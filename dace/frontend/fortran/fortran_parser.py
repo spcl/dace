@@ -34,6 +34,29 @@ import networkx as nx
 
 global_struct_instance_counter=0
 
+def find_access_in_destinations(substate,substate_destinations,name):
+                                wv=None
+                                already_there=False
+                                for i in substate_destinations:
+                                    if i.data==name:
+                                        wv=i
+                                        already_there=True
+                                        break
+                                if not already_there:
+                                    wv = substate.add_write(name)
+                                return wv,already_there    
+def find_access_in_sources(substate,substate_sources,name):
+    re=None
+    already_there=False
+    for i in substate_sources:
+        if i.data==name:
+            re=i
+            already_there=True
+            break
+    if not already_there:
+        re=substate.add_read(name)  
+    return re,already_there      
+
 def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,registered_types,chain,actual_offsets_per_sdfg,names_of_object_in_parent_sdfg,actual_offsets_per_parent_sdfg): 
     if not isinstance(datatype_to_add,dat.Structure):
         #print("Not adding: ", str(datatype_to_add))
@@ -873,6 +896,7 @@ class AST_translator:
 
                     if isinstance(variable_in_call, ast_internal_classes.Data_Ref_Node):
                         done=False
+                        bonus_step=False
                         depth=0
                         tmpvar = variable_in_call
                         local_name = parameters[variables_in_call.index(variable_in_call)]
@@ -883,9 +907,14 @@ class AST_translator:
                         name_chain=[top_structure_name]    
                         while not done:
                             if isinstance(tmpvar.part_ref, ast_internal_classes.Data_Ref_Node):
+                                
                                 tmpvar=tmpvar.part_ref
                                 depth+=1
                                 current_member_name=ast_utils.get_name(tmpvar.parent_ref)
+                                if isinstance(tmpvar.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                                    print("Array Subscript Node")
+                                if bonus_step==True:
+                                    print("Bonus Step")
                                 current_member=current_parent_structure.members[current_member_name]
                                 concatenated_name="_".join(name_chain)
                                 local_shape=current_member.shape
@@ -925,12 +954,14 @@ class AST_translator:
                                 if isinstance(current_member,dat.ContainerArray):
                                     if len(new_shape)==0:
                                         stype=current_member.stype
+                                        view_to_container = dat.View.view(current_member)
+                                        sdfg.arrays[concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)] = view_to_container
                                         while isinstance(stype, dat.ContainerArray):
                                             stype=stype.stype
                                         bonus_step=True
                                         #sdfg.add_view(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count),current_member.shape,current_member.dtype)
                                         view_to_member = dat.View.view(stype)
-                                        sdfg.arrays[concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)] = view_to_member
+                                        sdfg.arrays[concatenated_name+"_"+current_member_name+"_m_"+str(self.struct_view_count)] = view_to_member
                                         #sdfg.add_view(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count),current_member.stype.dtype)
                                 else:    
                                     sdfg.add_view(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count),current_member.shape,current_member.dtype,strides=current_member.strides,offset=current_member.offset)  
@@ -949,45 +980,35 @@ class AST_translator:
                                     top_level=False
                                 if local_name.name in read_names:
                                     
-                                    for i in substate_sources:
-                                        if i.data==current_parent_structure_name:
-                                            re=i
-                                            already_there_1=True
-                                            break
-                                    if not already_there_1:
-                                        re=substate.add_read(current_parent_structure_name)    
-                                        
-                                    for i in substate_destinations:
-                                        if i.data==concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count):
-                                            wv=i
-                                            already_there_2=True
-                                            break
-                                    if not already_there_2:
-                                        wv = substate.add_write(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count))
+                                    re,already_there_1=find_access_in_sources(substate,substate_sources,current_parent_structure_name)
+                                    wv,already_there_2=find_access_in_destinations(substate,substate_destinations,concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count))
                                                                         
-                                    mem=Memlet.simple(current_parent_structure_name + "." + current_member_name, subset)
-                                    substate.add_edge(re,None,wv,"views",dpcp(mem))
+                                    if not bonus_step:                                                                        
+                                        mem=Memlet.simple(current_parent_structure_name + "." + current_member_name, subset)
+                                        substate.add_edge(re,None,wv,"views",dpcp(mem))
+                                    else:
+                                        firstmem=Memlet.simple(current_parent_structure_name + "." + current_member_name,subs.Range.from_array(sdfg.arrays[concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)]))
+                                        wv2,already_there_22=find_access_in_destinations(substate,substate_destinations,concatenated_name+"_"+current_member_name+"_m_"+str(self.struct_view_count))
+                                        mem     =Memlet.simple(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count), subset)
+                                        substate.add_edge(re,None,wv,"views",dpcp(firstmem))
+                                        substate.add_edge(wv,None,wv2,"views",dpcp(mem))
+
 
                                 if local_name.name in write_names:
                                     
-                                    for i in substate_destinations:
-                                        if i.data==current_parent_structure_name:
-                                            wr=i
-                                            already_there_3=True
-                                            break
-                                    if not already_there_3:
-                                        wr=substate.add_write(current_parent_structure_name)
+                                    wr,already_there_3=find_access_in_destinations(substate,substate_destinations,current_parent_structure_name)
+                                    rv,already_there_4=find_access_in_sources(substate,substate_sources,concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count))
                                     
-                                    for i in substate_sources:
-                                        if i.data==concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count):
-                                            rv=i
-                                            already_there_4=True
-                                            break
-                                    if not already_there_4:    
-                                        rv = substate.add_read(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count))
+                                    if not bonus_step: 
+                                        mem2=Memlet.simple(current_parent_structure_name + "." + current_member_name, subset)
+                                        substate.add_edge(rv,"views",wr,None,dpcp(mem2))
+                                    else:
+                                        firstmem=Memlet.simple(current_parent_structure_name + "." + current_member_name,subs.Range.from_array(sdfg.arrays[concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)]))
+                                        wr2,already_there_33=find_access_in_sources(substate,substate_sources,concatenated_name+"_"+current_member_name+"_m_"+str(self.struct_view_count))
+                                        mem2     =Memlet.simple(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count), subset)
+                                        substate.add_edge(wr2,"views",rv,None,dpcp(mem2))    
+                                        substate.add_edge(rv,"views",wr,None,dpcp(firstmem))
                                         
-                                    mem2=Memlet.simple(current_parent_structure_name + "." + current_member_name, subset)
-                                    substate.add_edge(rv,"views",wr,None,dpcp(mem2))
     
                                 if not already_there_1:
                                     if re is not None:
@@ -995,9 +1016,11 @@ class AST_translator:
                                             substate_sources.append(re)
                                         else:
                                             substate_destinations.append(re)
+                                           
                                 if not already_there_2:
                                     if wv is not None:
                                         substate_destinations.append(wv)
+                                
                                 if not already_there_3:
                                     if wr is not None:
                                         if not top_level:
@@ -1006,9 +1029,20 @@ class AST_translator:
                                             substate_sources.append(wr)
                                 if not already_there_4:
                                     if rv is not None:
-                                        substate_sources.append(rv)     
-                                
-                                current_parent_structure_name=concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)
+                                        substate_sources.append(rv)   
+
+                                if bonus_step==True:
+                                    if not already_there_22:
+                                        if wv2 is not None:
+                                            substate_destinations.append(wv2)     
+                                    if not already_there_33:
+                                        if wr2 is not None:
+                                            substate_sources.append(wr2)           
+                                    
+                                if not bonus_step:
+                                    current_parent_structure_name=concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)
+                                else:
+                                    current_parent_structure_name=concatenated_name+"_"+current_member_name+"_m_"+str(self.struct_view_count)
                                 current_parent_structure=current_parent_structure.members[current_member_name]
                                 self.struct_view_count+=1
                                 name_chain.append(current_member_name)
@@ -1018,10 +1052,14 @@ class AST_translator:
                                 concatenated_name="_".join(name_chain)
                                 array_name=ast_utils.get_name(tmpvar)
                                 member_name=ast_utils.get_name(tmpvar)
-                                if depth>0:
-                                    last_view_name=concatenated_name+"_"+str(self.struct_view_count-1)
-                                else:
-                                    last_view_name=concatenated_name    
+                                if bonus_step==True:
+                                    print("Bonus Step")
+                                    last_view_name=concatenated_name+"_m_"+str(self.struct_view_count-1)
+                                else:    
+                                    if depth>0:
+                                        last_view_name=concatenated_name+"_"+str(self.struct_view_count-1)
+                                    else:
+                                        last_view_name=concatenated_name    
                                 if isinstance(current_parent_structure,dat.ContainerArray):
                                     stype=current_parent_structure.stype
                                     while isinstance(stype, dat.ContainerArray):
@@ -1846,19 +1884,19 @@ class AST_translator:
         for i, j in zip(input_names, input_names_tasklet):
             memlet_range = self.get_memlet_range(sdfg, input_vars, i, j)
             src= ast_utils.add_memlet_read(substate, i, tasklet, j, memlet_range)
-            if self.struct_views.get(sdfg) is not None:
-              if self.struct_views[sdfg].get(i) is not None:
-                chain= self.struct_views[sdfg][i]
-                access_parent=substate.add_access(chain[0])
-                name=chain[0]
-                for i in range(1,len(chain)):
-                    view_name=name+"_"+chain[i]
-                    access_child=substate.add_access(view_name)
-                    substate.add_edge(access_parent, None,access_child, 'views',  Memlet.simple(name+"."+chain[i],subs.Range.from_array(sdfg.arrays[view_name])))
-                    name=view_name
-                    access_parent=access_child
+            # if self.struct_views.get(sdfg) is not None:
+            #   if self.struct_views[sdfg].get(i) is not None:
+            #     chain= self.struct_views[sdfg][i]
+            #     access_parent=substate.add_access(chain[0])
+            #     name=chain[0]
+            #     for i in range(1,len(chain)):
+            #         view_name=name+"_"+chain[i]
+            #         access_child=substate.add_access(view_name)
+            #         substate.add_edge(access_parent, None,access_child, 'views',  Memlet.simple(name+"."+chain[i],subs.Range.from_array(sdfg.arrays[view_name])))
+            #         name=view_name
+            #         access_parent=access_child
                 
-                substate.add_edge(access_parent, None,src,'views',  Memlet(data=name, subset=memlet_range))
+            #     substate.add_edge(access_parent, None,src,'views',  Memlet(data=name, subset=memlet_range))
 
 
         for i, j, k in zip(output_names, output_names_tasklet, output_names_changed):
@@ -3276,10 +3314,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            #if j.name.name!="solve_nh":
+            if j.name.name!="solve_nh":
             #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
-            if j.name.name!="velocity_tendencies":
+            #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue
@@ -3297,7 +3335,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             
 
 
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics.sdfgz"),compress=True)
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics_a.sdfgz"),compress=True)
             # for sd in sdfg.all_sdfgs_recursive():
             #     free_symbols = sd.free_symbols
             #     for i in ['__f2dace_OA_iblk_d_0_s_4140', '__f2dace_OA_iidx_d_1_s_4138', '__f2dace_OA_iidx_d_2_s_4139', '__f2dace_OA_iblk_d_2_s_4142', '__f2dace_OA_iblk_d_1_s_4141', '__f2dace_OA_iidx_d_0_s_4137','__f2dace_A_iidx_d_1_s_5395', '__f2dace_A_iblk_d_0_s_5397', '__f2dace_A_iidx_d_2_s_5396', '__f2dace_A_iblk_d_1_s_5398', '__f2dace_A_iblk_d_2_s_5399', '__f2dace_A_iidx_d_0_s_5394','__f2dace_A_iidx_d_0_s_4137', '__f2dace_A_iblk_d_2_s_4142', '__f2dace_A_iblk_d_0_s_4140', '__f2dace_A_iidx_d_1_s_4138', '__f2dace_A_iidx_d_2_s_4139', '__f2dace_A_iblk_d_1_s_4141','__f2dace_OA_opt_out2_d_1_s_8111', '__f2dace_A_opt_out2_d_0_s_8110', '__f2dace_OA_opt_out2_d_2_s_8112', '__f2dace_OA_opt_out2_d_0_s_8110', '__f2dace_A_opt_out2_d_2_s_8112', '__f2dace_A_opt_out2_d_1_s_8111','__f2dace_A_opt_out2_d_1_s_8111', '__f2dace_A_ieidx_d_2_s_8121', '__f2dace_OA_opt_out2_d_1_s_8111', '__f2dace_A_ieblk_d_1_s_8123', '__f2dace_A_inidx_d_1_s_8114', '__f2dace_A_inblk_d_2_s_8118', '__f2dace_A_ieidx_d_0_s_8119', '__f2dace_A_opt_out2_d_2_s_8112', '__f2dace_A_ieidx_d_1_s_8120', '__f2dace_OA_opt_out2_d_0_s_8110', '__f2dace_A_inblk_d_0_s_8116', '__f2dace_OA_opt_out2_d_2_s_8112', '__f2dace_A_ieblk_d_2_s_8124', '__f2dace_A_inblk_d_1_s_8117', '__f2dace_A_ieblk_d_0_s_8122', '__f2dace_A_opt_out2_d_0_s_8110', '__f2dace_A_inidx_d_2_s_8115', '__f2dace_A_inidx_d_0_s_8113','__f2dace_A_iidx_d_1_s_8159', '__f2dace_A_iidx_d_0_s_8158', '__f2dace_A_iblk_d_0_s_8161', '__f2dace_A_iblk_d_1_s_8162', '__f2dace_A_iblk_d_2_s_8163', '__f2dace_A_iidx_d_2_s_8160','__f2dace_A_iblk_d_0_s_6698', '__f2dace_A_iblk_d_1_s_6699', '__f2dace_A_iidx_d_2_s_6697', '__f2dace_A_iidx_d_1_s_6696', '__f2dace_A_iblk_d_2_s_6700', '__f2dace_A_iidx_d_0_s_6695','__f2dace_A_incidx_d_2_s_8055', '__f2dace_A_iqblk_d_0_s_8044', '__f2dace_A_incblk_d_1_s_8057', '__f2dace_A_iqblk_d_1_s_8045', '__f2dace_A_iqidx_d_2_s_8043', '__f2dace_A_icidx_d_2_s_8031', '__f2dace_A_ivblk_d_2_s_8052', '__f2dace_A_incidx_d_0_s_8053', '__f2dace_A_icidx_d_0_s_8029', '__f2dace_A_incblk_d_2_s_8058', '__f2dace_A_incblk_d_0_s_8056', '__f2dace_A_ividx_d_2_s_8049', '__f2dace_A_icblk_d_0_s_8032', '__f2dace_A_ieidx_d_0_s_8035', '__f2dace_A_ivblk_d_0_s_8050', '__f2dace_A_ieidx_d_1_s_8036', '__f2dace_A_icidx_d_1_s_8030', '__f2dace_A_incidx_d_1_s_8054', '__f2dace_A_iqidx_d_0_s_8041', '__f2dace_A_icblk_d_2_s_8034', '__f2dace_A_ieblk_d_0_s_8038', '__f2dace_A_ividx_d_0_s_8047', '__f2dace_A_ieblk_d_2_s_8040', '__f2dace_A_ividx_d_1_s_8048', '__f2dace_A_icblk_d_1_s_8033', '__f2dace_A_iqidx_d_1_s_8042', '__f2dace_A_ieblk_d_1_s_8039', '__f2dace_A_iqblk_d_2_s_8046', '__f2dace_A_ieidx_d_2_s_8037', '__f2dace_A_ivblk_d_1_s_8051']:
@@ -3336,10 +3374,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
             
             sdfg.validate()
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfgz"),compress=True)
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated_a.sdfgz"),compress=True)
             #try:    
             sdfg.simplify(verbose=True)
-            print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz")}')
+            print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_a.sdfgz")}')
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz"),compress=True)
             #except Exception as e:
             #    print("Simplification failed for ", sdfg.name)    
