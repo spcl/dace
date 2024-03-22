@@ -429,7 +429,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         out_node = node
                         in_node = nstate.add_access(node.data)
                         for iedge in in_edges:
-                            nstate.add_ege(iedge.src, iedge.src_conn, in_node, iedge.dst_conn, dc(iedge.data))
+                            nstate.add_edge(iedge.src, iedge.src_conn, in_node, iedge.dst_conn, dc(iedge.data))
                             nstate.remove_edge(iedge)
                     else:
                         in_node = node
