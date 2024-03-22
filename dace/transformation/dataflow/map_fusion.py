@@ -475,7 +475,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 for other_edge in out_edges:
                     if other_edge is not edge:
                         graph.remove_edge(other_edge)
-                        mem = Memlet(data=local_name, other_subset=other_edge.data.dst_subset)
+                        mem = Memlet(data=local_name, subset="0", other_subset=other_edge.data.dst_subset)
                         graph.add_edge(local_node, src_connector, other_edge.dst, other_edge.dst_conn, mem)
             else:
                 local_node = edge.src
@@ -490,11 +490,17 @@ class MapFusion(transformation.SingleStateTransformation):
                 else:
                     local_node_out = local_node
                     connector_out = src_connector
+                assert local_node_out != local_node     # Ensures that no cycles are introduced by the call below.
                 graph.add_edge(local_node, src_connector, local_node_out, connector_out,
-                               Memlet.from_array(local_name, sdfg.arrays[local_name]))
+                               Memlet(data=local_name, subset='0'))
                 graph.add_edge(local_node_out, connector_out, new_dst, new_dst_conn, dcpy(edge.data))
-                for e in other_edges:
-                    graph.add_edge(local_node_out, connector_out, e.dst, e.dst_conn, dcpy(edge.data))
+
+                for other_edge in other_edges:
+                    if other_edge is not edge:
+                        mem = dcpy(edge.data)
+                        mem.subset = "0"
+                        mem.data = local_name
+                        graph.add_edge(local_node_out, connector_out, other_edge.dst, other_edge.dst_conn, mem)
             else:
                 # Add edge that leads to the second node
                 graph.add_edge(local_node, src_connector, new_dst, new_dst_conn, dcpy(edge.data))

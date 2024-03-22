@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy
 import numpy as np
 import os
 import dace
@@ -163,6 +164,35 @@ def test_fusion_with_transient():
     assert np.allclose(A, expected)
 
 
+def fusion_with_transient_scalar(
+        A: dace.float32[1, 1],
+        B: dace.float32[1],
+):
+    tmp1 = A * 2
+
+    for i, j in dace.map[0:1, 0:1]:
+        tmp2 = tmp1[i, j] + 4
+        tmp3 = tmp1[i, j] * 5
+        tmp4 = tmp1[i, j] + 1
+        B[0] = tmp2 + tmp3 + tmp4
+
+
+def test_fusion_with_transient_scalar():
+    A = np.ones((1, 1)).astype(np.float32)
+    B = np.zeros(1).astype(np.float32)
+    fusion_with_transient_scalar_prog = dace.program(fusion_with_transient_scalar)
+    fusion_with_transient_scalar(A, B)
+    sdfg = fusion_with_transient_scalar_prog.to_sdfg()
+    sdfg.simplify()
+    assert sdfg.is_valid()
+    expected_B = B.copy()
+    B[:] = np.nan
+    sdfg.apply_transformations_repeated(MapFusion)
+    csdfg = sdfg.compile()
+    csdfg(A=A, B=B)
+    assert np.allclose(B, expected_B)
+
+
 def test_fusion_with_inverted_indices():
 
     @dace.program
@@ -278,6 +308,7 @@ if __name__ == '__main__':
     test_multiple_fusions()
     test_fusion_chain()
     test_fusion_with_transient()
+    test_fusion_with_transient_scalar()
     test_fusion_with_inverted_indices()
     test_fusion_with_empty_memlet()
     test_fusion_with_nested_sdfg_0()
