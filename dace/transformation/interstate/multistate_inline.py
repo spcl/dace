@@ -124,7 +124,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Add nested SDFG states into top-level SDFG
 
         # Make symbol mapping explicit
-        mapping_state = nsdfg.add_state_before(nsdfg.start_state, is_start_state=True)
+        statenames = set(s.label for s in nsdfg.nodes())
+        newname = find_new_name("mapping_state", statenames)
+        mapping_state = nsdfg.add_state_before(nsdfg.start_state, label=newname, is_start_state=True)
         mapping_edge = nsdfg.out_edges(mapping_state)[0]
         for inner_sym, expr in nsdfg_node.symbol_mapping.items():
             if str(inner_sym) == str(expr):
@@ -181,6 +183,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         from dace.transformation.passes import ArrayElimination
         Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
 
+        sdfg.validate()
         return nsdfg.nodes()
 
 
@@ -554,7 +557,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                             # We can simply skip
                             continue
 
-            data_path = ".".join(data_path[::-1])
+            data_path = ".".join(data_path)
             for edge in nsdfg.edges():
                 edge.data.replace(arg, data_path)
 
