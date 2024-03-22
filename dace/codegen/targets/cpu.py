@@ -39,16 +39,17 @@ class CPUCodeGen(TargetCodeGenerator):
             for k, v in struct.members.items():
                 if isinstance(v, data.Structure):
                     _visit_structure(v, args, f'{prefix}->{k}')
+                # NOTE: We should revisit this when we decide if direct access to struct members of container arrays is allowed.
                 elif isinstance(v, data.ContainerArray):
 
                     cur_v = v.stype
-                    prefix = f'{prefix}->{k}'
+                    prefix_ = f'{prefix}->{k}'
 
                     while isinstance(cur_v, data.ContainerArray):
                         cur_v = cur_v.stype
-                        prefix = f'(*{prefix})'
+                        prefix_ = f'(*{prefix_})'
 
-                    _visit_structure(cur_v, args, prefix)
+                    _visit_structure(cur_v, args, prefix_)
 
                 if isinstance(v, data.Data):
                     args[f'{prefix}->{k}'] = v
