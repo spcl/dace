@@ -61,6 +61,8 @@ class NestedDict(dict):
         
         while tokens:
             token = tokens.pop(0)
+            if isinstance(result, dt.ContainerArray):
+                result = result.stype
             result = result.members[token]
         return result
 

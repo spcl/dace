@@ -968,12 +968,16 @@ class AST_translator:
                                 
                                 already_there_1=False
                                 already_there_2=False
+                                already_there_22=False
                                 already_there_3=False
+                                already_there_33=False
                                 already_there_4=False
                                 re=None
                                 wv=None
                                 wr=None
                                 rv=None
+                                wv2=None
+                                wr2=None
                                 if current_parent_structure_name==top_structure_name:
                                     top_level=True
                                 else:
