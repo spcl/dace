@@ -56,6 +56,9 @@ class Memlet(object):
                             default=dtypes.MemletScheduleType.Default)
     doacross_dependency_offset = ShapeProperty(allow_none=True, desc='Offset for doacross input dependencies',
                                                default=None)
+    prefetch_locality = EnumProperty(dtype=dtypes.MemletPrefetchType,
+                                     desc='If prefetching is enabled, with locality to prefetch to',
+                                     default=dtypes.MemletPrefetchType.Low_Locality)
 
     def __init__(self,
                  expr: Optional[str] = None,
@@ -142,6 +145,7 @@ class Memlet(object):
 
         self.schedule = dtypes.MemletScheduleType.Default
         self.doacross_dependency_offset = None
+        self.prefetch_locality = dtypes.MemletPrefetchType.Low_Locality
 
     @staticmethod
     def from_memlet(memlet: 'Memlet') -> 'Memlet':
@@ -213,6 +217,7 @@ class Memlet(object):
         node._allow_oob = self._allow_oob
         node._schedule = self._schedule
         node._doacross_dependency_offset = self._doacross_dependency_offset
+        node._prefetch_locality = self._prefetch_locality
         node._is_data_src = self._is_data_src
 
         # Nullify graph references

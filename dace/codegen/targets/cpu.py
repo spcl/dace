@@ -2070,26 +2070,45 @@ class CPUCodeGen(TargetCodeGenerator):
         for e in dfg.scope_subgraph(node, include_nested_scopes=False).edges():
             if e.data.schedule in (dtypes.MemletScheduleType.Prefetch_Start, dtypes.MemletScheduleType.Prefetch_All):
                 memlet: mmlt.Memlet = e.data
-                prefetch_locality = 3 # TODO: make configurable
-                prefetch_rw = 0 if memlet._is_data_src else 1
-
+                desc = sdfg.data(memlet.data)
+                ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                offs_expr = cpp.cpp_offset_expr(desc, memlet.subset, indices=offset_coord)
+                prefetch_ptr = '%s + %s' % (ptrname, offs_expr)
                 subset = memlet.subset
                 map_param = symbolic.symbol(node.map.params[-1])
                 zero_coord = subset.coord_at([0] * subset.dims())
                 offset_coord = [node.map.range[-1][2] if c == map_param else 0 for c in zero_coord]
-                desc = sdfg.data(memlet.data)
-                ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
-                offs_expr = cpp.cpp_offset_expr(desc, subset, indices=offset_coord)
-                prefetch_ptr = '%s + %s' % (ptrname, offs_expr)
-
-                result.write(
-                    '__builtin_prefetch(%s, %s, %s);' % (prefetch_ptr, prefetch_rw, prefetch_locality)
-                )
+                self._write_prefetch(memlet, prefetch_ptr, sdfg, state_id, node, result)
 
         callsite_stream.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
         self._frame.allocate_arrays_in_scope(sdfg, node, function_stream, result)
+
+    def _write_prefetch(self, memlet: mmlt.Memlet, prefetch_ptr: str, sdfg: SDFG, state_id: int, node: nodes.Node,
+                        callsite_stream: CodeIOStream):
+        prefetch_locality = memlet.prefetch_locality
+        prefetch_rw = 0 if memlet._is_data_src else 1
+
+        # Careful, _mm_prefetch's locality hint is the opposite of __builtin_prefetch (i.e., low = 3, high = 0).
+        if prefetch_locality == dtypes.MemletPrefetchType.No_Prefetch:
+            mmintrin_hint = '_MM_HINT_T3'
+        elif prefetch_locality == dtypes.MemletPrefetchType.Low_Locality:
+            mmintrin_hint = '_MM_HINT_T2'
+        elif prefetch_locality == dtypes.MemletPrefetchType.Med_Locality:
+            mmintrin_hint = '_MM_HINT_T1'
+        else:
+            mmintrin_hint = '_MM_HINT_T0'
+        mmintrin_version = '_mm_prefetch(%s, %s);' % (prefetch_ptr, mmintrin_hint)
+        gnu_version = '__builtin_prefetch(%s, %s, %s);' % (prefetch_ptr, prefetch_rw, prefetch_locality)
+
+        prefetch_instr = '#ifdef __SSE__\n'
+        prefetch_instr += mmintrin_version + '\n'
+        prefetch_instr += '#else\n'
+        prefetch_instr += gnu_version + '\n'
+        prefetch_instr += '#endif'
+
+        callsite_stream.write(prefetch_instr, sdfg, state_id, node)
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         result = callsite_stream

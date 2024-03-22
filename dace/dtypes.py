@@ -92,6 +92,15 @@ class MemletScheduleType(aenum.AutoNumberEnum):
     Prefetch_All = ()
 
 
+@undefined_safe_enum
+@extensible_enum
+class MemletPrefetchType(aenum.Enum):
+    No_Prefetch = 0
+    Low_Locality = 1
+    Med_Locality = 2
+    High_Locality = 3
+
+
 # A subset of GPU schedule types
 GPU_SCHEDULES = [
     ScheduleType.GPU_Device,
