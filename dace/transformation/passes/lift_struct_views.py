@@ -127,6 +127,8 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         attr_view_node = self.state.add_access(attr_view_name)
         if self.direction == 'in':
             idx = ast.unparse(val.slice)
+            if isinstance(val.slice, ast.Tuple):
+                idx = idx.strip('()')
             slice_memlet = Memlet(self.data_node.data + '[' + idx + ']')
             self.state.add_edge(self.data_node, None, slice_view_node, 'views', slice_memlet)
             attr_memlet = Memlet.from_array(slice_view_name + '.' + node.attr, struct.members[node.attr])
