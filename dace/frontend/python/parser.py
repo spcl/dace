@@ -21,6 +21,12 @@ try:
 except ImportError:
     from typing_compat import get_origin, get_args
 
+try:
+    import mpi4py
+    from dace.sdfg.utils import distributed_compile
+except ImportError:
+    mpi4py = None
+
 ArgTypes = Dict[str, Data]
 
 
@@ -443,9 +449,12 @@ class DaceProgram(pycommon.SDFGConvertible):
                 sdfg.simplify()
 
         with hooks.invoke_sdfg_call_hooks(sdfg) as sdfg:
-            # Compile SDFG (note: this is done after symbol inference due to shape
-            # altering transformations such as Vectorization)
-            binaryobj = sdfg.compile(validate=self.validate)
+            if not mpi4py:
+                # Compile SDFG (note: this is done after symbol inference due to shape
+                # altering transformations such as Vectorization)
+                binaryobj = sdfg.compile(validate=self.validate)
+            else:
+                binaryobj = distributed_compile(sdfg, mpi4py.MPI.COMM_WORLD, validate=self.validate)
 
             # Recreate key and add to cache
             cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,

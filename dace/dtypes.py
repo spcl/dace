@@ -1449,8 +1449,10 @@ def validate_name(name):
         return False
     if name in {'True', 'False', 'None'}:
         return False
-    if namere.match(name) is None:
-        return False
+    tokens = name.split('.')
+    for token in tokens:
+        if namere.match(token) is None:
+            return False
     return True
 
 

@@ -19,6 +19,7 @@ from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_stream_view, NodeNotExpandedError,
                        dynamic_map_inputs, local_transients)
 from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga, is_in_scope
+from dace.sdfg.validation import validate_memlet_data
 from typing import Union
 from dace.codegen.targets import fpga
 
@@ -40,7 +41,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     _visit_structure(v, args, f'{prefix}->{k}')
                 elif isinstance(v, data.ContainerArray):
                     _visit_structure(v.stype, args, f'{prefix}->{k}')
-                elif isinstance(v, data.Data):
+                if isinstance(v, data.Data):
                     args[f'{prefix}->{k}'] = v
 
         # Keeps track of generated connectors, so we know how to access them in nested scopes
@@ -620,6 +621,7 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream,
         )
 
+
     def _emit_copy(
         self,
         sdfg,
@@ -637,13 +639,16 @@ class CPUCodeGen(TargetCodeGenerator):
         orig_vconn = vconn
 
         # Determine memlet directionality
-        if isinstance(src_node, nodes.AccessNode) and memlet.data == src_node.data:
+        if isinstance(src_node, nodes.AccessNode) and validate_memlet_data(memlet.data, src_node.data):
             write = True
-        elif isinstance(dst_node, nodes.AccessNode) and memlet.data == dst_node.data:
+        elif isinstance(dst_node, nodes.AccessNode) and validate_memlet_data(memlet.data, dst_node.data):
             write = False
         elif isinstance(src_node, nodes.CodeNode) and isinstance(dst_node, nodes.CodeNode):
             # Code->Code copy (not read nor write)
             raise RuntimeError("Copying between code nodes is only supported as part of the participating nodes")
+        elif uconn is None and vconn is None and memlet.data is None and dst_schedule == dtypes.ScheduleType.Sequential:
+            # Sequential dependency edge
+            return
         else:
             raise LookupError("Memlet does not point to any of the nodes")
 
