@@ -124,7 +124,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Add nested SDFG states into top-level SDFG
 
         # Make symbol mapping explicit
-        statenames = set(s.label for s in nsdfg.nodes())
+        statenames = set([s.label for s in nsdfg.all_control_flow_blocks()])
         newname = find_new_name("mapping_state", statenames)
         mapping_state = nsdfg.add_state_before(nsdfg.start_state, label=newname, is_start_state=True)
         mapping_edge = nsdfg.out_edges(mapping_state)[0]
@@ -134,12 +134,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             mapping_edge.data.assignments[inner_sym] = str(expr)
 
         # Make unique names for states
-        statenames = set(s.label for s in sdfg.nodes())
-        for nstate in nsdfg.nodes():
-            if nstate.label in statenames:
-                newname = find_new_name(nstate.label, statenames)
-                statenames.add(newname)
-                nstate.label = newname
+        statenames = set([s.label for s in sdfg.all_control_flow_blocks()])
+        for nstate in list(nsdfg.all_control_flow_blocks()):
+            newname = find_new_name(nstate.label, statenames)
+            statenames.add(newname)
+            nstate.label = newname
 
         outer_start_state = sdfg.start_state
 
@@ -175,15 +174,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         #######################################################
         # Remove nested SDFG and state
+        nsdfg_state.remove_node(nsdfg_node)
         sdfg.remove_node(nsdfg_state)
 
         sdfg._cfg_list = sdfg.reset_cfg_list()
 
-        from dace.transformation.pass_pipeline import Pipeline
-        from dace.transformation.passes import ArrayElimination
-        Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
-
-        sdfg.validate()
         return nsdfg.nodes()
 
 
