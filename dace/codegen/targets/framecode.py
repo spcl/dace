@@ -155,6 +155,8 @@ class DaCeCodeGenerator(object):
             if arr is not None:
                 datatypes.add(arr.dtype)
         
+        emitted = set()
+        
         def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
             if isinstance(dtype, dtypes.pointer):
                 wrote_something = _emit_definitions(dtype._typeclass, wrote_something)
@@ -164,7 +166,10 @@ class DaCeCodeGenerator(object):
             if hasattr(dtype, 'emit_definition'):
                 if not wrote_something:
                     global_stream.write("", sdfg)
-                global_stream.write(dtype.emit_definition(), sdfg)
+                if dtype not in emitted:
+                    global_stream.write(dtype.emit_definition(), sdfg)
+                    wrote_something = True
+                    emitted.add(dtype)
             return wrote_something
 
         # Emit unique definitions
