@@ -2435,6 +2435,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     edge._dst_conn = "IN_" + str(conn_to_data[edge.data.data])
                     node.add_in_connector(edge.dst_conn)
 
+    def view(self):
+        from dace.sdfg.analysis.cutout import SDFGCutout
+        cutout = SDFGCutout.multistate_cutout(self, make_side_effects_global=False, override_start_state=self)
+        cutout.view()
+
 
 class StateSubgraphView(SubgraphView, DataflowGraphView):
     """ A read-only subgraph view of an SDFG state. """

@@ -321,7 +321,8 @@ class SDFGCutout(SDFG):
     @classmethod
     def multistate_cutout(cls,
                           *states: SDFGState,
-                          make_side_effects_global: bool = True) -> Union['SDFGCutout', SDFG]:
+                          make_side_effects_global: bool = True,
+                          override_start_state: Optional[SDFGState] = None) -> Union['SDFGCutout', SDFG]:
         """
         Cut out a multi-state subgraph from an SDFG to run separately for localized testing or optimization.
 
@@ -350,10 +351,13 @@ class SDFGCutout(SDFG):
         # Determine the start state and ensure there IS a unique start state. If there is no unique start state, keep
         # adding states from the predecessor frontier in the state machine until a unique start state can be determined.
         start_state: Optional[SDFGState] = None
-        for state in cutout_states:
-            if state == sdfg.start_state:
-                start_state = state
-                break
+        if override_start_state is not None:
+            start_state = override_start_state
+        else:
+            for state in cutout_states:
+                if state == sdfg.start_state:
+                    start_state = state
+                    break
 
         if start_state is None:
             bfs_queue: Deque[Tuple[Set[SDFGState], Set[Edge[InterstateEdge]]]] = deque()
