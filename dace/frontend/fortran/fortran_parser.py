@@ -1577,8 +1577,17 @@ class AST_translator:
         addedmemlets = []
         
         globalmemlets = []
+        names_list=[]
+        if node.specification_part is not None:
+            if node.specification_part.specifications is not None:
+                namefinder=ast_transforms.FindDefinedNames()
+                for i in node.specification_part.specifications:
+                    namefinder.visit(i)   
+                names_list=namefinder.names
         # This handles the case where the function is called with read variables found in a module
         for i in not_found_read_names:
+            if i in names_list: 
+                continue
             if i in [a[0] for a in self.module_vars]:
                 if self.name_mapping[sdfg].get(i) is not None:
                     self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
@@ -1622,6 +1631,8 @@ class AST_translator:
         # This handles the case where the function is called with wrriten but not read variables found in a module
         for i in not_found_write_names:
             if i in not_found_read_names:
+                continue
+            if i in names_list: 
                 continue
             if i in [a[0] for a in self.module_vars]:
                 if self.name_mapping[sdfg].get(i) is not None:
@@ -1813,8 +1824,15 @@ class AST_translator:
                                     self.globalsdfg.name].constants[ast_utils.get_name(k)]
 
                             pass
+                        
+                    old_mode=self.transient_mode
+                    print("For ",sdfg_name," old mode is ",old_mode)
+                    self.transient_mode=True
                     for j in node.specification_part.specifications:
+                        
+                    
                         self.declstmt2sdfg(j, new_sdfg)
+                    self.transient_mode=old_mode
                    
     
                 for i in assigns:
@@ -3378,11 +3396,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
             
             sdfg.validate()
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated_a.sdfgz"),compress=True)
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated_b.sdfgz"),compress=True)
             #try:    
             sdfg.simplify(verbose=True)
-            print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_a.sdfgz")}')
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz"),compress=True)
+            print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_b.sdfgz")}')
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_b.sdfgz"),compress=True)
             #except Exception as e:
             #    print("Simplification failed for ", sdfg.name)    
             #    print(e)

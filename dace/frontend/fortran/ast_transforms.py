@@ -208,6 +208,14 @@ class FindNames(NodeVisitor):
             self.visit(i)    
 
 
+class FindDefinedNames(NodeVisitor):
+    def __init__(self):
+        self.names: List[str] = []
+
+    def visit_Var_Decl_Node(self, node: ast_internal_classes.Var_Decl_Node):
+        self.names.append(node.name)
+
+
 class FindInputs(NodeVisitor):
     """
     Finds all inputs (reads) in the AST node and its children
@@ -265,8 +273,12 @@ class FindInputs(NodeVisitor):
                 if isinstance(node.lval.parent_ref, ast_internal_classes.Array_Subscript_Node):
                     #self.nodes.append(node.lval.parent_ref.name)
                     for i in node.lval.parent_ref.indices:
-                        self.visit(i)  
-                self.visit(node.lval.part_ref)              
+                        self.visit(i)
+                if isinstance(node.lval.part_ref,ast_internal_classes.Data_Ref_Node):
+                    self.visit_Blunt_Data_Ref_Node(node.lval.part_ref)
+                elif isinstance(node.lval.part_ref, ast_internal_classes.Array_Subscript_Node):
+                    for i in node.lval.part_ref.indices:
+                        self.visit(i)
 
         else:
             if isinstance(node.lval, ast_internal_classes.Data_Ref_Node):
@@ -276,7 +288,11 @@ class FindInputs(NodeVisitor):
                     self.nodes.append(node.lval.parent_ref.name)
                     for i in node.lval.parent_ref.indices:
                         self.visit(i)        
-                self.visit(node.lval.part_ref)        
+                if isinstance(node.lval.part_ref,ast_internal_classes.Data_Ref_Node):
+                    self.visit_Blunt_Data_Ref_Node(node.lval.part_ref)
+                elif isinstance(node.lval.part_ref, ast_internal_classes.Array_Subscript_Node):
+                    for i in node.lval.part_ref.indices:
+                        self.visit(i)
             else:
                 self.visit(node.lval)
         if isinstance(node.rval, ast_internal_classes.Data_Ref_Node):
@@ -286,7 +302,11 @@ class FindInputs(NodeVisitor):
                     self.nodes.append(node.rval.parent_ref.name)
                     for i in node.rval.parent_ref.indices:
                         self.visit(i)        
-                self.visit(node.rval.part_ref)        
+                if isinstance(node.rval.part_ref,ast_internal_classes.Data_Ref_Node):
+                    self.visit_Blunt_Data_Ref_Node(node.rval.part_ref)
+                elif isinstance(node.rval.part_ref, ast_internal_classes.Array_Subscript_Node):
+                    for i in node.rval.part_ref.indices:
+                        self.visit(i)
         else:
             self.visit(node.rval)
                 
