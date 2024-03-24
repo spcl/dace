@@ -200,5 +200,7 @@ def replace_datadesc_names(sdfg, repl: Dict[str, str]):
                         node.data = repl[node.data]
                 # Replace in memlets
                 for edge in block.edges():
-                    if edge.data.data in repl:
-                        edge.data.data = repl[edge.data.data]
+                    data_path = edge.data.data.split(".")
+                    first_name = data_path[0]
+                    if first_name in repl:
+                        edge.data.data = ".".join([repl[first_name]] + data_path[1:])
