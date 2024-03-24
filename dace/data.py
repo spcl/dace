@@ -1902,14 +1902,14 @@ class View:
         """
         debuginfo = debuginfo or viewed_container.debuginfo
         # Construct the right kind of view from the input data container
-        if isinstance(viewed_container, Structure):
+        if isinstance(viewed_container, (Structure, StructureView)):
             result = StructureView(members=cp.deepcopy(viewed_container.members),
                                    name=viewed_container.name,
                                    storage=viewed_container.storage,
                                    location=viewed_container.location,
                                    lifetime=viewed_container.lifetime,
                                    debuginfo=debuginfo)
-        elif isinstance(viewed_container, ContainerArray):
+        elif isinstance(viewed_container, (ContainerArray, ContainerView)):
             result = ContainerView(stype=cp.deepcopy(viewed_container.stype),
                                    shape=viewed_container.shape,
                                    allow_conflicts=viewed_container.allow_conflicts,

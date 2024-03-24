@@ -306,7 +306,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             used_symbol_names.add(new_name)
             replacements[outp] = new_name
 
-        nsdfg.replace_dict(replacements)
+        replace_datadesc_names(nsdfg, replacements)
+
         for state in nsdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.MapEntry):
