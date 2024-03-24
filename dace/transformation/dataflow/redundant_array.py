@@ -778,6 +778,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
         # and are of the same type (e.g., Stream->Stream)
         if in_desc.storage != out_desc.storage:
             return False
+        if isinstance(out_desc, data.View):
+            e = sdutil.get_view_edge(graph, out_array)
+            if "." in e.data.data:
+                return False
         if type(in_desc) != type(out_desc):
             if isinstance(in_desc, data.View):
                 # Case View -> Access
