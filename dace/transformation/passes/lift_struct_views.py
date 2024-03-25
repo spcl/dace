@@ -171,7 +171,7 @@ class RecodeAttributeNodes(ast.NodeTransformer):
                     self.state.add_edge(slice_view_node, None, self.tasklet, self.connector,
                                         Memlet.from_array(slice_view_name, slice_view))
                 else:
-                    self.state.add_edge(slice_view_node, None, self.data_node, 'views', self.memlet)
+                    self.state.add_edge(slice_view_node, 'views', self.data_node, None, self.memlet)
                     self.state.add_edge(self.tasklet, self.connector, slice_view_node, None,
                                         Memlet.from_array(slice_view_name, slice_view))
             elif isinstance(node.value, ast.Subscript) and node.value.value.id == self.connector:
