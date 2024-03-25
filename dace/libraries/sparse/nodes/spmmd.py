@@ -126,6 +126,14 @@ class MKLSPMMDExpansion(library.ExpandTransformation):
         a_op = 'SPARSE_OPERATION_TRANSPOSE' if node.transA else 'SPARSE_OPERATION_NON_TRANSPOSE'
         a_format = 'csr' if A.is_CSR() else 'csc'
 
+        b_rows = B.tensor_shape[0]
+        b_cols = B.tensor_shape[1]
+        b_op = 'SPARSE_OPERATION_TRANSPOSE' if node.transB else 'SPARSE_OPERATION_NON_TRANSPOSE'
+        b_format = 'csr' if B.is_CSR() else 'csc'
+        
+        if a_format != b_format:
+            raise ValueError('A and B must have the same format')
+
         code += f"""
             sparse_matrix_t __A;
             {func_pref}_create_{a_format}(&__A, SPARSE_INDEX_BASE_ZERO, {a_rows}, {a_cols}, _A->idx1_pos, _A->idx1_pos + 1, _A->idx1_crd, _A->values);
@@ -135,11 +143,6 @@ class MKLSPMMDExpansion(library.ExpandTransformation):
             __A_descr.diag = SPARSE_DIAG_NON_UNIT;
             sparse_operation_t __A_op = {a_op};
         """
-
-        b_rows = B.tensor_shape[0]
-        b_cols = B.tensor_shape[1]
-        b_op = 'SPARSE_OPERATION_TRANSPOSE' if node.transB else 'SPARSE_OPERATION_NON_TRANSPOSE'
-        b_format = 'csr' if B.is_CSR() else 'csc'
 
         code += f"""
             sparse_matrix_t __B;
