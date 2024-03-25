@@ -220,4 +220,5 @@ def test_fortran_frontend_type3_array():
 
 if __name__ == "__main__":
   
+   #test_fortran_frontend_type_array()
    test_fortran_frontend_type3_array()
