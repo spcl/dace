@@ -155,7 +155,7 @@ class MKLSPMMDExpansion(library.ExpandTransformation):
         layout = 'SPARSE_LAYOUT_ROW_MAJOR'
 
         code += f"""
-            {func_pref}_sp2md(__A_op, __A_descr, __A, __B_op, __B_descr, __B, {node.alpha}, {node.beta}, _C, {layout}, {C.shape[0]});
+            {func_pref}_sp2md(__A_op, __A_descr, __A, __B_op, __B_descr, __B, {node.alpha}, {node.beta}, _C, {layout}, {C.shape[1]});
         """
 
         # TODO do we need to destroy the matrices?
