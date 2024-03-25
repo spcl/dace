@@ -480,10 +480,12 @@ class MapFusion(transformation.SingleStateTransformation):
             else:
                 local_node = edge.src
                 src_connector = edge.src_conn
-                if isinstance(edge.src, nodes.AccessNode):
-                    edge.data.data = edge.src.data
-                elif isinstance(edge.dst, nodes.AccessNode):
-                    edge.data.data = edge.dst.data
+
+                # update edge data in case source or destination is a scalar access node
+                test_data = [node.data for node in (edge.src, edge.dst) if isinstance(node, nodes.AccessNode)]
+                for new_data in test_data:
+                    if isinstance(sdfg.arrays[new_data], data.Scalar):
+                        edge.data.data = new_data
 
             # If destination of edge leads to multiple destinations, redirect all through an access node.
             if other_edges:
