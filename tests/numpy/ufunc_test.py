@@ -1304,6 +1304,11 @@ def test_ufunc_trunc_u(A: dace.uint32[10]):
     return np.trunc(A)
 
 
+@compare_numpy_output()
+def test_ufunc_clip(A: dace.float32[10]):
+    return np.clip(A, 0.2, 0.5)
+
+
 if __name__ == "__main__":
     test_ufunc_add_ff()
     test_ufunc_subtract_ff()
@@ -1542,3 +1547,4 @@ if __name__ == "__main__":
     test_ufunc_trunc_c()
     test_ufunc_trunc_f()
     test_ufunc_trunc_u()
+    test_ufunc_clip()
