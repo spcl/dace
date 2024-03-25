@@ -157,7 +157,7 @@ class MKLSPMMDExpansion(library.ExpandTransformation):
         code += f"""
             sparse_status_t __status = {func_pref}_sp2md(__A_op, __A_descr, __A, __B_op, __B_descr, __B, {node.alpha}, {node.beta}, _C, {layout}, {C.shape[1]});
             if (__status != SPARSE_STATUS_SUCCESS) {{
-                exit((int) __status);
+                printf("MKL SP2MD failed with status %d\\n", __status);
             }}
         """
 
