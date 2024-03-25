@@ -289,12 +289,11 @@ def emit_memlet_reference(dispatcher,
     typedef = conntype.ctype
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
-    # is_scalar = not isinstance(conntype, dtypes.pointer) or (isinstance(conntype, dtypes.pointer) and
-    #                                                          isinstance(desc, data.ContainerArray))
-    is_scalar = not isinstance(conntype, dtypes.pointer)
-    is_scalar = is_scalar or isinstance(desc, data.Structure)
-    is_dtype_struct = isinstance(desc, data.ContainerArray) and isinstance(desc.dtype, dtypes.pointer) and isinstance(desc.dtype.base_type, dtypes.struct)
-    is_scalar = is_scalar or (is_dtype_struct and memlet.subset and memlet.subset.num_elements() == 1)
+    is_scalar = not isinstance(conntype, dtypes.pointer) or (isinstance(conntype, dtypes.pointer) and isinstance(desc, data.ContainerArray))
+    # is_scalar = not isinstance(conntype, dtypes.pointer)
+    # is_scalar = is_scalar or isinstance(desc, data.Structure)
+    # is_dtype_struct = isinstance(desc, data.ContainerArray) and isinstance(desc.dtype, dtypes.pointer) and isinstance(desc.dtype.base_type, dtypes.struct)
+    # is_scalar = is_scalar or (is_dtype_struct and memlet.subset and memlet.subset.num_elements() == 1)
     ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
     ref = ''
 
@@ -326,6 +325,26 @@ def emit_memlet_reference(dispatcher,
 
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
+
+        if '.' in memlet.data:
+            tokens = memlet.data.split('.')
+            datadef = ''
+            for token in tokens[:-1]:
+                assert token in sdfg.arrays
+                desc = sdfg.arrays[token]
+                assert isinstance(desc, data.Structure)
+                if not datadef:
+                    datadef = token
+                    if isinstance(desc, data.StructureView):
+                        datadef = f"(*{token})"
+                    continue
+                if isinstance(desc.dtype, dtypes.struct):
+                    datadef = f"{datadef}.{token}"
+                elif isinstance(desc.dtype, dtypes.pointer) and isinstance(desc.dtype.base_type, dtypes.struct):
+                    datadef = f"{datadef}->{token}"
+                else:
+                    raise TypeError(f"Unsupported structure type: {desc.dtype}")
+            datadef = f"({datadef}.{tokens[-1]})"
 
     def make_const(expr: str) -> str:
         # check whether const has already been added before
@@ -405,13 +424,14 @@ def emit_memlet_reference(dispatcher,
             ref = ''
             offset_expr = ''
         expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
+        expr = expr.replace('.', '->')
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
 
     # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
     # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
-    expr = expr.replace('.', '->')
+    # expr = expr.replace('.', '->')
 
     return (typedef + ref, pointer_name, expr)
 
