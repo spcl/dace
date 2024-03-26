@@ -1072,10 +1072,19 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
 
         # Replace values with their code-generated names (for example, persistent arrays)
         desc = self.sdfg.arrays[t.id]
-        self.write(ptr(t.id, desc, self.sdfg, self.codegen))
+        to_write = ptr(t.id, desc, self.sdfg, self.codegen)
+        if isinstance(desc, data.StructureView):
+            to_write = f"(*{to_write})"
+        self.write(to_write)
     
     def _Attribute(self, t: ast.Attribute):
-        from dace.frontend.python.astutils import rname
+        from dace.frontend.python.astutils import rname, unparse
+
+        if '.' in unparse(t):
+            super().dispatch(t.value)
+            self.write(f'->{t.attr}')
+            return
+
         name = rname(t)
         if name not in self.sdfg.arrays:
             return super()._Attribute(t)
@@ -1085,13 +1094,34 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         self.write(ptr(name, desc, self.sdfg, self.codegen))
 
     def _Subscript(self, t: ast.Subscript):
-        from dace.frontend.python.astutils import subscript_to_slice
+        from dace.frontend.python.astutils import subscript_to_slice, unparse
+
+        if isinstance(t.value, ast.Name):
+            name = t.value.id
+            desc = self.sdfg.arrays[name]
+            if isinstance(desc, data.Structure):
+                to_write = name
+                if isinstance(desc, data.StructureView):
+                    to_write = f"(*{to_write})"
+                self.write(to_write)
+                return
+
         target, rng = subscript_to_slice(t, self.sdfg.arrays)
         rng = subsets.Range(rng)
         if rng.num_elements() != 1:
             raise SyntaxError('Range subscripts disallowed in interstate edges')
 
         memlet = mmlt.Memlet(data=target, subset=rng)
+        to_write = cpp_array_expr(self.sdfg, memlet, codegen=self.codegen)
+
+        if '.' in unparse(t):
+            super().dispatch(t.value)
+            desc = self.sdfg.arrays[target]
+            if not isinstance(desc, data.Structure):
+                i0 = to_write.find('[')
+                i1 = to_write.rfind(']')
+                self.write(to_write[i0:i1 + 1])
+            return
 
         if target not in self.sdfg.arrays:
             # This could be an FPGA array whose name has been mangled
