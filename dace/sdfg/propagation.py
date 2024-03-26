@@ -684,7 +684,12 @@ def _annotate_loop_ranges(cfg, unannotated_cycle_states):
         if isinstance(ncfg, LoopRegion):
             itvar, rng = loop_analysis.get_loop_range(ncfg)
             for nblock in ncfg.all_control_flow_blocks():
-                nblock.ranges[itvar] = subsets.Range([rng])
+                try:
+                    nblock.ranges[itvar] = subsets.Range([rng])
+                except AttributeError:
+                    nblock.ranges = {
+                        itvar: subsets.Range([rng])
+                    }
 
     return condition_edges
 

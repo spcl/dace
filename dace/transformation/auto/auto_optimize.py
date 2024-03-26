@@ -542,7 +542,8 @@ def auto_optimize(sdfg: SDFG,
                   validate_all: bool = False,
                   symbols: Dict[str, int] = None,
                   use_gpu_storage: bool = False,
-                  move_loop_into_maps: bool = True) -> SDFG:
+                  move_loop_into_maps: bool = True,
+                  with_canonicalization: bool = True) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -607,9 +608,10 @@ def auto_optimize(sdfg: SDFG,
     # Move Loops inside Maps when possible
     if move_loop_into_maps:
         from dace.transformation.interstate import MoveLoopIntoMap
-        # Canonicalize the SDFG.
-        sdfg.canonicalize(validate=False, validate_all=validate_all)
-        sdfg.reset_cfg_list()
+        if with_canonicalization:
+            # Canonicalize the SDFG.
+            sdfg.canonicalize(validate=False, validate_all=validate_all)
+            sdfg.reset_cfg_list()
         sdfg.simplify(validate=False, validate_all=validate_all)
         sdfg.reset_cfg_list()
         sdfg.apply_transformations_repeated([MoveLoopIntoMap], validate=False, validate_all=validate_all)
@@ -694,7 +696,8 @@ def auto_parallelize(sdfg: SDFG,
                      use_gpu_storage: bool = False,
                      use_doacross_parallelism: bool = False,
                      force_collapse_parallelism: bool = False,
-                     use_pointer_incrementation: bool = False) -> SDFG:
+                     use_pointer_incrementation: bool = False,
+                     omp_schedule: str = 'dynamic') -> SDFG:
     # To start with, make sure the SDFG is simplified.
     sdfg.simplify(validate=False, validate_all=validate_all)
     sdfg.reset_cfg_list()
@@ -703,7 +706,7 @@ def auto_parallelize(sdfg: SDFG,
 
     # Do regular auto-optimization.
     auto_optimize(sdfg, device, validate=validate, validate_all=validate_all, symbols=symbols,
-                  use_gpu_storage=use_gpu_storage, move_loop_into_maps=False)
+                  use_gpu_storage=use_gpu_storage, move_loop_into_maps=False, with_canonicalization=True)
 
     # Canonicalize the SDFG.
     sdfg.canonicalize(validate=False, validate_all=validate_all)

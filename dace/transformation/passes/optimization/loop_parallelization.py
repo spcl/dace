@@ -25,6 +25,8 @@ class ParallelizeDoacrossLoops(ppl.Pass):
 
     use_doacross = properties.Property(dtype=bool, default=False,
                                        desc='Parallelize loops with sequential dependencies using doacross parallelism')
+    omp_schedule = properties.Property(dtype=str, default='dynamic',
+                                       desc='Which OMP schedule type to use')
 
     def __init__(self):
         self._non_analyzable_loops = set()
@@ -84,7 +86,14 @@ class ParallelizeDoacrossLoops(ppl.Pass):
             map_entry, map_exit = body.add_map(loop.name + '_doacross',
                                                [[loop.loop_variable, Range([(loop_start, loop_end, loop_stride)])]],
                                                schedule=dtypes.ScheduleType.CPU_Multicore_Doacross)
-            map_entry.map.omp_schedule = dtypes.OMPScheduleType.Static
+            if self.omp_schedule == 'guided':
+                map_entry.map.omp_schedule = dtypes.OMPScheduleType.Guided
+            elif self.omp_schedule == 'dynamic':
+                map_entry.map.omp_schedule = dtypes.OMPScheduleType.Dynamic
+            elif self.omp_schedule == 'static':
+                map_entry.map.omp_schedule = dtypes.OMPScheduleType.Static
+            else:
+                map_entry.map.omp_schedule = dtypes.OMPScheduleType.Default
             map_entry.map.omp_chunk_size = 1
         else:
             map_entry, map_exit = body.add_map(loop.name + '_parallel',
