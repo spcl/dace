@@ -2070,14 +2070,14 @@ class CPUCodeGen(TargetCodeGenerator):
         for e in dfg.scope_subgraph(node, include_nested_scopes=False).edges():
             if e.data.schedule in (dtypes.MemletScheduleType.Prefetch_Start, dtypes.MemletScheduleType.Prefetch_All):
                 memlet: mmlt.Memlet = e.data
-                desc = sdfg.data(memlet.data)
-                ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
-                offs_expr = cpp.cpp_offset_expr(desc, memlet.subset, indices=offset_coord)
-                prefetch_ptr = '%s + %s' % (ptrname, offs_expr)
                 subset = memlet.subset
                 map_param = symbolic.symbol(node.map.params[-1])
                 zero_coord = subset.coord_at([0] * subset.dims())
                 offset_coord = [node.map.range[-1][2] if c == map_param else 0 for c in zero_coord]
+                desc = sdfg.data(memlet.data)
+                ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                offs_expr = cpp.cpp_offset_expr(desc, memlet.subset, indices=offset_coord)
+                prefetch_ptr = '%s + %s' % (ptrname, offs_expr)
                 self._write_prefetch(memlet, prefetch_ptr, sdfg, state_id, node, result)
 
         callsite_stream.write(inner_stream.getvalue())
