@@ -289,13 +289,17 @@ def emit_memlet_reference(dispatcher,
     typedef = conntype.ctype
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
-    is_scalar = not isinstance(conntype, dtypes.pointer) or (isinstance(conntype, dtypes.pointer) and isinstance(desc, data.ContainerArray))
+    is_scalar = not isinstance(conntype, dtypes.pointer)  # or (isinstance(conntype, dtypes.pointer) and isinstance(desc, data.ContainerArray))
     # is_scalar = not isinstance(conntype, dtypes.pointer)
     # is_scalar = is_scalar or isinstance(desc, data.Structure)
     # is_dtype_struct = isinstance(desc, data.ContainerArray) and isinstance(desc.dtype, dtypes.pointer) and isinstance(desc.dtype.base_type, dtypes.struct)
     # is_scalar = is_scalar or (is_dtype_struct and memlet.subset and memlet.subset.num_elements() == 1)
     ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
     ref = ''
+
+    if isinstance(desc, data.Structure):
+        offset = ''
+        offset_expr = ''
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
@@ -335,7 +339,7 @@ def emit_memlet_reference(dispatcher,
                 assert isinstance(desc, data.Structure)
                 if not datadef:
                     datadef = token
-                    if isinstance(desc, data.StructureView):
+                    if isinstance(desc, data.StructureView) and isinstance(desc.dtype, dtypes.pointer):
                         datadef = f"(*{token})"
                     continue
                 if isinstance(desc.dtype, dtypes.struct):
@@ -345,6 +349,8 @@ def emit_memlet_reference(dispatcher,
                 else:
                     raise TypeError(f"Unsupported structure type: {desc.dtype}")
             datadef = f"({datadef}.{tokens[-1]})"
+        elif isinstance(desc, data.StructureView) and isinstance(desc.dtype, dtypes.pointer):
+            datadef = f"(*{datadef})"
 
     def make_const(expr: str) -> str:
         # check whether const has already been added before
@@ -356,8 +362,12 @@ def emit_memlet_reference(dispatcher,
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface and isinstance(desc, data.View))):
         if not is_scalar and desc.dtype == conntype.base_type:
-            # Cast potential consts
-            typedef = defined_ctype
+            if isinstance(desc, data.Structure):
+                # typdef = defined_ctype
+                pass
+            else:
+                # Cast potential consts
+                typedef = defined_ctype
 
         if is_scalar:
             defined_type = DefinedType.Scalar

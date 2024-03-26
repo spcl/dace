@@ -86,9 +86,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 if not isinstance(stype, data.Structure):
                     raise TypeError(f"ContainerArray {name} has non-structure element type: {type(stype)} (value {stype})")
                 if isinstance(stype.dtype, dtypes.struct):
-                    self._dispatcher.defined_vars.add(name, DefinedType.Array, dtypes.pointer(stype.dtype).ctype)
+                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(stype.dtype).ctype)
                 elif isinstance(stype.dtype, dtypes.pointer) and isinstance(stype.dtype.base_type, dtypes.struct):
-                    self._dispatcher.defined_vars.add(name, DefinedType.Array, dtypes.pointer(stype.dtype).ctype)
+                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(stype.dtype).ctype)
                 else:
                     raise TypeError(f"ContainerArray {name} has unrecognized structure element type: {type(stype)} (value {stype})")
             elif isinstance(arg_type, data.Array):
