@@ -581,11 +581,17 @@ def generate_memlet(op, top_sdfg, state, offset_normalization = False):
         raise NameError("Variable name not found: ", get_name(op))
     indices = []
     if isinstance(op, ast_internal_classes.Array_Subscript_Node):
-        for i in op.indices:
-            tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders, placeholders_offsets=state.placeholders_offsets)
-            text = tw.write_code(i)
-            #This might need to be replaced with the name in the context of the top/current sdfg
-            indices.append(sym.pystr_to_symbolic(text))
+        for idx, i in enumerate(op.indices):
+            if isinstance(i, ast_internal_classes.ParDecl_Node):
+                if i.type == 'ALL':
+                    indices.append(None)
+                else:
+                    raise RuntimeError()
+            else:
+                tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders, placeholders_offsets=state.placeholders_offsets)
+                text = tw.write_code(i)
+                #This might need to be replaced with the name in the context of the top/current sdfg
+                indices.append(sym.pystr_to_symbolic(text))
     memlet = '0'
     if len(shape) == 1:
         if shape[0] == 1:
