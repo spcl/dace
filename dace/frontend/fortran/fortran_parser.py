@@ -3352,8 +3352,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="cloudscouter":
-            #if j.name.name!="solve_nh":
+            #if j.name.name!="cloudscouter":
+            if j.name.name!="solve_nh":
             #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
             #if j.name.name!="velocity_tendencies":

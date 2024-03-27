@@ -2327,9 +2327,7 @@ class PointerRemoval(NodeTransformer):
         newbody = []
 
         for child in node.execution:
-            lister = CallExtractorNodeLister()
-            lister.visit(child)
-            res = lister.nodes
+            
 
             if isinstance(child, ast_internal_classes.Pointer_Assignment_Stmt_Node):
                 self.nodes[child.name_pointer.name] = child.name_target
