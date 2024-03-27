@@ -451,7 +451,8 @@ class AST_translator:
                         ast_utils.add_simple_state_to_sdfg(self, sdfg, "start_struct_size")
                         assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
                         for decl in i.vardecl:
-
+                            if decl.name in sdfg.symbols:
+                                continue
                             add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name,decl.name,self.placeholders,self.placeholders_offsets,sdfg.arrays[self.name_mapping[sdfg][decl.name]],self.replace_names,self.actual_offsets_per_sdfg[sdfg])
 
                 self.transient_mode=True    
@@ -3339,7 +3340,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program.modules=[]
     for i in parse_order:
         for j in unordered_modules:
-            if j.name.name==i:
+            if j.name.name==i.lower():
                 program.modules.append(j)
     for j in unordered_modules:
         if j.name.name==top_level_ast:
