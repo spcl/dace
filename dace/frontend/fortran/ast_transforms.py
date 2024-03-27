@@ -639,7 +639,7 @@ class ArgumentExtractorNodeLister(NodeVisitor):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if not stop and node.name.name not in [
-                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+                "malloc", "pow", "cbrt", "__dace_epsilon" #, *FortranIntrinsics.call_extraction_exemptions()
         ]:
             for i in node.args:
                 if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node) or isinstance(i, ast_internal_classes.Data_Ref_Node) or isinstance(i, ast_internal_classes.Actual_Arg_Spec_Node):
@@ -669,7 +669,7 @@ class ArgumentExtractor(NodeTransformer):
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        if node.name.name in ["malloc", "pow", "cbrt",  "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()]:
+        if node.name.name in ["malloc", "pow", "cbrt",  "__dace_epsilon"]: #, *FortranIntrinsics.call_extraction_exemptions()]:
             return self.generic_visit(node)
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
@@ -841,8 +841,9 @@ class CallExtractorNodeLister(NodeVisitor):
     """
     Finds all function calls in the AST node and its children that have to be extracted into independent expressions
     """
-    def __init__(self):
+    def __init__(self, scope_vars):
         self.nodes: List[ast_internal_classes.Call_Expr_Node] = []
+        self.scope_vars = scope_vars
 
     def visit_For_Stmt_Node(self, node: ast_internal_classes.For_Stmt_Node):
         self.generic_visit(node.init)
@@ -855,10 +856,12 @@ class CallExtractorNodeLister(NodeVisitor):
             if node.subroutine is True:
                 stop = True
 
+        # This call is also used from other passes.
+        # We skip the intrinsic part by allowing to provide None to scope_vars
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if not stop and node.name.name not in [
-                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
-        ]:
+                "malloc", "pow", "cbrt", "__dace_epsilon"
+        ] and self.scope_vars is not None and not FortranIntrinsics.call_extraction_exemptions(node, self.scope_vars):
             self.nodes.append(node)
         return self.generic_visit(node)
 
@@ -872,13 +875,18 @@ class CallExtractor(NodeTransformer):
     in the AST node and its children that have to be extracted into independent expressions
     It then creates a new temporary variable for each of them and replaces the call with the variable.
     """
-    def __init__(self, count=0):
+    def __init__(self, ast, count=0):
         self.count = count
+
+        # this is needed for the resolving of MERGE
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations(ast)
+        self.scope_vars.visit(ast)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        if node.name.name in ["malloc", "pow", "cbrt",  "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()]:
+        if node.name.name in ["malloc", "pow", "cbrt",  "__dace_epsilon"] or FortranIntrinsics.call_extraction_exemptions(node, self.scope_vars):
             return self.generic_visit(node)
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
@@ -904,7 +912,7 @@ class CallExtractor(NodeTransformer):
             else:
                 newdecl=[]
                 for var in i.vardecl:
-                    lister = CallExtractorNodeLister()
+                    lister = CallExtractorNodeLister(self.scope_vars)
                     lister.visit(var)
                     res = lister.nodes
                     for j in res:
@@ -940,7 +948,7 @@ class CallExtractor(NodeTransformer):
         newbody = []
 
         for child in node.execution:
-            lister = CallExtractorNodeLister()
+            lister = CallExtractorNodeLister(self.scope_vars)
             lister.visit(child)
             res = lister.nodes
             for i in res:
@@ -2327,7 +2335,7 @@ class PointerRemoval(NodeTransformer):
         newbody = []
 
         for child in node.execution:
-            lister = CallExtractorNodeLister()
+            lister = CallExtractorNodeLister(None)
             lister.visit(child)
             res = lister.nodes
 

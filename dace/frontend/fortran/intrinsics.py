@@ -1530,11 +1530,24 @@ class FortranIntrinsics:
         return MathFunctions.dace_functions()
 
     @staticmethod
-    def call_extraction_exemptions() -> List[str]:
-        return [
-            *[func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION]
-            #*MathFunctions.temporary_functions()
-        ]
+    def call_extraction_exemptions(node: ast_internal_classes.Call_Expr_Node, scope_vars) -> List[str]:
+
+        func_names = [func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION]
+
+        if node.name.name not in func_names:
+            return False
+
+        # FIXME: this implementation only supports MERGE!
+        first_arg = node.args[0]
+        if not scope_vars.contains_var(node.parent, first_arg.name):
+            raise RuntimeError(f"Couldn't find variable {first_arg.name}!")
+
+        var = scope_vars.get_var(node.parent, first_arg.name)
+        if var.sizes is None or (len(var.sizes) == 1 and var.sizes[0] == 1):
+            return False
+        else:
+            return True
+
 
     def replace_function_name(self, node: FASTNode) -> ast_internal_classes.Name_Node:
 

@@ -2315,7 +2315,7 @@ def create_ast_from_string(
     if transform:
         program = ast_transforms.functionStatementEliminator(program)
         program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
-        program = ast_transforms.CallExtractor().visit(program)
+        program = ast_transforms.CallExtractor(program).visit(program)
         program = ast_transforms.SignToIf().visit(program)
         program = ast_transforms.ArrayToLoop(program).visit(program)
 
@@ -2615,7 +2615,7 @@ def create_sdfg_from_string(
     program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
-    program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.CallExtractor(program).visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
@@ -2730,7 +2730,7 @@ def create_sdfg_from_fortran_file(source_string: str):
     own_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
-    program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.CallExtractor(program).visit(program)
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop().visit(program)
     program = ast_transforms.SumToLoop().visit(program)
@@ -3207,7 +3207,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     #program = ast_transforms.TypeInterference(program).visit(program)
     #program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
-    program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.CallExtractor(program).visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
