@@ -1292,6 +1292,7 @@ class SignToIf(NodeTransformer):
                                                 op="=",
                                                 rval=ast_internal_classes.UnOp_Node(
                                                     op="-",
+                                                    type="VOID",
                                                     lval=ast_internal_classes.Call_Expr_Node(
                                                         name=ast_internal_classes.Name_Node(name="abs"),
                                                         type="DOUBLE",

@@ -265,7 +265,7 @@ class AST_translator:
         self.structures = ast.structures
         self.placeholders = ast.placeholders
         self.placeholders_offsets = ast.placeholders_offsets
-        self.iblocks=ast.iblocks
+        #self.iblocks=ast.iblocks
         self.replace_names = {}
         self.toplevel_subroutine = toplevel_subroutine
         self.normalize_offsets = normalize_offsets
@@ -2788,6 +2788,7 @@ def recursive_ast_improver(ast,
             for j in objects_in_modules[i].children:
                 weight.append(j)
 
+        print(parent_module, i, used_modules)
         dep_graph.add_edge(parent_module, i, obj_list=weight)
 
     #print("It's turtles all the way down: ", len(exclude_list))
@@ -2872,6 +2873,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                                  missing_modules=missing_modules,
                                  dep_graph=dep_graph,
                                  asts=asts)
+
+    for node in dep_graph.nodes:
+        print(node)
+        for e in dep_graph.out_edges(node):
+            print(e)
 
     for mod, blocks in interface_blocks.items():
 
@@ -3124,6 +3130,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     partial_ast.symbols["c_null_char"]=ast_internal_classes.Int_Literal_Node(value=1)
     functions_to_rename={}
 
+    print(asts.keys())
+
     #Why would you ever name a file differently than the module? Especially just one random file out of thousands???
     #asts["mo_restart_nml_and_att"]=asts["mo_restart_nmls_and_atts"]
     partial_ast.to_parse_list=what_to_parse_list
@@ -3136,10 +3144,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
        
         partial_ast.add_name_list_for_module(i, name_dict[i])
         try:
-            partial_module = partial_ast.create_ast(asts[i])
+            partial_module = partial_ast.create_ast(asts[i.lower()])
             partial_modules[partial_module.name.name] = partial_module
-        except:
+        except Exception as e:
             print("Module " + i + " could not be parsed ",partial_ast.unsupported_fortran_syntax[i])
+            print(e, type(e))
             #print(partial_ast.unsupported_fortran_syntax[i])
             continue
         tmp_rename=rename_dict[i]
@@ -3193,7 +3202,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             functions_and_subroutines_builder.names.append(ast_internal_classes.Name_Node(name=i,type="VOID"))
     program.iblocks=functions_and_subroutines_builder.iblocks
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
-    #program = ast_transforms.functionStatementEliminator(program)
+    print(type(program), program.iblocks)
+    program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     #program = ast_transforms.TypeInterference(program).visit(program)
@@ -3343,7 +3353,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
+            if j.name.name!="cloudscouter":
             #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
             #if j.name.name!="velocity_tendencies":

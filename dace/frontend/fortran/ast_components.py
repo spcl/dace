@@ -333,10 +333,11 @@ class InternalFortranAst:
         if node is not None:
             if isinstance(node, (list, tuple)):
                 return [self.create_ast(child) for child in node]
-            try:
+
+            if type(node).__name__ in self.supported_fortran_syntax:
+                #print(type(node), type(node).__name__, type(node).__name__ in self.supported_fortran_syntax)
                 return self.supported_fortran_syntax[type(node).__name__](node)
-            
-            except KeyError:
+            else:
                 if type(node).__name__=="Intrinsic_Name":
                     if node not in self.intrinsics_list:
                         self.intrinsics_list.append(node)
@@ -628,7 +629,10 @@ class InternalFortranAst:
         
         if name is None:
             return Name_Node(name="Error! "+node.children[0].string,type='VOID')
-        return self.intrinsic_handler.replace_function_reference(name, args, line,self.symbols)
+        print(f"Replace intrinsic {self.symbols}")
+        node = self.intrinsic_handler.replace_function_reference(name, args, line,self.symbols)
+        print(f"Replace intrinsic after {self.symbols}")
+        return node
 
 
     def end_subroutine_stmt(self, node: FASTNode):
@@ -865,6 +869,7 @@ class InternalFortranAst:
             raise TypeError("Type of node must be either Intrinsic_Type_Spec or Declaration_Type_Spec")
         kind = None
         size_later=False
+        print("TypeX", type_of_node.items)
         if len(type_of_node.items) >= 2:
             if type_of_node.items[1] is not None:
                 if not derived_type:
@@ -876,6 +881,7 @@ class InternalFortranAst:
                            size_later=True
                     else:
                         kind = type_of_node.items[1].items[1].string.lower()
+                        print(kind, self.symbols[kind])
                         if self.symbols[kind] is not None:
                           if basetype == "REAL":
                             while hasattr(self.symbols[kind], "name"):
