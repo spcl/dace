@@ -453,7 +453,8 @@ class InternalFortranAst:
         return ast_internal_classes.Program_Node(main_program=main_program,
                                                  function_definitions=function_definitions,
                                                  subroutine_definitions=subroutine_definitions,
-                                                 modules=modules)
+                                                 modules=modules,
+                                                 module_declarations={})
 
     def main_program(self, node: FASTNode):
         children = self.create_children(node)

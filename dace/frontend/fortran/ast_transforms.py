@@ -1545,7 +1545,7 @@ def functionStatementEliminator(node=ast_internal_classes.Program_Node):
                                              function_definitions=function_definitions,
                                              subroutine_definitions=subroutine_definitions,
                                              modules=modules,
-                                             #module_declarations=node.module_declarations,
+                                             module_declarations=node.module_declarations,
                                              structures=node.structures)
 
 
