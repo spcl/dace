@@ -9,6 +9,8 @@ from dace.sdfg.state import SDFGState, SubgraphView
 from dace.transformation import transformation
 from dace.properties import make_properties
 from dace import symbolic, Memlet
+from dace.data import View
+from dace.sdfg.replace import replace_datadesc_names
 
 @make_properties
 class InlineMap(transformation.SingleStateTransformation):
@@ -160,7 +162,7 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
             candidates = set()
             for symbol, value in oedge.data.assignments.items():
                 sympy_value = symbolic.pystr_to_symbolic(value)
-                if ({str(sym) for sym in sympy_value.free_symbols} & itervars):
+                if ({str(sym) for sym in sympy_value.expr_free_symbols} & itervars):
                     return False
                 
                 candidates.add(symbol)
@@ -187,6 +189,9 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
         nsdfg_node = self.nested_sdfg
         nsdfg = nsdfg_node.sdfg
         outer_state = state
+
+        # Rename nested transients to avoid conflicts
+        self._rename_nested_transients(nsdfg_node, sdfg)
 
         # Cache innerly defined symbols
         nested_defined_symbols = set(nsdfg.symbols) - set(nsdfg_node.symbol_mapping)
@@ -237,26 +242,45 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
         for iedge in outer_state.in_edges(map_entry):
             if iedge.src.data not in nsdfg_node.in_connectors:
                 nsdfg_node.add_in_connector(iedge.src.data)
-                nsdfg.add_datadesc(iedge.src.data, copy.deepcopy(sdfg.arrays[iedge.src.data]))
+                
+                if iedge.src.data not in nsdfg.arrays:
+                    new_desc = copy.deepcopy(sdfg.arrays[iedge.src.data])
+                    new_desc.transient = False
+                    nsdfg.add_datadesc(iedge.src.data, new_desc)
+                else:
+                    nsdfg.arrays[iedge.src.data].transient = False
 
             outer_state.add_edge(iedge.src, iedge.src_conn, nsdfg_node, iedge.src.data, Memlet.from_array(iedge.src.data, sdfg.arrays[iedge.src.data]))
 
             inner_access_node = new_nsdfg_state.add_access(iedge.src.data)
-            new_nsdfg_state.add_edge(inner_access_node, iedge.src_conn, new_map_entry, iedge.dst_conn, copy.deepcopy(iedge.data))
+            new_nsdfg_state.add_edge(inner_access_node, None, new_map_entry, iedge.dst_conn, copy.deepcopy(iedge.data))
 
         for oedge in outer_state.out_edges(map_entry):
             new_nsdfg_state.add_edge(new_map_entry, oedge.src_conn, new_nsdfg_node, oedge.dst_conn, copy.deepcopy(oedge.data))
 
         for oedge in outer_state.out_edges(map_exit):
+            if oedge.dst.data not in nsdfg_node.out_connectors:
+                nsdfg_node.add_out_connector(oedge.dst.data, force=True)
+
+            if oedge.dst.data not in nsdfg.arrays:
+                new_desc = copy.deepcopy(sdfg.arrays[oedge.dst.data])
+                new_desc.transient = False
+                nsdfg.add_datadesc(oedge.dst.data, new_desc)
+            else:
+                nsdfg.arrays[oedge.dst.data].transient = False
+
             outer_state.add_edge(nsdfg_node, oedge.dst.data, oedge.dst, oedge.dst_conn, Memlet.from_array(oedge.dst.data, sdfg.arrays[oedge.dst.data]))
 
             inner_access_node = new_nsdfg_state.add_access(oedge.dst.data)
-            new_nsdfg_state.add_edge(new_map_exit, oedge.src_conn, inner_access_node, oedge.dst_conn, copy.deepcopy(oedge.data))
+            new_nsdfg_state.add_edge(new_map_exit, oedge.src_conn, inner_access_node, None, copy.deepcopy(oedge.data))
 
         for iedge in outer_state.in_edges(map_exit):
             new_nsdfg_state.add_edge(new_nsdfg_node, iedge.src_conn, new_map_exit, iedge.dst_conn, copy.deepcopy(iedge.data))
 
         ############################################
+
+        outer_state.remove_node(map_entry)
+        outer_state.remove_node(map_exit)
 
         # Cache symbols defined in the current nested SDFG (before `new_nsdfg_state`)`
         defined_symbols = set()
@@ -269,6 +293,11 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
         for sym in new_map_entry.map.params:
             if sym not in new_nsdfg.symbols:
                 new_nsdfg.add_symbol(sym, sdfg.symbols[sym])
+            if sym not in new_nsdfg_node.symbol_mapping:
+                new_nsdfg_node.symbol_mapping[sym] = sym
+
+            if sym in nsdfg_node.symbol_mapping:
+                del nsdfg_node.symbol_mapping[sym]
             if sym in nsdfg.symbols:
                 nsdfg.remove_symbol(sym)
 
@@ -281,10 +310,39 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
                 new_nsdfg.add_symbol(sym, sdfg.symbols[sym])
             new_nsdfg_node.symbol_mapping[sym] = sym
 
-        outer_state.remove_node(map_entry)
-        outer_state.remove_node(map_exit)
-
         sdfg._cfg_list = sdfg.reset_cfg_list()
+
+    def _rename_nested_transients(self, nsdfg_node: nodes.NestedSDFG, sdfg: SDFG):
+        nsdfg = nsdfg_node.sdfg
+
+        outer_symbols = set(sdfg.arrays.keys()) | {str(sym) for sym in sdfg.symbols.keys()} | set(sdfg.constants.keys())
+        
+        transient_replacements: Dict[str, str] = {}
+        for nstate in nsdfg.nodes():
+            for node in nstate.nodes():
+                if isinstance(node, nodes.AccessNode):
+                    datadesc = nsdfg.arrays[node.data]
+                    if isinstance(datadesc, View) or not datadesc.transient:
+                        continue
+
+                    if node.data not in transient_replacements:
+                        new_name = node.data
+                        name = find_new_name(new_name, outer_symbols | set(nsdfg.arrays.keys() | set(transient_replacements.values())))
+                        transient_replacements[node.data] = name
+
+            for edge in nstate.edges():
+                if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
+                    if edge.data.data is not None:
+                        datadesc = nsdfg.arrays[edge.data.data]
+                        if isinstance(datadesc, View) or not datadesc.transient:
+                            continue
+
+                        if edge.data.data not in transient_replacements:
+                            new_name = edge.data.data
+                            name = find_new_name(new_name, outer_symbols | set(nsdfg.arrays.keys() | set(transient_replacements.values())))
+                            transient_replacements[edge.data.data] = name
+
+        replace_datadesc_names(nsdfg, transient_replacements)
 
 @make_properties
 class InlineMapByConditions(transformation.SingleStateTransformation):
@@ -419,7 +477,6 @@ class InlineMapByConditions(transformation.SingleStateTransformation):
 
         sdfg._cfg_list = sdfg.reset_cfg_list()
 
-
 @make_properties
 class InlineMapSingleState(transformation.SingleStateTransformation):
     map_entry = transformation.PatternNode(nodes.MapEntry)
@@ -455,6 +512,8 @@ class InlineMapSingleState(transformation.SingleStateTransformation):
                 continue
 
             for oedge in subgraph.out_edges(source_node):
+                if oedge.dst_conn == "views":
+                    return False
                 if oedge.data.subset != Memlet.from_array(oedge.data.data, nsdfg.arrays[oedge.data.data]).subset:
                     return False
 
@@ -463,6 +522,8 @@ class InlineMapSingleState(transformation.SingleStateTransformation):
                 continue
 
             for iedge in subgraph.in_edges(sink_node):
+                if iedge.src_conn == "views":
+                    return False
                 if iedge.data.subset != Memlet.from_array(iedge.data.data, nsdfg.arrays[iedge.data.data]).subset:
                     return False
 
@@ -515,26 +576,25 @@ class InlineMapSingleState(transformation.SingleStateTransformation):
         # Add new inputs to nested SDFG
         for inp in input_memlets:
             nsdfg_node.add_in_connector(inp.src.data)
-            outer_state.add_edge(inp.src, None, nsdfg_node, inp.src.data, Memlet.from_array(inp.src.data, sdfg.arrays[inp.src.data]))
+            outer_state.add_edge(inp.src, inp.src_conn, nsdfg_node, inp.src.data, Memlet.from_array(inp.src.data, sdfg.arrays[inp.src.data]))
 
-            if inp.src.data in nsdfg.arrays:
-                del nsdfg.arrays[inp.src.data]
-
-            outer_desc = copy.deepcopy(sdfg.arrays[inp.src.data])
-            outer_desc.transient = False
-            nsdfg.add_datadesc(inp.src.data, outer_desc)
+            if inp.src.data not in nsdfg.arrays:
+                outer_desc = copy.deepcopy(sdfg.arrays[inp.src.data])
+                outer_desc.transient = False
+                nsdfg.add_datadesc(inp.src.data, outer_desc)
+            else:
+                nsdfg.arrays[inp.src.data].transient = False
 
         for outp in output_memlets:
-            nsdfg_node.add_out_connector(outp.dst.data)
-            outer_state.add_edge(nsdfg_node, outp.dst.data, outp.dst, None, Memlet.from_array(outp.dst.data, sdfg.arrays[outp.dst.data]))
+            nsdfg_node.add_out_connector(outp.dst.data, force=True)
+            outer_state.add_edge(nsdfg_node, outp.dst.data, outp.dst, outp.dst_conn, Memlet.from_array(outp.dst.data, sdfg.arrays[outp.dst.data]))
 
-            if outp.dst.data in nsdfg.arrays:
-                del nsdfg.arrays[outp.dst.data]
-
-            outer_desc = copy.deepcopy(sdfg.arrays[outp.dst.data])
-            outer_desc.transient = False
-            nsdfg.add_datadesc(outp.dst.data, outer_desc)
-
+            if outp.dst.data not in nsdfg.arrays:
+                outer_desc = copy.deepcopy(sdfg.arrays[outp.dst.data])
+                outer_desc.transient = False
+                nsdfg.add_datadesc(outp.dst.data, outer_desc)
+            else:
+                nsdfg.arrays[outp.dst.data].transient = False
 
         # Add map to nested_sdfg
         nested_map_entry = copy.deepcopy(map_entry)
@@ -544,14 +604,12 @@ class InlineMapSingleState(transformation.SingleStateTransformation):
 
         # Reconnect map to arguments inside nested SDFG
         for inp in input_memlets:
-            nested_inp = copy.deepcopy(inp.src)
-            nested_state.add_node(nested_inp)
+            nested_inp = nested_state.add_access(inp.src.data)
 
             nested_state.add_edge(nested_inp, inp.src_conn, nested_map_entry, inp.dst_conn, copy.deepcopy(inp.data))
 
         for outp in output_memlets:
-            nested_outp = copy.deepcopy(outp.dst)
-            nested_state.add_node(nested_outp)
+            nested_outp = nested_state.add_access(outp.dst.data)
 
             nested_state.add_edge(nested_map_exit, outp.src_conn, nested_outp, outp.dst_conn, copy.deepcopy(outp.data))
 
