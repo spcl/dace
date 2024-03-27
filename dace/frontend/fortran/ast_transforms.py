@@ -639,8 +639,8 @@ class ArgumentExtractorNodeLister(NodeVisitor):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if not stop and node.name.name not in [
-                "malloc", "pow", "cbrt", "__dace_epsilon" #, *FortranIntrinsics.call_extraction_exemptions()
-        ]:
+                "malloc", "pow", "cbrt", "__dace_epsilon"
+        ] and not FortranIntrinsics.call_extraction_exemptions(node, None):
             for i in node.args:
                 if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node) or isinstance(i, ast_internal_classes.Data_Ref_Node) or isinstance(i, ast_internal_classes.Actual_Arg_Spec_Node):
                     continue
@@ -669,7 +669,7 @@ class ArgumentExtractor(NodeTransformer):
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        if node.name.name in ["malloc", "pow", "cbrt",  "__dace_epsilon"]: #, *FortranIntrinsics.call_extraction_exemptions()]:
+        if node.name.name in ["malloc", "pow", "cbrt",  "__dace_epsilon"] or FortranIntrinsics.call_extraction_exemptions(node, None):
             return self.generic_visit(node)
         if hasattr(node, "subroutine"):
             if node.subroutine is True:

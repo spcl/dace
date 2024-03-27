@@ -1538,12 +1538,17 @@ class FortranIntrinsics:
             return False
 
         # FIXME: this implementation only supports MERGE!
+        # skip check when our decision does not depend on the type
+        # regardless if we have scalar or array, MERGE always should not extract its arg
+        if scope_vars is None:
+            return True
+
         first_arg = node.args[0]
         if not scope_vars.contains_var(node.parent, first_arg.name):
             raise RuntimeError(f"Couldn't find variable {first_arg.name}!")
 
         var = scope_vars.get_var(node.parent, first_arg.name)
-        if var.sizes is None or (len(var.sizes) == 1 and var.sizes[0] == 1):
+        if var.sizes is None or (len(var.sizes) == 1 and var.sizes[0].value == 1):
             return False
         else:
             return True
