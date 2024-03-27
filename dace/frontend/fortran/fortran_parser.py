@@ -145,7 +145,11 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                         if offset.name.startswith('__f2dace_SOA'):
                                             newoffset=offset.name+"_"+name_+"_"+str(local_counter)
                                             sdfg.append_global_code(f"{dtypes.int32.ctype} {newoffset};\n")
-                                            sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
+                                            #prog hack
+                                            if name.endswith("prog"):
+                                                sdfg.append_init_code(f"{newoffset} = {name}[0]->{offset.name};\n")
+                                            else:
+                                                sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
                                             
                                             sdfg.add_symbol(newoffset, dtypes.int32)
                                             offsets_to_replace.append(newoffset)
@@ -177,7 +181,10 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                                 names_to_replace[size.name]=newsize
                                                 #var_type.sizes[var_type.sizes.index(size)]=newsize
                                                 sdfg.append_global_code(f"{dtypes.int32.ctype} {newsize};\n") 
-                                                sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
+                                                if name.endswith("prog"):
+                                                    sdfg.append_init_code(f"{newsize} = {name}[0]->{size.name};\n")
+                                                else:
+                                                    sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
                                                 sdfg.add_symbol(newsize, dtypes.int32)
                                                 if isinstance(object,dat.Structure):
                                                     shape2=dpcp(object.members[ast_struct_type.name].shape)
@@ -3364,7 +3371,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             
 
 
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics_tr.sdfgz"),compress=True)
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"),compress=True)
             # for sd in sdfg.all_sdfgs_recursive():
             #     free_symbols = sd.free_symbols
             #     for i in ['__f2dace_OA_iblk_d_0_s_4140', '__f2dace_OA_iidx_d_1_s_4138', '__f2dace_OA_iidx_d_2_s_4139', '__f2dace_OA_iblk_d_2_s_4142', '__f2dace_OA_iblk_d_1_s_4141', '__f2dace_OA_iidx_d_0_s_4137','__f2dace_A_iidx_d_1_s_5395', '__f2dace_A_iblk_d_0_s_5397', '__f2dace_A_iidx_d_2_s_5396', '__f2dace_A_iblk_d_1_s_5398', '__f2dace_A_iblk_d_2_s_5399', '__f2dace_A_iidx_d_0_s_5394','__f2dace_A_iidx_d_0_s_4137', '__f2dace_A_iblk_d_2_s_4142', '__f2dace_A_iblk_d_0_s_4140', '__f2dace_A_iidx_d_1_s_4138', '__f2dace_A_iidx_d_2_s_4139', '__f2dace_A_iblk_d_1_s_4141','__f2dace_OA_opt_out2_d_1_s_8111', '__f2dace_A_opt_out2_d_0_s_8110', '__f2dace_OA_opt_out2_d_2_s_8112', '__f2dace_OA_opt_out2_d_0_s_8110', '__f2dace_A_opt_out2_d_2_s_8112', '__f2dace_A_opt_out2_d_1_s_8111','__f2dace_A_opt_out2_d_1_s_8111', '__f2dace_A_ieidx_d_2_s_8121', '__f2dace_OA_opt_out2_d_1_s_8111', '__f2dace_A_ieblk_d_1_s_8123', '__f2dace_A_inidx_d_1_s_8114', '__f2dace_A_inblk_d_2_s_8118', '__f2dace_A_ieidx_d_0_s_8119', '__f2dace_A_opt_out2_d_2_s_8112', '__f2dace_A_ieidx_d_1_s_8120', '__f2dace_OA_opt_out2_d_0_s_8110', '__f2dace_A_inblk_d_0_s_8116', '__f2dace_OA_opt_out2_d_2_s_8112', '__f2dace_A_ieblk_d_2_s_8124', '__f2dace_A_inblk_d_1_s_8117', '__f2dace_A_ieblk_d_0_s_8122', '__f2dace_A_opt_out2_d_0_s_8110', '__f2dace_A_inidx_d_2_s_8115', '__f2dace_A_inidx_d_0_s_8113','__f2dace_A_iidx_d_1_s_8159', '__f2dace_A_iidx_d_0_s_8158', '__f2dace_A_iblk_d_0_s_8161', '__f2dace_A_iblk_d_1_s_8162', '__f2dace_A_iblk_d_2_s_8163', '__f2dace_A_iidx_d_2_s_8160','__f2dace_A_iblk_d_0_s_6698', '__f2dace_A_iblk_d_1_s_6699', '__f2dace_A_iidx_d_2_s_6697', '__f2dace_A_iidx_d_1_s_6696', '__f2dace_A_iblk_d_2_s_6700', '__f2dace_A_iidx_d_0_s_6695','__f2dace_A_incidx_d_2_s_8055', '__f2dace_A_iqblk_d_0_s_8044', '__f2dace_A_incblk_d_1_s_8057', '__f2dace_A_iqblk_d_1_s_8045', '__f2dace_A_iqidx_d_2_s_8043', '__f2dace_A_icidx_d_2_s_8031', '__f2dace_A_ivblk_d_2_s_8052', '__f2dace_A_incidx_d_0_s_8053', '__f2dace_A_icidx_d_0_s_8029', '__f2dace_A_incblk_d_2_s_8058', '__f2dace_A_incblk_d_0_s_8056', '__f2dace_A_ividx_d_2_s_8049', '__f2dace_A_icblk_d_0_s_8032', '__f2dace_A_ieidx_d_0_s_8035', '__f2dace_A_ivblk_d_0_s_8050', '__f2dace_A_ieidx_d_1_s_8036', '__f2dace_A_icidx_d_1_s_8030', '__f2dace_A_incidx_d_1_s_8054', '__f2dace_A_iqidx_d_0_s_8041', '__f2dace_A_icblk_d_2_s_8034', '__f2dace_A_ieblk_d_0_s_8038', '__f2dace_A_ividx_d_0_s_8047', '__f2dace_A_ieblk_d_2_s_8040', '__f2dace_A_ividx_d_1_s_8048', '__f2dace_A_icblk_d_1_s_8033', '__f2dace_A_iqidx_d_1_s_8042', '__f2dace_A_ieblk_d_1_s_8039', '__f2dace_A_iqblk_d_2_s_8046', '__f2dace_A_ieidx_d_2_s_8037', '__f2dace_A_ivblk_d_1_s_8051']:
@@ -3403,18 +3410,18 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
             
             sdfg.validate()
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated_tr.sdfgz"),compress=True)
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated_full.sdfgz"),compress=True)
             #try:    
             sdfg.simplify(verbose=True)
-            print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz"),compress=True)
+            print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_full.sdfgz")}')
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_full.sdfgz"),compress=True)
             #except Exception as e:
             #    print("Simplification failed for ", sdfg.name)    
             #    print(e)
             #    continue
             #sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfg"))
             #try:  
-            print(f'Compiling SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplifiedtr.sdfgz")}')
+            print(f'Compiling SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "s_full.sdfgz")}')
             sdfg.compile()
             #except Exception as e:
             #    print("Compilation failed for ", sdfg.name)
