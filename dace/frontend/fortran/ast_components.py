@@ -629,9 +629,7 @@ class InternalFortranAst:
         
         if name is None:
             return Name_Node(name="Error! "+node.children[0].string,type='VOID')
-        print(f"Replace intrinsic {self.symbols}")
         node = self.intrinsic_handler.replace_function_reference(name, args, line,self.symbols)
-        print(f"Replace intrinsic after {self.symbols}")
         return node
 
 
@@ -869,7 +867,6 @@ class InternalFortranAst:
             raise TypeError("Type of node must be either Intrinsic_Type_Spec or Declaration_Type_Spec")
         kind = None
         size_later=False
-        print("TypeX", type_of_node.items)
         if len(type_of_node.items) >= 2:
             if type_of_node.items[1] is not None:
                 if not derived_type:
@@ -881,7 +878,6 @@ class InternalFortranAst:
                            size_later=True
                     else:
                         kind = type_of_node.items[1].items[1].string.lower()
-                        print(kind, self.symbols[kind])
                         if self.symbols[kind] is not None:
                           if basetype == "REAL":
                             while hasattr(self.symbols[kind], "name"):
