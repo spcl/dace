@@ -1506,8 +1506,8 @@ class AST_translator:
 
                                 #memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
                                 #memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
-                                memlet = Memlet(f'{array_name}[{smallsubset}]')
-                                memlet2 = Memlet(f'{array_name}[{smallsubset}]')
+                                memlet = Memlet(f'{array_name}[{subset}]')
+                                memlet2 = Memlet(f'{array_name}[{subset}]')
                                 wv = None
                                 rv = None
                                 if local_name.name in read_names:
@@ -3414,18 +3414,18 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
             
             sdfg.validate()
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated_tr.sdfgz"),compress=True)
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated_f.sdfgz"),compress=True)
             #try:    
             sdfg.simplify(verbose=True)
             print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz"),compress=True)
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_f.sdfgz"),compress=True)
             #except Exception as e:
             #    print("Simplification failed for ", sdfg.name)    
             #    print(e)
             #    continue
             #sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfg"))
             #try:  
-            print(f'Compiling SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplifiedtr.sdfgz")}')
+            print(f'Compiling SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
             sdfg.compile()
             #except Exception as e:
             #    print("Compilation failed for ", sdfg.name)
