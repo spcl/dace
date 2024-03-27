@@ -289,14 +289,17 @@ def emit_memlet_reference(dispatcher,
     typedef = conntype.ctype
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
-    # is_scalar = not isinstance(conntype, dtypes.pointer) or (isinstance(conntype, dtypes.pointer) and
-    #                                                          isinstance(desc, data.ContainerArray))
-    is_scalar = not isinstance(conntype, dtypes.pointer)
-    is_scalar = is_scalar or isinstance(desc, data.Structure)
-    is_dtype_struct = isinstance(desc, data.ContainerArray) and isinstance(desc.dtype, dtypes.pointer) and isinstance(desc.dtype.base_type, dtypes.struct)
-    is_scalar = is_scalar or (is_dtype_struct and memlet.subset and memlet.subset.num_elements() == 1)
+    is_scalar = not isinstance(conntype, dtypes.pointer)  # or (isinstance(conntype, dtypes.pointer) and isinstance(desc, data.ContainerArray))
+    # is_scalar = not isinstance(conntype, dtypes.pointer)
+    # is_scalar = is_scalar or isinstance(desc, data.Structure)
+    # is_dtype_struct = isinstance(desc, data.ContainerArray) and isinstance(desc.dtype, dtypes.pointer) and isinstance(desc.dtype.base_type, dtypes.struct)
+    # is_scalar = is_scalar or (is_dtype_struct and memlet.subset and memlet.subset.num_elements() == 1)
     ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
     ref = ''
+
+    if isinstance(desc, data.Structure):
+        offset = ''
+        offset_expr = ''
 
     # Get defined type (pointer, stream etc.) and change the type definition
     # accordingly.
@@ -327,6 +330,28 @@ def emit_memlet_reference(dispatcher,
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
+        if '.' in memlet.data:
+            tokens = memlet.data.split('.')
+            datadef = ''
+            for token in tokens[:-1]:
+                assert token in sdfg.arrays
+                desc = sdfg.arrays[token]
+                assert isinstance(desc, data.Structure)
+                if not datadef:
+                    datadef = token
+                    if isinstance(desc, data.StructureView) and isinstance(desc.dtype, dtypes.pointer):
+                        datadef = f"(*{token})"
+                    continue
+                if isinstance(desc.dtype, dtypes.struct):
+                    datadef = f"{datadef}.{token}"
+                elif isinstance(desc.dtype, dtypes.pointer) and isinstance(desc.dtype.base_type, dtypes.struct):
+                    datadef = f"{datadef}->{token}"
+                else:
+                    raise TypeError(f"Unsupported structure type: {desc.dtype}")
+            datadef = f"({datadef}.{tokens[-1]})"
+        elif isinstance(desc, data.StructureView) and isinstance(desc.dtype, dtypes.pointer):
+            datadef = f"(*{datadef})"
+
     def make_const(expr: str) -> str:
         # check whether const has already been added before
         if not expr.startswith("const "):
@@ -337,8 +362,12 @@ def emit_memlet_reference(dispatcher,
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface and isinstance(desc, data.View))):
         if not is_scalar and desc.dtype == conntype.base_type:
-            # Cast potential consts
-            typedef = defined_ctype
+            if isinstance(desc, data.Structure):
+                # typdef = defined_ctype
+                pass
+            else:
+                # Cast potential consts
+                typedef = defined_ctype
 
         if is_scalar:
             defined_type = DefinedType.Scalar
@@ -405,13 +434,14 @@ def emit_memlet_reference(dispatcher,
             ref = ''
             offset_expr = ''
         expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
+        expr = expr.replace('.', '->')
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
 
     # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
     # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
-    expr = expr.replace('.', '->')
+    # expr = expr.replace('.', '->')
 
     return (typedef + ref, pointer_name, expr)
 
@@ -1042,10 +1072,19 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
 
         # Replace values with their code-generated names (for example, persistent arrays)
         desc = self.sdfg.arrays[t.id]
-        self.write(ptr(t.id, desc, self.sdfg, self.codegen))
+        to_write = ptr(t.id, desc, self.sdfg, self.codegen)
+        if isinstance(desc, data.StructureView):
+            to_write = f"(*{to_write})"
+        self.write(to_write)
     
     def _Attribute(self, t: ast.Attribute):
-        from dace.frontend.python.astutils import rname
+        from dace.frontend.python.astutils import rname, unparse
+
+        if '.' in unparse(t):
+            super().dispatch(t.value)
+            self.write(f'->{t.attr}')
+            return
+
         name = rname(t)
         if name not in self.sdfg.arrays:
             return super()._Attribute(t)
@@ -1055,13 +1094,34 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         self.write(ptr(name, desc, self.sdfg, self.codegen))
 
     def _Subscript(self, t: ast.Subscript):
-        from dace.frontend.python.astutils import subscript_to_slice
+        from dace.frontend.python.astutils import subscript_to_slice, unparse
+
+        if isinstance(t.value, ast.Name):
+            name = t.value.id
+            desc = self.sdfg.arrays[name]
+            if isinstance(desc, data.Structure):
+                to_write = name
+                if isinstance(desc, data.StructureView):
+                    to_write = f"(*{to_write})"
+                self.write(to_write)
+                return
+
         target, rng = subscript_to_slice(t, self.sdfg.arrays)
         rng = subsets.Range(rng)
         if rng.num_elements() != 1:
             raise SyntaxError('Range subscripts disallowed in interstate edges')
 
         memlet = mmlt.Memlet(data=target, subset=rng)
+        to_write = cpp_array_expr(self.sdfg, memlet, codegen=self.codegen)
+
+        if '.' in unparse(t):
+            super().dispatch(t.value)
+            desc = self.sdfg.arrays[target]
+            if not isinstance(desc, data.Structure):
+                i0 = to_write.find('[')
+                i1 = to_write.rfind(']')
+                self.write(to_write[i0:i1 + 1])
+            return
 
         if target not in self.sdfg.arrays:
             # This could be an FPGA array whose name has been mangled
