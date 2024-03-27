@@ -110,6 +110,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 if isinstance(oe.dst, nodes.AccessNode) and isinstance(sdfg.arrays[oe.dst.data], dt.View):
                     candidates.remove(candidate)
                     removed = True
+                    break
             if removed:
                 continue
 
