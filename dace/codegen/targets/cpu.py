@@ -73,8 +73,24 @@ class CPUCodeGen(TargetCodeGenerator):
                 if arg_type.storage is dtypes.StorageType.GPU_Global:
                     self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
                     continue
-
                 self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
+            elif isinstance(arg_type, data.Structure):
+                if isinstance(arg_type.dtype, dtypes.struct):
+                    self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
+                elif isinstance(arg_type.dtype, dtypes.pointer) and isinstance(arg_type.dtype.base_type, dtypes.struct):
+                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, arg_type.dtype.ctype)
+                else:
+                    raise TypeError(f"Structure argument {name} has unrecognized argument type: {type(arg_type)} (value {arg_type})")
+            elif isinstance(arg_type, data.ContainerArray):
+                stype = arg_type.stype
+                if not isinstance(stype, data.Structure):
+                    raise TypeError(f"ContainerArray {name} has non-structure element type: {type(stype)} (value {stype})")
+                if isinstance(stype.dtype, dtypes.struct):
+                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(stype.dtype).ctype)
+                elif isinstance(stype.dtype, dtypes.pointer) and isinstance(stype.dtype.base_type, dtypes.struct):
+                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(stype.dtype).ctype)
+                else:
+                    raise TypeError(f"ContainerArray {name} has unrecognized structure element type: {type(stype)} (value {stype})")
             elif isinstance(arg_type, data.Array):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
             elif isinstance(arg_type, data.Stream):
@@ -82,8 +98,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     self._dispatcher.defined_vars.add(name, DefinedType.StreamArray, arg_type.as_arg(name=''))
                 else:
                     self._dispatcher.defined_vars.add(name, DefinedType.Stream, arg_type.as_arg(name=''))
-            elif isinstance(arg_type, data.Structure):
-                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, arg_type.dtype.ctype)
             else:
                 raise TypeError("Unrecognized argument type: {t} (value {v})".format(t=type(arg_type).__name__,
                                                                                      v=str(arg_type)))
@@ -226,7 +240,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet.subset = subsets.Range.from_array(viewed_dnode.desc(sdfg))
 
         # Emit memlet as a reference and register defined variable
-        conntype = nodedesc.dtype if isinstance(nodedesc, data.StructureView) else dtypes.pointer(nodedesc.dtype)
+        # conntype = nodedesc.dtype if isinstance(nodedesc, data.StructureView) else dtypes.pointer(nodedesc.dtype)
+        conntype = dtypes.pointer(nodedesc.dtype)
         # atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
         #                                                 sdfg,
         #                                                 memlet,
@@ -243,16 +258,16 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         ancestor=0,
                                                         is_write=True)
         
-        # if '.' in memlet.data:
-        #     root = memlet.data.split('.')[0]
-        #     if root in value and isinstance(sdfg.arrays[root], data.StructureView):
-        #         # Dereference the extra pointer.
-        #         value = value.replace(root, f'(*{root})')
-        num_pointers = atype.count('*')
-        num_references = atype.count('&')
-        num_delete = min(num_pointers, num_references)
-        atype = atype.replace('*', '', num_delete)
-        atype = atype.replace('&', '', num_delete)
+        # # if '.' in memlet.data:
+        # #     root = memlet.data.split('.')[0]
+        # #     if root in value and isinstance(sdfg.arrays[root], data.StructureView):
+        # #         # Dereference the extra pointer.
+        # #         value = value.replace(root, f'(*{root})')
+        # num_pointers = atype.count('*')
+        # num_references = atype.count('&')
+        # num_delete = min(num_pointers, num_references)
+        # atype = atype.replace('*', '', num_delete)
+        # atype = atype.replace('&', '', num_delete)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):

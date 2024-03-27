@@ -23,27 +23,34 @@ from dace.transformation import transformation as xf
 def _check_range(subset, a, itersym, b, step):
     found = False
     for rb, re, _ in subset.ndrange():
-        m = rb.match(a * itersym + b)
-        if m is None:
-            continue
-        if (abs(m[a]) >= 1) != True:
-            continue
-        if re != rb:
-            if isinstance(rb, symbolic.SymExpr):
-                rb = rb.approx
-            if isinstance(re, symbolic.SymExpr):
-                re = re.approx
-
-            # If False or indeterminate, the range may
-            # overlap across iterations
-            if ((re - rb) > m[a] * step) != False:
+        if rb != 0:
+            m = rb.match(a * itersym + b)
+            if m is None:
                 continue
-
+            if (abs(m[a]) >= 1) != True:
+                continue
+        else:
             m = re.match(a * itersym + b)
             if m is None:
                 continue
             if (abs(m[a]) >= 1) != True:
                 continue
+        # if re != rb:
+        #     if isinstance(rb, symbolic.SymExpr):
+        #         rb = rb.approx
+        #     if isinstance(re, symbolic.SymExpr):
+        #         re = re.approx
+
+        #     # If False or indeterminate, the range may
+        #     # overlap across iterations
+        #     if ((re - rb) > m[a] * step) != False:
+        #         continue
+
+        #     m = re.match(a * itersym + b)
+        #     if m is None:
+        #         continue
+        #     if (abs(m[a]) >= 1) != True:
+        #         continue
         found = True
         break
     return found
@@ -181,6 +188,10 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         if e.data.dynamic and e.data.wcr is None:
                             # If pointers are involved, give up
                             return False
+                        # Ignore write views
+                        if e.src_conn == "views" or e.dst_conn == "views":
+                            continue
+
                         # To be sure that the value is only written at unique
                         # indices per loop iteration, we want to match symbols
                         # of the form "a*i+b" where |a| >= 1, and i is the iteration
@@ -201,6 +212,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 data = dn.data
                 if data in write_memlets:
                     for e in state.out_edges(dn):
+                        if e.src_conn == "views" or e.dst_conn == "views":
+                            continue
+
                         # If the same container is both read and written, only match if
                         # it read and written at locations that will not create data races
                         src_subset = e.data.get_src_subset(e, state)
