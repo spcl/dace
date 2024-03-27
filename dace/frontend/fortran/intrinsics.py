@@ -415,10 +415,12 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
             # If we access SUM(arr) where arr has many dimensions,
             # We need to create a ParDecl_Node for each dimension
             #array_sizes = self.scope_vars.get_var(node.parent, arg.name).sizes
-            array_sizes = self.get_var_declaration(node.parent, arg.name).sizes
+            var = self.get_var_declaration(node.parent, arg.name)
+            array_sizes = var.sizes
             if array_sizes is None:
                 return None
             dims = len(array_sizes)
+            array_node.type = var.type
             array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
 
             return array_node
