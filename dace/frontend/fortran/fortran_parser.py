@@ -2789,7 +2789,6 @@ def recursive_ast_improver(ast,
             for j in objects_in_modules[i].children:
                 weight.append(j)
 
-        print(parent_module, i, used_modules)
         dep_graph.add_edge(parent_module, i, obj_list=weight)
 
     #print("It's turtles all the way down: ", len(exclude_list))
@@ -2874,11 +2873,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                                  missing_modules=missing_modules,
                                  dep_graph=dep_graph,
                                  asts=asts)
-
-    for node in dep_graph.nodes:
-        print(node)
-        for e in dep_graph.out_edges(node):
-            print(e)
 
     for mod, blocks in interface_blocks.items():
 
@@ -3131,8 +3125,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     partial_ast.symbols["c_null_char"]=ast_internal_classes.Int_Literal_Node(value=1)
     functions_to_rename={}
 
-    print(asts.keys())
-
     #Why would you ever name a file differently than the module? Especially just one random file out of thousands???
     #asts["mo_restart_nml_and_att"]=asts["mo_restart_nmls_and_atts"]
     partial_ast.to_parse_list=what_to_parse_list
@@ -3203,7 +3195,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             functions_and_subroutines_builder.names.append(ast_internal_classes.Name_Node(name=i,type="VOID"))
     program.iblocks=functions_and_subroutines_builder.iblocks
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
-    print(type(program), program.iblocks)
     program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
