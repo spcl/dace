@@ -47,7 +47,8 @@ class DaCeCodeGenerator(object):
     arglist: Dict[str, data.Data]
 
     _symbols_and_constants: Dict[int, Set[str]]
-    _ptr_incremented_accesses: Dict[mlt.Memlet, Tuple[subsets.Range, Tuple[dace.symbol, int, nodes.Map, bool]]]
+    _ptr_incremented_accesses: Dict[mlt.Memlet,
+                                    Tuple[subsets.Range, Tuple[dace.symbol, int, nodes.Map, bool], SDFGState]]
     _initcode: CodeIOStream
     _exitcode: CodeIOStream
     _dispatcher: disp.TargetDispatcher
@@ -504,6 +505,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
                         offs_params = []
                         involved_scopes = []
+                        for param, pscope, is_para in pass_params:
+                            if param in memlet.subset.free_symbols:
+                                involved_scopes.append([dace.symbol(param), -1, pscope, is_para])
+
                         for i, dim in enumerate(memlet.subset.ranges):
                             dim_symbols = set()
                             for _d in dim:
@@ -520,11 +525,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                                     break
                             if found_param:
                                 offs_params.append(found_param)
-                                involved_scopes.append([found_param, i, found_scope, found_scope_barrier])
                             else:
                                 offs_params.append(0)
                         offset_subset = memlet.subset.offset_new(offs_params, negative=True)
-                        self._ptr_incremented_accesses[memlet] = [offset_subset, involved_scopes]
+                        self._ptr_incremented_accesses[e] = [offset_subset, involved_scopes, state]
         for child in scope.children:
             self._preprocess_memlet_schedules_scope(state, child, pass_params)
 
@@ -536,26 +540,30 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         for state in sdfg.states():
             self._preprocess_memlet_schedules_state(state)
 
-        for access in self._ptr_incremented_accesses.keys():
-            _, involved_scopes = self._ptr_incremented_accesses[access]
+        for paccess in self._ptr_incremented_accesses.keys():
+            access = paccess.data
+            _, involved_scopes, state = self._ptr_incremented_accesses[paccess]
+            if not involved_scopes:
+                continue
             n_scopes = len(involved_scopes)
             define_scope = None
             define_scope_idx = None
+
             for i in range(n_scopes - 1, -1, -1):
                 param, _, entry, parallel = involved_scopes[i]
                 if parallel:
                     break
 
                 idx = entry.map.params.index(str(param))
-                self.ptr_increments_to_update[entry][idx].add(access)
+                self.ptr_increments_to_update[entry][idx].add(paccess)
                 define_scope = entry
                 define_scope_idx = idx
 
             if define_scope is None:
                 define_scope = involved_scopes[0][2]
                 define_scope_idx = define_scope.map.params.index(str(involved_scopes[0][0]))
-                self.ptr_increments_to_update[define_scope][define_scope_idx].add(access)
-            self.ptr_increments_to_define[define_scope][define_scope_idx].add(access)
+                self.ptr_increments_to_update[define_scope][define_scope_idx].add(paccess)
+            self.ptr_increments_to_define[define_scope][define_scope_idx].add(paccess)
 
     def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
         states_generated = set()

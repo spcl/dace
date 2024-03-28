@@ -688,6 +688,11 @@ class CPUCodeGen(TargetCodeGenerator):
         u, uconn, v, vconn, memlet = edge
         orig_vconn = vconn
 
+        gedge = None
+        for e in dfg.edges_between(u, v):
+            if e.data == memlet:
+                gedge = e
+
         # Determine memlet directionality
         if isinstance(src_node, nodes.AccessNode) and validate_memlet_data(memlet.data, src_node.data):
             write = True
@@ -719,7 +724,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(dst_node, nodes.Tasklet):
             # Copy into tasklet
             stream.write(
-                "    " + self.memlet_definition(sdfg, memlet, False, vconn, dst_node.in_connectors[vconn]),
+                "    " + self.memlet_definition(sdfg, memlet, False, vconn, dst_node.in_connectors[vconn], edge=gedge),
                 sdfg,
                 state_id,
                 [src_node, dst_node],
@@ -730,7 +735,7 @@ class CPUCodeGen(TargetCodeGenerator):
         elif isinstance(src_node, nodes.Tasklet):
             # Copy out of tasklet
             stream.write(
-                "    " + self.memlet_definition(sdfg, memlet, True, uconn, src_node.out_connectors[uconn]),
+                "    " + self.memlet_definition(sdfg, memlet, True, uconn, src_node.out_connectors[uconn], edge=gedge),
                 sdfg,
                 state_id,
                 [src_node, dst_node],
@@ -1104,8 +1109,9 @@ class CPUCodeGen(TargetCodeGenerator):
                             # which we skip since the memlets are references
                             continue
                         desc = sdfg.arrays[memlet.data]
-                        if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
-                            ptrname = self._frame.ptr_increment_name_mapping[memlet]
+                        if (memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment and
+                            edge in self._frame.ptr_increment_name_mapping):
+                            ptrname = self._frame.ptr_increment_name_mapping[edge]
                             is_global = False
                         else:
                             ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
@@ -1289,7 +1295,8 @@ class CPUCodeGen(TargetCodeGenerator):
                           local_name: str,
                           conntype: Union[data.Data, dtypes.typeclass] = None,
                           allow_shadowing=False,
-                          codegen=None):
+                          codegen=None,
+                          edge=None):
         # TODO: Robust rule set
         if conntype is None:
             raise ValueError('Cannot define memlet for "%s" without connector type' % local_name)
@@ -1310,7 +1317,7 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
-            ptr = self._frame.ptr_increment_name_mapping[memlet]
+            ptr = self._frame.ptr_increment_name_mapping[edge]
         else:
             ptr = cpp.ptr(memlet.data, desc, sdfg, self._frame)
 
@@ -1917,7 +1924,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if e.data.data != e.dst_conn:
                 callsite_stream.write(
                     self.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), sdfg,
-                    state_id, node)
+                    state_id, node, edge=e)
 
         inner_stream = CodeIOStream()
         self.generate_scope_preamble(sdfg, dfg, state_id, function_stream, callsite_stream, inner_stream)
@@ -2005,7 +2012,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 begin, end, skip = r
 
                 ptr_increments_to_define = self._frame.ptr_increments_to_define[node][i]
-                for access in ptr_increments_to_define:
+                for paccess in ptr_increments_to_define:
+                    access = paccess.data
                     ptr_base_name = '__dace_ptr_increment_' + access.data
                     ptr_name_addendum = 0
                     ptr_name = ptr_base_name + '_' + str(ptr_name_addendum)
@@ -2020,30 +2028,46 @@ class CPUCodeGen(TargetCodeGenerator):
                     else:
                         dtype, ctype = self._dispatcher.defined_vars.get(ptr)
                     self._dispatcher.defined_vars.add(ptr_name, dtype, ctype)
-                    self._frame.ptr_increment_name_mapping[access] = ptr_name
+                    self._frame.ptr_increment_name_mapping[paccess] = ptr_name
                     offsets_to_add = []
-                    scope_stride = None
-                    access_offset_raw = self._frame._ptr_incremented_accesses[access][0]
+                    access_offset_raw = self._frame._ptr_incremented_accesses[paccess][0]
                     access_offset = [rn[0] for rn in access_offset_raw.ranges]
-                    for involved_scope in self._frame._ptr_incremented_accesses[access][1]:
-                        para, idx, _, _ = involved_scope
+                    for involved_scope in self._frame._ptr_incremented_accesses[paccess][1]:
+                        para, _, _, _ = involved_scope
                         if str(para) == var:
-                            scope_stride = desc.strides[idx]
                             break
-                        offset_expr = '(' + cpp.sym2cpp(para) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
-                        offsets_to_add.append(offset_expr)
+                        for idx, subrng in enumerate(access.subset):
+                            dimsyms = set()
+                            for _d in subrng:
+                                dimsyms |= symbolic.free_symbols_and_functions(_d)
+                            if str(para) in dimsyms:
+                                offset_expr = '(' + cpp.sym2cpp(para) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                                offsets_to_add.append(offset_expr)
                     if begin != 0:
-                        if scope_stride is None:
-                            raise RuntimeError()
-                        offset_expr = '(' + cpp.sym2cpp(begin) + ' * ' + cpp.sym2cpp(scope_stride) + ')'
-                        offsets_to_add.append(offset_expr)
+                        for idx, subrng in enumerate(access.subset):
+                            dimsyms = set()
+                            for _d in subrng:
+                                dimsyms |= symbolic.free_symbols_and_functions(_d)
+                            if var in dimsyms:
+                                offset_expr = '(' + cpp.sym2cpp(begin) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                                offsets_to_add.append(offset_expr)
                     for j, off in enumerate(access_offset):
                         if off != 0:
                             offset_expr = '(' + cpp.sym2cpp(off) + ' * ' + cpp.sym2cpp(desc.strides[j]) + ')'
                             offsets_to_add.append(offset_expr)
                     data_ptr_expr = ptr
+                    offset_expr = None
                     if offsets_to_add:
-                        data_ptr_expr += ' + ' + ' + '.join(offsets_to_add)
+                        offset_expr = ' + '.join(offsets_to_add)
+                        simplified_offset_expr = None
+                        try:
+                            simplified_offset_expr = str(symbolic.simplify(symbolic.pystr_to_symbolic(offset_expr)))
+                        except Exception:
+                            pass
+                        if simplified_offset_expr:
+                            offset_expr = simplified_offset_expr
+                    if offset_expr:
+                        data_ptr_expr += ' + ' + offset_expr
                     result.write(
                         '%s %s = %s;\n' %
                         (ctype, ptr_name, data_ptr_expr),
@@ -2147,14 +2171,15 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 ptr_increments_to_update = self._frame.ptr_increments_to_update[map_node][i]
                 handled = set()
-                for access in ptr_increments_to_update:
-                    ptr_name = self._frame.ptr_increment_name_mapping[access]
+                for paccess in ptr_increments_to_update:
+                    access = paccess.data
+                    ptr_name = self._frame.ptr_increment_name_mapping[paccess]
                     if ptr_name not in handled:
                         handled.add(ptr_name)
 
                         desc = sdfg.data(access.data)
 
-                        involved_scopes = self._frame._ptr_incremented_accesses[access][1]
+                        involved_scopes = self._frame._ptr_incremented_accesses[paccess][1]
                         found_involved_scope = None
                         for involved_scope in involved_scopes:
                             if map_node == involved_scope[2] and param == str(involved_scope[0]):

@@ -220,7 +220,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         from dace.transformation.auto import auto_optimize as autoopt
         return autoopt.auto_optimize(sdfg, self.device, symbols=symbols)
 
-    def to_sdfg(self, *args, simplify=None, save=False, validate=False, use_cache=False, **kwargs) -> SDFG:
+    def to_sdfg(self, *args, simplify=None, save=False, validate=False, use_cache=False, use_experimental_cfg_blocks=None, **kwargs) -> SDFG:
         """
         Creates an SDFG from the DaCe function. If no type hints are provided on the function, example arrays/scalars
         (i.e., with the same shape and type) must be given to this method in order to construct a valid SDFG.
@@ -266,6 +266,9 @@ class DaceProgram(pycommon.SDFGConvertible):
             if self._cache.has(cachekey):
                 entry = self._cache.get(cachekey)
                 return entry.sdfg
+
+        if use_experimental_cfg_blocks is not None:
+            self.use_experimental_cfg_blocks = use_experimental_cfg_blocks
 
         sdfg = self._parse(args, kwargs, simplify=simplify, save=save, validate=validate)
 
