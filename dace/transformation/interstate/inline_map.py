@@ -27,19 +27,19 @@ class InlineMap(transformation.SingleStateTransformation):
     def can_be_applied(
         self, state: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive=False
     ):
-        # xform_single_state = InlineMapSingleState()
-        # xform_single_state.setup_match(
-        #     sdfg,
-        #     sdfg.cfg_id,
-        #     sdfg.node_id(state),
-        #     {
-        #         InlineMapSingleState.nested_sdfg: state.node_id(self.nested_sdfg),
-        #         InlineMapSingleState.map_entry: state.node_id(self.map_entry),
-        #     },
-        #     0
-        # )
-        # if xform_single_state.can_be_applied(state, 0, sdfg, False):
-        #     return True
+        xform_single_state = InlineMapSingleState()
+        xform_single_state.setup_match(
+            sdfg,
+            sdfg.cfg_id,
+            sdfg.node_id(state),
+            {
+                InlineMapSingleState.nested_sdfg: state.node_id(self.nested_sdfg),
+                InlineMapSingleState.map_entry: state.node_id(self.map_entry),
+            },
+            0
+        )
+        if xform_single_state.can_be_applied(state, 0, sdfg, False):
+            return True
 
         xform_assignment = InlineMapByAssignment()
         xform_assignment.setup_match(
@@ -72,19 +72,19 @@ class InlineMap(transformation.SingleStateTransformation):
         return False
 
     def apply(self, state: SDFGState, sdfg: SDFG):
-        # xform_single_state = InlineMapSingleState()
-        # xform_single_state.setup_match(
-        #     sdfg,
-        #     sdfg.cfg_id,
-        #     sdfg.node_id(state),
-        #     {
-        #         InlineMapSingleState.nested_sdfg: state.node_id(self.nested_sdfg),
-        #         InlineMapSingleState.map_entry: state.node_id(self.map_entry),
-        #     },
-        #     0
-        # )
-        # if xform_single_state.can_be_applied(state, 0, sdfg, False):
-        #     return xform_single_state.apply(state, sdfg)
+        xform_single_state = InlineMapSingleState()
+        xform_single_state.setup_match(
+            sdfg,
+            sdfg.cfg_id,
+            sdfg.node_id(state),
+            {
+                InlineMapSingleState.nested_sdfg: state.node_id(self.nested_sdfg),
+                InlineMapSingleState.map_entry: state.node_id(self.map_entry),
+            },
+            0
+        )
+        if xform_single_state.can_be_applied(state, 0, sdfg, False):
+            return xform_single_state.apply(state, sdfg)
 
         xform_assignment = InlineMapByAssignment()
         xform_assignment.setup_match(
@@ -155,16 +155,18 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
             return False
 
         itervars = set(self.map_entry.map.params)
+        candidates = set()
         for oedge in nsdfg.out_edges(start_state):
             if not oedge.data.is_unconditional():
                 return False
             
-            candidates = set()
             for symbol, value in oedge.data.assignments.items():
                 sympy_value = symbolic.pystr_to_symbolic(value)
                 if ({str(sym) for sym in sympy_value.expr_free_symbols} & itervars):
                     return False
-                
+                if "_for" in str(symbol):
+                    return False
+
                 candidates.add(symbol)
 
         # Candidates must be nsdfg-local
@@ -381,6 +383,8 @@ class InlineMapByConditions(transformation.SingleStateTransformation):
                 if not (str(condition.rhs) == str(b) or str(condition.rhs) == str(e)):
                     return False
 
+            print(oedge.data.condition.as_string)
+            print()
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
