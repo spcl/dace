@@ -1197,12 +1197,19 @@ class DataProperty(Property):
             sdfg = context['sdfg']
         if sdfg is None:
             raise TypeError("Must pass SDFG as second argument")
-        if s not in sdfg.arrays:
+        if s not in sdfg.arrays and s is None:
+            return None
+        if s not in sdfg.arrays and not '.' in s:
             if s is None:
                 # This is fine
                 #return "null" # Every SDFG has a 'null' element
                 return None
             raise ValueError("No data found in SDFG with name: {}".format(s))
+        else:
+            parts = s.split('.')
+            if not parts[0] in sdfg.arrays:
+                raise ValueError("No data found in SDFG with name: {}".format(parts[0]))
+
         return s
 
 
