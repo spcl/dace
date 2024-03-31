@@ -25,19 +25,19 @@ class InlineMap(transformation.SingleStateTransformation):
     def can_be_applied(
         self, state: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive=False
     ):
-        xform_single_state = InlineMapSingleState()
-        xform_single_state.setup_match(
-            sdfg,
-            sdfg.cfg_id,
-            sdfg.node_id(state),
-            {
-                InlineMapSingleState.nested_sdfg: state.node_id(self.nested_sdfg),
-                InlineMapSingleState.map_entry: state.node_id(self.map_entry),
-            },
-            0
-        )
-        if xform_single_state.can_be_applied(state, 0, sdfg, False):
-            return True
+        # xform_single_state = InlineMapSingleState()
+        # xform_single_state.setup_match(
+        #     sdfg,
+        #     sdfg.cfg_id,
+        #     sdfg.node_id(state),
+        #     {
+        #         InlineMapSingleState.nested_sdfg: state.node_id(self.nested_sdfg),
+        #         InlineMapSingleState.map_entry: state.node_id(self.map_entry),
+        #     },
+        #     0
+        # )
+        # if xform_single_state.can_be_applied(state, 0, sdfg, False):
+        #     return True
 
         xform_assignment = InlineMapByAssignment()
         xform_assignment.setup_match(
@@ -53,36 +53,36 @@ class InlineMap(transformation.SingleStateTransformation):
         if xform_assignment.can_be_applied(state, 0, sdfg, False):
             return True
 
-        xform_conditions = InlineMapByConditions()
-        xform_conditions.setup_match(
-            sdfg,
-            sdfg.cfg_id,
-            sdfg.node_id(state),
-            {
-                InlineMapByConditions.nested_sdfg: state.node_id(self.nested_sdfg),
-                InlineMapByConditions.map_entry: state.node_id(self.map_entry),
-            },
-            0
-        )
-        if xform_conditions.can_be_applied(state, 0, sdfg, False):
-            return True
+        # xform_conditions = InlineMapByConditions()
+        # xform_conditions.setup_match(
+        #     sdfg,
+        #     sdfg.cfg_id,
+        #     sdfg.node_id(state),
+        #     {
+        #         InlineMapByConditions.nested_sdfg: state.node_id(self.nested_sdfg),
+        #         InlineMapByConditions.map_entry: state.node_id(self.map_entry),
+        #     },
+        #     0
+        # )
+        # if xform_conditions.can_be_applied(state, 0, sdfg, False):
+        #     return True
 
         return False
 
     def apply(self, state: SDFGState, sdfg: SDFG):
-        xform_single_state = InlineMapSingleState()
-        xform_single_state.setup_match(
-            sdfg,
-            sdfg.cfg_id,
-            sdfg.node_id(state),
-            {
-                InlineMapSingleState.nested_sdfg: state.node_id(self.nested_sdfg),
-                InlineMapSingleState.map_entry: state.node_id(self.map_entry),
-            },
-            0
-        )
-        if xform_single_state.can_be_applied(state, 0, sdfg, False):
-            return xform_single_state.apply(state, sdfg)
+        # xform_single_state = InlineMapSingleState()
+        # xform_single_state.setup_match(
+        #     sdfg,
+        #     sdfg.cfg_id,
+        #     sdfg.node_id(state),
+        #     {
+        #         InlineMapSingleState.nested_sdfg: state.node_id(self.nested_sdfg),
+        #         InlineMapSingleState.map_entry: state.node_id(self.map_entry),
+        #     },
+        #     0
+        # )
+        # if xform_single_state.can_be_applied(state, 0, sdfg, False):
+        #     return xform_single_state.apply(state, sdfg)
 
         xform_assignment = InlineMapByAssignment()
         xform_assignment.setup_match(
@@ -98,19 +98,19 @@ class InlineMap(transformation.SingleStateTransformation):
         if xform_assignment.can_be_applied(state, 0, sdfg, False):
             return xform_assignment.apply(state, sdfg)
 
-        xform_conditions = InlineMapByConditions()
-        xform_conditions.setup_match(
-            sdfg,
-            sdfg.cfg_id,
-            sdfg.node_id(state),
-            {
-                InlineMapByConditions.nested_sdfg: state.node_id(self.nested_sdfg),
-                InlineMapByConditions.map_entry: state.node_id(self.map_entry),
-            },
-            0
-        )
-        if xform_conditions.can_be_applied(state, 0, sdfg, False):
-            return xform_conditions.apply(state, sdfg)
+        # xform_conditions = InlineMapByConditions()
+        # xform_conditions.setup_match(
+        #     sdfg,
+        #     sdfg.cfg_id,
+        #     sdfg.node_id(state),
+        #     {
+        #         InlineMapByConditions.nested_sdfg: state.node_id(self.nested_sdfg),
+        #         InlineMapByConditions.map_entry: state.node_id(self.map_entry),
+        #     },
+        #     0
+        # )
+        # if xform_conditions.can_be_applied(state, 0, sdfg, False):
+        #     return xform_conditions.apply(state, sdfg)
 
         return None
 

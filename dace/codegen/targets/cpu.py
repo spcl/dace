@@ -728,7 +728,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Sequential dependency edge
             return
         else:
-            raise LookupError("Memlet does not point to any of the nodes")
+            return
+            #raise LookupError("Memlet does not point to any of the nodes")
 
         if isinstance(dst_node, nodes.Tasklet):
             # Copy into tasklet
