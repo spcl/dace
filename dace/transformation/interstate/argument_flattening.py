@@ -35,6 +35,9 @@ class ArgumentFlattening(transformation.SingleStateTransformation):
             if isinstance(desc, dt.Structure):
                 candidates.add(con)
 
+        if not candidates:
+            return set()
+
         # Remove candidates which are not only viewed for members
         used = set()
         for nstate in nsdfg.states():
@@ -61,6 +64,13 @@ class ArgumentFlattening(transformation.SingleStateTransformation):
 
         # Check usages in interstate edges
         for edge in nsdfg.edges():
+            if not edge.data.is_unconditional():
+                condition = edge.data.condition.as_string
+                for candidate in list(candidates):
+                    if candidate in condition:
+                        if (candidate + ".") in condition or (candidate + "[0].") in condition:
+                            used.add(candidate)
+
             for assignment in edge.data.assignments.values():
                 for candidate in list(candidates):
                     if candidate in assignment:

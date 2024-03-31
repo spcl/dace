@@ -201,7 +201,7 @@ class CUDACodeGen(TargetCodeGenerator):
             if (isinstance(node, nodes.MapEntry)
                     and node.map.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)):
                 if state.parent not in shared_transients:
-                    shared_transients[state.parent] = state.parent.shared_transients()
+                    shared_transients[state.parent] = state.parent.shared_transients()   
                 self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
 
     def _compute_pool_release(self, top_sdfg: SDFG):
@@ -2551,7 +2551,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
     def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references, sdfg_label):
         return 'DACE_DFI ' + self._cpu_codegen.generate_nsdfg_header(
-            sdfg, state, state_id, node, memlet_references, sdfg_label, state_struct=False)
+            sdfg, state, state_id, node, memlet_references, sdfg_label, state_struct=False, gpu=True)
 
     def generate_nsdfg_call(self, sdfg, state, node, memlet_references, sdfg_label):
         return self._cpu_codegen.generate_nsdfg_call(sdfg,
@@ -2559,7 +2559,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                                      node,
                                                      memlet_references,
                                                      sdfg_label,
-                                                     state_struct=False)
+                                                     state_struct=False, gpu=True)
 
     def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
         result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, dfg, state, node)
