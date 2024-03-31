@@ -1626,7 +1626,7 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg, state_id, src_node)
 
-    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
+    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True, gpu=False):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
         arguments = []
 
@@ -1654,7 +1654,8 @@ class CPUCodeGen(TargetCodeGenerator):
             f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
-        fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA")), fsyms))
+        if not gpu:
+            fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA")), fsyms))
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
             if aname in fsyms and aname not in sdfg.constants
@@ -1662,12 +1663,13 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments = ', '.join(arguments)
         return f'void {sdfg_label}({arguments}) {{'
 
-    def generate_nsdfg_call(self, sdfg, state, node, memlet_references, sdfg_label, state_struct=True):
+    def generate_nsdfg_call(self, sdfg, state, node, memlet_references, sdfg_label, state_struct=True, gpu=False):
         prepend = []
         if state_struct:
             prepend = ['__state']
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
-        fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA")), fsyms))
+        if not gpu:
+            fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA")), fsyms))
         args = ', '.join(prepend + [argval for _, _, argval in memlet_references] + [
             cpp.sym2cpp(symval) for symname, symval in sorted(node.symbol_mapping.items())
             if symname in fsyms and symname not in sdfg.constants
