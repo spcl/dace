@@ -1272,7 +1272,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
     def visit_Call(self, node: ast.Call):
         funcname = rname(node.func)
-        if (funcname in self.sdfg.symbols and isinstance(self.sdfg.symbols[funcname], dtypes.callback)):
+        if (funcname in self.sdfg.callback_mapping or (funcname in self.sdfg.symbols and isinstance(self.sdfg.symbols[funcname], dtypes.callback))):
             # Visit arguments without changing their types
             self.allow_casts = False
             result = self.generic_visit(node)
