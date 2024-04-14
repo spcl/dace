@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from collections import defaultdict
 from copy import deepcopy
 from dace.sdfg.state import SDFGState
 import functools
@@ -1111,7 +1112,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         desc = sdfg.arrays[memlet.data]
                         if (memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment and
                             edge in self._frame.ptr_increment_name_mapping):
-                            ptrname = self._frame.ptr_increment_name_mapping[edge]
+                            ptrname, offs = self._frame.ptr_increment_name_mapping[edge]
                             is_global = False
                         else:
                             ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
@@ -1155,7 +1156,10 @@ class CPUCodeGen(TargetCodeGenerator):
                         else:
                             desc_dtype = desc.dtype
                             if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
-                                expr = '%s[0]' % (ptrname)
+                                if offs is not None:
+                                    expr = '%s[%s]' % (ptrname, offs)
+                                else:
+                                    expr = '%s[0]' % (ptrname)
                             else:
                                 expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
                             write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
@@ -1317,7 +1321,7 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
-            ptr = self._frame.ptr_increment_name_mapping[edge]
+            ptr, offs = self._frame.ptr_increment_name_mapping[edge]
         else:
             ptr = cpp.ptr(memlet.data, desc, sdfg, self._frame)
 
@@ -1351,7 +1355,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
         result = ''
         if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
-            expr = '0'
+            if offs is not None:
+                expr = offs
+            else:
+                expr = '0'
         else:
             expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
                     if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
@@ -1899,6 +1906,75 @@ class CPUCodeGen(TargetCodeGenerator):
         self._dispatcher.defined_vars.exit_scope(sdfg)
         self._dispatcher.declared_arrays.exit_scope(sdfg)
 
+
+    def _register_ptr_incrementation_definition(self, sdfg: SDFG, state_id: int, node: nodes.Node,
+                                                result: CodeIOStream, paccess, var, begin) -> str:
+            access = paccess.data
+            ptr_base_name = '__dace_ptr_increment_' + access.data
+            ptr_name_addendum = 0
+            ptr_name = ptr_base_name + '_' + str(ptr_name_addendum)
+            while self._dispatcher.defined_vars.has(ptr_name):
+                ptr_name_addendum += 1
+                ptr_name = ptr_base_name + '_' + str(ptr_name_addendum)
+
+            desc = sdfg.data(access.data)
+            ptr = cpp.ptr(access.data, desc, sdfg, self._frame)
+            if self._dispatcher.declared_arrays.has(ptr):
+                dtype, ctype = self._dispatcher.declared_arrays.get(ptr)
+            else:
+                dtype, ctype = self._dispatcher.defined_vars.get(ptr)
+            self._dispatcher.defined_vars.add(ptr_name, dtype, ctype)
+            self._frame.ptr_increment_name_mapping[paccess] = ptr_name, '0'
+
+            offsets_to_add = []
+            access_offset_raw = self._frame._ptr_incremented_accesses[paccess][0]
+            access_offset = [rn[0] for rn in access_offset_raw.ranges]
+            for involved_scope in self._frame._ptr_incremented_accesses[paccess][1]:
+                para, _, _, _ = involved_scope
+                if str(para) == var:
+                    break
+                for idx, subrng in enumerate(access.subset):
+                    dimsyms = set()
+                    for _d in subrng:
+                        dimsyms |= symbolic.free_symbols_and_functions(_d)
+                    if str(para) in dimsyms:
+                        offset_expr = '(' + cpp.sym2cpp(para) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                        offsets_to_add.append(offset_expr)
+            if begin != 0:
+                for idx, subrng in enumerate(access.subset):
+                    dimsyms = set()
+                    for _d in subrng:
+                        dimsyms |= symbolic.free_symbols_and_functions(_d)
+                    if var in dimsyms:
+                        offset_expr = '(' + cpp.sym2cpp(begin) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                        offsets_to_add.append(offset_expr)
+            for j, off in enumerate(access_offset):
+                if off != 0:
+                    offset_expr = '(' + cpp.sym2cpp(off) + ' * ' + cpp.sym2cpp(desc.strides[j]) + ')'
+                    offsets_to_add.append(offset_expr)
+            data_ptr_expr = ptr
+            offset_expr = None
+            if offsets_to_add:
+                offset_expr = ' + '.join(offsets_to_add)
+                simplified_offset_expr = None
+                try:
+                    simplified_offset_expr = str(symbolic.simplify(symbolic.pystr_to_symbolic(offset_expr)))
+                except Exception:
+                    pass
+                if simplified_offset_expr:
+                    offset_expr = simplified_offset_expr
+            if offset_expr:
+                data_ptr_expr += ' + ' + offset_expr
+            result.write(
+                '%s %s = %s;\n' %
+                (ctype, ptr_name, data_ptr_expr),
+                sdfg,
+                state_id,
+                node
+            )
+
+            return ptr_name
+
     def _generate_MapEntry(
         self,
         sdfg: SDFG,
@@ -2012,6 +2088,47 @@ class CPUCodeGen(TargetCodeGenerator):
                 begin, end, skip = r
 
                 ptr_increments_to_define = self._frame.ptr_increments_to_define[node][i]
+                container_to_increment_mapping = defaultdict(set)
+                for paccess in ptr_increments_to_define:
+                    container_to_increment_mapping[paccess.data.data].add(paccess)
+
+                for dname, accesses in container_to_increment_mapping.items():
+                    desc = sdfg.data(dname)
+                    if len(accesses) > 1:
+                        # Check grouping
+                        grouping_handled = set()
+                        for paccess in accesses:
+                            if paccess in grouping_handled:
+                                continue
+                            grouping_handled.add(paccess)
+
+                            a_name = self._register_ptr_incrementation_definition(sdfg, state_id, node,
+                                                                                  result, paccess, var, begin)
+                            memlet: mmlt.Memlet = paccess.data
+                            for other_paccess in accesses:
+                                if other_paccess in grouping_handled:
+                                    continue
+                                other_memlet: mmlt.Memlet = other_paccess.data
+
+                                a_subset = memlet.subset.offset_new(desc.offset, False)
+                                b_subset = other_memlet.subset.offset_new(desc.offset, False)
+                                indices = [0] * len(desc.strides)
+
+                                a_index = a_subset.at(indices, desc.strides)
+                                b_index = b_subset.at(indices, desc.strides)
+                                try:
+                                    index_diff = b_index - a_index
+                                    if index_diff.is_constant():
+                                        grouping_handled.add(other_paccess)
+                                        idx_diff_str = cpp.sym2cpp(index_diff)
+                                        self._frame.ptr_increment_name_mapping[other_paccess] = (a_name, idx_diff_str)
+                                except Exception:
+                                    pass
+                    else:
+                        a_name = self._register_ptr_incrementation_definition(sdfg, state_id, node,
+                                                                              result, list(accesses)[0], var, begin)
+
+                '''
                 for paccess in ptr_increments_to_define:
                     access = paccess.data
                     ptr_base_name = '__dace_ptr_increment_' + access.data
@@ -2075,6 +2192,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         state_id,
                         node
                     )
+                '''
 
                 # The header must be directly atop the for statement.
                 if i == 0:
@@ -2173,7 +2291,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 handled = set()
                 for paccess in ptr_increments_to_update:
                     access = paccess.data
-                    ptr_name = self._frame.ptr_increment_name_mapping[paccess]
+                    ptr_name, _ = self._frame.ptr_increment_name_mapping[paccess]
                     if ptr_name not in handled:
                         handled.add(ptr_name)
 
@@ -2190,7 +2308,6 @@ class CPUCodeGen(TargetCodeGenerator):
                             raise RuntimeError()
 
                         do_increment = True
-                        curr_stride = desc.strides[found_involved_scope[1]]
                         subtr_expr = None
                         if found_involved_scope != involved_scopes[-1]:
                             # Subtract everything added in the loop one hierarchy down.
@@ -2198,21 +2315,38 @@ class CPUCodeGen(TargetCodeGenerator):
                             prev_param, prev_idx, prev_entry, _ = involved_scopes[scope_idx + 1]
                             prev_range = prev_entry.map.range[prev_entry.map.params.index(str(prev_param))]
                             prev_n_iterations = subsets.Range([prev_range]).num_elements_exact()
-                            if prev_n_iterations != curr_stride:
-                                stride_expr = cpp.sym2cpp(desc.strides[prev_idx])
-                                subtr_expr = '(' + cpp.sym2cpp(prev_n_iterations) + ' * ' + stride_expr + ')'
-                            else:
-                                do_increment = False
+                            offsets_to_subtract = []
+                            for idx, subrng in enumerate(access.subset):
+                                dimsyms = set()
+                                for _d in subrng:
+                                    dimsyms |= symbolic.free_symbols_and_functions(_d)
+                                if str(prev_param) in dimsyms:
+                                    offset_expr = '(' + cpp.sym2cpp(prev_n_iterations) + '*' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                                    offsets_to_subtract.append(offset_expr)
+                            subtr_expr = '(' + '+'.join(offsets_to_subtract) + ')'
 
                         if do_increment:
-                            stride_expr = cpp.sym2cpp(curr_stride)
-                            full_offset_expr = None
-                            offset_expr = '(' + cpp.sym2cpp(skip) + ' * ' + stride_expr + ')'
+                            offsets_to_add = []
+                            for idx, subrng in enumerate(access.subset):
+                                dimsyms = set()
+                                for _d in subrng:
+                                    dimsyms |= symbolic.free_symbols_and_functions(_d)
+                                if str(param) in dimsyms:
+                                    offset_expr = '(' + cpp.sym2cpp(skip) + '*' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                                    offsets_to_add.append(offset_expr)
                             if subtr_expr:
-                                full_offset_expr = '+= (' + offset_expr + ' - ' + subtr_expr + ')'
+                                full_offset_expr = '((' + '+'.join(offsets_to_add) + ') - ' + subtr_expr + ')'
                             else:
-                                full_offset_expr = '+= ' + offset_expr
-                            result.write('%s %s;\n' % (ptr_name, full_offset_expr), sdfg, state_id, node)
+                                full_offset_expr = '+'.join(offsets_to_add)
+                            simplified_offset_expr = None
+                            try:
+                                simplified_offset_expr = str(symbolic.simplify(symbolic.pystr_to_symbolic(full_offset_expr)))
+                            except Exception:
+                                pass
+                            if simplified_offset_expr:
+                                full_offset_expr = simplified_offset_expr
+                            if full_offset_expr != '0':
+                                result.write('%s += %s;\n' % (ptr_name, full_offset_expr), sdfg, state_id, node)
 
                 result.write("}", sdfg, state_id, node)
 

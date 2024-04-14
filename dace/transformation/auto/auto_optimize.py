@@ -543,7 +543,9 @@ def auto_optimize(sdfg: SDFG,
                   symbols: Dict[str, int] = None,
                   use_gpu_storage: bool = False,
                   move_loop_into_maps: bool = True,
-                  with_canonicalization: bool = True) -> SDFG:
+                  with_canonicalization: bool = True,
+                  fuse_stencils: bool = True,
+                  use_fast_library_calls: bool = True) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -603,7 +605,8 @@ def auto_optimize(sdfg: SDFG,
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
     # fuse stencils greedily
-    greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+    if fuse_stencils:
+        greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
 
     # Move Loops inside Maps when possible
     if move_loop_into_maps:
@@ -623,7 +626,8 @@ def auto_optimize(sdfg: SDFG,
         fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
 
         # Set all library nodes to expand to fast library calls
-        set_fast_implementations(sdfg, device)
+        if use_fast_library_calls:
+            set_fast_implementations(sdfg, device)
         return sdfg
 
     # Tiled WCR and streams
@@ -640,7 +644,8 @@ def auto_optimize(sdfg: SDFG,
             pass
 
     # Set all library nodes to expand to fast library calls
-    set_fast_implementations(sdfg, device)
+    if use_fast_library_calls:
+        set_fast_implementations(sdfg, device)
 
     # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
     infer_types.infer_connector_types(sdfg)

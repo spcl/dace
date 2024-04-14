@@ -17,6 +17,7 @@ from dace.codegen import dispatcher as disp
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator
+from dace.config import Config
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
@@ -41,7 +42,7 @@ class DaCeCodeGenerator(object):
     to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode], List[Tuple[int, int, nodes.AccessNode]]]
     ptr_increments_to_define: DefaultDict[nodes.MapEntry, DefaultDict[int, Set[mlt.Memlet]]]
     ptr_increments_to_update: DefaultDict[nodes.MapEntry, DefaultDict[int, Set[mlt.Memlet]]]
-    ptr_increment_name_mapping: Dict[mlt.Memlet, str]
+    ptr_increment_name_mapping: Dict[mlt.Memlet, Tuple[str, symbolic.SymbolicType]]
     where_allocated: Dict[Tuple[SDFG, str], SDFG]
     fsyms: Dict[int, Set[str]]
     arglist: Dict[str, data.Data]
@@ -558,6 +559,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 self.ptr_increments_to_update[entry][idx].add(paccess)
                 define_scope = entry
                 define_scope_idx = idx
+
+                if Config.get_bool('optimizer', 'ptr_increment_finest'):
+                    break
 
             if define_scope is None:
                 define_scope = involved_scopes[0][2]

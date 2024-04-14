@@ -102,6 +102,13 @@ required:
                     When an exception is raised in a transformation "can_be_applied"
                     function, if True the exception is raised further. Otherwise
                     the exception is printed as a warning.
+
+            ptr_increment_finest:
+                type: bool
+                default: false
+                title: Use pointer incrementation on the finest granularity only.
+                description: >
+                    TODO
     compiler:
         type: dict
         title: Compiler
