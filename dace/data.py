@@ -1293,7 +1293,17 @@ class Tensor(Structure):
             nnz,
             f"CSF_{len(shape)}D_Tensor"
         )
-
+    
+    def is_CSF(self) -> bool:
+        if len(self.indices) < 3: # only 3D and higher
+            return False
+        if not all(isinstance(idx, TensorIndexCompressed) for idx in self.indices):
+            return False
+        if not self.index_ordering == list(range(len(self.tensor_shape))):
+            return False
+        
+        return True
+        
 
 @make_properties
 class Scalar(Data):

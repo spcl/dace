@@ -308,26 +308,26 @@ class ExpandCSRMMMKL(ExpandTransformation):
         opt['ldb'] = opt['ncols']
         opt['ldc'] = opt['ncols']
 
-        code += """
-            sparse_matrix_t __csrA;
-            {func}_create_csr(&__csrA, SPARSE_INDEX_BASE_ZERO, {arows}, {acols}, _a_rows, _a_rows + 1, _a_cols, _a_vals);
-            struct matrix_descr __descrA;
-            __descrA.type = SPARSE_MATRIX_TYPE_GENERAL;
-            __descrA.mode = SPARSE_FILL_MODE_UPPER;
-            __descrA.diag = SPARSE_DIAG_NON_UNIT;
-
-            {func}_mm({opA}, {alpha}, __csrA, __descrA, {layout}, _b, {ncols}, {ldb}, {beta}, _c, {ldc});
-        """.format_map(opt)
         # code += """
         #     sparse_matrix_t __csrA;
-        #     {func}_create_csr(&__csrA, SPARSE_INDEX_BASE_ZERO, N, N, _a_rows, _a_rows + 1, _a_cols, _a_vals);
+        #     {func}_create_csr(&__csrA, SPARSE_INDEX_BASE_ZERO, {arows}, {acols}, _a_rows, _a_rows + 1, _a_cols, _a_vals);
         #     struct matrix_descr __descrA;
         #     __descrA.type = SPARSE_MATRIX_TYPE_GENERAL;
         #     __descrA.mode = SPARSE_FILL_MODE_UPPER;
         #     __descrA.diag = SPARSE_DIAG_NON_UNIT;
 
-        #     {func}_mm({opA}, {alpha}, __csrA, __descrA, SPARSE_LAYOUT_COLUMN_MAJOR, _b, M, N, {beta}, _c, N);
+        #     {func}_mm({opA}, {alpha}, __csrA, __descrA, {layout}, _b, {ncols}, {ldb}, {beta}, _c, {ldc});
         # """.format_map(opt)
+        code += """
+            sparse_matrix_t __csrA;
+            {func}_create_csr(&__csrA, SPARSE_INDEX_BASE_ZERO, N, N, _a_rows, _a_rows + 1, _a_cols, _a_vals);
+            struct matrix_descr __descrA;
+            __descrA.type = SPARSE_MATRIX_TYPE_GENERAL;
+            __descrA.mode = SPARSE_FILL_MODE_UPPER;
+            __descrA.diag = SPARSE_DIAG_NON_UNIT;
+
+            {func}_mm({opA}, {alpha}, __csrA, __descrA, SPARSE_LAYOUT_COLUMN_MAJOR, _b, {ncols}, {ldb}, {beta}, _c, {ldc});
+        """.format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,

@@ -8,13 +8,14 @@ import subprocess
 import re
 
 from copy import deepcopy
+from functools import reduce
 from typing import List
 
 from dace import SDFG, library, nodes, transformation, dtypes, Memlet
+from dace.data import TensorIndexDense, TensorIndexCompressed, Tensor, Array
+from dace.frontend.common.op_repository import replaces
 from dace.properties import Property, ListProperty
 from dace.sdfg import SDFG, SDFGState, nodes as nd
-from dace.data import TensorIndexDense, TensorIndexCompressed, Tensor
-from dace.frontend.common.op_repository import replaces
 
 
 @library.node
@@ -37,6 +38,123 @@ class TensorIndexNotation(nodes.LibraryNode):
         super().__init__(name, *args, schedule=schedule, **kwargs)
         self.tensor_index_notation = expr
         self.extra_taco_args = extra_taco_args
+
+
+@library.register_expansion(TensorIndexNotation, "concretize")
+class ConcretizeTIN(transformation.ExpandTransformation):
+    # Define environments necessary for this expansion (optional, can be an empty list)
+    environments = []
+
+    @staticmethod
+    def expansion(
+        node: TensorIndexNotation, parent_state: SDFGState, parent_sdfg: SDFG
+    ) -> SDFG:
+        
+        # Check if it can be reduced to CSRMM
+
+        if len(parent_state.in_edges(node)) != 2:
+            raise NotImplementedError("Only supports two input tensors at the moment")
+        
+        inputs = {e.dst_conn: parent_sdfg.arrays[e.data.data] for e in parent_state.in_edges(node)}
+
+        print(f'DEBUG: {inputs = }')
+
+        keys = list(inputs.keys())
+
+        if isinstance(inputs[keys[0]], Array):
+            array = inputs[keys[0]]
+            array_name = keys[0]
+            tensor = inputs[keys[1]]
+            tensor_name = keys[1]
+        else:
+            array = inputs[keys[1]]
+            array_name = keys[1]
+            tensor = inputs[keys[0]]
+            tensor_name = keys[0]
+
+        output_array_name = parent_state.out_edges(node)[0].src_conn
+        output_array = parent_sdfg.arrays[parent_state.out_edges(node)[0].data.data]
+        
+        print(f'DEBUG: {array = }; {tensor = }')
+        
+        if not (isinstance(array, Array) and isinstance(tensor, Tensor)):
+            raise NotImplementedError("Only suports one array and one tensor")
+        
+        if not isinstance(tensor.indices[-1], TensorIndexCompressed):
+            raise NotImplementedError("Only implemented if last dimension of tensor is compressed")
+        
+        if not all([isinstance(idx, TensorIndexDense) for idx in tensor.indices[:-1]]):
+           raise NotImplementedError("Only implemented if all dimensions but last are dense")
+        
+        array_shape = list(array.shape)
+        array_reduced_dim = reduce(lambda x,y: x*y, array_shape[:-1])
+
+        tensor_shape = list(tensor.tensor_shape)
+        tensor_reduced_dim =reduce(lambda x,y: x*y, tensor_shape[:-1]) 
+
+        output_reduced_shape = [tensor_reduced_dim, array_reduced_dim]
+
+        print(f"Will view array as {array_reduced_dim} by {array_shape[-1]}")
+        print(f"Will view tensor as {tensor_reduced_dim} by {tensor_shape[-1]}")
+        print(f"output will be {', '.join([str(x) for x in output_reduced_shape])}, but viewd as {tensor_shape[:-1] + array_shape[:-1]}")
+
+        print(f"DEBUG: {tensor.members = }")
+        
+        sdfg = SDFG("CSRMM")
+        state = sdfg.add_state()
+
+        # Create the arrays
+        sdfg.add_datadesc(tensor_name, tensor.clone())
+        sdfg.add_array(array_name, array.shape, array.dtype)
+        sdfg.add_array('_output', list(reversed(output_reduced_shape)), output_array.dtype, transient=True)
+        sdfg.add_array(output_array_name, output_array.shape, output_array.dtype)
+
+        sdfg.add_view('pos', [tensor_reduced_dim + 1], int)
+        sdfg.add_view('crd', [tensor_reduced_dim + 1], int)
+        sdfg.add_view('vals', tensor.members['values'].shape, tensor.value_dtype)
+        sdfg.add_view('dense', (array_reduced_dim, array_shape[-1]), array.dtype)
+        sdfg.add_view('output', output_reduced_shape, output_array.dtype)
+
+        tensor_access = state.add_access(tensor_name)
+        array_access = state.add_access(array_name)
+        output_access = state.add_access(output_array_name)
+
+        pos = state.add_access('pos')
+        crd = state.add_access('crd')
+        vals = state.add_access('vals')
+        dense = state.add_access('dense')
+        _output = state.add_access('_output')
+        output = state.add_access('output')
+
+        idx_num = len(tensor.indices) - 1
+
+        state.add_edge(tensor_access, None, pos, 'views', Memlet.from_array(f'{tensor_name}.idx{idx_num}_pos', tensor.members[f'idx{idx_num}_pos']))
+        state.add_edge(tensor_access, None, crd, 'views', Memlet.from_array(f'{tensor_name}.idx{idx_num}_crd', tensor.members[f'idx{idx_num}_crd']))
+        state.add_edge(tensor_access, None, vals, 'views', Memlet.from_array(f'{tensor_name}.values', tensor.members['values']))
+        state.add_edge(array_access, None, dense, 'views', Memlet.from_array(array_name, array))
+
+        from dace.libraries.sparse import CSRMM
+        csrmm = CSRMM('csrmm')
+        state.add_node(csrmm)
+
+        state.add_edge(pos, None, csrmm, '_a_rows', Memlet(data='pos'))
+        state.add_edge(crd, None, csrmm, '_a_cols', Memlet(data='crd'))
+        state.add_edge(vals, None, csrmm, '_a_vals', Memlet(data='vals'))
+        state.add_edge(dense, None, csrmm, '_b', Memlet(data='dense'))
+        state.add_edge(csrmm, '_c', _output, None, Memlet(data='_output'))
+
+        from dace.libraries.standard import Transpose
+        transpose = Transpose('transpose', dtype=array.dtype)
+        state.add_node(transpose)
+
+        state.add_edge(_output, None, transpose, '_inp', Memlet(data='_output'))
+        state.add_edge(transpose, '_out', output, None, Memlet(data='output'))
+
+        state.add_edge(output, 'views', output_access, None, Memlet.from_array(output_array_name, output_array))
+
+        return sdfg
+
+        
 
 
 @library.register_expansion(TensorIndexNotation, "taco")
