@@ -109,8 +109,8 @@ class ConcretizeTIN(transformation.ExpandTransformation):
         sdfg.add_array('_output', list(reversed(output_reduced_shape)), output_array.dtype, transient=True)
         sdfg.add_array(output_array_name, output_array.shape, output_array.dtype)
 
-        sdfg.add_view('pos', [tensor_reduced_dim + 1], int)
-        sdfg.add_view('crd', [tensor_reduced_dim + 1], int)
+        sdfg.add_view('pos', [tensor_reduced_dim + 1], dtypes.int32)
+        sdfg.add_view('crd', [tensor_reduced_dim + 1], dtypes.int32)
         sdfg.add_view('vals', tensor.members['values'].shape, tensor.value_dtype)
         sdfg.add_view('dense', (array_reduced_dim, array_shape[-1]), array.dtype)
         sdfg.add_view('output', output_reduced_shape, output_array.dtype)
