@@ -389,7 +389,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Prepend incoming edges until reaching the source node
         curedge = edge
+        visited = set()
         while not isinstance(curedge.src, (nd.CodeNode, nd.AccessNode)):
+            visited.add(curedge)
             # Trace through scopes using OUT_# -> IN_#
             if isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
                 if curedge.src_conn is None:
@@ -398,10 +400,14 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 next_edge = next(e for e in state.in_edges(curedge.src) if e.dst_conn == "IN_" + curedge.src_conn[4:])
                 result.insert(0, next_edge)
                 curedge = next_edge
+                if curedge in visited:
+                    raise ValueError('Cycle encountered while reading memlet path')
 
         # Append outgoing edges until reaching the sink node
         curedge = edge
+        visited.clear()
         while not isinstance(curedge.dst, (nd.CodeNode, nd.AccessNode)):
+            visited.add(curedge)
             # Trace through scope entry using IN_# -> OUT_#
             if isinstance(curedge.dst, (nd.EntryNode, nd.ExitNode)):
                 if curedge.dst_conn is None:
@@ -411,6 +417,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 next_edge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == "OUT_" + curedge.dst_conn[3:])
                 result.append(next_edge)
                 curedge = next_edge
+                if curedge in visited:
+                    raise ValueError('Cycle encountered while reading memlet path')
 
         return result
 
@@ -434,16 +442,23 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Find tree root
         curedge = edge
+        visited = set()
         if propagate_forward:
             while (isinstance(curedge.src, nd.EntryNode) and curedge.src_conn is not None):
+                visited.add(curedge)
                 assert curedge.src_conn.startswith('OUT_')
                 cname = curedge.src_conn[4:]
                 curedge = next(e for e in state.in_edges(curedge.src) if e.dst_conn == 'IN_%s' % cname)
+                if curedge in visited:
+                    raise ValueError('Cycle encountered while reading memlet path')
         elif propagate_backward:
             while (isinstance(curedge.dst, nd.ExitNode) and curedge.dst_conn is not None):
+                visited.add(curedge)
                 assert curedge.dst_conn.startswith('IN_')
                 cname = curedge.dst_conn[3:]
                 curedge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == 'OUT_%s' % cname)
+                if curedge in visited:
+                    raise ValueError('Cycle encountered while reading memlet path')
         tree_root = mm.MemletTree(curedge, downwards=propagate_forward)
 
         # Collect children (recursively)
