@@ -156,7 +156,8 @@ class DaCeCodeGenerator(object):
         # Custom types
         datatypes = set()
         # Types of this SDFG
-        for _, arrname, arr in sdfg.arrays_recursive():
+        for sd, arrname, arr in sdfg.arrays_recursive():
+            datatypes.update(sd.extra_dtypes)
             if arr is not None:
                 datatypes.add(arr.dtype)
 

@@ -466,6 +466,8 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
+    extra_dtypes = ListProperty(dtypes.typeclass, desc='Additional data types to be added in code generation')
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
@@ -508,6 +510,7 @@ class SDFG(ControlFlowRegion):
         self.orig_sdfg = None
         self.transformation_hist = []
         self.callback_mapping = {}
+        self.extra_dtypes = []
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
 
