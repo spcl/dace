@@ -358,8 +358,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if nodedesc.lifetime == dtypes.AllocationLifetime.Global:
             self._dispatcher.defined_vars.add_global(
                 name,
-                DefinedType.Scalar,
-                nodedesc.dtype,
+                DefinedType.Pointer if isinstance(nodedesc, data.Array) else DefinedType.Scalar,
+                dtypes.pointer(nodedesc.dtype) if isinstance(nodedesc, data.Array) else nodedesc.dtype,
             )
             if not nodedesc.transient:  # Global globals are declared as extern
                 definition = 'extern ' + nodedesc.as_arg(name=name) + ';'
