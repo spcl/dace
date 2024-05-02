@@ -823,7 +823,7 @@ class TaskletTransformer(ExtNodeTransformer):
             arr_type = type(parent_array)
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
-        elif arr_type in (data.Array, data.View):
+        elif issubclass(arr_type, data.Array):
             self.sdfg.add_array(var_name, shape, dtype, strides=strides)
         elif arr_type == data.Stream:
             self.sdfg.add_stream(var_name, dtype)
@@ -3116,7 +3116,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr_type = data.Scalar
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
-        elif arr_type in (data.Array, data.View):
+        elif issubclass(arr_type, data.Array):
             if non_squeezed:
                 strides = [parent_array.strides[d] for d in non_squeezed]
             else:
