@@ -7,7 +7,6 @@ from .dtypes import *
 from .builtin_hooks import *
 
 # Python frontend
-from .frontend.python.interface import *
 from .frontend.python.wrappers import *
 from .frontend.python.ndloop import ndrange
 from .frontend.operations import reduce, elementwise
@@ -18,6 +17,7 @@ from .sdfg import SDFG, SDFGState, InterstateEdge, nodes
 from .sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
 from .memlet import Memlet
 from .symbolic import symbol
+from .frontend.python.interface import *
 
 # Run Jupyter notebook code
 from .jupyter import *
