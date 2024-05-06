@@ -74,8 +74,6 @@ jobs:
           PACE_CONSTANTS: GFS
           PACE_LOGLEVEL: Debug
         run: |
-          export FV3_DACEMODE=BuildAndRun
-          export PACE_CONSTANTS=GFS
           pytest -v -s --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
               --backend=dace:cpu --which_modules=D_SW --which_rank=0 \
               --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
@@ -89,4 +87,4 @@ jobs:
           pytest -v -s --data_path=./pyFV3/test_data/8.1.3/c12_6ranks_standard/dycore \
               --backend=dace:cpu --which_modules=Remapping --which_rank=0 \
               --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
-              ./pyFV3/fv3core/tests/savepoint
+              ./pyFV3/tests/savepoint
