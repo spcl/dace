@@ -15,7 +15,12 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def profile(repetitions: int = 100, warmup: int = 0):
+def profile(
+    repetitions: int = 100,
+    warmup: int = 0,
+    tqdm_leave: bool = True,
+    print_results: bool = True,
+):
     """
     Context manager that enables profiling of each called DaCe program. If repetitions is greater than 1, the
     program is run multiple times and the average execution time is reported.
@@ -35,6 +40,10 @@ def profile(repetitions: int = 100, warmup: int = 0):
 
     :param repetitions: The number of times to run each DaCe program.
     :param warmup: Number of additional repetitions to run the program without measuring time.
+    :param tqdm_leave: Sets the ``leave`` parameter of the ``tqdm`` progress bar (useful
+        for nested progress bars). Ignored if tqdm progress bar is not used.
+    :param print_results: Whether or not to print the median execution time after
+        all repetitions.
     :note: Running functions multiple times may affect the results of the program.
     """
     from dace.frontend.operations import CompiledSDFGProfiler  # Avoid circular import
@@ -51,7 +60,7 @@ def profile(repetitions: int = 100, warmup: int = 0):
             yield hook
             return
 
-    profiler = CompiledSDFGProfiler(repetitions, warmup)
+    profiler = CompiledSDFGProfiler(repetitions, warmup, tqdm_leave, print_results)
 
     with on_compiled_sdfg_call(context_manager=profiler):
         yield profiler
