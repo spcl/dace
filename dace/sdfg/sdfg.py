@@ -1547,14 +1547,15 @@ class SDFG(ControlFlowRegion):
 
         return None
 
-    def view(self, filename=None):
+    def view(self, filename=None, verbose=False):
         """
         View this sdfg in the system's HTML viewer
 
         :param filename: the filename to write the HTML to. If `None`, a temporary file will be created.
+        :param verbose: Be verbose, `False` by default.
         """
         from dace.cli.sdfv import view
-        view(self, filename=filename)
+        view(self, filename=filename, verbose=verbose)
 
     @staticmethod
     def _from_file(fp: BinaryIO) -> 'SDFG':
