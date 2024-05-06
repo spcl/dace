@@ -16,7 +16,7 @@ jobs:
       runs-on: ubuntu-latest
       strategy:
           matrix:
-              python-version: [3.8.12]
+              python-version: [3.11.7]
 
       steps:
       - uses: actions/checkout@v2
@@ -68,7 +68,7 @@ jobs:
               --backend=dace:cpu --which_modules=Riem_Solver3 \
               --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
               ./pyFV3/tests/savepoint
-      - name: "Regression test: D-grid shallow water lagrangian dynamics (D_SW) (on rank 0 only)"
+      - name: "Regression test: Shallow water lagrangian dynamics on D-grid (D_SW) (on rank 0 only)"
         env:
           FV3_DACEMODE: BuildAndRun
           PACE_CONSTANTS: GFS
