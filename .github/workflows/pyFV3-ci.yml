@@ -54,7 +54,7 @@ jobs:
           wget https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.D_SW.tar.gz
           tar -xzvf 8.1.3_c12_6ranks_standard.D_SW.tar.gz
           wget https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.RiemSolver3.tar.gz
-          tar -xzvf 8.1.3_c12_6ranks_standard.RiemSolverC.tar.gz
+          tar -xzvf 8.1.3_c12_6ranks_standard.RiemSolver3.tar.gz
           wget https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.Remapping.tar.gz
           tar -xzvf 8.1.3_c12_6ranks_standard.Remapping.tar.gz
           cd ../..
