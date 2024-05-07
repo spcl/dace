@@ -36,8 +36,7 @@ class BackwardResult:
     """
 
     #: mapping from names of output connectors to the connector name of the gradient for that connector.
-    required_grad_names: typing.Dict[typing.Optional[str],
-                                     typing.Optional[str]]
+    required_grad_names: typing.Dict[typing.Optional[str], typing.Optional[str]]
 
     #: mapping from names of input connectors to the connector name of the gradient for that connector.
     given_grad_names: typing.Dict[typing.Optional[str], typing.Optional[str]]
@@ -52,9 +51,7 @@ class BackwardResult:
 
     @staticmethod
     def empty():
-        return BackwardResult(given_grad_names={},
-                              required_grad_names={},
-                              zero_init={})
+        return BackwardResult(given_grad_names={}, required_grad_names={}, zero_init={})
 
 
 @dace.registry.make_registry
@@ -69,9 +66,9 @@ class BackwardImplementation(abc.ABC):
 
         It also expects a ``name`` argument that names the implementation.
     """
+
     @staticmethod
-    def backward_can_be_applied(node: nd.Node, state: SDFGState,
-                                sdfg: SDFG) -> bool:
+    def backward_can_be_applied(node: nd.Node, state: SDFGState, sdfg: SDFG) -> bool:
         """ Return whether this expansion can be applied.
 
             :param node: the candidate node.
@@ -82,11 +79,8 @@ class BackwardImplementation(abc.ABC):
 
     @staticmethod
     @abc.abstractmethod
-    def backward(
-        forward_node: nd.Node, context: BackwardContext,
-        given_gradients: typing.List[typing.Optional[str]],
-        required_gradients: typing.List[typing.Optional[str]]
-    ) -> typing.Tuple[nd.Node, BackwardResult]:
+    def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: typing.List[typing.Optional[str]],
+                 required_gradients: typing.List[typing.Optional[str]]) -> typing.Tuple[nd.Node, BackwardResult]:
         """ Add the reverse node for a node from the forward pass to the backward pass, and return it.
 
             For each input connector with name ``n`` of the forward in required_grads, the returned backward node must
@@ -110,9 +104,8 @@ class BackwardImplementation(abc.ABC):
 import dace.autodiff.implementations
 
 
-def find_backward_implementation(
-        forward_sdfg: SDFG, forward_state: SDFGState,
-        node: nd.Node) -> typing.Optional[BackwardImplementation]:
+def find_backward_implementation(forward_sdfg: SDFG, forward_state: SDFGState,
+                                 node: nd.Node) -> typing.Optional[BackwardImplementation]:
     """ Try to find the backward implementation for ``node``.
 
         :forward_sdfg: the parent sdfg of the node.
@@ -123,12 +116,10 @@ def find_backward_implementation(
     valid_impls = []
     for impl, args in BackwardImplementation.extensions().items():
         if "name" not in args:
-            raise ValueError(
-                f"Expected name in arguments of implementation {impl}.")
+            raise ValueError(f"Expected name in arguments of implementation {impl}.")
 
-        if "node_type" in args and isinstance(node, args["node_type"]) or (
-                isinstance(node, ONNXOp) and "op" in args
-                and node.schema.name == args["op"]):
+        if "node_type" in args and isinstance(node, args["node_type"]) or (isinstance(node, ONNXOp) and "op" in args
+                                                                           and node.schema.name == args["op"]):
 
             if impl.backward_can_be_applied(node, forward_state, forward_sdfg):
                 valid_impls.append((args["name"], impl))
@@ -142,15 +133,12 @@ def find_backward_implementation(
         implementation = None
 
     if implementation:
-        filtered_impls = [
-            i for name, i in valid_impls if name == implementation
-        ]
+        filtered_impls = [i for name, i in valid_impls if name == implementation]
         if filtered_impls:
             return filtered_impls[0]
 
-        log.warning(
-            f"Set backward_implementation {node.backward_implementation} on {node}, but it could not be"
-            f" applied. Falling back to default selection.")
+        log.warning(f"Set backward_implementation {node.backward_implementation} on {node}, but it could not be"
+                    f" applied. Falling back to default selection.")
     if valid_impls:
         return valid_impls[0][1]
     else:

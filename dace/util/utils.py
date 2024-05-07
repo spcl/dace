@@ -22,17 +22,13 @@ def is_desc_contiguous(desc: dt.Data) -> bool:
     if type(desc) is dt.Scalar:
         return True
     elif type(desc) is dt.Array:
-        contiguous_strides = [
-            dt._prod(desc.shape[i + 1:]) for i in range(len(desc.shape))
-        ]
+        contiguous_strides = [dt._prod(desc.shape[i + 1:]) for i in range(len(desc.shape))]
         return desc.strides == contiguous_strides
     else:
-        raise ValueError("Unsupported data descriptor type {}".format(
-            type(desc)))
+        raise ValueError("Unsupported data descriptor type {}".format(type(desc)))
 
 
-def in_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG,
-                      name: str) -> dt.Data:
+def in_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG, name: str) -> dt.Data:
     """ Find the descriptor of the data that connects to input connector `name`.
         :param node: the node.
         :param sdfg: the sdfg.
@@ -43,8 +39,7 @@ def in_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG,
     return sdfg.arrays[in_edge_with_name(node, state, name).data.data]
 
 
-def out_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG,
-                       name: str) -> dt.Data:
+def out_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG, name: str) -> dt.Data:
     """ Find the descriptor of the data that connects to output connector `name`.
         :param node: the node.
         :param sdfg: the sdfg.
@@ -55,8 +50,7 @@ def out_desc_with_name(node: nd.Node, state: SDFGState, sdfg: SDFG,
     return sdfg.arrays[out_edge_with_name(node, state, name).data.data]
 
 
-def in_edge_with_name(node: nd.Node, state: SDFGState,
-                      name: str) -> MultiConnectorEdge:
+def in_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:
     """ Find the edge that connects to input connector `name` on `node`.
         :param node: the node.
         :param state: the state.
@@ -66,14 +60,11 @@ def in_edge_with_name(node: nd.Node, state: SDFGState,
 
     cands = list(state.in_edges_by_connector(node, name))
     if len(cands) != 1:
-        raise ValueError(
-            "Expected to find exactly one edge with name '{}', found {}".
-            format(name, len(cands)))
+        raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
     return cands[0]
 
 
-def out_edge_with_name(node: nd.Node, state: SDFGState,
-                       name: str) -> MultiConnectorEdge:
+def out_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:
     """ Find the edge that connects to output connector `name` on `node`.
         :param node: the node.
         :param state: the state.
@@ -82,9 +73,7 @@ def out_edge_with_name(node: nd.Node, state: SDFGState,
      """
     cands = list(state.out_edges_by_connector(node, name))
     if len(cands) != 1:
-        raise ValueError(
-            "Expected to find exactly one edge with name '{}', found {}".
-            format(name, len(cands)))
+        raise ValueError("Expected to find exactly one edge with name '{}', found {}".format(name, len(cands)))
     return cands[0]
 
 
@@ -122,18 +111,15 @@ def vectorize_array_and_memlet(sdfg, array_name, type: dtypes.typeclass):
     #adjust the shape
     vec_width = type.veclen
     if data.shape[-1] % vec_width != 0:
-        raise ValueError("Shape of {} is not divisible by {}".format(
-            data, vec_width))
+        raise ValueError("Shape of {} is not divisible by {}".format(data, vec_width))
     data.shape = data.shape[:-1] + (data.shape[-1] // vec_width, )
 
     # #adjust all the strides
     for stride in data.strides[:-1]:
         if stride % vec_width != 0:
-            raise ValueError("Stride of {} is not divisible by {}".format(
-                data.name, vec_width))
+            raise ValueError("Stride of {} is not divisible by {}".format(data.name, vec_width))
 
-    data.strides = tuple(ti // vec_width
-                         for ti in data.strides[:-1]) + (data.strides[-1], )
+    data.strides = tuple(ti // vec_width for ti in data.strides[:-1]) + (data.strides[-1], )
 
     # Search for all the memlets
     for state in sdfg.nodes():
@@ -144,17 +130,14 @@ def vectorize_array_and_memlet(sdfg, array_name, type: dtypes.typeclass):
 
                 # Let's be conservative for the moment
                 if start != 0 or skip != 1 or (stop + 1) % vec_width != 0:
-                    raise ValueError(
-                        "Memlet {} not able to convert its range".format(
-                            edge.data))
+                    raise ValueError("Memlet {} not able to convert its range".format(edge.data))
 
                 #update the range
                 new_stop = (stop + 1) // vec_width - 1
                 edge.data.subset.ranges[-1] = (start, new_stop, skip)
 
 
-def expand_onnx_nodes(sdfg: dace.SDFG,
-                      predicate: Optional[Callable[[nd.Node], bool]] = None):
+def expand_onnx_nodes(sdfg: dace.SDFG, predicate: Optional[Callable[[nd.Node], bool]] = None):
     """ Recursively expand all onnx library nodes in the SDFG, resulting in an SDFG that can be optimized by
         dace transformations. Will also specialize dace matmuls.
 
@@ -167,8 +150,7 @@ def expand_onnx_nodes(sdfg: dace.SDFG,
     if predicate is None:
         new_predicate = lambda n: isinstance(n, (ONNXOp, blas.MatMul))
     else:
-        new_predicate = lambda n: predicate(n) and isinstance(
-            n, (ONNXOp, blas.MatMul))
+        new_predicate = lambda n: predicate(n) and isinstance(n, (ONNXOp, blas.MatMul))
 
     expand_nodes(sdfg, new_predicate)
 
@@ -190,9 +172,8 @@ def expand_nodes(sdfg: dace.SDFG, predicate: Callable[[nd.Node], bool]):
                 if predicate(node):
                     impl_name = node.expand(sdfg, state)
                     if dace.Config.get_bool('debugprint'):
-                        print(
-                            "Automatically expanded library node \"{}\" with implementation \"{}\"."
-                            .format(str(node), impl_name))
+                        print("Automatically expanded library node \"{}\" with implementation \"{}\".".format(
+                            str(node), impl_name))
                     # We made a copy of the original list of nodes, so we keep
                     # iterating even though this list has now changed
                     expanded_something = True
@@ -215,17 +196,12 @@ def auto_optimize(sdfg: dace.SDFG, cuda, simplify=False, fold_constants=True):
     log.debug("Applying automatic optimizations")
     if fold_constants:
         log.debug("Applying constant folding")
-        sdfg.apply_transformations_repeated(
-            [ConstantFolding, dataflow.RedundantSecondArray],
-            validate_all=True)
+        sdfg.apply_transformations_repeated([ConstantFolding, dataflow.RedundantSecondArray], validate_all=True)
     log.debug("Expanding ONNX nodes")
     expand_onnx_nodes(sdfg)
     log.debug("Setting fast implementations")
     # MKL is currently broken
-    set_fast_implementations(
-        sdfg,
-        dace.DeviceType.GPU if cuda else dace.DeviceType.CPU,
-        blocklist=["MKL"])
+    set_fast_implementations(sdfg, dace.DeviceType.GPU if cuda else dace.DeviceType.CPU, blocklist=["MKL"])
     if simplify:
         log.debug("Applying simplification transforms")
         # there is a nondeterministic bug in redundant array that appears if
@@ -268,8 +244,7 @@ def platform_library_name(libname: str) -> str:
     return f"{prefix}{libname}.{suffix}"
 
 
-def remove_output_connector(sdfg: dace.SDFG, state: dace.SDFGState,
-                            node: nd.Node, conn_name: str):
+def remove_output_connector(sdfg: dace.SDFG, state: dace.SDFGState, node: nd.Node, conn_name: str):
     """ Remove an output connector (only possible if the connector doesn't write to a non-transient).
 
         :param sdfg: the sdfg containing the node.
@@ -277,8 +252,7 @@ def remove_output_connector(sdfg: dace.SDFG, state: dace.SDFGState,
         :param node: the node
         :param conn_name: the name of the connector to remove
     """
-    queue = collections.deque(
-        e.dst for e in state.out_edges_by_connector(node, conn_name))
+    queue = collections.deque(e.dst for e in state.out_edges_by_connector(node, conn_name))
     while len(queue) > 0:
         current_node = queue.popleft()
 
@@ -286,9 +260,7 @@ def remove_output_connector(sdfg: dace.SDFG, state: dace.SDFGState,
         state.remove_node(current_node)
         for e in edges:
             if not sdfg.arrays[e.data.data].transient:
-                raise ValueError(
-                    "Tried to remove a connector that wrote to a non-transient"
-                )
+                raise ValueError("Tried to remove a connector that wrote to a non-transient")
 
             queue.append(e.dst)
 

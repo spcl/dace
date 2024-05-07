@@ -7,20 +7,17 @@ from dace.libraries.onnx.schema import ONNXAttributeType
 from dace.libraries.onnx.converters import ONNX_DTYPES_TO_DACE_TYPE_CLASS
 from dace.libraries.ort_api.raw_api_bindings import OrtCUDAProviderOptions, ORTCAPIInterface, ORTAPIError
 
-dt_to_onnx_string = {
-    v: k.upper()
-    for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()
-}
+dt_to_onnx_string = {v: k.upper() for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()}
 
 
 class Env:
+
     def __init__(self, api):
         self.api = api
 
     def __enter__(self):
         self.ptr = ctypes.c_void_p()
-        self.api.CreateEnv("ORT_LOGGING_LEVEL_WARNING", "ort_api",
-                           ctypes.byref(self.ptr))
+        self.api.CreateEnv("ORT_LOGGING_LEVEL_WARNING", "ort_api", ctypes.byref(self.ptr))
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -28,6 +25,7 @@ class Env:
 
 
 class MemoryInfo:
+
     def __init__(self, api, cuda: bool, pinned: bool):
         self.cuda = cuda
         self.pinned = pinned
@@ -44,14 +42,10 @@ class MemoryInfo:
     def __enter__(self):
         self.ptr = ctypes.c_void_p()
         if not self.cuda:
-            self.api.CreateCpuMemoryInfo("OrtDeviceAllocator",
-                                         "OrtMemTypeDefault",
-                                         ctypes.byref(self.ptr))
+            self.api.CreateCpuMemoryInfo("OrtDeviceAllocator", "OrtMemTypeDefault", ctypes.byref(self.ptr))
         else:
-            self.api.CreateMemoryInfo(
-                f"Cuda{'Pinned' if self.pinned else ''}", "OrtDeviceAllocator",
-                0, "OrtMemTypeCPU" if self.pinned else "OrtMemTypeDefault",
-                ctypes.byref(self.ptr))
+            self.api.CreateMemoryInfo(f"Cuda{'Pinned' if self.pinned else ''}", "OrtDeviceAllocator", 0,
+                                      "OrtMemTypeCPU" if self.pinned else "OrtMemTypeDefault", ctypes.byref(self.ptr))
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -59,6 +53,7 @@ class MemoryInfo:
 
 
 class SessionOptions:
+
     def __init__(self, api, cuda=False):
         self.api = api
         self.env = Env(api)
@@ -70,21 +65,17 @@ class SessionOptions:
 
         self.api.CreateSessionOptions(ctypes.byref(self.ptr))
 
-        self.api.dll.OrtSessionOptionsAppendExecutionProvider_CPU(
-            self.ptr, ctypes.c_int(0))
+        self.api.dll.OrtSessionOptionsAppendExecutionProvider_CPU(self.ptr, ctypes.c_int(0))
 
-        if self.cuda and hasattr(
-                self.api.dll, "OrtSessionOptionsAppendExecutionProvider_CUDA"):
-            cuda_opts = OrtCUDAProviderOptions(
-                device_id=0,
-                cudnn_conv_algo_search=self.api.get_enum_value("DEFAULT"),
-                cuda_mem_limit=np.iinfo(ctypes.c_size_t).max,
-                do_copy_in_default_stream=1,
-                has_user_compute_stream=0,
-                user_compute_stream=0)
+        if self.cuda and hasattr(self.api.dll, "OrtSessionOptionsAppendExecutionProvider_CUDA"):
+            cuda_opts = OrtCUDAProviderOptions(device_id=0,
+                                               cudnn_conv_algo_search=self.api.get_enum_value("DEFAULT"),
+                                               cuda_mem_limit=np.iinfo(ctypes.c_size_t).max,
+                                               do_copy_in_default_stream=1,
+                                               has_user_compute_stream=0,
+                                               user_compute_stream=0)
 
-            self.api.SessionOptionsAppendExecutionProvider_CUDA(
-                self.ptr, ctypes.byref(cuda_opts))
+            self.api.SessionOptionsAppendExecutionProvider_CUDA(self.ptr, ctypes.byref(cuda_opts))
 
         return self
 
@@ -94,6 +85,7 @@ class SessionOptions:
 
 
 class KernelSession:
+
     def __init__(self, api, cuda=False):
         self.api = api
         self.session_options = SessionOptions(api, cuda=cuda)
@@ -111,8 +103,8 @@ class KernelSession:
 
 
 class ExecutableKernelContext:
-    def __init__(self, api: ORTCAPIInterface, kernel_session: KernelSession,
-                 name, op_type):
+
+    def __init__(self, api: ORTCAPIInterface, kernel_session: KernelSession, name, op_type):
         self.kernel_session = kernel_session
         self.api = api
         self.n_inputs = 0
@@ -122,8 +114,7 @@ class ExecutableKernelContext:
 
     def __enter__(self):
         self.ptr = ctypes.c_void_p()
-        self.api.CreateExecutableKernelContext(self.name, self.op_type,
-                                               ctypes.byref(self.ptr))
+        self.api.CreateExecutableKernelContext(self.name, self.op_type, ctypes.byref(self.ptr))
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -131,23 +122,18 @@ class ExecutableKernelContext:
 
     def add_input(self, dtype: dace.typeclass):
         self.n_inputs += 1
-        self.api.ExecutableKernelContext_AddInput(
-            self.ptr,
-            f"ONNX_TENSOR_ELEMENT_DATA_TYPE_{dt_to_onnx_string[dtype]}")
+        self.api.ExecutableKernelContext_AddInput(self.ptr, f"ONNX_TENSOR_ELEMENT_DATA_TYPE_{dt_to_onnx_string[dtype]}")
 
     def add_output(self, dtype: dace.typeclass):
         self.n_outputs += 1
-        self.api.ExecutableKernelContext_AddOutput(
-            self.ptr,
-            f"ONNX_TENSOR_ELEMENT_DATA_TYPE_{dt_to_onnx_string[dtype]}")
+        self.api.ExecutableKernelContext_AddOutput(self.ptr,
+                                                   f"ONNX_TENSOR_ELEMENT_DATA_TYPE_{dt_to_onnx_string[dtype]}")
 
-    def add_attribute(self, attr_name, attr_value,
-                      attr_type: ONNXAttributeType):
+    def add_attribute(self, attr_name, attr_value, attr_type: ONNXAttributeType):
         if attr_value is None:
             return
         attr_name = attr_name
-        add_attr_function = getattr(
-            self.api, f"ExecutableKernelContext_AddAttribute{attr_type.name}")
+        add_attr_function = getattr(self.api, f"ExecutableKernelContext_AddAttribute{attr_type.name}")
 
         if attr_type == ONNXAttributeType.Int or attr_type == ONNXAttributeType.Float or attr_type == ONNXAttributeType.String:
             add_attr_function(self.ptr, attr_name, attr_value)
@@ -165,20 +151,19 @@ class ExecutableKernelContext:
 
             data = [data_val.item() for data_val in np.nditer(attr_value)]
             ctype = np.ctypeslib.as_ctypes_type(attr_value.dtype)
-            type_str = dt_to_onnx_string[dace.DTYPE_TO_TYPECLASS[
-                attr_value.dtype.type]]
+            type_str = dt_to_onnx_string[dace.DTYPE_TO_TYPECLASS[attr_value.dtype.type]]
             type = f"ONNX_TENSOR_ELEMENT_DATA_TYPE_{type_str}"
             p_data = (ctype * len(data))(*data)
             p_data = ctypes.cast(p_data, ctypes.c_void_p)
             shape = (ctypes.c_int64 * len(attr_value.shape))(*attr_value.shape)
-            add_attr_function(self.ptr, attr_name, p_data, len(data), shape,
-                              len(attr_value.shape), type)
+            add_attr_function(self.ptr, attr_name, p_data, len(data), shape, len(attr_value.shape), type)
 
     def try_create_kernel(self, provider_id: int) -> "ExecutableKernel":
         return ExecutableKernel(self.api, self, provider_id)
 
 
 class Value:
+
     def __init__(self, api, array: np.ndarray):
         self.api = api
         self.mem_info = MemoryInfo.for_cpu(api)
@@ -192,15 +177,13 @@ class Value:
 
         data_ptr = ctypes.c_void_p(self.array.__array_interface__['data'][0])
 
-        type_str = dt_to_onnx_string[dace.DTYPE_TO_TYPECLASS[
-            self.array.dtype.type]]
+        type_str = dt_to_onnx_string[dace.DTYPE_TO_TYPECLASS[self.array.dtype.type]]
         type = f"ONNX_TENSOR_ELEMENT_DATA_TYPE_{type_str}"
 
         with self.mem_info:
-            self.api.CreateTensorWithDataAsOrtValue(
-                self.mem_info.ptr, data_ptr,
-                ctypes.sizeof(data_ctype) * self.array.size, shape,
-                len(self.array.shape), type, ctypes.byref(self.ptr))
+            self.api.CreateTensorWithDataAsOrtValue(self.mem_info.ptr, data_ptr,
+                                                    ctypes.sizeof(data_ctype) * self.array.size, shape,
+                                                    len(self.array.shape), type, ctypes.byref(self.ptr))
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -208,8 +191,8 @@ class Value:
 
 
 class ExecutableKernel:
-    def __init__(self, api, kernel_context: ExecutableKernelContext,
-                 provider_id: int):
+
+    def __init__(self, api, kernel_context: ExecutableKernelContext, provider_id: int):
         self.api = api
         self.provider_id = provider_id
         self.kernel_context = kernel_context
@@ -217,10 +200,8 @@ class ExecutableKernel:
 
     def __enter__(self):
         self.ptr = ctypes.c_void_p()
-        self.api.CreateExecutableKernel(self.kernel_context.kernel_session.ptr,
-                                        self.kernel_context.ptr,
-                                        self.provider_id,
-                                        ctypes.byref(self.ptr))
+        self.api.CreateExecutableKernel(self.kernel_context.kernel_session.ptr, self.kernel_context.ptr,
+                                        self.provider_id, ctypes.byref(self.ptr))
         return self
 
     def add_input(self, array: np.ndarray, idx: int):
@@ -243,16 +224,14 @@ class ExecutableKernel:
 
         for i in range(self.kernel_context.n_outputs):
             result = ctypes.c_int(-1)
-            self.api.ExecutableKernel_IsOutputOnCpu(self.ptr, i,
-                                                    ctypes.byref(result))
+            self.api.ExecutableKernel_IsOutputOnCpu(self.ptr, i, ctypes.byref(result))
             if result == -1:
                 raise ORTAPIError("Could not determine output storage of op")
             outputs_on_cpu.append(bool(result))
 
         for i in range(self.kernel_context.n_inputs):
             result = ctypes.c_int(-1)
-            self.api.ExecutableKernel_IsInputOnCpu(self.ptr, i,
-                                                   ctypes.byref(result))
+            self.api.ExecutableKernel_IsInputOnCpu(self.ptr, i, ctypes.byref(result))
             if result == -1:
                 raise ORTAPIError("Could not determine output storage of op")
             inputs_on_cpu.append(bool(result))

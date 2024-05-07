@@ -23,32 +23,28 @@ from dace.util import is_cuda
 
 def init_remaining_parameters(module, fwd_arglist, input_names, output_names):
     # initialize all remaining parameters
-    remaining = set(fwd_arglist).difference(
-        itertools.chain(input_names, output_names))
+    remaining = set(fwd_arglist).difference(itertools.chain(input_names, output_names))
     constants = {}
     for name in remaining:
         # remaining arguments must be constant
         if name not in module.dace_model.clean_weights:
-            raise ValueError(
-                f"Cannot generate ctypes dispatcher: SDFG argument {name} is "
-                f"not an input or output of the PyTorch Module, and not a"
-                f" constant.")
+            raise ValueError(f"Cannot generate ctypes dispatcher: SDFG argument {name} is "
+                             f"not an input or output of the PyTorch Module, and not a"
+                             f" constant.")
         constants[name] = module.dace_model.clean_weights[name]
         if is_cuda(fwd_arglist[name].storage):
             constants[name] = constants[name].cuda()
     return constants
 
 
-def callable_for_fwd_module(module: 'dace.frontend.python.module.DaceModule',
-                            forward_compiled: CompiledSDFG):
+def callable_for_fwd_module(module: 'dace.frontend.python.module.DaceModule', forward_compiled: CompiledSDFG):
     assert forward_compiled._initialized
 
     fwd_arglist = forward_compiled.sdfg.arglist()
 
     input_names, output_names = get_arglist(module)
 
-    constants = init_remaining_parameters(module, fwd_arglist, input_names,
-                                          output_names)
+    constants = init_remaining_parameters(module, fwd_arglist, input_names, output_names)
 
     def forward(*inputs):
         kwargs = {}
@@ -60,10 +56,7 @@ def callable_for_fwd_module(module: 'dace.frontend.python.module.DaceModule',
         # initialize the outputs
         for name in output_names:
             output_desc = forward_compiled.sdfg.arrays[name]
-            kwargs[name] = create_output_array({},
-                                               output_desc,
-                                               use_torch=True,
-                                               zeros=False)
+            kwargs[name] = create_output_array({}, output_desc, use_torch=True, zeros=False)
 
         # call the SDFG
         return forward_compiled(**kwargs, **constants)
@@ -71,10 +64,8 @@ def callable_for_fwd_module(module: 'dace.frontend.python.module.DaceModule',
     return forward
 
 
-def callable_for_bwd_module(module: 'dace.frontend.python.module.DaceModule',
-                            forward_compiled: CompiledSDFG,
-                            backward_compiled: CompiledSDFG,
-                            backward_result: BackwardResult,
+def callable_for_bwd_module(module: 'dace.frontend.python.module.DaceModule', forward_compiled: CompiledSDFG,
+                            backward_compiled: CompiledSDFG, backward_result: BackwardResult,
                             forwarded_arrays: Dict[str, data.Data]):
 
     assert forward_compiled._initialized
@@ -85,15 +76,11 @@ def callable_for_bwd_module(module: 'dace.frontend.python.module.DaceModule',
     input_names, output_names = get_arglist(module)
 
     # arrays that we will forward to the backward pass using saved_for_backward
-    forwarded_io_names: List[str] = [
-        name for name in forwarded_arrays
-        if name in output_names or name in input_names
-    ]
+    forwarded_io_names: List[str] = [name for name in forwarded_arrays if name in output_names or name in input_names]
 
     # non input/output arrays that we are forwarding
     forwarded_non_io_names: List[str] = [
-        name for name in forwarded_arrays
-        if name not in output_names and name not in input_names
+        name for name in forwarded_arrays if name not in output_names and name not in input_names
     ]
 
     # for each gradient array that is required, this contains the:
@@ -109,25 +96,21 @@ def callable_for_bwd_module(module: 'dace.frontend.python.module.DaceModule',
         gradient_descriptors.append((grad_name, zero_init, desc))
 
     outputs_with_forwarded_outputs: List[str] = copy.deepcopy(output_names)
-    outputs_with_forwarded_outputs.extend(
-        n for n in forwarded_arrays
-        if n not in input_names and n not in output_names)
+    outputs_with_forwarded_outputs.extend(n for n in forwarded_arrays if n not in input_names and n not in output_names)
 
     output_gradient_names: List[str] = [
-        backward_result.given_grad_names[output]
-        if output in backward_result.given_grad_names else None
+        backward_result.given_grad_names[output] if output in backward_result.given_grad_names else None
         for output in output_names
     ]
     input_gradient_names: List[str] = [
-        backward_result.required_grad_names[input]
-        if input in backward_result.required_grad_names else None
+        backward_result.required_grad_names[input] if input in backward_result.required_grad_names else None
         for input in input_names
     ]
 
-    constants = init_remaining_parameters(module, fwd_arglist, input_names,
-                                          outputs_with_forwarded_outputs)
+    constants = init_remaining_parameters(module, fwd_arglist, input_names, outputs_with_forwarded_outputs)
 
     class DifferentiableFunction(torch.autograd.Function):
+
         @staticmethod
         def forward(ctx, *inputs):
             kwargs = {}
@@ -139,17 +122,13 @@ def callable_for_bwd_module(module: 'dace.frontend.python.module.DaceModule',
             # initialize the outputs
             for name in outputs_with_forwarded_outputs:
                 output_desc = forward_compiled.sdfg.arrays[name]
-                kwargs[name] = create_output_array({},
-                                                   output_desc,
-                                                   use_torch=True,
-                                                   zeros=False)
+                kwargs[name] = create_output_array({}, output_desc, use_torch=True, zeros=False)
 
             # call the SDFG
             outputs = forward_compiled(**kwargs, **constants)
 
             # save inputs/outputs for backward
-            ctx.save_for_backward(*(kwargs[name]
-                                    for name in forwarded_io_names))
+            ctx.save_for_backward(*(kwargs[name] for name in forwarded_io_names))
 
             # save non- input/output values for backward
             for name in forwarded_non_io_names:
@@ -171,22 +150,17 @@ def callable_for_bwd_module(module: 'dace.frontend.python.module.DaceModule',
 
             # create gradient buffers of inputs
             for grad_name, zero_init, desc in gradient_descriptors:
-                kwargs[grad_name] = create_output_array({},
-                                                        desc,
-                                                        use_torch=True,
-                                                        zeros=zero_init)
+                kwargs[grad_name] = create_output_array({}, desc, use_torch=True, zeros=zero_init)
 
             # grab gradient buffers of outputs
-            for grad_name, grad_value in zip(output_gradient_names,
-                                             grad_outputs):
+            for grad_name, grad_value in zip(output_gradient_names, grad_outputs):
                 kwargs[grad_name] = grad_value.contiguous()
 
             # call bwd sdfg
             backward_compiled(**kwargs)
 
             # return grads
-            grads = tuple(None if name is None else kwargs[name]
-                          for name in input_gradient_names)
+            grads = tuple(None if name is None else kwargs[name] for name in input_gradient_names)
             if len(grads) == 1:
                 return grads[0]
             return grads
@@ -194,8 +168,7 @@ def callable_for_bwd_module(module: 'dace.frontend.python.module.DaceModule',
     return lambda *args: DifferentiableFunction.apply(*args)
 
 
-def get_ctypes_dispatcher(module: 'dace.frontend.python.module.DaceModule',
-                          dummy_inputs) -> DaCeMLTorchFunction:
+def get_ctypes_dispatcher(module: 'dace.frontend.python.module.DaceModule', dummy_inputs) -> DaCeMLTorchFunction:
     """
     Get a torch callable for the module. This will compile the sdfg and create a
     wrapper python callable that can be used with PyTorch.
@@ -212,12 +185,9 @@ def get_ctypes_dispatcher(module: 'dace.frontend.python.module.DaceModule',
 
     if module.backward:
         # TODO we could return the inferred symbols here
-        compiled, _, compiled_bwd, _ = compile_and_init_sdfgs(
-            module, dummy_inputs)
+        compiled, _, compiled_bwd, _ = compile_and_init_sdfgs(module, dummy_inputs)
 
-        function = callable_for_bwd_module(module, compiled, compiled_bwd,
-                                           module._ad_result,
-                                           module._ad_inp_arrs)
+        function = callable_for_bwd_module(module, compiled, compiled_bwd, module._ad_result, module._ad_inp_arrs)
         compiled_sdfgs = [compiled, compiled_bwd]
     else:
         compiled, _ = compile_and_init_sdfgs(module, dummy_inputs)

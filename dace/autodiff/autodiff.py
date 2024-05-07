@@ -4,6 +4,7 @@ from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 from dace.sdfg import SDFG, SDFGState, nodes
 
+
 def add_backward_pass(
     sdfg: SDFG,
     state: SDFGState,

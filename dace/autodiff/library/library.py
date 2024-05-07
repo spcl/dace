@@ -23,10 +23,7 @@ class ParameterArray(data.Array):
     An array for which a gradient can be computed.
     """
     # since this can be None, this is not a DataProperty
-    gradient = properties.Property(dtype=str,
-                                   desc="The corresponding gradient buffer",
-                                   optional=True,
-                                   default=None)
+    gradient = properties.Property(dtype=str, desc="The corresponding gradient buffer", optional=True, default=None)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -80,13 +77,11 @@ class ParameterArray(data.Array):
 
                 for name in nested_names:
                     nested_desc = node.sdfg.arrays[name]
-                    if isinstance(nested_desc,
-                                  ParameterArray) and nested_desc.gradient:
+                    if isinstance(nested_desc, ParameterArray) and nested_desc.gradient:
                         cands.add(nested_desc.gradient)
 
         if len(cands) > 1:
-            raise ValueError("Multiple gradient buffers found for parameter " +
-                             name)
+            raise ValueError("Multiple gradient buffers found for parameter " + name)
         elif len(cands) == 1:
             # we found a name of a gradient buffer in a nested SDFG:
             # reuse the same name in the outer sdfg if there is a matching descriptor
@@ -135,22 +130,19 @@ class ParameterArray(data.Array):
 @dace.library.expansion
 class ExpandBackwardPass(pm.ExpandTransformation):
     environments = []
+
     @staticmethod
     def expansion(node: 'BackwardPass', state: SDFGState, sdfg: SDFG):
 
-        
         node.validate(sdfg, state)
 
-        in_array_name = lambda connector_name: in_edge_with_name(
-            node, state, connector_name).data.data
+        in_array_name = lambda connector_name: in_edge_with_name(node, state, connector_name).data.data
 
         array_grad_map = {}
 
         access_sets = AccessSets().apply_pass(sdfg, {})
 
-        forward_state = node.determine_forward_state(sdfg,
-                                                     state,
-                                                     access_sets=access_sets)
+        forward_state = node.determine_forward_state(sdfg, state, access_sets=access_sets)
         nsdfg = SDFG("backward_" + forward_state.label)
         nstate = nsdfg.add_state()
 
@@ -162,62 +154,51 @@ class ExpandBackwardPass(pm.ExpandTransformation):
 
         array_grad_map.update(node.required_gradients)
         array_grad_map.update((in_array_name(value_conn_name), grad_conn_name)
-                              for grad_conn_name, value_conn_name in
-                              node.given_gradients.items())
+                              for grad_conn_name, value_conn_name in node.given_gradients.items())
 
         # remove the non-grad arrays as inputs from the forward pass;
         # they were also just added for control dependencies
         for forward_non_grad_conn_name in node.given_gradients.values():
-            for edge in list(
-                    state.in_edges_by_connector(node,
-                                                forward_non_grad_conn_name)):
+            for edge in list(state.in_edges_by_connector(node, forward_non_grad_conn_name)):
                 state.remove_edge(edge)
                 if state.in_degree(edge.src) + state.out_degree(edge.src) == 0:
                     state.remove_node(edge.src)
             node.remove_in_connector(forward_non_grad_conn_name)
 
-        gen = engine.BackwardPassGenerator(
-            sdfg=sdfg,
-            state=forward_state,
-            given_gradients=given_gradients,
-            required_gradients=node.required_gradients.keys(),
-            backward_sdfg=nsdfg,
-            backward_state=nstate,
-            zero_non_transients=False,
-            array_grad_map=array_grad_map,
-            conflicted_gradient_buffers=node._conflicted_gradients)
+        gen = engine.BackwardPassGenerator(sdfg=sdfg,
+                                           state=forward_state,
+                                           given_gradients=given_gradients,
+                                           required_gradients=node.required_gradients.keys(),
+                                           backward_sdfg=nsdfg,
+                                           backward_state=nstate,
+                                           zero_non_transients=False,
+                                           array_grad_map=array_grad_map,
+                                           conflicted_gradient_buffers=node._conflicted_gradients)
 
         _, _, required_forwarded_values = gen.backward()
 
         # Add zero initialization for all gradients which we are the first to compute
         for outer_edge in state.out_edges(node):
             gradient_we_are_writing: str = outer_edge.data.data
-            is_written_with_wcr = any(
-                edge.data.wcr is not None
-                and edge.data.data == outer_edge.src_conn
-                for edge, _ in nsdfg.all_edges_recursive()
-                if isinstance(edge, graph.MultiConnectorEdge))
+            is_written_with_wcr = any(edge.data.wcr is not None and edge.data.data == outer_edge.src_conn
+                                      for edge, _ in nsdfg.all_edges_recursive()
+                                      if isinstance(edge, graph.MultiConnectorEdge))
 
-            anyone_written_before_us = autodiff_analysis.is_previously_written(
-                sdfg,
-                state,
-                node,
-                gradient_we_are_writing,
-                access_sets=access_sets)
+            anyone_written_before_us = autodiff_analysis.is_previously_written(sdfg,
+                                                                               state,
+                                                                               node,
+                                                                               gradient_we_are_writing,
+                                                                               access_sets=access_sets)
             if not anyone_written_before_us and is_written_with_wcr:
                 engine.init_grad(gradient_we_are_writing, sdfg, state)
 
         for name in required_forwarded_values:
             # get the access to the forwarded_value
             # there should only be one since we don't allow inplace modification
-            n = [
-                n for n in state.nodes()
-                if isinstance(n, nodes.AccessNode) and n.data == name
-            ]
+            n = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == name]
             if len(n) > 1:
                 raise ValueError(
-                    "Expected only one access node for forwarded value, does the graph have in-place modification?"
-                )
+                    "Expected only one access node for forwarded value, does the graph have in-place modification?")
             elif len(n) == 0:
                 n = state.add_read(name)
             else:
@@ -243,7 +224,7 @@ class BackwardPass(nodes.LibraryNode):
     For this, the names of the output connectors must match the name of the
     array for which the gradient is to be computed.
     """
-    
+
     # Global properties
     implementations = {
         "differentiate": ExpandBackwardPass,
@@ -253,9 +234,7 @@ class BackwardPass(nodes.LibraryNode):
     given_gradients = properties.DictProperty(
         key_type=str,
         value_type=str,
-        desc=
-        "Mapping between connector names of the given gradients and the names of the arrays they correspond to."
-    )
+        desc="Mapping between connector names of the given gradients and the names of the arrays they correspond to.")
     required_gradients = properties.DictProperty(
         key_type=str,
         value_type=str,
@@ -265,8 +244,7 @@ class BackwardPass(nodes.LibraryNode):
 
     _conflicted_gradients = properties.SetProperty(
         element_type=str,
-        desc=
-        "Keys from required_gradients for which the gradients are also computed elsewhere, and thus writes to the "
+        desc="Keys from required_gradients for which the gradients are also computed elsewhere, and thus writes to the "
         " buffer need to be with write-conflict-resolution. Note: this field is automatically populated upon expansion."
     )
 
@@ -279,8 +257,7 @@ class BackwardPass(nodes.LibraryNode):
         """
         Returns the names of the arrays that are passed as given gradients.
         """
-        in_array_name = lambda connector_name: in_edge_with_name(
-            self, state, connector_name).data.data
+        in_array_name = lambda connector_name: in_edge_with_name(self, state, connector_name).data.data
         return set(map(in_array_name, self.given_gradients.values()))
 
     def propagate_conflicts(self, sdfg: SDFG, state: SDFGState):
@@ -302,12 +279,10 @@ class BackwardPass(nodes.LibraryNode):
                         self._conflicted_gradients |= conflicts
                         node._conflicted_gradients |= conflicts
 
-    def determine_forward_state(
-        self,
-        sdfg: SDFG,
-        state: SDFGState,
-        access_sets: Optional[autodiff_analysis.AccessSets] = None
-    ) -> SDFGState:
+    def determine_forward_state(self,
+                                sdfg: SDFG,
+                                state: SDFGState,
+                                access_sets: Optional[autodiff_analysis.AccessSets] = None) -> SDFGState:
         """
         Determine what the forward pass state for this backward node is.
 
@@ -333,10 +308,8 @@ class BackwardPass(nodes.LibraryNode):
                 candidate_states.append(cand)
 
         if len(candidate_states) != 1:
-            raise ValueError(
-                "Could not find a state where all outputs are written. The "
-                "DaCe autodiff currently only supports differentiating single dataflow states."
-            )
+            raise ValueError("Could not find a state where all outputs are written. The "
+                             "DaCe autodiff currently only supports differentiating single dataflow states.")
         return candidate_states[0]
 
     def validate(self, sdfg, state):
@@ -344,22 +317,17 @@ class BackwardPass(nodes.LibraryNode):
         all_inputs = set(self.in_connectors)
         for given_grad, tensor_name in self.given_gradients.items():
             if given_grad not in all_inputs:
-                raise ValueError(
-                    "Given gradient '{}' is not an input of the node".format(
-                        given_grad))
+                raise ValueError("Given gradient '{}' is not an input of the node".format(given_grad))
 
             all_inputs.remove(given_grad)
             all_inputs.remove(tensor_name)
 
         if all_inputs:
-            raise ValueError(
-                "The following in connectors were not included in given_gradients: {}"
-                .format(', '.join(all_inputs)))
+            raise ValueError("The following in connectors were not included in given_gradients: {}".format(
+                ', '.join(all_inputs)))
         # check that the forward state can be determined
         self.determine_forward_state(sdfg, state)
 
         # check that we are computing at least one gradient
         if len(self.out_connectors) == 0:
-            raise ValueError(
-                "BackwardPass node '{}' does not compute any gradients".format(
-                    self.name))
+            raise ValueError("BackwardPass node '{}' does not compute any gradients".format(self.name))

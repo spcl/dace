@@ -51,39 +51,27 @@ def backward(pv: newast.ProgramVisitor,
             tensor_desc = sdfg.arrays[tensor]
             if tensor_desc.total_size == 1:
                 constant_name = sdfg._find_new_name("one")
-                desc = data.Scalar(tensor_desc.dtype,
-                                   transient=True,
-                                   storage=tensor_desc.storage)
+                desc = data.Scalar(tensor_desc.dtype, transient=True, storage=tensor_desc.storage)
                 sdfg.add_constant(constant_name, 1, dtype=desc)
                 sdfg.arrays[constant_name] = desc
                 grads.append(constant_name)
             else:
-                raise common.DaceSyntaxError(
-                    pv, None,
-                    "grad can be implicitly created only for scalar outputs")
+                raise common.DaceSyntaxError(pv, None, "grad can be implicitly created only for scalar outputs")
 
     if len(grads) != len(tensors):
-        raise common.DaceSyntaxError(
-            pv, None,
-            "grads and tensors must correspond, but they were not the same length"
-        )
+        raise common.DaceSyntaxError(pv, None, "grads and tensors must correspond, but they were not the same length")
 
     for grad, tensor in zip(grads, tensors):
         if grad not in sdfg.arrays and grad not in sdfg.constants_prop:
-            raise common.DaceSyntaxError(
-                pv, None, "Gradient {} is not an array".format(grad))
+            raise common.DaceSyntaxError(pv, None, "Gradient {} is not an array".format(grad))
         if tensor not in sdfg.arrays:
-            raise common.DaceSyntaxError(
-                pv, None, "Tensor {} is not an array".format(tensor))
+            raise common.DaceSyntaxError(pv, None, "Tensor {} is not an array".format(tensor))
 
-        grad_desc = sdfg.arrays[
-            grad] if grad in sdfg.arrays else sdfg.constants_prop[grad][0]
+        grad_desc = sdfg.arrays[grad] if grad in sdfg.arrays else sdfg.constants_prop[grad][0]
 
         if not all_equal(grad_desc.shape, sdfg.arrays[tensor].shape):
-            raise common.DaceSyntaxError(
-                pv, None,
-                "Gradient {} and tensor {} have different shapes".format(
-                    grad, tensor))
+            raise common.DaceSyntaxError(pv, None,
+                                         "Gradient {} and tensor {} have different shapes".format(grad, tensor))
 
     given_gradients = dict(zip(grads, tensors))
 
@@ -94,16 +82,15 @@ def backward(pv: newast.ProgramVisitor,
     state.add_node(bwd_node)
 
     for inp in itertools.chain(tensors, grads):
-        state.add_edge(state.add_read(inp), None, bwd_node, inp,
-                       sdfg.make_array_memlet(inp))
+        state.add_edge(state.add_read(inp), None, bwd_node, inp, sdfg.make_array_memlet(inp))
 
     # determine what grdaients to compute
     dependencies = autodiff_analysis.dependency_analysis(sdfg)
 
     to_compute = {
         dependency
-        for tensor in tensors for dependency in dependencies[tensor]
-        if isinstance(sdfg.arrays[dependency], ParameterArray)
+        for tensor in tensors
+        for dependency in dependencies[tensor] if isinstance(sdfg.arrays[dependency], ParameterArray)
     }
 
     for param in to_compute:
@@ -114,8 +101,7 @@ def backward(pv: newast.ProgramVisitor,
         bwd_node.required_gradients[param] = conn_name
         bwd_node.add_out_connector(conn_name)
 
-        state.add_edge(bwd_node, conn_name, state.add_write(grad_name), None,
-                       sdfg.make_array_memlet(grad_name))
+        state.add_edge(bwd_node, conn_name, state.add_write(grad_name), None, sdfg.make_array_memlet(grad_name))
 
 
 @op_repository.replaces_attribute('ParameterArray', 'grad')
@@ -128,13 +114,11 @@ def grad(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
     """
 
     if arr not in sdfg.arrays:
-        raise common.DaceSyntaxError(pv, None,
-                                     "Array {} is not defined".format(arr))
+        raise common.DaceSyntaxError(pv, None, "Array {} is not defined".format(arr))
     desc = sdfg.arrays[arr]
     if not isinstance(desc, ParameterArray):
         raise common.DaceSyntaxError(
-            pv, None,
-            "Called .grad on an Array that was not a Parameter. Convert it to a parameter "
+            pv, None, "Called .grad on an Array that was not a Parameter. Convert it to a parameter "
             " first using .requires_grad_()")
 
     return desc.gradient
@@ -142,29 +126,24 @@ def grad(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
 
 @op_repository.replaces_method('Array', 'requires_grad_')
 @op_repository.replaces_method('Scalar', 'requires_grad_')
-def requires_grad_(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState,
-                   self: str):
+def requires_grad_(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self: str):
     """
     Converts a array to a ParameterArray. This creates a descriptor for
     the gradient buffer for this array.
     """
 
     if self not in sdfg.arrays:
-        raise common.DaceSyntaxError(pv, None,
-                                     "Array {} is not defined".format(self))
+        raise common.DaceSyntaxError(pv, None, "Array {} is not defined".format(self))
     ParameterArray.make_parameter(sdfg, self)
 
 
 @op_repository.replaces_method('Array', 'backward')
 @op_repository.replaces_method('Scalar', 'backward')
-def backward_method(pv: newast.ProgramVisitor,
-                    sdfg: SDFG,
-                    state: SDFGState,
-                    self: str,
-                    grad: Optional[str] = None):
+def backward_method(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self: str, grad: Optional[str] = None):
     """
     Alias for ``torch.autograd.backward(self)``
     """
     backward(pv, sdfg, state, self, grad)
+
 
 dace.hooks.register_sdfg_call_hook(before_hook=lambda sdfg: expand_nodes(sdfg, lambda n: isinstance(n, BackwardPass)))

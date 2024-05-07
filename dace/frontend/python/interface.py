@@ -188,21 +188,24 @@ def method(f: F,
 
     return MethodWrapper()
 
+
 # # DaCeML decorator
 
+
 @paramdec
-def module(moduleclass,
-            dummy_inputs: Optional[Tuple[torch.Tensor]] = None, # type: ignore TODO: add torch import
-            cuda: Optional[bool] = None,
-            training: bool = False,
-            backward=False,
-            inputs_to_skip: Optional[List[str]] = None,
-            onnx_simplify: bool = True,
-            simplify: bool = True,
-            auto_optimize: bool = True,
-            sdfg_name: Optional[str] = None,
-            compile_torch_extension: bool = True,
-            debug_transients: bool = False) -> DaceModule:
+def module(
+        moduleclass,
+        dummy_inputs: Optional[Tuple[torch.Tensor]] = None,  # type: ignore TODO: add torch import
+        cuda: Optional[bool] = None,
+        training: bool = False,
+        backward=False,
+        inputs_to_skip: Optional[List[str]] = None,
+        onnx_simplify: bool = True,
+        simplify: bool = True,
+        auto_optimize: bool = True,
+        sdfg_name: Optional[str] = None,
+        compile_torch_extension: bool = True,
+        debug_transients: bool = False) -> DaceModule:
     """ Decorator to apply on a definition of a ``torch.nn.Module`` to
         convert it to a data-centric module upon construction.
 
@@ -237,20 +240,23 @@ def module(moduleclass,
         :param debug_transients: if True, the module will have all transients as outputs.
     """
     wraps(moduleclass)
+
     def _create(*args, **kwargs):
         return DaceModule(moduleclass(*args, **kwargs),
-                            dummy_inputs=dummy_inputs,
-                            cuda=cuda,
-                            training=training,
-                            backward=backward,
-                            inputs_to_skip=inputs_to_skip,
-                            onnx_simplify=onnx_simplify,
-                            simplify=simplify,
-                            auto_optimize=auto_optimize,
-                            sdfg_name=sdfg_name,
-                            compile_torch_extension=compile_torch_extension,
-                            debug_transients=debug_transients)
+                          dummy_inputs=dummy_inputs,
+                          cuda=cuda,
+                          training=training,
+                          backward=backward,
+                          inputs_to_skip=inputs_to_skip,
+                          onnx_simplify=onnx_simplify,
+                          simplify=simplify,
+                          auto_optimize=auto_optimize,
+                          sdfg_name=sdfg_name,
+                          compile_torch_extension=compile_torch_extension,
+                          debug_transients=debug_transients)
+
     return _create
+
 
 # DaCe functions
 

@@ -28,9 +28,7 @@ class PyTorch:
                     library_paths.append(path)
                     break
             else:
-                raise RuntimeError(
-                    f"Couldn't locate shared library {name} in PyTorch library paths"
-                )
+                raise RuntimeError(f"Couldn't locate shared library {name} in PyTorch library paths")
 
         return library_paths
 
@@ -57,10 +55,7 @@ class PyTorchCUDA:
 
     @staticmethod
     def cmake_libraries():
-        library_names = [
-            "c10", "torch", "torch_cpu", "torch_cuda", "torch_python",
-            "c10_cuda"
-        ]
+        library_names = ["c10", "torch", "torch_cpu", "torch_cuda", "torch_python", "c10_cuda"]
         library_paths = []
 
         for name in library_names:
@@ -70,9 +65,7 @@ class PyTorchCUDA:
                     library_paths.append(path)
                     break
             else:
-                raise RuntimeError(
-                    f"Couldn't locate shared library {name} in PyTorch library paths"
-                )
+                raise RuntimeError(f"Couldn't locate shared library {name} in PyTorch library paths")
 
         return library_paths + ["cudart"]
 

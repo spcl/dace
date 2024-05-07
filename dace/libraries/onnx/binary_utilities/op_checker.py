@@ -26,8 +26,7 @@ def check_op(sdfg, state, node, cuda=False) -> Tuple[List[bool], List[bool]]:
 
         for attribute, onnx_attribute in node.schema.attributes.items():
             if hasattr(node, attribute):
-                context.add_attribute(attribute, getattr(node, attribute),
-                                      onnx_attribute.attribute_type)
+                context.add_attribute(attribute, getattr(node, attribute), onnx_attribute.attribute_type)
 
         for edge, is_input in node.iter_edges(state):
             edge_data = edge.data.data

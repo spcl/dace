@@ -19,10 +19,7 @@ class cuDNN:
     state_fields = ["dace::cudnn::CudnnHandle *cudnn_handle;"]
     dependencies = [CUDA]
 
-    headers = {
-        'cuda': ["../include/dace_cudnn.h"],
-        'frame': ["../include/dace_cudnn.h"]
-    }
+    headers = {'cuda': ["../include/dace_cudnn.h"], 'frame': ["../include/dace_cudnn.h"]}
     init_code = """
         __state->cudnn_handle = new dace::cudnn::CudnnHandle;
     """
@@ -61,8 +58,7 @@ cudnnHandle_t &__dace_cudnn_handle = __state->cudnn_handle->Get(__dace_cuda_devi
         if 'CUDNN_HOME' in os.environ:
             prefix = dace.Config.get('compiler', 'library_prefix')
             suffix = dace.Config.get('compiler', 'library_extension')
-            libfile = os.path.join(os.environ['CUDNN_HOME'], 'lib64',
-                                   prefix + 'cudnn.' + suffix)
+            libfile = os.path.join(os.environ['CUDNN_HOME'], 'lib64', prefix + 'cudnn.' + suffix)
             if os.path.isfile(libfile):
                 return [libfile]
 

@@ -8,6 +8,7 @@ import networkx as nx
 
 from dace.sdfg import SDFG, SDFGState, nodes, utils as sdfg_utils
 from dace.transformation.passes import analysis
+
 AccessSets = Dict[SDFGState, Tuple[Set[str], Set[str]]]
 
 
@@ -34,7 +35,7 @@ def dependency_analysis(sdfg: SDFG) -> Dict[str, Set[str]]:
 
 
 def inverse_reachability(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
-    
+
     reachability = analysis.StateReachability().apply_pass(sdfg, {})
     inverse_reachability = collections.defaultdict(set)
     # iterate over cfg_ids

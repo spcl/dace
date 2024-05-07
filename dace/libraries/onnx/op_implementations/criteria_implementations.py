@@ -18,9 +18,9 @@ from dace.util import in_desc_with_name
 
 @op_implementation(op="SoftmaxCrossEntropyLoss", name="pure")
 class PureSoftmaxCrossEntropyLoss(ONNXForward):
+
     @staticmethod
-    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState,
-                               sdfg: SDFG) -> bool:
+    def forward_can_be_applied(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> bool:
         # Softmax is weird in opset 11, so let's stick to 2D for now
         if len(in_desc_with_name(node, state, sdfg, "scores").shape) != 2:
             return False
@@ -37,8 +37,7 @@ class PureSoftmaxCrossEntropyLoss(ONNXForward):
         return True
 
     @staticmethod
-    def forward(node: onnx_op.ONNXOp, state: SDFGState,
-                sdfg: SDFG) -> Union[nd.Node, SDFG]:
+    def forward(node: onnx_op.ONNXOp, state: SDFGState, sdfg: SDFG) -> Union[nd.Node, SDFG]:
 
         if node.reduction == 'mean':
 
@@ -53,8 +52,7 @@ class PureSoftmaxCrossEntropyLoss(ONNXForward):
             def reduction(x):
                 return np.sum(x)
         else:
-            raise ValueError("Unsupported reduction: {}".format(
-                node.reduction))
+            raise ValueError("Unsupported reduction: {}".format(node.reduction))
         reduction = dace.program(reduction)
 
         # this implementation doesn't use donnx.LogSoftmax, and thus saves the

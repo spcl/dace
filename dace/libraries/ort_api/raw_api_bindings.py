@@ -15,6 +15,7 @@ class ORTAPIError(RuntimeError):
 
 
 class keydefaultdict(collections.defaultdict):
+
     def __missing__(self, key):
         if self.default_factory is None:
             raise KeyError(key)
@@ -79,22 +80,14 @@ class ORTCAPIInterface:
         "OrtAllocatorType": ["OrtDeviceAllocator"],
         "OrtLoggingLevel": ["ORT_LOGGING_LEVEL_WARNING"],
         "ONNXTensorElementDataType": [
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX64",
-            "ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX128",
+            "ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED", "ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT",
+            "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8", "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8",
+            "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16", "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16",
+            "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32", "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32",
+            "ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64", "ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64",
+            "ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING", "ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL",
+            "ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16", "ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE",
+            "ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX64", "ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX128",
             "ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16"
         ],
         "OrtCudnnConvAlgoSearch": ["EXHAUSTIVE", "HEURISTIC", "DEFAULT"]
@@ -110,8 +103,7 @@ class ORTCAPIInterface:
         self.dll.GetErrorMessage.restype = ctypes.c_char_p
 
         # lazily constructed dict of function pointers
-        self._function_pointers = keydefaultdict(
-            lambda name: self._dll_get_fptr(name))
+        self._function_pointers = keydefaultdict(lambda name: self._dll_get_fptr(name))
         self.exit_lambdas = []
         return self
 
@@ -127,6 +119,7 @@ class ORTCAPIInterface:
         return func_ptr
 
     def __getattr__(self, function_name):
+
         def wrapper(*args):
             if function_name not in ORTCAPIInterface._function_signatures:
                 raise RuntimeError(
@@ -136,9 +129,7 @@ class ORTCAPIInterface:
             func_ptr = self._function_pointers[function_name]
             sig = self._function_signatures[function_name]
             if len(args) != len(sig):
-                raise TypeError(
-                    f"OrtCAPIInterface.{function_name}() expected {len(sig)} arguments, got {len(args)}."
-                )
+                raise TypeError(f"OrtCAPIInterface.{function_name}() expected {len(sig)} arguments, got {len(args)}.")
 
             converted_args = []
             for arg_typ, arg in zip(sig, args):
@@ -172,12 +163,9 @@ class ORTCAPIInterface:
     # Code generation methods
     def _get_function_def(self, header_code, function_name):
         # find the arguments of the function
-        match = re.search(rf"ORT_API2_STATUS\({function_name},(.*?)\)",
-                          header_code)
+        match = re.search(rf"ORT_API2_STATUS\({function_name},(.*?)\)", header_code)
         if match is None:
-            raise RuntimeError(
-                f"Couldn't parse ORT header file (couldn't find function {function_name} in header)"
-            )
+            raise RuntimeError(f"Couldn't parse ORT header file (couldn't find function {function_name} in header)")
 
         # remove annotations like _Inout_, _In_, etc.
         args_str = re.sub(r"_[^_\s]*?_", "", match[1].strip())
@@ -188,14 +176,11 @@ class ORTCAPIInterface:
         arg_names = []
         for arg in args_str.split(","):
             c_var_name_regex = r"[a-zA-Z_][a-zA-Z_0-9]*"
-            match = re.search(
-                fr"(?:const )?(?:enum )?\s*({c_var_name_regex})([*\s]+)({c_var_name_regex})",
-                arg.strip())
+            match = re.search(fr"(?:const )?(?:enum )?\s*({c_var_name_regex})([*\s]+)({c_var_name_regex})", arg.strip())
 
             if match is None:
-                raise RuntimeError(
-                    f"Couldn't parse ORT header file (couldn't parse argument '{arg}'"
-                    f" of function {function_name})")
+                raise RuntimeError(f"Couldn't parse ORT header file (couldn't parse argument '{arg}'"
+                                   f" of function {function_name})")
             type_name, whitespace, var_name = match[1], match[2], match[3]
             arg_names.append(var_name)
 
@@ -213,12 +198,9 @@ class ORTCAPIInterface:
                 # pointers must be converted manually
                 ctypes_type = lambda x: x
             else:
-                raise RuntimeError(
-                    f"Could not import function {function_name}: couldn't identify type {type_name}"
-                )
+                raise RuntimeError(f"Could not import function {function_name}: couldn't identify type {type_name}")
 
-            ORTCAPIInterface._function_signatures[function_name].append(
-                ctypes_type)
+            ORTCAPIInterface._function_signatures[function_name].append(ctypes_type)
 
         return f"""
         extern "C" OrtStatus* {function_name}({args_str}) {{
@@ -228,9 +210,7 @@ class ORTCAPIInterface:
 
     @staticmethod
     def _get_release_function(object_name) -> str:
-        ORTCAPIInterface._function_signatures[f"Release{object_name}"] = [
-            lambda x: x
-        ]
+        ORTCAPIInterface._function_signatures[f"Release{object_name}"] = [lambda x: x]
         return f"""
         extern "C" void Release{object_name}(Ort{object_name}* input) {{
             ort_api->Release{object_name}(input);
@@ -249,8 +229,7 @@ class ORTCAPIInterface:
     def _find_ort_header_path() -> str:
         from dace.libraries.onnx.environments.onnxruntime import ONNXRuntime
         for include_directory in ONNXRuntime.cmake_includes():
-            header_path = os.path.join(include_directory,
-                                       "onnxruntime_c_api.h")
+            header_path = os.path.join(include_directory, "onnxruntime_c_api.h")
             if os.path.exists(header_path):
                 return header_path
 
@@ -303,19 +282,17 @@ class ORTCAPIInterface:
         """
 
     def build_dll(self):
-        program = codeobject.CodeObject(
-            "onnx_c_api_bridge",
-            self._get_api_code(),
-            "cpp",
-            targets.cpu.CPUCodeGen,
-            "ONNXCAPIBridge",
-            environments={ONNXRuntime.full_class_path()})
+        program = codeobject.CodeObject("onnx_c_api_bridge",
+                                        self._get_api_code(),
+                                        "cpp",
+                                        targets.cpu.CPUCodeGen,
+                                        "ONNXCAPIBridge",
+                                        environments={ONNXRuntime.full_class_path()})
 
         BUILD_PATH = os.path.join('.dacecache', "onnx_c_api_bridge")
         compiler.generate_program_folder(None, [program], BUILD_PATH)
         compiler.configure_and_compile(BUILD_PATH)
 
-        api_dll = ctypes.CDLL(
-            compiler.get_binary_name(BUILD_PATH, "onnx_c_api_bridge"))
+        api_dll = ctypes.CDLL(compiler.get_binary_name(BUILD_PATH, "onnx_c_api_bridge"))
 
         return api_dll

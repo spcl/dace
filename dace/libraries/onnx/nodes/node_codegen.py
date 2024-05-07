@@ -24,8 +24,8 @@ from dace.util import prod
 
 log = logging.getLogger(__name__)
 
-def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute,
-                        value) -> str:
+
+def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute, value) -> str:
     """ Get the code to setup an attribute on an onnx::NodeProto
 
         :param kernel_context: the variable name of the kernel context
@@ -36,21 +36,15 @@ def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute,
 
     def assert_type(val, expected_type):
         if not isinstance(val, expected_type):
-            raise ValueError(
-                "Expected value of attribute '{}' to have type {}, got {} (type {})"
-                .format(attr.name, expected_type, val, type(val)))
+            raise ValueError("Expected value of attribute '{}' to have type {}, got {} (type {})".format(
+                attr.name, expected_type, val, type(val)))
 
     init_code = "{\n"
 
     def value_to_str(value):
-        return '"{}"'.format(
-            value) if attr.attribute_type == ONNXAttributeType.String else str(
-                value)
+        return '"{}"'.format(value) if attr.attribute_type == ONNXAttributeType.String else str(value)
 
-    if attr.attribute_type in [
-            ONNXAttributeType.Int, ONNXAttributeType.Float,
-            ONNXAttributeType.String
-    ]:
+    if attr.attribute_type in [ONNXAttributeType.Int, ONNXAttributeType.Float, ONNXAttributeType.String]:
         assert_type(value, _ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type])
 
         init_code += """
@@ -59,14 +53,9 @@ def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute,
                    kernel_context=kernel_context,
                    name=attr.name,
                    value=value_to_str(value))
-    elif attr.attribute_type in [
-            ONNXAttributeType.Ints, ONNXAttributeType.Floats,
-            ONNXAttributeType.Strings
-    ]:
+    elif attr.attribute_type in [ONNXAttributeType.Ints, ONNXAttributeType.Floats, ONNXAttributeType.Strings]:
         if not isinstance(value, Iterable):
-            raise ValueError(
-                "Expected iterable value for attribute '{}', got {}".format(
-                    attr.name, value))
+            raise ValueError("Expected iterable value for attribute '{}', got {}".format(attr.name, value))
 
         values = list(value)
         if attr.attribute_type == ONNXAttributeType.Ints:
@@ -76,20 +65,15 @@ def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute,
         elif attr.attribute_type == ONNXAttributeType.String:
             c_type = "char*"
 
-        init_code += "{type} values[{length}];\n".format(type=c_type,
-                                                         length=len(values))
+        init_code += "{type} values[{length}];\n".format(type=c_type, length=len(values))
 
         for i, values_elem in enumerate(values):
             assert_type(i, _ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type])
-            init_code += "values[{i}] = {value};\n".format(
-                i=i, value=value_to_str(values_elem))
+            init_code += "values[{i}] = {value};\n".format(i=i, value=value_to_str(values_elem))
 
         init_code += """
         __ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernelContext_AddAttribute{type_str}({kernel_context}, "{name}", values, {length}));
-        """.format(type_str=attr.attribute_type.name,
-                   kernel_context=kernel_context,
-                   name=attr.name,
-                   length=len(values))
+        """.format(type_str=attr.attribute_type.name, kernel_context=kernel_context, name=attr.name, length=len(values))
 
     elif attr.attribute_type == ONNXAttributeType.Tensor:
         assert_type(value, _ATTR_TYPE_TO_PYTHON_TYPE[attr.attribute_type])
@@ -124,31 +108,24 @@ def _gen_attr_init_code(kernel_context: str, attr: ONNXAttribute,
         for i, dim in enumerate(value.shape):
             init_code += "shape[{}] = {};\n".format(i, dim)
 
-        init_code += "{} p_data[{}];\n".format(type_to_generate.ctype,
-                                               value.size)
+        init_code += "{} p_data[{}];\n".format(type_to_generate.ctype, value.size)
         for i, data_val in enumerate(np.nditer(value)):
             data_val = data_val.item()
             init_code += "p_data[{}] = {};\n".format(i, data_val)
 
         init_code += """
         __ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernelContext_AddAttributeTensor({kernel_context}, "{name}", static_cast<void*>(p_data), {data_length}, shape, {shape_length}, element_type));
-        """.format(kernel_context=kernel_context,
-                   name=attr.name,
-                   data_length=value.size,
-                   shape_length=len(value.shape))
+        """.format(kernel_context=kernel_context, name=attr.name, data_length=value.size, shape_length=len(value.shape))
 
     else:
-        raise NotImplementedError(
-            "Got unsupported attribute type {} for '{}'".format(
-                attr.dtype, attr.name))
+        raise NotImplementedError("Got unsupported attribute type {} for '{}'".format(attr.dtype, attr.name))
     init_code += "}\n"
     return init_code
 
 
 def check_required_copies(
-    node: nd.Node, state: SDFGState, sdfg: SDFG, outputs_on_host: List[bool],
-    inputs_on_host: List[bool]
-) -> Tuple[Dict[str, dtypes.StorageType], Dict[str, dtypes.StorageType]]:
+        node: nd.Node, state: SDFGState, sdfg: SDFG, outputs_on_host: List[bool],
+        inputs_on_host: List[bool]) -> Tuple[Dict[str, dtypes.StorageType], Dict[str, dtypes.StorageType]]:
     """ Check whether copies are required for all parameters.
         :param node: the node.
         :param state: the state.
@@ -167,17 +144,14 @@ def check_required_copies(
     assert len(node.iter_inputs_in_onnx_order(state)) == len(inputs_on_host)
 
     # check outputs
-    for edge, output_on_host in zip(node.iter_outputs_in_onnx_order(state),
-                                    outputs_on_host):
+    for edge, output_on_host in zip(node.iter_outputs_in_onnx_order(state), outputs_on_host):
         # get the memlet for this output
         array = sdfg.arrays[edge.data.data]
 
         if output_on_host:
-            is_device_mismatch = not dtypes.can_access(
-                dtypes.ScheduleType.Default, array.storage)
+            is_device_mismatch = not dtypes.can_access(dtypes.ScheduleType.Default, array.storage)
         else:
-            is_device_mismatch = not dtypes.can_access(
-                dtypes.ScheduleType.GPU_Device, array.storage)
+            is_device_mismatch = not dtypes.can_access(dtypes.ScheduleType.GPU_Device, array.storage)
 
         if is_device_mismatch:
             # we need to insert a copy
@@ -185,16 +159,13 @@ def check_required_copies(
             output_copy_required[edge.src_conn] = storage
 
     # check inputs (same thing again)
-    for edge, input_on_host in zip(node.iter_inputs_in_onnx_order(state),
-                                   inputs_on_host):
+    for edge, input_on_host in zip(node.iter_inputs_in_onnx_order(state), inputs_on_host):
         array = sdfg.arrays[edge.data.data]
 
         if input_on_host:
-            is_device_mismatch = not dtypes.can_access(
-                dtypes.ScheduleType.Default, array.storage)
+            is_device_mismatch = not dtypes.can_access(dtypes.ScheduleType.Default, array.storage)
         else:
-            is_device_mismatch = not dtypes.can_access(
-                dtypes.ScheduleType.GPU_Device, array.storage)
+            is_device_mismatch = not dtypes.can_access(dtypes.ScheduleType.GPU_Device, array.storage)
 
         if is_device_mismatch:
             # we need to insert a copy
@@ -204,10 +175,8 @@ def check_required_copies(
     return input_copy_required, output_copy_required
 
 
-def emit_setup_code_for_ortvalue(node: nd.CodeNode, parameter_name: str,
-                                 edge_connector_name: str, desc: dt.Data,
-                                 required_copy: Optional[dtypes.StorageType],
-                                 is_input: bool, ort_value_name: str,
+def emit_setup_code_for_ortvalue(node: nd.CodeNode, parameter_name: str, edge_connector_name: str, desc: dt.Data,
+                                 required_copy: Optional[dtypes.StorageType], is_input: bool, ort_value_name: str,
                                  connector_dict: dict) -> str:
     """ Emit the code that creates the OrtValue for a parameter. Also set the connector types on the parent node.
 
@@ -239,9 +208,7 @@ def emit_setup_code_for_ortvalue(node: nd.CodeNode, parameter_name: str,
     elif storage is dtypes.StorageType.CPU_Pinned:
         mem_info = "__state->ort_cuda_pinned_mem_info"
     else:
-        raise ValueError(
-            "Unsupported storage type {} for input to ONNX node".format(
-                desc.storage))
+        raise ValueError("Unsupported storage type {} for input to ONNX node".format(desc.storage))
 
     if isinstance(desc, dt.Scalar):
 
@@ -260,8 +227,7 @@ def emit_setup_code_for_ortvalue(node: nd.CodeNode, parameter_name: str,
         ));
         """.format(mem_info=mem_info,
                    edge_connector_name=edge_connector_name,
-                   data_size=cppunparse.pyexpr2cpp(str(prod(
-                       desc.shape))),
+                   data_size=cppunparse.pyexpr2cpp(str(prod(desc.shape))),
                    ctype=desc.dtype.ctype,
                    type_str=typeclass_to_onnx_str(desc.dtype).upper(),
                    ort_value_name=ort_value_name,
@@ -283,8 +249,7 @@ def emit_setup_code_for_ortvalue(node: nd.CodeNode, parameter_name: str,
                    dims_size=len(desc.shape),
                    dims=", ".join(str(s) for s in desc.shape))
 
-        data = "const_cast < void * > (reinterpret_cast < const void * > ({}))".format(
-            edge_connector_name)
+        data = "const_cast < void * > (reinterpret_cast < const void * > ({}))".format(edge_connector_name)
 
         code += """
         OrtValue* {ort_value_name};
@@ -301,8 +266,7 @@ def emit_setup_code_for_ortvalue(node: nd.CodeNode, parameter_name: str,
                    data=data,
                    mem_info=mem_info,
                    parameter_name=parameter_name,
-                   data_size=cppunparse.pyexpr2cpp(str(prod(
-                       desc.shape))),
+                   data_size=cppunparse.pyexpr2cpp(str(prod(desc.shape))),
                    ctype=desc.dtype.ctype,
                    dims_size=len(desc.shape),
                    type_str=typeclass_to_onnx_str(desc.dtype).upper(),
@@ -310,24 +274,19 @@ def emit_setup_code_for_ortvalue(node: nd.CodeNode, parameter_name: str,
         connector_dict[edge_connector_name] = dace.pointer(desc.dtype)
         parent_connector_dict[parameter_name] = dace.pointer(desc.dtype)
     else:
-        raise NotImplementedError(
-            "Data-descriptor type {} not supported for ONNX nodes".format(
-                type(desc)))
+        raise NotImplementedError("Data-descriptor type {} not supported for ONNX nodes".format(type(desc)))
     return code
 
 
 def expand_node(node, state, sdfg):
     if not ONNXRuntime.is_installed():
-        raise RuntimeError(
-            "ONNXRuntime is not installed, cannot expand node "
-            "{}. You can either install ONNX Runtime as described in the "
-            "docs, or add a pure node implementation for the {} op.".format(
-                node, node.schema.name))
+        raise RuntimeError("ONNXRuntime is not installed, cannot expand node "
+                           "{}. You can either install ONNX Runtime as described in the "
+                           "docs, or add a pure node implementation for the {} op.".format(node, node.schema.name))
 
     inputs, outputs = _get_inputs_and_outputs(sdfg, state, node)
 
-    unique_id = "{}_{}_{}_{}".format(clean_onnx_name(node.name), sdfg.sdfg_id,
-                                     sdfg.node_id(state), state.node_id(node))
+    unique_id = "{}_{}_{}_{}".format(clean_onnx_name(node.name), sdfg.sdfg_id, sdfg.node_id(state), state.node_id(node))
 
     # check if ORT supports CUDA for this node using the op checker
     ###############################################################
@@ -339,32 +298,24 @@ def expand_node(node, state, sdfg):
     actual_node_schedule = node.schedule
     if node.schedule == dtypes.ScheduleType.CPU_Multicore or node.schedule == dtypes.ScheduleType.Default:
         provider_index = 0
-    elif node.schedule in dtypes.GPU_SCHEDULES + [
-            dtypes.ScheduleType.GPU_Default
-    ]:
+    elif node.schedule in dtypes.GPU_SCHEDULES + [dtypes.ScheduleType.GPU_Default]:
         provider_index = 1
         try:
             # the ith position indicates whether the ith output is in host memory
-            inputs_on_host, outputs_on_host = check_op(sdfg,
-                                                       state,
-                                                       node,
-                                                       cuda=True)
+            inputs_on_host, outputs_on_host = check_op(sdfg, state, node, cuda=True)
 
         except ORTAPIError as e:
             # fallback to CPU
-            log.warning("Falling back to CPU for node {}. Reason:\n{}".format(
-                node.name, str(e)))
+            log.warning("Falling back to CPU for node {}. Reason:\n{}".format(node.name, str(e)))
             provider_index = 0
     else:
-        raise NotImplementedError(
-            "ORT expansion for schedule '{}' is not implemented".format(
-                node.schedule))
+        raise NotImplementedError("ORT expansion for schedule '{}' is not implemented".format(node.schedule))
 
     # check if we need to insert device copies
     ##########################################
 
-    input_copy_required, output_copy_required = check_required_copies(
-        node, state, sdfg, outputs_on_host, inputs_on_host)
+    input_copy_required, output_copy_required = check_required_copies(node, state, sdfg, outputs_on_host,
+                                                                      inputs_on_host)
 
     # begin codegen
     ##########################################
@@ -394,8 +345,7 @@ def expand_node(node, state, sdfg):
                    input_output_string=input_output_string.capitalize())
 
         ort_value_name = "ort_value_{input_output_string}_{parameter_name}".format(
-            input_output_string=input_output_string,
-            parameter_name=parameter_name)
+            input_output_string=input_output_string, parameter_name=parameter_name)
 
         # We always emit a NestedSDFG, so the edge connector names must be prefixed (otherwise there would be a conflict
         # of names).
@@ -404,15 +354,14 @@ def expand_node(node, state, sdfg):
         copy_options_dict = input_copy_required if is_input else output_copy_required
         copy_options = copy_options_dict.get(parameter_name, None)
 
-        tasklet_setup_code += emit_setup_code_for_ortvalue(
-            node=node,
-            parameter_name=parameter_name,
-            edge_connector_name=edge_connector_name,
-            desc=desc,
-            required_copy=copy_options,
-            is_input=is_input,
-            ort_value_name=ort_value_name,
-            connector_dict=in_connectors if is_input else out_connectors)
+        tasklet_setup_code += emit_setup_code_for_ortvalue(node=node,
+                                                           parameter_name=parameter_name,
+                                                           edge_connector_name=edge_connector_name,
+                                                           desc=desc,
+                                                           required_copy=copy_options,
+                                                           is_input=is_input,
+                                                           ort_value_name=ort_value_name,
+                                                           connector_dict=in_connectors if is_input else out_connectors)
 
         tasklet_code += "__ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernel_Set" \
                         "{input_output_string_capital}(" \
@@ -433,9 +382,8 @@ def expand_node(node, state, sdfg):
 
     for name, attr in node.schema.attributes.items():
         if hasattr(node, name):
-            env_init_code += _gen_attr_init_code(
-                "__state->ort_context_{}".format(unique_id),
-                node.schema.attributes[name], getattr(node, name))
+            env_init_code += _gen_attr_init_code("__state->ort_context_{}".format(unique_id),
+                                                 node.schema.attributes[name], getattr(node, name))
 
     env_finalize_code = """
         __state->ort_api->ReleaseExecutableKernel(__state->ort_kernel_{});\n
@@ -443,8 +391,7 @@ def expand_node(node, state, sdfg):
     """.format(unique_id, unique_id)
 
     if logging.root.level <= logging.DEBUG:
-        tasklet_code += 'fprintf(stderr, "Launching {}\\n");\n'.format(
-            unique_id)
+        tasklet_code += 'fprintf(stderr, "Launching {}\\n");\n'.format(unique_id)
 
     tasklet_code += "__ort_check_status(__state->ort_api, __state->ort_api->ExecutableKernel_Compute(__state->ort_kernel_{}));\n".format(
         unique_id)
@@ -463,22 +410,19 @@ def expand_node(node, state, sdfg):
     env_init_code = "{\n" + env_init_code + "\n}"
     env_finalize_code = "{\n" + env_finalize_code + "\n}"
 
-    tasklet = nd.Tasklet(
-        unique_id + '_onnx_code',
-        in_connectors,
-        out_connectors,
-        tasklet_code,
-        state_fields=[
-            "OrtExecutableKernelContext *ort_context_{};\n".format(unique_id),
-            "OrtExecutableKernel *ort_kernel_{};\n".format(unique_id),
-        ],
-        code_init=env_init_code,
-        code_exit=env_finalize_code,
-        language=dace.dtypes.Language.CPP)
+    tasklet = nd.Tasklet(unique_id + '_onnx_code',
+                         in_connectors,
+                         out_connectors,
+                         tasklet_code,
+                         state_fields=[
+                             "OrtExecutableKernelContext *ort_context_{};\n".format(unique_id),
+                             "OrtExecutableKernel *ort_kernel_{};\n".format(unique_id),
+                         ],
+                         code_init=env_init_code,
+                         code_exit=env_finalize_code,
+                         language=dace.dtypes.Language.CPP)
 
-    env = ONNXRuntimeCUDA if node.schedule in dtypes.GPU_SCHEDULES + [
-        dtypes.ScheduleType.GPU_Default
-    ] else ONNXRuntime
+    env = ONNXRuntimeCUDA if node.schedule in dtypes.GPU_SCHEDULES + [dtypes.ScheduleType.GPU_Default] else ONNXRuntime
     tasklet.environments = {env.full_class_path()}
 
     nsdfg = dace.SDFG("nested_{}".format(unique_id))
@@ -498,9 +442,7 @@ def expand_node(node, state, sdfg):
         original_desc.transient = False
         nsdfg.add_datadesc(parameter_name, original_desc)
         if not (isinstance(desc, dt.Array) or isinstance(desc, dt.Scalar)):
-            raise ValueError(
-                "Unsupported data type {} connected to an ONNX tasklet".format(
-                    type(desc)))
+            raise ValueError("Unsupported data type {} connected to an ONNX tasklet".format(type(desc)))
 
         copy_options_dict = input_copy_required if is_input else output_copy_required
         # handle parameters for which no copies are required
@@ -509,12 +451,10 @@ def expand_node(node, state, sdfg):
             copied_memlet.data = parameter_name
             if is_input:
                 access = nstate.add_read(parameter_name)
-                nstate.add_edge(access, None, ntasklet, "__" + parameter_name,
-                                copied_memlet)
+                nstate.add_edge(access, None, ntasklet, "__" + parameter_name, copied_memlet)
             else:
                 access = nstate.add_write(parameter_name)
-                nstate.add_edge(ntasklet, "__" + parameter_name, access, None,
-                                copied_memlet)
+                nstate.add_edge(ntasklet, "__" + parameter_name, access, None, copied_memlet)
             continue
 
         # add the copy of the descriptor
@@ -525,9 +465,7 @@ def expand_node(node, state, sdfg):
         # there can be name conflicts here if an input is given to multiple
         # connectors. We could technically share the copied result, but it's
         # likely not worth the effort since these are just scalars.
-        copy_name = nsdfg.add_datadesc("copy_" + memlet.data,
-                                       copy_desc,
-                                       find_new_name=True)
+        copy_name = nsdfg.add_datadesc("copy_" + memlet.data, copy_desc, find_new_name=True)
 
         nmemlet = deepcopy(memlet)
         nmemlet_copy = deepcopy(memlet)
@@ -537,13 +475,11 @@ def expand_node(node, state, sdfg):
             access = nstate.add_read(parameter_name)
             access_copy = nstate.add_access(copy_name)
             nstate.add_edge(access, None, access_copy, None, nmemlet_copy)
-            nstate.add_edge(access_copy, None, ntasklet, "__" + parameter_name,
-                            nmemlet)
+            nstate.add_edge(access_copy, None, ntasklet, "__" + parameter_name, nmemlet)
         else:
             access = nstate.add_write(parameter_name)
             access_copy = nstate.add_access(copy_name)
-            nstate.add_edge(ntasklet, "__" + parameter_name, access_copy, None,
-                            nmemlet)
+            nstate.add_edge(ntasklet, "__" + parameter_name, access_copy, None, nmemlet)
             nstate.add_edge(access_copy, None, access, None, nmemlet_copy)
 
     return nsdfg

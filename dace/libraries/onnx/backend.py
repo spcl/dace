@@ -13,6 +13,7 @@ from . import onnx_importer
 
 
 class DaCeMLBackendRep(base.BackendRep):
+
     def __init__(self, model: onnx_importer.ONNXModel):
         self.model = model
 
@@ -28,6 +29,7 @@ class DaCeMLBackend(base.Backend):
     """
     ONNX Backend for daceml
     """
+
     @classmethod
     def prepare(cls, model, device='CPU', **kwargs):
         """
@@ -35,11 +37,10 @@ class DaCeMLBackend(base.Backend):
         """
         super().prepare(model, device, **kwargs)
 
-        dace_model = onnx_importer.ONNXModel(
-            'backend_model',
-            model,
-            cuda=device == 'CUDA',
-            onnx_simplify=False,
-            storage=dtypes.StorageType.Default)
+        dace_model = onnx_importer.ONNXModel('backend_model',
+                                             model,
+                                             cuda=device == 'CUDA',
+                                             onnx_simplify=False,
+                                             storage=dtypes.StorageType.Default)
 
         return DaCeMLBackendRep(dace_model)

@@ -34,8 +34,7 @@ class DLDataTypeCode(ctypes.c_uint8):
 
 
 class DLDataType(ctypes.Structure):
-    _fields_ = [('type_code', DLDataTypeCode), ('bits', ctypes.c_uint8),
-                ('lanes', ctypes.c_uint16)]
+    _fields_ = [('type_code', DLDataTypeCode), ('bits', ctypes.c_uint8), ('lanes', ctypes.c_uint16)]
 
 
 dace_to_dldtype_dict = {
@@ -57,10 +56,8 @@ class DLContext(ctypes.Structure):
 
 
 class DLTensor(ctypes.Structure):
-    _fields_ = [('data', ctypes.c_void_p), ('ctx', DLContext),
-                ('ndim', ctypes.c_int), ('dtype', DLDataType),
-                ('shape', ctypes.POINTER(ctypes.c_int64)),
-                ('strides', ctypes.POINTER(ctypes.c_int64)),
+    _fields_ = [('data', ctypes.c_void_p), ('ctx', DLContext), ('ndim', ctypes.c_int), ('dtype', DLDataType),
+                ('shape', ctypes.POINTER(ctypes.c_int64)), ('strides', ctypes.POINTER(ctypes.c_int64)),
                 ('byte_offset', ctypes.c_uint64)]
 
 
@@ -72,9 +69,7 @@ DLManagedTensorHandle = ctypes.POINTER(DLManagedTensor)
 
 DeleterFunc = ctypes.CFUNCTYPE(None, DLManagedTensorHandle)
 
-DLManagedTensor._fields_ = [("dl_tensor", DLTensor),
-                            ("manager_ctx", ctypes.c_void_p),
-                            ("deleter", DeleterFunc)]
+DLManagedTensor._fields_ = [("dl_tensor", DLTensor), ("manager_ctx", ctypes.c_void_p), ("deleter", DeleterFunc)]
 
 
 def make_manager_ctx(obj):
@@ -114,8 +109,7 @@ class PyCapsule:
     SetDestructor.restype = ctypes.c_int
 
 
-def array_to_torch_tensor(ptr: ctypes.c_void_p,
-                          desc: data.Array) -> torch.Tensor:
+def array_to_torch_tensor(ptr: ctypes.c_void_p, desc: data.Array) -> torch.Tensor:
     """ Convert a dace array descriptor to a torch tensor that points to the same data.
 
         :param ptr: the pointer the the memory of the array.
@@ -125,9 +119,7 @@ def array_to_torch_tensor(ptr: ctypes.c_void_p,
 
     if desc.storage is dtypes.StorageType.GPU_Global:
         device_type = 2
-    elif desc.storage in [
-            dtypes.StorageType.CPU_Heap, dtypes.StorageType.Default
-    ]:
+    elif desc.storage in [dtypes.StorageType.CPU_Heap, dtypes.StorageType.Default]:
         device_type = 1
     else:
         raise ValueError(f"Unsupported storage type {desc.storage}")

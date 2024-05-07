@@ -83,6 +83,7 @@ def sympy_reduce_product(x):
 
 
 class SymbolicShapeInference:
+
     def __init__(self, int_max, auto_merge, guess_output_rank, verbose):
         self.dispatcher_ = {
             'Add': self._infer_symbolic_compute_ops,
@@ -895,9 +896,7 @@ class SymbolicShapeInference:
     def _infer_BatchNormalization(self, node):
         new_shape = self._get_shape(node, 0)
         vi_y = self.known_vi_[node.output[0]]
-        vi_y.CopyFrom(
-            helper.make_tensor_value_info(node.output[0], vi_y.type.tensor_type.elem_type,
-                                          new_shape))
+        vi_y.CopyFrom(helper.make_tensor_value_info(node.output[0], vi_y.type.tensor_type.elem_type, new_shape))
 
         # this works for opsets < 14 and 14 since we check i < len(node.output) in the loop
         c_sized_input_vi = self.known_vi_[node.input[1]]

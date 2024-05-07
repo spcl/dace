@@ -14,8 +14,7 @@ from dace.libraries.ort_api import ORTCAPIInterface, KernelSession, ExecutableKe
 from dace.util import out_desc_with_name
 
 
-def evaluate_node(sdfg, state, node,
-                  inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+def evaluate_node(sdfg, state, node, inputs: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
     """ Evaluate the given node and return the outputs produced.
 
         :param sdfg: the sdfg of the node.
@@ -29,8 +28,7 @@ def evaluate_node(sdfg, state, node,
             ExecutableKernelContext(api, session, node.name, node.schema.name) as context:
         for attribute, onnx_attribute in node.schema.attributes.items():
             if hasattr(node, attribute):
-                context.add_attribute(attribute, getattr(node, attribute),
-                                      onnx_attribute.attribute_type)
+                context.add_attribute(attribute, getattr(node, attribute), onnx_attribute.attribute_type)
 
         for edge, is_input in node.iter_edges(state):
             edge_data = edge.data.data
@@ -47,14 +45,11 @@ def evaluate_node(sdfg, state, node,
             outputs = {}
 
             for i, edge in enumerate(node.iter_outputs_in_onnx_order(state)):
-                desc = copy.deepcopy(
-                    out_desc_with_name(node, state, sdfg, edge.src_conn))
+                desc = copy.deepcopy(out_desc_with_name(node, state, sdfg, edge.src_conn))
 
-                if dtypes.can_access(dtypes.ScheduleType.CPU_Multicore,
-                                     desc.storage):
+                if dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, desc.storage):
                     pass
-                elif dtypes.can_access(dtypes.ScheduleType.GPU_Default,
-                                       desc.storage):
+                elif dtypes.can_access(dtypes.ScheduleType.GPU_Default, desc.storage):
                     # outputs should be on CPU
                     desc.storage = dtypes.StorageType.CPU_Heap
                 else:

@@ -9,9 +9,7 @@ log = logging.getLogger(__name__)
 
 def is_installed():
     if 'ORT_ROOT' not in os.environ and 'ORT_RELEASE' not in os.environ:
-        log.info(
-            "This environment expects the environment variable ORT_ROOT or ORT_RELEASE to be set (see README.md)"
-        )
+        log.info("This environment expects the environment variable ORT_ROOT or ORT_RELEASE to be set (see README.md)")
         return False
     else:
         return True
@@ -23,8 +21,7 @@ def _get_src_includes():
     """
 
     ort_path = os.path.abspath(os.environ['ORT_ROOT'])
-    cand_path = os.path.join(ort_path, "build", "Linux",
-                             dace.Config.get("compiler", "build_type"))
+    cand_path = os.path.join(ort_path, "build", "Linux", dace.Config.get("compiler", "build_type"))
 
     if os.path.isdir(cand_path):
         ort_build_path = cand_path
@@ -34,10 +31,8 @@ def _get_src_includes():
     ort_dll_path = os.path.join(ort_build_path, "libonnxruntime.so")
     includes = [
         os.path.join(ort_path, "include", "onnxruntime", "core", "session"),
-        os.path.join(ort_path, "include", "onnxruntime", "core", "providers",
-                     "cpu"),
-        os.path.join(ort_path, "include", "onnxruntime", "core", "providers",
-                     "cuda")
+        os.path.join(ort_path, "include", "onnxruntime", "core", "providers", "cpu"),
+        os.path.join(ort_path, "include", "onnxruntime", "core", "providers", "cuda")
     ]
     return includes, ort_dll_path
 
@@ -85,10 +80,8 @@ class ONNXRuntime:
     cmake_link_flags = []
     cmake_files = []
     state_fields = [
-        "const OrtApi* ort_api;", "OrtEnv* ort_env;",
-        "OrtKernelSession* ort_session;",
-        "OrtSessionOptions* ort_session_options;",
-        "OrtMemoryInfo* ort_cpu_mem_info;"
+        "const OrtApi* ort_api;", "OrtEnv* ort_env;", "OrtKernelSession* ort_session;",
+        "OrtSessionOptions* ort_session_options;", "OrtMemoryInfo* ort_cpu_mem_info;"
     ]
     dependencies = []
     headers = [
@@ -138,10 +131,7 @@ class ONNXRuntimeCUDA:
     cmake_compile_flags = []
     cmake_link_flags = []
     cmake_files = []
-    state_fields = [
-        "OrtMemoryInfo* ort_cuda_mem_info;",
-        "OrtMemoryInfo* ort_cuda_pinned_mem_info;"
-    ]
+    state_fields = ["OrtMemoryInfo* ort_cuda_mem_info;", "OrtMemoryInfo* ort_cuda_pinned_mem_info;"]
     dependencies = [ONNXRuntime]
     cmake_libraries = []
     cmake_includes = []
@@ -209,18 +199,14 @@ __state->ort_api->CreateKernelSession(__state->ort_session_options, &__state->or
 
 
 def _setup_env():
-    num_concurrent_streams = Config.get("compiler", "cuda",
-                                        "max_concurrent_streams")
+    num_concurrent_streams = Config.get("compiler", "cuda", "max_concurrent_streams")
     if 'ORT_USE_STREAMS' in os.environ:
         ONNXRuntimeCUDA.use_streams = _env2bool(os.environ["ORT_USE_STREAMS"])
         if ONNXRuntimeCUDA.use_streams:
             log.info("Using streams with ORT (experimental)")
             if num_concurrent_streams == 0:
                 log.info("Setting compiler.cuda.max_concurrent_streams to 8")
-                Config.set("compiler",
-                           "cuda",
-                           "max_concurrent_streams",
-                           value=8)
+                Config.set("compiler", "cuda", "max_concurrent_streams", value=8)
             elif num_concurrent_streams == -1:
                 ONNXRuntimeCUDA.use_streams = False
     else:
@@ -228,5 +214,4 @@ def _setup_env():
             log.info("Setting compiler.cuda.max_concurrent_streams to -1")
             Config.set("compiler", "cuda", "max_concurrent_streams", value=-1)
         ONNXRuntimeCUDA.use_streams = False
-    ONNXRuntimeCUDA.max_concurrent_streams = Config.get(
-        "compiler", "cuda", "max_concurrent_streams")
+    ONNXRuntimeCUDA.max_concurrent_streams = Config.get("compiler", "cuda", "max_concurrent_streams")

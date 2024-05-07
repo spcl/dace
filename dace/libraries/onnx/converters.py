@@ -15,6 +15,7 @@ def get_proto_attr(proto, name):
         encoding issues with protobuf: python getattr calls take a string, but protobuf attributes are utf-8), and that
         the protobuf has the field. Note that the HasField checks might break in proto3, but ONNX doesn't use this yet.
     """
+
     def is_ascii(s):
         try:
             s.encode('ascii')
@@ -24,9 +25,8 @@ def get_proto_attr(proto, name):
             return True
 
     if not is_ascii(name):
-        raise ValueError(
-            "Attempted to access non-ASCII property name '{}' on protobuf {} (type {})."
-            " Please open an issue".format(name, proto, type(proto)))
+        raise ValueError("Attempted to access non-ASCII property name '{}' on protobuf {} (type {})."
+                         " Please open an issue".format(name, proto, type(proto)))
 
     return getattr(proto, name)
 
@@ -49,8 +49,7 @@ def convert_onnx_proto(attribute):
             return ONNXParameterType.Variadic
         else:
             raise NotImplementedError(
-                "Only single, optional and variadic formal parameters are supported, got"
-                .format(attribute))
+                "Only single, optional and variadic formal parameters are supported, got".format(attribute))
 
     if type(attribute) is onnx.defs.OpSchema.AttrType:
         if attribute == onnx.defs.OpSchema.AttrType.FLOAT:
@@ -74,9 +73,7 @@ def convert_onnx_proto(attribute):
     if type(attribute) is onnx.AttributeProto:
         return convert_attribute_proto(attribute)
 
-    raise NotImplementedError(
-        "No conversion implemented for {} (type {})".format(
-            attribute, type(attribute)))
+    raise NotImplementedError("No conversion implemented for {} (type {})".format(attribute, type(attribute)))
 
 
 def convert_attribute_proto(proto):
@@ -95,12 +92,9 @@ def convert_attribute_proto(proto):
             elif k == "INTS":
                 inv_map[v] = lambda attr: list(get_proto_attr(attr, "ints"))
             elif k == "STRING":
-                inv_map[v] = lambda attr: get_proto_attr(attr, "s").decode(
-                    'utf-8')
+                inv_map[v] = lambda attr: get_proto_attr(attr, "s").decode('utf-8')
             elif k == "STRINGS":
-                inv_map[v] = lambda attr: list(
-                    map(lambda x: x.decode('utf-8'),
-                        get_proto_attr(attr, "strings")))
+                inv_map[v] = lambda attr: list(map(lambda x: x.decode('utf-8'), get_proto_attr(attr, "strings")))
             elif k == "TENSOR":
                 inv_map[v] = lambda attr: to_array(get_proto_attr(attr, "t"))
 
@@ -113,10 +107,7 @@ def convert_attribute_proto(proto):
         return None
 
     if onnx_type not in inv_map:
-        type_str = {
-            v: k
-            for k, v in onnx.AttributeProto.AttributeType.items()
-        }[onnx_type]
+        type_str = {v: k for k, v in onnx.AttributeProto.AttributeType.items()}[onnx_type]
         raise NotImplementedError(
             "Only FLOAT, FLOATS, INT, INTS, STRING, STRINGS and TENSOR attributes are supported, got attribute with type {}"
             .format(type_str))
@@ -168,9 +159,10 @@ def onnx_tensor_type_to_typeclass(elem_type: int) -> typeclass:
         onnx_tensor_type_to_typeclass.inv_map = inv_map
 
     if elem_type not in inv_map:
-        raise ValueError("Got unsupported ONNX tensor type: {}".format(
-            {v: k
-             for k, v in onnx.TensorProto.DataType.items()}[elem_type]))
+        raise ValueError("Got unsupported ONNX tensor type: {}".format({
+            v: k
+            for k, v in onnx.TensorProto.DataType.items()
+        }[elem_type]))
 
     return inv_map[elem_type]
 
@@ -183,9 +175,7 @@ def typeclass_to_onnx_str(dtype: typeclass) -> str:
         inv_map = {v: k for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()}
 
     if dtype not in inv_map:
-        raise ValueError(
-            "Attempted to convert unsupported dace type to ONNX type: {}".
-            format(dtype))
+        raise ValueError("Attempted to convert unsupported dace type to ONNX type: {}".format(dtype))
 
     return inv_map[dtype]
 
@@ -207,5 +197,4 @@ def clean_onnx_name(name: str) -> str:
     # if the first character is a digit, add the ONNX_ prefix
     if re.match("^[0-9]", name):
         name = f"ONNX_{name}"
-    return name.replace(".", "DOT").replace(":", "COLON").replace(
-        "/", "SLASH").replace("-", "DASH")
+    return name.replace(".", "DOT").replace(":", "COLON").replace("/", "SLASH").replace("-", "DASH")
