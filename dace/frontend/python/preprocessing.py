@@ -761,7 +761,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                     if gkey == gslice:
                         return self._visit_potential_constant(v, True)
             elif isinstance(node.value, ast.List):  # List
-                if isinstance(node.value.elts[gslice], ast.List):
+                if isinstance(node.value.elts[gslice], List):
                     visited_list = astutils.copy_tree(node.value)
                     visited_list.elts.clear()
                     for v in node.value.elts[gslice]:
@@ -770,7 +770,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                     node.value = visited_list
                     return node
                 else:
-                    return self._visit_potential_constant(node.value.elts[gslice], True)    
+                    return self._visit_potential_constant(node.value.elts[gslice], True)
             else:
                 return self._visit_potential_constant(node, True)
 
