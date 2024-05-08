@@ -534,6 +534,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             self._preprocess_memlet_schedules_scope(state, child, pass_params)
 
     def _preprocess_memlet_schedules_state(self, state: SDFGState):
+        # Force scope tree recomputation.
+        state._scope_tree_cached = None
         self._preprocess_memlet_schedules_scope(state, state.scope_tree()[None], [])
 
     def _preprocess_memlet_schedules_sdfg(self, sdfg: SDFG):

@@ -1034,7 +1034,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     out_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
                 for e in nstate.out_edges(dnode):
-                    if e.data.data not in read_set:
+                    if not e.data._is_data_src or e.data.data not in read_set:
                         # Skip data which is not in the read and write set of the state -> there also won't be a
                         # connector
                         continue
@@ -1080,7 +1080,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
             out_candidates[cand] = (s2, nstate2, indices)
 
         # Ensure minimum elements of candidates do not begin with zero
-        def _check_cand(candidates, outer_edges):
+        def _check_cand(candidates, outer_edges, use_dst):
             for cname, (cand, nstate, indices) in candidates.items():
                 if all(me == 0 for i, me in enumerate(cand.subset.min_element()) if i in indices):
                     ignore.add(cname)
@@ -1106,7 +1106,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
                     memlet = propagation.propagate_subset(
                         [cand], nsdfg.sdfg.arrays[cname], sorted(nstate.ranges.keys()),
-                        subsets.Range([v.ndrange()[0] for _, v in sorted(nstate.ranges.items())]))
+                        subsets.Range([v.ndrange()[0] for _, v in sorted(nstate.ranges.items())]), use_dst=use_dst)
                     if all(me == 0 for i, me in enumerate(memlet.subset.min_element()) if i in indices):
                         ignore.add(cname)
                         continue
@@ -1124,8 +1124,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     ignore.add(cname)
                     continue
 
-        _check_cand(in_candidates, state.in_edges_by_connector)
-        _check_cand(out_candidates, state.out_edges_by_connector)
+        _check_cand(in_candidates, state.in_edges_by_connector, False)
+        _check_cand(out_candidates, state.out_edges_by_connector, True)
 
         # Return result, filtering out the states
         return ({
