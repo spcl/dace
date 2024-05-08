@@ -95,7 +95,7 @@ class DefinedMemlets:
             if name in scope:
                 err_str = "Shadowing variable {} from type {} to {}".format(name, scope[name], dtype)
                 if (allow_shadowing or config.Config.get_bool("compiler", "allow_shadowing")):
-                    if not allow_shadowing:
+                    if not allow_shadowing and scope[name][0] != dtype:
                         print("WARNING: " + err_str)
                 else:
                     raise cgx.CodegenError(err_str)
