@@ -1338,6 +1338,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)
+
+        # Special case for pointer use as-is
+        if is_scalar and is_pointer and list(memlet.subset.size()) == list(desc.shape):
+            expr = ptr
+
         # If there is a type mismatch, cast pointer
         expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype, is_scalar, var_type)
 
@@ -1730,6 +1735,7 @@ class CPUCodeGen(TargetCodeGenerator):
     ):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
+        self._dispatcher.declared_arrays.enter_scope(sdfg, can_access_parent=inline)
         state_dfg = sdfg.nodes()[state_id]
 
         # Quick sanity check.
@@ -1879,6 +1885,7 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream.write(nested_stream.getvalue())
 
         self._dispatcher.defined_vars.exit_scope(sdfg)
+        self._dispatcher.declared_arrays.exit_scope(sdfg)
 
     def _generate_MapEntry(
         self,
