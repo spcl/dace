@@ -752,7 +752,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 return self.generic_visit(node)
 
             # Then query for the right value
-            if isinstance(node.value, ast.Dict):
+            if isinstance(node.value, ast.Dict): # Dict
                 for k, v in zip(node.value.keys, node.value.values):
                     try:
                         gkey = astutils.evalnode(k, self.globals)
@@ -760,7 +760,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                         continue
                     if gkey == gslice:
                         return self._visit_potential_constant(v, True)
-            elif isinstance(node.value, ast.List):  # List
+            elif isinstance(node.value, (ast.List, ast.Tuple)):  # List & Tuple
+                # Loop over the list if slicing makes it a list
                 if isinstance(node.value.elts[gslice], List):
                     visited_list = astutils.copy_tree(node.value)
                     visited_list.elts.clear()
@@ -771,7 +772,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                     return node
                 else:
                     return self._visit_potential_constant(node.value.elts[gslice], True)
-            else:
+            else: # Catch-all
                 return self._visit_potential_constant(node, True)
 
         return self._visit_potential_constant(node, True)
