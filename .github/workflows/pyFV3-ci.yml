@@ -58,6 +58,7 @@ jobs:
           wget https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.Remapping.tar.gz
           tar -xzvf 8.1.3_c12_6ranks_standard.Remapping.tar.gz
           cd ../..
+      # Clean up caches between run for stale un-expanded SDFG to trip the build system (NDSL side issue)
       - name: "Regression test: Riemman Solver on D-grid (RiemSolver3)"
         env:
           FV3_DACEMODE: BuildAndRun
