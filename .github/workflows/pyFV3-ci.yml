@@ -12,7 +12,7 @@ defaults:
 
 jobs:
     build_and_validate_pyFV3:
-      # if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+      if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
       runs-on: ubuntu-latest
       strategy:
           matrix:
