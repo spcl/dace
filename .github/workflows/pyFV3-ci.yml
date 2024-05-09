@@ -68,6 +68,7 @@ jobs:
               --backend=dace:cpu --which_modules=Riem_Solver3 \
               --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
               ./pyFV3/tests/savepoint
+          rm -r ./.gt_cache_FV3_A
       - name: "Regression test: Shallow water lagrangian dynamics on D-grid (D_SW) (on rank 0 only)"
         env:
           FV3_DACEMODE: BuildAndRun
@@ -78,6 +79,7 @@ jobs:
               --backend=dace:cpu --which_modules=D_SW --which_rank=0 \
               --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
               ./pyFV3/tests/savepoint
+          rm -r ./.gt_cache_FV3_A
       - name: "Regression test: Remapping (on rank 0 only)"
         env:
           FV3_DACEMODE: BuildAndRun
@@ -88,3 +90,4 @@ jobs:
               --backend=dace:cpu --which_modules=Remapping --which_rank=0 \
               --threshold_overrides_file=./pyFV3/tests/savepoint/translate/overrides/standard.yaml \
               ./pyFV3/tests/savepoint
+          rm -r ./.gt_cache_FV3_A
