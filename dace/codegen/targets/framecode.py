@@ -10,7 +10,7 @@ import networkx as nx
 import numpy as np
 
 import dace
-from dace import config, data, dtypes
+from dace import config, data, dtypes, Memlet
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
@@ -21,7 +21,7 @@ from dace.frontend.python import wrappers
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
-from dace.transformation.passes.analysis import StateReachability
+from dace.transformation.passes.analysis import StateReachability, FindReferenceSources
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -562,6 +562,12 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         shared_transients = {}
         fsyms = {}
         reachability = StateReachability().apply_pass(top_sdfg, {})
+
+        # Gather reference sources
+        refsources_pass = FindReferenceSources()
+        refsources_pass.trace_through_code = True
+        refsources = refsources_pass.apply_pass(top_sdfg, {})
+
         access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(check_toplevel=False)
@@ -570,14 +576,20 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             #############################################
             # Look for all states in which a scope-allocated array is used in
             instances: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]] = collections.defaultdict(list)
-            array_names = sdfg.arrays.keys(
-            )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
+            array_names = sdfg.arrays.keys()
+            #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
             # Iterate topologically to get state-order
             for state in sdfg.topological_sort():
                 for node in state.data_nodes():
                     if node.data not in array_names:
                         continue
                     instances[node.data].append((state, node))
+
+                    # Find array reference sources and keep them allocated throughout the reference's usage
+                    if node.data in refsources[sdfg.sdfg_id]:
+                        for src in refsources[sdfg.sdfg_id][node.data]:
+                            if isinstance(src, Memlet):
+                                instances[src.data].append((state, nodes.AccessNode(src.data)))
 
                 # Look in the surrounding edges for usage
                 edge_fsyms: Set[str] = set()
@@ -643,7 +655,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # a kernel).
             alloc_scope: Union[nodes.EntryNode, SDFGState, SDFG] = None
             alloc_state: SDFGState = None
-            if (name in shared_transients[sdfg.sdfg_id] or desc.lifetime is dtypes.AllocationLifetime.SDFG):
+            if name in shared_transients[sdfg.sdfg_id] or desc.lifetime is dtypes.AllocationLifetime.SDFG:
                 # SDFG descriptors are allocated in the beginning of their SDFG
                 alloc_scope = sdfg
                 if first_state_instance is not None:
@@ -679,6 +691,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 for isedge in sdfg.edges():
                     if name in self.free_symbols(isedge.data):
                         multistate = True
+                        break
 
                 for state in sdfg.nodes():
                     if multistate:

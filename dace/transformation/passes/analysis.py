@@ -1,6 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-from collections import defaultdict
+from collections import defaultdict, deque
+from dataclasses import dataclass
 from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt
 from dace.sdfg.graph import Edge
@@ -543,6 +544,7 @@ class AccessRanges(ppl.Pass):
         return top_result
 
 
+@dataclass(unsafe_hash=True)
 @properties.make_properties
 class FindReferenceSources(ppl.Pass):
     """
@@ -551,6 +553,9 @@ class FindReferenceSources(ppl.Pass):
     """
 
     CATEGORY: str = 'Analysis'
+
+    trace_through_code = properties.Property(dtype=bool, default=False, desc='Trace inputs through tasklets.')
+    recursive = properties.Property(dtype=bool, default=False, desc='Add reference of reference dependencies.')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
@@ -568,6 +573,7 @@ class FindReferenceSources(ppl.Pass):
             result: Dict[str, Set[Memlet]] = defaultdict(set)
             reference_descs = set(k for k, v in sdfg.arrays.items() if isinstance(v, dt.Reference))
             for state in sdfg.states():
+                code_sources: Dict[str, Set[nd.CodeNode]] = defaultdict(set)
                 for anode in state.data_nodes():
                     if anode.data not in reference_descs:
                         continue
@@ -578,8 +584,33 @@ class FindReferenceSources(ppl.Pass):
                         if isinstance(true_src, nd.CodeNode):
                             # Code  -> Reference
                             result[anode.data].add(true_src)
+                            code_sources[anode.data].add(true_src)
                         else:
                             # Array -> Reference
                             result[anode.data].add(e.data)
+
+                # Trace back through code nodes
+                if self.trace_through_code:
+                    for name, codes in code_sources.items():
+                        sources = deque(codes)
+                        while sources:
+                            src = sources.pop()
+                            if isinstance(src, nd.CodeNode):
+                                for e in state.in_edges(src):
+                                    true_src = state.memlet_path(e)[0].src
+                                    if isinstance(true_src, nd.CodeNode):
+                                        # Keep traversing backwards
+                                        sources.append(true_src)
+                                    else:
+                                        result[name].add(e.data)
+
+            # Recursively add dependencies of reference dependencies
+            if self.recursive:
+                for k, v in result.items():
+                    for src in list(v):
+                        if not isinstance(v, nd.CodeNode) and src.data in result:
+                            v.update(result[src.data])
+
+
             top_result[sdfg.sdfg_id] = result
         return top_result
