@@ -625,6 +625,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             last_state_instance, last_node_instance = \
                 access_instances[sdfg.sdfg_id].get(name, [(None, None)])[-1]
 
+            # Determine zero initialization
+            if getattr(desc, 'setzero', False):
+                first_node_instance.setzero = True
+
             # Cases
             if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
                 # Persistent memory is allocated in initialization code and
