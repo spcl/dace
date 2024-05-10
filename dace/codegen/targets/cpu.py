@@ -192,11 +192,12 @@ class CPUCodeGen(TargetCodeGenerator):
         # write variation
         is_write = edge.src is node
 
-        # Allocate the viewed data before the view, if necessary
+        # Allocate the viewed view before the view, if necessary
         mpath = dfg.memlet_path(edge)
         viewed_dnode = mpath[-1].dst if is_write else mpath[0].src
-        self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode, viewed_dnode.desc(sdfg), global_stream,
-                                           allocation_stream)
+        if isinstance(viewed_dnode.desc(sdfg), (data.View, data.Reference)):
+            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode, viewed_dnode.desc(sdfg),
+                                               global_stream, allocation_stream)
 
         # Memlet points to view, construct mirror memlet
         memlet = edge.data
@@ -351,6 +352,11 @@ class CPUCodeGen(TargetCodeGenerator):
         declared = self._dispatcher.declared_arrays.has(name)
 
         define_var = self._dispatcher.defined_vars.add
+        if declared:
+            # Move definition to the right ancestor (from state to function, hopefully).
+            # TODO(later): Ensure same scope as the declaration scope
+            define_var = lambda *args, **kwargs: self._dispatcher.defined_vars.add(*args, ancestor=1, **kwargs)
+
         if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             define_var = self._dispatcher.defined_vars.add_global
             nodedesc = update_persistent_desc(nodedesc, sdfg)

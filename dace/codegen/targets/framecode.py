@@ -589,7 +589,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     if node.data in refsources[sdfg.sdfg_id]:
                         for src in refsources[sdfg.sdfg_id][node.data]:
                             if isinstance(src, Memlet):
-                                instances[src.data].append((state, nodes.AccessNode(src.data)))
+                                instances[src.data].append((state, node))
 
                 # Look in the surrounding edges for usage
                 edge_fsyms: Set[str] = set()
@@ -620,10 +620,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # 5. True if allocation should take place, otherwise False.
             # 6. True if deallocation should take place, otherwise False.
 
-            first_state_instance, first_node_instance = \
-                access_instances[sdfg.sdfg_id].get(name, [(None, None)])[0]
-            last_state_instance, last_node_instance = \
-                access_instances[sdfg.sdfg_id].get(name, [(None, None)])[-1]
+            # We will allocate an array when it is first used, but deallocate
+            # when its last reference was seen (e.g., if assigned to a Reference)
+            instances = access_instances[sdfg.sdfg_id].get(name, [(None, None)])
+            first_state_instance, first_node_instance = next(((s, n) for s, n in instances
+                                                              if n is not None and n.data == name),
+                                                             (None, None))
+            last_state_instance, last_node_instance = instances[-1]
 
             # Determine zero initialization
             if getattr(desc, 'setzero', False):
@@ -786,6 +789,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     # A view gets "allocated" everywhere it appears
                     if isinstance(desc, data.View):
                         for s, n in instances:
+                            if n is not None and n.data != name:
+                                continue
                             self.to_allocate[s].append((sdfg, s, n, False, True, False))
                             self.to_allocate[s].append((sdfg, s, n, False, False, True))
                         self.where_allocated[(sdfg, name)] = cursdfg
@@ -822,6 +827,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
     def allocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Dispatches allocation of all arrays in the given scope. """
+        deferred = []
         for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
             if state is not None:
                 state_id = tsdfg.node_id(state)
@@ -830,8 +836,18 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             desc = node.desc(tsdfg)
 
+            # Defer view/reference allocations until all arrays were allocated
+            if isinstance(desc, (data.View, data.Reference)):
+                deferred.append((tsdfg, state, state_id, node, declare, allocate, desc))
+                continue
+
             self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream,
                                                declare, allocate)
+
+        for tsdfg, state, state_id, node, declare, allocate, desc in deferred:
+            self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream,
+                                               declare, allocate)
+
 
     def allocate_globals(self, sdfg: SDFG, global_stream: CodeIOStream):
         """
