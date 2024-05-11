@@ -248,7 +248,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         stype = vdesc
 
                     value = f'{arrexpr}->{field_name}'
-                    if isinstance(stype.members[field_name], data.Scalar):
+                    if (isinstance(stype.members[field_name], data.Scalar) or
+                            getattr(stype.members[field_name], 'byval', False)):
                         value = '&' + value
                     if getattr(stype.members[field_name], 'byval', False):
                         # Corner case: cast by-value arrays

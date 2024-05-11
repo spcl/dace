@@ -604,7 +604,10 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar, defined_type
         elif src_dtype.base_type != dst_dtype:
             dst_expr = '(%s)(&%s)' % (src_dtype.as_arg(''), dst_expr)
         elif defined_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
-            dst_expr = '&' + dst_expr
+            if dst_expr.endswith('[0]'):  # Skip expressions of the kind "&x[0]"
+                dst_expr = dst_expr[:-3]
+            else:
+                dst_expr = '&' + dst_expr
     elif not is_scalar:
         dst_expr = '&' + dst_expr
     return dst_expr
