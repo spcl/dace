@@ -947,18 +947,22 @@ class BackwardPassGenerator:
                             # we need to modify the forward pass to store these neccessary values
                             new_store_accessnode, memlets = self._store_data(edge)
 
+                            # replicate the new store node from the forward state
+                            replicated_new_store_accessnode = copy.deepcopy(new_store_accessnode)
+                            self.backward_state.add_node(replicated_new_store_accessnode)
                             # we will traverse the memlets in the reverse order
                             # that they were added from the forward pass
                             last_memlet = memlets.pop()
+                            last_memlet = copy.deepcopy(last_memlet)
                             # add the new edge
-                            self.backward_state.add_edge(new_store_accessnode, None, backward_node,
+                            self.backward_state.add_edge(replicated_new_store_accessnode, None, backward_node,
                                                          required_inputs[edge.dst_conn], last_memlet)
 
                             # set the boolean to False to avoid adding the connection again
                             connect_replicated_node = False
 
                             # extract the edge to the new store node to get the memlet path
-                            new_edge = self.backward_state.out_edges(new_store_accessnode)
+                            new_edge = self.backward_state.out_edges(replicated_new_store_accessnode)
 
                             # sanity check: there should be only one edge on this node
                             assert len(new_edge) == 1
@@ -972,6 +976,7 @@ class BackwardPassGenerator:
                                 edge_src = e.src
                                 if isinstance(edge_src, nodes.MapEntry):
                                     memlet_data = memlets.pop()
+                                    memlet_data = copy.deepcopy(memlet_data)
                                     e.data = memlet_data
 
                             # sanity check: there should be the same number of connections
@@ -1101,7 +1106,6 @@ class BackwardPassGenerator:
         :return: the new AccessNode which contains the stored data, 
                  a list of memlets connecting an assign tasklet to this new AccessNode.
         """
-
         # get the AccessNode we want to save data from
         node: nodes.AccessNode = edge.src
 
@@ -1115,12 +1119,14 @@ class BackwardPassGenerator:
         assert len(edge_list) > 1
 
         # get the last map in the path.
+        last_edge = edge_list[-1]
         # this is the map that contains the connector for the value we want to store
-        last_map: nodes.MapEntry = edge_list[-1].src
+        last_map: nodes.MapEntry = last_edge.src
 
         # make sure this is indeed an MapEntry
         assert isinstance(last_map, nodes.MapEntry)
-        last_map_connector = edge_list[-1].src_conn
+
+        last_map_connector = last_edge.src_conn
 
         # create the assign tasklet and add it to the forward state
         assign_tasklet_node_in_connector = "in_stored_" + last_map_connector
@@ -1135,7 +1141,7 @@ class BackwardPassGenerator:
 
         # create the memlet for the assignement
         # this will be the same as the memlet going to the tasklet
-        assign_memlet_data = copy.deepcopy(edge.data)
+        assign_memlet_data = copy.deepcopy(last_edge.data)
 
         # add the new edge from the last map to the new assign tasklet
         self.forward_state.add_edge(last_map, last_map_connector, assign_tasklet_node, assign_tasklet_node_in_connector,
@@ -1168,6 +1174,7 @@ class BackwardPassGenerator:
             name=new_store_node_name,
             shape=shape_list,
             dtype=original_desc.dtype,
+            transient=True,
         )
 
         # we will save the memlets we create an return them
@@ -1184,7 +1191,7 @@ class BackwardPassGenerator:
         params_to_add = param_list
 
         # for each map in the path
-        for e in edge_list:
+        for e in reversed(edge_list):
             edge_src = e.src
             if isinstance(edge_src, nodes.MapEntry):
                 # get the corresponding map exit
