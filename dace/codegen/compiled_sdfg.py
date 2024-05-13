@@ -553,6 +553,8 @@ class CompiledSDFG(object):
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
                     pass
+                elif isinstance(arg, bool) and atype.dtype.type == np.bool_:
+                    pass
                 elif (isinstance(arg, str) or arg is None) and atype.dtype == dtypes.string:
                     if arg is None:
                         arglist[i] = ctypes.c_char_p(None)
