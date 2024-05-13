@@ -506,6 +506,11 @@ namespace dace
         }
 #endif
 
+        template <typename T>
+        DACE_HDFI DACE_CONSTEXPR std::make_unsigned_t<T> make_unsigned(const T& value) {
+            return static_cast<std::make_unsigned_t<T>>(value);
+        }
+
         template<typename T>
         DACE_HDFI T ipow(const T& a, const unsigned int& b) {
             T result = a;
