@@ -303,7 +303,6 @@ class BackwardPassGenerator:
 
         def str_to_access(data: str, source: str) -> nodes.AccessNode:
             """
-            TODO: improve doc and name
             Given a string containing the name of the accessed array, return the AccessNode in the state
             that points to this array.
             If there are multiple AccessNodes, the behaviour will depend on whether we want
@@ -325,7 +324,6 @@ class BackwardPassGenerator:
                 # There are multiple occurances of the same AccessNode
                 if source == "inputs":
                     # we return the first node with this data
-                    # TODO: do we need to do a topological sort for the nodes or are they already sorted?
                     input_node: nodes.AccessNode = matches[0]
 
                     # There should not be any incoming edges for this node since
@@ -365,7 +363,7 @@ class BackwardPassGenerator:
 
         self.sdfg = sdfg
         self.forward_state = state
-        self.strategy = "store_all"
+        self.strategy = "recompute_all"
         self.backward_sdfg = backward_sdfg
         self.backward_state: SDFGState = backward_state
 
@@ -820,7 +818,8 @@ class BackwardPassGenerator:
                backward pass.
             2. In some cases, we need to save the value of a connector to an array so that the backward pass can
                read it.
-               TODO: update doc and talk about the store all strategy
+            
+            Currently we have initial support two strategies: store-all and recompute all.
 
             :param forward_node: the forward node.
             :param backward_node: the backward node. This must not necessarily be a reversed node.
@@ -889,6 +888,7 @@ class BackwardPassGenerator:
                         # node has not been replicated yet: do it now
                         replicated_edge_src = copy.deepcopy(edge_src)
                         self.backward_state.add_node(replicated_edge_src)
+                        self.replicated_map[edge_src] = replicated_edge_src
 
                     # add the connection from the repliacted node to the tasklet
                     new_edge_data = copy.deepcopy(edge.data)
@@ -910,7 +910,7 @@ class BackwardPassGenerator:
                     assert isinstance(original_accessnode, nodes.AccessNode)
 
                     # check if this AccessNode has been overwritten
-                    overwritten = self._check_node_overwrite(edge_src)
+                    overwritten, recomputable = self._check_node_overwrite(edge_src)
                     if overwritten:
                         # we lost values that are necessary for the backward pass
                         if self.strategy == "store_all":
@@ -919,7 +919,8 @@ class BackwardPassGenerator:
                             self._connect_temporary_to_accessnode(new_store_accessnode, replicated_edge_src,
                                                                   memlet_list, sink_edge)
                         elif self.strategy == "recompute_all":
-                            pass
+                            replicate_node = False
+                            connect_replicated_node = False
                     else:
                         # the data has not been overwritten
                         # we just need to connect the original AccessNode in the backward state
@@ -940,7 +941,7 @@ class BackwardPassGenerator:
                 else:
                     # base-case: we have reached a base level AccessNode.
                     # check if this AccessNode has been overwritten
-                    overwritten = self._check_node_overwrite(edge_src)
+                    overwritten, recomputable = self._check_node_overwrite(edge_src)
                     if overwritten:
                         # we lost values that are necessary for the backward pass
                         if self.strategy == "store_all":
@@ -983,6 +984,19 @@ class BackwardPassGenerator:
                             assert len(memlets) == 0
 
                         elif self.strategy == "recompute_all":
+                            replicate_node = False
+                            connect_replicated_node = False
+                            # if we can recompute this value
+                            if recomputable:
+                                # call a function that inserts a recomputation nested-sdfg into the map nest
+                                self._recompute_data(edge)
+                                connector_to_clean = required_inputs[edge.dst_conn]
+                                self._clean_after_recomputation(edge, connector_to_clean)
+                            else:
+                                # throw an exception in case a value can't be recomputed and the recompute all strategy was used
+                                raise AutoDiffException(
+                                    f"Attempting to recompute the node {edge_src.data}, but this node is not recomputable."
+                                )
                             pass
                     else:
                         # if not, nothing to do
@@ -1015,6 +1029,7 @@ class BackwardPassGenerator:
                     # node has not been replicated yet: do it now
                     replicated_edge_src = copy.deepcopy(edge_src)
                     self.backward_state.add_node(replicated_edge_src)
+                    self.replicated_map[edge_src] = replicated_edge_src
 
             if connect_replicated_node:
                 new_edge_data = copy.deepcopy(edge.data)
@@ -1094,6 +1109,271 @@ class BackwardPassGenerator:
         memlet_data = Memlet.from_array(source_node.data, self.sdfg.arrays[source_node.data])
         # add the final connection to the source node
         self.backward_state.add_edge(source_node, None, child_node, child_node_in_connector, memlet_data)
+
+    def _clean_after_recomputation(self, edge: dgraph.MultiConnectorEdge, connector_to_clean: str):
+        """
+        In the case of the recomputation of a base-level AccessNode, 
+        we will only know whether this node can be recomputed after adding a path from the tasklet that required the computation
+        to the maps serrounding this tasklet.
+        If recomputation is applied, this path of memlets is no longer required and needs to be removed.
+        :param edge: the edge leading to the first backward map containing the first out edge in the path to clean
+        :param connector_to_clean: name of the out connector of the first out edge in the path to clean
+        """
+        # get the map in the backward pass
+        bwd_map = self._find_backward_entry_node_for_map_entry(edge.dst)
+        assert isinstance(bwd_map, nodes.MapEntry)
+
+        # find the starting edge of the path we want to delete
+        out_edges = self.backward_state.out_edges(bwd_map)
+        starting_edge = None
+        for e in out_edges:
+            if e.dst_conn == connector_to_clean:
+                starting_edge = e
+                break
+
+        assert starting_edge
+        starting_edge.src.remove_in_connector(connector_to_clean)
+
+        # clean up
+        while starting_edge:
+            next_edge = None
+            # get the next edge
+            next_map_edges = self.backward_state.out_edges(starting_edge.dst)
+            for e in next_map_edges:
+                if isinstance(e.dst, nodes.MapEntry):
+                    if e.dst_conn == connector_to_clean:
+                        next_edge = e
+                        break
+                else:
+                    if e.src_conn == connector_to_clean.replace("IN", "OUT"):
+                        self.backward_state.remove_edge(e)
+                        e.src.remove_out_connector(connector_to_clean.replace("IN", "OUT"))
+                        break
+
+            starting_edge.src.remove_out_connector(starting_edge.src_conn)
+            starting_edge.dst.remove_in_connector(starting_edge.dst_conn)
+            self.backward_state.remove_edge(starting_edge)
+
+            starting_edge = next_edge
+
+    def _recompute_data(self, edge: dgraph.MultiConnectorEdge):
+        """
+        Given an edge leading from a base-level AccessNode to a map in the forward state,
+        add an sdfg to recompute the values of this node to the backward state.
+        :param edge: the edge connecting the AccessNode to recompute data from to a map node.
+        """
+        replicate_nodes = {}
+        # treat the case where the recomputation can be merged into the gradient maps
+        # get the subgraph neccessary to calculate the AccessNode itself
+        subgraph: dstate.StateSubgraphView = self._get_computation_subgraph(edge.src)
+
+        # check if this is the case
+        mergeable = self._check_if_recomputation_is_mergeable(edge, subgraph)
+        if mergeable:
+            # get the maps from the backward pass to modify
+            edge_list = self.forward_state.memlet_path(edge)
+            backward_maps = []
+            for e in edge_list:
+                if isinstance(e.src, nodes.MapEntry):
+                    bwd_map_entry = self._find_backward_entry_node_for_map_entry(e.src)
+                    backward_maps.append(bwd_map_entry)
+
+            map_index = 0
+            # for each map in the forward pass
+            for nd in subgraph.nodes():
+                if isinstance(nd, nodes.MapEntry):
+                    # get the equivelent node in the backward pass
+                    fwd_map_entry: nodes.MapEntry = nd
+                    bwd_map_entry: nodes.MapEntry = backward_maps[map_index]
+
+                    # add all of the connectors of the forward map to the backward map
+                    for connector in fwd_map_entry.in_connectors:
+                        bwd_map_entry.add_in_connector(f"{connector}_recomputation")
+
+                    for connector in fwd_map_entry.out_connectors:
+                        bwd_map_entry.add_out_connector(f"{connector}_recomputation")
+
+                    # replicate and add all of the edges coming into this map
+                    in_edges = self.forward_state.in_edges(fwd_map_entry)
+                    for e in in_edges:
+                        # replicate the edge src
+                        replicated_edge_src_dst_con = f"{e.dst_conn}_recomputation" if e.dst_conn else None
+                        replicated_edge_src_src_con = f"{e.src_conn}_recomputation" if e.src_conn else None
+                        if map_index == 0:
+                            # and the nodes they are coming from if necessary
+                            if e.src in replicate_nodes:
+                                replicated_edge_src = replicate_nodes[e.src]
+                            else:
+                                # node has not been replicated yet: do it now
+                                replicated_edge_src = copy.deepcopy(e.src)
+                                self.backward_state.add_node(replicated_edge_src)
+                                replicate_nodes[e.src] = replicated_edge_src
+                        else:
+                            replicated_edge_src = backward_maps[map_index - 1]
+
+                        memlet_data = copy.deepcopy(e.data)
+                        # add a new edge between the backward map and the new replicated node
+                        self.backward_state.add_edge(replicated_edge_src, replicated_edge_src_src_con, bwd_map_entry,
+                                                     replicated_edge_src_dst_con, memlet_data)
+                    map_index += 1
+
+            next_level = []
+            node = fwd_map_entry
+            node_bwd = bwd_map_entry
+            # we go level by level through the content of the map nest
+            while node:
+                # we start with all the edges coming out of the last map
+                node_out_edges = self.forward_state.out_edges(node)
+                for e in node_out_edges:
+                    # we will reuse the same memlet for the recomputation
+                    memlet_data = copy.deepcopy(e.data)
+                    # rename the connectors to reflect that this was added for recomputation
+                    replicated_edge_src_dst_con = f"{e.dst_conn}_recomputation" if e.dst_conn else None
+                    replicated_edge_src_src_con = f"{e.src_conn}_recomputation" if e.src_conn else None
+                    if isinstance(e.dst, nodes.MapExit):
+                        # if we got to the map exit,
+                        # we need to connect the output of the recomputation
+                        # to the tasklet that required the values in the backward pass
+
+                        # first, we get the target taskelt and its connector
+                        tasklet = edge_list[-1].dst
+                        tasklet_conn = edge_list[-1].dst_conn
+                        assert isinstance(tasklet, nodes.Tasklet)
+
+                        # get the replicated tasklet from the backward pass
+                        assert tasklet in self.reverse_map
+                        bwd_tasklet = self.reverse_map[tasklet]
+
+                        # we want to first remove the last assign tasklet
+                        # this was previously added to assign the calculated value to the correct position in the array
+                        # since we will use the value directly, we will remove the assign tasklet
+                        assign_tsaklet = node_bwd
+
+                        # sanity check
+                        assert isinstance(assign_tsaklet, nodes.Tasklet)
+                        assert assign_tsaklet in self.backward_state.nodes()
+                        assert "assign" in assign_tsaklet.name
+
+                        # get the edge from the AccessNode coming to the assign tasklet
+                        # this will be the edge that is connected to the reversed tasklet
+                        assign_tasklet_in_edge = self.backward_state.in_edges(assign_tsaklet)
+                        assert len(assign_tasklet_in_edge) == 1
+                        assign_tasklet_in_edge = assign_tasklet_in_edge[0]
+                        self.backward_state.remove_edge(assign_tasklet_in_edge)
+
+                        # remove the tasklet
+                        self.backward_state.remove_node(assign_tsaklet)
+
+                        # add the new edge between the final AccessNode and the reversed tasklet
+                        last_accessnode = assign_tasklet_in_edge.src
+                        assert isinstance(last_accessnode, nodes.AccessNode)
+
+                        memlet_data = assign_tasklet_in_edge.data
+                        assert tasklet_conn in bwd_tasklet.in_connectors
+                        self.backward_state.add_edge(last_accessnode, None, bwd_tasklet, tasklet_conn, memlet_data)
+                    else:
+                        # the general case, we are replicating the content of the map nest
+                        # replicate the edge dst if not already replicated
+                        if e.dst in replicate_nodes:
+                            replicated_edge_dst = replicate_nodes[e.dst]
+                        else:
+                            # node has not been replicated yet: do it now
+                            replicated_edge_dst = copy.deepcopy(e.dst)
+                            # change the connectors for recomputation
+                            self._modify_connectors_for_recomputation(replicated_edge_dst)
+                            self.backward_state.add_node(replicated_edge_dst)
+                            replicate_nodes[e.dst] = replicated_edge_dst
+
+                        # add a new edge between the two nodes in the backward state
+                        self.backward_state.add_edge(node_bwd, replicated_edge_src_src_con, replicated_edge_dst,
+                                                     replicated_edge_src_dst_con, memlet_data)
+
+                        # add the node for the next level only if it has not already been explored
+                        if e.dst not in next_level: next_level.append(e.dst)
+
+                node = next_level.pop() if next_level else None
+                assert not node or node in replicate_nodes
+                node_bwd = replicate_nodes[node] if node else None
+            else:
+                raise AutoDiffException(f"Recomputation of the node {edge.src} is not yet supported")
+
+    def _modify_connectors_for_recomputation(self, node: nodes.Node):
+        """
+        Given a node in the graph, modify all the connectors to indicate that this node was added for recomputation.
+        Additionally, if the node is a tasklet, we also modify the tasklet code to refelect this change.
+        :param node: the node to modify the connectors for
+        """
+        # for an AccessNode, there are no connectors to be modified
+        if isinstance(node, nodes.AccessNode):
+            return
+        all_connectors = node.in_connectors + node.out_connectors
+        for con in list(all_connectors):
+            new_con = f"{con}_recomputation"
+            if con in node.in_connectors:
+                node.remove_in_connector(con)
+                assert node.add_in_connector(new_con)
+            else:
+                node.remove_in_connector(con)
+                assert node.add_in_connector(new_con)
+
+            # if this node is a tasklet we need to modify the content of the code
+            if isinstance(node, nodes.Tasklet):
+                node.code.as_string = node.code.as_string.replace(con, new_con)
+
+    def _check_if_recomputation_is_mergeable(self, edge: dgraph.MultiConnectorEdge,
+                                             subgraph: dstate.StateSubgraphView) -> bool:
+        """
+        Given an edge leading from a base-level AccessNode to a map in the forward state,
+        Check if the computation of this AccessNode can be merged with the maps where
+        this node will be used in the backward pass. 
+        The constraints of this function are too strong and can be relaxed.
+        :param edge: the edge connecting the AccessNode to recompute data from to a map node.
+        """
+        # if the forward tasklet is surrounded by the same number of maps with the same indicies
+        # get the path of the AccessNode and store the maps until we reach the tasklet
+        edge_list = self.forward_state.memlet_path(edge)
+        successor_maps: List[nodes.MapEntry] = []
+        for e in edge_list:
+            if isinstance(e.src, nodes.MapEntry):
+                successor_maps.append(e.src)
+
+        mergeable = True
+
+        # check if the number of maps in the subgraph matches
+        for nd in subgraph.nodes():
+            if isinstance(nd, nodes.MapEntry):
+                # make sure the two maps match in terms of ranges
+                if len(successor_maps) > 0:
+                    s_map = successor_maps.pop()
+                else:
+                    # different number of maps
+                    # for now, we return false
+                    mergeable = False
+                    break
+                if s_map.map.range != nd.map.range:
+                    # map ranges are not the same
+                    # for now, we return false
+                    mergeable = False
+                    break
+
+        if len(successor_maps) != 0:
+            # different number of maps
+            # for now, we return false
+            mergeable = False
+
+        return mergeable
+
+    def _get_computation_subgraph(self, node: nodes.AccessNode) -> SDFG:
+        """
+        Given an access node get the subgraph from the forward state that writes to this access node
+        """
+        # reverse bfs from the accesss node
+        backward_nodes = {n for e in self.forward_state.bfs_edges(node, reverse=True) for n in [e.src, e.dst]}
+        forward_nodes = {n for n in self.forward_state.nodes()}
+        # intersection with all the nodes in the forward state
+        forward_subgraph = dstate.StateSubgraphView(self.forward_state,
+                                                    list(forward_nodes.intersection(backward_nodes)))
+        return forward_subgraph
 
     def _store_data(self, edge: dgraph.MultiConnectorEdge) -> Tuple[nodes.AccessNode, List[Memlet]]:
         """
@@ -1246,17 +1526,18 @@ class BackwardPassGenerator:
 
         return new_store_node, memlets_stack
 
-    def _check_node_overwrite(self, node: nodes.AccessNode) -> bool:
+    def _check_node_overwrite(self, node: nodes.AccessNode) -> Tuple[bool, bool]:
         """
         Given an AccessNode from the forward state, check if the data of this node has changed.
         We look at all the AccessNodes with the same data that occur after the 'node' parameter
-        if any of them has an incoming edge, return True.
-        Otherwise, return False.
+        if any of them has an incoming edge, return the node has been overwritten.
         
         :param edge: the AccessNode to perform the check for.
-        :return: True if the data for this node has been overwritten to after this occurance.
+        :return: a tuple of wether this node has been overwritten, and if it can be recomputed
         """
-
+        overwritten = False
+        decided = False
+        recomputable = False
         # get all the AccessNodes with the same data
         matches = [nd for nd in self.forward_state.nodes() if isinstance(nd, nodes.AccessNode) and nd.data == node.data]
 
@@ -1265,7 +1546,8 @@ class BackwardPassGenerator:
 
         # if there is only one occurance of this data, it will not be overwritten later in the graph
         if len(matches) == 1:
-            return False
+            overwritten = False
+            decided = True
 
         # get the index of the parameter node
         index = matches.index(node)
@@ -1273,16 +1555,26 @@ class BackwardPassGenerator:
         # if the parameter node is the last occurance in the forward state
         # return False
         if len(matches) - 1 == index:
-            return False
+            overwritten = False
+            decided = True
 
-        # iterate through all the successor occurances
-        for nd in matches[index + 1:]:
-            # check if this node has an incoming edge
-            if len(self.forward_state.in_edges(nd)) > 0:
-                return True
+        # if we haven't already confirmed that this node has not been overwritten
+        if not decided:
+            # iterate through all the successor occurances
+            for nd in matches[index + 1:]:
+                # check if this node has an incoming edge
+                if len(self.forward_state.in_edges(nd)) > 0:
+                    overwritten = True
 
+        if overwritten:
+            # we only check if the node is recomputable if it has been overwritten
+            # iterate through all the predecessor occurances
+            for nd in matches[:index + 1]:
+                # check if this node has an incoming edge
+                if len(self.forward_state.in_edges(nd)) > 0:
+                    recomputable = True
         # if the loop didn't return True, all of the successor occurances are read only
-        return False
+        return overwritten, recomputable
 
     def _lookup_required_grad_name(self, node: nodes.Node, connector: str) -> str:
         if node not in self.result_map:
