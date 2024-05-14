@@ -1294,8 +1294,8 @@ class BackwardPassGenerator:
                 node = next_level.pop() if next_level else None
                 assert not node or node in replicate_nodes
                 node_bwd = replicate_nodes[node] if node else None
-            else:
-                raise AutoDiffException(f"Recomputation of the node {edge.src} is not yet supported")
+        else:
+            raise AutoDiffException(f"Recomputation of the node {edge.src} is not yet supported")
 
     def _modify_connectors_for_recomputation(self, node: nodes.Node):
         """
@@ -1306,15 +1306,18 @@ class BackwardPassGenerator:
         # for an AccessNode, there are no connectors to be modified
         if isinstance(node, nodes.AccessNode):
             return
-        all_connectors = node.in_connectors + node.out_connectors
+
+        all_connectors = node.out_connectors.copy()
+        all_connectors.update(node.in_connectors)
+
         for con in list(all_connectors):
             new_con = f"{con}_recomputation"
             if con in node.in_connectors:
                 node.remove_in_connector(con)
                 assert node.add_in_connector(new_con)
             else:
-                node.remove_in_connector(con)
-                assert node.add_in_connector(new_con)
+                node.remove_out_connector(con)
+                assert node.add_out_connector(new_con)
 
             # if this node is a tasklet we need to modify the content of the code
             if isinstance(node, nodes.Tasklet):
