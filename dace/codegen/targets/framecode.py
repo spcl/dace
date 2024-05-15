@@ -707,7 +707,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     for node in state.nodes():
                         if not isinstance(node, nodes.AccessNode):
                             continue
-                        if node.data != name:
+                        if node.data != name and (state, node) not in instances:
                             continue
 
                         # If already found in another state, set scope to SDFG
