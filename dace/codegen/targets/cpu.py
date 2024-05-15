@@ -500,17 +500,24 @@ class CPUCodeGen(TargetCodeGenerator):
             ctypedef = dtypes.pointer(nodedesc.dtype)
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
+
+            defdesc = nodedesc
+            # Register container arrays use their stype with the array size
+            if isinstance(nodedesc, data.ContainerArray):
+                defdesc = nodedesc.stype
+
             if node.setzero:
                 declaration_stream.write(
-                    "%s[%s]  DACE_ALIGN(64) = {0};\n" % (nodedesc.as_arg(name=name), cpp.sym2cpp(arrsize)),
+                    "%s[%s]  DACE_ALIGN(64) = {0};\n" % (defdesc.as_arg(name=name), cpp.sym2cpp(arrsize)),
                     sdfg,
                     state_id,
                     node,
                 )
                 define_var(name, DefinedType.Pointer, ctypedef)
                 return
+
             declaration_stream.write(
-                "%s[%s]  DACE_ALIGN(64);\n" % (nodedesc.as_arg(name=name), cpp.sym2cpp(arrsize)),
+                "%s[%s]  DACE_ALIGN(64);\n" % (defdesc.as_arg(name=name), cpp.sym2cpp(arrsize)),
                 sdfg,
                 state_id,
                 node,
