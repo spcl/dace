@@ -525,6 +525,11 @@ class TargetDispatcher(object):
             if e is edge:
                 return None
 
+        # Skip reference that is also a view
+        if src_is_data and isinstance(src_node.desc(sdfg), dt.Reference):
+            if edge.src_conn == 'views' and not edge.dst_conn:
+                return None
+
         if (isinstance(src_node, nodes.Tasklet) and not isinstance(dst_node, nodes.Tasklet)):
             # Special case: Copying from a tasklet to an array, schedule of
             # the copy is in the copying tasklet

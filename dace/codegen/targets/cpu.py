@@ -248,8 +248,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         stype = vdesc
 
                     value = f'{arrexpr}->{field_name}'
-                    if (isinstance(stype.members[field_name], data.Scalar) or
-                            getattr(stype.members[field_name], 'byval', False)):
+                    if (isinstance(stype.members[field_name], data.Scalar)
+                            or getattr(stype.members[field_name], 'byval', False)):
                         value = '&' + value
                     if getattr(stype.members[field_name], 'byval', False):
                         # Corner case: cast by-value arrays
@@ -284,6 +284,11 @@ class CPUCodeGen(TargetCodeGenerator):
         declared = self._dispatcher.declared_arrays.has(ptrname)
 
         if not declared:
+            if 'views' in node.out_connectors and not list(dfg.out_edges_by_connector(node, 'views'))[0].dst_conn:
+                # Reference and a view, but not setting a field
+                self.allocate_view(sdfg, dfg, state_id, node, global_stream, declaration_stream, allocation_stream)
+                return
+
             declaration_stream.write(f'{nodedesc.as_arg(name=ptrname)};', sdfg, state_id, node)
             ctypedef = dtypes.pointer(nodedesc.dtype)
             self._dispatcher.declared_arrays.add(ptrname, DefinedType.Pointer, ctypedef)
