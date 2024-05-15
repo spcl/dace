@@ -498,9 +498,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # If disabled, generate entire graph as general control flow block
             states_topological = list(sdfg.topological_sort(sdfg.start_state))
             last = states_topological[-1]
-            cft = cflow.GeneralBlock(dispatch_state, None,
-                                     [cflow.SingleState(dispatch_state, None, s, s is last) for s in states_topological], [],
-                                     [], [], [], False)
+            cft = cflow.GeneralBlock(
+                dispatch_state, None,
+                [cflow.SingleState(dispatch_state, None, s, s is last)
+                 for s in states_topological], [], [], [], [], False)
 
         callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
 
@@ -623,9 +624,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # We will allocate an array when it is first used, but deallocate
             # when its last reference was seen (e.g., if assigned to a Reference)
             instances = access_instances[sdfg.sdfg_id].get(name, [(None, None)])
-            first_state_instance, first_node_instance = next(((s, n) for s, n in instances
-                                                              if n is not None and n.data == name),
-                                                             (None, None))
+            first_state_instance, first_node_instance = next(
+                ((s, n) for s, n in instances if n is not None and n.data == name), (None, None))
             last_state_instance, last_node_instance = instances[-1]
 
             # Determine zero initialization
@@ -707,7 +707,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     for node in state.nodes():
                         if not isinstance(node, nodes.AccessNode):
                             continue
-                        if node.data != name and (state, node) not in instances:
+                        if node.data != name and (isinstance(desc, data.View) or (state, node) not in instances):
                             continue
 
                         # If already found in another state, set scope to SDFG
@@ -848,7 +848,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream,
                                                declare, allocate)
 
-
     def allocate_globals(self, sdfg: SDFG, global_stream: CodeIOStream):
         """
         Allocate globals for SDFG and all nested SDFGs.
@@ -863,8 +862,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     continue  # Do not define same global more than once
 
                 node = nodes.AccessNode(aname)
-                self._dispatcher.dispatch_allocate(tsdfg, None, -1, node, desc, global_stream, global_stream,
-                                                    True, True)
+                self._dispatcher.dispatch_allocate(tsdfg, None, -1, node, desc, global_stream, global_stream, True,
+                                                   True)
                 allocated[aname] = desc
 
     def deallocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
