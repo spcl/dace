@@ -11,6 +11,7 @@ import warnings
 from typing import TYPE_CHECKING, Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload
 
 import dace
+import dace.serialize
 from dace import data as dt
 from dace import dtypes
 from dace import memlet as mm
@@ -388,7 +389,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Prepend incoming edges until reaching the source node
         curedge = edge
+        visited = set()
         while not isinstance(curedge.src, (nd.CodeNode, nd.AccessNode)):
+            visited.add(curedge)
             # Trace through scopes using OUT_# -> IN_#
             if isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
                 if curedge.src_conn is None:
@@ -397,10 +400,14 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 next_edge = next(e for e in state.in_edges(curedge.src) if e.dst_conn == "IN_" + curedge.src_conn[4:])
                 result.insert(0, next_edge)
                 curedge = next_edge
+                if curedge in visited:
+                    raise ValueError('Cycle encountered while reading memlet path')
 
         # Append outgoing edges until reaching the sink node
         curedge = edge
+        visited.clear()
         while not isinstance(curedge.dst, (nd.CodeNode, nd.AccessNode)):
+            visited.add(curedge)
             # Trace through scope entry using IN_# -> OUT_#
             if isinstance(curedge.dst, (nd.EntryNode, nd.ExitNode)):
                 if curedge.dst_conn is None:
@@ -410,6 +417,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 next_edge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == "OUT_" + curedge.dst_conn[3:])
                 result.append(next_edge)
                 curedge = next_edge
+                if curedge in visited:
+                    raise ValueError('Cycle encountered while reading memlet path')
 
         return result
 
@@ -433,16 +442,23 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Find tree root
         curedge = edge
+        visited = set()
         if propagate_forward:
             while (isinstance(curedge.src, nd.EntryNode) and curedge.src_conn is not None):
+                visited.add(curedge)
                 assert curedge.src_conn.startswith('OUT_')
                 cname = curedge.src_conn[4:]
                 curedge = next(e for e in state.in_edges(curedge.src) if e.dst_conn == 'IN_%s' % cname)
+                if curedge in visited:
+                    raise ValueError('Cycle encountered while reading memlet path')
         elif propagate_backward:
             while (isinstance(curedge.dst, nd.ExitNode) and curedge.dst_conn is not None):
+                visited.add(curedge)
                 assert curedge.dst_conn.startswith('IN_')
                 cname = curedge.dst_conn[3:]
                 curedge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == 'OUT_%s' % cname)
+                if curedge in visited:
+                    raise ValueError('Cycle encountered while reading memlet path')
         tree_root = mm.MemletTree(curedge, downwards=propagate_forward)
 
         # Collect children (recursively)
@@ -787,10 +803,12 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Gather data descriptors from nodes
         descs = {}
+        descs_with_nodes = {}
         scalars_with_nodes = set()
         for node in self.nodes():
             if isinstance(node, nd.AccessNode):
                 descs[node.data] = node.desc(sdfg)
+                descs_with_nodes[node.data] = node
                 if isinstance(node.desc(sdfg), dt.Scalar):
                     scalars_with_nodes.add(node.data)
 
@@ -842,18 +860,18 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             elif isinstance(self, SubgraphView):
                 if (desc.lifetime != dtypes.AllocationLifetime.Scope):
                     data_args[name] = desc
-            # Check for allocation constraints that would
-            # enforce array to be allocated outside subgraph
-            elif desc.lifetime == dtypes.AllocationLifetime.Scope:
-                curnode = sdict[node]
-                while curnode is not None:
-                    if dtypes.can_allocate(desc.storage, curnode.schedule):
-                        break
-                    curnode = sdict[curnode]
-                else:
-                    # If no internal scope can allocate node,
-                    # mark as external
-                    data_args[name] = desc
+                # Check for allocation constraints that would
+                # enforce array to be allocated outside subgraph
+                elif desc.lifetime == dtypes.AllocationLifetime.Scope:
+                    curnode = sdict[descs_with_nodes[name]]
+                    while curnode is not None:
+                        if dtypes.can_allocate(desc.storage, curnode.schedule):
+                            break
+                        curnode = sdict[curnode]
+                    else:
+                        # If no internal scope can allocate node,
+                        # mark as external
+                        data_args[name] = desc
         # End of data descriptor loop
 
         # Add scalar arguments from free symbols
@@ -1143,6 +1161,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     @parent_graph.setter
     def parent_graph(self, parent: Optional['ControlFlowRegion']):
         self._parent_graph = parent
+
+    @property
+    def block_id(self) -> int:
+        return self.parent_graph.node_id(self)
 
 
 @make_properties
@@ -1547,7 +1569,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         sdfg.parent = self
         sdfg.parent_sdfg = self.sdfg
 
-        sdfg.update_sdfg_list([])
+        sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
         if isinstance(inputs, (set, collections.abc.KeysView)):
@@ -2380,6 +2402,51 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self._labels: Set[str] = set()
         self._start_block: Optional[int] = None
         self._cached_start_block: Optional[ControlFlowBlock] = None
+        self._cfg_list: List['ControlFlowRegion'] = [self]
+
+    def reset_cfg_list(self) -> List['ControlFlowRegion']:
+        """
+        Reset the CFG list when changes have been made to the SDFG's CFG tree.
+        This collects all control flow graphs recursively and propagates the collection to all CFGs as the new CFG list.
+
+        :return: The newly updated CFG list.
+        """
+        if isinstance(self, dace.SDFG) and self.parent_sdfg is not None:
+            return self.parent_sdfg.reset_cfg_list()
+        elif self._parent_graph is not None:
+            return self._parent_graph.reset_cfg_list()
+        else:
+            # Propagate new CFG list to all children
+            all_cfgs = list(self.all_control_flow_regions(recursive=True))
+            for g in all_cfgs:
+                g._cfg_list = all_cfgs
+        return self._cfg_list
+
+    def update_cfg_list(self, cfg_list):
+        """
+        Given a collection of CFGs, add them all to the current SDFG's CFG list.
+        Any CFGs already in the list are skipped, and the newly updated list is propagated across all CFGs in the CFG
+        tree.
+
+        :param cfg_list: The collection of CFGs to add to the CFG list.
+        """
+        # TODO: Refactor
+        sub_cfg_list = self._cfg_list
+        for g in cfg_list:
+            if g not in sub_cfg_list:
+                sub_cfg_list.append(g)
+        ptarget = None
+        if isinstance(self, dace.SDFG) and self.parent_sdfg is not None:
+            ptarget = self.parent_sdfg
+        elif self._parent_graph is not None:
+            ptarget = self._parent_graph
+        if ptarget is not None:
+            ptarget.update_cfg_list(sub_cfg_list)
+            self._cfg_list = ptarget.cfg_list
+            for g in sub_cfg_list:
+                g._cfg_list = self._cfg_list
+        else:
+            self._cfg_list = sub_cfg_list
 
     def add_edge(self, src: ControlFlowBlock, dst: ControlFlowBlock, data: 'dace.sdfg.InterstateEdge'):
         """ Adds a new edge to the graph. Must be an InterstateEdge or a subclass thereof.
@@ -2432,38 +2499,56 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self.add_node(state, is_start_block=start_block)
         return state
 
-    def add_state_before(self, state: SDFGState, label=None, is_start_state=False) -> SDFGState:
+    def add_state_before(self,
+                         state: SDFGState,
+                         label=None,
+                         is_start_block=False,
+                         condition: CodeBlock = None,
+                         assignments=None,
+                         *,
+                         is_start_state: bool=None) -> SDFGState:
         """ Adds a new SDFG state before an existing state, reconnecting predecessors to it instead.
 
             :param state: The state to prepend the new state before.
             :param label: State label.
-            :param is_start_state: If True, resets scope block starting state to this state.
+            :param is_start_block: If True, resets scope block starting state to this state.
+            :param condition: Transition condition of the newly created edge between state and the new state.
+            :param assignments: Assignments to perform upon transition.
             :return: A new SDFGState object.
         """
-        new_state = self.add_state(label, is_start_state)
+        new_state = self.add_state(label, is_start_block=is_start_block, is_start_state=is_start_state)
         # Reconnect
         for e in self.in_edges(state):
             self.remove_edge(e)
             self.add_edge(e.src, new_state, e.data)
-        # Add unconditional connection between the new state and the current
-        self.add_edge(new_state, state, dace.sdfg.InterstateEdge())
+        # Add the new edge
+        self.add_edge(new_state, state, dace.sdfg.InterstateEdge(condition=condition, assignments=assignments))
         return new_state
 
-    def add_state_after(self, state: SDFGState, label=None, is_start_state=False) -> SDFGState:
+    def add_state_after(self,
+                        state: SDFGState,
+                        label=None,
+                        is_start_block=False,
+                        condition: CodeBlock = None,
+                        assignments=None,
+                        *,
+                        is_start_state: bool=None) -> SDFGState:
         """ Adds a new SDFG state after an existing state, reconnecting it to the successors instead.
 
             :param state: The state to append the new state after.
             :param label: State label.
-            :param is_start_state: If True, resets SDFG starting state to this state.
+            :param is_start_block: If True, resets scope block starting state to this state.
+            :param condition: Transition condition of the newly created edge between state and the new state.
+            :param assignments: Assignments to perform upon transition.
             :return: A new SDFGState object.
         """
-        new_state = self.add_state(label, is_start_state)
+        new_state = self.add_state(label, is_start_block=is_start_block, is_start_state=is_start_state)
         # Reconnect
         for e in self.out_edges(state):
             self.remove_edge(e)
             self.add_edge(new_state, e.dst, e.data)
-        # Add unconditional connection between the current and the new state
-        self.add_edge(state, new_state, dace.sdfg.InterstateEdge())
+        # Add the new edge
+        self.add_edge(state, new_state, dace.sdfg.InterstateEdge(condition=condition, assignments=assignments))
         return new_state
 
     @abc.abstractmethod
@@ -2530,7 +2615,44 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         graph_json = OrderedDiGraph.to_json(self)
         block_json = ControlFlowBlock.to_json(self, parent)
         graph_json.update(block_json)
+
+        graph_json['cfg_list_id'] = int(self.cfg_id)
+        graph_json['start_block'] = self._start_block
+
         return graph_json
+
+    @classmethod
+    def from_json(cls, json_obj, context_info=None):
+        context_info = context_info or {'sdfg': None, 'parent_graph': None}
+        _type = json_obj['type']
+        if _type != cls.__name__:
+            raise TypeError("Class type mismatch")
+
+        attrs = json_obj['attributes']
+        nodes = json_obj['nodes']
+        edges = json_obj['edges']
+
+        ret = ControlFlowRegion(label=attrs['label'], sdfg=context_info['sdfg'])
+
+        dace.serialize.set_properties_from_json(ret, json_obj)
+
+        nodelist = []
+        for n in nodes:
+            nci = copy.copy(context_info)
+            nci['parent_graph'] = ret
+
+            state = SDFGState.from_json(n, context=nci)
+            ret.add_node(state)
+            nodelist.append(state)
+
+        for e in edges:
+            e = dace.serialize.from_json(e)
+            ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
+
+        if 'start_block' in json_obj:
+            ret._start_block = json_obj['start_block']
+
+        return ret
 
     ###################################################################
     # Traversal methods
@@ -2580,6 +2702,18 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__} ({self.label})'
+
+    @property
+    def cfg_list(self) -> List['ControlFlowRegion']:
+        return self._cfg_list
+
+    @property
+    def cfg_id(self) -> int:
+        """
+        Returns the unique index of the current CFG within the current tree of CFGs (Top-level CFG/SDFG is 0, nested
+        CFGs/SDFGs are greater).
+        """
+        return self.cfg_list.index(self)
 
     @property
     def start_block(self):

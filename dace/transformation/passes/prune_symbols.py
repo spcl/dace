@@ -54,7 +54,7 @@ class RemoveUnusedSymbols(ppl.Pass):
 
         if self.recursive:
             # Prune nested SDFGs recursively
-            sid = sdfg.sdfg_id
+            sid = sdfg.cfg_id
             result = set((sid, sym) for sym in result)
 
             for state in sdfg.nodes():

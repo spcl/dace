@@ -54,12 +54,17 @@ def _define_local_ex(pv: ProgramVisitor,
                      state: SDFGState,
                      shape: Shape,
                      dtype: dace.typeclass,
+                     strides: Optional[Shape] = None,
                      storage: dtypes.StorageType = dtypes.StorageType.Default,
                      lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local array in a DaCe program. """
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
-    name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage, lifetime=lifetime)
+    if strides is not None:
+        if not isinstance(strides, (list, tuple)):
+            strides = [strides]
+        strides = [int(s) if isinstance(s, Integral) else s for s in strides]
+    name, _ = sdfg.add_temp_transient(shape, dtype, strides=strides, storage=storage, lifetime=lifetime)
     return name
 
 
@@ -79,6 +84,24 @@ def _define_local_scalar(pv: ProgramVisitor,
     """ Defines a local scalar in a DaCe program. """
     name = sdfg.temp_data_name()
     _, desc = sdfg.add_scalar(name, dtype, transient=True, storage=storage, lifetime=lifetime)
+    pv.variables[name] = name
+    return name
+
+
+@oprepo.replaces('dace.define_local_structure')
+def _define_local_structure(pv: ProgramVisitor,
+                            sdfg: SDFG,
+                            state: SDFGState,
+                            dtype: dace.data.Structure,
+                            storage: dtypes.StorageType = dtypes.StorageType.Default,
+                            lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
+    """ Defines a local structure in a DaCe program. """
+    name = sdfg.temp_data_name()
+    desc = copy.deepcopy(dtype)
+    desc.transient = True
+    desc.storage = storage
+    desc.lifetime = lifetime
+    sdfg.add_datadesc(name, desc)
     pv.variables[name] = name
     return name
 
@@ -238,9 +261,9 @@ def eye(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=
     name, _ = sdfg.add_temp_transient([N, M], dtype)
 
     state.add_mapped_tasklet('eye',
-                             dict(i='0:%s' % N, j='0:%s' % M), {},
-                             'val = 1 if i == (j - %s) else 0' % k,
-                             dict(val=dace.Memlet.simple(name, 'i, j')),
+                             dict(__i0='0:%s' % N, __i1='0:%s' % M), {},
+                             'val = 1 if __i0 == (__i1 - %s) else 0' % k,
+                             dict(val=dace.Memlet.simple(name, '__i0, __i1')),
                              external_edges=True)
 
     return name
@@ -289,7 +312,7 @@ def _numpy_full(pv: ProgramVisitor,
     """
     is_data = False
     if isinstance(fill_value, (Number, np.bool_)):
-        vtype = dtypes.DTYPE_TO_TYPECLASS[type(fill_value)]
+        vtype = dtypes.dtype_to_typeclass(type(fill_value))
     elif isinstance(fill_value, sp.Expr):
         vtype = _sym_type(fill_value)
     else:
@@ -300,16 +323,20 @@ def _numpy_full(pv: ProgramVisitor,
 
     if is_data:
         state.add_mapped_tasklet(
-            '_numpy_full_', {"__i{}".format(i): "0: {}".format(s)
-                            for i, s in enumerate(shape)},
+            '_numpy_full_', {
+                "__i{}".format(i): "0: {}".format(s)
+                for i, s in enumerate(shape)
+            },
             dict(__inp=dace.Memlet(data=fill_value, subset='0')),
             "__out = __inp",
             dict(__out=dace.Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
             external_edges=True)
     else:
         state.add_mapped_tasklet(
-            '_numpy_full_', {"__i{}".format(i): "0: {}".format(s)
-                            for i, s in enumerate(shape)}, {},
+            '_numpy_full_', {
+                "__i{}".format(i): "0: {}".format(s)
+                for i, s in enumerate(shape)
+            }, {},
             "__out = {}".format(fill_value),
             dict(__out=dace.Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
             external_edges=True)
@@ -328,7 +355,7 @@ def _numpy_full_like(pv: ProgramVisitor,
     """ Creates and array of the same shape and dtype as a and initializes it
         with the fill value.
     """
-    if a not in sdfg.arrays.keys():
+    if a not in sdfg.arrays:
         raise mem_parser.DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
     desc = sdfg.arrays[a]
     dtype = dtype or desc.dtype
@@ -429,8 +456,10 @@ def _numpy_flip(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis
     inpidx = ','.join([f'__i{i}' for i in range(ndim)])
     outidx = ','.join([f'{s} - __i{i} - 1' if a else f'__i{i}' for i, (a, s) in enumerate(zip(axis, desc.shape))])
     state.add_mapped_tasklet(name="_numpy_flip_",
-                             map_ranges={f'__i{i}': f'0:{s}:1'
-                                         for i, s in enumerate(desc.shape)},
+                             map_ranges={
+                                 f'__i{i}': f'0:{s}:1'
+                                 for i, s in enumerate(desc.shape)
+                             },
                              inputs={'__inp': Memlet(f'{arr}[{inpidx}]')},
                              code='__out = __inp',
                              outputs={'__out': Memlet(f'{arr_copy}[{outidx}]')},
@@ -500,8 +529,10 @@ def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1
 
     outidx = ','.join(out_indices)
     state.add_mapped_tasklet(name="_rot90_",
-                             map_ranges={f'__i{i}': f'0:{s}:1'
-                                         for i, s in enumerate(desc.shape)},
+                             map_ranges={
+                                 f'__i{i}': f'0:{s}:1'
+                                 for i, s in enumerate(desc.shape)
+                             },
                              inputs={'__inp': Memlet(f'{arr}[{inpidx}]')},
                              code='__out = __inp',
                              outputs={'__out': Memlet(f'{arr_copy}[{outidx}]')},
@@ -546,10 +577,10 @@ def _arange(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
     if 'dtype' in kwargs and kwargs['dtype'] != None:
         dtype = kwargs['dtype']
         if not isinstance(dtype, dtypes.typeclass):
-            dtype = dtypes.DTYPE_TO_TYPECLASS[dtype]
+            dtype = dtypes.dtype_to_typeclass(dtype)
         outname, outarr = sdfg.add_temp_transient(shape, dtype)
     else:
-        dtype = dtypes.DTYPE_TO_TYPECLASS[type(shape[0])]
+        dtype = dtypes.dtype_to_typeclass(type(shape[0]))
         outname, outarr = sdfg.add_temp_transient(shape, dtype)
 
     state.add_mapped_tasklet(name="_numpy_arange_",
@@ -655,8 +686,10 @@ def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype:
     else:
         state.add_mapped_tasklet(
             name=func,
-            map_ranges={'__i%d' % i: '0:%s' % n
-                        for i, n in enumerate(inparr.shape)},
+            map_ranges={
+                '__i%d' % i: '0:%s' % n
+                for i, n in enumerate(inparr.shape)
+            },
             inputs={'__inp': Memlet.simple(inpname, ','.join(['__i%d' % i for i in range(len(inparr.shape))]))},
             code='__out = {f}(__inp)'.format(f=func),
             outputs={'__out': Memlet.simple(outname, ','.join(['__i%d' % i for i in range(len(inparr.shape))]))},
@@ -1005,22 +1038,27 @@ def _argminmax(pv: ProgramVisitor,
     code = "__init = _val_and_idx(val={}, idx=-1)".format(
         dtypes.min_value(a_arr.dtype) if func == 'max' else dtypes.max_value(a_arr.dtype))
 
-    nest.add_state().add_mapped_tasklet(
-        name="_arg{}_convert_".format(func),
-        map_ranges={'__i%d' % i: '0:%s' % n
-                    for i, n in enumerate(a_arr.shape) if i != axis},
-        inputs={},
-        code=code,
-        outputs={
-            '__init': Memlet.simple(reduced_structs,
-                                    ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis))
-        },
-        external_edges=True)
+    nest.add_state().add_mapped_tasklet(name="_arg{}_convert_".format(func),
+                                        map_ranges={
+                                            '__i%d' % i: '0:%s' % n
+                                            for i, n in enumerate(a_arr.shape) if i != axis
+                                        },
+                                        inputs={},
+                                        code=code,
+                                        outputs={
+                                            '__init':
+                                            Memlet.simple(
+                                                reduced_structs,
+                                                ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis))
+                                        },
+                                        external_edges=True)
 
     nest.add_state().add_mapped_tasklet(
         name="_arg{}_reduce_".format(func),
-        map_ranges={'__i%d' % i: '0:%s' % n
-                    for i, n in enumerate(a_arr.shape)},
+        map_ranges={
+            '__i%d' % i: '0:%s' % n
+            for i, n in enumerate(a_arr.shape)
+        },
         inputs={'__in': Memlet.simple(a, ','.join('__i%d' % i for i in range(len(a_arr.shape))))},
         code="__out = _val_and_idx(idx={}, val=__in)".format("__i%d" % axis),
         outputs={
@@ -1040,8 +1078,10 @@ def _argminmax(pv: ProgramVisitor,
 
         nest.add_state().add_mapped_tasklet(
             name="_arg{}_extract_".format(func),
-            map_ranges={'__i%d' % i: '0:%s' % n
-                        for i, n in enumerate(a_arr.shape) if i != axis},
+            map_ranges={
+                '__i%d' % i: '0:%s' % n
+                for i, n in enumerate(a_arr.shape) if i != axis
+            },
             inputs={
                 '__in': Memlet.simple(reduced_structs,
                                       ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis))
@@ -1076,8 +1116,8 @@ def _array_array_where(visitor: ProgramVisitor,
     left_arr = sdfg.arrays.get(left_operand, None)
     right_arr = sdfg.arrays.get(right_operand, None)
 
-    left_type = left_arr.dtype if left_arr else dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
-    right_type = right_arr.dtype if right_arr else dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+    left_type = left_arr.dtype if left_arr else dtypes.dtype_to_typeclass(type(left_operand))
+    right_type = right_arr.dtype if right_arr else dtypes.dtype_to_typeclass(type(right_operand))
 
     # Implicit Python coversion implemented as casting
     arguments = [cond_arr, left_arr or left_type, right_arr or right_type]
@@ -1164,9 +1204,10 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
         opcode = 'not'
 
     name, _ = sdfg.add_temp_transient(arr1.shape, restype, arr1.storage)
-    state.add_mapped_tasklet("_%s_" % opname, {'__i%d' % i: '0:%s' % s
-                                               for i, s in enumerate(arr1.shape)},
-                             {'__in1': Memlet.simple(op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
+    state.add_mapped_tasklet("_%s_" % opname, {
+        '__i%d' % i: '0:%s' % s
+        for i, s in enumerate(arr1.shape)
+    }, {'__in1': Memlet.simple(op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
                              '__out = %s __in1' % opcode,
                              {'__out': Memlet.simple(name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
                              external_edges=True)
@@ -1356,11 +1397,11 @@ def _np_result_type(nptypes):
     # Fix for np.result_type returning platform-dependent types,
     # e.g. np.longlong
     restype = np.result_type(*nptypes)
-    if restype.type not in dtypes.DTYPE_TO_TYPECLASS.keys():
-        for k in dtypes.DTYPE_TO_TYPECLASS.keys():
+    if restype.type not in dtypes.dtype_to_typeclass().keys():
+        for k in dtypes.dtype_to_typeclass().keys():
             if k == restype.type:
-                return dtypes.DTYPE_TO_TYPECLASS[k]
-    return dtypes.DTYPE_TO_TYPECLASS[restype.type]
+                return dtypes.dtype_to_typeclass(k)
+    return dtypes.dtype_to_typeclass(restype.type)
 
 
 def _sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
@@ -1393,7 +1434,7 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
             datatypes.append(arg.dtype)
             dtypes_for_result.append(_representative_num(arg.dtype))
         elif isinstance(arg, (Number, np.bool_)):
-            datatypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
+            datatypes.append(dtypes.dtype_to_typeclass(type(arg)))
             dtypes_for_result.append(arg)
         elif symbolic.issymbolic(arg):
             datatypes.append(_sym_type(arg))
@@ -1668,13 +1709,13 @@ def _array_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
         left_shape = left_arr.shape
         storage = left_arr.storage
         right_arr = None
-        right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+        right_type = dtypes.dtype_to_typeclass(type(right_operand))
         right_shape = [1]
         arguments = [left_arr, right_operand]
         tasklet_args = ['__in1', f'({str(right_operand)})']
     else:
         left_arr = None
-        left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
+        left_type = dtypes.dtype_to_typeclass(type(left_operand))
         left_shape = [1]
         right_arr = sdfg.arrays[right_operand]
         right_type = right_arr.dtype
@@ -2229,7 +2270,7 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     type1 = arr1.dtype.type
     type2 = arr2.dtype.type
-    restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
+    restype = dace.dtype_to_typeclass(np.result_type(type1, type2).type)
 
     op3, arr3 = sdfg.add_temp_transient(output_shape, restype, arr1.storage)
 
@@ -3517,7 +3558,7 @@ def implement_ufunc(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, sta
         ufunc_impl['operator'])
     if 'dtype' in kwargs.keys():
         dtype = kwargs['dtype']
-        if dtype in dtypes.DTYPE_TO_TYPECLASS.keys():
+        if dtype in dtypes.dtype_to_typeclass().keys():
             result_type = dtype
 
     # Create output data (if needed)
@@ -3709,7 +3750,7 @@ def implement_ufunc_reduce(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SD
         datadesc = sdfg.arrays[arg]
         result_type = datadesc.dtype
     elif isinstance(arg, (Number, np.bool_)):
-        result_type = dtypes.DTYPE_TO_TYPECLASS[type(arg)]
+        result_type = dtypes.dtype_to_typeclass(type(arg))
     elif isinstance(arg, sp.Basic):
         result_type = _sym_type(arg)
 
@@ -4018,7 +4059,7 @@ def implement_ufunc_outer(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDF
         ufunc_impl['operator'])
     if 'dtype' in kwargs.keys():
         dtype = kwargs['dtype']
-        if dtype in dtypes.DTYPE_TO_TYPECLASS.keys():
+        if dtype in dtypes.dtype_to_typeclass().keys():
             result_type = dtype
 
     # Create output data (if needed)
@@ -4412,9 +4453,9 @@ def _make_datatype_converter(typeclass: str):
     if typeclass == "bool":
         dtype = dace.bool
     elif typeclass in {"int", "float", "complex"}:
-        dtype = dtypes.DTYPE_TO_TYPECLASS[eval(typeclass)]
+        dtype = dtypes.dtype_to_typeclass(eval(typeclass))
     else:
-        dtype = dtypes.DTYPE_TO_TYPECLASS[eval("np.{}".format(typeclass))]
+        dtype = dtypes.dtype_to_typeclass(eval("np.{}".format(typeclass)))
 
     @oprepo.replaces(typeclass)
     @oprepo.replaces("dace.{}".format(typeclass))
@@ -4691,7 +4732,7 @@ def _define_cupy_local(
     sdfg: SDFG,
     state: SDFGState,
     shape: Shape,
-    dtype: typeclass,
+    dtype: typeclass
 ):
     """Defines a local array in a DaCe program."""
     if not isinstance(shape, (list, tuple)):
@@ -4711,7 +4752,7 @@ def _cupy_full(pv: ProgramVisitor,
         the fill value.
     """
     if isinstance(fill_value, (Number, np.bool_)):
-        vtype = dtypes.DTYPE_TO_TYPECLASS[type(fill_value)]
+        vtype = dtypes.dtype_to_typeclass(type(fill_value))
     elif isinstance(fill_value, sp.Expr):
         vtype = _sym_type(fill_value)
     else:
@@ -4720,8 +4761,10 @@ def _cupy_full(pv: ProgramVisitor,
     name, _ = sdfg.add_temp_transient(shape, dtype, storage=dtypes.StorageType.GPU_Global)
 
     state.add_mapped_tasklet(
-        '_cupy_full_', {"__i{}".format(i): "0: {}".format(s)
-                        for i, s in enumerate(shape)}, {},
+        '_cupy_full_', {
+            "__i{}".format(i): "0: {}".format(s)
+            for i, s in enumerate(shape)
+        }, {},
         "__out = {}".format(fill_value),
         dict(__out=dace.Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
         external_edges=True)

@@ -30,12 +30,12 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
         cast_value = complex(value)
 
         return "dace.{type}({real}, {imag})".format(
-            type=dace.DTYPE_TO_TYPECLASS[dtype].to_string(),
+            type=dace.dtype_to_typeclass(dtype).to_string(),
             real=cast_value.real,
             imag=cast_value.imag,
         )
     else:
-        return "dace.{}({})".format(dace.DTYPE_TO_TYPECLASS[dtype].to_string(), value)
+        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
 
 
 @dace.library.expansion
@@ -52,7 +52,7 @@ class ExpandGemmPure(ExpandTransformation):
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
-        dtype_c = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a, dtype_b).type]
+        dtype_c = dace.dtype_to_typeclass(np.result_type(dtype_a, dtype_b).type)
 
         if node.transA:
             trans_shape_a = list(reversed(shape_a))
@@ -518,7 +518,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
-        dtype_c = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a, dtype_b).type]
+        dtype_c = dace.dtype_to_typeclass(np.result_type(dtype_a, dtype_b).type)
         shape_c = (shape_a[0], shape_b[1])
         if node.transA:
             raise NotImplementedError("GEMM FPGA expansion not implemented for transposed A.")

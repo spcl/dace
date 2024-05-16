@@ -52,13 +52,7 @@ sizes = [{
 args = [([NI, NK], datatype), ([NK, NJ], datatype), ([NJ, NM], datatype), ([NM, NL], datatype), ([NI, NL], datatype)]
 
 
-def init_array(A, B, C, D, G):
-    ni = NI.get()
-    nj = NJ.get()
-    nk = NK.get()
-    nl = NL.get()
-    nm = NM.get()
-
+def init_array(A, B, C, D, G, ni, nj, nk, nl, nm):
     for i in range(ni):
         for j in range(nk):
             A[i, j] = datatype((i * j + 1) % ni) / (5 * ni)
@@ -104,6 +98,5 @@ if __name__ == '__main__':
     if polybench:
         polybench.main(sizes, args, [(4, 'G')], init_array, k3mm)
     else:
-        [k.set(v) for k, v in sizes[2].items()]
-        init_array(*args)
+        init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         k3mm(*args)

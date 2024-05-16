@@ -42,10 +42,7 @@ args = [
 ]
 
 
-def init_array(ex, ey, hz, _fict_):  #, NX, NY, TMAX):
-    nx = NX.get()
-    ny = NY.get()
-    tmax = TMAX.get()
+def init_array(ex, ey, hz, _fict_, nx, ny, tmax):
     for i in range(tmax):
         _fict_[i] = datatype(i)
     for i in range(nx):
@@ -57,7 +54,7 @@ def init_array(ex, ey, hz, _fict_):  #, NX, NY, TMAX):
 
 @dace.program(datatype[NX, NY], datatype[NX, NY], datatype[NX, NY],
               datatype[TMAX])  #, dace.int32, dace.int32, dace.int32)
-def fdtd2d(ex, ey, hz, _fict_):  #, NX, NY, TMAX):
+def fdtd2d(ex, ey, hz, _fict_):
     for t in range(TMAX):
 
         @dace.map
