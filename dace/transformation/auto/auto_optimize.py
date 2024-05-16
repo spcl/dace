@@ -6,16 +6,18 @@ import sympy
 from dace.sdfg import infer_types
 from dace.sdfg.state import SDFGState, ControlFlowRegion
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.propagation import propagate_states
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List, Iterable, Dict
-import warnings
+from typing import Set, Tuple, Union, List, Any, Dict
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess
+from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopRegionElimination
+from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.optimization.loop_parallelization import ParallelizeDoacrossLoops
+from dace.transformation.passes.optimization.move_sequential_into_parallel import MoveSequentialIntoParallel
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation import helpers as xfh
@@ -539,7 +541,11 @@ def auto_optimize(sdfg: SDFG,
                   validate: bool = True,
                   validate_all: bool = False,
                   symbols: Dict[str, int] = None,
-                  use_gpu_storage: bool = False) -> SDFG:
+                  use_gpu_storage: bool = False,
+                  move_loop_into_maps: bool = True,
+                  with_canonicalization: bool = True,
+                  fuse_stencils: bool = True,
+                  use_fast_library_calls: bool = True) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -560,6 +566,7 @@ def auto_optimize(sdfg: SDFG,
     :param validate_all: If True, validates the SDFG after every step.
     :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
     :param use_gpu_storage: If True, changes the storage of non-transient data to GPU global memory.
+    :param move_loop_into_maps: If True, tries to move sequential loops inside of parallel regions.
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
     :note: This function is still experimental and may harm correctness in
@@ -569,7 +576,8 @@ def auto_optimize(sdfg: SDFG,
 
     # Simplification and loop parallelization
     transformed = True
-    sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
+    sdfg.apply_transformations_repeated((TrivialMapElimination, TrivialLoopRegionElimination),
+                                        validate=False, validate_all=validate_all)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
         for s in sdfg.cfg_list:
@@ -597,11 +605,19 @@ def auto_optimize(sdfg: SDFG,
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
     # fuse stencils greedily
-    greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+    if fuse_stencils:
+        greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
 
     # Move Loops inside Maps when possible
-    from dace.transformation.interstate import MoveLoopIntoMap
-    sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+    if move_loop_into_maps:
+        from dace.transformation.interstate import MoveLoopIntoMap
+        if with_canonicalization:
+            # Canonicalize the SDFG.
+            sdfg.canonicalize(validate=False, validate_all=validate_all)
+            sdfg.reset_cfg_list()
+        sdfg.simplify(validate=False, validate_all=validate_all)
+        sdfg.reset_cfg_list()
+        sdfg.apply_transformations_repeated([MoveLoopIntoMap], validate=False, validate_all=validate_all)
 
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations
@@ -610,7 +626,8 @@ def auto_optimize(sdfg: SDFG,
         fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
 
         # Set all library nodes to expand to fast library calls
-        set_fast_implementations(sdfg, device)
+        if use_fast_library_calls:
+            set_fast_implementations(sdfg, device)
         return sdfg
 
     # Tiled WCR and streams
@@ -627,12 +644,18 @@ def auto_optimize(sdfg: SDFG,
             pass
 
     # Set all library nodes to expand to fast library calls
-    set_fast_implementations(sdfg, device)
+    if use_fast_library_calls:
+        set_fast_implementations(sdfg, device)
 
     # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.expand_library_nodes()
+
+    # Simplify again, before modifying allocation lifetimes and similar things, so dead dataflow elimination etc. can
+    # still help us out. There are likely to be more opportunities here again after greedy fusion.
+    sdfg.simplify(validate=False, validate_all=validate_all)
+    sdfg.reset_cfg_list()
 
     # TODO(later): Safe vectorization
 
@@ -664,6 +687,132 @@ def auto_optimize(sdfg: SDFG,
         sdfg.specialize(known_symbols)
 
     # Validate at the end
+    if validate or validate_all:
+        sdfg.validate()
+
+    return sdfg
+
+
+def auto_parallelize(sdfg: SDFG,
+                     device: dtypes.DeviceType,
+                     validate: bool = True,
+                     validate_all: bool = False,
+                     symbols: Dict[str, int] = None,
+                     use_gpu_storage: bool = False,
+                     use_doacross_parallelism: bool = False,
+                     force_collapse_parallelism: bool = False,
+                     use_pointer_incrementation: bool = False,
+                     omp_schedule: str = 'dynamic') -> SDFG:
+    # To start with, make sure the SDFG is simplified.
+    sdfg.simplify(validate=False, validate_all=validate_all)
+    sdfg.reset_cfg_list()
+    if validate_all:
+        sdfg.validate()
+
+    # Do regular auto-optimization.
+    auto_optimize(sdfg, device, validate=validate, validate_all=validate_all, symbols=symbols,
+                  use_gpu_storage=use_gpu_storage, move_loop_into_maps=False, with_canonicalization=True)
+
+    # Canonicalize the SDFG.
+    sdfg.canonicalize(validate=False, validate_all=validate_all)
+    sdfg.reset_cfg_list()
+    sdfg.simplify(validate=False, validate_all=validate_all)
+    sdfg.reset_cfg_list()
+    if validate_all:
+        sdfg.validate()
+
+    # Try to parallelize loops that are still sequential. Analyze the data dependencies of loops and check if they can
+    # be parallelized. If `use_doacross_parallelism` is set, also try to parallelize loops with sequential data
+    # dependencies, if they allow for it.
+    parallelization_pass = ParallelizeDoacrossLoops()
+    parallelization_pass.use_doacross = use_doacross_parallelism
+    pipeline = Pipeline([parallelization_pass])
+    res = {}
+    pipeline.apply_pass(sdfg, res)
+    sdfg.apply_transformations_repeated([MapCollapse], validate=False, validate_all=validate_all)
+    if validate_all:
+        sdfg.validate()
+
+    # Re-canonicalize the SDFG.
+    sdfg.canonicalize(validate=False, validate_all=validate_all)
+    sdfg.reset_cfg_list()
+    sdfg.simplify(validate=False, validate_all=validate_all)
+    sdfg.reset_cfg_list()
+    optimize_order_pass = MoveSequentialIntoParallel()
+    pipeline = Pipeline([optimize_order_pass])
+    res = {}
+    pipeline.apply_pass(sdfg, res)
+    if validate_all:
+        sdfg.validate()
+
+    # Collapse parallelism if enabled to force, otherwise try to be smart about it and only collapse where the contents
+    # of the map seem to be easily vectorizable by the compiler.
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+                    if force_collapse_parallelism:
+                        node.map.collapse = len(node.map.params)
+                    else:
+                        # TODO: Be smart about it, or try to.
+                        pass
+
+    # Setup pointer incrementation.
+    if use_pointer_incrementation:
+        for sd in sdfg.all_sdfgs_recursive():
+            for state in sd.states():
+                for leaf_scope in state.scope_leaves():
+                    if isinstance(leaf_scope.entry, nodes.MapEntry):
+                        mmap = leaf_scope.entry.map
+                        exclude = (dtypes.ScheduleType.CPU_Multicore_Doacross, dtypes.ScheduleType.CPU_Persistent)
+                        if (mmap.schedule not in exclude and
+                            (mmap.schedule != dtypes.ScheduleType.CPU_Multicore or mmap.collapse < len(mmap.params))):
+                            # This map has some sequentialism, set up pointer incrementation for accesses to CPU
+                            # heap arrays.
+                            for edge in state.scope_subgraph(leaf_scope.entry).edges():
+                                mlt: Memlet = edge.data
+                                if mlt.data and state.is_leaf_memlet(edge):
+                                    # TODO: This is a workaround for bugs related to move map into loop and refine
+                                    # nested access. Once these problems are addressed, this limitation can be lifted.
+                                    if isinstance(edge.dst, nodes.NestedSDFG) or isinstance(edge.src, nodes.NestedSDFG):
+                                        continue
+
+                                    desc = sd.data(mlt.data)
+                                    if (isinstance(desc, dt.Array) and desc.total_size != 1 and
+                                        desc.storage == dtypes.StorageType.CPU_Heap):
+                                        mlt.schedule = dtypes.MemletScheduleType.Pointer_Increment
+
+    # If there is any chance for doacross parallelism being used in the program, ensure that all doacross dependencies
+    # are code-generated as late as they can possibly be. To ensure this, we force them to the lowest part of the scope
+    # with empty memlets.
+    # NOTE: This is hacky and there should probably eventually be a codegen solution for this instead - needs to be
+    # discussed.
+    if use_doacross_parallelism:
+        for sd in sdfg.all_sdfgs_recursive():
+            for state in sd.states():
+                for entry in state.scope_tree().keys():
+                    if entry and isinstance(entry, nodes.MapEntry):
+                        if entry.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross:
+                            dependency_sinks = set()
+                            doacross_frontier = set()
+                            for edge in state.scope_subgraph(entry).edges():
+                                if edge.data.schedule == dtypes.MemletScheduleType.Doacross_Sink:
+                                    dependency_sinks.add(edge.dst)
+                                    for succ in state.successors(edge.dst):
+                                        for pred in state.predecessors(succ):
+                                            if pred is not edge.dst:
+                                                doacross_frontier.add(pred)
+
+                            for frontier_node in doacross_frontier:
+                                for sink_node in dependency_sinks:
+                                    state.add_edge(frontier_node, None, sink_node, None, Memlet())
+
+    # Set all Default storage types that are constant sized to registers and make all independent arrays persistent.
+    # We are doing this here for the second time because repeated simplification and canonicalization has most likely
+    # made more accesses transients.
+    move_small_arrays_to_stack(sdfg)
+    make_transients_persistent(sdfg, device)
+
     if validate or validate_all:
         sdfg.validate()
 

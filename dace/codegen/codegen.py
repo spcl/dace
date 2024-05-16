@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import os
-from typing import List, Set
+from typing import Dict, List, Set
 
 import dace
 from dace import dtypes
@@ -95,7 +95,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
     for node, parent in sdfg.all_nodes_recursive():
         # Query nodes and scopes
         if isinstance(node, SDFGState):
-            frame.targets.add(disp.get_state_dispatcher(parent, node))
+            frame.targets.add(disp.get_state_dispatcher(node.sdfg, node))
         elif isinstance(node, dace.nodes.EntryNode):
             frame.targets.add(disp.get_scope_dispatcher(node.schedule))
         elif isinstance(node, dace.nodes.Node):
@@ -149,7 +149,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
-def generate_code(sdfg, validate=True) -> List[CodeObject]:
+def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
 
@@ -208,12 +208,12 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
 
     # Instantiate CPU first (as it is used by the other code generators)
     # TODO: Refactor the parts used by other code generators out of CPU
-    default_target = cpu.CPUCodeGen
+    default_target: TargetCodeGenerator = cpu.CPUCodeGen
     for k, v in TargetCodeGenerator.extensions().items():
         # If another target has already been registered as CPU, use it instead
         if v['name'] == 'cpu':
             default_target = k
-    targets = {'cpu': default_target(frame, sdfg)}
+    targets: Dict[str, TargetCodeGenerator] = {'cpu': default_target(frame, sdfg)}
 
     # Instantiate the rest of the targets
     targets.update(

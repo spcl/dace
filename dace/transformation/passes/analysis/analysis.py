@@ -1,7 +1,8 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 from collections import defaultdict
-from dace.transformation import pass_pipeline as ppl
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd
@@ -27,26 +28,86 @@ class StateReachability(ppl.Pass):
         return ppl.Modifies.Nothing
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        # If anything was modified, reapply
-        return modified & ppl.Modifies.States
+        return modified & ppl.Modifies.CFG
 
-    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[SDFGState, Set[SDFGState]]]:
+    def depends_on(self):
+        return {ControlFlowBlockReachability}
+
+    def _region_closure(self, region: ControlFlowRegion,
+                        block_reach: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]) -> Set[SDFGState]:
+        # TODO: cache stuff here, this is supremely inefficient right now.
+        closure: Set[SDFGState] = set()
+
+        if isinstance(region, LoopRegion):
+            # Any point inside the loop may reach any other point inside the loop again.
+            # TODO(later): Technically an overapproximation. A branch terminating a break is excluded from this.
+            closure.update(region.all_states())
+
+        for reached_block in block_reach[region.parent_graph.cfg_id][region]:
+            if isinstance(reached_block, ControlFlowRegion):
+                closure.update(reached_block.all_states())
+            else:
+                closure.add(reached_block)
+        
+        # Walk up the parent tree.
+        pivot = region.parent_graph
+        while pivot and not isinstance(pivot, SDFG):
+            closure.update(self._region_closure(pivot, block_reach))
+            pivot = pivot.parent_graph
+
+        return closure
+
+    def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[int, Dict[SDFGState, Set[SDFGState]]]:
         """
         :return: A dictionary mapping each state to its other reachable states.
         """
+        if not ControlFlowBlockReachability.__name__ in pipeline_res:
+            cf_block_reach_dict = ControlFlowBlockReachability().apply_pass(top_sdfg, {})
+        else:
+            cf_block_reach_dict = pipeline_res[ControlFlowBlockReachability.__name__]
         reachable: Dict[int, Dict[SDFGState, Set[SDFGState]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            result: Dict[SDFGState, Set[SDFGState]] = {}
-
-            # In networkx this is currently implemented naively for directed graphs.
-            # The implementation below is faster
-            # tc: nx.DiGraph = nx.transitive_closure(sdfg.nx)
-
-            for n, v in reachable_nodes(sdfg.nx):
-                result[n] = set(v)
+            result: Dict[SDFGState, Set[SDFGState]] = defaultdict(set)
+            for state in sdfg.states():
+                for reached in cf_block_reach_dict[state.parent_graph.cfg_id][state]:
+                    if isinstance(reached, ControlFlowRegion):
+                        result[state].update(reached.all_states())
+                    else:
+                        result[state].add(reached)
+                if state.parent_graph is not sdfg:
+                    result[state].update(self._region_closure(state.parent_graph, cf_block_reach_dict))
 
             reachable[sdfg.cfg_id] = result
 
+        return reachable
+
+
+@properties.make_properties
+class ControlFlowBlockReachability(ppl.Pass):
+    """
+    Evaluates control flow block reachability (which control flow block can be executed after each control flow block)
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & ppl.Modifies.CFG
+
+    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]:
+        """
+        :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
+                 control flow blocks in the same region.
+        """
+        reachable: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
+        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
+            # In networkx this is currently implemented naively for directed graphs.
+            # The implementation below is faster
+            # tc: nx.DiGraph = nx.transitive_closure(sdfg.nx)
+            for n, v in reachable_nodes(cfg.nx):
+                reachable[cfg.cfg_id][n] = set(v)
         return reachable
 
 
@@ -116,21 +177,22 @@ class SymbolAccessSets(ppl.Pass):
     def apply_pass(self, top_sdfg: SDFG,
                    _) -> Dict[int, Dict[Union[SDFGState, Edge[InterstateEdge]], Tuple[Set[str], Set[str]]]]:
         """
-        :return: A dictionary mapping each state to a tuple of its (read, written) data descriptors.
+        :return: A dictionary mapping each state and interstate edge to a tuple of its (read, written) symbols.
         """
-        top_result: Dict[int, Dict[SDFGState, Tuple[Set[str], Set[str]]]] = {}
+        top_result: Dict[int, Dict[Union[SDFGState, Edge[InterstateEdge]], Tuple[Set[str], Set[str]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            adesc = set(sdfg.arrays.keys())
-            result: Dict[SDFGState, Tuple[Set[str], Set[str]]] = {}
-            for state in sdfg.nodes():
-                readset = state.free_symbols
-                # No symbols may be written to inside states.
-                result[state] = (readset, set())
-                for oedge in sdfg.out_edges(state):
-                    edge_readset = oedge.data.read_symbols() - adesc
-                    edge_writeset = set(oedge.data.assignments.keys())
-                    result[oedge] = (edge_readset, edge_writeset)
-            top_result[sdfg.cfg_id] = result
+            for cfg in sdfg.all_control_flow_regions():
+                adesc = set(sdfg.arrays.keys())
+                result: Dict[Union[SDFGState, Edge[InterstateEdge]], Tuple[Set[str], Set[str]]] = {}
+                for block in cfg.nodes():
+                    if isinstance(block, SDFGState):
+                        # No symbols may be written to inside states.
+                        result[block] = (block.free_symbols, set())
+                    for oedge in cfg.out_edges(block):
+                        edge_readset = oedge.data.read_symbols() - adesc
+                        edge_writeset = set(oedge.data.assignments.keys())
+                        result[oedge] = (edge_readset, edge_writeset)
+                top_result[cfg.cfg_id] = result
         return top_result
 
 
@@ -179,6 +241,74 @@ class AccessSets(ppl.Pass):
 
 
 @properties.make_properties
+class NonCoveredReads(ppl.Pass):
+    """
+    Evaluates memory reads that are not self-covering, meaning they are not guaranteed to have been preceeded by a
+    write that covers every part of the read.
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.AccessNodes & ppl.Modifies.InterstateEdges
+
+    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[SDFGState, Set[str]]]:
+        """
+        :return: A dictionary mapping each state to a set of not covered read data descriptors.
+        """
+        top_result: Dict[int, Dict[SDFGState, Set[str]]] = {}
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            anames = sdfg.arrays.keys()
+            result: Dict[SDFGState, Set[str]] = {}
+            for cfg in sdfg.all_control_flow_regions():
+                for state in cfg.nodes():
+                    if not isinstance(state, SDFGState):
+                        continue
+
+                    result[state] = set()
+                    for anode in state.data_nodes():
+                        write_subset = None
+                        for ie in state.in_edges(anode):
+                            if ie.data.data == anode.data and ie.data.subset.num_elements_exact() == 1:
+                                if write_subset:
+                                    write_subset = None
+                                    break
+                                write_subset = ie.data.subset
+
+                        all_covered = True
+                        if not write_subset:
+                            all_covered = False
+                        else:
+                            for oe in state.out_edges(anode):
+                                if (oe.data is not None and oe.data.data == anode.data and
+                                    not write_subset.covers_precise(oe.data.src_subset)):
+                                    all_covered = False
+                                    break
+                                elif oe.data.data != anode.data:
+                                    # This indicates a copy to a different data container - meaning we cannot
+                                    # safely eliminate this container no matter what.
+                                    all_covered = False
+                                    break
+
+                        if state.out_degree(anode) > 0 and not all_covered:
+                            result[state].add(anode.data)
+
+                # Edges that read from arrays add to both ends' access sets
+                for e in cfg.edges():
+                    fsyms = e.data.free_symbols & anames
+                    if fsyms:
+                        result[e.src].update(fsyms)
+                        result[e.dst].update(fsyms)
+
+            top_result[sdfg.cfg_id] = result
+        return top_result
+
+
+@properties.make_properties
 class FindAccessStates(ppl.Pass):
     """
     For each data descriptor, creates a set of states in which access nodes of that data are used.
@@ -201,13 +331,13 @@ class FindAccessStates(ppl.Pass):
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[str, Set[SDFGState]] = defaultdict(set)
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 for anode in state.data_nodes():
                     result[anode.data].add(state)
 
             # Edges that read from arrays add to both ends' access sets
             anames = sdfg.arrays.keys()
-            for e in sdfg.edges():
+            for e in sdfg.all_interstate_edges():
                 fsyms = e.data.free_symbols & anames
                 for access in fsyms:
                     result[access].update({e.src, e.dst})
@@ -242,7 +372,7 @@ class FindAccessNodes(ppl.Pass):
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]] = defaultdict(
                 lambda: defaultdict(lambda: [set(), set()]))
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 for anode in state.data_nodes():
                     if state.in_degree(anode) > 0:
                         result[anode.data][state][1].add(anode)
@@ -253,6 +383,7 @@ class FindAccessNodes(ppl.Pass):
 
 
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class SymbolWriteScopes(ppl.Pass):
     """
     For each symbol, create a dictionary mapping each writing interstate edge to that symbol to the set of interstate
@@ -357,6 +488,7 @@ class SymbolWriteScopes(ppl.Pass):
 
 
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class ScalarWriteShadowScopes(ppl.Pass):
     """
     For each scalar or array of size 1, create a dictionary mapping writes to that data container to the set of reads

@@ -62,7 +62,7 @@ class InlineSDFGs(ppl.Pass):
                                    default=None,
                                    allow_none=True,
                                    desc='Whether to print progress, or None for default (print after 5 seconds).')
-    multistate = properties.Property(dtype=bool, default=True, desc='If True, include multi-state inlining.')
+    multistate = properties.Property(dtype=bool, default=False, desc='If True, include multi-state inlining.')
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.NestedSDFGs | ppl.Modifies.States)
@@ -106,6 +106,8 @@ class FixNestedSDFGReferences(ppl.Pass):
             if not isinstance(node, nodes.NestedSDFG):
                 continue
             was_modified = False
+            if node.sdfg is None:
+                continue
             if node.sdfg.parent_nsdfg_node is not node:
                 was_modified = True
                 node.sdfg.parent_nsdfg_node = node

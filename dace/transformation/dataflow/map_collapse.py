@@ -1,6 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the map-collapse transformation. """
 
+import copy
+from dace import dtypes
+from dace import symbolic
+from dace.memlet import Memlet
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.symbolic import symlist
@@ -76,7 +80,16 @@ class MapCollapse(transformation.SingleStateTransformation):
                 return False
 
         if not permissive:
-            if inner_map_entry.map.schedule != outer_map_entry.map.schedule:
+            # Make sure the schedules are correct.
+            if outer_map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross:
+                if inner_map_entry.map.schedule not in (dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential,
+                                                        dtypes.ScheduleType.CPU_Multicore):
+                    return False
+            elif inner_map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross:
+                if outer_map_entry.map.schedule not in (dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential,
+                                                        dtypes.ScheduleType.CPU_Multicore):
+                    return False
+            elif inner_map_entry.map.schedule != outer_map_entry.map.schedule:
                 return False
 
         return True
@@ -101,4 +114,34 @@ class MapCollapse(transformation.SingleStateTransformation):
         inner_map_exit = graph.exit_node(inner_map_entry)
         outer_map_exit = graph.exit_node(outer_map_entry)
 
-        return sdutil.merge_maps(graph, outer_map_entry, outer_map_exit, inner_map_entry, inner_map_exit)
+        merged_entry, merged_exit = sdutil.merge_maps(graph, outer_map_entry, outer_map_exit, inner_map_entry,
+                                                      inner_map_exit)
+
+        if (outer_map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross or
+            inner_map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross):
+            subgraph = graph.scope_subgraph(merged_entry, True, True)
+            for edge in subgraph.edges():
+                memlet: Memlet = edge.data
+                if memlet.schedule == dtypes.MemletScheduleType.Doacross_Source:
+                    # Nothing needs to be done here.
+                    pass
+                elif memlet.schedule == dtypes.MemletScheduleType.Doacross_Source_Deferred:
+                    # Ensure the merged output is marked to resolve the deferred source.
+                    merged_entry.map.omp_doacross_multi_source = True
+                elif memlet.schedule == dtypes.MemletScheduleType.Doacross_Sink:
+                    # Adjust the sink dependency offset to account for the new map ranges / dimensions.
+                    if outer_map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross:
+                        # Since the inner map must be a non-doacross map, we can append the inner map's parameters as
+                        # unchanged to the offsets of a sink.
+                        for par in inner_map_entry.map.params:
+                            new_offset = [old for old in memlet.doacross_dependency_offset]
+                            new_offset.append(symbolic.symbol(par))
+                            memlet.doacross_dependency_offset = new_offset
+                    elif inner_map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross:
+                        # The same, but in the other direction.
+                        for par in outer_map_entry.map.params:
+                            new_offset = [old for old in memlet.doacross_dependency_offset]
+                            new_offset.append(symbolic.symbol(par))
+                            memlet.doacross_dependency_offset = new_offset
+
+        return merged_entry, merged_exit

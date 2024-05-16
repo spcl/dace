@@ -1073,6 +1073,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'IfExpr': IfExpr,
         'Mod': sympy.Mod,
         'Attr': Attr,
+        'id': sympy.Symbol('id')
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters

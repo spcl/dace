@@ -354,16 +354,31 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         def map_node(node):
             return graph.node(id_map[graph.node_id(node)])
 
-        def map_memlet(memlet):
+        def map_memlet(memlet: Memlet, access_node_involved: bool):
             memlet = copy.deepcopy(memlet)
-            memlet.data = tmp_map.get(memlet.data, memlet.data)
+            new_memlet_data = memlet.data
+            try:
+                new_memlet_data = tmp_map[memlet.data]
+            except KeyError:
+                if access_node_involved:
+                    new_mamlet_data = memlet.data
+                else:
+                    desc = sdfg.data(memlet.data)
+                    if isinstance(desc, dt.Scalar) and desc.storage == dtypes.StorageType.Register:
+                        # Ensure that any register scalars used on memlets are renamed to avoid clashes.
+                        new_name = sdfg.temp_data_name()
+                        sdfg.arrays[new_name] = copy.deepcopy(desc)
+                        tmp_map[memlet.data] = new_name
+                        new_memlet_data = new_name
+            memlet.data = new_memlet_data
             return memlet
 
         for edge in graph.edges():
             if edge.src in inter_nodes or edge.dst in inter_nodes:
                 src = map_node(edge.src) if edge.src in inter_nodes else edge.src
                 dst = map_node(edge.dst) if edge.dst in inter_nodes else edge.dst
-                edge_data = map_memlet(edge.data)
+                with_access_node = isinstance(src, nodes.AccessNode) or isinstance(dst, nodes.AccessNode)
+                edge_data = map_memlet(edge.data, with_access_node)
                 graph.add_edge(src, edge.src_conn, dst, edge.dst_conn, edge_data)
 
         return new_inter_nodes

@@ -298,13 +298,13 @@ class RedundantArray(pm.SingleStateTransformation):
                     if not subsets_intersect:
                         continue
                     try:
-                        has_bward_path = nx.has_path(G, a, true_out_array)
+                        has_fward_path = nx.has_path(G, a, true_out_array)
                     except NodeNotFound:
-                        has_bward_path = nx.has_path(graph.nx, a, true_out_array)
+                        has_fward_path = nx.has_path(graph.nx, a, true_out_array)
                     try:
-                        has_fward_path = nx.has_path(G, true_out_array, a)
+                        has_bward_path = nx.has_path(G, true_out_array, a)
                     except NodeNotFound:
-                        has_fward_path = nx.has_path(graph.nx, true_out_array, a)
+                        has_bward_path = nx.has_path(graph.nx, true_out_array, a)
                     # If there is no path between the access nodes (disconnected
                     # components), then it is definitely possible to have data
                     # races. Abort.
@@ -425,7 +425,8 @@ class RedundantArray(pm.SingleStateTransformation):
         return True
 
     def _make_view(self, sdfg: SDFG, graph: SDFGState, in_array: nodes.AccessNode, out_array: nodes.AccessNode,
-                   e1: graph.MultiConnectorEdge[mm.Memlet], b_subset: subsets.Subset, b_dims_to_pop: List[int]):
+                   e1: graph.MultiConnectorEdge[mm.Memlet], b_subset: subsets.Subset, b_dims_to_pop: List[int],
+                   a_dims_to_pop: Optional[List[int]]):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
         # NOTE: We do not want to create another view, if the immediate
@@ -452,6 +453,15 @@ class RedundantArray(pm.SingleStateTransformation):
         view_strides = in_desc.strides
         if (b_dims_to_pop and len(b_dims_to_pop) == len(out_desc.shape) - len(in_desc.shape)):
             view_strides = [s for i, s in enumerate(out_desc.strides) if i not in b_dims_to_pop]
+        elif (a_dims_to_pop and len(a_dims_to_pop) == len(in_desc.shape) - len(out_desc.shape)):
+            view_strides = []
+            skipped_strides = 0
+            for i, s in enumerate(in_desc.strides):
+                if i in a_dims_to_pop:
+                    view_strides.append(0)
+                    skipped_strides += 1
+                else:
+                    view_strides.append(out_desc.strides[i - skipped_strides])
         sdfg.arrays[in_array.data] = data.ArrayView(in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
                                                     out_desc.storage, out_desc.location, view_strides, in_desc.offset,
                                                     out_desc.may_alias, dtypes.AllocationLifetime.Scope,
@@ -525,7 +535,7 @@ class RedundantArray(pm.SingleStateTransformation):
         # create a view.
         if reduction or len(a_dims_to_pop) == len(in_desc.shape) or any(
                 m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
-            self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
+            self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop, a_dims_to_pop)
             return in_array
 
         # Validate that subsets are composable. If not, make a view
@@ -1473,7 +1483,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
         desc = self.view.desc(sdfg)
 
         # Ensure view
-        if not isinstance(desc, data.View):
+        if not isinstance(desc, data.View) or isinstance(desc, data.StructureView):
             return False
 
         # Get viewed node and non-viewed edges

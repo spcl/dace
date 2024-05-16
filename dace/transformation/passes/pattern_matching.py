@@ -166,7 +166,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         if self.validate_all:
             match_name = match.print_match(tcfg)
 
-        applied_transformations[type(match).__name__].append(match.apply(graph, tcfg.sdfg))
+        applied_transformations[type(match).__name__].append(match.apply(graph, tcfg.sdfg or tcfg))
         if self.progress or (self.progress is None and (time.time() - start) > 5):
             print('Applied {}.\r'.format(', '.join(['%d %s' % (len(v), k)
                                                     for k, v in applied_transformations.items()])),
@@ -520,6 +520,7 @@ def match_patterns(sdfg: SDFG,
 
     # Try to find transformations on each SDFG
     for cfr in cfrs:
+        sd = cfr.sdfg or cfr
         ###################################
         # Match inter-state transformations
         if len(interstate_transformations) > 0:
@@ -528,7 +529,7 @@ def match_patterns(sdfg: SDFG,
 
         for xform, expr_idx, nxpattern, matcher, opts in interstate_transformations:
             for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
-                match = _try_to_match_transformation(cfr, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern, -1,
+                match = _try_to_match_transformation(cfr, digraph, subgraph, sd, xform, expr_idx, nxpattern, -1,
                                                      permissive, opts)
                 if match is not None:
                     yield match
@@ -546,7 +547,7 @@ def match_patterns(sdfg: SDFG,
 
             for xform, expr_idx, nxpattern, matcher, opts in singlestate_transformations:
                 for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
-                    match = _try_to_match_transformation(state, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern,
+                    match = _try_to_match_transformation(state, digraph, subgraph, sd, xform, expr_idx, nxpattern,
                                                          state_id, permissive, opts)
                     if match is not None:
                         yield match

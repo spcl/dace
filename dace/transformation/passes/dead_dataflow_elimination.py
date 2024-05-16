@@ -11,15 +11,14 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
 from dace.sdfg import infer_types
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes import analysis as ap
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.analysis import analysis as ap
 
 PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be erased
 
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@transformation.single_level_sdfg_only
 class DeadDataflowElimination(ppl.Pass):
     """
     Removes unused computations from SDFG states.
@@ -44,7 +43,7 @@ class DeadDataflowElimination(ppl.Pass):
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.States)
 
     def depends_on(self) -> Set[Type[ppl.Pass]]:
-        return {ap.StateReachability, ap.AccessSets}
+        return {ap.StateReachability, ap.AccessSets, ap.NonCoveredReads}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Set[str]]]:
         """
@@ -61,11 +60,12 @@ class DeadDataflowElimination(ppl.Pass):
         #  * Read/write access sets per state
         reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability'][sdfg.cfg_id]
         access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets'][sdfg.cfg_id]
+        non_covered_reads: Dict[SDFGState, Set[str]] = pipeline_results[ap.NonCoveredReads.__name__][sdfg.cfg_id]
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
         # Traverse SDFG backwards
         try:
-            state_order = list(cfg.stateorder_topological_sort(sdfg))
+            state_order: List[SDFGState] = list(cfg.stateorder_topological_sort(sdfg, produce_nonstate_blocks=False))
         except KeyError:
             return None
         for state in reversed(state_order):
@@ -76,7 +76,7 @@ class DeadDataflowElimination(ppl.Pass):
             # Compute states where memory will no longer be read
             writes = access_sets[state][1]
             descendants = reachable[state]
-            descendant_reads = set().union(*(access_sets[succ][0] for succ in descendants))
+            descendant_reads = set().union(*(non_covered_reads[succ] for succ in descendants))
             no_longer_used: Set[str] = set(data for data in writes if data not in descendant_reads)
 
             # Compute dead nodes

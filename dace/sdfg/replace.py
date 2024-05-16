@@ -70,8 +70,14 @@ def replace_dict(subgraph: 'dace.sdfg.state.StateGraphView',
 
     # Replace in memlets
     for edge in subgraph.edges():
-        if edge.data.data in repl:
-            edge.data.data = str(repl[edge.data.data])
+        if edge.data.data is not None:
+            members = edge.data.data.split(".")
+            new_members = []
+            for member in members:
+                if member in repl:
+                    member = str(repl[member])
+                new_members.append(member)
+            edge.data.data = ".".join(new_members)
         if (edge.data.subset is not None and repl.keys() & edge.data.subset.free_symbols):
             edge.data.subset = _replsym(edge.data.subset, symrepl)
         if (edge.data.other_subset is not None and repl.keys() & edge.data.other_subset.free_symbols):

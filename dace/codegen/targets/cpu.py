@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from collections import defaultdict
 from copy import deepcopy
 from dace.sdfg.state import SDFGState
 import functools
@@ -17,11 +18,15 @@ from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
 from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_stream_view, NodeNotExpandedError,
-                       dynamic_map_inputs, local_transients)
-from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga, is_in_scope
+                       dynamic_map_inputs)
+from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from typing import Union
+from typing import TYPE_CHECKING, Optional, Tuple, Union
 from dace.codegen.targets import fpga
+
+
+if TYPE_CHECKING:
+    from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
 @registry.autoregister_params(name='cpu')
@@ -78,7 +83,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise TypeError("Unrecognized argument type: {t} (value {v})".format(t=type(arg_type).__name__,
                                                                                      v=str(arg_type)))
 
-    def __init__(self, frame_codegen, sdfg):
+    def __init__(self, frame_codegen: 'DaCeCodeGenerator', sdfg: sd.SDFG):
         self._frame = frame_codegen
         self._dispatcher: TargetDispatcher = frame_codegen.dispatcher
         self.calling_codegen = self
@@ -109,7 +114,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # Register dispatchers
         dispatcher.register_node_dispatcher(self)
         dispatcher.register_map_dispatcher(
-            [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential],
+            [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Multicore_Doacross,
+             dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential],
             self)
 
         cpu_storage = [dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.Register]
@@ -216,13 +222,22 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet.subset = subsets.Range.from_array(viewed_dnode.desc(sdfg))
 
         # Emit memlet as a reference and register defined variable
+        conntype = nodedesc.dtype if isinstance(nodedesc, data.StructureView) else dtypes.pointer(nodedesc.dtype)
+        # atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
+        #                                                 sdfg,
+        #                                                 memlet,
+        #                                                 name,
+        #                                                 conntype,
+        #                                                 ancestor=0,
+        #                                                 is_write=is_write)
+        # NOTE: IMPORTANT!!! This is a temporary fix for Views that are used for both reading and writing
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
                                                         sdfg,
                                                         memlet,
                                                         name,
-                                                        dtypes.pointer(nodedesc.dtype),
+                                                        conntype,
                                                         ancestor=0,
-                                                        is_write=is_write)
+                                                        is_write=True)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
@@ -251,23 +266,40 @@ class CPUCodeGen(TargetCodeGenerator):
                     value = f'{arrexpr}->{field_name}'
                     if isinstance(stype.members[field_name], data.Scalar):
                         value = '&' + value
-
-        if not declared:
-            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
-            self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
-            if isinstance(nodedesc, data.StructureView):
-                for k, v in nodedesc.members.items():
+        
+        def _visit_structure(struct: Union[data.Structure, data.StructureView],
+                             prefix: str = '', declare: bool = True, define: bool = True):
+                for k, v in struct.members.items():
+                    if isinstance(v, data.Structure):
+                        _visit_structure(v, f'{prefix}->{k}')
+                    elif isinstance(v, data.ContainerArray):
+                        _visit_structure(v.stype, f'{prefix}->{k}')
                     if isinstance(v, data.Data):
                         ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
                         defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
-                        self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
-                        self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
-                # TODO: Find a better way to do this (the issue is with pointers of pointers)
-                if atype.endswith('*'):
-                    atype = atype[:-1]
-                if value.startswith('&'):
-                    value = value[1:]
+                        if declare:
+                            self._dispatcher.declared_arrays.add(f"{prefix}->{k}", defined_type, ctypedef)
+                        if define:
+                            self._dispatcher.defined_vars.add(f"{prefix}->{k}", defined_type, ctypedef)
+                    ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+                    if declare:
+                        self._dispatcher.declared_arrays.add(f"{prefix}", DefinedType.Pointer, ctypedef)
+                    if define:
+                        self._dispatcher.defined_vars.add(f"{prefix}", DefinedType.Pointer, ctypedef)
+
+        ctypedef = (nodedesc.dtype.ctype if isinstance(nodedesc, data.StructureView) else
+                        dtypes.pointer(nodedesc.dtype).ctype)
+        if not declared:
+            if isinstance(nodedesc, data.StructureView):
+                _visit_structure(nodedesc, aname)
+            else:
+                self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
             declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
+        else:
+            if isinstance(nodedesc, data.StructureView):
+                _visit_structure(nodedesc, aname, declare=False)
+            else:
+                self._dispatcher.defined_vars.add(aname, DefinedType.Pointer, ctypedef)
         allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
 
     def allocate_reference(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.AccessNode,
@@ -378,7 +410,8 @@ class CPUCodeGen(TargetCodeGenerator):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
-            declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
+            if not declared:
+                declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
             if allocate_nested_data:
                 for k, v in nodedesc.members.items():
@@ -386,8 +419,13 @@ class CPUCodeGen(TargetCodeGenerator):
                         ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
                         defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
                         self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
-                        self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
-                                            declaration_stream, allocation_stream)
+                        # NOTE: The access node dataname must "navigate" the structure with dots (not arrows).
+                        if isinstance(v, data.Scalar):
+                            # NOTE: Scalar members are already defined in the struct definition.
+                            self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
+                        else:
+                            self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{node.data}.{k}"), v,
+                                                function_stream, declaration_stream, allocation_stream)
             return
         if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
@@ -395,6 +433,10 @@ class CPUCodeGen(TargetCodeGenerator):
             return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
                                            allocation_stream)
         if isinstance(nodedesc, data.Scalar):
+            if top_desc is not None and isinstance(top_desc, (data.Structure, data.StructureView)):
+                # If this scalar is a field of a structure, there is no need for allocation.
+                return
+
             if node.setzero:
                 declaration_stream.write("%s %s = 0;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node)
             else:
@@ -451,30 +493,38 @@ class CPUCodeGen(TargetCodeGenerator):
             declaration_stream.write(definition, sdfg, state_id, node)
             define_var(name, DefinedType.Stream, ctypedef)
 
-        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and
+        elif (top_storage == dtypes.StorageType.CPU_Heap
+              or (top_storage == dtypes.StorageType.Register and
                   ((symbolic.issymbolic(arrsize, sdfg.constants)) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
 
-            if nodedesc.storage == dtypes.StorageType.Register:
+            if top_storage == dtypes.StorageType.Register:
 
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn('Variable-length array %s with size %s '
                                   'detected and was allocated on heap instead of '
-                                  '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
+                                  '%s' % (name, cpp.sym2cpp(arrsize), top_storage))
                 elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
                     warnings.warn("Array {} with size {} detected and was allocated on heap instead of "
                                   "{} since its size is greater than max_stack_array_size ({})".format(
-                                      name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
+                                      name, cpp.sym2cpp(arrsize_bytes), top_storage,
                                       Config.get("compiler", "max_stack_array_size")))
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', sdfg, state_id, node)
-            allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), sdfg,
-                state_id, node)
+            
+            # NOTE: Special case: double pointer
+            ctype_str = nodedesc.dtype.ctype
+            format_str = "{name} = new {ctype} DACE_ALIGN(64)[{size}];\n"
+            if (isinstance(nodedesc.dtype, dtypes.pointer) and
+                isinstance(nodedesc.dtype.base_type, (dtypes.pointer, dtypes.struct))):
+                ctype_str = nodedesc.dtype.base_type.ctype
+                format_str = "{name} = new {ctype} DACE_ALIGN(64)*[{size}];\n"    
+            
+            allocation_stream.write(format_str.format(name=alloc_name, ctype=ctype_str, size=cpp.sym2cpp(arrsize)),
+                                    sdfg, state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
             if node.setzero:
@@ -485,7 +535,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                         node)
 
             return
-        elif (nodedesc.storage == dtypes.StorageType.Register):
+        elif (top_storage == dtypes.StorageType.Register):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
@@ -506,7 +556,7 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             define_var(name, DefinedType.Pointer, ctypedef)
             return
-        elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
+        elif top_storage is dtypes.StorageType.CPU_ThreadLocal:
             # Define pointer once
             # NOTE: OpenMP threadprivate storage MUST be declared globally.
             if not declared:
@@ -541,7 +591,7 @@ class CPUCodeGen(TargetCodeGenerator):
             allocation_stream.write('}')
             self._dispatcher.defined_vars.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
         else:
-            raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
+            raise NotImplementedError("Unimplemented storage type " + str(top_storage))
 
     def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
         arrsize = nodedesc.total_size
@@ -554,7 +604,12 @@ class CPUCodeGen(TargetCodeGenerator):
                                               dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
-        if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
+        # Special case for structures
+        operator = 'delete[]'
+        if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
+            operator = 'delete'
+
+        if isinstance(nodedesc, (data.Scalar, data.View, data.StructureView, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
@@ -562,10 +617,10 @@ class CPUCodeGen(TargetCodeGenerator):
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             callsite_stream.write(
-                """#pragma omp parallel
+                f"""#pragma omp parallel
                 {{
-                    delete[] {name};
-                }}""".format(name=alloc_name),
+                    {operator} {alloc_name};
+                }}""",
                 sdfg,
                 state_id,
                 node,
@@ -624,19 +679,24 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def _emit_copy(
         self,
-        sdfg,
-        state_id,
-        src_node,
-        src_storage,
-        dst_node,
-        dst_storage,
-        dst_schedule,
-        edge,
-        dfg,
-        stream,
+        sdfg: SDFG,
+        state_id: int,
+        src_node: nodes.Node,
+        src_storage: dtypes.StorageType,
+        dst_node: nodes.Node,
+        dst_storage: dtypes.StorageType,
+        dst_schedule: dtypes.ScheduleType,
+        edge: Tuple[nodes.Node, str, nodes.Node, str, mmlt.Memlet],
+        dfg: SDFGState,
+        stream: CodeIOStream,
     ):
         u, uconn, v, vconn, memlet = edge
         orig_vconn = vconn
+
+        gedge = None
+        for e in dfg.edges_between(u, v):
+            if e.data == memlet:
+                gedge = e
 
         # Determine memlet directionality
         if isinstance(src_node, nodes.AccessNode) and validate_memlet_data(memlet.data, src_node.data):
@@ -652,23 +712,41 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             raise LookupError("Memlet does not point to any of the nodes")
 
+        postample = None
+        if memlet.schedule == dtypes.MemletScheduleType.Doacross_Sink and memlet.doacross_dependency_offset is not None:
+            stream.write(
+                '#pragma omp ordered depend(sink:{offset})'.format(
+                    offset=','.join([str(o) for o in memlet.doacross_dependency_offset])
+                ),
+                sdfg,
+                state_id,
+                [src_node, dst_node]
+            )
+
+        if memlet.schedule == dtypes.MemletScheduleType.Doacross_Source:
+            postample = '#pragma omp ordered depend(source)'
+
         if isinstance(dst_node, nodes.Tasklet):
             # Copy into tasklet
             stream.write(
-                "    " + self.memlet_definition(sdfg, memlet, False, vconn, dst_node.in_connectors[vconn]),
+                "    " + self.memlet_definition(sdfg, memlet, False, vconn, dst_node.in_connectors[vconn], edge=gedge),
                 sdfg,
                 state_id,
                 [src_node, dst_node],
             )
+            if postample:
+                stream.write("    " + postample, sdfg, state_id, [src_node, dst_node])
             return
         elif isinstance(src_node, nodes.Tasklet):
             # Copy out of tasklet
             stream.write(
-                "    " + self.memlet_definition(sdfg, memlet, True, uconn, src_node.out_connectors[uconn]),
+                "    " + self.memlet_definition(sdfg, memlet, True, uconn, src_node.out_connectors[uconn], edge=gedge),
                 sdfg,
                 state_id,
                 [src_node, dst_node],
             )
+            if postample:
+                stream.write("    " + postample, sdfg, state_id, [src_node, dst_node])
             return
         else:  # Copy array-to-array
             src_nodedesc = src_node.desc(sdfg)
@@ -691,6 +769,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     state_id,
                     [src_node, dst_node],
                 )
+                if postample:
+                    stream.write("    " + postample, sdfg, state_id, [src_node, dst_node])
                 return
 
             # Writing from/to a stream
@@ -727,6 +807,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         state_id,
                         [src_node, dst_node],
                     )
+                    if postample:
+                        stream.write("    " + postample, sdfg, state_id, [src_node, dst_node])
                     return
                 # Array -> Stream - push bulk
                 if isinstance(src_nodedesc, (data.Scalar, data.Array)) and isinstance(dst_nodedesc, data.Stream):
@@ -758,6 +840,8 @@ class CPUCodeGen(TargetCodeGenerator):
                             state_id,
                             [src_node, dst_node],
                         )
+                    if postample:
+                        stream.write("    " + postample, sdfg, state_id, [src_node, dst_node])
                     return
                 else:
                     # Unknown case
@@ -888,6 +972,9 @@ class CPUCodeGen(TargetCodeGenerator):
             if instr is not None:
                 instr.on_copy_end(sdfg, state_dfg, src_node, dst_node, edge, stream, None)
         #############################################################
+
+        if postample:
+            stream.write("    " + postample, sdfg, state_id, [src_node, dst_node])
 
     ###########################################################################
     # Memlet handling
@@ -1027,10 +1114,16 @@ class CPUCodeGen(TargetCodeGenerator):
                             # which we skip since the memlets are references
                             continue
                         desc = sdfg.arrays[memlet.data]
-                        ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
-                        is_global = desc.lifetime in (dtypes.AllocationLifetime.Global,
-                                                      dtypes.AllocationLifetime.Persistent,
-                                                      dtypes.AllocationLifetime.External)
+                        if (memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment and
+                            edge in self._frame.ptr_increment_name_mapping):
+                            ptrname, offs = self._frame.ptr_increment_name_mapping[edge]
+                            is_global = False
+                        else:
+                            ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                            offs = None
+                            is_global = desc.lifetime in (dtypes.AllocationLifetime.Global,
+                                                        dtypes.AllocationLifetime.Persistent,
+                                                        dtypes.AllocationLifetime.External)
                         try:
                             defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
                         except KeyError:
@@ -1067,11 +1160,21 @@ class CPUCodeGen(TargetCodeGenerator):
                             write_expr = f"*({ptr_str} + {array_expr}) = {in_local_name};"
                         else:
                             desc_dtype = desc.dtype
-                            expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
+                            if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
+                                if offs is not None:
+                                    expr = '%s[%s]' % (ptrname, offs)
+                                else:
+                                    expr = '%s[0]' % (ptrname)
+                            else:
+                                expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
                             write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
 
                     # Write out
                     result.write(write_expr, sdfg, state_id, node)
+
+                    # If the memlet resolves a doacross dependency, insert the necessary pragma.
+                    if memlet.schedule == dtypes.MemletScheduleType.Doacross_Source:
+                        result.write("#pragma omp ordered depend(source)", sdfg, state_id, node)
 
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
@@ -1201,7 +1304,8 @@ class CPUCodeGen(TargetCodeGenerator):
                           local_name: str,
                           conntype: Union[data.Data, dtypes.typeclass] = None,
                           allow_shadowing=False,
-                          codegen=None):
+                          codegen=None,
+                          edge=None):
         # TODO: Robust rule set
         if conntype is None:
             raise ValueError('Cannot define memlet for "%s" without connector type' % local_name)
@@ -1221,7 +1325,11 @@ class CPUCodeGen(TargetCodeGenerator):
         # Allocate variable type
         memlet_type = conntype.dtype.ctype
 
-        ptr = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+        if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
+            ptr, offs = self._frame.ptr_increment_name_mapping[edge]
+        else:
+            ptr = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+
         types = None
         # Non-free symbol dependent Arrays due to their shape
         dependent_shape = (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
@@ -1234,7 +1342,8 @@ class CPUCodeGen(TargetCodeGenerator):
         except KeyError:
             pass
         if not types:
-            types = self._dispatcher.defined_vars.get(ptr, is_global=True)
+            is_global = memlet.schedule != dtypes.MemletScheduleType.Pointer_Increment
+            types = self._dispatcher.defined_vars.get(ptr, is_global=is_global)
         var_type, ctypedef = types
 
         if fpga.is_fpga_array(desc):
@@ -1250,8 +1359,14 @@ class CPUCodeGen(TargetCodeGenerator):
                                 decouple_array_interfaces=decouple_array_interfaces)
 
         result = ''
-        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
-                if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
+        if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
+            if offs is not None:
+                expr = offs
+            else:
+                expr = '0'
+        else:
+            expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
+                    if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
 
         if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)
@@ -1362,6 +1477,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                           after_memlets_stream)
 
         self._dispatcher.defined_vars.enter_scope(node)
+        self._dispatcher.declared_arrays.enter_scope(node)
 
         arrays = set()
         for edge in state_dfg.in_edges(node):
@@ -1516,6 +1632,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
+        self._dispatcher.declared_arrays.exit_scope(node)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
                         toplevel_schedule):
@@ -1573,6 +1690,7 @@ class CPUCodeGen(TargetCodeGenerator):
             f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA")), fsyms))
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
             if aname in fsyms and aname not in sdfg.constants
@@ -1585,6 +1703,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if state_struct:
             prepend = ['__state']
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA")), fsyms))
         args = ', '.join(prepend + [argval for _, _, argval in memlet_references] + [
             cpp.sym2cpp(symval) for symname, symval in sorted(node.symbol_mapping.items())
             if symname in fsyms and symname not in sdfg.constants
@@ -1634,11 +1753,14 @@ class CPUCodeGen(TargetCodeGenerator):
     ):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
+        self._dispatcher.declared_arrays.enter_scope(sdfg, can_access_parent=inline)
         state_dfg = sdfg.nodes()[state_id]
 
         fsyms = self._frame.free_symbols(node.sdfg)
         arglist = node.sdfg.arglist(scalars_only=False, free_symbols=fsyms)
+        
         self._define_sdfg_arguments(node.sdfg, arglist)
+
 
         # Quick sanity check.
         # TODO(later): Is this necessary or "can_access_parent" should always be False?
@@ -1787,11 +1909,98 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream.write(nested_stream.getvalue())
 
         self._dispatcher.defined_vars.exit_scope(sdfg)
+        self._dispatcher.declared_arrays.exit_scope(sdfg)
+
+
+    def _register_ptr_incrementation_definition(self, sdfg: SDFG, state_id: int, node: nodes.Node,
+                                                result: CodeIOStream, paccess, var, begin) -> str:
+            access = paccess.data
+            ptr_base_name = '__dace_ptr_increment_' + access.data
+            ptr_name_addendum = 0
+            ptr_name = ptr_base_name + '_' + str(ptr_name_addendum)
+            while self._dispatcher.defined_vars.has(ptr_name):
+                ptr_name_addendum += 1
+                ptr_name = ptr_base_name + '_' + str(ptr_name_addendum)
+
+            desc = sdfg.data(access.data)
+            ptr = cpp.ptr(access.data, desc, sdfg, self._frame)
+            if self._dispatcher.declared_arrays.has(ptr):
+                dtype, ctype = self._dispatcher.declared_arrays.get(ptr)
+            else:
+                dtype, ctype = self._dispatcher.defined_vars.get(ptr)
+            self._dispatcher.defined_vars.add(ptr_name, dtype, ctype)
+            self._frame.ptr_increment_name_mapping[paccess] = ptr_name, '0'
+
+            offsets_to_add = []
+            access_offset_raw = self._frame._ptr_incremented_accesses[paccess][0]
+            access_offset = [rn[0] for rn in access_offset_raw.ranges]
+
+            begin_offs_skip_scope_paras = set()
+            involved_scopes = self._frame._ptr_incremented_accesses[paccess][1]
+            for involved_scope in involved_scopes:
+                para, _, _, _ = involved_scope
+                if str(para) == var:
+                    break
+                begin_offs_skip_scope_paras.add(str(para))
+                for idx, subrng in enumerate(access.subset):
+                    dimsyms = set()
+                    for _d in subrng:
+                        dimsyms |= symbolic.free_symbols_and_functions(_d)
+                    if str(para) in dimsyms:
+                        offset_expr = '(' + cpp.sym2cpp(para) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                        offsets_to_add.append(offset_expr)
+
+            # Calculate the offset added for any involved scopes that begin at something other than 0.
+            for involved_scope in involved_scopes:
+                para, _, scope_node, is_para = involved_scope
+                if str(para) in begin_offs_skip_scope_paras:
+                    continue
+
+                if is_para:
+                    raise ValueError('Parallel scopes involved in pointer incremented accesses are not supported.')
+
+                rng_idx = scope_node.params.index(str(para))
+                para_start = scope_node.range[rng_idx][0]
+                if para_start != 0:
+                    for idx, subrng in enumerate(access.subset):
+                        dimsyms = set()
+                        for _d in subrng:
+                            dimsyms |= symbolic.free_symbols_and_functions(_d)
+                        if str(para) in dimsyms:
+                            offset_expr = '(' + cpp.sym2cpp(para_start) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                            offsets_to_add.append(offset_expr)
+
+            for j, off in enumerate(access_offset):
+                if off != 0:
+                    offset_expr = '(' + cpp.sym2cpp(off) + ' * ' + cpp.sym2cpp(desc.strides[j]) + ')'
+                    offsets_to_add.append(offset_expr)
+            data_ptr_expr = ptr
+            offset_expr = None
+            if offsets_to_add:
+                offset_expr = ' + '.join(offsets_to_add)
+                simplified_offset_expr = None
+                try:
+                    simplified_offset_expr = str(symbolic.simplify(symbolic.pystr_to_symbolic(offset_expr)))
+                except Exception:
+                    pass
+                if simplified_offset_expr:
+                    offset_expr = simplified_offset_expr
+            if offset_expr:
+                data_ptr_expr += ' + ' + offset_expr
+            result.write(
+                '%s %s = %s;\n' %
+                (ctype, ptr_name, data_ptr_expr),
+                sdfg,
+                state_id,
+                node
+            )
+
+            return ptr_name
 
     def _generate_MapEntry(
         self,
-        sdfg,
-        dfg,
+        sdfg: SDFG,
+        dfg: SDFGState,
         state_id,
         node: nodes.MapEntry,
         function_stream,
@@ -1813,7 +2022,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if e.data.data != e.dst_conn:
                 callsite_stream.write(
                     self.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), sdfg,
-                    state_id, node)
+                    state_id, node, edge=e)
 
         inner_stream = CodeIOStream()
         self.generate_scope_preamble(sdfg, dfg, state_id, function_stream, callsite_stream, inner_stream)
@@ -1825,10 +2034,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # TODO: Refactor to generate_scope_preamble once a general code
         #  generator (that CPU inherits from) is implemented
-        if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
+        if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Multicore_Doacross,
+                                 dtypes.ScheduleType.CPU_Persistent):
             # OpenMP header
             in_persistent = False
-            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+            if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore or
+                node.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross):
                 in_persistent = is_in_scope(sdfg, state_dfg, node, [dtypes.ScheduleType.CPU_Persistent])
                 if in_persistent:
                     # If already in a #pragma omp parallel, no need to use it twice
@@ -1863,14 +2074,16 @@ class CPUCodeGen(TargetCodeGenerator):
             # OpenMP nested loop properties
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.collapse > 1:
                 map_header += ' collapse(%d)' % node.map.collapse
+            elif node.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross:
+                map_header += ' ordered(%d)' % node.map.get_param_num()
 
         if node.map.unroll:
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
                 raise ValueError("An OpenMP map cannot be unrolled (" + node.map.label + ")")
 
-        result.write(map_header, sdfg, state_id, node)
-
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
+            result.write(map_header, sdfg, state_id, node)
+
             result.write('{\n', sdfg, state_id, node)
 
             # Find if bounds are used within the scope
@@ -1896,6 +2109,117 @@ class CPUCodeGen(TargetCodeGenerator):
                 var = map_params[i]
                 begin, end, skip = r
 
+                ptr_increments_to_define = self._frame.ptr_increments_to_define[node][i]
+                container_to_increment_mapping = defaultdict(set)
+                for paccess in ptr_increments_to_define:
+                    container_to_increment_mapping[paccess.data.data].add(paccess)
+
+                for dname, accesses in container_to_increment_mapping.items():
+                    desc = sdfg.data(dname)
+                    if len(accesses) > 1:
+                        # Check grouping
+                        grouping_handled = set()
+                        for paccess in accesses:
+                            if paccess in grouping_handled:
+                                continue
+                            grouping_handled.add(paccess)
+
+                            a_name = self._register_ptr_incrementation_definition(sdfg, state_id, node,
+                                                                                  result, paccess, var, begin)
+                            memlet: mmlt.Memlet = paccess.data
+                            for other_paccess in accesses:
+                                if other_paccess in grouping_handled:
+                                    continue
+                                other_memlet: mmlt.Memlet = other_paccess.data
+
+                                a_subset = memlet.subset.offset_new(desc.offset, False)
+                                b_subset = other_memlet.subset.offset_new(desc.offset, False)
+                                indices = [0] * len(desc.strides)
+
+                                a_index = a_subset.at(indices, desc.strides)
+                                b_index = b_subset.at(indices, desc.strides)
+                                try:
+                                    index_diff = b_index - a_index
+                                    if index_diff.is_constant():
+                                        grouping_handled.add(other_paccess)
+                                        idx_diff_str = cpp.sym2cpp(index_diff)
+                                        self._frame.ptr_increment_name_mapping[other_paccess] = (a_name, idx_diff_str)
+                                except Exception:
+                                    pass
+                    else:
+                        a_name = self._register_ptr_incrementation_definition(sdfg, state_id, node,
+                                                                              result, list(accesses)[0], var, begin)
+
+                '''
+                for paccess in ptr_increments_to_define:
+                    access = paccess.data
+                    ptr_base_name = '__dace_ptr_increment_' + access.data
+                    ptr_name_addendum = 0
+                    ptr_name = ptr_base_name + '_' + str(ptr_name_addendum)
+                    while self._dispatcher.defined_vars.has(ptr_name):
+                        ptr_name_addendum += 1
+                        ptr_name = ptr_base_name + '_' + str(ptr_name_addendum)
+
+                    desc = sdfg.data(access.data)
+                    ptr = cpp.ptr(access.data, desc, sdfg, self._frame)
+                    if self._dispatcher.declared_arrays.has(ptr):
+                        dtype, ctype = self._dispatcher.declared_arrays.get(ptr)
+                    else:
+                        dtype, ctype = self._dispatcher.defined_vars.get(ptr)
+                    self._dispatcher.defined_vars.add(ptr_name, dtype, ctype)
+                    self._frame.ptr_increment_name_mapping[paccess] = ptr_name
+                    offsets_to_add = []
+                    access_offset_raw = self._frame._ptr_incremented_accesses[paccess][0]
+                    access_offset = [rn[0] for rn in access_offset_raw.ranges]
+                    for involved_scope in self._frame._ptr_incremented_accesses[paccess][1]:
+                        para, _, _, _ = involved_scope
+                        if str(para) == var:
+                            break
+                        for idx, subrng in enumerate(access.subset):
+                            dimsyms = set()
+                            for _d in subrng:
+                                dimsyms |= symbolic.free_symbols_and_functions(_d)
+                            if str(para) in dimsyms:
+                                offset_expr = '(' + cpp.sym2cpp(para) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                                offsets_to_add.append(offset_expr)
+                    if begin != 0:
+                        for idx, subrng in enumerate(access.subset):
+                            dimsyms = set()
+                            for _d in subrng:
+                                dimsyms |= symbolic.free_symbols_and_functions(_d)
+                            if var in dimsyms:
+                                offset_expr = '(' + cpp.sym2cpp(begin) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                                offsets_to_add.append(offset_expr)
+                    for j, off in enumerate(access_offset):
+                        if off != 0:
+                            offset_expr = '(' + cpp.sym2cpp(off) + ' * ' + cpp.sym2cpp(desc.strides[j]) + ')'
+                            offsets_to_add.append(offset_expr)
+                    data_ptr_expr = ptr
+                    offset_expr = None
+                    if offsets_to_add:
+                        offset_expr = ' + '.join(offsets_to_add)
+                        simplified_offset_expr = None
+                        try:
+                            simplified_offset_expr = str(symbolic.simplify(symbolic.pystr_to_symbolic(offset_expr)))
+                        except Exception:
+                            pass
+                        if simplified_offset_expr:
+                            offset_expr = simplified_offset_expr
+                    if offset_expr:
+                        data_ptr_expr += ' + ' + offset_expr
+                    result.write(
+                        '%s %s = %s;\n' %
+                        (ctype, ptr_name, data_ptr_expr),
+                        sdfg,
+                        state_id,
+                        node
+                    )
+                '''
+
+                # The header must be directly atop the for statement.
+                if i == 0:
+                    result.write(map_header, sdfg, state_id, node)
+
                 if node.map.unroll:
                     result.write("#pragma unroll", sdfg, state_id, node)
 
@@ -1907,17 +2231,55 @@ class CPUCodeGen(TargetCodeGenerator):
                     node,
                 )
 
+        for e in dfg.scope_subgraph(node, include_nested_scopes=False).edges():
+            if e.data.schedule in (dtypes.MemletScheduleType.Prefetch_Start, dtypes.MemletScheduleType.Prefetch_All):
+                memlet: mmlt.Memlet = e.data
+                subset = memlet.subset
+                map_param = symbolic.symbol(node.map.params[-1])
+                zero_coord = subset.coord_at([0] * subset.dims())
+                offset_coord = [node.map.range[-1][2] if c == map_param else 0 for c in zero_coord]
+                desc = sdfg.data(memlet.data)
+                ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                offs_expr = cpp.cpp_offset_expr(desc, memlet.subset, indices=offset_coord)
+                prefetch_ptr = '%s + %s' % (ptrname, offs_expr)
+                self._write_prefetch(memlet, prefetch_ptr, sdfg, state_id, node, result)
+
         callsite_stream.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
         self._frame.allocate_arrays_in_scope(sdfg, node, function_stream, result)
+
+    def _write_prefetch(self, memlet: mmlt.Memlet, prefetch_ptr: str, sdfg: SDFG, state_id: int, node: nodes.Node,
+                        callsite_stream: CodeIOStream):
+        prefetch_locality = memlet.prefetch_locality
+        prefetch_rw = 0 if memlet._is_data_src else 1
+
+        # Careful, _mm_prefetch's locality hint is the opposite of __builtin_prefetch (i.e., low = 3, high = 0).
+        if prefetch_locality == dtypes.MemletPrefetchType.No_Prefetch:
+            mmintrin_hint = '_MM_HINT_T3'
+        elif prefetch_locality == dtypes.MemletPrefetchType.Low_Locality:
+            mmintrin_hint = '_MM_HINT_T2'
+        elif prefetch_locality == dtypes.MemletPrefetchType.Med_Locality:
+            mmintrin_hint = '_MM_HINT_T1'
+        else:
+            mmintrin_hint = '_MM_HINT_T0'
+        mmintrin_version = '_mm_prefetch(%s, %s);' % (prefetch_ptr, mmintrin_hint)
+        gnu_version = '__builtin_prefetch(%s, %s, %s);' % (prefetch_ptr, prefetch_rw, prefetch_locality)
+
+        prefetch_instr = '#ifdef __SSE__\n'
+        prefetch_instr += mmintrin_version + '\n'
+        prefetch_instr += '#else\n'
+        prefetch_instr += gnu_version + '\n'
+        prefetch_instr += '#endif'
+
+        callsite_stream.write(prefetch_instr, sdfg, state_id, node)
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         result = callsite_stream
 
         # Obtain start of map
         scope_dict = dfg.scope_dict()
-        map_node = scope_dict[node]
+        map_node: Optional[nodes.MapEntry] = scope_dict[node]
         state_dfg = sdfg.node(state_id)
 
         if map_node is None:
@@ -1935,10 +2297,79 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self.generate_scope_postamble(sdfg, dfg, state_id, function_stream, outer_stream, callsite_stream)
 
+        if map_node.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross:
+            if map_node.map.omp_doacross_multi_source:
+                result.write("#pragma omp ordered depend(source)", sdfg, state_id, node)
+
         if map_node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
             result.write("}", sdfg, state_id, node)
         else:
-            for _ in map_node.map.range:
+            for i in range(len(map_node.map.range) - 1, -1, -1):
+                r = node.map.range[i]
+                param = node.map.params[i]
+                _, _, skip = r
+
+                ptr_increments_to_update = self._frame.ptr_increments_to_update[map_node][i]
+                handled = set()
+                for paccess in ptr_increments_to_update:
+                    access = paccess.data
+                    ptr_name, _ = self._frame.ptr_increment_name_mapping[paccess]
+                    if ptr_name not in handled:
+                        handled.add(ptr_name)
+
+                        desc = sdfg.data(access.data)
+
+                        involved_scopes = self._frame._ptr_incremented_accesses[paccess][1]
+                        found_involved_scope = None
+                        for involved_scope in involved_scopes:
+                            if map_node == involved_scope[2] and param == str(involved_scope[0]):
+                                found_involved_scope = involved_scope
+                                break
+
+                        if not found_involved_scope:
+                            raise RuntimeError()
+
+                        do_increment = True
+                        subtr_expr = None
+                        if found_involved_scope != involved_scopes[-1]:
+                            # Subtract everything added in the loop one hierarchy down.
+                            scope_idx = involved_scopes.index(found_involved_scope)
+                            prev_param, prev_idx, prev_entry, _ = involved_scopes[scope_idx + 1]
+                            prev_range = prev_entry.map.range[prev_entry.map.params.index(str(prev_param))]
+                            prev_n_iterations = subsets.Range([prev_range]).num_elements_exact()
+                            offsets_to_subtract = []
+                            for idx, subrng in enumerate(access.subset):
+                                dimsyms = set()
+                                for _d in subrng:
+                                    dimsyms |= symbolic.free_symbols_and_functions(_d)
+                                if str(prev_param) in dimsyms:
+                                    offset_expr = '(' + cpp.sym2cpp(prev_n_iterations) + '*' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                                    offsets_to_subtract.append(offset_expr)
+                            subtr_expr = '(' + '+'.join(offsets_to_subtract) + ')'
+
+                        if do_increment:
+                            offsets_to_add = []
+                            for idx, subrng in enumerate(access.subset):
+                                dimsyms = set()
+                                for _d in subrng:
+                                    dimsyms |= symbolic.free_symbols_and_functions(_d)
+                                if str(param) in dimsyms:
+                                    offset_expr = '(' + cpp.sym2cpp(skip) + '*' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                                    offsets_to_add.append(offset_expr)
+                            if subtr_expr:
+                                full_offset_expr = '((' + '+'.join(offsets_to_add) + ') - ' + subtr_expr + ')'
+                            else:
+                                full_offset_expr = '+'.join(offsets_to_add)
+                            simplified_offset_expr = None
+                            try:
+                                simplified_offset_expr = str(symbolic.simplify(symbolic.pystr_to_symbolic(full_offset_expr)))
+                            except Exception:
+                                pass
+                            if simplified_offset_expr:
+                                full_offset_expr = simplified_offset_expr
+                            if full_offset_expr != '0':
+                                result.write('%s += %s;\n' % (ptr_name, full_offset_expr), sdfg, state_id, node)
+
                 result.write("}", sdfg, state_id, node)
 
         result.write(outer_stream.getvalue())

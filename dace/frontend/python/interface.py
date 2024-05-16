@@ -30,6 +30,7 @@ def program(*args,
             regenerate_code: bool = True,
             recompile: bool = True,
             constant_functions=False,
+            use_experimental_cfg_blocks: bool = False,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     ...
 
@@ -44,6 +45,7 @@ def program(f: F,
             recompile: bool = True,
             distributed_compilation: bool = False,
             constant_functions=False,
+            use_experimental_cfg_blocks: bool = False,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     """
     Entry point to a data-centric program. For methods and ``classmethod``s, use
@@ -68,6 +70,7 @@ def program(f: F,
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
                                resulting program.
+    :param use_experimental_cfg_blocks: Make use of experimental CFG blocks like loop regions.
     :note: If arguments are defined with type hints, the program can be compiled
            ahead-of-time with ``.compile()``.
     """
@@ -83,6 +86,7 @@ def program(f: F,
                               recreate_sdfg=recreate_sdfg,
                               regenerate_code=regenerate_code,
                               recompile=recompile,
+                              use_experimental_cfg_blocks=use_experimental_cfg_blocks,
                               distributed_compilation=distributed_compilation)
 
 
@@ -99,6 +103,7 @@ def method(*args,
            auto_optimize=False,
            device=dtypes.DeviceType.CPU,
            constant_functions=False,
+           use_experimental_cfg_blocks: bool = False,
            **kwargs) -> parser.DaceProgram:
     ...
 
@@ -112,6 +117,7 @@ def method(f: F,
            regenerate_code: bool = True,
            recompile: bool = True,
            constant_functions=False,
+           use_experimental_cfg_blocks: bool = False,
            **kwargs) -> parser.DaceProgram:
     """ 
     Entry point to a data-centric program that is a method or  a ``classmethod``. 
@@ -132,6 +138,7 @@ def method(f: F,
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
                                resulting program.
+    :param use_experimental_cfg_blocks: Make use of experimental CFG blocks like loop regions.
     :note: If arguments are defined with type hints, the program can be compiled
            ahead-of-time with ``.compile()``.    
     """
@@ -157,6 +164,7 @@ def method(f: F,
                                       recreate_sdfg=recreate_sdfg,
                                       regenerate_code=regenerate_code,
                                       recompile=recompile,
+                                      use_experimental_cfg_blocks=use_experimental_cfg_blocks,
                                       method=True)
             prog.methodobj = obj
             self.wrapped[objid] = prog
@@ -174,6 +182,7 @@ def method(f: F,
                                           recreate_sdfg=recreate_sdfg,
                                           regenerate_code=regenerate_code,
                                           recompile=recompile,
+                                          use_experimental_cfg_blocks=use_experimental_cfg_blocks,
                                           method=False)
                 self.wrapped[None] = prog
             else:

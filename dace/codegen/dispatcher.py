@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains the DaCe code generator target dispatcher, which is responsible for
 flexible code generation with multiple backends by dispatching certain
@@ -355,9 +355,11 @@ class TargetDispatcher(object):
         """ Dispatches a code generator for an SDFG state. """
 
         self.defined_vars.enter_scope(state)
+        self.declared_arrays.enter_scope(state)
         disp = self.get_state_dispatcher(sdfg, state)
         disp.generate_state(sdfg, state, function_stream, callsite_stream)
         self.defined_vars.exit_scope(state)
+        self.declared_arrays.exit_scope(state)
 
     def dispatch_subgraph(self,
                           sdfg,
@@ -433,9 +435,11 @@ class TargetDispatcher(object):
 
         entry_node = sub_dfg.source_nodes()[0]
         self.defined_vars.enter_scope(entry_node)
+        self.declared_arrays.enter_scope(entry_node)
         self._used_targets.add(self._map_dispatchers[map_schedule])
         self._map_dispatchers[map_schedule].generate_scope(sdfg, sub_dfg, state_id, function_stream, callsite_stream)
         self.defined_vars.exit_scope(entry_node)
+        self.declared_arrays.exit_scope(entry_node)
 
     def get_array_dispatcher(self, storage: dtypes.StorageType):
         return self._array_dispatchers[storage]

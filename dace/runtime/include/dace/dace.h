@@ -43,4 +43,8 @@
 
 #include "fpga_common.h"
 
+#if defined(__amd__64) || defined(__x86_64__)
+#include <xmmintrin.h>
+#endif
+
 #endif  // __DACE_RUNTIME_H

@@ -328,7 +328,7 @@ class PatternTransformation(TransformationBase):
             graph = sdfg
             state_id = -1
         elif isinstance(sample_node, nd.Node):
-            graph = next(s for s in sdfg.nodes() if sample_node in s.nodes())
+            graph = next(s for s in sdfg.states() if sample_node in s.nodes())
             state_id = sdfg.node_id(graph)
         else:
             raise TypeError('Invalid node type "%s"' % type(sample_node).__name__)
@@ -708,8 +708,8 @@ class SubgraphTransformation(TransformationBase):
             self.subgraph = set(subgraph.graph.node_id(n) for n in subgraph.nodes())
 
             if isinstance(subgraph.graph, SDFGState):
-                sdfg = subgraph.graph.parent
-                self.cfg_id = sdfg.cfg_id
+                cfg = subgraph.graph.parent_graph
+                self.cfg_id = cfg.cfg_id
                 self.state_id = subgraph.graph.block_id
             elif isinstance(subgraph.graph, SDFG):
                 self.cfg_id = subgraph.graph.cfg_id

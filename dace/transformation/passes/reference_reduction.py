@@ -7,7 +7,7 @@ from dace import SDFG, SDFGState, data, properties, Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes import analysis as ap
+from dace.transformation.passes.analysis import analysis as ap
 
 
 @properties.make_properties

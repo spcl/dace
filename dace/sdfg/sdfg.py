@@ -430,6 +430,7 @@ class SDFG(ControlFlowRegion):
                                desc='Whether to generate OpenMP sections in code')
 
     debuginfo = DebugInfoProperty(allow_none=True)
+    
 
     _pgrids = DictProperty(str,
                            ProcessGrid,
@@ -457,7 +458,7 @@ class SDFG(ControlFlowRegion):
 
     def __init__(self,
                  name: str,
-                 constants: Dict[str, Tuple[dt.Data, Any]] = None,
+                 constants: Optional[Dict[str, Tuple[dt.Data, Any]]] = None,
                  propagate: bool = True,
                  parent=None):
         """ Constructs a new SDFG.
@@ -584,42 +585,31 @@ class SDFG(ControlFlowRegion):
         return tmp
 
     @classmethod
-    def from_json(cls, json_obj, context_info=None):
-        context_info = context_info or {'sdfg': None}
+    def from_json(cls, json_obj, context=None):
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
 
+        context = context or {'sdfg': None, 'parent_graph': None}
+
         attrs = json_obj['attributes']
-        nodes = json_obj['nodes']
-        edges = json_obj['edges']
 
         if 'constants_prop' in attrs:
             constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']))
         else:
             constants_prop = None
 
-        ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context_info['sdfg'])
+        ret = SDFG(name=attrs['name'],
+                   constants=constants_prop,
+                   parent=context['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret,
-                                                json_obj,
-                                                ignore_properties={'constants_prop', 'name', 'hash'})
+        child_context = copy.copy(context)
+        child_context['sdfg'] = ret
+        ignore_props = {'constants_prop', 'name', 'hash'}
 
-        nodelist = []
-        for n in nodes:
-            nci = copy.copy(context_info)
-            nci['sdfg'] = ret
+        ControlFlowRegion._deserialize_cf_region(ret, json_obj, context, ignore_props, child_context)
 
-            state = SDFGState.from_json(n, context=nci)
-            ret.add_node(state)
-            nodelist.append(state)
-
-        for e in edges:
-            e = dace.serialize.from_json(e)
-            ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
-
-        if 'start_block' in json_obj:
-            ret._start_block = json_obj['start_block']
+        ret.sdfg = None
 
         return ret
 
@@ -1255,11 +1245,16 @@ class SDFG(ControlFlowRegion):
 
         defined_syms |= set(self.constants_prop.keys())
 
+        init_code_symbols=set()
+        exit_code_symbols=set()
         # Add used symbols from init and exit code
         for code in self.init_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            init_code_symbols |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
         for code in self.exit_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            exit_code_symbols |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+        
+        #free_syms|=set(filter(lambda x: not str(x).startswith('__f2dace_ARRAY'),init_code_symbols))
+        #free_syms|=set(filter(lambda x: not  str(x).startswith('__f2dace_ARRAY'),exit_code_symbols))
 
         return super()._used_symbols_internal(all_symbols=all_symbols,
                                               keep_defined_in_mapping=keep_defined_in_mapping,
@@ -1339,7 +1334,9 @@ class SDFG(ControlFlowRegion):
         }
 
         # Add global free symbols used in the generated code to scalar arguments
+        #TODO LATER investiagte why all_symbols=False leads to bug
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
+        free_symbols = set(filter(lambda x: not str(x).startswith('__f2dace_STRUCTARRAY'), free_symbols))
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary
@@ -2172,8 +2169,9 @@ class SDFG(ControlFlowRegion):
             :param symbols: Values to specialize.
         """
         # Update constants
-        for k, v in symbols.items():
-            self.add_constant(str(k), v)
+        for sd in self.all_sdfgs_recursive():
+            for k, v in symbols.items():
+                sd.add_constant(str(k), v)
 
     def is_loaded(self) -> bool:
         """
@@ -2386,6 +2384,15 @@ class SDFG(ControlFlowRegion):
         """
         from dace.transformation.passes.simplify import SimplifyPass
         return SimplifyPass(validate=validate, validate_all=validate_all, verbose=verbose).apply_pass(self, {})
+
+    def canonicalize(self, validate=True, validate_all=False, verbose=False):
+        """ Applies canonicalizations that may make the SDFG more verbose or decrease performance, but may expose
+            crucial optimization opportunities.
+
+            :note: This is an in-place operation on the SDFG.
+        """
+        from dace.transformation.passes.canonicalize import CanonicalizationPass
+        return CanonicalizationPass(validate=validate, validate_all=validate_all, verbose=verbose).apply_pass(self, {})
 
     def _initialize_transformations_from_type(
         self,

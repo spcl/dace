@@ -1,6 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Implements the map-dim shuffle transformation. """
 
+from typing import List
+from dace import dtypes
+from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -38,8 +41,17 @@ class MapDimShuffle(transformation.SingleStateTransformation):
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
         map_entry: nodes.MapEntry = self.map_entry
-        new_map_order: list[int] = [map_entry.map.params.index(param) for param in self.parameters]
-
-        map_entry.range.ranges = [map_entry.range.ranges[new_pos] for new_pos in new_map_order]
-        map_entry.range.tile_sizes = [map_entry.range.tile_sizes[new_pos] for new_pos in new_map_order]
+        new_map_order: List[int] = [map_entry.map.params.index(param) for param in self.parameters]
+        map_entry.map.range.ranges = [map_entry.map.range.ranges[new_pos] for new_pos in new_map_order]
+        map_entry.map.range.tile_sizes = [map_entry.map.range.tile_sizes[new_pos] for new_pos in new_map_order]
         map_entry.map.params = [map_entry.map.params[new_pos] for new_pos in new_map_order]
+
+        if map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross:
+            # For doacross maps, we need to make sure all memlets that carry doacross dependencies are also equally
+            # permuted.
+            scope_subgraph = graph.scope_subgraph(map_entry)
+            for e in scope_subgraph.edges():
+                memlet: Memlet = e.data
+                if memlet.schedule == dtypes.MemletScheduleType.Doacross_Sink:
+                    new_offset = [memlet.doacross_dependency_offset[new_pos] for new_pos in new_map_order]
+                    memlet.doacross_dependency_offset = new_offset

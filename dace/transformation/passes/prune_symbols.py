@@ -6,12 +6,11 @@ from typing import Optional, Set, Tuple
 
 from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
 
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@transformation.single_level_sdfg_only
 class RemoveUnusedSymbols(ppl.Pass):
     """
     Prunes unused symbols from the SDFG symbol repository (``sdfg.symbols``).
@@ -58,7 +57,7 @@ class RemoveUnusedSymbols(ppl.Pass):
             sid = sdfg.cfg_id
             result = set((sid, sym) for sym in result)
 
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
                         old_symbols = self.symbols
@@ -84,7 +83,7 @@ class RemoveUnusedSymbols(ppl.Pass):
         for desc in sdfg.arrays.values():
             result |= set(map(str, desc.free_symbols))
 
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             result |= state.free_symbols
             # In addition to the standard free symbols, we are conservative with other tasklet languages by
             # tokenizing their code. Since this is intersected with `sdfg.symbols`, keywords such as "if" are

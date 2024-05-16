@@ -13,7 +13,6 @@ import sympy
 from sympy import ceiling, Symbol
 from sympy.concrete.summations import Sum
 import warnings
-import networkx as nx
 
 from dace import registry, subsets, symbolic, dtypes, data
 from dace.memlet import Memlet
@@ -559,7 +558,7 @@ class ConstantRangeMemlet(MemletPattern):
         return subsets.Range(rng)
 
 
-def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
+def _annotate_loop_ranges(cfg, unannotated_cycle_states):
     """
     Annotate each valid for loop construct with its loop variable ranges.
 
@@ -570,19 +569,22 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
 
     # We import here to avoid cyclic imports.
     from dace.transformation.interstate.loop_detection import find_for_loop
+    from dace.transformation.passes.analysis import loop_analysis
     from dace.sdfg import utils as sdutils
+    from dace.sdfg.state import LoopRegion
 
     condition_edges = {}
 
-    for cycle in sdfg.find_cycles():
+    # Handle traditional style for-loops.
+    for cycle in cfg.find_cycles():
         # In each cycle, try to identify a valid loop guard state.
         guard = None
         begin = None
         itvar = None
         for v in cycle:
             # Try to identify a valid for-loop guard.
-            in_edges = sdfg.in_edges(v)
-            out_edges = sdfg.out_edges(v)
+            in_edges = cfg.in_edges(v)
+            out_edges = cfg.out_edges(v)
 
             # A for-loop guard has two or more incoming edges (1 increment and
             # n init, all identical), and exactly two outgoing edges (loop and
@@ -651,7 +653,7 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             if itvar in begin.ranges:
                 continue
 
-            res = find_for_loop(sdfg, guard, begin, itervar=itvar)
+            res = find_for_loop(cfg, guard, begin, itervar=itvar)
             if res is None:
                 # No range detected, mark as unbounded.
                 unannotated_cycle_states.append(cycle)
@@ -666,11 +668,11 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
                 if (stride < 0) == True:
                     rng = (stop, start, -stride)
 
-                loop_states = sdutils.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard)
+                loop_states = sdutils.dfs_conditional(cfg, sources=[begin], condition=lambda _, child: child != guard)
                 for v in loop_states:
                     v.ranges[itervar] = subsets.Range([rng])
                 guard.ranges[itervar] = subsets.Range([rng])
-                condition_edges[guard] = sdfg.edges_between(guard, begin)[0]
+                condition_edges[guard] = cfg.edges_between(guard, begin)[0]
                 guard.is_loop_guard = True
                 guard.itvar = itervar
         else:
@@ -678,9 +680,20 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             # dynamically unbounded.
             unannotated_cycle_states.append(cycle)
 
+    for ncfg in cfg.all_control_flow_regions():
+        if isinstance(ncfg, LoopRegion):
+            itvar, rng = loop_analysis.get_loop_range(ncfg)
+            for nblock in ncfg.all_control_flow_blocks():
+                try:
+                    nblock.ranges[itvar] = subsets.Range([rng])
+                except AttributeError:
+                    nblock.ranges = {
+                        itvar: subsets.Range([rng])
+                    }
+
     return condition_edges
 
-def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
+def propagate_states(cfg, concretize_dynamic_unbounded=False) -> None:
     """
     Annotate the states of an SDFG with the number of executions.
 
@@ -740,31 +753,31 @@ def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
     # We import here to avoid cyclic imports.
     from dace.sdfg import InterstateEdge
     from dace.transformation.helpers import split_interstate_edges
-    from dace.sdfg.analysis import cfg
+    from dace.sdfg.analysis import cfg as cfg_analysis
 
     # Reset the state edge annotations (which may have changed due to transformations)
-    reset_state_annotations(sdfg)
+    reset_block_annotations(cfg)
 
     # Clean up the state machine by separating combined condition and assignment
     # edges.
-    split_interstate_edges(sdfg)
+    split_interstate_edges(cfg)
 
     # To enable branch annotation, we add a temporary exit state that connects
     # to all child-less states. With this, we can use the dominance frontier
     # to determine a full-merge state for branches.
     temp_exit_state = None
-    for s in sdfg.nodes():
-        if sdfg.out_degree(s) == 0:
+    for s in cfg.nodes():
+        if cfg.out_degree(s) == 0:
             if temp_exit_state is None:
-                temp_exit_state = sdfg.add_state('__dace_brannotate_exit')
-            sdfg.add_edge(s, temp_exit_state, InterstateEdge())
+                temp_exit_state = cfg.add_state('__dace_brannotate_exit')
+            cfg.add_edge(s, temp_exit_state, InterstateEdge())
 
-    dom_frontier = cfg.acyclic_dominance_frontier(sdfg)
+    dom_frontier = cfg_analysis.acyclic_dominance_frontier(cfg)
 
     # Find any valid for loop constructs and annotate the loop ranges. Any other
     # cycle should be marked as unannotated.
     unannotated_cycle_states = []
-    condition_edges = _annotate_loop_ranges(sdfg, unannotated_cycle_states)
+    condition_edges = _annotate_loop_ranges(cfg, unannotated_cycle_states)
     if not concretize_dynamic_unbounded:
         # Flatten the list. This keeps the old behavior of propagate_states.
         unannotated_cycle_states = [state for cycle in unannotated_cycle_states for state in cycle]
@@ -776,12 +789,12 @@ def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
     visited_states = set()
 
     traversal_q = deque()
-    traversal_q.append((sdfg.start_state, 1, False, []))
+    traversal_q.append((cfg.start_block, 1, False, []))
     while traversal_q:
         (state, proposed_executions, proposed_dynamic, itvar_stack) = traversal_q.pop()
 
-        out_degree = sdfg.out_degree(state)
-        out_edges = sdfg.out_edges(state)
+        out_degree = cfg.out_degree(state)
+        out_edges = cfg.out_edges(state)
 
         # Check if the traversal reached a state that's already been visited
         # (ends traversal), or if the number of executions being propagated is
@@ -909,7 +922,7 @@ def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
                             # We can always assume these symbols to be non-negative.
                             traversal_q.append(
                                 (unannotated_loop_edge.dst,
-                                 Symbol(f'num_execs_{sdfg.cfg_id}_{sdfg.node_id(unannotated_loop_edge.dst)}',
+                                 Symbol(f'num_execs_{cfg.cfg_id}_{cfg.node_id(unannotated_loop_edge.dst)}',
                                         nonnegative=True), False, itvar_stack))
                         else:
                             # Propagate dynamic unbounded.
@@ -943,7 +956,7 @@ def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
 
     # If we had to create a temporary exit state, we remove it again here.
     if temp_exit_state is not None:
-        sdfg.remove_node(temp_exit_state)
+        cfg.remove_node(temp_exit_state)
 
 
 def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
@@ -957,6 +970,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
     """
     # We import late to avoid cyclic imports here.
     from dace.transformation.helpers import unsqueeze_memlet
+    from dace.sdfg.state import SDFGState
 
     # Build a map of connectors to associated 'border' memlets inside
     # the nested SDFG. This map will be populated with memlets once they
@@ -979,6 +993,8 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
     # subset corresponding to the outside memlet attached to that connector.
     # This is passed out via `border_memlets` and propagated along from there.
     for state in sdfg.nodes():
+        if not isinstance(state, SDFGState):
+            continue
         for node in state.data_nodes():
             for direction in border_memlets:
                 if (node.label not in border_memlets[direction]):
@@ -1100,8 +1116,18 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             internal_memlet = border_memlets['in'][iedge.dst_conn]
             if internal_memlet is None:
                 continue
+            if internal_memlet.data != iedge.data.data:
+                continue
             try:
-                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
+                ext_desc = parent_sdfg.arrays[iedge.data.data]
+                int_desc = sdfg.arrays[iedge.dst_conn]
+                iedge.data = unsqueeze_memlet(
+                    internal_memlet,
+                    iedge.data,
+                    True,
+                    internal_offset=int_desc.offset,
+                    external_offset=ext_desc.offset
+                )
                 # If no appropriate memlet found, use array dimension
                 for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[iedge.data.data].shape)):
                     if rng[1] + 1 == s:
@@ -1120,8 +1146,18 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             internal_memlet = border_memlets['out'][oedge.src_conn]
             if internal_memlet is None:
                 continue
+            if internal_memlet.data != oedge.data.data:
+                continue
             try:
-                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
+                ext_desc = parent_sdfg.arrays[oedge.data.data]
+                int_desc = sdfg.arrays[oedge.src_conn]
+                oedge.data = unsqueeze_memlet(
+                    internal_memlet,
+                    oedge.data,
+                    True,
+                    internal_offset=int_desc.offset,
+                    external_offset=ext_desc.offset
+                )
                 # If no appropriate memlet found, use array dimension
                 for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[oedge.data.data].shape)):
                     if rng[1] + 1 == s:
@@ -1137,17 +1173,33 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 oedge.data.dynamic = True
 
 
-def reset_state_annotations(sdfg):
+def reset_block_annotations(cfg):
     """ Resets the state (loop-related) annotations of an SDFG.
 
         :note: This operation is shallow (does not go into nested SDFGs).
     """
-    for state in sdfg.nodes():
-        state.executions = 0
-        state.dynamic_executions = True
-        state.ranges = {}
-        state.is_loop_guard = False
-        state.itervar = None
+    for block in cfg.nodes():
+        block.executions = 0
+        block.dynamic_executions = True
+        block.ranges = {}
+        block.is_loop_guard = False
+        block.itervar = None
+
+
+def propagate_memlets_cfg(cfg):
+    # Avoid import loops
+    from dace.sdfg.state import SDFGState, ControlFlowRegion
+
+    # Reset previous annotations first
+    reset_block_annotations(cfg)
+
+    for block in cfg.nodes():
+        if isinstance(block, SDFGState):
+            propagate_memlets_state(cfg.sdfg or cfg, block)
+        elif isinstance(block, ControlFlowRegion):
+            propagate_memlets_cfg(block)
+
+    propagate_states(cfg)
 
 
 def propagate_memlets_sdfg(sdfg):
@@ -1155,13 +1207,7 @@ def propagate_memlets_sdfg(sdfg):
     
         :note: This is an in-place operation on the SDFG.
     """
-    # Reset previous annotations first
-    reset_state_annotations(sdfg)
-
-    for state in sdfg.nodes():
-        propagate_memlets_state(sdfg, state)
-
-    propagate_states(sdfg)
+    propagate_memlets_cfg(sdfg)
 
 
 def propagate_memlets_state(sdfg, state):

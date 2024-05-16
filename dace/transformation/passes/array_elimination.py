@@ -5,15 +5,14 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from dace import SDFG, SDFGState, data, properties
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, RedundantSecondArray, RedundantWriteSlice,
                                           SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
-from dace.transformation.passes import analysis as ap
+from dace.transformation.passes.analysis import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
 
 
 @properties.make_properties
-@transformation.single_level_sdfg_only
 class ArrayElimination(ppl.Pass):
     """
     Merges and removes arrays and their corresponding accesses. This includes redundant array copies, unnecessary views,
@@ -132,14 +131,14 @@ class ArrayElimination(ppl.Pass):
         """
         removed_nodes: Set[nodes.AccessNode] = set()
         xforms = [RemoveSliceView()]
-        state_id = sdfg.node_id(state)
+        state_id = state.parent_graph.node_id(state)
 
         for nodeset in access_nodes.values():
             for anode in list(nodeset):
                 for xform in xforms:
                     # Quick path to setup match
                     candidate = {type(xform).view: anode}
-                    xform.setup_match(sdfg, sdfg.cfg_id, state_id, candidate, 0, override=True)
+                    xform.setup_match(sdfg, state.parent_graph.cfg_id, state_id, candidate, 0, override=True)
 
                     # Try to apply
                     if xform.can_be_applied(state, 0, sdfg):
@@ -154,7 +153,7 @@ class ArrayElimination(ppl.Pass):
         Removes access nodes that represent redundant copies and/or views.
         """
         removed_nodes: Set[nodes.AccessNode] = set()
-        state_id = sdfg.node_id(state)
+        state_id = state.parent_graph.node_id(state)
 
         # Transformations that remove the first access node
         xforms_first: List[SingleStateTransformation] = [RedundantWriteSlice(), UnsqueezeViewRemove(), RedundantArray()]
@@ -184,7 +183,8 @@ class ArrayElimination(ppl.Pass):
                             for xform in xforms_first:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
-                                xform.setup_match(sdfg, sdfg.cfg_id, state_id, candidate, 0, override=True)
+                                xform.setup_match(sdfg, state.parent_graph.cfg_id, state_id, candidate, 0,
+                                                  override=True)
 
                                 # Try to apply
                                 if xform.can_be_applied(state, 0, sdfg):
@@ -204,7 +204,8 @@ class ArrayElimination(ppl.Pass):
                             for xform in xforms_second:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
-                                xform.setup_match(sdfg, sdfg.cfg_id, state_id, candidate, 0, override=True)
+                                xform.setup_match(sdfg, state.parent_graph.cfg_id, state_id, candidate, 0,
+                                                  override=True)
 
                                 # Try to apply
                                 if xform.can_be_applied(state, 0, sdfg):

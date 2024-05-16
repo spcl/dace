@@ -19,7 +19,7 @@ from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
 from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
-                             CodeProperty, make_properties, ListProperty)
+                             CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
 from dace.sdfg.propagation import propagate_memlet
@@ -342,7 +342,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         for node in self.nodes():
             yield node, self
             if isinstance(node, nd.NestedSDFG):
-                yield from node.sdfg.all_nodes_recursive()
+                if node.sdfg is not None:
+                    yield from node.sdfg.all_nodes_recursive()
 
     def all_edges_recursive(self) -> Iterator[Tuple[EdgeT, GraphT]]:
         for e in self.edges():
@@ -523,7 +524,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         self._scope_tree_cached = None
         self._scope_leaves_cached = None
 
-    def scope_tree(self) -> 'dace.sdfg.scope.ScopeTree':
+    def scope_tree(self) -> Dict[Optional['nd.Node'], 'dace.sdfg.scope.ScopeTree']:
         from dace.sdfg.scope import ScopeTree
 
         if (hasattr(self, '_scope_tree_cached') and self._scope_tree_cached is not None):
@@ -756,8 +757,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
                     for out_edge in list(out_edges):
                         for in_edge in list(in_edges):
+                            write_subset = in_edge.data.dst_subset or in_edge.data.subset
                             if (in_edge.data.data == out_edge.data.data
-                                    and in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
+                                    and write_subset.covers(out_edge.data.src_subset)):
                                 out_edges.remove(out_edge)
                                 break
 
@@ -765,12 +767,18 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                         # skip empty memlets
                         if e.data.is_empty():
                             continue
+                        if e.dst_conn == "views":
+                            continue
+
                         # Store all subsets that have been written
                         ws[n.data].append(e.data.subset)
                     for e in out_edges:
                         # skip empty memlets
                         if e.data.is_empty():
                             continue
+                        if e.src_conn == "views":
+                            continue
+
                         rs[n.data].append(e.data.subset)
             # Union all subgraphs, so an array that was excluded from the read
             # set because it was written first is still included if it is read
@@ -902,9 +910,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         """
         return [v.as_arg(name=k, with_types=with_types, for_call=for_call) for k, v in self.arglist().items()]
 
-    def scope_subgraph(self, entry_node, include_entry=True, include_exit=True):
+    def scope_subgraph(self, entry_node, include_entry=True, include_exit=True, include_nested_scopes=True):
         from dace.sdfg.scope import _scope_subgraph
-        return _scope_subgraph(self, entry_node, include_entry, include_exit)
+        return _scope_subgraph(self, entry_node, include_entry, include_exit, include_nested_scopes)
 
     def top_level_transients(self):
         """Iterate over top-level transients of this state."""
@@ -1273,9 +1281,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             raise TypeError("Expected Node, got " + type(node).__name__ + " (" + str(node) + ")")
         # Correct nested SDFG's parent attributes
         if isinstance(node, nd.NestedSDFG):
-            node.sdfg.parent = self
-            node.sdfg.parent_sdfg = self.sdfg
-            node.sdfg.parent_nsdfg_node = node
+            if node.sdfg is not None:
+                node.sdfg.parent = self
+                node.sdfg.parent_sdfg = self.parent
+                node.sdfg.parent_nsdfg_node = node
         self._clear_scopedict_cache()
         return super(SDFGState, self).add_node(node)
 
@@ -1355,7 +1364,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if _type != cls.__name__:
             raise Exception("Class type mismatch")
 
-        attrs = json_obj['attributes']
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
@@ -1559,6 +1567,78 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             name = sdfg.label
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
 
+        if sdfg is not None:
+            sdfg.parent = self
+            sdfg.parent_sdfg = self.parent
+
+        sdfg.update_cfg_list([])
+
+        # Make dictionary of autodetect connector types from set
+        if isinstance(inputs, (set, collections.abc.KeysView)):
+            inputs = {k: None for k in inputs}
+        if isinstance(outputs, (set, collections.abc.KeysView)):
+            outputs = {k: None for k in outputs}
+
+        s = nd.NestedSDFG(
+            name,
+            sdfg,
+            inputs,
+            outputs,
+            symbol_mapping=symbol_mapping,
+            schedule=schedule,
+            location=location,
+            debuginfo=debuginfo,
+        )
+        self.add_node(s)
+
+        if sdfg is not None:
+            sdfg.parent_nsdfg_node = s
+
+        # Add "default" undefined symbols if None are given
+
+            symbols = sdfg.free_symbols
+            if symbol_mapping is None:
+                symbol_mapping = {s: s for s in symbols}
+                s.symbol_mapping = symbol_mapping
+
+            # Validate missing symbols
+            missing_symbols = [s for s in symbols if s not in symbol_mapping]
+            if missing_symbols and parent:
+                # If symbols are missing, try to get them from the parent SDFG
+                parent_mapping = {s: s for s in missing_symbols if s in parent.symbols}
+                symbol_mapping.update(parent_mapping)
+                s.symbol_mapping = symbol_mapping
+                missing_symbols = [s for s in symbols if s not in symbol_mapping]
+            if missing_symbols:
+                raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
+
+            # Add new global symbols to nested SDFG
+            from dace.codegen.tools.type_inference import infer_expr_type
+            for sym, symval in s.symbol_mapping.items():
+                if sym not in sdfg.symbols:
+                    # TODO: Think of a better way to avoid calling
+                    # symbols_defined_at in this moment
+                    sdfg.add_symbol(sym, infer_expr_type(symval, self.parent.symbols) or dtypes.typeclass(int))
+
+        return s
+    
+    def add_external_nested_sdfg(
+        self,
+        sdfg: 'dace.sdfg.SDFG',
+        parent,
+        inputs: Union[Set[str], Dict[str, dtypes.typeclass]],
+        outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
+        symbol_mapping: Dict[str, Any] = None,
+        name=None,
+        schedule=dtypes.ScheduleType.Default,
+        location=None,
+        debuginfo=None,
+    ):
+        """ Adds an external nested SDFG to the SDFG state. """
+        if name is None:
+            name = sdfg.label
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
+
         sdfg.parent = self
         sdfg.parent_sdfg = self.sdfg
 
@@ -1570,7 +1650,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if isinstance(outputs, (set, collections.abc.KeysView)):
             outputs = {k: None for k in outputs}
 
-        s = nd.NestedSDFG(
+        s = nd.ExternalNestedSDFG(
             name,
             sdfg,
             inputs,
@@ -2478,8 +2558,9 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             self._cached_start_block = node
 
     def add_state(self, label=None, is_start_block=False, *, is_start_state: bool=None) -> SDFGState:
-        if self._labels is None or len(self._labels) != self.number_of_nodes():
-            self._labels = set(s.label for s in self.all_control_flow_blocks())
+        sdfg: SDFG = self.sdfg or self
+        if self._labels is None or len(self._labels) != sdfg.number_of_blocks_nested():
+            self._labels = set(s.label for s in sdfg.all_control_flow_blocks())
         label = label or 'state'
         existing_labels = self._labels
         label = dt.find_new_name(label, existing_labels)
@@ -2559,6 +2640,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         except ValueError:  # Failsafe (e.g., for invalid or empty SDFGs)
             ordered_blocks = self.nodes()
 
+        sdfg = self if isinstance(self, dace.SDFG) else self.sdfg
         for block in ordered_blocks:
             state_symbols = set()
             if isinstance(block, ControlFlowRegion):
@@ -2578,9 +2660,13 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                 # compute the symbols that are used before being assigned.
                 efsyms = e.data.used_symbols(all_symbols)
                 # collect symbols representing data containers
-                dsyms = {sym for sym in efsyms if sym in self.sdfg.arrays}
+                dsyms = {sym for sym in efsyms if sym in sdfg.arrays}
                 for d in dsyms:
-                    efsyms |= {str(sym) for sym in self.sdfg.arrays[d].used_symbols(all_symbols)}
+                    desc = sdfg.arrays[d]
+                    efsyms |= {str(sym) for sym in desc.used_symbols(all_symbols)}
+                    # If a 'symbol' represents a scalar data container, remove it.
+                    if isinstance(desc, dt.Scalar) or (isinstance(desc, dt.Array) and desc.total_size == 1):
+                        efsyms.remove(d)
                 defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_symbols)
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms
@@ -2614,28 +2700,27 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         return graph_json
 
     @classmethod
-    def from_json(cls, json_obj, context_info=None):
-        context_info = context_info or {'sdfg': None, 'parent_graph': None}
-        _type = json_obj['type']
-        if _type != cls.__name__:
-            raise TypeError("Class type mismatch")
+    def _deserialize_cf_region(cls, ret: 'ControlFlowRegion', json_obj, context = None, ignore_properties = None,
+                               child_context = None):
+        context = context or {'sdfg': None, 'parent_graph': None}
 
-        attrs = json_obj['attributes']
+        ret.sdfg = context['sdfg']
+        ret.parent_graph = context['parent_graph'] if 'parent_graph' in context else None
+
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
-        ret = ControlFlowRegion(label=attrs['label'], sdfg=context_info['sdfg'])
-
-        dace.serialize.set_properties_from_json(ret, json_obj)
+        dace.serialize.set_properties_from_json(ret, json_obj, ignore_properties)
 
         nodelist = []
         for n in nodes:
-            nci = copy.copy(context_info)
+            child_context = child_context or context
+            nci = copy.copy(child_context)
             nci['parent_graph'] = ret
 
-            state = SDFGState.from_json(n, context=nci)
-            ret.add_node(state)
-            nodelist.append(state)
+            block = dace.serialize.from_json(n, context=nci)
+            ret.add_node(block)
+            nodelist.append(block)
 
         for e in edges:
             e = dace.serialize.from_json(e)
@@ -2643,6 +2728,18 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
         if 'start_block' in json_obj:
             ret._start_block = json_obj['start_block']
+
+        ret.reset_cfg_list()
+
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        _type = json_obj['type']
+        if _type != cls.__name__:
+            raise TypeError("Class type mismatch")
+
+        ret = ControlFlowRegion(label=json_obj['label'])
+
+        ControlFlowRegion._deserialize_cf_region(ret, json_obj, context)
 
         return ret
 
@@ -2656,7 +2753,8 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             if isinstance(block, SDFGState) and recursive:
                 for node in block.nodes():
                     if isinstance(node, nd.NestedSDFG):
-                        yield from node.sdfg.all_control_flow_regions(recursive=recursive)
+                        if node.sdfg is not None:
+                            yield from node.sdfg.all_control_flow_regions(recursive=recursive)
             elif isinstance(block, ControlFlowRegion):
                 yield from block.all_control_flow_regions(recursive=recursive)
 
@@ -2688,6 +2786,13 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
     ###################################################################
     # Getters & setters, overrides
+
+    def number_of_blocks_nested(self):
+        n = 0
+        for r in self.all_control_flow_regions():
+            n += r.number_of_nodes()
+        return n
+
 
     def __str__(self):
         return ControlFlowBlock.__str__(self)
@@ -2770,7 +2875,7 @@ class LoopRegion(ControlFlowRegion):
 
     def __init__(self,
                  label: str,
-                 condition_expr: str,
+                 condition_expr: str = 'True',
                  loop_var: Optional[str] = None,
                  initialize_expr: Optional[str] = None,
                  update_expr: Optional[str] = None,
@@ -2850,6 +2955,18 @@ class LoopRegion(ControlFlowRegion):
         elif is_continue:
             state.__class__ = LoopRegion.ContinueState
         return state
+
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        _type = json_obj['type']
+        if _type != cls.__name__:
+            raise TypeError("Class type mismatch")
+
+        ret = LoopRegion(label=json_obj['label'])
+
+        ControlFlowRegion._deserialize_cf_region(ret, json_obj, context)
+
+        return ret
 
 
     class BreakState(SDFGState):

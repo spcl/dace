@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import copy
-import functools
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
@@ -10,14 +9,16 @@ import numpy as np
 
 import dace
 from dace import config, data, dtypes
+from dace import memlet as mlt
+from dace import subsets, symbolic
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
+from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.common import codeblock_to_cpp, sym2cpp, unparse_interstate_edge
 from dace.codegen.targets.target import TargetCodeGenerator
-from dace.frontend.python import wrappers
-from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
+from dace.config import Config
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.transformation.passes.analysis import StateReachability
@@ -34,20 +35,42 @@ class DaCeCodeGenerator(object):
         state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
 
+    targets: Set[TargetCodeGenerator]
+    statestruct: List[str]
+    environments: List[Any]
+    to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode], List[Tuple[int, int, nodes.AccessNode]]]
+    ptr_increments_to_define: DefaultDict[nodes.MapEntry, DefaultDict[int, Set[mlt.Memlet]]]
+    ptr_increments_to_update: DefaultDict[nodes.MapEntry, DefaultDict[int, Set[mlt.Memlet]]]
+    ptr_increment_name_mapping: Dict[mlt.Memlet, Tuple[str, symbolic.SymbolicType]]
+    where_allocated: Dict[Tuple[SDFG, str], SDFG]
+    fsyms: Dict[int, Set[str]]
+    arglist: Dict[str, data.Data]
+
+    _symbols_and_constants: Dict[int, Set[str]]
+    _ptr_incremented_accesses: Dict[mlt.Memlet,
+                                    Tuple[subsets.Range, List[Tuple[dace.symbol, int, nodes.Map, bool]], SDFGState]]
+    _initcode: CodeIOStream
+    _exitcode: CodeIOStream
+    _dispatcher: disp.TargetDispatcher
+
     def __init__(self, sdfg: SDFG):
         self._dispatcher = disp.TargetDispatcher(self)
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
-        self.statestruct: List[str] = []
-        self.environments: List[Any] = []
-        self.targets: Set[TargetCodeGenerator] = set()
-        self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
-                                      List[Tuple[int, int, nodes.AccessNode]]] = collections.defaultdict(list)
-        self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
-        self.fsyms: Dict[int, Set[str]] = {}
-        self._symbols_and_constants: Dict[int, Set[str]] = {}
+        self.statestruct = []
+        self.environments = []
+        self.targets = set()
+        self.to_allocate = collections.defaultdict(list)
+        self.ptr_increments_to_define = collections.defaultdict(lambda: collections.defaultdict(set))
+        self.ptr_increments_to_update = collections.defaultdict(lambda: collections.defaultdict(set))
+        self.ptr_increment_name_mapping = dict()
+        self.where_allocated = {}
+        self.fsyms = {}
+        self._symbols_and_constants = {}
+        self._ptr_incremented_accesses = {}
         fsyms = self.free_symbols(sdfg)
+        fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA") or str(x).startswith("tmp_struct_symbol")), fsyms))
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
         # resolve all symbols and constants
@@ -83,6 +106,7 @@ class DaCeCodeGenerator(object):
         if k in self.fsyms:
             return self.fsyms[k]
         if hasattr(obj, 'used_symbols'):
+            #TODO LATER: all_symbols was False but caused members in structs that are not transient to lose the last dimension
             result = obj.used_symbols(all_symbols=False)
         else:
             result = obj.free_symbols
@@ -131,7 +155,9 @@ class DaCeCodeGenerator(object):
             :param global_stream: Stream to write to (global).
             :param backend: Whose backend this header belongs to.
         """
-        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
+        from dace.codegen.targets.cpp import \
+            mangle_dace_state_struct_name  # Avoid circular import
+
         # Hash file include
         if backend == 'frame':
             global_stream.write('#include "../../include/hash.h"\n', sdfg)
@@ -154,7 +180,7 @@ class DaCeCodeGenerator(object):
         for _, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 datatypes.add(arr.dtype)
-        
+
         emitted = set()
         
         def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
@@ -166,10 +192,10 @@ class DaCeCodeGenerator(object):
             if hasattr(dtype, 'emit_definition'):
                 if not wrote_something:
                     global_stream.write("", sdfg)
-                if dtype not in emitted:
+                if dtype not in emitted_definitions:
                     global_stream.write(dtype.emit_definition(), sdfg)
                     wrote_something = True
-                    emitted.add(dtype)
+                    emitted_definitions.add(dtype)
             return wrote_something
 
         # Emit unique definitions
@@ -232,12 +258,15 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             :param callsite_stream: Stream to write to (at call site).
         """
         import dace.library
-        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
+        from dace.codegen.targets.cpp import \
+            mangle_dace_state_struct_name  # Avoid circular import
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
-        initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
-        initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
+        initparams = sdfg.signature(arglist=self.arglist)
+        initparamnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
+        #initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
+        #initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -358,8 +387,9 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         can be ``CPU_Heap`` or any other ``dtypes.StorageType``); and (2) set the externally-allocated
         pointer to the generated code's internal state (``__dace_set_external_memory_<STORAGE>``).
         """
-        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
-        
+        from dace.codegen.targets.cpp import \
+            mangle_dace_state_struct_name  # Avoid circular import
+
         # Collect external arrays
         ext_arrays: Dict[dtypes.StorageType, List[Tuple[SDFG, str, data.Data]]] = collections.defaultdict(list)
         for subsdfg, aname, arr in sdfg.arrays_recursive():
@@ -402,9 +432,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # Footer
             callsite_stream.write('}', sdfg)
 
-    def generate_state(self, sdfg, state, global_stream, callsite_stream, generate_state_footer=True):
+    def generate_state(self, sdfg: SDFG, state: SDFGState, global_stream: CodeIOStream, callsite_stream: CodeIOStream,
+                       generate_state_footer: bool = True):
 
-        sid = sdfg.node_id(state)
+        sid = state.block_id
 
         # Emit internal transient array allocation
         self.allocate_arrays_in_scope(sdfg, state, global_stream, callsite_stream)
@@ -451,10 +482,99 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if instr is not None:
                     instr.on_state_end(sdfg, state, callsite_stream, global_stream)
 
-    def generate_states(self, sdfg, global_stream, callsite_stream):
+    def _preprocess_memlet_schedules_scope(self, state: SDFGState, scope: sdscope.ScopeTree,
+                                           map_param_list: List[Tuple[str, nodes.Map, bool]]):
+        pass_params = copy.copy(map_param_list)
+        if scope.entry:
+            if isinstance(scope.entry, nodes.MapEntry):
+                if scope.entry.map.schedule in (dtypes.ScheduleType.CPU_Multicore,
+                                                dtypes.ScheduleType.CPU_Multicore_Doacross,
+                                                dtypes.ScheduleType.CPU_Persistent,
+                                                dtypes.ScheduleType.GPU_Device,
+                                                dtypes.ScheduleType.GPU_ThreadBlock,
+                                                dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+                                                dtypes.ScheduleType.GPU_Persistent):
+                    n_parallel_params = scope.entry.map.collapse
+                    para_params = scope.entry.map.params[:n_parallel_params]
+                    seq_params = scope.entry.map.params[n_parallel_params:]
+                else:
+                    para_params = []
+                    seq_params = scope.entry.map.params
+                for p in para_params:
+                    pass_params.append([p, scope.entry, True])
+                for p in seq_params:
+                    pass_params.append([p, scope.entry, False])
+
+                for e in state.scope_subgraph(scope.entry, include_nested_scopes=False).edges():
+                    memlet: mlt.Memlet = e.data
+                    if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
+                        offs_params = []
+                        involved_scopes = []
+                        for param, pscope, is_para in pass_params:
+                            if param in memlet.subset.free_symbols:
+                                involved_scopes.append([dace.symbol(param), -1, pscope, is_para])
+
+                        for dim in memlet.subset.ranges:
+                            dim_symbols = set()
+                            for _d in dim:
+                                dim_symbols |= symbolic.free_symbols_and_functions(_d)
+                            found_param = None
+                            for param, pscope, is_para in pass_params:
+                                if param in dim_symbols:
+                                    found_param = dace.symbol(param)
+                                    break
+                            if found_param:
+                                offs_params.append(found_param)
+                            else:
+                                offs_params.append(0)
+                        offset_subset = memlet.subset.offset_new(offs_params, negative=True)
+                        self._ptr_incremented_accesses[e] = [offset_subset, involved_scopes, state]
+        for child in scope.children:
+            self._preprocess_memlet_schedules_scope(state, child, pass_params)
+
+    def _preprocess_memlet_schedules_state(self, state: SDFGState):
+        # Force scope tree recomputation.
+        state._scope_tree_cached = None
+        self._preprocess_memlet_schedules_scope(state, state.scope_tree()[None], [])
+
+    def _preprocess_memlet_schedules_sdfg(self, sdfg: SDFG):
+        # Ensure that a proper mapping to scopes is present for pointer incrementation scheduled memlets.
+        for state in sdfg.states():
+            self._preprocess_memlet_schedules_state(state)
+
+        for paccess in self._ptr_incremented_accesses.keys():
+            _, involved_scopes, state = self._ptr_incremented_accesses[paccess]
+            if not involved_scopes:
+                continue
+            n_scopes = len(involved_scopes)
+            define_scope = None
+            define_scope_idx = None
+
+            for i in range(n_scopes - 1, -1, -1):
+                param, _, entry, parallel = involved_scopes[i]
+                if parallel:
+                    break
+
+                idx = entry.map.params.index(str(param))
+                self.ptr_increments_to_update[entry][idx].add(paccess)
+                define_scope = entry
+                define_scope_idx = idx
+
+                if Config.get_bool('optimizer', 'ptr_increment_finest'):
+                    break
+
+            if define_scope is None:
+                define_scope = involved_scopes[0][2]
+                define_scope_idx = define_scope.map.params.index(str(involved_scopes[0][0]))
+                self.ptr_increments_to_update[define_scope][define_scope_idx].add(paccess)
+            self.ptr_increments_to_define[define_scope][define_scope_idx].add(paccess)
+
+    def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
         states_generated = set()
 
-        opbar = progress.OptionalProgressBar(sdfg.number_of_nodes(), title=f'Generating code (SDFG {sdfg.cfg_id})')
+        opbar = progress.OptionalProgressBar(len(sdfg.states()), title=f'Generating code (SDFG {sdfg.cfg_id})')
+
+        self._preprocess_memlet_schedules_sdfg(sdfg)
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
@@ -561,7 +681,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
                 # Look in the surrounding edges for usage
                 edge_fsyms: Set[str] = set()
-                for e in sdfg.all_edges(state):
+                for e in state.parent_graph.all_edges(state):
                     edge_fsyms |= e.data.free_symbols
                 for edge_array in edge_fsyms & array_names:
                     instances[edge_array].append((state, nodes.AccessNode(edge_array)))
@@ -671,11 +791,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 multistate = False
 
                 # Does the array appear in inter-state edges?
-                for isedge in sdfg.edges():
+                for isedge in sdfg.all_interstate_edges():
                     if name in self.free_symbols(isedge.data):
                         multistate = True
 
-                for state in sdfg.nodes():
+                for state in sdfg.states():
                     if multistate:
                         break
                     sdict = state.scope_dict()
@@ -802,7 +922,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         """ Dispatches allocation of all arrays in the given scope. """
         for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
             if state is not None:
-                state_id = tsdfg.node_id(state)
+                state_id = state.block_id
             else:
                 state_id = -1
 

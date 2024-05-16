@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import dace
 from dace import dtypes, symbolic
@@ -18,11 +18,16 @@ class ScopeTree(object):
     """ A class defining a scope, its parent and children scopes, and
         scope entry/exit nodes. """
 
+    parent: Optional['ScopeTree']
+    children: List['ScopeTree']
+    entry: Optional[EntryNodeType]
+    exit: Optional[ExitNodeType]
+
     def __init__(self, entrynode: EntryNodeType, exitnode: ExitNodeType):
-        self.parent: 'ScopeTree' = None
-        self.children: List['ScopeTree'] = []
-        self.entry: EntryNodeType = entrynode
-        self.exit: ExitNodeType = exitnode
+        self.parent = None
+        self.children = []
+        self.entry = entrynode
+        self.exit = exitnode
 
 
 class ScopeSubgraphView(StateSubgraphView):
@@ -48,7 +53,7 @@ class ScopeSubgraphView(StateSubgraphView):
         return result
 
 
-def _scope_subgraph(graph, entry_node, include_entry, include_exit) -> ScopeSubgraphView:
+def _scope_subgraph(graph, entry_node, include_entry, include_exit, include_nested_scopes = True) -> ScopeSubgraphView:
     if not isinstance(entry_node, nd.EntryNode):
         raise TypeError("Received {}: should be dace.nodes.EntryNode".format(type(entry_node).__name__))
     node_to_children = graph.scope_children()
@@ -57,17 +62,23 @@ def _scope_subgraph(graph, entry_node, include_entry, include_exit) -> ScopeSubg
     else:
         children_nodes = set(n for n in node_to_children[entry_node] if not isinstance(n, nd.ExitNode))
     map_nodes = [node for node in children_nodes if isinstance(node, nd.EntryNode)]
-    while len(map_nodes) > 0:
-        next_map_nodes = []
-        # Traverse children map nodes
-        for map_node in map_nodes:
-            # Get child map subgraph (1 level)
-            more_nodes = set(node_to_children[map_node])
-            # Unionize children_nodes with new nodes
-            children_nodes |= more_nodes
-            # Add nodes of the next level to next_map_nodes
-            next_map_nodes.extend([node for node in more_nodes if isinstance(node, nd.EntryNode)])
-        map_nodes = next_map_nodes
+    if include_nested_scopes:
+        while len(map_nodes) > 0:
+            next_map_nodes = []
+            # Traverse children map nodes
+            for map_node in map_nodes:
+                # Get child map subgraph (1 level)
+                more_nodes = set(node_to_children[map_node])
+                # Unionize children_nodes with new nodes
+                children_nodes |= more_nodes
+                # Add nodes of the next level to next_map_nodes
+                next_map_nodes.extend([node for node in more_nodes if isinstance(node, nd.EntryNode)])
+            map_nodes = next_map_nodes
+    else:
+        if include_exit:
+            for n in map_nodes:
+                children_nodes |= set([v for v in node_to_children[n] if isinstance(v, nd.ExitNode)])
+
 
     if include_entry:
         children_nodes.add(entry_node)

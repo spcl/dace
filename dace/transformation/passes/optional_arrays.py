@@ -5,11 +5,11 @@ from typing import Dict, Iterator, Optional, Set, Tuple
 from dace import SDFG, SDFGState, data, properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
+from dace.transformation import pass_pipeline as ppl
 
 
 @properties.make_properties
-@transformation.single_level_sdfg_only
 class OptionalArrayInference(ppl.Pass):
     """
     Infers the ``optional`` property of arrays, i.e., if they can be given None, throughout the SDFG and all nested
@@ -29,6 +29,17 @@ class OptionalArrayInference(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         # If connectivity or any edges were changed, some new descriptors may be marked as optional
         return modified & (ppl.Modifies.States)
+
+    def _set_optional_in_cfg(self, cfg: ControlFlowRegion, sdfg: SDFG, result: Set[Tuple[int, str]]):
+        for block in self.traverse_unconditional_states(cfg):
+            if isinstance(block, SDFGState):
+                for anode in block.data_nodes():
+                    desc = anode.desc(sdfg)
+                    if isinstance(desc, data.Array) and desc.optional is None:
+                        desc.optional = False
+                        result.add((cfg.cfg_id, anode.data))
+            elif isinstance(block, ControlFlowRegion):
+                self._set_optional_in_cfg(block, sdfg, result)
 
     def apply_pass(self,
                    sdfg: SDFG,
@@ -63,15 +74,10 @@ class OptionalArrayInference(ppl.Pass):
                 arr.optional = parent_arrays[aname]
 
         # Change unconditionally-accessed arrays to non-optional
-        for state in self.traverse_unconditional_states(sdfg):
-            for anode in state.data_nodes():
-                desc = anode.desc(sdfg)
-                if isinstance(desc, data.Array) and desc.optional is None:
-                    desc.optional = False
-                    result.add((cfg_id, anode.data))
+        self._set_optional_in_cfg(sdfg, sdfg, result)
 
         # Propagate information to nested SDFGs
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     # Create information about parent arrays
@@ -96,23 +102,23 @@ class OptionalArrayInference(ppl.Pass):
 
         return result or None
 
-    def traverse_unconditional_states(self, sdfg: SDFG) -> Iterator[SDFGState]:
+    def traverse_unconditional_states(self, cfg: ControlFlowRegion) -> Iterator[ControlFlowBlock]:
         """
-        Traverse SDFG and keep track of whether the state is executed unconditionally.
+        Traverse CFG and keep track of all control flow blocks which are executed unconditionally.
         """
-        ipostdom = sdutil.postdominators(sdfg)
-        curstate = sdfg.start_state
-        out_degree = sdfg.out_degree(curstate)
+        ipostdom = sdutil.postdominators(cfg)
+        curstate = cfg.start_block
+        out_degree = cfg.out_degree(curstate)
         while out_degree > 0:
             yield curstate
             if out_degree == 1:  # Unconditional, continue to next state
-                curstate = sdfg.successors(curstate)[0]
+                curstate = cfg.successors(curstate)[0]
             elif out_degree > 1:  # Conditional branch
                 # Conditional code follows, use immediate post-dominator for next unconditional state
                 curstate = ipostdom[curstate]
             # Compute new out degree
-            if curstate in sdfg.nodes():
-                out_degree = sdfg.out_degree(curstate)
+            if curstate in cfg.nodes():
+                out_degree = cfg.out_degree(curstate)
             else:
                 out_degree = 0
         # Yield final state

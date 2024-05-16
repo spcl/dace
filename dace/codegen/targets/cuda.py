@@ -27,7 +27,7 @@ from dace.sdfg import (SDFG, ScopeSubgraphView, SDFGState, dynamic_map_inputs, h
                        is_array_stream_view, is_devicelevel_gpu, nodes, scope_contains_scope)
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers as xfh
-from dace.transformation.passes import analysis as ap
+from dace.transformation.passes.analysis import analysis as ap
 
 
 def prod(iterable):
@@ -231,7 +231,7 @@ class CUDACodeGen(TargetCodeGenerator):
 
             reachable = reachability[sdfg.cfg_id]
             access_sets = access_nodes[sdfg.cfg_id]
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 # Find all data descriptors that will no longer be used after this state
                 last_state_arrays: Set[str] = set(
                     s for s in access_sets
@@ -1478,6 +1478,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # TODO: This (const behavior and code below) is all a hack.
         #       Refactor and fix when nested SDFGs are separate functions.
         self._dispatcher.defined_vars.enter_scope(scope_entry)
+        self._dispatcher.declared_arrays.enter_scope(scope_entry)
         prototype_kernel_args = {}
         for aname, arg in kernel_args.items():  # `list` wrapper is used to modify kernel_args within the loop
             if aname in const_params:
@@ -1540,6 +1541,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                    tbmap, dtbmap, kernel_args_typed, self._globalcode, kernel_stream)
 
         self._dispatcher.defined_vars.exit_scope(scope_entry)
+        self._dispatcher.declared_arrays.exit_scope(scope_entry)
 
         # Add extra kernel arguments for a grid barrier object
         if create_grid_barrier:

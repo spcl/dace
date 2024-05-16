@@ -63,6 +63,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     Sequential = ()  #: Sequential code (single-thread)
     MPI = ()  #: MPI processes
     CPU_Multicore = ()  #: OpenMP parallel for loop
+    CPU_Multicore_Doacross = ()  #: OpenMP parallel for loop with doacross parallelism for sequential dependencies
     CPU_Persistent = ()  #: OpenMP parallel region
     Unrolled = ()  #: Unrolled code
     SVE_Map = ()  #: Arm SVE
@@ -77,6 +78,27 @@ class ScheduleType(aenum.AutoNumberEnum):
     Snitch = ()
     Snitch_Multicore = ()
     FPGA_Multi_Pumped = ()  #: Used for double pumping
+
+
+@undefined_safe_enum
+@extensible_enum
+class MemletScheduleType(aenum.AutoNumberEnum):
+    Default = ()
+    Doacross_Sink = ()
+    Doacross_Source = ()
+    Doacross_Source_Deferred = ()
+    Pointer_Increment = ()
+    Prefetch_Start = ()
+    Prefetch_All = ()
+
+
+@undefined_safe_enum
+@extensible_enum
+class MemletPrefetchType(aenum.Enum):
+    No_Prefetch = 0
+    Low_Locality = 1
+    Med_Locality = 2
+    High_Locality = 3
 
 
 # A subset of GPU schedule types
@@ -190,6 +212,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
+    ScheduleType.CPU_Multicore_Doacross: StorageType.Register,
     ScheduleType.CPU_Persistent: StorageType.CPU_Heap,
     ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
@@ -208,6 +231,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.Sequential: ScheduleType.Sequential,
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
+    ScheduleType.CPU_Multicore_Doacross: ScheduleType.Sequential,
     ScheduleType.CPU_Persistent: ScheduleType.CPU_Multicore,
     ScheduleType.Unrolled: ScheduleType.CPU_Multicore,
     ScheduleType.GPU_Default: ScheduleType.GPU_Device,
@@ -759,10 +783,11 @@ class stringtype(pointer):
 class struct(typeclass):
     """ A data type for a struct of existing typeclasses.
 
-        Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
+        Example use: `dace.struct('example', a=dace.int32, b=dace.float64)`.
     """
 
-    def __init__(self, name, **fields_and_types):
+    def __init__(self, name, fields_and_types=None, **fields):
+        fields_and_types = fields_and_types or fields
         # self._data = fields_and_types
         self.type = ctypes.Structure
         self.name = name
@@ -855,7 +880,7 @@ class struct(typeclass):
 {typ}
 }};""".format(
             name=self.name,
-            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
+            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in sorted(self._data.items())]),
         )
 
 

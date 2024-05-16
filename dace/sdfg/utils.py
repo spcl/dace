@@ -1330,17 +1330,17 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     for nsdfg_node in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
         # We have to reevaluate every time due to changing IDs
         # e.g., InlineMultistateSDFG may fission states
-        parent_state = nsdfg_node.sdfg.parent
-        parent_sdfg = parent_state.parent
-        parent_state_id = parent_sdfg.node_id(parent_state)
+        parent_state: SDFGState = nsdfg_node.sdfg.parent
+        parent_sdfg = parent_state.sdfg
+        parent_state_id = parent_state.block_id
 
         if multistate:
             candidate = {
                 InlineMultistateSDFG.nested_sdfg: nsdfg_node,
             }
             inliner = InlineMultistateSDFG()
-            inliner.setup_match(sdfg=parent_sdfg,
-                                cfg_id=parent_sdfg.sdfg_id,
+            inliner.setup_match(parent_sdfg,
+                                cfg_id=parent_state.parent_graph.cfg_id,
                                 state_id=parent_state_id,
                                 subgraph=candidate,
                                 expr_index=0,
@@ -1354,8 +1354,8 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             InlineSDFG.nested_sdfg: nsdfg_node,
         }
         inliner = InlineSDFG()
-        inliner.setup_match(sdfg=parent_sdfg,
-                            cfg_id=parent_sdfg.sdfg_id,
+        inliner.setup_match(parent_sdfg,
+                            cfg_id=parent_state.parent_graph.cfg_id,
                             state_id=parent_state_id,
                             subgraph=candidate,
                             expr_index=0,
@@ -1674,9 +1674,10 @@ def map_view_to_array(vdesc: dt.View, adesc: dt.Array,
     unsqueezed: List[int] = []
     squeezed: List[int] = []
 
-    # First, remove shape=1 dimensions (unsqueezed or squeezed)
-    non_squeeze_vdims = [i for i, s in enumerate(vdesc.shape) if s != 1]
-    non_squeeze_adims = [i for i, s in enumerate(adesc.shape) if s != 1]
+    # First, remove shape=1 dimensions (unsqueezed or squeezed) or dimensions that are effectively ignored through
+    # 0 strides.
+    non_squeeze_vdims = [i for i, s in enumerate(vdesc.shape) if s != 1 and vdesc.strides[i] != 0]
+    non_squeeze_adims = [i for i, s in enumerate(adesc.shape) if s != 1 and adesc.strides[i] != 0]
     astrides = [adesc.strides[i] for i in non_squeeze_adims]
 
     # Find matching strides

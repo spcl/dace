@@ -3,9 +3,11 @@
 import ast
 from dataclasses import dataclass
 from dace.frontend.python import astutils
+from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes, utils as sdutil
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.sdfg.state import ControlFlowBlock
+from dace.transformation import pass_pipeline as ppl
 from dace.cli.progress import optional_progressbar
 from dace import data, SDFG, SDFGState, dtypes, symbolic, properties
 from typing import Any, Dict, Set, Optional, Tuple
@@ -18,7 +20,6 @@ class _UnknownValue:
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@transformation.single_level_sdfg_only
 class ConstantPropagation(ppl.Pass):
     """
     Propagates constants and symbols that were assigned to one value forward through the SDFG, reducing
@@ -68,8 +69,17 @@ class ConstantPropagation(ppl.Pass):
         if not initial_symbols and not self.should_apply(sdfg):
             result = {}
         else:
-            # Trace all constants and symbols through states
-            per_state_constants: Dict[SDFGState, Dict[str, Any]] = self.collect_constants(sdfg, initial_symbols)
+            # Trace all constants and symbols through control flow blocks
+            per_block_constants: Dict[SDFGState, Dict[str, Any]] = self.collect_constants(sdfg, initial_symbols)            
+
+            for block, mapping in per_block_constants.items():
+                mapping_ = {}
+                for k, v in mapping.items():
+                    if isinstance(v, str) and "." in v:
+                        continue
+                    mapping_[k] = v
+                
+                per_block_constants[block] = mapping_
 
             # Keep track of replaced and ambiguous symbols
             symbols_replaced: Dict[str, Any] = {}
@@ -77,13 +87,14 @@ class ConstantPropagation(ppl.Pass):
 
             # Collect symbols from symbol-dependent data descriptors
             # If there can be multiple values over the SDFG, the symbols are not propagated
-            desc_symbols, multivalue_desc_symbols = self._find_desc_symbols(sdfg, per_state_constants)
+            desc_symbols, multivalue_desc_symbols = self._find_desc_symbols(sdfg, per_block_constants)
 
-            # Replace constants per state
-            for state, mapping in optional_progressbar(per_state_constants.items(),
-                                                       'Propagating constants',
-                                                       n=len(per_state_constants),
-                                                       progress=self.progress):
+            # Replace constants per block
+            for blk, mapping in optional_progressbar(per_block_constants.items(),
+                                                     'Propagating constants',
+                                                     n=len(per_block_constants),
+                                                     progress=self.progress):
+                block: ControlFlowBlock = blk
                 remaining_unknowns.update(
                     {k
                      for k, v in mapping.items() if v is _UnknownValue or k in multivalue_desc_symbols})
@@ -97,10 +108,10 @@ class ConstantPropagation(ppl.Pass):
                 # Update replaced symbols for later replacements
                 symbols_replaced.update(mapping)
 
-                # Replace in state contents
-                state.replace_dict(mapping)
+                # Replace in block contents
+                block.replace_dict(mapping)
                 # Replace in outgoing edges as well
-                for e in sdfg.out_edges(state):
+                for e in block.parent_graph.out_edges(block):
                     e.data.replace_dict(mapping, replace_keys=False)
 
             # Gather initial propagated symbols
@@ -133,8 +144,8 @@ class ConstantPropagation(ppl.Pass):
             sid = sdfg.cfg_id
             result = set((sid, sym) for sym in result)
 
-            for state in sdfg.nodes():
-                for node in state.nodes():
+            for block in sdfg.states():
+                for node in block.nodes():
                     if isinstance(node, nodes.NestedSDFG):
                         nested_id = node.sdfg.cfg_id
                         const_syms = {k: v for k, v in node.symbol_mapping.items() if not symbolic.issymbolic(v)}
@@ -156,7 +167,7 @@ class ConstantPropagation(ppl.Pass):
 
     def collect_constants(self,
                           sdfg: SDFG,
-                          initial_symbols: Optional[Dict[str, Any]] = None) -> Dict[SDFGState, Dict[str, Any]]:
+                          initial_symbols: Optional[Dict[str, Any]] = None) -> Dict[ControlFlowBlock, Dict[str, Any]]:
         """
         Finds all constants and constant-assigned symbols in the SDFG for each state.
 
@@ -165,7 +176,7 @@ class ConstantPropagation(ppl.Pass):
         :return: A dictionary mapping an SDFG state to a mapping of constants and their corresponding values.
         """
         arrays: Set[str] = set(sdfg.arrays.keys() | sdfg.constants_prop.keys())
-        result: Dict[SDFGState, Dict[str, Any]] = {}
+        result: Dict[ControlFlowBlock, Dict[str, Any]] = {}
 
         # Add nested data to arrays
         def _add_nested_datanames(name: str, desc: data.Structure):
@@ -187,33 +198,43 @@ class ConstantPropagation(ppl.Pass):
         # * If unvisited state has more than one incoming edge, consider all paths (use reverse DFS on unvisited paths)
         #   * If value is ambiguous (not the same), set value to UNKNOWN
 
-        start_state = sdfg.start_state
+        start_block = sdfg.start_block
         if initial_symbols:
-            result[start_state] = {}
-            result[start_state].update(initial_symbols)
+            result[start_block] = {}
+            result[start_block].update(initial_symbols)
 
         # Traverse SDFG topologically
-        for state in optional_progressbar(sdfg.topological_sort(start_state), 'Collecting constants',
-                                          sdfg.number_of_nodes(), self.progress):
+        inorder_blocks = list(cfg_analysis.stateorder_topological_sort(sdfg, recursive=True,
+                                                                       produce_nonstate_blocks=True))
+        for blk in optional_progressbar(inorder_blocks, 'Collecting constants', len(inorder_blocks), self.progress):
+            block: ControlFlowBlock = blk
             # NOTE: We must always check the start-state regardless if there are initial symbols. This is necessary
             # when the start-state is a scope's guard instead of a special initialization state, i.e., when the start-
             # state has incoming edges that may involve the initial symbols. See also:
             # `tests.passes.constant_propagation_test.test_for_with_external_init_nested_start_with_guard``
-            if state in result and state is not start_state:
+            if block in result and block is not block.parent_graph.start_block:
                 continue
 
+            if (block.parent_graph is not None and block is block.parent_graph.start_block and
+                block.parent_graph in result):
+                # This is a special case for start states of nested regions, where we want to propagate whatever
+                # constants live on the parent down to the start block. Here, we are handling that start block.
+                if block not in result:  # Condition evaluates to False when state is the start-state
+                    result[block] = {}
+                self._propagate(result[block], result[block.parent_graph])
+
             # Get predecessors
-            in_edges = sdfg.in_edges(state)
+            in_edges = block.parent_graph.in_edges(block)
             if len(in_edges) == 1:  # Special case, propagate as-is
-                if state not in result:  # Condition evaluates to False when state is the start-state
-                    result[state] = {}
+                if block not in result:  # Condition evaluates to False when state is the start-state
+                    result[block] = {}
 
                 # First the prior state
                 if in_edges[0].src in result:  # Condition evaluates to False when state is the start-state
-                    self._propagate(result[state], result[in_edges[0].src])
+                    self._propagate(result[block], result[in_edges[0].src])
 
                 # Then assignments on the incoming edge
-                self._propagate(result[state], self._data_independent_assignments(in_edges[0].data, arrays))
+                self._propagate(result[block], self._data_independent_assignments(in_edges[0].data, arrays))
                 continue
 
             # More than one incoming edge: may require reversed traversal
@@ -224,7 +245,7 @@ class ConstantPropagation(ppl.Pass):
                 if edge.src in result:
                     constants.update(result[edge.src])
                 else:  # Otherwise, reverse DFS to find constants until a visited state
-                    constants = self._constants_from_unvisited_state(sdfg, edge.src, arrays, result)
+                    constants = self._constants_from_unvisited_block(edge.src, arrays, result)
 
                 # Update constants with incoming edge
                 self._propagate(constants, self._data_independent_assignments(edge.data, arrays))
@@ -236,9 +257,9 @@ class ConstantPropagation(ppl.Pass):
                     else:
                         assignments[aname] = aval
 
-            if state not in result:  # Condition may evaluate to False when state is the start-state
-                result[state] = {}
-            self._propagate(result[state], assignments)
+            if block not in result:  # Condition may evaluate to False when state is the start-state
+                result[block] = {}
+            self._propagate(result[block], assignments)
 
         return result
 
@@ -324,29 +345,37 @@ class ConstantPropagation(ppl.Pass):
             for k, v in edge.assignments.items()
         }
 
-    def _constants_from_unvisited_state(self, sdfg: SDFG, state: SDFGState, arrays: Set[str],
-                                        existing_constants: Dict[SDFGState, Dict[str, Any]]) -> Dict[str, Any]:
+    def _constants_from_unvisited_block(self, block: ControlFlowBlock, arrays: Set[str],
+                                        existing_constants: Dict[ControlFlowBlock, Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Collects constants from an unvisited state, traversing backwards until reaching states that do have
+        Collects constants from an unvisited block, traversing backwards until reaching blocks that do have
         collected constants.
         """
         result: Dict[str, Any] = {}
 
-        for parent, node in sdutil.dfs_conditional(sdfg,
-                                                   sources=[state],
-                                                   reverse=True,
-                                                   condition=lambda p, c: c not in existing_constants,
-                                                   yield_parent=True):
-            # Skip first node
-            if parent is None:
-                continue
+        pivot_graph = block.parent_graph
+        while pivot_graph is not None:
+            for parent, node in sdutil.dfs_conditional(pivot_graph,
+                                                       sources=[block],
+                                                       reverse=True,
+                                                       condition=lambda p, c: c not in existing_constants,
+                                                       yield_parent=True):
+                # Skip first node
+                if parent is None:
+                    continue
 
-            # Get connecting edge (reversed)
-            edge = sdfg.edges_between(node, parent)[0]
+                # Get connecting edge (reversed)
+                edge = pivot_graph.edges_between(node, parent)[0]
 
-            # If node already has propagated constants, update dictionary and stop traversal
-            self._propagate(result, self._data_independent_assignments(edge.data, arrays), True)
-            if node in existing_constants:
-                self._propagate(result, existing_constants[node], True)
+                # If node already has propagated constants, update dictionary and stop traversal
+                self._propagate(result, self._data_independent_assignments(edge.data, arrays), True)
+                if node in existing_constants:
+                    self._propagate(result, existing_constants[node], True)
+
+            if not isinstance(pivot_graph, SDFG) and pivot_graph.parent_graph:
+                block = pivot_graph
+                pivot_graph = pivot_graph.parent_graph
+            else:
+                pivot_graph = None
 
         return result

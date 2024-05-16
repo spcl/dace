@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional, Set
 from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes import analysis as ap
+from dace.transformation.passes.analysis import analysis as ap
 
 
 @transformation.single_level_sdfg_only

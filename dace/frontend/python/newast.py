@@ -4605,7 +4605,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if isinstance(result, tuple) and type(result[0]) is nested_call.NestedCall:
             nc: nested_call.NestedCall = result[0]
-            self.last_block = nc.last_state
+            self.last_block = nc.current_state
             result = result[1]
 
         if not isinstance(result, (tuple, list)):

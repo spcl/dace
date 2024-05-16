@@ -2,12 +2,11 @@
 """ This module contains classes and functions that implement the orthogonal
     stencil tiling transformation. """
 
-import math
-
 import dace
-from dace import dtypes, registry, symbolic
+from dace import dtypes, symbolic
 from dace.properties import make_properties, Property, ShapeProperty
 from dace.sdfg import nodes
+from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.transformation import transformation
 from dace.sdfg.propagation import _propagate_node
 
@@ -60,7 +59,7 @@ class StencilTiling(transformation.SubgraphTransformation):
     unroll_loops = Property(desc="Unroll Inner Loops if they have Size > 1", dtype=bool, default=False)
 
     @staticmethod
-    def coverage_dicts(sdfg, graph, map_entry, outer_range=True):
+    def coverage_dicts(sdfg, graph: SDFGState, map_entry: nodes.MapEntry, outer_range=True):
         """
         returns a tuple of two dicts:
         the first dict has as a key all data entering the map
@@ -120,7 +119,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         return (entry_coverage, exit_coverage)
 
     @staticmethod
-    def topology(sdfg, graph, map_entries):
+    def topology(sdfg, graph: SDFGState, map_entries):
         # first get dicts of parents and children for each map_entry
         # get source maps as a starting point for BFS
         # these are all map entries reachable from source nodes
@@ -153,9 +152,9 @@ class StencilTiling(transformation.SubgraphTransformation):
         return (children_dict, parent_dict, sink_maps)
 
     @staticmethod
-    def can_be_applied(sdfg, subgraph) -> bool:
+    def can_be_applied(sdfg, subgraph: StateSubgraphView) -> bool:
         # get highest scope maps
-        graph = subgraph.graph
+        graph: SDFGState = subgraph.graph
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
         map_exits = [graph.exit_node(entry) for entry in map_entries]
 
@@ -200,13 +199,13 @@ class StencilTiling(transformation.SubgraphTransformation):
 
         # get intermediate_nodes, out_nodes from SubgraphFusion Transformation
         try:
-            node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph, map_entries)
+            node_config = SubgraphFusion.get_adjacent_nodes(graph, map_entries)
             (_, intermediate_nodes, out_nodes) = node_config
         except NotImplementedError:
             return False
 
         # 1.4: check topological feasibility
-        if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
+        if not SubgraphFusion.check_topo_feasibility(graph, map_entries, intermediate_nodes, out_nodes):
             return False
         # 1.5 nodes that are both intermediate and out nodes
         # are not supported in StencilTiling
@@ -216,7 +215,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         # 1.6 check that we only deal with compressible transients
 
         subgraph_contains_data = SubgraphFusion.determine_compressible_nodes(sdfg, graph, intermediate_nodes,
-                                                                             map_entries, map_exits)
+                                                                             map_entries)
         if any([s == False for s in subgraph_contains_data.values()]):
             return False
 
@@ -305,7 +304,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         return True
 
     def apply(self, sdfg):
-        graph = sdfg.node(self.state_id)
+        graph: SDFGState = sdfg.cfg_list[self.cfg_id].node(self.state_id)
         subgraph = self.subgraph_view(sdfg)
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
 
@@ -430,7 +429,6 @@ class StencilTiling(transformation.SubgraphTransformation):
 
             stripmine_subgraph = {StripMining.map_entry: graph.node_id(map_entry)}
 
-            cfg_id = sdfg.cfg_id
             last_map_entry = None
             original_schedule = map_entry.schedule
             self.tile_sizes = []
@@ -497,7 +495,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                                map.range[dim_idx][1] - self.tile_offset_upper[-1], map.range[dim_idx][2])
                 map.range[dim_idx] = range_tuple
                 stripmine = StripMining()
-                stripmine.setup_match(sdfg, cfg_id, self.state_id, stripmine_subgraph, 0)
+                stripmine.setup_match(sdfg, self.cfg_id, self.state_id, stripmine_subgraph, 0)
 
                 stripmine.tiling_type = dtypes.TilingType.CeilRange
                 stripmine.dim_idx = dim_idx
@@ -538,7 +536,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                         MapCollapse.inner_map_entry: graph.node_id(new_map_entry)
                     }
                     mapcollapse = MapCollapse()
-                    mapcollapse.setup_match(sdfg, cfg_id, self.state_id, mapcollapse_subgraph, 0)
+                    mapcollapse.setup_match(sdfg, self.cfg_id, self.state_id, mapcollapse_subgraph, 0)
                     mapcollapse.apply(graph, sdfg)
                 last_map_entry = graph.in_edges(map_entry)[0].src
             # add last instance of map entries to _outer_entries
