@@ -231,7 +231,7 @@ class CUDACodeGen(TargetCodeGenerator):
 
             reachable = reachability[sdfg.cfg_id]
             access_sets = access_nodes[sdfg.cfg_id]
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 # Find all data descriptors that will no longer be used after this state
                 last_state_arrays: Set[str] = set(
                     s for s in access_sets

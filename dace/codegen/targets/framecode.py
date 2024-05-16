@@ -21,7 +21,6 @@ from dace.config import Config
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
-from dace.sdfg.analysis.cfg import stateorder_topological_sort
 from dace.transformation.passes.analysis import StateReachability
 
 
@@ -49,7 +48,7 @@ class DaCeCodeGenerator(object):
 
     _symbols_and_constants: Dict[int, Set[str]]
     _ptr_incremented_accesses: Dict[mlt.Memlet,
-                                    Tuple[subsets.Range, Tuple[dace.symbol, int, nodes.Map, bool], SDFGState]]
+                                    Tuple[subsets.Range, List[Tuple[dace.symbol, int, nodes.Map, bool]], SDFGState]]
     _initcode: CodeIOStream
     _exitcode: CodeIOStream
     _dispatcher: disp.TargetDispatcher
@@ -489,7 +488,12 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         if scope.entry:
             if isinstance(scope.entry, nodes.MapEntry):
                 if scope.entry.map.schedule in (dtypes.ScheduleType.CPU_Multicore,
-                                                dtypes.ScheduleType.CPU_Multicore_Doacross):
+                                                dtypes.ScheduleType.CPU_Multicore_Doacross,
+                                                dtypes.ScheduleType.CPU_Persistent,
+                                                dtypes.ScheduleType.GPU_Device,
+                                                dtypes.ScheduleType.GPU_ThreadBlock,
+                                                dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+                                                dtypes.ScheduleType.GPU_Persistent):
                     n_parallel_params = scope.entry.map.collapse
                     para_params = scope.entry.map.params[:n_parallel_params]
                     seq_params = scope.entry.map.params[n_parallel_params:]
@@ -510,19 +514,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                             if param in memlet.subset.free_symbols:
                                 involved_scopes.append([dace.symbol(param), -1, pscope, is_para])
 
-                        for i, dim in enumerate(memlet.subset.ranges):
+                        for dim in memlet.subset.ranges:
                             dim_symbols = set()
                             for _d in dim:
                                 dim_symbols |= symbolic.free_symbols_and_functions(_d)
-                            #dim_symbols = dim[0].free_symbols | dim[1].free_symbols | dim[2].free_symbols
                             found_param = None
-                            found_scope = None
-                            found_scope_barrier = None
                             for param, pscope, is_para in pass_params:
                                 if param in dim_symbols:
                                     found_param = dace.symbol(param)
-                                    found_scope = pscope
-                                    found_scope_barrier = is_para
                                     break
                             if found_param:
                                 offs_params.append(found_param)
@@ -544,7 +543,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             self._preprocess_memlet_schedules_state(state)
 
         for paccess in self._ptr_incremented_accesses.keys():
-            access = paccess.data
             _, involved_scopes, state = self._ptr_incremented_accesses[paccess]
             if not involved_scopes:
                 continue

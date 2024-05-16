@@ -18,11 +18,15 @@ from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
 from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_stream_view, NodeNotExpandedError,
-                       dynamic_map_inputs, local_transients)
-from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga, is_in_scope
+                       dynamic_map_inputs)
+from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
-from typing import Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Tuple, Union
 from dace.codegen.targets import fpga
+
+
+if TYPE_CHECKING:
+    from dace.codegen.targets.framecode import DaCeCodeGenerator
 
 
 @registry.autoregister_params(name='cpu')
@@ -79,7 +83,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise TypeError("Unrecognized argument type: {t} (value {v})".format(t=type(arg_type).__name__,
                                                                                      v=str(arg_type)))
 
-    def __init__(self, frame_codegen, sdfg):
+    def __init__(self, frame_codegen: 'DaCeCodeGenerator', sdfg: sd.SDFG):
         self._frame = frame_codegen
         self._dispatcher: TargetDispatcher = frame_codegen.dispatcher
         self.calling_codegen = self
@@ -1116,6 +1120,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             is_global = False
                         else:
                             ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                            offs = None
                             is_global = desc.lifetime in (dtypes.AllocationLifetime.Global,
                                                         dtypes.AllocationLifetime.Persistent,
                                                         dtypes.AllocationLifetime.External)
@@ -1929,10 +1934,14 @@ class CPUCodeGen(TargetCodeGenerator):
             offsets_to_add = []
             access_offset_raw = self._frame._ptr_incremented_accesses[paccess][0]
             access_offset = [rn[0] for rn in access_offset_raw.ranges]
-            for involved_scope in self._frame._ptr_incremented_accesses[paccess][1]:
+
+            begin_offs_skip_scope_paras = set()
+            involved_scopes = self._frame._ptr_incremented_accesses[paccess][1]
+            for involved_scope in involved_scopes:
                 para, _, _, _ = involved_scope
                 if str(para) == var:
                     break
+                begin_offs_skip_scope_paras.add(str(para))
                 for idx, subrng in enumerate(access.subset):
                     dimsyms = set()
                     for _d in subrng:
@@ -1940,14 +1949,27 @@ class CPUCodeGen(TargetCodeGenerator):
                     if str(para) in dimsyms:
                         offset_expr = '(' + cpp.sym2cpp(para) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
                         offsets_to_add.append(offset_expr)
-            if begin != 0:
-                for idx, subrng in enumerate(access.subset):
-                    dimsyms = set()
-                    for _d in subrng:
-                        dimsyms |= symbolic.free_symbols_and_functions(_d)
-                    if var in dimsyms:
-                        offset_expr = '(' + cpp.sym2cpp(begin) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
-                        offsets_to_add.append(offset_expr)
+
+            # Calculate the offset added for any involved scopes that begin at something other than 0.
+            for involved_scope in involved_scopes:
+                para, _, scope_node, is_para = involved_scope
+                if str(para) in begin_offs_skip_scope_paras:
+                    continue
+
+                if is_para:
+                    raise ValueError('Parallel scopes involved in pointer incremented accesses are not supported.')
+
+                rng_idx = scope_node.params.index(str(para))
+                para_start = scope_node.range[rng_idx][0]
+                if para_start != 0:
+                    for idx, subrng in enumerate(access.subset):
+                        dimsyms = set()
+                        for _d in subrng:
+                            dimsyms |= symbolic.free_symbols_and_functions(_d)
+                        if str(para) in dimsyms:
+                            offset_expr = '(' + cpp.sym2cpp(para_start) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                            offsets_to_add.append(offset_expr)
+
             for j, off in enumerate(access_offset):
                 if off != 0:
                     offset_expr = '(' + cpp.sym2cpp(off) + ' * ' + cpp.sym2cpp(desc.strides[j]) + ')'
