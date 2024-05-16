@@ -234,7 +234,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 field_name = mpath[0].src_conn
 
             # Plain view into a container array
-            if isinstance(vdesc, data.ContainerArray) and not isinstance(vdesc.stype, data.Structure):
+            if isinstance(vdesc, data.ContainerArray) and not isinstance(vdesc.stype, data.Structure) and nodedesc.dtype == vdesc.dtype:
                 offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
                 value = f'{ptrname}[{offset}]'
             else:
@@ -728,6 +728,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 if dst_nodedesc.dtype == dtypes.pointer(src_nodedesc.dtype):
                     src_expr = '&' + src_expr
+                if src_nodedesc.dtype == dtypes.pointer(dst_nodedesc.dtype):
+                    src_expr = '*' + src_expr
 
                 stream.write(
                     f"{dst_node.data} = {src_expr};",
