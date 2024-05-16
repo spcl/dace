@@ -80,8 +80,9 @@ def infer_connector_types(sdfg: SDFG):
                         # NOTE: Scalars allocated on the host can be read by GPU kernels. Therefore, we do not need
                         # to use the `allocated_as_scalar` check here.
                         scalar = isinstance(node.sdfg.arrays[cname], data.Scalar)
+                        struct = isinstance(node.sdfg.arrays[cname], data.Structure)
                         dtype = node.sdfg.arrays[cname].dtype
-                        ctype = (dtype if scalar else dtypes.pointer(dtype))
+                        ctype = (dtype if scalar or struct else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
                         scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
                         if isinstance(node, nodes.LibraryNode):
@@ -381,6 +382,8 @@ def _get_storage_from_parent(data_name: str, sdfg: SDFG) -> dtypes.StorageType:
     parent_sdfg = parent_state.parent
 
     # Find data descriptor in parent SDFG
+    # NOTE: Assuming that all members of a Structure have the same storage type.
+    data_name = data_name.split('.')[0]
     if data_name in nsdfg_node.in_connectors:
         e = next(iter(parent_state.in_edges_by_connector(nsdfg_node, data_name)))
         return parent_sdfg.arrays[e.data.data].storage

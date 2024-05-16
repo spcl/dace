@@ -79,7 +79,14 @@ class NestedDict(dict):
             else:
                 desc = desc.members[token]
             token = tokens.pop(0)
-            result = token in desc.members
+            result = hasattr(desc, 'members') and token in desc.members
+        return result
+
+    def keys(self):
+        result = super(NestedDict, self).keys()
+        for k, v in self.items():
+            if isinstance(v, dt.Structure):
+                result |= set(map(lambda x: k + '.' + x, v.keys()))
         return result
 
 
@@ -113,25 +120,6 @@ def _replace_dict_values(d, old, new):
     for k, v in d.items():
         if v == old:
             d[k] = new
-
-
-def _assignments_from_string(astr):
-    """ Returns a dictionary of assignments from a semicolon-delimited
-        string of expressions. """
-
-    result = {}
-    for aitem in astr.split(';'):
-        aitem = aitem.strip()
-        m = re.search(r'([^=\s]+)\s*=\s*([^=]+)', aitem)
-        result[m.group(1)] = m.group(2)
-
-    return result
-
-
-def _assignments_to_string(assdict):
-    """ Returns a semicolon-delimited string from a dictionary of assignment
-        expressions. """
-    return '; '.join(['%s=%s' % (k, v) for k, v in assdict.items()])
 
 
 def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
@@ -192,9 +180,7 @@ class InterstateEdge(object):
     """
 
     assignments = Property(dtype=dict,
-                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
-                           from_string=_assignments_from_string,
-                           to_string=_assignments_to_string)
+                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
 
     def __init__(self, condition: CodeBlock = None, assignments=None):
@@ -478,8 +464,8 @@ class SDFG(ControlFlowRegion):
 
             :param name: Name for the SDFG (also used as the filename for
                          the compiled shared library).
-            :param symbols: Additional dictionary of symbol names -> types that the SDFG
-                            defines, apart from symbolic data sizes.
+            :param constants: Additional dictionary of compile-time constants
+                              {name (str): tuple(type (dace.data.Data), value (Any))}.
             :param propagate: If False, disables automatic propagation of
                               memlet subsets from scopes outwards. Saves
                               processing time but disallows certain
@@ -613,9 +599,7 @@ class SDFG(ControlFlowRegion):
         else:
             constants_prop = None
 
-        ret = SDFG(name=attrs['name'],
-                   constants=constants_prop,
-                   parent=context_info['sdfg'])
+        ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(ret,
                                                 json_obj,
@@ -743,13 +727,15 @@ class SDFG(ControlFlowRegion):
         :param replace_keys: If True, replaces in SDFG property names (e.g., array, symbol, and constant names).
         """
         symrepl = symrepl or {
-            symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
             for k, v in repldict.items()
         }
 
         # Replace in arrays and symbols (if a variable name)
         if replace_keys:
-            for name, new_name in repldict.items():
+            # Filter out nested data names, as we cannot and do not want to replace names in nested data descriptors
+            repldict_filtered = {k: v for k, v in repldict.items() if '.' not in k}
+            for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self._arrays, name, new_name)
                     _replace_dict_keys(self.symbols, name, new_name)
@@ -1230,22 +1216,35 @@ class SDFG(ControlFlowRegion):
         """ Returns the states in this SDFG, recursing into state scope blocks. """
         return list(self.all_states())
 
-    def arrays_recursive(self):
+    def arrays_recursive(self, include_nested_data: bool = False):
         """ Iterate over all arrays in this SDFG, including arrays within
-            nested SDFGs. Yields 3-tuples of (sdfg, array name, array)."""
+            nested SDFGs. Yields 3-tuples of (sdfg, array name, array).
+
+            :param include_nested_data: If True, also yields nested data.
+            :return: A generator of (sdfg, array name, array) tuples.
+        """
+
+        def _yield_nested_data(name, arr):
+            for nname, narr in arr.members.items():
+                if isinstance(narr, dt.Structure):
+                    yield from _yield_nested_data(name + '.' + nname, narr)
+                yield self, name + '.' + nname, narr
+
         for aname, arr in self.arrays.items():
+            if isinstance(arr, dt.Structure) and include_nested_data:
+                yield from _yield_nested_data(aname, arr)
             yield self, aname, arr
         for state in self.nodes():
             for node in state.nodes():
                 if isinstance(node, nd.NestedSDFG):
-                    yield from node.sdfg.arrays_recursive()
+                    yield from node.sdfg.arrays_recursive(include_nested_data=include_nested_data)
 
     def _used_symbols_internal(self,
                                all_symbols: bool,
-                               defined_syms: Optional[Set]=None,
-                               free_syms: Optional[Set]=None,
-                               used_before_assignment: Optional[Set]=None,
-                               keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+                               defined_syms: Optional[Set] = None,
+                               free_syms: Optional[Set] = None,
+                               used_before_assignment: Optional[Set] = None,
+                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -1262,10 +1261,11 @@ class SDFG(ControlFlowRegion):
         for code in self.exit_code.values():
             free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
 
-        return super()._used_symbols_internal(
-            all_symbols=all_symbols, keep_defined_in_mapping=keep_defined_in_mapping,
-            defined_syms=defined_syms, free_syms=free_syms, used_before_assignment=used_before_assignment
-        )
+        return super()._used_symbols_internal(all_symbols=all_symbols,
+                                              keep_defined_in_mapping=keep_defined_in_mapping,
+                                              defined_syms=defined_syms,
+                                              free_syms=free_syms,
+                                              used_before_assignment=used_before_assignment)
 
     def get_all_toplevel_symbols(self) -> Set[str]:
         """
@@ -1432,9 +1432,13 @@ class SDFG(ControlFlowRegion):
 
         # Create renderer canvas and load SDFG
         result += """
+<div class="sdfv">
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
+</div>
 <script>
     var sdfg_{uid} = {sdfg};
+</script>
+<script>
     var sdfv_{uid} = new SDFV();
     var renderer_{uid} = new SDFGRenderer(sdfv_{uid}, parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
@@ -1470,9 +1474,13 @@ class SDFG(ControlFlowRegion):
 
         return result
 
-    def shared_transients(self, check_toplevel=True) -> List[str]:
-        """ Returns a list of transient data that appears in more than one
-            state. """
+    def shared_transients(self, check_toplevel: bool = True, include_nested_data: bool = False) -> List[str]:
+        """ Returns a list of transient data that appears in more than one state.
+
+            :param check_toplevel: If True, consider the descriptors' toplevel attribute.
+            :param include_nested_data: If True, also include nested data.
+            :return: A list of transient data names.
+        """
         seen = {}
         shared = []
 
@@ -1486,11 +1494,21 @@ class SDFG(ControlFlowRegion):
         # If transient is accessed in more than one state, it is shared
         for state in self.states():
             for node in state.data_nodes():
-                if node.desc(self).transient:
-                    if (check_toplevel and node.desc(self).toplevel) or (node.data in seen
-                                                                         and seen[node.data] != state):
-                        shared.append(node.data)
-                    seen[node.data] = state
+                tokens = node.data.split('.')
+                # NOTE: The following three lines ensure that nested data share transient and toplevel attributes.
+                desc = self.arrays[tokens[0]]
+                is_transient = desc.transient
+                is_toplevel = desc.toplevel
+                if include_nested_data:
+                    datanames = set(['.'.join(tokens[:i + 1]) for i in range(len(tokens))])
+                else:
+                    datanames = set([tokens[0]])
+                for dataname in datanames:
+                    desc = self.arrays[dataname]
+                    if is_transient:
+                        if (check_toplevel and is_toplevel) or (dataname in seen and seen[dataname] != state):
+                            shared.append(dataname)
+                        seen[dataname] = state
 
         return dtypes.deduplicate(shared)
 
@@ -1534,14 +1552,15 @@ class SDFG(ControlFlowRegion):
 
         return None
 
-    def view(self, filename=None):
+    def view(self, filename=None, verbose=False):
         """
         View this sdfg in the system's HTML viewer
 
         :param filename: the filename to write the HTML to. If `None`, a temporary file will be created.
+        :param verbose: Be verbose, `False` by default.
         """
         from dace.cli.sdfv import view
-        view(self, filename=filename)
+        view(self, filename=filename, verbose=verbose)
 
     @staticmethod
     def _from_file(fp: BinaryIO) -> 'SDFG':
@@ -1670,7 +1689,7 @@ class SDFG(ControlFlowRegion):
                  total_size=None,
                  find_new_name=False,
                  alignment=0,
-                 may_alias=False) -> Tuple[str, dt.View]:
+                 may_alias=False) -> Tuple[str, dt.ArrayView]:
         """ Adds a view to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1685,18 +1704,18 @@ class SDFG(ControlFlowRegion):
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.View(dtype,
-                       shape,
-                       storage=storage,
-                       allow_conflicts=allow_conflicts,
-                       transient=True,
-                       strides=strides,
-                       offset=offset,
-                       lifetime=dtypes.AllocationLifetime.Scope,
-                       alignment=alignment,
-                       debuginfo=debuginfo,
-                       total_size=total_size,
-                       may_alias=may_alias)
+        desc = dt.ArrayView(dtype,
+                            shape,
+                            storage=storage,
+                            allow_conflicts=allow_conflicts,
+                            transient=True,
+                            strides=strides,
+                            offset=offset,
+                            lifetime=dtypes.AllocationLifetime.Scope,
+                            alignment=alignment,
+                            debuginfo=debuginfo,
+                            total_size=total_size,
+                            may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1727,18 +1746,18 @@ class SDFG(ControlFlowRegion):
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.Reference(dtype,
-                            shape,
-                            storage=storage,
-                            allow_conflicts=allow_conflicts,
-                            transient=True,
-                            strides=strides,
-                            offset=offset,
-                            lifetime=dtypes.AllocationLifetime.Scope,
-                            alignment=alignment,
-                            debuginfo=debuginfo,
-                            total_size=total_size,
-                            may_alias=may_alias)
+        desc = dt.ArrayReference(dtype,
+                                 shape,
+                                 storage=storage,
+                                 allow_conflicts=allow_conflicts,
+                                 transient=True,
+                                 strides=strides,
+                                 offset=offset,
+                                 lifetime=dtypes.AllocationLifetime.Scope,
+                                 alignment=alignment,
+                                 debuginfo=debuginfo,
+                                 total_size=total_size,
+                                 may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1900,11 +1919,15 @@ class SDFG(ControlFlowRegion):
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
         # If exists, fail
-        if name in self._arrays:
+        while name in self._arrays:
             if find_new_name:
                 name = self._find_new_name(name)
             else:
                 raise NameError(f'Array or Stream with name "{name}" already exists in SDFG')
+            # NOTE: Remove illegal characters, such as dots. Such characters may be introduced when creating views to
+            # members of Structures.
+            name = name.replace('.', '_')
+        assert name not in self._arrays
         self._arrays[name] = datadesc
 
         def _add_symbols(desc: dt.Data):
@@ -1920,6 +1943,30 @@ class SDFG(ControlFlowRegion):
         _add_symbols(datadesc)
 
         return name
+
+    def add_datadesc_view(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+        """ Adds a view of a given data descriptor to the SDFG array store.
+
+            :param name: Name to use.
+            :param datadesc: Data descriptor to view.
+            :param find_new_name: If True and data descriptor with this name
+                                  exists, finds a new name to add.
+            :return: Name of the new data descriptor
+        """
+        vdesc = dt.View.view(datadesc)
+        return self.add_datadesc(name, vdesc, find_new_name)
+
+    def add_datadesc_reference(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+        """ Adds a reference of a given data descriptor to the SDFG array store.
+
+            :param name: Name to use.
+            :param datadesc: Data descriptor to view.
+            :param find_new_name: If True and data descriptor with this name
+                                  exists, finds a new name to add.
+            :return: Name of the new data descriptor
+        """
+        vdesc = dt.Reference.view(datadesc)
+        return self.add_datadesc(name, vdesc, find_new_name)
 
     def add_pgrid(self,
                   shape: ShapeType = None,
@@ -2124,16 +2171,8 @@ class SDFG(ControlFlowRegion):
 
             :param symbols: Values to specialize.
         """
-        # Set symbol values to add
-        syms = {
-            # If symbols are passed, extract the value. If constants are
-            # passed, use them directly.
-            name: val.get() if isinstance(val, dace.symbolic.symbol) else val
-            for name, val in symbols.items()
-        }
-
         # Update constants
-        for k, v in syms.items():
+        for k, v in symbols.items():
             self.add_constant(str(k), v)
 
     def is_loaded(self) -> bool:

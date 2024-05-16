@@ -77,8 +77,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
             # If in map, only match if the subset is independent of any
             # map indices (otherwise no conflict)
-            if not permissive and len(outedge.data.subset.free_symbols & set(me.map.params)) == len(
-                    me.map.params):
+            if not permissive and len(outedge.data.subset.free_symbols & set(me.map.params)) == len(me.map.params):
                 return False
 
         # Get relevant output connector
@@ -151,18 +150,16 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         # If state fission is necessary to keep semantics, do it first
         if state.in_degree(input) > 0:
-            subgraph_nodes = set([e.src for e in state.bfs_edges(input, reverse=True)])
-            subgraph_nodes.add(input)
-
-            subgraph = StateSubgraphView(state, subgraph_nodes)
-            helpers.state_fission(subgraph)
+            new_state = helpers.state_fission_after(state, tasklet)
+        else:
+            new_state = state
 
         if self.expr_index == 0:
-            inedges = state.edges_between(input, tasklet)
-            outedge = state.edges_between(tasklet, output)[0]
+            inedges = new_state.edges_between(input, tasklet)
+            outedge = new_state.edges_between(tasklet, output)[0]
         else:
-            inedges = state.edges_between(me, tasklet)
-            outedge = state.edges_between(tasklet, mx)[0]
+            inedges = new_state.edges_between(me, tasklet)
+            outedge = new_state.edges_between(tasklet, mx)[0]
 
         # Get relevant output connector
         outconn = outedge.src_conn
@@ -253,8 +250,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             outedge.data.wcr = f'lambda a,b: a {op} b'
 
         # Remove input node and connector
-        state.remove_memlet_path(inedge)
-        propagate_memlets_state(sdfg, state)
+        new_state.remove_memlet_path(inedge)
+        propagate_memlets_state(sdfg, new_state)
 
         # If outedge leads to non-transient, and this is a nested SDFG,
         # propagate outwards

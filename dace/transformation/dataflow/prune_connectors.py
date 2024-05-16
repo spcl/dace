@@ -57,40 +57,7 @@ class PruneConnectors(pm.SingleStateTransformation):
         nsdfg = self.nsdfg
 
         # Fission subgraph around nsdfg into its own state to avoid data races
-        predecessors = set()
-        for inedge in state.in_edges(nsdfg):
-            if inedge.data is None:
-                continue
-
-            pred = state.memlet_path(inedge)[0].src
-            if state.in_degree(pred) == 0:
-                continue
-
-            predecessors.add(pred)
-            for e in state.bfs_edges(pred, reverse=True):
-                predecessors.add(e.src)
-
-        subgraph = StateSubgraphView(state, predecessors)
-        pred_state = helpers.state_fission(subgraph)
-
-        subgraph_nodes = set()
-        subgraph_nodes.add(nsdfg)
-        for inedge in state.in_edges(nsdfg):
-            if inedge.data is None:
-                continue
-            path = state.memlet_path(inedge)
-            for edge in path:
-                subgraph_nodes.add(edge.src)
-
-        for oedge in state.out_edges(nsdfg):
-            if oedge.data is None:
-                continue
-            path = state.memlet_path(oedge)
-            for edge in path:
-                subgraph_nodes.add(edge.dst)
-
-        subgraph = StateSubgraphView(state, subgraph_nodes)
-        nsdfg_state = helpers.state_fission(subgraph)
+        nsdfg_state = helpers.state_fission_after(state, nsdfg)
 
         read_set, write_set = nsdfg.sdfg.read_and_write_sets()
         prune_in = nsdfg.in_connectors.keys() - read_set
