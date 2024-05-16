@@ -11,7 +11,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import InterstateEdge, SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types
 from dace.sdfg.replace import replace_datadesc_names
-from dace.transformation import transformation
+from dace.transformation import transformation, helpers
 from dace.properties import make_properties
 from dace import data
 from dace.sdfg.state import StateSubgraphView
@@ -158,14 +158,14 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Isolate nsdfg in a separate state
         # 1. Push nsdfg node plus dependencies down into new state
-        nsdfg_state = helpers.state_fission_after(sdfg, outer_state, nsdfg_node)
+        nsdfg_state = helpers.state_fission_after(outer_state, nsdfg_node)
         # 2. Push successors of nsdfg node into a later state
         direct_subgraph = set()
         direct_subgraph.add(nsdfg_node)
         direct_subgraph.update(nsdfg_state.predecessors(nsdfg_node))
         direct_subgraph.update(nsdfg_state.successors(nsdfg_node))
         direct_subgraph = StateSubgraphView(nsdfg_state, direct_subgraph)
-        nsdfg_state = helpers.state_fission(sdfg, direct_subgraph)
+        nsdfg_state = helpers.state_fission(direct_subgraph)
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
