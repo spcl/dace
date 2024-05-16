@@ -661,7 +661,7 @@ class ScalarToSymbolPromotion(passes.Pass):
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
             # Step 2: Assignment tasklets
             for node in scalar_nodes:
-                if node not in state.nodes() or state.in_degree(node) == 0:
+                if state.in_degree(node) == 0:
                     continue
                 in_edge = state.in_edges(node)[0]
                 input = in_edge.src
