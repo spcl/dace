@@ -796,6 +796,33 @@ def get_all_view_nodes(state: SDFGState, view: nd.AccessNode) -> List[nd.AccessN
     return result
 
 
+def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiConnectorEdge[mm.Memlet]]:
+    """
+    Given a view access node, returns a list of viewed access nodes as edges
+    if existent, else None
+    """
+    sdfg = state.parent
+    node = view
+    desc = sdfg.arrays[node.data]
+    result = []
+    while isinstance(desc, dt.View):
+        edge = get_view_edge(state, node)
+        if edge is None:
+            break
+        old_node = node
+        if edge.dst is view:
+            node = edge.src
+        else:
+            node = edge.dst
+        if node is old_node:
+            break
+        if not isinstance(node, nd.AccessNode):
+            break
+        desc = sdfg.arrays[node.data]
+        result.append(edge)
+    return result
+
+
 def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
     """
     Given a view access node, returns the
@@ -843,7 +870,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return out_edge
     if not src_is_data and not dst_is_data:
         return None
-    
+
     # Check if there is a 'views' connector
     if in_edge.dst_conn and in_edge.dst_conn == 'views':
         return in_edge
