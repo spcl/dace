@@ -258,8 +258,67 @@ def test_two_levels():
     assert np.allclose(ref, B[0])
 
 
+def test_multi_nested_containers():
+
+    M, N = dace.symbol('M'), dace.symbol('N')
+    sdfg = dace.SDFG('tester')
+    float_desc = dace.data.Scalar(dace.float32)
+    E_desc = dace.data.Structure({'F': dace.float32[N], 'G':float_desc}, 'InnerStruct')
+    B_desc = dace.data.ContainerArray(E_desc, [M])
+    A_desc = dace.data.Structure({'B': B_desc, 'C': dace.float32[M], 'D': float_desc}, 'OuterStruct')
+    sdfg.add_datadesc('A', A_desc)
+    sdfg.add_datadesc_view('vB', B_desc)
+    sdfg.add_datadesc_view('vE', E_desc)
+    sdfg.add_array('out', [M, N], dace.float32)
+
+    state = sdfg.add_state()
+    rA = state.add_read('A')
+    vB = state.add_access('vB')
+    vE = state.add_access('vE')
+    wout = state.add_write('out')
+
+    me, mx = state.add_map('outer_product', dict(i='0:M', j='0:N'))
+    tasklet = state.add_tasklet('outer_product', {'__in_A_B_E_F', '__in_A_B_E_G', '__in_A_C', '__in_A_D'}, {'__out'},
+                                '__out = (__in_A_B_E_F + __in_A_B_E_G) * (__in_A_C + __in_A_D)')
+
+    state.add_edge(rA, None, vB, 'views', dace.Memlet('A.B'))
+    state.add_memlet_path(vB, me, vE, dst_conn='views', memlet=dace.Memlet('vB[i]'))
+    state.add_edge(vE, None, tasklet, '__in_A_B_E_F', dace.Memlet('vE.F[j]'))
+    state.add_edge(vE, None, tasklet, '__in_A_B_E_G', dace.Memlet(data='vE.G', subset='0'))
+    state.add_memlet_path(rA, me, tasklet, dst_conn='__in_A_C', memlet=dace.Memlet('A.C[i]'))
+    state.add_memlet_path(rA, me, tasklet, dst_conn='__in_A_D', memlet=dace.Memlet(data='A.D', subset='0'))
+    state.add_memlet_path(tasklet, mx, wout, src_conn='__out', memlet=dace.Memlet('out[i, j]'))
+
+    c_data = np.arange(5, dtype=np.float32)
+    f_data = np.arange(5 * 3, dtype=np.float32).reshape(5, 3)
+
+    e_class = E_desc.dtype._typeclass.as_ctypes()
+    b_obj = []
+    b_data = np.ndarray((5, ), dtype=ctypes.c_void_p)
+    for i in range(5):
+        f_obj = f_data[i].__array_interface__['data'][0]
+        e_obj = e_class(F=f_obj, G=ctypes.c_float(0.1))
+        b_obj.append(e_obj)  # NOTE: This is needed to keep the object alive ...
+        b_data[i] = ctypes.addressof(e_obj)
+    a_dace = A_desc.dtype._typeclass.as_ctypes()(B=b_data.__array_interface__['data'][0],
+                                                 C=c_data.__array_interface__['data'][0],
+                                                 D=ctypes.c_float(0.2))
+
+    
+
+
+    out_dace = np.empty((5, 3), dtype=np.float32)
+    ref = np.empty((5, 3), dtype=np.float32)
+    for i in range(5):
+        ref[i] = (f_data[i] + 0.1) * (c_data[i] + 0.2)
+
+    sdfg(A=a_dace, out=out_dace, M=5, N=3)
+    assert np.allclose(out_dace, ref)
+
+
 if __name__ == '__main__':
     test_read_struct_array()
     test_write_struct_array()
     test_jagged_container_array()
     test_two_levels()
+    test_multi_nested_containers()

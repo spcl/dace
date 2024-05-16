@@ -73,7 +73,7 @@ def test_expand_without_inputs():
             continue
 
         # (Fast) MapExpansion should not add memlet paths for each memlet to a tasklet
-        if sdfg.start_state.entry_node(node) is None:
+        if state.entry_node(node) is None:
             assert state.in_degree(node) == 0
             assert state.out_degree(node) == 1
             assert len(node.out_connectors) == 0
@@ -113,7 +113,58 @@ def test_expand_without_dynamic_inputs():
     print('Difference:', diff2)
     assert (diff <= 1e-5) and (diff2 <= 1e-5)
 
+def test_expand_with_limits():
+    @dace.program
+    def expansion(A: dace.float32[20, 30, 5]):
+        @dace.map
+        def mymap(i: _[0:20], j: _[0:30], k: _[0:5]):
+            a << A[i, j, k]
+            b >> A[i, j, k]
+            b = a * 2
+
+    A = np.random.rand(20, 30, 5).astype(np.float32)
+    expected = A.copy()
+    expected *= 2
+
+    sdfg = expansion.to_sdfg()
+    sdfg.simplify()
+    sdfg(A=A)
+    diff = np.linalg.norm(A - expected)
+    print('Difference (before transformation):', diff)
+
+    sdfg.apply_transformations(MapExpansion, options=dict(expansion_limit=1))
+
+    map_entries = set()
+    state = sdfg.start_state
+    for node in state.nodes():
+        if not isinstance(node, dace.nodes.MapEntry):
+            continue
+
+        if state.entry_node(node) is None:
+            assert state.in_degree(node) == 1
+            assert state.out_degree(node) == 1
+            assert len(node.out_connectors) == 1
+            assert len(node.map.range.ranges) == 1
+            assert node.map.range.ranges[0][1] - node.map.range.ranges[0][0] + 1 == 20
+        else:
+            assert state.in_degree(node) == 1
+            assert state.out_degree(node) == 1
+            assert len(node.out_connectors) == 1
+            assert len(node.map.range.ranges) == 2
+            assert list(map(lambda x: x[1] - x[0] + 1, node.map.range.ranges)) == [30, 5]
+
+        map_entries.add(node)
+
+    sdfg(A=A)
+    expected *= 2
+    diff2 = np.linalg.norm(A - expected)
+    print('Difference:', diff2)
+    assert (diff <= 1e-5) and (diff2 <= 1e-5)
+    assert len(map_entries) == 2
+
+
 if __name__ == '__main__':
     test_expand_with_inputs()
     test_expand_without_inputs()
     test_expand_without_dynamic_inputs()
+    test_expand_with_limits()

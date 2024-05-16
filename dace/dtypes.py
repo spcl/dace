@@ -1216,6 +1216,7 @@ int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
 int64 = typeclass(numpy.int64)
+uintp = typeclass(numpy.uintp)
 uint8 = typeclass(numpy.uint8)
 uint16 = typeclass(numpy.uint16)
 uint32 = typeclass(numpy.uint32)
@@ -1449,8 +1450,10 @@ def validate_name(name):
         return False
     if name in {'True', 'False', 'None'}:
         return False
-    if namere.match(name) is None:
-        return False
+    tokens = name.split('.')
+    for token in tokens:
+        if namere.match(token) is None:
+            return False
     return True
 
 

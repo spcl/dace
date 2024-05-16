@@ -389,7 +389,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Prepend incoming edges until reaching the source node
         curedge = edge
+        visited = set()
         while not isinstance(curedge.src, (nd.CodeNode, nd.AccessNode)):
+            visited.add(curedge)
             # Trace through scopes using OUT_# -> IN_#
             if isinstance(curedge.src, (nd.EntryNode, nd.ExitNode)):
                 if curedge.src_conn is None:
@@ -398,10 +400,14 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 next_edge = next(e for e in state.in_edges(curedge.src) if e.dst_conn == "IN_" + curedge.src_conn[4:])
                 result.insert(0, next_edge)
                 curedge = next_edge
+                if curedge in visited:
+                    raise ValueError('Cycle encountered while reading memlet path')
 
         # Append outgoing edges until reaching the sink node
         curedge = edge
+        visited.clear()
         while not isinstance(curedge.dst, (nd.CodeNode, nd.AccessNode)):
+            visited.add(curedge)
             # Trace through scope entry using IN_# -> OUT_#
             if isinstance(curedge.dst, (nd.EntryNode, nd.ExitNode)):
                 if curedge.dst_conn is None:
@@ -411,6 +417,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 next_edge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == "OUT_" + curedge.dst_conn[3:])
                 result.append(next_edge)
                 curedge = next_edge
+                if curedge in visited:
+                    raise ValueError('Cycle encountered while reading memlet path')
 
         return result
 
@@ -434,16 +442,23 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Find tree root
         curedge = edge
+        visited = set()
         if propagate_forward:
             while (isinstance(curedge.src, nd.EntryNode) and curedge.src_conn is not None):
+                visited.add(curedge)
                 assert curedge.src_conn.startswith('OUT_')
                 cname = curedge.src_conn[4:]
                 curedge = next(e for e in state.in_edges(curedge.src) if e.dst_conn == 'IN_%s' % cname)
+                if curedge in visited:
+                    raise ValueError('Cycle encountered while reading memlet path')
         elif propagate_backward:
             while (isinstance(curedge.dst, nd.ExitNode) and curedge.dst_conn is not None):
+                visited.add(curedge)
                 assert curedge.dst_conn.startswith('IN_')
                 cname = curedge.dst_conn[3:]
                 curedge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == 'OUT_%s' % cname)
+                if curedge in visited:
+                    raise ValueError('Cycle encountered while reading memlet path')
         tree_root = mm.MemletTree(curedge, downwards=propagate_forward)
 
         # Collect children (recursively)
@@ -2477,38 +2492,56 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self.add_node(state, is_start_block=start_block)
         return state
 
-    def add_state_before(self, state: SDFGState, label=None, is_start_state=False) -> SDFGState:
+    def add_state_before(self,
+                         state: SDFGState,
+                         label=None,
+                         is_start_block=False,
+                         condition: CodeBlock = None,
+                         assignments=None,
+                         *,
+                         is_start_state: bool=None) -> SDFGState:
         """ Adds a new SDFG state before an existing state, reconnecting predecessors to it instead.
 
             :param state: The state to prepend the new state before.
             :param label: State label.
-            :param is_start_state: If True, resets scope block starting state to this state.
+            :param is_start_block: If True, resets scope block starting state to this state.
+            :param condition: Transition condition of the newly created edge between state and the new state.
+            :param assignments: Assignments to perform upon transition.
             :return: A new SDFGState object.
         """
-        new_state = self.add_state(label, is_start_state)
+        new_state = self.add_state(label, is_start_block=is_start_block, is_start_state=is_start_state)
         # Reconnect
         for e in self.in_edges(state):
             self.remove_edge(e)
             self.add_edge(e.src, new_state, e.data)
-        # Add unconditional connection between the new state and the current
-        self.add_edge(new_state, state, dace.sdfg.InterstateEdge())
+        # Add the new edge
+        self.add_edge(new_state, state, dace.sdfg.InterstateEdge(condition=condition, assignments=assignments))
         return new_state
 
-    def add_state_after(self, state: SDFGState, label=None, is_start_state=False) -> SDFGState:
+    def add_state_after(self,
+                        state: SDFGState,
+                        label=None,
+                        is_start_block=False,
+                        condition: CodeBlock = None,
+                        assignments=None,
+                        *,
+                        is_start_state: bool=None) -> SDFGState:
         """ Adds a new SDFG state after an existing state, reconnecting it to the successors instead.
 
             :param state: The state to append the new state after.
             :param label: State label.
-            :param is_start_state: If True, resets SDFG starting state to this state.
+            :param is_start_block: If True, resets scope block starting state to this state.
+            :param condition: Transition condition of the newly created edge between state and the new state.
+            :param assignments: Assignments to perform upon transition.
             :return: A new SDFGState object.
         """
-        new_state = self.add_state(label, is_start_state)
+        new_state = self.add_state(label, is_start_block=is_start_block, is_start_state=is_start_state)
         # Reconnect
         for e in self.out_edges(state):
             self.remove_edge(e)
             self.add_edge(new_state, e.dst, e.data)
-        # Add unconditional connection between the current and the new state
-        self.add_edge(state, new_state, dace.sdfg.InterstateEdge())
+        # Add the new edge
+        self.add_edge(state, new_state, dace.sdfg.InterstateEdge(condition=condition, assignments=assignments))
         return new_state
 
     @abc.abstractmethod
