@@ -687,10 +687,10 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
     return newstate
 
 
-def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: Optional[str] = None) -> SDFGState:
+def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str] = None) -> SDFGState:
     """
     """
-    newstate = sdfg.add_state_after(state, label=label)
+    newstate = state.parent_graph.add_state_after(state, label=label)
 
     # Bookkeeping
     nodes_to_move = set([node])
