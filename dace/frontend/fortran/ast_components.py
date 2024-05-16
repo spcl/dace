@@ -290,7 +290,6 @@ class InternalFortranAst:
             "Data_Component_Def_Stmt": self.data_component_def_stmt,
             "End_Type_Stmt": self.end_type_stmt,
             "Data_Ref": self.data_ref,
-            "Cycle_Stmt": self.cycle_stmt,
             #"Component_Decl_List": self.component_decl_list,
             #"Component_Decl": self.component_decl,
         }
@@ -320,10 +319,6 @@ class InternalFortranAst:
                                                  (list,
                                                   tuple)) else [self.create_ast(child) for child in node.children]
 
-    def cycle_stmt(self, node: FASTNode):
-        line = get_line(node)
-        return ast_internal_classes.Continue_Node( line_number=line)
-
     def create_ast(self, node=None):
         """
         Creates an AST from a FASTNode
@@ -347,7 +342,7 @@ class InternalFortranAst:
                         self.unsupported_fortran_syntax[self.current_ast].append(type(node).__name__)
                 for i in node.children:
                     self.create_ast(i)
-                print("Unsupported syntax: ", type(node).__name__, node.string)
+                #print("Unsupported syntax: ", type(node).__name__, node.string)
                 return None
             #except Exception as e:
             #    print("Error in create_ast: ", e)

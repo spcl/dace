@@ -214,9 +214,6 @@ class Allocation_Node(FNode):
     _attributes = ('name', )
     _fields = ('shape', )
 
-class Continue_Node(FNode):
-    _attributes = ()
-    _fields = ()
 
 class Allocate_Stmt_Node(FNode):
     _attributes = ()

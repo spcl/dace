@@ -249,7 +249,6 @@ class AST_translator:
             ast_internal_classes.Write_Stmt_Node: self.write2sdfg,
             ast_internal_classes.Allocate_Stmt_Node: self.allocate2sdfg,
             ast_internal_classes.Break_Node: self.break2sdfg,
-            ast_internal_classes.Continue_Node: self.continue2sdfg,
             ast_internal_classes.Derived_Type_Def_Node: self.derivedtypedef2sdfg,
             ast_internal_classes.Pointer_Assignment_Stmt_Node: self.pointerassignment2sdfg,
         }
@@ -668,7 +667,7 @@ class AST_translator:
             begin_loop_state = cfg.add_state("BeginLoop" + name)
             end_loop_state = cfg.add_state("EndLoop" + name)
             self.last_sdfg_states[cfg] = begin_loop_state
-            self.last_loop_continues[cfg] = end_loop_state
+            self.last_loop_continues[cfg] = final_substate
             self.translate(node.body, sdfg, cfg)
 
             cfg.add_edge(self.last_sdfg_states[cfg], end_loop_state, InterstateEdge())
@@ -2096,11 +2095,6 @@ class AST_translator:
 
         self.last_loop_breaks[cfg] = self.last_sdfg_states[cfg]
         cfg.add_edge(self.last_sdfg_states[cfg], self.last_loop_continues.get(cfg), InterstateEdge())
-
-    def continue2sdfg(self, node: ast_internal_classes.Continue_Node, sdfg: SDFG, cfg: ControlFlowRegion):
-        #
-        sdfg.add_edge(self.last_sdfg_states[cfg], self.last_loop_continues.get(cfg), InterstateEdge())  
-        self.last_loop_continues[cfg] = self.last_sdfg_states[cfg]  
 
 def create_ast_from_string(
     source_string: str,
