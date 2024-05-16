@@ -37,6 +37,7 @@ jobs:
               python-version: ${{ matrix.python-version }}
       - name: Install library dependencies
         run: |
+          sudo apt-get update
           sudo apt-get install libopenmpi-dev libboost-all-dev gcc-13
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 13
           gcc --version
