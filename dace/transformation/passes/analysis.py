@@ -589,6 +589,11 @@ class FindReferenceSources(ppl.Pass):
                             # Array -> Reference
                             result[anode.data].add(e.data)
 
+                            # If array is view, add view targets
+                            view_targets = sdutil.get_all_view_edges(state, true_src)
+                            for te in view_targets:
+                                result[anode.data].add(te.data)
+
                         if 'views' in anode.out_connectors:  # Reference and view
                             out_edge, = state.out_edges_by_connector(anode, 'views')
                             if isinstance(out_edge.dst, nd.AccessNode):
