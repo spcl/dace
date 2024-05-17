@@ -497,7 +497,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
-            ctypedef = dtypes.pointer(nodedesc.dtype)
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
 
@@ -506,9 +505,25 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(nodedesc, data.ContainerArray):
                 defdesc = nodedesc.stype
 
+            # Register arrays can be allocated as a container array of the descriptor
+            defdesc = data.ContainerArray(defdesc, [arrsize], byval=True)
+            ctypedef = dtypes.pointer(defdesc.dtype)
+
+            # Fix the type definition for byvalue arrays for proper C casts
+            alloc_ptr = False
+            origname = name
+            if isinstance(defdesc.stype, data.Array) and defdesc.stype.byval:
+                # Special case for arrsize 1
+                if arrsize == 1:
+                    name += '__daceinternal'
+                    alloc_ptr = True
+                    defdesc = defdesc.stype
+                else:
+                    ctypedef = dtypes.pointer(dtypes.fixedlenarray(defdesc.stype.dtype, defdesc.stype.shape[0]))
+
             if node.setzero:
                 declaration_stream.write(
-                    "%s[%s]  DACE_ALIGN(64) = {0};\n" % (defdesc.as_arg(name=name), cpp.sym2cpp(arrsize)),
+                    "%s DACE_ALIGN(64) = {0};\n" % (defdesc.as_arg(name=name)),
                     sdfg,
                     state_id,
                     node,
@@ -517,12 +532,20 @@ class CPUCodeGen(TargetCodeGenerator):
                 return
 
             declaration_stream.write(
-                "%s[%s]  DACE_ALIGN(64);\n" % (defdesc.as_arg(name=name), cpp.sym2cpp(arrsize)),
+                "%s DACE_ALIGN(64);\n" % (defdesc.as_arg(name=name)),
                 sdfg,
                 state_id,
                 node,
             )
-            define_var(name, DefinedType.Pointer, ctypedef)
+            define_var(origname, DefinedType.Pointer, ctypedef)
+
+            # Special case for a size-1 fixed-length array (don't use [N][M] as the memory gets flattened)
+            if alloc_ptr:
+                defdesc = data.ContainerArray(defdesc, [arrsize], byval=False)
+                # TODO(later): not using as_arg
+                declaration_stream.write(f'{ctypedef.base_type} {origname}__daceptr = ({ctypedef.base_type}){name};')
+                declaration_stream.write(f'{ctypedef} {origname} = &{origname}__daceptr;')
+
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Define pointer once
@@ -1319,7 +1342,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
         desc = sdfg.arrays[memlet.data]
 
-        is_scalar = not isinstance(conntype, dtypes.pointer) or desc.dtype == conntype
+        desc_dtype = desc.dtype
+        if isinstance(desc, data.Array):
+            desc_dtype = dtypes.pointer(desc_dtype)
+
+        is_scalar = not isinstance(conntype, dtypes.pointer) or desc_dtype == conntype
         is_pointer = isinstance(conntype, dtypes.pointer)
 
         # Allocate variable type
@@ -1365,7 +1392,7 @@ class CPUCodeGen(TargetCodeGenerator):
             expr = ptr
 
         # If there is a type mismatch, cast pointer
-        expr = codegen.make_ptr_vector_cast(expr, desc.dtype, conntype, is_scalar, var_type)
+        expr = codegen.make_ptr_vector_cast(expr, ctypedef, conntype, is_scalar, var_type)
 
         if var_type == DefinedType.Scalar:
             expr = self._make_pointer_difference(conntype, ctypedef) + expr

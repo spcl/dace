@@ -1973,6 +1973,7 @@ class View:
 
         # Views are always transient
         result.transient = True
+        result.byval = False
         return result
 
 
@@ -2027,6 +2028,7 @@ class Reference:
 
         # References are always transient
         result.transient = True
+        result.byval = False
         return result
 
 
