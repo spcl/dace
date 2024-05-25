@@ -7,7 +7,6 @@ from dace.sdfg import SDFG, SDFGState, nodes
 
 def add_backward_pass(
     sdfg: SDFG,
-    state: SDFGState,
     outputs: typing.List[typing.Union[nodes.AccessNode, str]],
     inputs: typing.List[typing.Union[nodes.AccessNode, str]],
 ):
@@ -37,13 +36,9 @@ def add_backward_pass(
         :param inputs: the inputs w.r.t. which the gradient will be returned.
     """
     sdfg.validate()
-
-    backward_state = sdfg.add_state_after(state)
     gen = BackwardPassGenerator(sdfg=sdfg,
-                                state=state,
                                 given_gradients=outputs,
                                 required_gradients=inputs,
                                 backward_sdfg=sdfg,
-                                backward_state=backward_state,
                                 zero_non_transients=False)
     gen.backward()
