@@ -2768,6 +2768,8 @@ class LoopRegion(ControlFlowRegion):
                         desc='If True, the loop condition is checked after the first iteration.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
     body_debuginfo = DebugInfoProperty(desc='Line information to track source code of the loop body')
+    condition_debuginfo = DebugInfoProperty(desc='Line information to track source code of the loop condition', allow_none=True)
+
 
     def __init__(self,
                  label: str,
@@ -2776,7 +2778,8 @@ class LoopRegion(ControlFlowRegion):
                  initialize_expr: Optional[str] = None,
                  update_expr: Optional[str] = None,
                  inverted: bool = False,
-                 body_debuginfo: Optional[dtypes.DebugInfo] = None):
+                 body_debuginfo: Optional[dtypes.DebugInfo] = None,
+                 condition_debuginfo: Optional[dtypes.DebugInfo] = None):
         super(LoopRegion, self).__init__(label)
 
         if initialize_expr is not None:
@@ -2797,6 +2800,7 @@ class LoopRegion(ControlFlowRegion):
         self.loop_variable = loop_var or ''
         self.inverted = inverted
         self.body_debuginfo = body_debuginfo
+        self.condition_debuginfo = condition_debuginfo
 
     def _used_symbols_internal(self,
                                all_symbols: bool,

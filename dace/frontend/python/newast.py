@@ -1378,8 +1378,9 @@ class ProgramVisitor(ExtNodeVisitor):
                          init_expr: Optional[str] = None,
                          update_expr: Optional[str] = None,
                          inverted: bool = False,
-                         body_debuginfo: Optional[dtypes.DebugInfo] = None) -> LoopRegion:
-        loop_region = LoopRegion(label, condition_expr, loop_var, init_expr, update_expr, inverted, body_debuginfo)
+                         body_debuginfo: Optional[dtypes.DebugInfo] = None,
+                         condition_debuginfo: Optional[dtypes.DebugInfo] = None) -> LoopRegion:
+        loop_region = LoopRegion(label, condition_expr, loop_var, init_expr, update_expr, inverted, body_debuginfo, condition_debuginfo)
         self.cfg_target.add_node(loop_region)
         self._on_block_added(loop_region)
         return loop_region
@@ -2455,9 +2456,14 @@ class ProgramVisitor(ExtNodeVisitor):
         loop_cond, _, test_region = self._visit_test(node.test)
         loop_region = self._add_loop_region(loop_cond, label=f'while_{node.lineno}', inverted=False, 
                                             body_debuginfo=DebugInfo(
-                                                    start_line=node.body[0].lineno,
-                                                    end_line=node.body[-1].end_lineno,
-                                                    filename=self.filename
+                                                start_line=node.body[0].lineno,
+                                                end_line=node.body[-1].end_lineno,
+                                                filename=self.filename
+                                            ),
+                                            condition_debuginfo=DebugInfo(
+                                                start_line=node.test.lineno,
+                                                end_line=node.test.end_lineno,
+                                                filename=self.filename
                                             ))
 
         # Parse body

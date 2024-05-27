@@ -22,3 +22,18 @@ def function_while(a: dace.float64[N]):
         i += 1
     return b
 
+@dace.program(use_experimental_cfg_blocks=True)
+def function_while_multiline_condition(a: dace.float64[N]):
+    b = np.zeros((N,))
+    i = 0
+    j = N
+    k = 2**N
+    while i < N and \
+        j >= 0 and \
+            k >= 1:
+        b[i] = \
+            a[i] + 10
+        i += 1
+        j -= 1
+        k //= 2
+    return b
