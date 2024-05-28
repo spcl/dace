@@ -156,7 +156,7 @@ class AccessSets(ppl.Pass):
         top_result: Dict[int, Dict[SDFGState, Tuple[Set[str], Set[str]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[SDFGState, Tuple[Set[str], Set[str]]] = {}
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 readset, writeset = set(), set()
                 for anode in state.data_nodes():
                     if state.in_degree(anode) > 0:
