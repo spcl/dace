@@ -150,6 +150,7 @@ class AccumulateTransient(transformation.SingleStateTransformation):
                      allow_none=True)
 
     identity = SymbolicProperty(desc="Identity value to set", default=None, allow_none=True)
+    non_atomic = Property(dtype=bool, default=False, desc="Disable atomic operations for accumulation")
 
     @classmethod
     def expressions(cls):
@@ -184,6 +185,12 @@ class AccumulateTransient(transformation.SingleStateTransformation):
                                                                save=False,
                                                                node_a=map_exit,
                                                                node_b=outer_map_exit)
+        
+        if self.non_atomic:
+            for e in graph.edges_between(map_exit, data_node):
+                if e.data.wcr is not None:
+                    e.data.wcr_nonatomic = True
+            map_exit.map.schedule = dtypes.ScheduleType.Sequential
 
         if self.identity is None:
             warnings.warn('AccumulateTransient did not properly initialize ' 'newly-created transient!')
@@ -218,4 +225,5 @@ class AccumulateTransient(transformation.SingleStateTransformation):
             },
             external_edges=True)
 
-        # TODO: use trivial map elimintation here when it will be merged to remove map if it has trivial ranges
+        from dace.transformation.dataflow import TrivialMapElimination
+        nested_sdfg.sdfg.apply_transformations_repeated([TrivialMapElimination])
