@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
 import dace
@@ -6,12 +6,10 @@ import sympy
 from dace.sdfg import infer_types
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.propagation import propagate_states
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List, Iterable, Dict
-import warnings
+from typing import Any, Set, Tuple, Union, List, Dict
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
@@ -537,6 +535,7 @@ def auto_optimize(sdfg: SDFG,
                   validate: bool = True,
                   validate_all: bool = False,
                   symbols: Dict[str, int] = None,
+                  use_stencil_tiling: bool = True,
                   use_gpu_storage: bool = False) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
@@ -595,7 +594,8 @@ def auto_optimize(sdfg: SDFG,
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
     # fuse stencils greedily
-    greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+    if use_stencil_tiling:
+        greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
 
     # Move Loops inside Maps when possible
     from dace.transformation.interstate import MoveLoopIntoMap
