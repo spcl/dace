@@ -306,7 +306,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
                     to_apply = None
                     break
 
-                to_apply = (dataflow.AccumulateTransient, dict(identity=identity, array=e.data.data),
+                to_apply = (dataflow.AccumulateTransient, dict(identity=identity, array=e.data.data, non_atomic=True),
                             dict(map_exit=mapexit, outer_map_exit=outer_mapexit))
         if to_apply is not None:
             xform, opts, pattern = to_apply
