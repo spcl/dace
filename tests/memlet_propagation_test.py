@@ -103,9 +103,48 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
         raise RuntimeError('Expected subset of outer out memlet to be [0:M, 0:N], found ' +
             str(outer_out.subset))
 
+def test_memlet_propagation_with_offsets():
+    code = """
+    PROGRAM foo
+        IMPLICIT NONE
+        REAL INP1(NBLOCKS, KLEV)
+        INTEGER, PARAMETER  :: KLEV = 137
+        INTEGER, PARAMETER  :: NBLOCKS = 8
+
+
+        CALL foo_test_function(NBLOCKS, KLEV, INP1)
+
+    END PROGRAM
+
+    SUBROUTINE foo_test_function(NBLOCKS, KLEV, INP1)
+        INTEGER, PARAMETER  :: KLEV = 137
+        INTEGER, PARAMETER  :: NBLOCKS = 1
+        REAL INP1(NBLOCKS, KLEV)
+
+        DO JN=1,NBLOCKS
+            DO JK=1,KLEV
+                INP1(JN, JK) = (JN-1) * KLEV + (JK-1)
+            ENDDO
+        ENDDO
+    END SUBROUTINE foo_test_function
+    """
+
+    from dace.frontend.fortran import fortran_parser
+    from dace.transformation.interstate import LoopToMap
+    sdfg = fortran_parser.create_sdfg_from_string(code, "test_loop_map_parallel")
+    
+    # Convert into map(NestedSDFG(map))
+    sdfg.simplify()
+    sdfg.apply_transformations_repeated([LoopToMap])
+
+    # Offsets of arrays (-1, -1) must be propagated through NestedSDFG correctly
+    propagate_memlets_sdfg(sdfg)
+    sdfg.validate()
+
 
 if __name__ == '__main__':
     test_conditional()
     test_conditional_nested()
     test_runtime_conditional()
     test_nsdfg_memlet_propagation_with_one_sparse_dimension()
+    test_memlet_propagation_with_offsets()
