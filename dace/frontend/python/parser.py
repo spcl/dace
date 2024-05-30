@@ -151,6 +151,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                  recreate_sdfg: bool = True,
                  regenerate_code: bool = True,
                  recompile: bool = True,
+                 distributed_compilation: bool = False,
                  method: bool = False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
@@ -171,6 +172,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.recreate_sdfg = recreate_sdfg
         self.regenerate_code = regenerate_code
         self.recompile = recompile
+        self.distributed_compilation = distributed_compilation
 
         self.global_vars = _get_locals_and_globals(f)
         self.signature = inspect.signature(f)
@@ -449,12 +451,12 @@ class DaceProgram(pycommon.SDFGConvertible):
                 sdfg.simplify()
 
         with hooks.invoke_sdfg_call_hooks(sdfg) as sdfg:
-            if not mpi4py:
+            if self.distributed_compilation and mpi4py:
+                binaryobj = distributed_compile(sdfg, mpi4py.MPI.COMM_WORLD, validate=self.validate)
+            else:
                 # Compile SDFG (note: this is done after symbol inference due to shape
                 # altering transformations such as Vectorization)
                 binaryobj = sdfg.compile(validate=self.validate)
-            else:
-                binaryobj = distributed_compile(sdfg, mpi4py.MPI.COMM_WORLD, validate=self.validate)
 
             # Recreate key and add to cache
             cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
