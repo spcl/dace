@@ -5,6 +5,8 @@ on:
     branches: [ master, ci-fix ]
   pull_request:
     branches: [ master, ci-fix ]
+  merge_group:
+    branches: [ master, ci-fix ]
 
 defaults:
     run:
@@ -35,8 +37,8 @@ jobs:
               python-version: ${{ matrix.python-version }}
       - name: Install library dependencies
         run: |
-          sudo apt-get install libopenmpi-dev libboost-all-dev gcc-13
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 13
+          sudo apt-get update
+          sudo apt-get install -y libopenmpi-dev libboost-all-dev
           gcc --version
       # Because Github doesn't allow us to do a git checkout in code
       # we use a trick to checkout DaCe first (not using the external submodule)    

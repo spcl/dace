@@ -1520,6 +1520,8 @@ class SDFG(ControlFlowRegion):
             :param compress: If True, uses gzip to compress the file upon saving.
             :return: The hash of the SDFG, or None if failed/not requested.
         """
+        filename = os.path.expanduser(filename)
+
         if compress:
             fileopen = lambda file, mode: gzip.open(file, mode + 't')
         else:
