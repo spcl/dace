@@ -482,7 +482,7 @@ namespace dace
         template<typename T, typename E>
         DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const E& b)
         {
-            return (T)std::pow(a, (T)b);
+            return (T)std::pow(a, b);
         }
 
 #ifndef DACE_XILINX
