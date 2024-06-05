@@ -473,16 +473,10 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const T& b)
+        template<typename T, typename U>
+        DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
-            return (T)std::pow(a, b);
-        }
-
-        template<typename T, typename E>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const E& b)
-        {
-            return (T)std::pow(a, b);
+            return std::pow(a, b);
         }
 
 #ifndef DACE_XILINX
