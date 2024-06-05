@@ -5,11 +5,10 @@ from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 from dace.sdfg import SDFG, SDFGState, nodes
 
 
-def add_backward_pass(
-    sdfg: SDFG,
-    outputs: typing.List[typing.Union[nodes.AccessNode, str]],
-    inputs: typing.List[typing.Union[nodes.AccessNode, str]],
-):
+def add_backward_pass(sdfg: SDFG,
+                      outputs: typing.List[typing.Union[nodes.AccessNode, str]],
+                      inputs: typing.List[typing.Union[nodes.AccessNode, str]],
+                      overwite_strategy: str = "store_all"):
     """ Experimental: Add a backward pass to `state` using reverse-mode automatic differentiation.
 
         ``inputs``, ``outputs`` and ``grads`` can be provided either as ``AccessNode`` nodes, or as ``str``, in which
@@ -40,5 +39,6 @@ def add_backward_pass(
                                 given_gradients=outputs,
                                 required_gradients=inputs,
                                 backward_sdfg=sdfg,
-                                zero_non_transients=False)
+                                zero_non_transients=False,
+                                overwrite_strategy=overwite_strategy)
     gen.backward()
