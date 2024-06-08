@@ -540,7 +540,7 @@ required:
                         type: str
                         title: Synthesis arguments
                         description: High-level synthesis C++ flags
-                        default: "-std=c++11"
+                        default: "-std=c++14"
 
                     build_flags:
                         type: str
