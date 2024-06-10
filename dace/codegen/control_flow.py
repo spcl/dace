@@ -857,8 +857,25 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
                                  (ptree[oedges[1].dst] == state and ptree[oedges[0].dst] != state)):
             continue
 
+        def _find_common_frontier(edges):
+            common_frontier = set()
+            for oedge in edges:
+                frontier = adf[oedge.dst]
+                if not frontier:
+                    frontier = {oedge.dst}
+                common_frontier |= frontier
+            return common_frontier
+
+        # Try to obtain common DF to find merge state
+        common_frontier = _find_common_frontier(oedges)
+        while len(common_frontier) > 1:
+            new_frontier = _find_common_frontier([e for e in oedges if e.dst in common_frontier])
+            if new_frontier == common_frontier:
+                break
+            common_frontier = new_frontier
+
         # If branch without else (adf of one successor is equal to the other)
-        if len(oedges) == 2:
+        if len(oedges) == 2 and len(common_frontier) == 0:
             if {oedges[0].dst} & adf[oedges[1].dst]:
                 branch_merges[state] = oedges[0].dst
                 continue
@@ -866,13 +883,6 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
                 branch_merges[state] = oedges[1].dst
                 continue
 
-        # Try to obtain common DF to find merge state
-        common_frontier = set()
-        for oedge in oedges:
-            frontier = adf[oedge.dst]
-            if not frontier:
-                frontier = {oedge.dst}
-            common_frontier |= frontier
         if len(common_frontier) == 1:
             branch_merges[state] = next(iter(common_frontier))
 
