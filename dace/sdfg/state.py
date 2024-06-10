@@ -2864,3 +2864,50 @@ class LoopRegion(ControlFlowRegion):
 
         def __repr__(self) -> str:
             return f"SDFGState ({self.label}) [Continue]"
+
+@make_properties
+class ConditionalRegion(ControlFlowRegion):
+    condition_expr = CodeProperty(allow_none=True, default=None, desc='The "if" condition')
+
+    def __init__(self, label: str, condition_expr: str):
+        super(ConditionalRegion, self).__init__(label)
+        if condition_expr:
+            self.condition_expr = CodeBlock(condition_expr)
+        else:
+            self.condition_expr = CodeBlock('True')
+
+    def _used_symbols_internal(self,
+                               all_symbols: bool,
+                               defined_syms: Optional[Set]=None,
+                               free_syms: Optional[Set]=None,
+                               used_before_assignment: Optional[Set]=None,
+                               keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+        defined_syms = set() if defined_syms is None else defined_syms
+        free_syms = set() if free_syms is None else free_syms
+        used_before_assignment = set() if used_before_assignment is None else used_before_assignment
+
+        free_syms |= self.condition_expr.get_free_symbols()
+
+        b_free_symbols, b_defined_symbols, b_used_before_assignment = super()._used_symbols_internal(
+            all_symbols, keep_defined_in_mapping=keep_defined_in_mapping
+        )
+        free_syms |= b_free_symbols
+        defined_syms |= b_defined_symbols
+        used_before_assignment |= (b_used_before_assignment - {self.loop_variable})
+
+        defined_syms -= used_before_assignment
+        free_syms -= defined_syms
+
+        return free_syms, defined_syms, used_before_assignment
+
+    def replace_dict(self, repl: Dict[str, str],
+                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+                     replace_in_graph: bool = True, replace_keys: bool = True):
+        if replace_keys:
+            from dace.sdfg.replace import replace_properties_dict
+            replace_properties_dict(self, repl, symrepl)
+
+        super().replace_dict(repl, symrepl, replace_in_graph)
+
+    def to_json(self, parent=None):
+        return super().to_json(parent)

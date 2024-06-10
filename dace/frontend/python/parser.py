@@ -494,6 +494,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
 
         if not self.use_experimental_cfg_blocks:
+            sdutils.inline_conditional_block(sdfg)
             sdutils.inline_loop_blocks(sdfg)
             sdutils.inline_control_flow_regions(sdfg)
         sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
