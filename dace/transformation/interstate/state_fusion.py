@@ -174,57 +174,72 @@ class StateFusion(transformation.MultiStateTransformation):
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
 
-        # First state must have only one output edge (with dst the second
-        # state).
         if len(out_edges) != 1:
+            self._cba_failure_reason = 'First state must have only one output edge (which leads into the second state).'
             return False
-        # If both states have more than one incoming edge, some control flow
-        # may become ambiguous
         if len(in_edges) > 1 and graph.in_degree(second_state) > 1:
+            self._cba_failure_reason = 'If both states have more than one incoming edge, control flow may be ambiguous.'
             return False
-        # The interstate edge must not have a condition.
         if not out_edges[0].data.is_unconditional():
+            self._cba_failure_reason = 'The edge connecting the two states must not have a conditional transition.'
             return False
-        # The interstate edge may have assignments, as long as there are input
-        # edges to the first state that can absorb them.
         if out_edges[0].data.assignments:
             if not in_edges:
+                self._cba_failure_reason = ('Assignments on the edge ' +
+                                            'connecting the two states must be absorbed (' +
+                                            str(list(out_edges[0].data.assignments.keys())) +
+                                            '). However, there are no incoming edges to the first state to ' +
+                                            'absorb them.')
                 return False
-            # Fail if symbol is set before the state to fuse
             new_assignments = set(out_edges[0].data.assignments.keys())
             if any((new_assignments & set(e.data.assignments.keys())) for e in in_edges):
+                self._cba_failure_reason = ('Assignments on the edge ' +
+                                            'connecting the two states must be absorbed (' +
+                                            str(list(out_edges[0].data.assignments.keys())) +
+                                            '). However, some of these symbols may have different values in the ' +
+                                            'first state and thus cannot be absorbed.')
                 return False
-            # Fail if symbol is used in the dataflow of that state
             if len(new_assignments & first_state.free_symbols) > 0:
+                self._cba_failure_reason = ('Assignments on the edge ' +
+                                            'connecting the two states must be absorbed (' +
+                                            str(list(out_edges[0].data.assignments.keys())) +
+                                            '). However, some of these symbols are already used in the dataflow of ' +
+                                            'the first state.')
                 return False
-            # Fail if assignments have free symbols that are updated in the
-            # first state
             freesyms = out_edges[0].data.free_symbols
             if freesyms and any(n.data in freesyms for n in first_state.nodes()
                                 if isinstance(n, nodes.AccessNode) and first_state.in_degree(n) > 0):
+                self._cba_failure_reason = ('Assignments on the edge ' +
+                                            'connecting the two states must be absorbed (' +
+                                            str(list(out_edges[0].data.assignments.keys())) +
+                                            '). However, some of these symbol assignments rely on data written in ' +
+                                            'the first state.')
                 return False
-            # Fail if symbols assigned on the first edge are free symbols on the
-            # second edge
             symbols_used = set(out_edges[0].data.free_symbols)
             for e in in_edges:
                 if e.data.assignments.keys() & symbols_used:
+                    self._cba_failure_reason = ('Some symbols assigned on edges entering the first state ' +
+                                                'are free symbols on the edge connecting the two states. This may ' +
+                                                'indicate a dependency which is broken through fusion.')
                     return False
-                # Also fail in the inverse; symbols assigned on the second edge are free symbols on the first edge
                 if new_assignments & set(e.data.free_symbols):
+                    self._cba_failure_reason = ('Some symbols assigned on the edge connecting the two states ' +
+                                                'are free symbols on edges entering the first state. This may ' +
+                                                'indicate a dependency which is broken through fusion.')
                     return False
 
-        # There can be no state that have output edges pointing to both the
-        # first and the second state. Such a case will produce a multi-graph.
         for src, _, _ in in_edges:
             for _, dst, _ in graph.out_edges(src):
                 if dst == second_state:
+                    self._cba_failure_reason = ('There can be no state that has outgoing edges pointing to both ' +
+                                                'of the states being fused. This will produce a multi-graph.')
                     return False
 
         if not permissive:
-            # Strict mode that inhibits state fusion if Python callbacks are involved
             if Config.get_bool('frontend', 'dont_fuse_callbacks'):
                 for node in (first_state.data_nodes() + second_state.data_nodes()):
                     if node.data == '__pystate':
+                        self._cba_failure_reason = 'Python callbacks cannot be safely fused in strict mode.'
                         return False
 
             # NOTE: This is quick fix for MPI Waitall (probably also needed for
@@ -234,6 +249,7 @@ class StateFusion(transformation.MultiStateTransformation):
                 next(node for node in first_state.nodes()
                      if (isinstance(node, nodes.LibraryNode) and type(node).__name__ == 'Waitall')
                      or node.label == '_Waitall_')
+                self._cba_failure_reason = 'MPI Wait / Waitall cannot be safely fused in strict mode.'
                 return False
             except StopIteration:
                 pass
@@ -241,6 +257,7 @@ class StateFusion(transformation.MultiStateTransformation):
                 next(node for node in second_state.nodes()
                      if (isinstance(node, nodes.LibraryNode) and type(node).__name__ == 'Waitall')
                      or node.label == '_Waitall_')
+                self._cba_failure_reason = 'MPI Wait / Waitall cannot be safely fused in strict mode.'
                 return False
             except StopIteration:
                 pass
@@ -253,6 +270,9 @@ class StateFusion(transformation.MultiStateTransformation):
             second_in_edges = graph.in_edges(second_state)
             if ((not second_state.is_empty() or not first_state.is_empty() or len(first_in_edges) == 0)
                     and len(second_in_edges) != 1):
+                self._cba_failure_reason = ('There are multiple edges leading into the second state being fused. ' +
+                                            'This is not allowed in strict mode if any of the two states contain ' +
+                                            'dataflow.')
                 return False
 
             # Get connected components.
@@ -285,12 +305,12 @@ class StateFusion(transformation.MultiStateTransformation):
             first_output_names = {node.data for node in first_output}
             second_input_names = {node.data for node in second_input}
 
-            # If any second input appears more than once, fail
             if len(second_input) > len(second_input_names):
+                self._cba_failure_reason = ('Strict mode does not allow multiple input data nodes from the same data ' +
+                                            'container in the second state.')
                 return False
 
-            # If any first output that is an input to the second state
-            # appears in more than one CC, fail
+            # If any first output that is an input to the second state appears in more than one CC, fail.
             matches = first_output_names & second_input_names
             for match in matches:
                 cc_appearances = 0
@@ -298,6 +318,9 @@ class StateFusion(transformation.MultiStateTransformation):
                     if len([n for n in cc if n.data == match]) > 0:
                         cc_appearances += 1
                 if cc_appearances > 1:
+                    self._cba_failure_reason = ('Strict mode does not allow an output from the first state ' +
+                                                ' (i.e., data written to a sink node in the first state)' +
+                                                'to be read by more than one connected component in the second state.')
                     return False
 
             # Recreate fused connected component correspondences, and then
@@ -318,8 +341,8 @@ class StateFusion(transformation.MultiStateTransformation):
                 ]
                 # Those nodes will be the connection points upon fusion
                 match_nodes: Dict[nodes.AccessNode, nodes.AccessNode] = {
-                    next(n for n in order
-                         if n.data == match): next(n for n in fused_cc.second_input_nodes if n.data == match)
+                    next(n for n in order if n.data == match):
+                    next(n for n in fused_cc.second_input_nodes if n.data == match)
                     for match in (fused_cc.first_outputs
                                   & fused_cc.second_inputs)
                 }
@@ -335,6 +358,8 @@ class StateFusion(transformation.MultiStateTransformation):
                     # the match nodes in both states, there is no conflict
                     if not self._check_paths(first_state, second_state, match_nodes, nodes_first, nodes_second,
                                              second_input, False, False):
+                        self._cba_failure_reason = ('There may be a possible WAW conflict, which prohibits fusion ' +
+                                                    'in strict mode.')
                         return False
                 # End of write-write hazard check
 
@@ -360,6 +385,9 @@ class StateFusion(transformation.MultiStateTransformation):
                                                 if n1.data == src.data:
                                                     for n0 in nodes_first:
                                                         if not nx.has_path(first_state._nx, n0, n1):
+                                                            self._cba_failure_reason = ('There may be a possible RAW ' +
+                                                                                        'conflict, which prohibits ' +
+                                                                                        'fusion in strict mode.')
                                                             return False
                                 # Read-write hazard where an access node is connected
                                 # to more than one output at once: (a) -> (b)  |  (d) -> [code] -> (d)
@@ -368,6 +396,8 @@ class StateFusion(transformation.MultiStateTransformation):
                                 # All paths need to lead to `src`
                                 if not self._check_all_paths(first_state, second_state, match_nodes, nodes_first,
                                                              nodes_second, True, False):
+                                    self._cba_failure_reason = ('There may be a possible RAW conflict preventing ' +
+                                                                'fusion in strict mode.')
                                     return False
 
                         continue
@@ -384,29 +414,32 @@ class StateFusion(transformation.MultiStateTransformation):
                                 nodes_first = [n for n in first_input if n.data == d]
                                 if StateFusion.memlets_intersect(first_state, nodes_first, True, second_state,
                                                                  nodes_second, False):
+                                    self._cba_failure_reason = ('There may be a possible RAW conflict preventing ' +
+                                                                'fusion in strict mode.')
                                     return False
                             # Write-Write race
                             if d in fused_cc.first_outputs:
                                 nodes_first = [n for n in first_output if n.data == d]
                                 if StateFusion.memlets_intersect(first_state, nodes_first, False, second_state,
                                                                  nodes_second, False):
+                                    self._cba_failure_reason = ('There may be a possible RAW conflict preventing ' +
+                                                                'fusion in strict mode.')
                                     return False
                     # End of data race check
 
-                # Read-after-write dependencies: if there is an output of the
-                # second state that is an input of the first, ensure all paths
-                # from the input of the first state lead to the output.
-                # Otherwise, there may be a RAW due to topological sort or
-                # concurrency.
+                # Read-after-write dependencies: if there is an output of the second state that is an input of the
+                # first, ensure all paths from the input of the first state lead to the output. Otherwise, there may be
+                # a RAW due to topological sort or concurrency.
                 second_inout = ((fused_cc.first_inputs | fused_cc.first_outputs) & fused_cc.second_outputs)
                 for inout in second_inout:
                     nodes_first = [n for n in match_nodes if n.data == inout]
                     if any(first_state.out_degree(n) > 0 for n in nodes_first):
+                        self._cba_failure_reason = ('There may be a possible RAW conflict due to topological sort or ' +
+                                                    'concurrency. Fusion is thus prohibited in strict mode.')
                         return False
 
-                    # If we have potential candidates, check if there is a
-                    # path from the first read to the second write (in that
-                    # case, there is no hazard):
+                    # If we have potential candidates, check if there is a path from the first read to the second write
+                    # (in that case, there is no hazard):
                     nodes_first = {
                         n
                         for n in fused_cc.first_input_nodes
@@ -414,17 +447,18 @@ class StateFusion(transformation.MultiStateTransformation):
                     }
                     nodes_second = {n for n in fused_cc.second_output_nodes if n.data == inout}
 
-                    # If there is a path for the candidate that goes through
-                    # the match nodes in both states, there is no conflict
+                    # If there is a path for the candidate that goes through the match nodes in both states, there is no
+                    # conflict
                     if not self._check_paths(first_state, second_state, match_nodes, nodes_first, nodes_second,
                                              second_input, True, False):
+                        self._cba_failure_reason = ('There may be a possible RAW conflict due to topological sort or ' +
+                                                    'concurrency. Fusion is thus prohibited in strict mode.')
                         return False
 
                 # End of read-write hazard check
 
-                # Read-after-write dependencies: if there is more than one first
-                # output with the same data, make sure it can be unambiguously
-                # connected to the second state
+                # Read-after-write dependencies: if there is more than one first output with the same data, make sure it
+                # can be unambiguously connected to the second state
                 if (len(fused_cc.first_output_nodes) > len(fused_cc.first_outputs)):
                     for inpnode in fused_cc.second_input_nodes:
                         found = None
@@ -433,8 +467,7 @@ class StateFusion(transformation.MultiStateTransformation):
                                 continue
                             if StateFusion.memlets_intersect(first_state, [outnode], False, second_state, [inpnode],
                                                              True):
-                                # If found more than once, either there is a
-                                # path from one to another or it is ambiguous
+                                # If found more than once, either there is a path from one to another or it is ambiguous
                                 if found is not None:
                                     if nx.has_path(first_state.nx, outnode, found):
                                         # Found is a descendant, continue
@@ -444,12 +477,15 @@ class StateFusion(transformation.MultiStateTransformation):
                                         found = outnode
                                     else:
                                         # No path: ambiguous match
+                                        self._cba_failure_reason = ('A read-after-write dependency can not be ' +
+                                                                    'unambiguously fulfilled after fusion. Fusion is ' +
+                                                                    'thus forbidden in strict mode.')
                                         return False
                                 found = outnode
 
-        # Do not fuse FPGA and NON-FPGA states (unless one of them is empty)
         if first_state.number_of_nodes() > 0 and second_state.number_of_nodes() > 0 and sdutil.is_fpga_kernel(
                 sdfg, first_state) != sdutil.is_fpga_kernel(sdfg, second_state):
+            self._cba_failure_reason = 'Strict mode forbids fusing (non-empty) FPGA and non-FPGA states.'
             return False
 
         return True
