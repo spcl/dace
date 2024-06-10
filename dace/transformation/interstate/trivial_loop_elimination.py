@@ -24,16 +24,19 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
         # Obtain iteration variable, range, and stride
         loop_info = find_for_loop(sdfg, guard, body)
         if not loop_info:
+            self._cba_failure_reason = 'No well-structured state machine for-loop detected.'
             return False
         _, (start, end, step), _ = loop_info
 
         try:
             if step > 0 and start + step < end + 1:
+                self._cba_failure_reason = 'More than one iteration, not a trivial loop.'
                 return False
             if step < 0 and start + step > end - 1:
+                self._cba_failure_reason = 'More than one iteration, not a trivial loop.'
                 return False
         except:
-            # if the relation can't be determined it's not a trivial loop
+            self._cba_failure_reason = 'Can not symbolically guarantee that the loop executes only one iteration.'
             return False
 
         return True

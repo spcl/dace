@@ -175,7 +175,9 @@ class StateFusion(transformation.MultiStateTransformation):
         in_edges = graph.in_edges(first_state)
 
         if len(out_edges) != 1:
-            self._cba_failure_reason = 'First state must have only one output edge (which leads into the second state).'
+            self._cba_failure_reason = ('The first state (' + str(first_state) +
+                                        ') must have only one output edge, which must lead into the second state (' +
+                                        str(second_state) + ').')
             return False
         if len(in_edges) > 1 and graph.in_degree(second_state) > 1:
             self._cba_failure_reason = 'If both states have more than one incoming edge, control flow may be ambiguous.'
@@ -188,8 +190,8 @@ class StateFusion(transformation.MultiStateTransformation):
                 self._cba_failure_reason = ('Assignments on the edge ' +
                                             'connecting the two states must be absorbed (' +
                                             str(list(out_edges[0].data.assignments.keys())) +
-                                            '). However, there are no incoming edges to the first state to ' +
-                                            'absorb them.')
+                                            '). However, there are no incoming edges to the first state (' +
+                                            str(first_state) + ') to absorb them.')
                 return False
             new_assignments = set(out_edges[0].data.assignments.keys())
             if any((new_assignments & set(e.data.assignments.keys())) for e in in_edges):
@@ -197,14 +199,14 @@ class StateFusion(transformation.MultiStateTransformation):
                                             'connecting the two states must be absorbed (' +
                                             str(list(out_edges[0].data.assignments.keys())) +
                                             '). However, some of these symbols may have different values in the ' +
-                                            'first state and thus cannot be absorbed.')
+                                            'first state (' + str(first_state) + ') and thus cannot be absorbed.')
                 return False
             if len(new_assignments & first_state.free_symbols) > 0:
                 self._cba_failure_reason = ('Assignments on the edge ' +
                                             'connecting the two states must be absorbed (' +
                                             str(list(out_edges[0].data.assignments.keys())) +
                                             '). However, some of these symbols are already used in the dataflow of ' +
-                                            'the first state.')
+                                            'the first state (' + str(first_state) + ').')
                 return False
             freesyms = out_edges[0].data.free_symbols
             if freesyms and any(n.data in freesyms for n in first_state.nodes()
@@ -213,19 +215,21 @@ class StateFusion(transformation.MultiStateTransformation):
                                             'connecting the two states must be absorbed (' +
                                             str(list(out_edges[0].data.assignments.keys())) +
                                             '). However, some of these symbol assignments rely on data written in ' +
-                                            'the first state.')
+                                            'the first state (' + str(first_state) + ').')
                 return False
             symbols_used = set(out_edges[0].data.free_symbols)
             for e in in_edges:
                 if e.data.assignments.keys() & symbols_used:
-                    self._cba_failure_reason = ('Some symbols assigned on edges entering the first state ' +
-                                                'are free symbols on the edge connecting the two states. This may ' +
-                                                'indicate a dependency which is broken through fusion.')
+                    self._cba_failure_reason = ('Some symbols assigned on edges entering the first state (' +
+                                                str(first_state) + ') are free symbols on the edge connecting the ' +
+                                                'two states. This may indicate a dependency which is broken through ' +
+                                                'fusion.')
                     return False
                 if new_assignments & set(e.data.free_symbols):
                     self._cba_failure_reason = ('Some symbols assigned on the edge connecting the two states ' +
-                                                'are free symbols on edges entering the first state. This may ' +
-                                                'indicate a dependency which is broken through fusion.')
+                                                'are free symbols on edges entering the first state (' +
+                                                str(first_state) + '). This may indicate a dependency which is ' +
+                                                'broken through fusion.')
                     return False
 
         for src, _, _ in in_edges:
@@ -270,9 +274,9 @@ class StateFusion(transformation.MultiStateTransformation):
             second_in_edges = graph.in_edges(second_state)
             if ((not second_state.is_empty() or not first_state.is_empty() or len(first_in_edges) == 0)
                     and len(second_in_edges) != 1):
-                self._cba_failure_reason = ('There are multiple edges leading into the second state being fused. ' +
-                                            'This is not allowed in strict mode if any of the two states contain ' +
-                                            'dataflow.')
+                self._cba_failure_reason = ('There are multiple edges leading into the second state (' +
+                                            str(second_state) + '). This is not allowed in strict mode if any of the ' +
+                                            'two states contain dataflow.')
                 return False
 
             # Get connected components.
@@ -307,7 +311,7 @@ class StateFusion(transformation.MultiStateTransformation):
 
             if len(second_input) > len(second_input_names):
                 self._cba_failure_reason = ('Strict mode does not allow multiple input data nodes from the same data ' +
-                                            'container in the second state.')
+                                            'container in the second state (' + str(second_state) + ').')
                 return False
 
             # If any first output that is an input to the second state appears in more than one CC, fail.
@@ -318,9 +322,10 @@ class StateFusion(transformation.MultiStateTransformation):
                     if len([n for n in cc if n.data == match]) > 0:
                         cc_appearances += 1
                 if cc_appearances > 1:
-                    self._cba_failure_reason = ('Strict mode does not allow an output from the first state ' +
-                                                ' (i.e., data written to a sink node in the first state)' +
-                                                'to be read by more than one connected component in the second state.')
+                    self._cba_failure_reason = ('Strict mode does not allow an output from the first state (' +
+                                                str(first_state) + ') (i.e., data written to a sink node in the ' +
+                                                'first state) to be read by more than one connected component in the ' +
+                                                'second state (' + str(second_state) + ').')
                     return False
 
             # Recreate fused connected component correspondences, and then
