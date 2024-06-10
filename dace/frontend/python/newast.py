@@ -35,6 +35,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.state import ControlFlowBlock, LoopRegion, ControlFlowRegion
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
+from dace import DebugInfo
 
 import numpy
 import sympy
@@ -1376,8 +1377,10 @@ class ProgramVisitor(ExtNodeVisitor):
                          loop_var: Optional[str] = None,
                          init_expr: Optional[str] = None,
                          update_expr: Optional[str] = None,
-                         inverted: bool = False) -> LoopRegion:
-        loop_region = LoopRegion(label, condition_expr, loop_var, init_expr, update_expr, inverted)
+                         inverted: bool = False,
+                         body_debuginfo: Optional[dtypes.DebugInfo] = None,
+                         condition_debuginfo: Optional[dtypes.DebugInfo] = None) -> LoopRegion:
+        loop_region = LoopRegion(label, condition_expr, loop_var, init_expr, update_expr, inverted, body_debuginfo, condition_debuginfo)
         self.cfg_target.add_node(loop_region)
         self._on_block_added(loop_region)
         return loop_region
@@ -2366,12 +2369,16 @@ class ProgramVisitor(ExtNodeVisitor):
                                                 loop_var=indices[0],
                                                 init_expr='%s = %s' % (indices[0], astutils.unparse(ast_ranges[0][0])),
                                                 update_expr=incr[indices[0]],
-                                                inverted=False)
+                                                inverted=False,
+                                                body_debuginfo=DebugInfo(
+                                                    start_line=node.body[0].lineno,
+                                                    end_line=node.body[-1].end_lineno,
+                                                    filename=self.filename
+                                                ))
             _, first_subblock, _, _ = self._recursive_visit(node.body, f'for_{node.lineno}', node.lineno,
                                                             extra_symbols=extra_syms, parent=loop_region,
                                                             unconnected_last_block=False)
             loop_region.start_block = loop_region.node_id(first_subblock)
-
             # Handle else clause
             if node.orelse:
                 # Continue visiting body
@@ -2447,7 +2454,17 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_While(self, node: ast.While):
         # Get loop condition expression and create the necessary states for it.
         loop_cond, _, test_region = self._visit_test(node.test)
-        loop_region = self._add_loop_region(loop_cond, label=f'while_{node.lineno}', inverted=False)
+        loop_region = self._add_loop_region(loop_cond, label=f'while_{node.lineno}', inverted=False, 
+                                            body_debuginfo=DebugInfo(
+                                                start_line=node.body[0].lineno,
+                                                end_line=node.body[-1].end_lineno,
+                                                filename=self.filename
+                                            ),
+                                            condition_debuginfo=DebugInfo(
+                                                start_line=node.test.lineno,
+                                                end_line=node.test.end_lineno,
+                                                filename=self.filename
+                                            ))
 
         # Parse body
         self._recursive_visit(node.body, f'while_{node.lineno}', node.lineno, parent=loop_region,
