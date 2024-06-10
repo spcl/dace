@@ -348,6 +348,33 @@ def test_nested_loop_detection():
     assert np.allclose(a, expected)
 
 
+def test_for_continue():
+    sdfg = dace.SDFG('test_for_continue')
+    sdfg.add_array('A', [10], dace.int32)
+    states = [sdfg.add_state('s_' + str(i)) for i in range(8)] 
+    sdfg.start_block = states[0].block_id
+    sdfg.add_edge(states[0], states[1], dace.sdfg.InterstateEdge(assignments=dict(i='0')))
+    sdfg.add_edge(states[6], states[1], dace.sdfg.InterstateEdge(assignments=dict(i='i+1')))
+    sdfg.add_edge(states[1], states[2], dace.sdfg.InterstateEdge(condition='(i<10)'))
+    sdfg.add_edge(states[1], states[7], dace.sdfg.InterstateEdge(condition='not (i<10)'))
+    sdfg.add_edge(states[2], states[3], dace.sdfg.InterstateEdge(condition='i%2==0'))
+    sdfg.add_edge(states[2], states[4], dace.sdfg.InterstateEdge(condition='i%2!=0'))
+    sdfg.add_edge(states[3], states[4], dace.sdfg.InterstateEdge(condition='False'))
+    sdfg.add_edge(states[3], states[6], dace.sdfg.InterstateEdge())
+    sdfg.add_edge(states[4], states[5], dace.sdfg.InterstateEdge())
+    sdfg.add_edge(states[5], states[6], dace.sdfg.InterstateEdge())
+
+    accA = states[5].add_access('A')
+    task = states[5].add_tasklet('assign', {}, {'o1'}, 'o1 = i')
+    states[5].add_edge(task, 'o1', accA, None, dace.Memlet('A[i]'))
+
+    #if dace.Config.get_bool('optimizer', 'detect_control_flow'):
+    #    code = sdfg.generate_code()[0].clean_code
+
+    a = np.zeros((10,))
+    sdfg(A=a) # This hangs
+
+
 if __name__ == '__main__':
     test_control_flow_basic()
     test_function_in_condition()
@@ -362,3 +389,4 @@ if __name__ == '__main__':
     test_switchcase()
     test_fsm()
     test_nested_loop_detection()
+    test_for_continue()
