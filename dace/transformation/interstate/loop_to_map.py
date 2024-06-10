@@ -99,19 +99,21 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         # Guard state should not contain any dataflow
         if len(guard.nodes()) != 0:
+            self._cba_failure_reason = 'Guard state (' + str(guard) + ') may not contain any dataflow'
             return False
 
         # If loop cannot be detected, fail
         found = find_for_loop(graph, guard, begin, itervar=self.itervar)
         if not found:
+            self._cba_failure_reason = 'No valid for-loop detected'
             return False
 
         itervar, (start, end, step), (_, body_end) = found
 
-        # We cannot handle symbols read from data containers unless they are
-        # scalar
+        # We cannot handle symbols read from data containers unless they are scalar
         for expr in (start, end, step):
             if symbolic.contains_sympy_functions(expr):
+                self._cba_failure_reason = 'The for loop start, end, or step expressions contain non-scalar symbols'
                 return False
 
         in_order_states = list(cfg.stateorder_topological_sort(sdfg))
@@ -119,6 +121,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         loop_end_idx = in_order_states.index(body_end)
 
         if loop_end_idx < loop_begin_idx:  # Malformed loop
+            self._cba_failure_reason = 'Malformed loop, loop end state appears before start state in topoligical order'
             return False
 
         # Find all loop-body states
@@ -151,6 +154,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     if not k in fsyms:
                         assigned_symbols.add(k)
                 if assigned_symbols & used_before_assignment:
+                    self._cba_failure_reason = 'Symbol is read before it is assigned inside the loop'
                     return False
 
                 symbols_that_may_be_used |= e.data.assignments.keys()
@@ -180,6 +184,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     for e in state.in_edges(dn):
                         if e.data.dynamic and e.data.wcr is None:
                             # If pointers are involved, give up
+                            self._cba_failure_reason = 'Loop contains pointer accesses to ' + dn.data
                             return False
                         # To be sure that the value is only written at unique
                         # indices per loop iteration, we want to match symbols
@@ -188,6 +193,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
                             if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
+                                self._cba_failure_reason = \
+                                    'Loop iterations may write to non-unique indices of ' + dn.data
                                 return False
                         # End of check
 
@@ -206,6 +213,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         src_subset = e.data.get_src_subset(e, state)
                         if not self.test_read_memlet(sdfg, state, e, itersym, itervar, start, end, step, write_memlets,
                                                      e.data, src_subset):
+                            self._cba_failure_reason = 'There is a potential read/write data race on ' + dn.data
                             return False
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
@@ -217,6 +225,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             if mmlt.data in write_memlets:
                 if not self.test_read_memlet(sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt,
                                              mmlt.subset):
+                    self._cba_failure_reason = 'There is a potential read/write data race on ' + dn.data
                     return False
 
         # Check that the iteration variable and other symbols are not used on other edges or states
@@ -230,12 +239,14 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
             # Check state contents
             if symbols_that_may_be_used & state.free_symbols:
+                self._cba_failure_reason = 'There may be symbols read before they are written'
                 return False
 
             # Check inter-state edges
             reassigned_symbols: Set[str] = None
             for e in sdfg.out_edges(state):
                 if symbols_that_may_be_used & e.data.read_symbols():
+                    self._cba_failure_reason = 'There may be symbols read before they are written'
                     return False
 
                 # Check for symbols that are set by all outgoing edges

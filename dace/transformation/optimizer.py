@@ -5,15 +5,14 @@
 import copy
 import os
 import re
-import time
-from typing import Any, Dict, Iterator, List, Optional, Type
+from typing import Any, Dict, Iterator, List, Optional, Set, Type
 
 import dace
 from dace.config import Config
 from dace.sdfg import propagation
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.passes import pattern_matching
-from dace.transformation.transformation import PatternTransformation
+from dace.transformation.transformation import PatternTransformation, TransformationBase
 
 # This import is necessary since it registers all the patterns
 from dace.transformation import dataflow, interstate, subgraph
@@ -24,6 +23,12 @@ class Optimizer(object):
         graph representation, by matching patterns and applying 
         transformations on it.
     """
+
+    patterns: Set[type[PatternTransformation]]
+    applied_patterns: Set[type[PatternTransformation]]
+    missed_opportunities: Set[TransformationBase]
+    transformation_metadata: pattern_matching.PatternMetadataType
+
     def __init__(self, sdfg, inplace=True):
         """ Constructs an SDFG optimizer.
 
@@ -40,6 +45,7 @@ class Optimizer(object):
         # Initialize patterns to search for
         self.patterns = PatternTransformation.subclasses_recursive()
         self.applied_patterns = set()
+        self.missed_opportunities = set()
         self.transformation_metadata = None
 
     def optimize(self):
@@ -81,10 +87,12 @@ class Optimizer(object):
                                                    metadata=self.transformation_metadata,
                                                    permissive=permissive,
                                                    states=states,
-                                                   options=options)
+                                                   options=options,
+                                                   missed_opportunities=self.missed_opportunities)
 
     def optimization_space(self):
         """ Returns the optimization space of the current SDFG """
+
         def get_actions(actions, graph, match):
             subgraph_node_ids = match.subgraph.values()
             subgraph_nodes = [graph.nodes()[nid] for nid in subgraph_node_ids]
@@ -178,6 +186,7 @@ def _parse_cli_input(line):
 
 
 class SDFGOptimizer(Optimizer):
+
     def optimize(self):
         """ A command-line UI for applying patterns on the SDFG.
         
