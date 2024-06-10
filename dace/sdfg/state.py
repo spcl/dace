@@ -19,7 +19,7 @@ from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
 from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
-                             CodeProperty, make_properties, ListProperty)
+                             CodeProperty, make_properties, ListProperty, DebugInfoProperty)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
 from dace.sdfg.propagation import propagate_memlet
@@ -2767,6 +2767,9 @@ class LoopRegion(ControlFlowRegion):
     inverted = Property(dtype=bool, default=False,
                         desc='If True, the loop condition is checked after the first iteration.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
+    body_debuginfo = DebugInfoProperty(desc='Line information to track source code of the loop body')
+    condition_debuginfo = DebugInfoProperty(desc='Line information to track source code of the loop condition', allow_none=True)
+
 
     def __init__(self,
                  label: str,
@@ -2774,7 +2777,9 @@ class LoopRegion(ControlFlowRegion):
                  loop_var: Optional[str] = None,
                  initialize_expr: Optional[str] = None,
                  update_expr: Optional[str] = None,
-                 inverted: bool = False):
+                 inverted: bool = False,
+                 body_debuginfo: Optional[dtypes.DebugInfo] = None,
+                 condition_debuginfo: Optional[dtypes.DebugInfo] = None):
         super(LoopRegion, self).__init__(label)
 
         if initialize_expr is not None:
@@ -2794,6 +2799,8 @@ class LoopRegion(ControlFlowRegion):
 
         self.loop_variable = loop_var or ''
         self.inverted = inverted
+        self.body_debuginfo = body_debuginfo
+        self.condition_debuginfo = condition_debuginfo
 
     def _used_symbols_internal(self,
                                all_symbols: bool,
