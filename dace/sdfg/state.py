@@ -1092,6 +1092,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
 
     is_collapsed = Property(dtype=bool, desc='Show this block as collapsed', default=False)
 
+    pre_conditions = DictProperty(key_type=str, value_type=list, desc='Pre-conditions for this block')
+    post_conditions = DictProperty(key_type=str, value_type=list, desc='Post-conditions for this block')
+    invariant_conditions = DictProperty(key_type=str, value_type=list, desc='Invariant conditions for this block')
+
     _label: str
 
     def __init__(self,
@@ -1104,6 +1108,9 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self._sdfg = sdfg
         self._parent_graph = parent
         self.is_collapsed = False
+        self.pre_conditions = {}
+        self.post_conditions = {}
+        self.invariant_conditions = {}
 
     def set_default_lineinfo(self, lineinfo: dace.dtypes.DebugInfo):
         """
