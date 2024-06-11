@@ -9,7 +9,6 @@ def test_for_body_range():
     assert len(cfgs) == 2
     loop_region : LoopRegion = cfgs[1]
     assert loop_region.body_debuginfo.start_line == 11
-    assert loop_region.body_debuginfo.end_line == 12
     assert basename(loop_region.body_debuginfo.filename) == "loop_region_code_location_file.py"
 
 def test_while_body_range():
@@ -18,7 +17,6 @@ def test_while_body_range():
     assert len(cfgs) == 2
     loop_region : LoopRegion = cfgs[1]
     assert loop_region.body_debuginfo.start_line == 20
-    assert loop_region.body_debuginfo.end_line == 22
     assert basename(loop_region.body_debuginfo.filename) == "loop_region_code_location_file.py"
 
 def test_while_condition_range():
@@ -27,7 +25,6 @@ def test_while_condition_range():
     assert len(cfgs) == 2
     loop_region : LoopRegion = cfgs[1]
     assert loop_region.condition_debuginfo.start_line == 31
-    assert loop_region.condition_debuginfo.end_line == 33
     assert basename(loop_region.body_debuginfo.filename) == "loop_region_code_location_file.py"
 
 if __name__ == '__main__':

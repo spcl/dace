@@ -2372,7 +2372,6 @@ class ProgramVisitor(ExtNodeVisitor):
                                                 inverted=False,
                                                 body_debuginfo=DebugInfo(
                                                     start_line=node.body[0].lineno,
-                                                    end_line=node.body[-1].end_lineno,
                                                     filename=self.filename
                                                 ))
             _, first_subblock, _, _ = self._recursive_visit(node.body, f'for_{node.lineno}', node.lineno,
@@ -2457,12 +2456,10 @@ class ProgramVisitor(ExtNodeVisitor):
         loop_region = self._add_loop_region(loop_cond, label=f'while_{node.lineno}', inverted=False, 
                                             body_debuginfo=DebugInfo(
                                                 start_line=node.body[0].lineno,
-                                                end_line=node.body[-1].end_lineno,
                                                 filename=self.filename
                                             ),
                                             condition_debuginfo=DebugInfo(
                                                 start_line=node.test.lineno,
-                                                end_line=node.test.end_lineno,
                                                 filename=self.filename
                                             ))
 
