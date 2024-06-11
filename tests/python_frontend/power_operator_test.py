@@ -45,10 +45,10 @@ def test_pow_types(a_type, b_type):
     @dace.program
     def pow_types(A: a_type[1], B: b_type[1], R: dace.float64[1]):
         with dace.tasklet(dace.Language.Python):
-            a << A[0]
-            b << B[0]
-            r >> R[0]
-            """r = a ** b"""
+            scalar_a << A[0]
+            scalar_b << B[0]
+            scalar_r >> R[0]
+            scalar_r = scalar_a ** scalar_b
 
     # a ** b needs to fit into the smallest type (int8)
     a = np.random.rand(1) * 4
