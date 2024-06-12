@@ -199,6 +199,30 @@ class DeadDataflowElimination(ppl.Pass):
         n = sum(len(v) for v in pass_retval.values())
         return f'Eliminated {n} nodes in {len(pass_retval)} states: {pass_retval}'
 
+    def _check_map_reads_for_data(self, state: SDFGState, node: nodes.AccessNode, exit: nodes.MapExit) -> bool:
+        """
+        Check if this map nest reads from the same data it is writing to.
+        In this case even if the data is not later used, we don't want to remove it.
+        
+        :param state: The SDFG state containing the map exist and AccessNode.
+        :param node: The AccessNode containing the data to perform the check on.
+        :param exit: The MapExit which writes to the AccessNode to perform the check on.
+        
+        :return: True if the data is read by the map, False otherwise.
+        """
+        # Get the map entrance for this map exist
+        entry = state.entry_node(exit)
+
+        # Get the inputs to this map entry
+        in_edges = state.in_edges(entry)
+
+        # Check if the same data is read by the map
+        for edge in in_edges:
+            if isinstance(edge.src, nodes.AccessNode) and edge.src.data == node.data:
+                return True
+
+        return False
+
     def _is_node_dead(self, node: nodes.Node, sdfg: SDFG, state: SDFGState, dead_nodes: Set[nodes.Node],
                       no_longer_used: Set[str], access_set: Tuple[Set[str], Set[str]]) -> bool:
         # Conditions for dead node:
@@ -244,6 +268,12 @@ class DeadDataflowElimination(ppl.Pass):
 
             # Check incoming edges
             for e in state.in_edges(node):
+                # If the data is writen to by a map which also reads the same data, do not remove
+                if isinstance(e.src, nodes.MapExit):
+                    # Check if the map entry reads the same data
+                    if self._check_map_reads_for_data(state, node, e.src):
+                        return False
+
                 # A reference set should not be removed
                 if e.dst_conn == 'set':
                     return False
