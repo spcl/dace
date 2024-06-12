@@ -5,7 +5,7 @@ from dace.sdfg import SDFG, SDFGState, InterstateEdge, graph as gr, utils as sdu
 from dace.symbolic import pystr_to_symbolic
 import networkx as nx
 import sympy as sp
-from typing import Dict, Iterator, List, Set
+from typing import Dict, Iterator, List, Optional, Set
 
 
 def acyclic_dominance_frontier(sdfg: SDFG, idom=None) -> Dict[SDFGState, Set[SDFGState]]:
@@ -67,7 +67,7 @@ def back_edges(sdfg: SDFG,
     return [e for e in sdfg.edges() if e.dst in alldoms[e.src]]
 
 
-def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
+def state_parent_tree(sdfg: SDFG, loopexits: Optional[Dict[SDFGState, SDFGState]] = None) -> Dict[SDFGState, SDFGState]:
     """
     Computes an upward-pointing tree of each state, pointing to the "parent
     state" it belongs to (in terms of structured control flow). More formally,
@@ -81,7 +81,7 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
     """
     idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
     alldoms = all_dominators(sdfg, idom)
-    loopexits: Dict[SDFGState, SDFGState] = defaultdict(lambda: None)
+    loopexits = loopexits if loopexits is not None else defaultdict(lambda: None)
 
     # First, annotate loops
     for be in back_edges(sdfg, idom, alldoms):
@@ -94,10 +94,9 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
         in_edges = sdfg.in_edges(guard)
         out_edges = sdfg.out_edges(guard)
 
-        # A loop guard has two or more incoming edges (1 increment and
-        # n init, all identical), and exactly two outgoing edges (loop and
-        # exit loop).
-        if len(in_edges) < 2 or len(out_edges) != 2:
+        # A loop guard has at least one incoming edges (the backedge, performing the increment), and exactly two
+        # outgoing edges (loop and exit loop).
+        if len(in_edges) < 1 or len(out_edges) != 2:
             continue
 
         # The outgoing edges must be negations of one another.
@@ -193,7 +192,7 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
 
     # Step up
     for state in step_up:
-        if parents[state] is not None:
+        if parents[state] is not None and parents[parents[state]] is not None:
             parents[state] = parents[parents[state]]
 
     return parents
@@ -204,7 +203,8 @@ def _stateorder_topological_sort(sdfg: SDFG,
                                  ptree: Dict[SDFGState, SDFGState],
                                  branch_merges: Dict[SDFGState, SDFGState],
                                  stop: SDFGState = None,
-                                 visited: Set[SDFGState] = None) -> Iterator[SDFGState]:
+                                 visited: Set[SDFGState] = None,
+                                 loopexits: Optional[Dict[SDFGState, SDFGState]] = None) -> Iterator[SDFGState]:
     """ 
     Helper function for ``stateorder_topological_sort``. 
 
@@ -217,6 +217,8 @@ def _stateorder_topological_sort(sdfg: SDFG,
     :return: Generator that yields states in state-order from ``start`` to 
              ``stop``.
     """
+    loopexits = loopexits if loopexits is not None else defaultdict(lambda: None)
+
     # Traverse states in custom order
     visited = visited or set()
     stack = [start]
@@ -235,20 +237,21 @@ def _stateorder_topological_sort(sdfg: SDFG,
             continue
         elif len(oe) == 2:  # Loop or branch
             # If loop, traverse body, then exit
-            if ptree[oe[0].dst] == node and ptree[oe[1].dst] != node:
-                for s in _stateorder_topological_sort(sdfg, oe[0].dst, ptree, branch_merges, stop=node,
-                                                      visited=visited):
-                    yield s
-                    visited.add(s)
-                stack.append(oe[1].dst)
-                continue
-            elif ptree[oe[1].dst] == node and ptree[oe[0].dst] != node:
-                for s in _stateorder_topological_sort(sdfg, oe[1].dst, ptree, branch_merges, stop=node,
-                                                      visited=visited):
-                    yield s
-                    visited.add(s)
-                stack.append(oe[0].dst)
-                continue
+            if node in loopexits:
+                if oe[0].dst == loopexits[node]:
+                    for s in _stateorder_topological_sort(sdfg, oe[1].dst, ptree, branch_merges, stop=node,
+                                                          visited=visited, loopexits=loopexits):
+                        yield s
+                        visited.add(s)
+                    stack.append(oe[0].dst)
+                    continue
+                elif oe[1].dst == loopexits[node]:
+                    for s in _stateorder_topological_sort(sdfg, oe[0].dst, ptree, branch_merges, stop=node,
+                                                          visited=visited, loopexits=loopexits):
+                        yield s
+                        visited.add(s)
+                    stack.append(oe[1].dst)
+                    continue
             # Otherwise, passthrough to branch
         # Branch
         if node in branch_merges:
@@ -272,7 +275,8 @@ def _stateorder_topological_sort(sdfg: SDFG,
                                                   ptree,
                                                   branch_merges,
                                                   stop=mergestate,
-                                                  visited=visited):
+                                                  visited=visited,
+                                                  loopexits=loopexits):
                 yield s
                 visited.add(s)
         stack.append(mergestate)
@@ -288,7 +292,8 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
     :return: Generator that yields states in state-order.
     """
     # Get parent states
-    ptree = state_parent_tree(sdfg)
+    loopexits: Dict[SDFGState, SDFGState] = defaultdict(lambda: None)
+    ptree = state_parent_tree(sdfg, loopexits)
 
     # Annotate branches
     branch_merges: Dict[SDFGState, SDFGState] = {}
@@ -312,4 +317,4 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
         if len(common_frontier) == 1:
             branch_merges[state] = next(iter(common_frontier))
 
-    yield from _stateorder_topological_sort(sdfg, sdfg.start_state, ptree, branch_merges)
+    yield from _stateorder_topological_sort(sdfg, sdfg.start_state, ptree, branch_merges, loopexits=loopexits)
