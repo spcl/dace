@@ -37,6 +37,7 @@ class LoopPeeling(LoopUnroll):
         # If loop cannot be detected, fail
         found = find_for_loop(sdfg, guard, begin)
         if found is None:
+            self._cba_failure_reason = 'No well-structured for loop could be identified from the state machine.'
             return False
 
         return True

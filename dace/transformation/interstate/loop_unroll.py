@@ -34,14 +34,16 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
 
         # If loop cannot be detected, fail
         if not found:
+            self._cba_failure_reason = 'No well-structured for loop could be identified in the state machine.'
             return False
         _, rng, _ = found
 
-        # If loop stride is not specialized or constant-sized, fail
         if symbolic.issymbolic(rng[2], sdfg.constants):
+            self._cba_failure_reason = 'The loop stride is not specialized or constant-sized.'
             return False
-        # If loop range diff is not constant-sized, fail
         if symbolic.issymbolic(rng[1] - rng[0], sdfg.constants):
+            self._cba_failure_reason = ('The loop range, i.e., the difference between the start and end indices, ' +
+                                        'is not constant-sized.')
             return False
         return True
 
