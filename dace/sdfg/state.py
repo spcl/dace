@@ -18,7 +18,7 @@ from dace import memlet as mm
 from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
-from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
+from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SDFGReferenceProperty, SubsetProperty, SymbolicProperty,
                              CodeProperty, make_properties, ListProperty)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
@@ -2868,13 +2868,17 @@ class LoopRegion(ControlFlowRegion):
 @make_properties
 class ConditionalRegion(ControlFlowRegion):
     condition_expr = CodeProperty(allow_none=True, default=None, desc='The "if" condition')
+    condition_else_expr = CodeProperty(allow_none=True, default=None, desc='The "else" condition')
+    else_branch = Property(dtype=ControlFlowRegion)
 
-    def __init__(self, label: str, condition_expr: str):
-        super(ConditionalRegion, self).__init__(label)
-        if condition_expr:
-            self.condition_expr = CodeBlock(condition_expr)
-        else:
-            self.condition_expr = CodeBlock('True')
+    def __init__(self, label: str, condition_expr: str, condition_else_expr: str):
+        super().__init__(label)
+        self.else_branch = ControlFlowRegion()
+        self.condition_expr = CodeBlock(condition_expr)
+        self.condition_else_expr = CodeBlock(condition_else_expr)
+        self.else_branch.parent_graph = self
+        self.else_branch.label = label + "else"
+        self.update_cfg_list([self.else_branch])
 
     def _used_symbols_internal(self,
                                all_symbols: bool,
@@ -2910,4 +2914,119 @@ class ConditionalRegion(ControlFlowRegion):
         super().replace_dict(repl, symrepl, replace_in_graph)
 
     def to_json(self, parent=None):
-        return super().to_json(parent)
+        json = ControlFlowBlock.to_json(self, parent)
+        graph_json = OrderedDiGraph.to_json(self)
+        graph_json.update(json)
+
+        graph_json['cfg_list_id'] = int(self.cfg_id)
+        graph_json['start_block'] = self._start_block
+
+        return graph_json
+
+    @classmethod
+    def from_json(cls, json_obj, context_info=None):
+        context_info = context_info or {'sdfg': None, 'parent_graph': None}
+        _type = json_obj['type']
+        if _type != cls.__name__:
+            raise TypeError("Class type mismatch")
+
+        attrs = json_obj['attributes']
+        nodes = json_obj['nodes']
+        edges = json_obj['edges']
+
+        ret = ControlFlowRegion(label=attrs['label'], sdfg=context_info['sdfg'])
+
+        dace.serialize.set_properties_from_json(ret, json_obj)
+
+        nodelist = []
+        for n in nodes:
+            nci = copy.copy(context_info)
+            nci['parent_graph'] = ret
+
+            state = SDFGState.from_json(n, context=nci)
+            ret.add_node(state)
+            nodelist.append(state)
+
+        for e in edges:
+            e = dace.serialize.from_json(e)
+            ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
+
+        if 'start_block' in json_obj:
+            ret._start_block = json_obj['start_block']
+
+        return ret
+
+    def all_nodes_recursive(self) -> Iterator[Tuple[NodeT, GraphT]]:
+        yield from super().all_nodes_recursive()
+        yield self.else_branch, self
+        yield from self.else_branch.all_nodes_recursive()
+
+    def all_edges_recursive(self) -> Iterator[Tuple[EdgeT, GraphT]]:
+        yield from super().all_edges_recursive()
+        yield from self.else_branch.all_edges_recursive()
+
+    def data_nodes(self) -> List[nd.AccessNode]:
+        return super().data_nodes() + self.else_branch.data_nodes()
+
+    ###################################################################
+    # Memlet-tracking methods
+
+    def memlet_path(self, edge: MultiConnectorEdge[mm.Memlet]) -> List[MultiConnectorEdge[mm.Memlet]]:
+        if edge in self.edges():
+            return super().memlet_path(edge)
+        if edge in self.else_branch.edges():
+            return self.else_branch.memlet_path(edge)
+        return []
+        
+    def memlet_tree(self, edge: MultiConnectorEdge) -> mm.MemletTree:
+        if edge in self.edges():
+            return super().memlet_tree(edge)
+        if edge in self.else_branch.edges():
+            return self.else_branch.memlet_tree(edge)
+        return mm.MemletTree(edge)
+
+    def in_edges_by_connector(self, node: nd.Node, connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
+        if node in self.nodes():
+            return super().in_edges_by_connector(node, connector)
+        if node in self.else_branch.nodes():
+            return self.else_branch.in_edges_by_connector(node, connector)
+        return []
+
+    def out_edges_by_connector(self, node: nd.Node, connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
+        if node in self.nodes():
+            return super().out_edges_by_connector(node, connector)
+        if node in self.else_branch.nodes():
+            return self.else_branch.out_edges_by_connector(node, connector)
+        return []
+
+    def edges_by_connector(self, node: nd.Node, connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
+        if node in self.nodes():
+            return super().edges_by_connector(node, connector)
+        if node in self.else_branch.nodes():
+            return self.else_branch.edges_by_connector(node, connector)
+        return []
+
+    ###################################################################
+    # Query, subgraph, and replacement methods
+
+    def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
+        main_rs, main_ws = super().read_and_write_set()
+        else_rs, else_ws = self.else_branch.read_and_write_set()
+        return main_rs + else_rs, main_ws + else_ws
+
+    def unordered_arglist(self,
+                          defined_syms=None,
+                          shared_transients=None) -> Tuple[Dict[str, dt.Data], Dict[str, dt.Data]]:
+        main_data_args, main_scalar_args = super().unordered_arglist(defined_syms, shared_transients)
+        else_data_args, else_scalar_args = self.else_branch.unordered_arglist(defined_syms, shared_transients)
+        return main_data_args + else_data_args, main_scalar_args + else_scalar_args
+
+    def top_level_transients(self) -> Set[str]:
+        return super().top_level_transients() + self.else_branch.top_level_transients()
+
+    def all_transients(self) -> List[str]:
+        return super().all_transients() + self.else_branch.all_transients()
+
+    def replace(self, name: str, new_name: str):
+        super().replace(name, new_name)
+        self.else_branch.replace(name, new_name)

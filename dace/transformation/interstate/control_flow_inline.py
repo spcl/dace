@@ -195,10 +195,7 @@ class ConditionalRegionInline(transformation.MultiStateTransformation):
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG) -> Tuple[Set[SDFGState], Set[SDFGState]]:
         parent: ControlFlowRegion = graph
 
-        if_state = self.conditional.start_block
-        if_state.label = self.conditional.label + '_if'
-
-        # Add all boilerplate loop states necessary for the structure.
+        # Add all boilerplate states necessary for the structure.
         guard_state = parent.add_state(self.conditional.label + '_guard')
         endif_state = parent.add_state(self.conditional.label + '_endinf')
 
@@ -232,18 +229,16 @@ class ConditionalRegionInline(transformation.MultiStateTransformation):
             parent.remove_edge(a_edge)
 
         # Add condition checking edges and connect the guard state.
-        cond_expr = self.conditional.condition_expr.code
-        parent.add_edge(guard_state, endif_state,
-                        InterstateEdge(CodeBlock(astutils.negate_expr(cond_expr)).code))
-        parent.add_edge(guard_state, if_state, InterstateEdge(CodeBlock(cond_expr).code))
-
+        parent.add_edge(guard_state, self.conditional.start_block, InterstateEdge(self.conditional.condition_expr))
+        parent.add_edge(guard_state, self.conditional.else_branch, InterstateEdge(self.conditional.condition_else_expr))
         # Connect any end states from the loop's internal state machine to the tail state so they end a
         # loop iteration. Do the same for any continue states, and connect any break states to the end of the loop.
         for node in connect_to_tail:
             parent.add_edge(node, endif_state, InterstateEdge())
-
+        parent.add_edge(self.conditional.else_branch, endif_state, InterstateEdge())
         # Remove the original loop.
         parent.remove_node(self.conditional)
+        # parent.remove_node(self.conditional.else_branch)
 
         sdfg.reset_cfg_list()
 
