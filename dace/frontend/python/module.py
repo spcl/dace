@@ -90,7 +90,7 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
                  inputs_to_skip: Optional[List[str]] = None,
                  onnx_simplify: bool = True,
                  simplify: bool = True,
-                 auto_optimize: bool = True,
+                 auto_optimize: bool = False,
                  debug_transients: bool = False,
                  compile_torch_extension: bool = True,
                  sdfg_name: Optional[str] = None):
@@ -326,7 +326,6 @@ class DaceModule(nn.Module, pycommon.SDFGConvertible):
 
                 for _, hook in self.post_autodiff_hooks.items():
                     hook(self.forward_sdfg, self.backward_sdfg)
-
                 self.compiled_function = function_generator(self, dummy_inputs)
             else:
                 self.compiled_function = function_generator(self, dummy_inputs)

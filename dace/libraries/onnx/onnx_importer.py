@@ -163,6 +163,10 @@ class ONNXModel:
         for value, is_input in chain(zip(graph.input, repeat(True)), zip(graph.output, repeat(False))):
             if not value.HasField("name"):
                 raise ValueError("Got input or output without name")
+
+            # if we already added this array, continue
+            if value.name in self.value_infos:
+                continue
             if is_input:
                 self.inputs.append(value.name)
             else:
@@ -336,6 +340,11 @@ class ONNXModel:
             # remove the tensor from inputs since this is a constant
             self.inputs.remove(unclean_name)
             # note: inputs already have data-descriptors created for them, so
+            # we skip the below code
+        elif unclean_name in self.outputs:
+            # remove the tensor from output since this is a constant
+            self.outputs.remove(unclean_name)
+            # note: outputs already have data-descriptors created for them, so
             # we skip the below code
         elif len(shape) == 0:
             # this is a scalar

@@ -29,22 +29,31 @@ def make_backward_function(
         raise AutoDiffException("Expected to find exactly one SDFGState, found {}".format(len(model.sdfg.nodes())))
 
     forward_sdfg = model.sdfg
-    forward_state = model.sdfg.nodes()[0]
 
     backward_sdfg = dace.SDFG(forward_sdfg.name + "_backward")
-    backward_state = backward_sdfg.add_state()
 
     gen = BackwardPassGenerator(sdfg=forward_sdfg,
-                                state=forward_state,
                                 given_gradients=[clean_onnx_name(name) for name in model.outputs],
                                 required_gradients=required_grads,
                                 backward_sdfg=backward_sdfg,
-                                backward_state=backward_state,
                                 zero_non_transients=False)
 
     backward_result, backward_grad_arrays, backward_input_arrays = gen.backward()
 
     replaced_scalars = {}
+
+    # get the forward state
+    forward_state = forward_sdfg.nodes()
+    # A loaded pytorch model should only have one state
+    assert len(forward_state) == 1
+    forward_state = forward_state[0]
+
+    # get the backward state
+    backward_state = backward_sdfg.nodes()
+    # A loaded pytorch model should only have one state
+    assert len(backward_state) == 1
+    backward_state = backward_state[0]
+
     for name, desc in backward_input_arrays.items():
         if name not in forward_sdfg.arrays:
             raise AutoDiffException("Expected to find array with name '{}' in SDFG".format(name))
