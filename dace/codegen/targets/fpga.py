@@ -2,31 +2,26 @@
 
 from six import StringIO
 import collections
-import enum
-import functools
 import itertools
 import re
 import warnings
-import sympy as sp
 import numpy as np
-from typing import Dict, Iterable, List, Set, Tuple, Union
+from typing import Dict, List, Set, Tuple, Union
 import copy
 
 import dace
 from dace.codegen.targets import cpp
-from dace import subsets, data as dt, dtypes, memlet, sdfg as sd, symbolic
+from dace import subsets, data as dt, dtypes, memlet, symbolic
 from dace.config import Config
-from dace.frontend import operations
 from dace.sdfg import SDFG, nodes, utils, dynamic_map_inputs
-from dace.sdfg import ScopeSubgraphView, find_input_arraynode, find_output_arraynode
+from dace.sdfg import ScopeSubgraphView
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.codegen import exceptions as cgx
-from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import update_persistent_desc
-from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
+from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen import cppunparse
-from dace.properties import Property, make_properties, indirect_properties
 from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import is_fpga_kernel
 from dace.symbolic import evaluate
@@ -1453,7 +1448,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         return max_kernels, dependencies
 
     def _trace_back_edge(self,
-                         edge: dace.sdfg.sdfg.Edge,
+                         edge: MultiConnectorEdge[dace.Memlet],
                          state: dace.SDFGState,
                          look_for_kernel_id: bool = False) -> Union[bool, int]:
         """
@@ -1497,7 +1492,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             src_repr = utils.unique_node_repr(state, curedge.src)
             return self._node_to_kernel[src_repr] if src_repr in self._node_to_kernel else None
 
-    def _trace_forward_edge(self, edge: dace.sdfg.sdfg.Edge, state: dace.SDFGState) -> Tuple[bool, int]:
+    def _trace_forward_edge(self, edge: MultiConnectorEdge[dace.Memlet], state: dace.SDFGState) -> Tuple[bool, int]:
         """
         Given an edge, this traverses the edges forward.
         It can be used either for:
