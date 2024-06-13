@@ -24,8 +24,8 @@ class Optimizer(object):
         transformations on it.
     """
 
-    patterns: Set[type[PatternTransformation]]
-    applied_patterns: Set[type[PatternTransformation]]
+    patterns: Set[Type[PatternTransformation]]
+    applied_patterns: Set[Type[PatternTransformation]]
     missed_opportunities: Set[TransformationBase]
     transformation_metadata: pattern_matching.PatternMetadataType
 
