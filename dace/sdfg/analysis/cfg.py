@@ -298,6 +298,7 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
     # Annotate branches
     branch_merges: Dict[SDFGState, SDFGState] = {}
     adf = acyclic_dominance_frontier(sdfg)
+    ipostdom = sdutil.postdominators(sdfg)
     for state in sdfg.nodes():
         oedges = sdfg.out_edges(state)
         # Skip if not branch
@@ -316,5 +317,7 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
             common_frontier |= frontier
         if len(common_frontier) == 1:
             branch_merges[state] = next(iter(common_frontier))
+        elif len(common_frontier) > 1 and ipostdom[state] in common_frontier:
+            branch_merges[state] = ipostdom[state]
 
     yield from _stateorder_topological_sort(sdfg, sdfg.start_state, ptree, branch_merges, loopexits=loopexits)
