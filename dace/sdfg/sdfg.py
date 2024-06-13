@@ -452,6 +452,9 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
+    using_experimental_blocks = Property(dtype=bool, default=False,
+                                         desc="Whether the SDFG contains experimental control flow blocks")
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
@@ -508,6 +511,8 @@ class SDFG(ControlFlowRegion):
         # Counter to resolve name conflicts
         self._orig_name = name
         self._num = 0
+
+        self._sdfg = self
 
     def __deepcopy__(self, memo):
         cls = self.__class__
@@ -2220,6 +2225,7 @@ class SDFG(ControlFlowRegion):
             # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
             # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
             sdutils.inline_loop_blocks(sdfg)
+            sdutils.inline_control_flow_regions(sdfg)
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0

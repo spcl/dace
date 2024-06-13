@@ -19,7 +19,7 @@ from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
 from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
-                             CodeProperty, make_properties, SetProperty)
+                             CodeProperty, make_properties, ListProperty, DebugInfoProperty)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
 from dace.sdfg.propagation import propagate_memlet
@@ -1134,6 +1134,31 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     def __repr__(self) -> str:
         return f'ControlFlowBlock ({self.label})'
 
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k in ('_parent_graph', '_sdfg'):  # Skip derivative attributes
+                continue
+            setattr(result, k, copy.deepcopy(v, memo))
+
+        for k in ('_parent_graph', '_sdfg'):
+            if id(getattr(self, k)) in memo:
+                setattr(result, k, memo[id(getattr(self, k))])
+            else:
+                setattr(result, k, None)
+
+        for node in result.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                try:
+                    node.sdfg.parent = result
+                except AttributeError:
+                    # NOTE: There are cases where a NestedSDFG does not have `sdfg` attribute.
+                    # TODO: Investigate why this happens.
+                    pass
+        return result
+
     @property
     def label(self) -> str:
         return self._label
@@ -1220,31 +1245,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         self.nosync = False
         self.location = location if location is not None else {}
         self._default_lineinfo = None
-
-    def __deepcopy__(self, memo):
-        cls = self.__class__
-        result = cls.__new__(cls)
-        memo[id(self)] = result
-        for k, v in self.__dict__.items():
-            if k in ('_parent_graph', '_sdfg'):  # Skip derivative attributes
-                continue
-            setattr(result, k, copy.deepcopy(v, memo))
-
-        for k in ('_parent_graph', '_sdfg'):
-            if id(getattr(self, k)) in memo:
-                setattr(result, k, memo[id(getattr(self, k))])
-            else:
-                setattr(result, k, None)
-
-        for node in result.nodes():
-            if isinstance(node, nd.NestedSDFG):
-                try:
-                    node.sdfg.parent = result
-                except AttributeError:
-                    # NOTE: There are cases where a NestedSDFG does not have `sdfg` attribute.
-                    # TODO: Investigate why this happens.
-                    pass
-        return result
 
     @property
     def parent(self):
@@ -2486,7 +2486,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
     def add_state(self, label=None, is_start_block=False, *, is_start_state: bool=None) -> SDFGState:
         if self._labels is None or len(self._labels) != self.number_of_nodes():
-            self._labels = set(s.label for s in self.nodes())
+            self._labels = set(s.label for s in self.all_control_flow_blocks())
         label = label or 'state'
         existing_labels = self._labels
         label = dt.find_new_name(label, existing_labels)
@@ -2551,7 +2551,6 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self.add_edge(state, new_state, dace.sdfg.InterstateEdge(condition=condition, assignments=assignments))
         return new_state
 
-    @abc.abstractmethod
     def _used_symbols_internal(self,
                                all_symbols: bool,
                                defined_syms: Optional[Set] = None,
@@ -2586,9 +2585,9 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                 # compute the symbols that are used before being assigned.
                 efsyms = e.data.used_symbols(all_symbols)
                 # collect symbols representing data containers
-                dsyms = {sym for sym in efsyms if sym in self.arrays}
+                dsyms = {sym for sym in efsyms if sym in self.sdfg.arrays}
                 for d in dsyms:
-                    efsyms |= {str(sym) for sym in self.arrays[d].used_symbols(all_symbols)}
+                    efsyms |= {str(sym) for sym in self.sdfg.arrays[d].used_symbols(all_symbols)}
                 defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_symbols)
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms
@@ -2775,8 +2774,9 @@ class LoopRegion(ControlFlowRegion):
     inverted = Property(dtype=bool, default=False,
                         desc='If True, the loop condition is checked after the first iteration.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
-    break_states = SetProperty(element_type=int, desc='States that when reached break out of the loop')
-    continue_states = SetProperty(element_type=int, desc='States that when reached directly execute the next iteration')
+    body_debuginfo = DebugInfoProperty(desc='Line information to track source code of the loop body')
+    condition_debuginfo = DebugInfoProperty(desc='Line information to track source code of the loop condition', allow_none=True)
+
 
     def __init__(self,
                  label: str,
@@ -2784,7 +2784,9 @@ class LoopRegion(ControlFlowRegion):
                  loop_var: Optional[str] = None,
                  initialize_expr: Optional[str] = None,
                  update_expr: Optional[str] = None,
-                 inverted: bool = False):
+                 inverted: bool = False,
+                 body_debuginfo: Optional[dtypes.DebugInfo] = None,
+                 condition_debuginfo: Optional[dtypes.DebugInfo] = None):
         super(LoopRegion, self).__init__(label)
 
         if initialize_expr is not None:
@@ -2804,6 +2806,8 @@ class LoopRegion(ControlFlowRegion):
 
         self.loop_variable = loop_var or ''
         self.inverted = inverted
+        self.body_debuginfo = body_debuginfo
+        self.condition_debuginfo = condition_debuginfo
 
     def _used_symbols_internal(self,
                                all_symbols: bool,
@@ -2827,7 +2831,7 @@ class LoopRegion(ControlFlowRegion):
         )
         free_syms |= b_free_symbols
         defined_syms |= b_defined_symbols
-        used_before_assignment |= b_used_before_assignment
+        used_before_assignment |= (b_used_before_assignment - {self.loop_variable})
 
         defined_syms -= used_before_assignment
         free_syms -= defined_syms
@@ -2849,22 +2853,28 @@ class LoopRegion(ControlFlowRegion):
     def to_json(self, parent=None):
         return super().to_json(parent)
 
-    def _add_node_internal(self, node, is_continue=False, is_break=False):
-        if is_continue:
-            if is_break:
-                raise ValueError('Cannot set both is_continue and is_break')
-            self.continue_states.add(self.node_id(node))
-        if is_break:
-            if is_continue:
-                raise ValueError('Cannot set both is_continue and is_break')
-            self.break_states.add(self.node_id(node))
-
-    def add_node(self, node, is_start_block=False, is_continue=False, is_break=False, *, is_start_state: bool = None):
-        super().add_node(node, is_start_block, is_start_state=is_start_state)
-        self._add_node_internal(node, is_continue, is_break)
-
-    def add_state(self, label=None, is_start_block=False, is_continue=False, is_break=False, *,
+    def add_state(self, label=None, is_start_block=False, is_break=False, is_continue=False, *,
                   is_start_state: bool = None) -> SDFGState:
         state = super().add_state(label, is_start_block, is_start_state=is_start_state)
-        self._add_node_internal(state, is_continue, is_break)
+        # Cast to the corresponding type if the state is a break or continue state.
+        if is_break and is_continue:
+            raise ValueError('State cannot represent both a break and continue at the same time.')
+        elif is_break:
+            state.__class__ = LoopRegion.BreakState
+        elif is_continue:
+            state.__class__ = LoopRegion.ContinueState
         return state
+
+
+    class BreakState(SDFGState):
+        """ Special state representing breaks inside of loop regions. """
+
+        def __repr__(self) -> str:
+            return f"SDFGState ({self.label}) [Break]"
+
+
+    class ContinueState(SDFGState):
+        """ Special state representing continue statements inside of loop regions. """
+
+        def __repr__(self) -> str:
+            return f"SDFGState ({self.label}) [Continue]"

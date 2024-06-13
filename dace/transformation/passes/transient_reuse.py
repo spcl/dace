@@ -44,7 +44,7 @@ class TransientReuse(ppl.Pass):
             if arrays[a] == 1:
                 transients.add(a)
 
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             # Copy the whole graph
             G = nx.MultiDiGraph()
             for n in state.nodes():
