@@ -881,7 +881,8 @@ def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Ca
             else:
                 sdfg = get_sdfg_arg(tgt, *args)
             if sdfg and isinstance(sdfg, SDFG):
-                if not sdfg.using_experimental_blocks:
+                root_sdfg: SDFG = sdfg.cfg_list[0]
+                if not root_sdfg.using_experimental_blocks:
                     return vanilla_method(tgt, *args, **kwargs)
                 else:
                     warnings.warn('Skipping ' + function_name + ' from ' + cls.__name__ +

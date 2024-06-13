@@ -32,7 +32,7 @@ from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import ControlFlowBlock, LoopRegion, ControlFlowRegion
+from dace.sdfg.state import ControlFlowBlock, LoopRegion, ControlFlowRegion, ConditionalRegion
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
@@ -2549,34 +2549,18 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(self, node, error_msg)
 
     def visit_If(self, node: ast.If):
-        # Add a guard state
-        self._add_state('if_guard')
-        self.last_block.debuginfo = self.current_lineinfo
-
         # Generate conditions
         cond, cond_else, _ = self._visit_test(node.test)
 
-        # Visit recursively
-        laststate, first_if_state, last_if_state, return_stmt = \
-            self._recursive_visit(node.body, 'if', node.lineno, self.cfg_target, True)
-        end_if_state = self.last_block
+        cond_region = ConditionalRegion(label=f'if_{node.lineno}', condition_expr=cond, condition_else_expr=cond_else)
+        self._on_block_added(cond_region)
+        self.last_block.debuginfo = self.current_lineinfo
 
-        # Connect the states
-        self.cfg_target.add_edge(laststate, first_if_state, dace.InterstateEdge(cond))
-        self.cfg_target.add_edge(last_if_state, end_if_state, dace.InterstateEdge(condition=f"{not return_stmt}"))
-
+        self._recursive_visit(node.body, f'if_{node.lineno}', node.lineno, cond_region, False)
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
-            # Visit recursively
-            _, first_else_state, last_else_state, return_stmt = \
-                self._recursive_visit(node.orelse, 'else', node.lineno, self.cfg_target, False)
-
-            # Connect the states
-            self.cfg_target.add_edge(laststate, first_else_state, dace.InterstateEdge(cond_else))
-            self.cfg_target.add_edge(last_else_state, end_if_state, dace.InterstateEdge(condition=f"{not return_stmt}"))
-        else:
-            self.cfg_target.add_edge(laststate, end_if_state, dace.InterstateEdge(cond_else))
-        self.last_block = end_if_state
+            self._recursive_visit(node.orelse, f'if_{node.lineno}_else', node.orelse[0].lineno, cond_region.else_branch, False)
+        self.last_block = cond_region
 
     def _parse_tasklet(self, state: SDFGState, node: TaskletType, name=None):
 

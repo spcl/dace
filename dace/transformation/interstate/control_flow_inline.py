@@ -34,9 +34,11 @@ class ControlFlowRegionInline(transformation.MultiStateTransformation):
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG) -> Optional[int]:
         parent: ControlFlowRegion = graph
 
-        internal_start = self.region.start_block
-
         end_state = parent.add_state(self.region.label + '_end')
+        if len(self.region.nodes()) > 0:
+            internal_start = self.region.start_block
+        else:
+            internal_start = end_state
 
         # Add all region states and make sure to keep track of all the ones that need to be connected in the end.
         to_connect: Set[SDFGState] = set()
