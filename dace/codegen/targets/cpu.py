@@ -1,13 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
 import functools
 import itertools
 import warnings
 
-from sympy.functions.elementary.complexes import arg
-
-from dace import data, dtypes, registry, memlet as mmlt, sdfg as sd, subsets, symbolic, Config
+from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
 from dace.codegen import cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
@@ -17,8 +15,8 @@ from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
 from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_stream_view, NodeNotExpandedError,
-                       dynamic_map_inputs, local_transients)
-from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga, is_in_scope
+                       dynamic_map_inputs)
+from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
 from typing import Union
 from dace.codegen.targets import fpga
@@ -145,26 +143,33 @@ class CPUCodeGen(TargetCodeGenerator):
     def has_finalizer(self):
         return False
 
-    def generate_scope(
-        self,
-        sdfg: SDFG,
-        dfg_scope: ScopeSubgraphView,
-        state_id,
-        function_stream,
-        callsite_stream,
-    ):
+    def generate_scope(self,
+                       sdfg: SDFG,
+                       cfg: ControlFlowRegion,
+                       dfg_scope: ScopeSubgraphView,
+                       state_id: int,
+                       function_stream: CodeIOStream,
+                       callsite_stream: CodeIOStream) -> None:
         entry_node = dfg_scope.source_nodes()[0]
-        cpp.presynchronize_streams(sdfg, dfg_scope, state_id, entry_node, callsite_stream)
+        cpp.presynchronize_streams(sdfg, cfg, dfg_scope, state_id, entry_node, callsite_stream)
 
-        self.generate_node(sdfg, dfg_scope, state_id, entry_node, function_stream, callsite_stream)
+        self.generate_node(sdfg, cfg, dfg_scope, state_id, entry_node, function_stream, callsite_stream)
         self._dispatcher.dispatch_subgraph(sdfg,
+                                           cfg,
                                            dfg_scope,
                                            state_id,
                                            function_stream,
                                            callsite_stream,
                                            skip_entry_node=True)
 
-    def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
+    def generate_node(self,
+                      sdfg: SDFG,
+                      cfg: ControlFlowRegion,
+                      dfg: ScopeSubgraphView,
+                      state_id: int,
+                      node: nodes.Node,
+                      function_stream: CodeIOStream,
+                      callsite_stream: CodeIOStream) -> None:
         # Dynamically obtain node generator according to class name
         try:
             gen = getattr(self, "_generate_" + type(node).__name__)
@@ -173,7 +178,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise NodeNotExpandedError(sdfg, state_id, dfg.node_id(node))
             raise
 
-        gen(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
         # Mark node as "generated"
         self._generated_nodes.add(node)
@@ -286,8 +291,15 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.declared_arrays.add(ptrname, DefinedType.Pointer, ctypedef)
             self._dispatcher.defined_vars.add(ptrname, DefinedType.Pointer, ctypedef)
 
-    def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
-
+    def declare_array(self,
+                      sdfg: SDFG,
+                      cfg: ControlFlowRegion,
+                      dfg: StateSubgraphView,
+                      state_id: int,
+                      node: nodes.Node,
+                      nodedesc: data.Data,
+                      function_stream: CodeIOStream,
+                      declaration_stream: CodeIOStream) -> None:
         fsymbols = self._frame.symbols_and_constants(sdfg)
         # NOTE: `dfg` (state) will be None iff `nodedesc` is non-free symbol dependent
         # (see `DaCeCodeGenerator.determine_allocation_lifetime` in `dace.codegen.targets.framecode`).
@@ -333,7 +345,7 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
 
-    def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
+    def allocate_array(self, sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                        allocation_stream, allocate_nested_data: bool = True):
         alloc_name = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         name = alloc_name
@@ -543,7 +555,7 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
 
-    def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
+    def deallocate_array(self, sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
         arrsize = nodedesc.total_size
         alloc_name = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
@@ -936,6 +948,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def process_out_memlets(self,
                             sdfg,
+                            cfg,
                             state_id,
                             node,
                             dfg,
@@ -946,7 +959,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             skip_wcr=False,
                             codegen=None):
         codegen = codegen or self
-        scope_dict = sdfg.nodes()[state_id].scope_dict()
+        scope_dict = cfg.nodes()[state_id].scope_dict()
 
         for edge in dfg.out_edges(node):
             _, uconn, v, _, memlet = edge
@@ -969,7 +982,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 shared_data_name = edge.data.data
                 if not shared_data_name:
                     # Very unique name. TODO: Make more intuitive
-                    shared_data_name = '__dace_%d_%d_%d_%d_%s' % (sdfg.cfg_id, state_id, dfg.node_id(node),
+                    shared_data_name = '__dace_%d_%d_%d_%d_%s' % (cfg.cfg_id, state_id, dfg.node_id(node),
                                                                   dfg.node_id(dst_node), edge.src_conn)
 
                 result.write(
@@ -1081,6 +1094,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         dst_node,
                         edge,
                         sdfg,
+                        cfg,
                         dfg,
                         state_id,
                         function_stream,
@@ -1336,7 +1350,9 @@ class CPUCodeGen(TargetCodeGenerator):
     #########################################################################
     # Dynamically-called node dispatchers
 
-    def _generate_Tasklet(self, sdfg, dfg, state_id, node, function_stream, callsite_stream, codegen=None):
+    def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                          node: nodes.Node, function_stream: CodeIOStream, callsite_stream: CodeIOStream,
+                          codegen=None):
 
         # Allow other code generators to call this with a callback
         codegen = codegen or self
@@ -1349,12 +1365,12 @@ class CPUCodeGen(TargetCodeGenerator):
         self._frame._initcode.write(codeblock_to_cpp(node.code_init), sdfg)
         self._frame._exitcode.write(codeblock_to_cpp(node.code_exit), sdfg)
 
-        state_dfg: SDFGState = sdfg.nodes()[state_id]
+        state_dfg: SDFGState = cfg.nodes()[state_id]
 
         # Free tasklets need to be presynchronized (e.g., CPU tasklet after
         # GPU->CPU copy)
         if state_dfg.entry_node(node) is None:
-            cpp.presynchronize_streams(sdfg, state_dfg, state_id, node, callsite_stream)
+            cpp.presynchronize_streams(sdfg, cfg, state_dfg, state_id, node, callsite_stream)
 
         # Prepare preamble and code for after memlets
         after_memlets_stream = CodeIOStream()
@@ -1396,6 +1412,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         node,
                         edge,
                         sdfg,
+                        cfg,
                         dfg,
                         state_id,
                         function_stream,
@@ -1420,8 +1437,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
                     continue
 
-                self._dispatcher.dispatch_output_definition(node, dst_node, edge, sdfg, dfg, state_id, function_stream,
-                                                            inner_stream)
+                self._dispatcher.dispatch_output_definition(node, dst_node, edge, sdfg, cfg, dfg, state_id,
+                                                            function_stream, inner_stream)
 
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1, node.out_connectors[edge.src_conn].ctype)
@@ -1481,8 +1498,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         inner_stream.write("\n    ///////////////////\n", sdfg, state_id, node)
 
-        codegen.unparse_tasklet(sdfg, state_id, dfg, node, function_stream, inner_stream, self._locals, self._ldepth,
-                                self._toplevel_schedule)
+        codegen.unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, self._locals,
+                                self._ldepth, self._toplevel_schedule)
 
         inner_stream.write("    ///////////////////\n\n", sdfg, state_id, node)
 
@@ -1494,6 +1511,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Process outgoing memlets
         codegen.process_out_memlets(
             sdfg,
+            cfg,
             state_id,
             node,
             dfg,
@@ -1517,11 +1535,11 @@ class CPUCodeGen(TargetCodeGenerator):
         self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
 
-    def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
+    def unparse_tasklet(self, sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
                         toplevel_schedule):
         # Call the generic CPP unparse_tasklet method
-        cpp.unparse_tasklet(sdfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth, toplevel_schedule,
-                            self)
+        cpp.unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
+                            toplevel_schedule, self)
 
     def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream):
         cdtype = src_node.out_connectors[edge.src_conn]
@@ -1626,6 +1644,7 @@ class CPUCodeGen(TargetCodeGenerator):
     def _generate_NestedSDFG(
         self,
         sdfg,
+        cfg,
         dfg: ScopeSubgraphView,
         state_id,
         node: nodes.NestedSDFG,
@@ -1761,6 +1780,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Process outgoing memlets with the internal SDFG
             codegen.process_out_memlets(sdfg,
+                                        cfg,
                                         state_id,
                                         node,
                                         state_dfg,
@@ -1791,6 +1811,7 @@ class CPUCodeGen(TargetCodeGenerator):
     def _generate_MapEntry(
         self,
         sdfg,
+        cfg,
         dfg,
         state_id,
         node: nodes.MapEntry,
@@ -1912,7 +1933,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Emit internal transient array allocation
         self._frame.allocate_arrays_in_scope(sdfg, node, function_stream, result)
 
-    def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
+    def _generate_MapExit(self, sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream):
         result = callsite_stream
 
         # Obtain start of map
@@ -1948,6 +1969,7 @@ class CPUCodeGen(TargetCodeGenerator):
     def _generate_ConsumeEntry(
         self,
         sdfg,
+        cfg,
         dfg,
         state_id,
         node: nodes.MapEntry,
@@ -2076,7 +2098,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     result.write(code, sdfg, state_id, [edge.src, edge.dst])
                     self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar, ctype)
 
-    def _generate_ConsumeExit(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
+    def _generate_ConsumeExit(self, sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream):
         result = callsite_stream
 
         # Obtain start of map
@@ -2103,12 +2125,13 @@ class CPUCodeGen(TargetCodeGenerator):
 
         result.write(outer_stream.getvalue())
 
-    def _generate_AccessNode(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
-        state_dfg = sdfg.nodes()[state_id]
+    def _generate_AccessNode(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                             node: nodes.Node, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        state_dfg: SDFGState = cfg.nodes()[state_id]
 
         if node not in state_dfg.sink_nodes():
             # NOTE: sink nodes are synchronized at the end of a state
-            cpp.presynchronize_streams(sdfg, state_dfg, state_id, node, callsite_stream)
+            cpp.presynchronize_streams(sdfg, cfg, state_dfg, state_id, node, callsite_stream)
 
         # Instrumentation: Pre-node
         instr = self._dispatcher.instrumentation[node.instrument]
@@ -2133,6 +2156,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         node,
                         edge,
                         sdfg,
+                        cfg,
                         dfg,
                         state_id,
                         function_stream,
@@ -2143,6 +2167,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # from the first leading edge out of the array)
         self.process_out_memlets(
             sdfg,
+            cfg,
             state_id,
             node,
             dfg,

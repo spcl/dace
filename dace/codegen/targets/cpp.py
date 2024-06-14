@@ -21,6 +21,7 @@ from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
 from dace.codegen import common, cppunparse
 from dace.codegen.common import (sym2cpp, find_incoming_edges, codeblock_to_cpp)
 from dace.codegen.dispatcher import DefinedType
+from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
 from dace.frontend import operations
 from dace.frontend.python import astutils
@@ -29,6 +30,7 @@ from dace.sdfg import nodes, graph as gr, utils
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 from dace.codegen.targets import fpga
+from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 
 if TYPE_CHECKING:
     from dace.codegen.dispatcher import TargetDispatcher
@@ -858,13 +860,13 @@ def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
     return False
 
 
-def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream, locals, ldepth, toplevel_schedule,
+def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_stream, locals, ldepth, toplevel_schedule,
                     codegen):
 
     if node.label is None or node.label == "":
         return ""
 
-    state_dfg = sdfg.nodes()[state_id]
+    state_dfg = cfg.nodes()[state_id]
 
     # Not [], "" or None
     if not node.code:
@@ -1366,8 +1368,9 @@ class StructInitializer(ExtNodeTransformer):
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
-def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
-    state_dfg = sdfg.nodes()[state_id]
+def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                           node: nodes.Node, callsite_stream: CodeIOStream):
+    state_dfg: SDFGState = cfg.nodes()[state_id]
     if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(sdfg, state_dfg, node):
         return
     for e in state_dfg.in_edges(node):

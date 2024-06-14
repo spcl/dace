@@ -12,6 +12,8 @@ from dace.codegen.targets import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
 from typing import Dict, Set, Tuple, Union
 
+from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
+
 
 @registry.extensible_enum
 class DefinedType(aenum.AutoNumberEnum):
@@ -351,22 +353,23 @@ class TargetDispatcher(object):
 
         return self._generic_state_dispatcher
 
-    def dispatch_state(self, sdfg, state, function_stream, callsite_stream):
+    def dispatch_state(self, state, function_stream, callsite_stream):
         """ Dispatches a code generator for an SDFG state. """
 
         self.defined_vars.enter_scope(state)
-        disp = self.get_state_dispatcher(sdfg, state)
-        disp.generate_state(sdfg, state, function_stream, callsite_stream)
+        disp = self.get_state_dispatcher(state.sdfg, state)
+        disp.generate_state(state, function_stream, callsite_stream)
         self.defined_vars.exit_scope(state)
 
     def dispatch_subgraph(self,
-                          sdfg,
-                          dfg,
-                          state_id,
-                          function_stream,
-                          callsite_stream,
-                          skip_entry_node=False,
-                          skip_exit_node=False):
+                          sdfg: SDFG,
+                          cfg: ControlFlowRegion,
+                          dfg: StateSubgraphView,
+                          state_id: int,
+                          function_stream: CodeIOStream,
+                          callsite_stream: CodeIOStream,
+                          skip_entry_node: bool = False,
+                          skip_exit_node: bool = False):
         """ Dispatches a code generator for a scope subgraph of an
             `SDFGState`. """
 
@@ -388,16 +391,18 @@ class TargetDispatcher(object):
                 continue
 
             if isinstance(v, nodes.MapEntry):
-                scope_subgraph = sdfg.node(state_id).scope_subgraph(v)
+                state: SDFGState = cfg.node(state_id)
+                scope_subgraph = state.scope_subgraph(v)
 
-                self.dispatch_scope(v.map.schedule, sdfg, scope_subgraph, state_id, function_stream, callsite_stream)
+                self.dispatch_scope(v.map.schedule, sdfg, cfg, scope_subgraph, state_id, function_stream,
+                                    callsite_stream)
 
                 # Skip scope subgraph nodes
                 nodes_to_skip.update(scope_subgraph.nodes())
             else:
-                self.dispatch_node(sdfg, dfg, state_id, v, function_stream, callsite_stream)
+                self.dispatch_node(sdfg, cfg, dfg, state_id, v, function_stream, callsite_stream)
 
-    def get_node_dispatcher(self, sdfg, state, node):
+    def get_node_dispatcher(self, sdfg: SDFG, state: SDFGState, node: nodes.Node):
         satisfied_dispatchers = [dispatcher for pred, dispatcher in self._node_dispatchers if pred(sdfg, state, node)]
         num_satisfied = len(satisfied_dispatchers)
         if num_satisfied > 1:
@@ -409,7 +414,8 @@ class TargetDispatcher(object):
             # Otherwise use the generic code generator
             return self._generic_node_dispatcher
 
-    def dispatch_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
+    def dispatch_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
+                      function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Dispatches a code generator for a single node. """
 
         # If this node depends on any environments, register this for
@@ -419,22 +425,30 @@ class TargetDispatcher(object):
 
         # Check if the node satisfies any predicates that delegate to a
         # specific code generator
-        state = sdfg.node(state_id)
+        state = cfg.node(state_id)
         disp = self.get_node_dispatcher(sdfg, state, node)
         self._used_targets.add(disp)
-        disp.generate_node(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        disp.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def get_scope_dispatcher(self, schedule):
         return self._map_dispatchers[schedule]
 
-    def dispatch_scope(self, map_schedule, sdfg, sub_dfg, state_id, function_stream, callsite_stream):
+    def dispatch_scope(self,
+                       map_schedule: dtypes.ScheduleType,
+                       sdfg: SDFG,
+                       cfg: ControlFlowRegion,
+                       sub_dfg: StateSubgraphView,
+                       state_id: int,
+                       function_stream: CodeIOStream,
+                       callsite_stream: CodeIOStream):
         """ Dispatches a code generator function for a scope in an SDFG
             state. """
 
         entry_node = sub_dfg.source_nodes()[0]
         self.defined_vars.enter_scope(entry_node)
         self._used_targets.add(self._map_dispatchers[map_schedule])
-        self._map_dispatchers[map_schedule].generate_scope(sdfg, sub_dfg, state_id, function_stream, callsite_stream)
+        self._map_dispatchers[map_schedule].generate_scope(sdfg, cfg, sub_dfg, state_id, function_stream,
+                                                           callsite_stream)
         self.defined_vars.exit_scope(entry_node)
 
     def get_array_dispatcher(self, storage: dtypes.StorageType):
@@ -560,9 +574,11 @@ class TargetDispatcher(object):
 
         return target
 
-    def dispatch_copy(self, src_node, dst_node, edge, sdfg, dfg, state_id, function_stream, output_stream):
+    def dispatch_copy(self, src_node: nodes.Node, dst_node: nodes.Node, edge, sdfg: SDFG, cfg: ControlFlowRegion,
+                      dfg: StateSubgraphView, state_id: int, function_stream: CodeIOStream,
+                      output_stream: CodeIOStream):
         """ Dispatches a code generator for a memory copy operation. """
-        state = sdfg.node(state_id)
+        state = cfg.node(state_id)
         target = self.get_copy_dispatcher(src_node, dst_node, edge, sdfg, state)
         if target is None:
             return
@@ -572,11 +588,13 @@ class TargetDispatcher(object):
         target.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)
 
     # Dispatches definition code for a memlet that is outgoing from a tasklet
-    def dispatch_output_definition(self, src_node, dst_node, edge, sdfg, dfg, state_id, function_stream, output_stream):
+    def dispatch_output_definition(self, src_node: nodes.Node, dst_node: nodes.Node, edge, sdfg: SDFG,
+                                   cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                                   function_stream: CodeIOStream, output_stream: CodeIOStream) -> None:
         """
         Dispatches a code generator for an output memlet definition in a tasklet.
         """
-        state = sdfg.node(state_id)
+        state = cfg.node(state_id)
         target = self.get_copy_dispatcher(src_node, dst_node, edge, sdfg, state)
 
         # Dispatch

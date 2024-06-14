@@ -46,8 +46,9 @@ class RTLCodeGen(target.TargetCodeGenerator):
         self.hardware_target: bool = config.Config.get("compiler", "xilinx", "mode").startswith("hardware")
         self.frequencies: str = config.Config.get("compiler", "xilinx", "frequency")
 
-    def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int, node: nodes.Node,
-                      function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream):
+    def generate_node(self, sdfg: sdfg.SDFG, cfg: state.ControlFlowRegion, dfg: state.StateSubgraphView, state_id: int,
+                      node: nodes.Node, function_stream: prettycode.CodeIOStream,
+                      callsite_stream: prettycode.CodeIOStream):
         # check instance type
         if isinstance(node, nodes.Tasklet):
             """
@@ -62,15 +63,15 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 # find input array
                 src_node = find_input_arraynode(dfg, edge)
                 # dispatch code gen (copy_memory)
-                self.dispatcher.dispatch_copy(src_node, node, edge, sdfg, dfg, state_id, function_stream,
+                self.dispatcher.dispatch_copy(src_node, node, edge, sdfg, cfg, dfg, state_id, function_stream,
                                               callsite_stream)
             # generate code to handle data output from the tasklet
             for edge in dfg.out_edges(node):
                 # find output array
                 dst_node = find_output_arraynode(dfg, edge)
                 # dispatch code gen (define_out_memlet)
-                self.dispatcher.dispatch_output_definition(node, dst_node, edge, sdfg, dfg, state_id, function_stream,
-                                                           callsite_stream)
+                self.dispatcher.dispatch_output_definition(node, dst_node, edge, sdfg, cfg, dfg, state_id,
+                                                           function_stream, callsite_stream)
             # generate tasklet code
             self.unparse_tasklet(sdfg, dfg, state_id, node, function_stream, callsite_stream)
             callsite_stream.write('}', sdfg, state_id, dfg.node_id(node))

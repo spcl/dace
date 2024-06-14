@@ -1,31 +1,30 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Various analyses related to control flow in SDFG states. """
+""" Various analyses related to control flow in SDFGs. """
 from collections import defaultdict
 from dace.sdfg import SDFG, SDFGState, InterstateEdge, graph as gr, utils as sdutil
-from dace.symbolic import pystr_to_symbolic
 import networkx as nx
 import sympy as sp
 from typing import Dict, Iterator, List, Set
 
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 
-def acyclic_dominance_frontier(sdfg: SDFG, idom=None) -> Dict[SDFGState, Set[SDFGState]]:
+
+def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
     """
-    Finds the dominance frontier for an SDFG while ignoring any back edges.
+    Finds the dominance frontier for a CFG while ignoring any back edges.
 
-    This is a modified version of the dominance frontiers algorithm as
-    implemented by networkx.
+    This is a modified version of the dominance frontiers algorithm as implemented by networkx.
 
-    :param sdfg: The SDFG for which to compute the acyclic dominance frontier.
+    :param cfg: The CFG for which to compute the acyclic dominance frontier.
     :param idom: Optional precomputed immediate dominators.
-    :return: A dictionary keyed by states, containing the dominance frontier
-             for each SDFG state.
+    :return: A dictionary keyed by control flow blocks, containing the dominance frontier for each control flow block.
     """
-    idom = idom or nx.immediate_dominators(sdfg.nx, sdfg.start_state)
+    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
 
-    dom_frontiers = {state: set() for state in sdfg.nodes()}
+    dom_frontiers = {block: set() for block in cfg.nodes()}
     for u in idom:
-        if len(sdfg.nx.pred[u]) >= 2:
-            for v in sdfg.nx.pred[u]:
+        if len(cfg.nx.pred[u]) >= 2:
+            for v in cfg.nx.pred[u]:
                 if v in idom:
                     df_candidates = set()
                     while v != idom[u]:
@@ -67,134 +66,139 @@ def back_edges(sdfg: SDFG,
     return [e for e in sdfg.edges() if e.dst in alldoms[e.src]]
 
 
-def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
+def block_parent_tree(cfg: ControlFlowRegion,
+                      idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
+                      with_loops: bool = True) -> Dict[ControlFlowBlock, ControlFlowBlock]:
     """
-    Computes an upward-pointing tree of each state, pointing to the "parent
-    state" it belongs to (in terms of structured control flow). More formally,
-    each state is either mapped to its immediate dominator with out degree > 2,
-    one state upwards if state occurs after a loop, or the start state if 
-    no such states exist.
+    Computes an upward-pointing tree of each control flow block, pointing to the "parent block" it belongs to (in terms
+    of structured control flow). More formally, each block is either mapped to its immediate dominator with out
+    degree >= 2, one block upwards if the block occurs after a loop and `with_loops` is True, or the start block if 
+    no such block exist.
 
     :param sdfg: The SDFG to analyze.
-    :return: A dictionary that maps each state to a parent state, or None
-             if the root (start) state.
+    :param idom: An optional, pre-computed immediate dominator dictionary.
+    :param with_loops: Respect loops in the parent computation, mapping blocks to a parent one block upwards of a loop
+                       if the block occurs after a loop. Defaults to true.
+    :return: A dictionary that maps each block to a parent block, or None if the root (start) block.
     """
-    idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
-    alldoms = all_dominators(sdfg, idom)
-    loopexits: Dict[SDFGState, SDFGState] = defaultdict(lambda: None)
+    idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
+    if with_loops:
+        alldoms = all_dominators(cfg, idom)
+        loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
 
-    # First, annotate loops
-    for be in back_edges(sdfg, idom, alldoms):
-        guard = be.dst
-        laststate = be.src
-        if loopexits[guard] is not None:
-            continue
+        # First, annotate loops
+        for be in back_edges(cfg, idom, alldoms):
+            guard = be.dst
+            laststate = be.src
+            if loopexits[guard] is not None:
+                continue
 
-        # Natural loops = one edge leads back to loop, another leads out
-        in_edges = sdfg.in_edges(guard)
-        out_edges = sdfg.out_edges(guard)
+            # Natural loops = one edge leads back to loop, another leads out
+            in_edges = cfg.in_edges(guard)
+            out_edges = cfg.out_edges(guard)
 
-        # A loop guard has two or more incoming edges (1 increment and
-        # n init, all identical), and exactly two outgoing edges (loop and
-        # exit loop).
-        if len(in_edges) < 2 or len(out_edges) != 2:
-            continue
+            # A loop guard has two or more incoming edges (1 increment and
+            # n init, all identical), and exactly two outgoing edges (loop and
+            # exit loop).
+            if len(in_edges) < 2 or len(out_edges) != 2:
+                continue
 
-        # The outgoing edges must be negations of one another.
-        if out_edges[0].data.condition_sympy() != (sp.Not(out_edges[1].data.condition_sympy())):
-            continue
+            # The outgoing edges must be negations of one another.
+            if out_edges[0].data.condition_sympy() != (sp.Not(out_edges[1].data.condition_sympy())):
+                continue
 
-        # Find all nodes that are between each branch and the guard.
-        # Condition makes sure the entire cycle is dominated by this node.
-        # If not, we're looking at a guard for a nested cycle, which we ignore for
-        # this cycle.
-        oa, ob = out_edges[0].dst, out_edges[1].dst
+            # Find all nodes that are between each branch and the guard.
+            # Condition makes sure the entire cycle is dominated by this node.
+            # If not, we're looking at a guard for a nested cycle, which we ignore for
+            # this cycle.
+            oa, ob = out_edges[0].dst, out_edges[1].dst
 
-        reachable_a = False
-        a_reached_guard = False
+            reachable_a = False
+            a_reached_guard = False
 
-        def cond_a(parent, child):
-            nonlocal reachable_a
-            nonlocal a_reached_guard
-            if reachable_a:  # If last state has been reached, stop traversal
-                return False
-            if parent is laststate or child is laststate:  # Reached back edge
-                reachable_a = True
-                a_reached_guard = True
-                return False
-            if oa not in alldoms[child]:  # Traversed outside of the loop
-                return False
-            if child is guard:  # Traversed back to guard
-                a_reached_guard = True
-                return False
-            return True  # Keep traversing
+            def cond_a(parent, child):
+                nonlocal reachable_a
+                nonlocal a_reached_guard
+                if reachable_a:  # If last state has been reached, stop traversal
+                    return False
+                if parent is laststate or child is laststate:  # Reached back edge
+                    reachable_a = True
+                    a_reached_guard = True
+                    return False
+                if oa not in alldoms[child]:  # Traversed outside of the loop
+                    return False
+                if child is guard:  # Traversed back to guard
+                    a_reached_guard = True
+                    return False
+                return True  # Keep traversing
 
-        reachable_b = False
-        b_reached_guard = False
+            reachable_b = False
+            b_reached_guard = False
 
-        def cond_b(parent, child):
-            nonlocal reachable_b
-            nonlocal b_reached_guard
-            if reachable_b:  # If last state has been reached, stop traversal
-                return False
-            if parent is laststate or child is laststate:  # Reached back edge
-                reachable_b = True
-                b_reached_guard = True
-                return False
-            if ob not in alldoms[child]:  # Traversed outside of the loop
-                return False
-            if child is guard:  # Traversed back to guard
-                b_reached_guard = True
-                return False
-            return True  # Keep traversing
+            def cond_b(parent, child):
+                nonlocal reachable_b
+                nonlocal b_reached_guard
+                if reachable_b:  # If last state has been reached, stop traversal
+                    return False
+                if parent is laststate or child is laststate:  # Reached back edge
+                    reachable_b = True
+                    b_reached_guard = True
+                    return False
+                if ob not in alldoms[child]:  # Traversed outside of the loop
+                    return False
+                if child is guard:  # Traversed back to guard
+                    b_reached_guard = True
+                    return False
+                return True  # Keep traversing
 
-        list(sdutil.dfs_conditional(sdfg, (oa, ), cond_a))
-        list(sdutil.dfs_conditional(sdfg, (ob, ), cond_b))
+            list(sdutil.dfs_conditional(cfg, (oa, ), cond_a))
+            list(sdutil.dfs_conditional(cfg, (ob, ), cond_b))
 
-        # Check which candidate states led back to guard
-        is_a_begin = a_reached_guard and reachable_a
-        is_b_begin = b_reached_guard and reachable_b
+            # Check which candidate states led back to guard
+            is_a_begin = a_reached_guard and reachable_a
+            is_b_begin = b_reached_guard and reachable_b
 
-        loop_state = None
-        exit_state = None
-        if is_a_begin and not is_b_begin:
-            loop_state = oa
-            exit_state = ob
-        elif is_b_begin and not is_a_begin:
-            loop_state = ob
-            exit_state = oa
-        if loop_state is None or exit_state is None:
-            continue
-        loopexits[guard] = exit_state
+            loop_state = None
+            exit_state = None
+            if is_a_begin and not is_b_begin:
+                loop_state = oa
+                exit_state = ob
+            elif is_b_begin and not is_a_begin:
+                loop_state = ob
+                exit_state = oa
+            if loop_state is None or exit_state is None:
+                continue
+            loopexits[guard] = exit_state
 
     # Get dominators
-    parents: Dict[SDFGState, SDFGState] = {}
-    step_up: Set[SDFGState] = set()
-    for state in sdfg.nodes():
-        curdom = idom[state]
-        if curdom == state:
-            parents[state] = None
+    parents: Dict[ControlFlowBlock, ControlFlowBlock] = {}
+    step_up: Set[ControlFlowBlock] = set()
+    for block in cfg.nodes():
+        curdom = idom[block]
+        if curdom == block:
+            parents[block] = None
             continue
 
         while curdom != idom[curdom]:
-            if sdfg.out_degree(curdom) > 1:
+            if cfg.out_degree(curdom) > 1:
                 break
             curdom = idom[curdom]
 
-        if sdfg.out_degree(curdom) == 2 and loopexits[curdom] is not None:
-            p = state
+        if with_loops and cfg.out_degree(curdom) == 2 and loopexits[curdom] is not None:
+            p = block
             while p != curdom and p != loopexits[curdom]:
                 p = idom[p]
             if p == loopexits[curdom]:
                 # Dominated by loop exit: do one more step up
-                step_up.add(state)
+                step_up.add(block)
 
-        parents[state] = curdom
+        parents[block] = curdom
 
-    # Step up
-    for state in step_up:
-        if parents[state] is not None:
-            parents[state] = parents[parents[state]]
+    if with_loops:
+        # Step up for post-loop blocks.
+        for block in step_up:
+            if parents[block] is not None:
+                parents[block] = parents[parents[block]]
 
     return parents
 
@@ -288,7 +292,7 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
     :return: Generator that yields states in state-order.
     """
     # Get parent states
-    ptree = state_parent_tree(sdfg)
+    ptree = block_parent_tree(sdfg)
 
     # Annotate branches
     branch_merges: Dict[SDFGState, SDFGState] = {}

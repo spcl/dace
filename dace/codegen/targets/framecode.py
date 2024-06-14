@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import copy
-import functools
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
@@ -11,16 +10,16 @@ import numpy as np
 import dace
 from dace import config, data, dtypes
 from dace.cli import progress
-from dace.codegen import control_flow as cflow
+from dace.codegen import control_flow as cflow, control_flow_2 as cflow2
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.common import codeblock_to_cpp, sym2cpp, unparse_interstate_edge
+from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.targets.target import TargetCodeGenerator
-from dace.frontend.python import wrappers
-from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
-from dace.sdfg.analysis import cfg
+from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.state import ControlFlowRegion
 from dace.transformation.passes.analysis import StateReachability
 
 
@@ -406,9 +405,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # Footer
             callsite_stream.write('}', sdfg)
 
-    def generate_state(self, sdfg, state, global_stream, callsite_stream, generate_state_footer=True):
-
-        sid = sdfg.node_id(state)
+    def generate_state(self,
+                       state: SDFGState,
+                       global_stream: CodeIOStream,
+                       callsite_stream: CodeIOStream,
+                       generate_state_footer: bool = True):
+        sid = state.parent_graph.node_id(state)
+        sdfg = state.sdfg
 
         # Emit internal transient array allocation
         self.allocate_arrays_in_scope(sdfg, state, global_stream, callsite_stream)
@@ -430,7 +433,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         components = dace.sdfg.concurrent_subgraphs(state)
 
         if len(components) <= 1:
-            self._dispatcher.dispatch_subgraph(sdfg, state, sid, global_stream, callsite_stream, skip_entry_node=False)
+            self._dispatcher.dispatch_subgraph(sdfg, state.parent_graph, state, sid, global_stream, callsite_stream,
+                                               skip_entry_node=False)
         else:
             if sdfg.openmp_sections:
                 callsite_stream.write("#pragma omp parallel sections\n{")
@@ -455,21 +459,24 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if instr is not None:
                     instr.on_state_end(sdfg, state, callsite_stream, global_stream)
 
-    def generate_states(self, sdfg, global_stream, callsite_stream):
+    def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
         states_generated = set()
 
-        opbar = progress.OptionalProgressBar(sdfg.number_of_nodes(), title=f'Generating code (SDFG {sdfg.cfg_id})')
+        opbar = progress.OptionalProgressBar(len(sdfg.states()), title=f'Generating code (SDFG {sdfg.cfg_id})')
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
             stream = CodeIOStream()
-            self._dispatcher.dispatch_state(sdfg, state, global_stream, stream)
+            self._dispatcher.dispatch_state(state, global_stream, stream)
             opbar.next()
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
-        # Handle specialized control flow
-        if config.Config.get_bool('optimizer', 'detect_control_flow'):
+        if sdfg.using_experimental_blocks:
+            # Use control flow blocks embedded in the SDFG to generate control flow.
+            cft = cflow2.structured_control_flow_tree(sdfg, dispatch_state)
+        elif config.Config.get_bool('optimizer', 'detect_control_flow'):
+            # Handle specialized control flow
             # Avoid import loop
             from dace.transformation import helpers as xfh
 
@@ -483,8 +490,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_topological = list(sdfg.topological_sort(sdfg.start_state))
             last = states_topological[-1]
             cft = cflow.GeneralBlock(dispatch_state, None,
-                                     [cflow.SingleState(dispatch_state, s, s is last) for s in states_topological], [],
-                                     [], [], [], False)
+                                    [cflow.SingleState(dispatch_state, s, s is last) for s in states_topological],
+                                    [], [], [], [], False)
 
         callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
 
@@ -557,7 +564,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             array_names = sdfg.arrays.keys(
             )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
             # Iterate topologically to get state-order
-            for state in cfg.stateorder_topological_sort(sdfg):
+            for state in cfg_analysis.stateorder_topological_sort(sdfg):
                 for node in state.data_nodes():
                     if node.data not in array_names:
                         continue
@@ -992,11 +999,9 @@ def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState,
     Gets the closest common dominator and post-dominator for a list of states.
     Used for determining allocation of data used in branched states.
     """
-    from dace.sdfg.analysis import cfg
-
     # Get immediate dominators
     idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
-    alldoms = cfg.all_dominators(sdfg, idom)
+    alldoms = cfg_analysis.all_dominators(sdfg, idom)
 
     states = [a for a, _ in accesses]
     data_name = accesses[0][1].data
