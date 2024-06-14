@@ -91,13 +91,17 @@ def _make_sdfg():
 
     tasklet = s_init.add_tasklet('set_result', {'root_idx'}, {'result_out'}, 'result_out = 0 if i == root_idx else -1')
 
-    s_init.add_memlet_path(root_in, map_entry, tasklet, dst_conn='root_idx', memlet=dace.Memlet.simple(root_in.data, '0'))
+    s_init.add_memlet_path(root_in,
+                           map_entry,
+                           tasklet,
+                           dst_conn='root_idx',
+                           memlet=dace.Memlet.simple(root_in.data, '0'))
 
     s_init.add_memlet_path(tasklet,
-                        map_exit,
-                        result_out,
-                        src_conn='result_out',
-                        memlet=dace.Memlet.simple(result_out.data, 'i'))
+                           map_exit,
+                           result_out,
+                           src_conn='result_out',
+                           memlet=dace.Memlet.simple(result_out.data, 'i'))
 
     # -------------------------------------------------------------
 
@@ -145,6 +149,7 @@ def _make_sdfg():
     bfs.fill_scope_connectors()
     bfs.validate()
     return bfs, s_init
+
 
 # -----------------------------
 # Helper functions to init data
@@ -268,7 +273,6 @@ if res[neighbor] == -1:
     state.add_memlet_path(s_frontier_io, front_out, memlet=dace.Memlet.simple(front_out.data, '0'))
 
 
-
 @pytest.mark.gpu
 def test_persistent_fusion():
     sdfg, s_init = _make_sdfg()
@@ -328,7 +332,6 @@ def test_persistent_fusion():
 def test_persistent_fusion_interstate():
     N = dace.symbol('N', dtype=dace.int64)
 
-
     @dace.program(auto_optimize=False, device=dace.DeviceType.GPU)
     def func(A: dace.float64[N], B: dace.float64[N]):
         a = 10.2
@@ -357,11 +360,48 @@ def test_persistent_fusion_interstate():
     func.f(aref, B)
 
     sdfg(A=A, B=B, N=N)
-    
+
     assert np.allclose(A, aref)
 
 
-# Actual execution
+@pytest.mark.gpu
+def test_output_view():
+    N = dace.symbol('N')
+    M = dace.symbol('M')
+
+    @dace.program
+    def correlation_kernel(float_n: dace.float64, data: dace.float64[N, M]):
+
+        mean = np.mean(data, axis=0)
+        # stddev = np.std(data, axis=0)
+        stddev = np.sqrt(np.mean(np.subtract(data, mean)**2, axis=0))
+        stddev[stddev <= 0.1] = 1.0
+        # data -= mean
+        np.subtract(data, mean, out=data)
+        # data /= np.sqrt(float_n) * stddev
+        np.divide(data, np.sqrt(float_n) * stddev, out=data)
+        corr = np.eye(M, dtype=data.dtype)
+        for i in range(M - 1):
+            # corr[i, i+1:M] = np.transpose(data[:, i+1:M]) @ data[:, i]
+            corr[i, i + 1:M] = data[:, i] @ data[:, i + 1:M]
+            corr[i + 1:M, i] = corr[i, i + 1:M]
+
+        return corr
+
+    sdfg = correlation_kernel.to_sdfg()
+    sdfg.apply_gpu_transformations()
+
+    # Apply persistent fusion on all but the first and last nodes
+    content_states = set(sdfg.states()) - {sdfg.start_state, sdfg.sink_nodes()[0]}
+    transform = GPUPersistentKernel()
+    transform.setup_match(SubgraphView(sdfg, content_states))
+    transform.kernel_prefix = 'top_kernel'
+    transform.apply(sdfg)
+
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     test_persistent_fusion()
     test_persistent_fusion_interstate()
+    test_output_view()
