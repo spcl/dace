@@ -7,7 +7,7 @@ from dace.frontend.python import astutils
 from dace.sdfg import SDFG, InterstateEdge, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import CodeBlock
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalRegion
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, ConditionalRegion, ReturnState
 from dace.transformation import transformation
 
 
@@ -202,7 +202,7 @@ class ConditionalRegionInline(transformation.MultiStateTransformation):
         endif_state = parent.add_state(self.conditional.label + '_endinf')
 
         # Add all loop states and make sure to keep track of all the ones that need to be connected in the end.
-        connect_to_tail: Set[SDFGState] = set()
+        connect_to_end: Set[SDFGState] = set()
         break_states: Set[SDFGState] = set()
         continue_states: Set[SDFGState] = set()
         for node in self.conditional.nodes():
@@ -214,8 +214,8 @@ class ConditionalRegionInline(transformation.MultiStateTransformation):
             elif isinstance(node, LoopRegion.ContinueState):
                 node.__class__ = SDFGState
                 continue_states.add(node)
-            elif self.conditional.out_degree(node) == 0:
-                connect_to_tail.add(node)
+            elif self.conditional.out_degree(node) == 0 and not isinstance(node, ReturnState):
+                connect_to_end.add(node)
 
         # Add all internal loop edges.
         for edge in self.conditional.edges():
@@ -235,7 +235,7 @@ class ConditionalRegionInline(transformation.MultiStateTransformation):
         parent.add_edge(guard_state, self.conditional.else_branch, InterstateEdge(self.conditional.condition_else_expr))
         # Connect any end states from the loop's internal state machine to the tail state so they end a
         # loop iteration. Do the same for any continue states, and connect any break states to the end of the loop.
-        for node in connect_to_tail:
+        for node in connect_to_end:
             parent.add_edge(node, endif_state, InterstateEdge())
         parent.add_edge(self.conditional.else_branch, endif_state, InterstateEdge())
         # Remove the original loop.
