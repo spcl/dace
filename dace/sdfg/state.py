@@ -2873,11 +2873,10 @@ class ConditionalRegion(ControlFlowRegion):
 
     def __init__(self, label: str, condition_expr: str, condition_else_expr: str):
         super().__init__(label)
-        self.else_branch = ControlFlowRegion()
+        self.else_branch = ControlFlowRegion(label + "else", self.sdfg)
         self.condition_expr = CodeBlock(condition_expr)
         self.condition_else_expr = CodeBlock(condition_else_expr)
         self.else_branch.parent_graph = self
-        self.else_branch.label = label + "else"
         self.update_cfg_list([self.else_branch])
 
     def _used_symbols_internal(self,
@@ -3030,3 +3029,12 @@ class ConditionalRegion(ControlFlowRegion):
     def replace(self, name: str, new_name: str):
         super().replace(name, new_name)
         self.else_branch.replace(name, new_name)
+
+class ReturnState(ControlFlowRegion):
+    """ Special state representing return expression. """
+
+    def __init__(self, label: str):
+        super().__init__(label)
+
+    def __repr__(self) -> str:
+        return f"ControlFlowRegion ({self.label}) [Return]"

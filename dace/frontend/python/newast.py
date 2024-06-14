@@ -32,13 +32,13 @@ from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import ControlFlowBlock, LoopRegion, ControlFlowRegion, ConditionalRegion
+from dace.sdfg.state import ControlFlowBlock, LoopRegion, ControlFlowRegion, ConditionalRegion, ReturnState
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
 import numpy
 import sympy
-
+ReturnState
 # register replacements in oprepo
 import dace.frontend.python.replacements
 from dace.frontend.python.replacements import _sym_type, _broadcast_to
@@ -2553,6 +2553,7 @@ class ProgramVisitor(ExtNodeVisitor):
         cond, cond_else, _ = self._visit_test(node.test)
 
         cond_region = ConditionalRegion(label=f'if_{node.lineno}', condition_expr=cond, condition_else_expr=cond_else)
+        self.cfg_target.add_node(cond_region)
         self._on_block_added(cond_region)
         self.last_block.debuginfo = self.current_lineinfo
 
@@ -4658,7 +4659,11 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Return(self, node: ast.Return):
         # Modify node value to become an expression
         new_node = ast.copy_location(ast.Expr(value=node.value), node)
-
+        return_state = ReturnState(f"return_{node.lineno}")
+        self.cfg_target.add_node(return_state)
+        self._on_block_added(return_state)
+        prev_cfg_target = self.cfg_target
+        self.cfg_target = return_state
         # Return values can either be tuples or a single object
         if isinstance(node.value, (ast.Tuple, ast.List)):
             ast_tuple = ast.copy_location(
@@ -4668,6 +4673,7 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             ast_name = ast.copy_location(ast.Name(id='__return'), node)
             self._visit_assign(new_node, ast_name, None, is_return=True)
+        self.cfg_target = prev_cfg_target
 
     def visit_With(self, node, is_async=False):
         # "with dace.tasklet" syntax
