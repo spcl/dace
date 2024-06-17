@@ -473,36 +473,29 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const T& b)
+        template<typename T, typename U>
+        DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
-            return (T)std::pow(a, b);
+            return std::pow(a, b);
         }
 
 #ifndef DACE_XILINX
         static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
         {
-/*#ifndef __CUDA_ARCH__
-            return std::pow(a, b);
-#else*/
             if (b < 0) return 0;
             int result = 1;
             for (int i = 0; i < b; ++i)
                 result *= a;
             return result;
-//#endif
         }
+
         static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
                                        const unsigned int& b)
         {
-/*#ifndef __CUDA_ARCH__
-            return std::pow(a, b);
-#else*/
             unsigned int result = 1;
             for (unsigned int i = 0; i < b; ++i)
                 result *= a;
             return result;
-//#endif
         }
 #endif
 
@@ -512,17 +505,6 @@ namespace dace
             for (unsigned int i = 1; i < b; ++i)
                 result *= a;
             return result;
-        }
-
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const int& b)
-        {
-            return (T)std::pow(a, (T)b);
-        }
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const unsigned int& b)
-        {
-            return (T)std::pow(a, (T)b);
         }
 
         template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>

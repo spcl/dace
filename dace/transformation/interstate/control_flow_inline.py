@@ -43,7 +43,8 @@ class ControlFlowRegionInline(transformation.MultiStateTransformation):
         # Add all region states and make sure to keep track of all the ones that need to be connected in the end.
         to_connect: Set[SDFGState] = set()
         for node in self.region.nodes():
-            parent.add_node(node)
+            node.label = self.region.label + '_' + node.label
+            parent.add_node(node, ensure_unique_name=True)
             if self.region.out_degree(node) == 0:
                 to_connect.add(node)
 
@@ -114,7 +115,7 @@ class LoopRegionInline(transformation.MultiStateTransformation):
         connect_to_end: Set[SDFGState] = set()
         for node in self.loop.nodes():
             node.label = self.loop.label + '_' + node.label
-            parent.add_node(node)
+            parent.add_node(node, ensure_unique_name=True)
             if isinstance(node, LoopRegion.BreakState):
                 node.__class__ = SDFGState
                 connect_to_end.add(node)

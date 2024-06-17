@@ -1092,6 +1092,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
 
     is_collapsed = Property(dtype=bool, desc='Show this block as collapsed', default=False)
 
+    pre_conditions = DictProperty(key_type=str, value_type=list, desc='Pre-conditions for this block')
+    post_conditions = DictProperty(key_type=str, value_type=list, desc='Post-conditions for this block')
+    invariant_conditions = DictProperty(key_type=str, value_type=list, desc='Invariant conditions for this block')
+
     _label: str
 
     def __init__(self,
@@ -1104,6 +1108,9 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self._sdfg = sdfg
         self._parent_graph = parent
         self.is_collapsed = False
+        self.pre_conditions = {}
+        self.post_conditions = {}
+        self.invariant_conditions = {}
 
     def set_default_lineinfo(self, lineinfo: dace.dtypes.DebugInfo):
         """
@@ -2458,9 +2465,19 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             self._cached_start_block = None
         return super().add_edge(src, dst, data)
 
-    def add_node(self, node, is_start_block=False, *, is_start_state: bool=None):
+    def _ensure_unique_block_name(self, proposed: Optional[str] = None) -> str:
+        if self._labels is None or len(self._labels) != self.number_of_nodes():
+            self._labels = set(s.label for s in self.nodes())
+        return dt.find_new_name(proposed or 'block', self._labels)
+
+    def add_node(self, node, is_start_block: bool = False, ensure_unique_name: bool = False, *,
+                 is_start_state: bool=None):
         if not isinstance(node, ControlFlowBlock):
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(node)))
+
+        if ensure_unique_name:
+            node.label = self._ensure_unique_block_name(node.label)
+
         super().add_node(node)
         self._cached_start_block = None
         node.parent_graph = self
@@ -2478,11 +2495,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             self._cached_start_block = node
 
     def add_state(self, label=None, is_start_block=False, *, is_start_state: bool=None) -> SDFGState:
-        if self._labels is None or len(self._labels) != self.number_of_nodes():
-            self._labels = set(s.label for s in self.all_control_flow_blocks())
-        label = label or 'state'
-        existing_labels = self._labels
-        label = dt.find_new_name(label, existing_labels)
+        label = self._ensure_unique_block_name(label)
         state = SDFGState(label)
         self._labels.add(label)
         start_block = is_start_block

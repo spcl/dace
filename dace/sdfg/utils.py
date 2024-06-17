@@ -16,9 +16,8 @@ from dace.sdfg.nodes import Node, NestedSDFG
 from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion, ControlFlowBlock, ControlFlowRegion, GraphT, ConditionalRegion
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
-from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
+from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from dace.cli.progress import optional_progressbar
-from string import ascii_uppercase
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Union
 
 
@@ -1218,8 +1217,6 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     start = time.time()
 
     for sd in sdfg.all_sdfgs_recursive():
-        id = sd.cfg_id
-
         for cfg in sd.all_control_flow_regions():
             while True:
                 edges = list(cfg.nx.edges)
@@ -1235,7 +1232,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                         continue
                     candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
                     sf = StateFusion()
-                    sf.setup_match(cfg, id, -1, candidate, 0, override=True)
+                    sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
                     if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
                         sf.apply(cfg, sd)
                         applied += 1
@@ -1356,9 +1353,10 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     for nsdfg_node in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
         # We have to reevaluate every time due to changing IDs
         # e.g., InlineMultistateSDFG may fission states
-        parent_state = nsdfg_node.sdfg.parent
-        parent_sdfg = parent_state.parent
-        parent_state_id = parent_sdfg.node_id(parent_state)
+        nsdfg: SDFG = nsdfg_node.sdfg
+        parent_state = nsdfg.parent
+        parent_sdfg = parent_state.sdfg
+        parent_state_id = parent_state.block_id
 
         if multistate:
             candidate = {
@@ -1366,7 +1364,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             }
             inliner = InlineMultistateSDFG()
             inliner.setup_match(sdfg=parent_sdfg,
-                                cfg_id=parent_sdfg.sdfg_id,
+                                cfg_id=parent_state.parent_graph.cfg_id,
                                 state_id=parent_state_id,
                                 subgraph=candidate,
                                 expr_index=0,
@@ -1381,7 +1379,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
         }
         inliner = InlineSDFG()
         inliner.setup_match(sdfg=parent_sdfg,
-                            cfg_id=parent_sdfg.sdfg_id,
+                            cfg_id=parent_state.parent_graph.cfg_id,
                             state_id=parent_state_id,
                             subgraph=candidate,
                             expr_index=0,
