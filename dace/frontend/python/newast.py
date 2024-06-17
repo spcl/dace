@@ -4668,6 +4668,7 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             ast_name = ast.copy_location(ast.Name(id='__return'), node)
             self._visit_assign(new_node, ast_name, None, is_return=True)
+        self._add_state("")
         self.last_block.__class__ = ReturnState
 
     def visit_With(self, node, is_async=False):

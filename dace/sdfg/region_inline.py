@@ -146,7 +146,7 @@ def inline_loop_region(loop: LoopRegion, parent: ControlFlowRegion):
 
     # Connect any end states from the loop's internal state machine to the tail state so they end a
     # loop iteration. Do the same for any continue states, and connect any break states to the end of the loop.
-    for node in continue_states + connect_to_tail:
+    for node in continue_states | connect_to_tail:
         parent.add_edge(node, loop_tail_state, InterstateEdge())
     for node in break_states:
         parent.add_edge(node, end_state, InterstateEdge())
