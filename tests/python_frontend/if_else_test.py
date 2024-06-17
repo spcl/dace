@@ -2,30 +2,40 @@
 import dace
 
 def test_if():
-    @dace.program(use_experimental_cfg_blocks=False)
+    @dace.program(use_experimental_cfg_blocks=True)
     def prog(i: int):
         if i < 20:
             return 11
         return 10
-    with dace.config.set_temporary('optimizer', 'automatic_simplification', value=False):
-        prog.to_sdfg().save("test_if.sdfg")
-        assert prog(i=10) == 11
-        assert prog(i=30) == 10
+    assert prog(i=10) == 11
+    assert prog(i=30) == 10
 
 def test_if_else():
     @dace.program(use_experimental_cfg_blocks=True)
     def prog(i: int):
         if i > 0:
-            i = 30
+            return 30
         else:
-            i = 40
-        return i
-    with dace.config.set_temporary('optimizer', 'automatic_simplification', value=True):
-        sdfg = prog.to_sdfg()
-        sdfg.save("if_else_test.sdfg")
-        assert prog(i=+1) == 30
-        assert prog(i=-1) == 40
+            return 40
+    assert prog(i=+1) == 30
+    assert prog(i=-1) == 40
+
+def test_nested_if_else():
+    @dace.program(use_experimental_cfg_blocks=True)
+    def prog(i: int):
+        if i == 0:
+            return 0
+        elif i == 1:
+            return 10
+        elif i == 2:
+            return 20
+        elif i == 3:
+            return 30
+    for i in range(4):
+        assert prog(i) == 10*i
+
 
 if __name__ == "__main__":
-    # test_if()
+    test_if()
     test_if_else()
+    test_nested_if_else()

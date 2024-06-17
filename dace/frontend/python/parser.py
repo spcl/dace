@@ -15,6 +15,7 @@ from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
 from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
+from dace.sdfg.region_inline import inline
 
 try:
     from typing import get_origin, get_args
@@ -494,9 +495,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
 
         if not self.use_experimental_cfg_blocks:
-            sdutils.inline_conditional_blocks(sdfg)
-            sdutils.inline_loop_blocks(sdfg)
-            sdutils.inline_control_flow_regions(sdfg)
+            inline(sdfg)
         sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
 
         # Apply simplification pass automatically

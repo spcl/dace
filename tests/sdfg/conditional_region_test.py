@@ -1,8 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+from dace.sdfg.region_inline import inline
 from dace.sdfg.state import ConditionalRegion
-from dace.sdfg.utils import inline_conditional_blocks, inline_control_flow_regions
 
 def create_conditional_sdfg():
     sdfg = dace.SDFG('regular_if')
@@ -31,8 +31,7 @@ def test_conditional_regular_if_true():
 
     assert sdfg.is_valid()
 
-    inline_conditional_blocks(sdfg)
-    inline_control_flow_regions(sdfg)
+    inline(sdfg)
     
     a_validation = np.array([20], dtype=np.float32)
     a_test = np.zeros((1,), dtype=np.float32)
@@ -44,8 +43,7 @@ def test_conditional_regular_if_false():
 
     assert sdfg.is_valid()
 
-    inline_conditional_blocks(sdfg)
-    inline_control_flow_regions(sdfg)
+    inline(sdfg)
     
     a_validation = np.array([30], dtype=np.float32)
     a_test = np.zeros((1,), dtype=np.float32)

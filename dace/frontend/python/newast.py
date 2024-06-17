@@ -4659,11 +4659,6 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Return(self, node: ast.Return):
         # Modify node value to become an expression
         new_node = ast.copy_location(ast.Expr(value=node.value), node)
-        return_state = ReturnState(f"return_{node.lineno}")
-        self.cfg_target.add_node(return_state)
-        self._on_block_added(return_state)
-        prev_cfg_target = self.cfg_target
-        self.cfg_target = return_state
         # Return values can either be tuples or a single object
         if isinstance(node.value, (ast.Tuple, ast.List)):
             ast_tuple = ast.copy_location(
@@ -4673,7 +4668,7 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             ast_name = ast.copy_location(ast.Name(id='__return'), node)
             self._visit_assign(new_node, ast_name, None, is_return=True)
-        self.cfg_target = prev_cfg_target
+        self.last_block.__class__ = ReturnState
 
     def visit_With(self, node, is_async=False):
         # "with dace.tasklet" syntax

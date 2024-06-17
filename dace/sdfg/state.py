@@ -2909,8 +2909,10 @@ class ConditionalRegion(ControlFlowRegion):
         if replace_keys:
             from dace.sdfg.replace import replace_properties_dict
             replace_properties_dict(self, repl, symrepl)
+            replace_properties_dict(self.else_branch, repl, symrepl)
 
         super().replace_dict(repl, symrepl, replace_in_graph)
+        self.else_branch.replace_dict(repl, symrepl, replace_in_graph)
 
     def to_json(self, parent=None):
         json = ControlFlowBlock.to_json(self, parent)
@@ -3030,11 +3032,15 @@ class ConditionalRegion(ControlFlowRegion):
         super().replace(name, new_name)
         self.else_branch.replace(name, new_name)
 
-class ReturnState(ControlFlowRegion):
+class ReturnState(SDFGState):
     """ Special state representing return expression. """
 
     def __init__(self, label: str):
         super().__init__(label)
 
     def __repr__(self) -> str:
-        return f"ControlFlowRegion ({self.label}) [Return]"
+        return f"State ({self.label}) [Return]"
+
+    def to_json(self, parent=None):
+        ReturnState.__name__ = "SDFGState"
+        return super().to_json(parent)

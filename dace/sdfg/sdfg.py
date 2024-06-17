@@ -21,6 +21,7 @@ import numpy as np
 import sympy as sp
 
 import dace
+from dace.sdfg.region_inline import inline
 import dace.serialize
 from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, properties, symbolic)
 from dace.sdfg.scope import ScopeTree
@@ -2222,9 +2223,8 @@ class SDFG(ControlFlowRegion):
 
             # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
             # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
-            sdutils.inline_conditional_blocks(sdfg)
-            sdutils.inline_loop_blocks(sdfg)
-            sdutils.inline_control_flow_regions(sdfg)
+            inline(sdfg)
+            sdfg.simplify()
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
