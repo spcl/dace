@@ -2527,26 +2527,14 @@ class ProgramVisitor(ExtNodeVisitor):
         self.cfg_target.add_edge(loop_region, postloop_block, dace.InterstateEdge(condition=f"{did_break_symbol} == 1"))
 
     def visit_Break(self, node: ast.Break):
-        if isinstance(self.cfg_target, LoopRegion):
-            break_state = self.cfg_target.add_state('break_%s' % node.lineno, is_break=True)
-            self._on_block_added(break_state)
-        else:
-            error_msg = "'break' is only supported inside loops "
-            if self.nested:
-                error_msg += ("('break' is not supported in Maps and cannot be used in nested DaCe program calls to "
-                              " break out of loops of outer scopes)")
-            raise DaceSyntaxError(self, node, error_msg)
+        break_state = LoopRegion.BreakState(f"break_{node.lineno}")
+        self.cfg_target.add_node(break_state)
+        self._on_block_added(break_state)
 
     def visit_Continue(self, node: ast.Continue):
-        if isinstance(self.cfg_target, LoopRegion):
-            continue_state = self.cfg_target.add_state('continue_%s' % node.lineno, is_continue=True)
-            self._on_block_added(continue_state)
-        else:
-            error_msg = ("'continue' is only supported inside loops ")
-            if self.nested:
-                error_msg += ("('continue' is not supported in Maps and cannot be used in nested DaCe program calls to "
-                              " continue loops of outer scopes)")
-            raise DaceSyntaxError(self, node, error_msg)
+        continue_state = LoopRegion.ContinueState(f"continue_{node.lineno}")
+        self.cfg_target.add_node(continue_state)
+        self._on_block_added(continue_state)
 
     def visit_If(self, node: ast.If):
         # Generate conditions
