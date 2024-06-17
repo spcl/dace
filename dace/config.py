@@ -44,7 +44,7 @@ def temporary_config():
         Config.save(file=fp)
         yield
         fp.seek(0)  # rewind to the beginning of the file.
-        Config.load(fp)
+        Config.load(file=fp)
 
 
 def _env2bool(envval):
