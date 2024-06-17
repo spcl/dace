@@ -172,7 +172,7 @@ class Config(object):
             assert filename is None
             Config._config = yaml.load(file.read(), Loader=yaml.SafeLoader)
         else:
-            with open(Config._cfg_filename if filename else filename, 'r') as f:
+            with open(filename if filename else Config._cfg_filename, 'r') as f:
                 Config._config = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
         if Config._config is None:
