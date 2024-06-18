@@ -889,8 +889,6 @@ def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Ca
                 else:
                     warnings.warn('Skipping ' + function_name + ' from ' + cls.__name__ +
                                   ' due to incompatibility with experimental control flow blocks')
-            else:
-                raise ValueError('Expected SDFG as first argument to ' + cls.__name__ + '.' + function_name)
         setattr(cls, function_name, blocksafe_wrapper)
 
 
