@@ -467,6 +467,7 @@ def test_while_else():
             A[1] = 1.0
             A[1] = 1.0
 
+    while_else.to_sdfg().save("while_else_orig.sdfg")
     A = np.array([0.0, 0.0])
     expected = np.array([5.0, 1.0])
     while_else(A)
