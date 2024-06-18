@@ -459,7 +459,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if instr is not None:
                     instr.on_state_end(sdfg, state, callsite_stream, global_stream)
 
-    def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
+    def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream) -> Set[SDFGState]:
         states_generated = set()
 
         opbar = progress.OptionalProgressBar(len(sdfg.states()), title=f'Generating code (SDFG {sdfg.cfg_id})')
@@ -544,8 +544,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
     def determine_allocation_lifetime(self, top_sdfg: SDFG):
         """
-        Determines where (at which scope/state/SDFG) each data descriptor
-        will be allocated/deallocated.
+        Determines where (at which scope/state/SDFG) each data descriptor will be allocated/deallocated.
 
         :param top_sdfg: The top-level SDFG to determine for.
         """
@@ -564,7 +563,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             array_names = sdfg.arrays.keys(
             )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
             # Iterate topologically to get state-order
-            for state in cfg_analysis.stateorder_topological_sort(sdfg):
+            for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
                 for node in state.data_nodes():
                     if node.data not in array_names:
                         continue
@@ -932,7 +931,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             raise RuntimeError(
                 "Not all states were generated in SDFG {}!"
                 "\n  Generated: {}\n  Missing: {}".format(sdfg.label, [s.label for s in states_generated],
-                                                          [s.label for s in (set(sdfg.nodes()) - states_generated)]))
+                                                          [s.label for s in (set(sdfg.states()) - states_generated)]))
 
         # Deallocate transients
         self.deallocate_arrays_in_scope(sdfg, sdfg, global_stream, callsite_stream)
@@ -994,20 +993,20 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)
 
 
-def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState, nodes.AccessNode]]):
+def _get_dominator_and_postdominator(cfg: ControlFlowRegion, accesses: List[Tuple[SDFGState, nodes.AccessNode]]):
     """
     Gets the closest common dominator and post-dominator for a list of states.
     Used for determining allocation of data used in branched states.
     """
     # Get immediate dominators
-    idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
-    alldoms = cfg_analysis.all_dominators(sdfg, idom)
+    idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
+    alldoms = cfg_analysis.all_dominators(cfg, idom)
 
     states = [a for a, _ in accesses]
     data_name = accesses[0][1].data
 
     # Get immediate post-dominators
-    ipostdom, allpostdoms = utils.postdominators(sdfg, return_alldoms=True)
+    ipostdom, allpostdoms = utils.postdominators(cfg, return_alldoms=True)
 
     # All dominators and postdominators include the states themselves
     for state in states:

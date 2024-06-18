@@ -35,7 +35,6 @@ def test_for_loop():
     assert (np.array_equal(A, A_ref))
 
 
-'''
 @dace.program
 def for_loop_with_break_continue():
     A = dace.ndarray([10], dtype=dace.int32)
@@ -58,10 +57,8 @@ def test_for_loop_with_break_continue():
     A = sdfg()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
     assert (np.array_equal(A, A_ref))
-'''
 
 
-'''
 @dace.program
 def nested_for_loop():
     A = dace.ndarray([10, 10], dtype=dace.int32)
@@ -91,7 +88,6 @@ def test_nested_for_loop():
     for i in range(0, 10, 2):
         A_ref[i] = [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
     assert (np.array_equal(A, A_ref))
-'''
 
 
 @dace.program
@@ -567,8 +563,8 @@ def test_branch_in_while():
 
 if __name__ == "__main__":
     test_for_loop()
-    #test_for_loop_with_break_continue()
-    #test_nested_for_loop()
+    test_for_loop_with_break_continue()
+    test_nested_for_loop()
     test_while_loop()
     test_while_loop_with_break_continue()
     test_nested_while_loop()

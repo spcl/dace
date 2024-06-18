@@ -25,7 +25,7 @@ from dace.transformation.interstate import GPUTransformSDFG
 
 # Type hints
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import StateSubgraphView
+from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.dispatcher import DefinedType
 from typing import Any, List
@@ -104,9 +104,9 @@ class TensorCoreCodegen(TargetCodeGenerator):
                          nodedesc: dt.Array, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         pass  # Nothing to deallocate (wmma::fragment is a C++ object)
 
-    def copy_memory(self, sdfg: dace.SDFG, dfg: StateSubgraphView, state_id: int, src_node: nodes.Node,
-                    dst_node: nodes.Node, edge: MultiConnectorEdge, function_stream: CodeIOStream,
-                    callsite_stream: CodeIOStream):
+    def copy_memory(self, sdfg: dace.SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                    src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge, function_stream: CodeIOStream,
+                    callsite_stream: CodeIOStream) -> None:
         # Obtain source and destination information, handle access<->tasklet
         # If copying from tensor core fragments to/from tasklets, we only need
         # to emit a reference, as the fragment contains the memory.

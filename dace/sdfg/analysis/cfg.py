@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various analyses related to control flow in SDFGs. """
 from collections import defaultdict
-from dace.sdfg import SDFG, SDFGState, InterstateEdge, graph as gr, utils as sdutil
+from dace.sdfg import SDFGState, InterstateEdge, graph as gr, utils as sdutil
 import networkx as nx
 import sympy as sp
 from typing import Dict, Iterator, List, Optional, Set
@@ -40,30 +40,31 @@ def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[Contro
     return dom_frontiers
 
 
-def all_dominators(sdfg: SDFG, idom: Dict[SDFGState, SDFGState] = None) -> Dict[SDFGState, Set[SDFGState]]:
-    """ Returns a mapping between each state and all its dominators. """
-    idom = idom or nx.immediate_dominators(sdfg.nx, sdfg.start_state)
-    # Create a dictionary of all dominators of each node by using the
-    # transitive closure of the DAG induced by the idoms
+def all_dominators(
+        cfg: ControlFlowRegion,
+        idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+    """ Returns a mapping between each control flow block and all its dominators. """
+    idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    # Create a dictionary of all dominators of each node by using the transitive closure of the DAG induced by the idoms
     g = nx.DiGraph()
     for node, dom in idom.items():
         if node is dom:  # Skip root
             continue
         g.add_edge(node, dom)
     tc = nx.transitive_closure_dag(g)
-    alldoms: Dict[SDFGState, Set[SDFGState]] = {sdfg.start_state: set()}
+    alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = {cfg.start_block: set()}
     for node in tc:
         alldoms[node] = set(dst for _, dst in tc.out_edges(node))
 
     return alldoms
 
 
-def back_edges(sdfg: SDFG,
-               idom: Dict[SDFGState, SDFGState] = None,
-               alldoms: Dict[SDFGState, SDFGState] = None) -> List[gr.Edge[InterstateEdge]]:
-    """ Returns a list of back-edges in an SDFG. """
-    alldoms = alldoms or all_dominators(sdfg, idom)
-    return [e for e in sdfg.edges() if e.dst in alldoms[e.src]]
+def back_edges(cfg: ControlFlowRegion,
+               idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
+               alldoms: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> List[gr.Edge[InterstateEdge]]:
+    """ Returns a list of back-edges in a control flow graph. """
+    alldoms = alldoms or all_dominators(cfg, idom)
+    return [e for e in cfg.edges() if e.dst in alldoms[e.src]]
 
 
 def block_parent_tree(cfg: ControlFlowRegion,
@@ -203,28 +204,29 @@ def block_parent_tree(cfg: ControlFlowRegion,
     return parents
 
 
-def _stateorder_topological_sort(sdfg: SDFG,
-                                 start: SDFGState,
-                                 ptree: Dict[SDFGState, SDFGState],
-                                 branch_merges: Dict[SDFGState, SDFGState],
-                                 stop: SDFGState = None,
-                                 visited: Set[SDFGState] = None,
-                                 loopexits: Optional[Dict[SDFGState, SDFGState]] = None) -> Iterator[SDFGState]:
+def _blockorder_topological_sort(
+        cfg: ControlFlowRegion,
+        start: ControlFlowBlock,
+        ptree: Dict[ControlFlowBlock, ControlFlowBlock],
+        branch_merges: Dict[ControlFlowBlock, ControlFlowBlock],
+        stop: ControlFlowBlock = None,
+        visited: Set[ControlFlowBlock] = None,
+        loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None) -> Iterator[ControlFlowBlock]:
     """ 
-    Helper function for ``stateorder_topological_sort``. 
+    Helper function for ``blockorder_topological_sort``. 
 
-    :param sdfg: SDFG.
-    :param start: Starting state for traversal.
-    :param ptree: State parent tree (computed from ``state_parent_tree``).
-    :param branch_merges: Dictionary mapping from branch state to its merge state.
-    :param stop: Stopping state to not traverse through (merge state of a 
-                 branch or guard state of a loop).
-    :return: Generator that yields states in state-order from ``start`` to 
-             ``stop``.
+    :param cfg: CFG.
+    :param start: Starting block for traversal.
+    :param ptree: Block parent tree (computed from ``block_parent_tree``).
+    :param branch_merges: Dictionary mapping from branch blocks to its merge block.
+    :param stop: Stopping blocks to not traverse through (e.g., merge blocks of a branch or guard block of a loop).
+    :param visited: Optionally, a set of already visited blocks.
+    :param loopexits: An optional dictionary of already identified loop guard to exit block mappings.
+    :return: Generator that yields control flow blocks in execution order from ``start`` to ``stop``.
     """
     loopexits = loopexits if loopexits is not None else defaultdict(lambda: None)
 
-    # Traverse states in custom order
+    # Traverse blocks in custom order
     visited = visited or set()
     stack = [start]
     while stack:
@@ -234,8 +236,8 @@ def _stateorder_topological_sort(sdfg: SDFG,
         yield node
         visited.add(node)
 
-        oe = sdfg.out_edges(node)
-        if len(oe) == 0:  # End state
+        oe = cfg.out_edges(node)
+        if len(oe) == 0:  # End block
             continue
         elif len(oe) == 1:  # No traversal change
             stack.append(oe[0].dst)
@@ -244,15 +246,25 @@ def _stateorder_topological_sort(sdfg: SDFG,
             # If loop, traverse body, then exit
             if node in loopexits:
                 if oe[0].dst == loopexits[node]:
-                    for s in _stateorder_topological_sort(sdfg, oe[1].dst, ptree, branch_merges, stop=node,
-                                                          visited=visited, loopexits=loopexits):
+                    for s in _blockorder_topological_sort(cfg,
+                                                          oe[1].dst,
+                                                          ptree,
+                                                          branch_merges,
+                                                          stop=node,
+                                                          visited=visited,
+                                                          loopexits=loopexits):
                         yield s
                         visited.add(s)
                     stack.append(oe[0].dst)
                     continue
                 elif oe[1].dst == loopexits[node]:
-                    for s in _stateorder_topological_sort(sdfg, oe[0].dst, ptree, branch_merges, stop=node,
-                                                          visited=visited, loopexits=loopexits):
+                    for s in _blockorder_topological_sort(cfg,
+                                                          oe[0].dst,
+                                                          ptree,
+                                                          branch_merges,
+                                                          stop=node,
+                                                          visited=visited,
+                                                          loopexits=loopexits):
                         yield s
                         visited.add(s)
                     stack.append(oe[1].dst)
@@ -260,52 +272,55 @@ def _stateorder_topological_sort(sdfg: SDFG,
             # Otherwise, passthrough to branch
         # Branch
         if node in branch_merges:
-            # Try to find merge state and traverse until reaching that
-            mergestate = branch_merges[node]
+            # Try to find merge block and traverse until reaching that
+            mergeblock = branch_merges[node]
         else:
             try:
                 # Otherwise (e.g., with return/break statements), traverse through each branch,
                 # stopping at the end of the current tree level.
-                mergestate = next(e.dst for e in sdfg.out_edges(stop) if ptree[e.dst] != stop)
+                mergeblock = next(e.dst for e in cfg.out_edges(stop) if ptree[e.dst] != stop)
             except (StopIteration, KeyError):
                 # If that fails, simply traverse branches in arbitrary order
-                mergestate = stop
+                mergeblock = stop
 
         for branch in oe:
-            if branch.dst is mergestate:
-                # If we hit the merge state (if without else), defer to end of branch traversal
+            if branch.dst is mergeblock:
+                # If we hit the merge block (if without else), defer to end of branch traversal
                 continue
-            for s in _stateorder_topological_sort(sdfg,
+            for s in _blockorder_topological_sort(cfg,
                                                   branch.dst,
                                                   ptree,
                                                   branch_merges,
-                                                  stop=mergestate,
+                                                  stop=mergeblock,
                                                   visited=visited,
                                                   loopexits=loopexits):
                 yield s
                 visited.add(s)
-        stack.append(mergestate)
+        stack.append(mergeblock)
 
 
-def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
+def blockorder_topological_sort(cfg: ControlFlowRegion,
+                                recursive: bool = True,
+                                ignore_nonstate_blocks: bool = False) -> Iterator[ControlFlowBlock]:
     """
-    Returns a generator that produces states in the order that they will be
-    executed, disregarding multiple loop iterations and employing topological
-    sort for branches.
+    Returns a generator that produces control flow blocks in the order that they will be executed, disregarding multiple
+    loop iterations and employing topological sort for branches.
 
-    :param sdfg: The SDFG to iterate over.
-    :return: Generator that yields states in state-order.
+    :param cfg: The CFG to iterate over.
+    :param recursive: Whether or not to recurse down hierarchies of control flow regions (not across Nested SDFGs).
+    :param ignore_nonstate_blocks: If true, only produce basic blocks / SDFGStates. Defaults to False.
+    :return: Generator that yields control flow blocks in execution-order.
     """
     # Get parent states
-    loopexits: Dict[SDFGState, SDFGState] = defaultdict(lambda: None)
-    ptree = block_parent_tree(sdfg, loopexits)
+    loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
+    ptree = block_parent_tree(cfg, loopexits)
 
     # Annotate branches
-    branch_merges: Dict[SDFGState, SDFGState] = {}
-    adf = acyclic_dominance_frontier(sdfg)
-    ipostdom = sdutil.postdominators(sdfg)
-    for state in sdfg.nodes():
-        oedges = sdfg.out_edges(state)
+    branch_merges: Dict[ControlFlowBlock, ControlFlowBlock] = {}
+    adf = acyclic_dominance_frontier(cfg)
+    ipostdom = sdutil.postdominators(cfg)
+    for state in cfg.nodes():
+        oedges = cfg.out_edges(state)
         # Skip if not branch
         if len(oedges) <= 1:
             continue
@@ -325,4 +340,15 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
         elif len(common_frontier) > 1 and ipostdom[state] in common_frontier:
             branch_merges[state] = ipostdom[state]
 
-    yield from _stateorder_topological_sort(sdfg, sdfg.start_state, ptree, branch_merges, loopexits=loopexits)
+    for block in _blockorder_topological_sort(cfg, cfg.start_block, ptree, branch_merges, loopexits=loopexits):
+        if isinstance(block, ControlFlowRegion):
+            if not ignore_nonstate_blocks:
+                yield block
+            if recursive:
+                yield from blockorder_topological_sort(block, recursive, ignore_nonstate_blocks)
+        elif isinstance(block, SDFGState):
+            yield block
+        else:
+            # Other control flow block.
+            if not ignore_nonstate_blocks:
+                yield block

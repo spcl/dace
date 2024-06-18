@@ -585,7 +585,7 @@ class TargetDispatcher(object):
 
         # Dispatch copy
         self._used_targets.add(target)
-        target.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)
+        target.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)
 
     # Dispatches definition code for a memlet that is outgoing from a tasklet
     def dispatch_output_definition(self, src_node: nodes.Node, dst_node: nodes.Node, edge, sdfg: SDFG,

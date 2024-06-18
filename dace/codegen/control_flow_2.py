@@ -88,8 +88,17 @@ class ControlFlow:
                 for variable, value in edge.data.assignments.items()
             ] + [''])
 
-        if (not edge.data.is_unconditional()
-                or ((successor is None or edge.dst is not successor) and not assignments_only)):
+        generate_goto = False
+        if not edge.data.is_unconditional():
+            generate_goto = True
+        elif not assignments_only:
+            if successor is None:
+                generate_goto = True
+            elif isinstance(edge.dst, SDFGState) and edge.dst is not successor:
+                generate_goto = True
+            elif isinstance(edge.dst, ControlFlowRegion) and edge.dst.start_block is not successor:
+                generate_goto = True
+        if generate_goto:
             expr += 'goto __state_{}_{};\n'.format(sdfg.cfg_id, edge.dst.label)
 
         if not edge.data.is_unconditional() and not assignments_only:
@@ -352,7 +361,7 @@ class ForScope(ControlFlow):
 
     @property
     def first_block(self) -> ControlFlowBlock:
-        return self.loop
+        return self.loop.start_block
 
     @property
     def children(self) -> List[ControlFlow]:
@@ -375,7 +384,7 @@ class WhileScope(ControlFlow):
 
     @property
     def first_block(self) -> ControlFlowBlock:
-        return self.loop
+        return self.loop.start_block
 
     @property
     def children(self) -> List[ControlFlow]:
@@ -398,7 +407,7 @@ class DoWhileScope(ControlFlow):
 
     @property
     def first_block(self) -> ControlFlowBlock:
-        return self.loop
+        return self.loop.start_block
 
     @property
     def children(self) -> List[ControlFlow]:
@@ -544,7 +553,7 @@ def _structured_control_flow_traversal(cfg: ControlFlowRegion,
     if ptree is None:
         ptree = cfg_analysis.block_parent_tree(cfg, with_loops=False)
 
-    start = start or cfg.start_block
+    start = start if start is not None else cfg.start_block
 
     def make_empty_block():
         return GeneralBlock(dispatch_state, parent_block, False, [], [], [], [], [], True)
@@ -563,6 +572,19 @@ def _structured_control_flow_traversal(cfg: ControlFlowRegion,
         cfg_block: ControlFlow
         if isinstance(node, SDFGState):
             cfg_block = BasicBlock(dispatch_state, parent_block, False, node)
+
+            if isinstance(node, LoopRegion.BreakState):
+                for break_edge in cfg.out_edges(node):
+                    cfg_block.last_block = True
+                    parent_block.assignments_to_ignore.append(break_edge)
+                    parent_block.gotos_to_ignore.append(break_edge)
+                    parent_block.gotos_to_break.append(break_edge)
+            elif isinstance(node, LoopRegion.ContinueState):
+                for continue_edge in cfg.out_edges(node):
+                    cfg_block.last_block = True
+                    parent_block.assignments_to_ignore.append(continue_edge)
+                    parent_block.gotos_to_ignore.append(continue_edge)
+                    parent_block.gotos_to_continue.append(continue_edge)
         elif isinstance(node, ControlFlowRegion):
             body = make_empty_block()
             if isinstance(node, LoopRegion):
@@ -573,7 +595,8 @@ def _structured_control_flow_traversal(cfg: ControlFlowRegion,
                 else:
                     cfg_block = WhileScope(dispatch_state, parent_block, False, node, body)
             else:
-                raise NotImplementedError()
+                cfg_block = make_empty_block()
+                cfg_block.children.append(body)
 
             body.parent = cfg_block
             _structured_control_flow_traversal(node, dispatch_state, body)

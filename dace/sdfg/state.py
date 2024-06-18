@@ -1098,6 +1098,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
 
     _label: str
 
+    _default_lineinfo: Optional[dace.dtypes.DebugInfo] = None
+    _sdfg: Optional['SDFG'] = None
+    _parent_graph: Optional['ControlFlowRegion'] = None
+
     def __init__(self,
                  label: str='',
                  sdfg: Optional['SDFG'] = None,
@@ -2448,6 +2452,9 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         else:
             self._cfg_list = sub_cfg_list
 
+    ###################################################################
+    # CFG API methods
+
     def add_edge(self, src: ControlFlowBlock, dst: ControlFlowBlock, data: 'dace.sdfg.InterstateEdge'):
         """ Adds a new edge to the graph. Must be an InterstateEdge or a subclass thereof.
 
@@ -2557,6 +2564,49 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self.add_edge(state, new_state, dace.sdfg.InterstateEdge(condition=condition, assignments=assignments))
         return new_state
 
+    ###################################################################
+    # Traversal methods
+
+    def all_control_flow_regions(self, recursive=False) -> Iterator['ControlFlowRegion']:
+        """ Iterate over this and all nested control flow regions. """
+        yield self
+        for block in self.nodes():
+            if isinstance(block, SDFGState) and recursive:
+                for node in block.nodes():
+                    if isinstance(node, nd.NestedSDFG):
+                        yield from node.sdfg.all_control_flow_regions(recursive=recursive)
+            elif isinstance(block, ControlFlowRegion):
+                yield from block.all_control_flow_regions(recursive=recursive)
+
+    def all_sdfgs_recursive(self) -> Iterator['SDFG']:
+        """ Iterate over this and all nested SDFGs. """
+        for cfg in self.all_control_flow_regions(recursive=True):
+            if isinstance(cfg, dace.SDFG):
+                yield cfg
+
+    def all_states(self) -> Iterator[SDFGState]:
+        """ Iterate over all states in this control flow graph. """
+        for block in self.nodes():
+            if isinstance(block, SDFGState):
+                yield block
+            elif isinstance(block, ControlFlowRegion):
+                yield from block.all_states()
+
+    def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
+        """ Iterate over all control flow blocks in this control flow graph. """
+        for cfg in self.all_control_flow_regions(recursive=recursive):
+            for block in cfg.nodes():
+                yield block
+
+    def all_interstate_edges(self, recursive=False) -> Iterator[Edge['dace.sdfg.InterstateEdge']]:
+        """ Iterate over all interstate edges in this control flow graph. """
+        for cfg in self.all_control_flow_regions(recursive=recursive):
+            for edge in cfg.edges():
+                yield edge
+
+    ###################################################################
+    # Inherited / Overrides
+
     def _used_symbols_internal(self,
                                all_symbols: bool,
                                defined_syms: Optional[Set] = None,
@@ -2660,47 +2710,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         return ret
 
     ###################################################################
-    # Traversal methods
-
-    def all_control_flow_regions(self, recursive=False) -> Iterator['ControlFlowRegion']:
-        """ Iterate over this and all nested control flow regions. """
-        yield self
-        for block in self.nodes():
-            if isinstance(block, SDFGState) and recursive:
-                for node in block.nodes():
-                    if isinstance(node, nd.NestedSDFG):
-                        yield from node.sdfg.all_control_flow_regions(recursive=recursive)
-            elif isinstance(block, ControlFlowRegion):
-                yield from block.all_control_flow_regions(recursive=recursive)
-
-    def all_sdfgs_recursive(self) -> Iterator['SDFG']:
-        """ Iterate over this and all nested SDFGs. """
-        for cfg in self.all_control_flow_regions(recursive=True):
-            if isinstance(cfg, dace.SDFG):
-                yield cfg
-
-    def all_states(self) -> Iterator[SDFGState]:
-        """ Iterate over all states in this control flow graph. """
-        for block in self.nodes():
-            if isinstance(block, SDFGState):
-                yield block
-            elif isinstance(block, ControlFlowRegion):
-                yield from block.all_states()
-
-    def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
-        """ Iterate over all control flow blocks in this control flow graph. """
-        for cfg in self.all_control_flow_regions(recursive=recursive):
-            for block in cfg.nodes():
-                yield block
-
-    def all_interstate_edges(self, recursive=False) -> Iterator[Edge['dace.sdfg.InterstateEdge']]:
-        """ Iterate over all interstate edges in this control flow graph. """
-        for cfg in self.all_control_flow_regions(recursive=recursive):
-            for edge in cfg.edges():
-                yield edge
-
-    ###################################################################
-    # Getters & setters, overrides
+    # Getters, setters, and builtins
 
     def __str__(self):
         return ControlFlowBlock.__str__(self)

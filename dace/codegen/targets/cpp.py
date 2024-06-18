@@ -269,7 +269,7 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     return name
 
 
-def emit_memlet_reference(dispatcher,
+def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                           sdfg: SDFG,
                           memlet: mmlt.Memlet,
                           pointer_name: str,
