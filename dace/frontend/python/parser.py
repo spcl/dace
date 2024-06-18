@@ -495,7 +495,10 @@ class DaceProgram(pycommon.SDFGConvertible):
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
 
         if not self.use_experimental_cfg_blocks:
-            inline(sdfg)
+            for nested_sdfg in sdfg.all_sdfgs_recursive():
+                break_states, continue_states, _return_states = inline(nested_sdfg)
+                if len(break_states) > 0 or len(continue_states) > 0:
+                    raise pycommon.DaceSyntaxError(None, None, "Break and Continue states were not handled")
         sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
 
         # Apply simplification pass automatically
