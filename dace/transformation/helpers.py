@@ -705,7 +705,7 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
                 orig_edges.add(e)
 
     # Collect nodes_to_move
-    for edge in state.bfs_edges(node):
+    for edge in state.edge_bfs(node):
         nodes_to_move.add(edge.dst)
         orig_edges.add(edge)
 

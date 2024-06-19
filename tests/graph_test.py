@@ -95,7 +95,7 @@ class TestOrderedGraphs(unittest.TestCase):
         e6 = h.add_edge(6, 7, None)
         e7 = h.add_edge(6, 8, None)
         e8 = h.add_edge(2, 6, None)
-        bfs_edges = h.bfs_edges(0)
+        bfs_edges = h.edge_bfs(0)
         self.assertEqual(next(bfs_edges), e0)
         self.assertEqual(next(bfs_edges), e1)
         self.assertEqual(next(bfs_edges), e2)
