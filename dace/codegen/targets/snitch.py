@@ -6,6 +6,8 @@ import itertools
 import numpy as np
 import sympy as sp
 
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation.dataflow.streaming_memory import _collect_map_ranges
 
 from dace import registry, data, dtypes, config, sdfg as sd, symbolic
@@ -141,9 +143,10 @@ class SnitchCodeGen(TargetCodeGenerator):
         # if para:
         #     callsite_stream.write(f'}}')
 
-    def generate_state(self, sdfg, state, global_stream, callsite_stream, generate_state_footer=True):
-
-        sid = sdfg.node_id(state)
+    def generate_state(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, global_stream: CodeIOStream,
+                       callsite_stream: CodeIOStream, generate_state_footer: bool = True):
+        sdfg = state.sdfg
+        sid = state.block_id
         dbg(f'-- generate state "{state}"')
 
         # analyze memlets for SSR candidates

@@ -63,7 +63,7 @@ class TargetCodeGenerator(object):
         return False
 
     def generate_state(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, function_stream: CodeIOStream,
-                       callsite_stream: CodeIOStream) -> None:
+                       callsite_stream: CodeIOStream, generate_state_footer: bool) -> None:
         """ Generates code for an SDFG state, outputting it to the given
             code streams.
 

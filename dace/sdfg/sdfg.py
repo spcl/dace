@@ -174,7 +174,7 @@ class InterstateEdge(object):
                            desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
 
-    def __init__(self, condition: CodeBlock = None, assignments=None):
+    def __init__(self, condition: Optional[CodeBlock] = None, assignments: Optional[Dict] = None):
         if condition is None:
             condition = CodeBlock("1")
 

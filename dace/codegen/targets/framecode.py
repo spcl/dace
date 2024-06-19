@@ -406,15 +406,16 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             callsite_stream.write('}', sdfg)
 
     def generate_state(self,
+                       sdfg: SDFG,
+                       cfg: ControlFlowRegion,
                        state: SDFGState,
                        global_stream: CodeIOStream,
                        callsite_stream: CodeIOStream,
                        generate_state_footer: bool = True):
-        sid = state.parent_graph.node_id(state)
-        sdfg = state.sdfg
+        sid = state.block_id
 
         # Emit internal transient array allocation
-        self.allocate_arrays_in_scope(sdfg, state, global_stream, callsite_stream)
+        self.allocate_arrays_in_scope(sdfg, cfg, state, global_stream, callsite_stream)
 
         callsite_stream.write('\n')
 
@@ -452,7 +453,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         if generate_state_footer:
             # Emit internal transient array deallocation
-            self.deallocate_arrays_in_scope(sdfg, state, global_stream, callsite_stream)
+            self.deallocate_arrays_in_scope(sdfg, state.parent_graph, state, global_stream, callsite_stream)
 
             # Invoke all instrumentation providers
             for instr in self._dispatcher.instrumentation.values():
@@ -807,34 +808,37 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             else:
                 self.where_allocated[(sdfg, name)] = cursdfg
 
-    def allocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
-                                 function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+    def allocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion,
+                                 scope: Union[nodes.EntryNode, SDFGState, SDFG], function_stream: CodeIOStream,
+                                 callsite_stream: CodeIOStream) -> None:
         """ Dispatches allocation of all arrays in the given scope. """
         for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
             if state is not None:
-                state_id = state.parent_graph.node_id(state)
+                state_id = state.block_id
             else:
                 state_id = -1
 
             desc = node.desc(tsdfg)
 
-            self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream,
-                                               declare, allocate)
+            self._dispatcher.dispatch_allocate(tsdfg, cfg, state, state_id, node, desc, function_stream,
+                                               callsite_stream, declare, allocate)
 
-    def deallocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
-                                   function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+    def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion,
+                                   scope: Union[nodes.EntryNode, SDFGState, SDFG], function_stream: CodeIOStream,
+                                   callsite_stream: CodeIOStream):
         """ Dispatches deallocation of all arrays in the given scope. """
         for tsdfg, state, node, _, _, deallocate in self.to_allocate[scope]:
             if not deallocate:
                 continue
             if state is not None:
-                state_id = tsdfg.node_id(state)
+                state_id = state.block_id
             else:
                 state_id = -1
 
             desc = node.desc(tsdfg)
 
-            self._dispatcher.dispatch_deallocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream)
+            self._dispatcher.dispatch_deallocate(tsdfg, cfg, state, state_id, node, desc, function_stream,
+                                                 callsite_stream)
 
     def generate_code(self,
                       sdfg: SDFG,
@@ -879,7 +883,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 instr.on_sdfg_begin(sdfg, callsite_stream, global_stream, self)
 
         # Allocate outer-level transients
-        self.allocate_arrays_in_scope(sdfg, sdfg, global_stream, callsite_stream)
+        self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
 
         # Define constants as top-level-allocated
         for cname, (ctype, _) in sdfg.constants_prop.items():
@@ -934,7 +938,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                                                           [s.label for s in (set(sdfg.states()) - states_generated)]))
 
         # Deallocate transients
-        self.deallocate_arrays_in_scope(sdfg, sdfg, global_stream, callsite_stream)
+        self.deallocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
 
         # Now that we have all the information about dependencies, generate
         # header and footer

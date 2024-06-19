@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
 import functools
 import itertools
@@ -376,7 +377,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 tmp_name = '.'.join(tokens[:i + 1])
                 tmp_alloc_name = cpp.ptr(tmp_name, sdfg.arrays[tmp_name], sdfg, self._frame)
                 if not self._dispatcher.defined_vars.has(tmp_alloc_name):
-                    self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(tmp_name), sdfg.arrays[tmp_name],
+                    self.allocate_array(sdfg, cfg, dfg, state_id, nodes.AccessNode(tmp_name), sdfg.arrays[tmp_name],
                                         function_stream, declaration_stream, allocation_stream,
                                         allocate_nested_data=False)
             declared = True
@@ -404,8 +405,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
                         defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
                         self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
-                        self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
-                                            declaration_stream, allocation_stream)
+                        self.allocate_array(sdfg, cfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v,
+                                            function_stream, declaration_stream, allocation_stream)
             return
         if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
@@ -427,14 +428,14 @@ class CPUCodeGen(TargetCodeGenerator):
                     raise SyntaxError("Stream-view of array may not be defined in more than one state")
 
                 arrnode = sdfg.arrays[nodedesc.sink]
-                state = sdfg.nodes()[state_id]
+                state: SDFGState = cfg.nodes()[state_id]
                 edges = state.out_edges(node)
                 if len(edges) > 1:
                     raise NotImplementedError("Cannot handle streams writing to multiple arrays.")
 
                 memlet_path = state.memlet_path(edges[0])
                 # Allocate the array before its stream view, if necessary
-                self.allocate_array(sdfg, dfg, state_id, memlet_path[-1].dst, memlet_path[-1].dst.desc(sdfg),
+                self.allocate_array(sdfg, cfg, dfg, state_id, memlet_path[-1].dst, memlet_path[-1].dst.desc(sdfg),
                                     function_stream, declaration_stream, allocation_stream)
 
                 array_expr = cpp.copy_expr(self._dispatcher,
@@ -1546,7 +1547,9 @@ class CPUCodeGen(TargetCodeGenerator):
         cpp.unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
                             toplevel_schedule, self)
 
-    def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream):
+    def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
+                          src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[mmlt.Memlet],
+                          function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         cdtype = src_node.out_connectors[edge.src_conn]
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
             pass
@@ -1823,7 +1826,7 @@ class CPUCodeGen(TargetCodeGenerator):
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ):
-        state_dfg: SDFGState = cfg.node(state_id)
+        state_dfg = cfg.state(state_id)
         map_params = node.map.params
 
         result = callsite_stream
@@ -1935,7 +1938,7 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write(inner_stream.getvalue())
 
         # Emit internal transient array allocation
-        self._frame.allocate_arrays_in_scope(sdfg, node, function_stream, result)
+        self._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, result)
 
     def _generate_MapExit(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.MapExit, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -1944,13 +1947,13 @@ class CPUCodeGen(TargetCodeGenerator):
         # Obtain start of map
         scope_dict = dfg.scope_dict()
         map_node = scope_dict[node]
-        state_dfg: SDFGState = cfg.node(state_id)
+        state_dfg = cfg.state(state_id)
 
         if map_node is None:
             raise ValueError("Exit node " + str(node.map.label) + " is not dominated by a scope entry node")
 
         # Emit internal transient array deallocation
-        self._frame.deallocate_arrays_in_scope(sdfg, map_node, function_stream, result)
+        self._frame.deallocate_arrays_in_scope(sdfg, cfg, map_node, function_stream, result)
 
         outer_stream = CodeIOStream()
 

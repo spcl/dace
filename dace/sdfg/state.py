@@ -2452,6 +2452,12 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         else:
             self._cfg_list = sub_cfg_list
 
+    def state(self, state_id: int) -> SDFGState:
+        node = self.node(state_id)
+        if not isinstance(node, SDFGState):
+            raise TypeError(f'The node with id {state_id} is not an SDFGState')
+        return node
+
     ###################################################################
     # CFG API methods
 
@@ -2501,7 +2507,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             self.start_block = len(self.nodes()) - 1
             self._cached_start_block = node
 
-    def add_state(self, label=None, is_start_block=False, *, is_start_state: bool=None) -> SDFGState:
+    def add_state(self, label=None, is_start_block=False, *, is_start_state: Optional[bool] = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
         state = SDFGState(label)
         self._labels.add(label)
@@ -2516,10 +2522,10 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                          state: SDFGState,
                          label=None,
                          is_start_block=False,
-                         condition: CodeBlock = None,
-                         assignments=None,
+                         condition: Optional[CodeBlock] = None,
+                         assignments: Optional[Dict] = None,
                          *,
-                         is_start_state: bool=None) -> SDFGState:
+                         is_start_state: Optional[bool] = None) -> SDFGState:
         """ Adds a new SDFG state before an existing state, reconnecting predecessors to it instead.
 
             :param state: The state to prepend the new state before.
@@ -2542,10 +2548,10 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                         state: SDFGState,
                         label=None,
                         is_start_block=False,
-                        condition: CodeBlock = None,
-                        assignments=None,
+                        condition: Optional[CodeBlock] = None,
+                        assignments: Optional[Dict] = None,
                         *,
-                        is_start_state: bool=None) -> SDFGState:
+                        is_start_state: Optional[bool] = None) -> SDFGState:
         """ Adds a new SDFG state after an existing state, reconnecting it to the successors instead.
 
             :param state: The state to append the new state after.
@@ -2868,7 +2874,7 @@ class LoopRegion(ControlFlowRegion):
         return super().to_json(parent)
 
     def add_state(self, label=None, is_start_block=False, is_continue=False, is_break=False, *,
-                  is_start_state: bool = None) -> SDFGState:
+                  is_start_state: Optional[bool] = None) -> SDFGState:
         state = super().add_state(label, is_start_block, is_start_state=is_start_state)
         # Cast to the corresponding type if the state is a break or continue state.
         if is_break and is_continue:

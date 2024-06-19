@@ -59,7 +59,7 @@ class GPUEventProvider(InstrumentationProvider):
         state_id = -1
         node_id = -1
         if state is not None:
-            state_id = state.parent_graph.node_id(state)
+            state_id = state.block_id
             if node is not None:
                 node_id = state.node_id(node)
 

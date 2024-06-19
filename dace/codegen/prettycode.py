@@ -40,7 +40,7 @@ class CodeIOStream(StringIO):
                     for i, nid in enumerate(node_id):
                         if not isinstance(nid, int):
                             try:
-                                state: SDFGState = cfg.node(state_id)
+                                state = cfg.state(state_id)
                                 node_id[i] = state.node_id(nid)
                             except NodeNotFoundError:
                                 node_id[i] = -1
