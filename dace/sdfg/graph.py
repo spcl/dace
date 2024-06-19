@@ -310,7 +310,7 @@ class Graph(Generic[NodeT, EdgeT]):
         """ Returns the total number of nodes in the graph (nx compatibility)"""
         return self.number_of_nodes()
 
-    def bfs_edges(self, node: Union[NodeT, Sequence[NodeT]], reverse: bool = False) -> Iterable[Edge[EdgeT]]:
+    def edge_bfs(self, node: Union[NodeT, Sequence[NodeT]], reverse: bool = False) -> Iterable[Edge[EdgeT]]:
         """Returns a generator over edges in the graph originating from the
         passed node in BFS order"""
         if isinstance(node, (tuple, list)):
