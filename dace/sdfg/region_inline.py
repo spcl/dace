@@ -7,7 +7,7 @@ from dace.sdfg.state import ConditionalRegion, ControlFlowBlock, ControlFlowRegi
 
 
 def inline(block: ControlFlowBlock) \
-    -> Tuple[set[LoopRegion.BreakState], set[LoopRegion.ContinueState], set[ReturnState]]:
+    -> Tuple[Set[LoopRegion.BreakState], Set[LoopRegion.ContinueState], Set[ReturnState]]:
     """
     Inline all ControlFlowRegions inside this region recursively.
     Returns three sets containing the Break, Continue and Return states which have to be handled by
