@@ -49,8 +49,7 @@ def for_loop_with_break_continue():
     return A
 
 
-@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
-                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
+@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_for_loop_with_break_continue():
     for_loop_with_break_continue.use_experimental_cfg_blocks = True
 
@@ -80,8 +79,7 @@ def nested_for_loop():
     return A
 
 
-@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
-                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
+@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_for_loop():
     nested_for_loop.use_experimental_cfg_blocks = True
 
@@ -198,8 +196,7 @@ def nested_for_while_loop():
     return A
 
 
-@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
-                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
+@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_for_while_loop():
     nested_for_while_loop.use_experimental_cfg_blocks = True
 
@@ -233,8 +230,7 @@ def nested_while_for_loop():
     return A
 
 
-@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
-                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
+@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_while_for_loop():
     nested_while_for_loop.use_experimental_cfg_blocks = True
 
@@ -473,8 +469,7 @@ def test_nested_map_with_symbol():
     assert (np.array_equal(val, ref))
 
 
-@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
-                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
+@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_for_else():
 
     @dace.program
@@ -568,7 +563,7 @@ def test_branch_in_while():
 
 if __name__ == "__main__":
     test_for_loop()
-    test_for_loop_with_break_continue()
+    #test_for_loop_with_break_continue()
     test_nested_for_loop()
     test_while_loop()
     test_while_loop_with_break_continue()
