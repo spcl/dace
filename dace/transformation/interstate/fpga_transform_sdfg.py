@@ -5,7 +5,6 @@ import networkx as nx
 
 from dace import properties
 from dace.transformation import transformation
-from dace.transformation import pass_pipeline as ppl
 
 
 @properties.make_properties

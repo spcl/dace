@@ -1,19 +1,10 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
 import dace
 import numpy as np
 
 from dace.frontend.python.common import DaceSyntaxError
 from dace.sdfg.state import LoopRegion
-
-# NOTE: Some tests have been disabled due to issues with our control flow detection during codegen.
-#       The issue is documented in #1586, and in parts in #635. The problem causes the listed tests to fail when
-#       automatic simplification is turned off ONLY. There are several active efforts to address this issue.
-#       For one, there are fixes being made to the control flow detection itself (commits da7af41 and c830f92
-#       are the start of that). Additionally, codegen is being adapted (in a separate, following PR) to make use
-#       of the control flow region constructs directly, circumventing this issue entirely.
-#       As such, disabling these tests is a very temporary solution that should not be longer lived than
-#       a few weeks at most.
-# TODO: Re-enable after issues are addressed.
 
 @dace.program
 def for_loop():
@@ -48,6 +39,7 @@ def for_loop_with_break_continue():
     return A
 
 
+@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_for_loop_with_break_continue():
     for_loop_with_break_continue.use_experimental_cfg_blocks = True
 
@@ -77,6 +69,7 @@ def nested_for_loop():
     return A
 
 
+@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_for_loop():
     nested_for_loop.use_experimental_cfg_blocks = True
 
@@ -173,7 +166,6 @@ def test_nested_while_loop():
     assert (np.array_equal(A, A_ref))
 
 
-'''
 @dace.program
 def nested_for_while_loop():
     A = dace.ndarray([10, 10], dtype=dace.int32)
@@ -194,6 +186,7 @@ def nested_for_while_loop():
     return A
 
 
+@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_for_while_loop():
     nested_for_while_loop.use_experimental_cfg_blocks = True
 
@@ -205,10 +198,8 @@ def test_nested_for_while_loop():
     for i in range(0, 10, 2):
         A_ref[i] = [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
     assert (np.array_equal(A, A_ref))
-'''
 
 
-'''
 @dace.program
 def nested_while_for_loop():
     A = dace.ndarray([10, 10], dtype=dace.int32)
@@ -229,6 +220,7 @@ def nested_while_for_loop():
     return A
 
 
+@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_while_for_loop():
     nested_while_for_loop.use_experimental_cfg_blocks = True
 
@@ -240,7 +232,6 @@ def test_nested_while_for_loop():
     for i in range(0, 10, 2):
         A_ref[i] = [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
     assert (np.array_equal(A, A_ref))
-'''
 
 
 @dace.program
@@ -468,7 +459,7 @@ def test_nested_map_with_symbol():
     assert (np.array_equal(val, ref))
 
 
-'''
+@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_for_else():
 
     @dace.program
@@ -500,7 +491,6 @@ def test_for_else():
     A_2[6] = 20.0
     for_else(A_2)
     assert np.allclose(A_2, expected_2)
-'''
 
 
 def test_while_else():
@@ -568,8 +558,8 @@ if __name__ == "__main__":
     test_while_loop()
     test_while_loop_with_break_continue()
     test_nested_while_loop()
-    #test_nested_for_while_loop()
-    #test_nested_while_for_loop()
+    test_nested_for_while_loop()
+    test_nested_while_for_loop()
     test_map_with_break_continue()
     test_nested_map_for_loop()
     test_nested_map_for_for_loop()
@@ -580,7 +570,7 @@ if __name__ == "__main__":
     test_nested_map_for_loop_2()
     test_nested_map_for_loop_with_tasklet_2()
     test_nested_map_with_symbol()
-    #test_for_else()
+    test_for_else()
     test_while_else()
     test_branch_in_for()
     test_branch_in_while()

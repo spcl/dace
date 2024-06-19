@@ -2862,7 +2862,7 @@ class LoopRegion(ControlFlowRegion):
     def to_json(self, parent=None):
         return super().to_json(parent)
 
-    def add_state(self, label=None, is_start_block=False, is_break=False, is_continue=False, *,
+    def add_state(self, label=None, is_start_block=False, is_continue=False, is_break=False, *,
                   is_start_state: bool = None) -> SDFGState:
         state = super().add_state(label, is_start_block, is_start_state=is_start_state)
         # Cast to the corresponding type if the state is a break or continue state.
