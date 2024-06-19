@@ -61,6 +61,7 @@ class ControlFlow:
 
     def generate_transition(self,
                             sdfg: SDFG,
+                            cfg: ControlFlowRegion,
                             edge: Edge[InterstateEdge],
                             successor: ControlFlowBlock = None,
                             assignments_only: bool = False,
@@ -98,8 +99,8 @@ class ControlFlow:
                 generate_goto = True
             elif isinstance(edge.dst, ControlFlowRegion) and edge.dst.start_block is not successor:
                 generate_goto = True
-        if generate_goto:
-            expr += 'goto __state_{}_{};\n'.format(sdfg.cfg_id, edge.dst.label)
+        if generate_goto and not assignments_only:
+            expr += 'goto __state_{}_{};\n'.format(cfg.cfg_id, edge.dst.label)
 
         if not edge.data.is_unconditional() and not assignments_only:
             expr += '}\n'
@@ -125,10 +126,45 @@ class BasicBlock(ControlFlow):
             # Dispatch empty state in any case in order to register that the state was dispatched.
             expr += self.dispatch_state(self.state)
 
-        # TODO
         # If any state has no children, it should jump to the end of the SDFG
         if not self.last_block and cfg.out_degree(self.state) == 0:
             expr += 'goto __state_exit_{};\n'.format(cfg.cfg_id)
+        return expr
+
+    @property
+    def first_block(self) -> SDFGState:
+        return self.state
+
+
+@dataclass
+class BreakBlock(BasicBlock):
+    """ A CFG basic block that generates a 'break' statement after itself. """
+
+    @classmethod
+    def from_basic_block(cls, block: BasicBlock) -> 'BreakBlock':
+        return BreakBlock(block.dispatch_state, block.parent, block.last_block, block.state)
+
+    def as_cpp(self, codegen, symbols) -> str:
+        expr = super().as_cpp(codegen, symbols)
+        expr += 'break;\n'
+        return expr
+
+    @property
+    def first_block(self) -> SDFGState:
+        return self.state
+
+
+@dataclass
+class ContinueBlock(BasicBlock):
+    """ A CFG basic block that generates a 'continue' statement after itself. """
+
+    @classmethod
+    def from_basic_block(cls, block: BasicBlock) -> 'ContinueBlock':
+        return ContinueBlock(block.dispatch_state, block.parent, block.last_block, block.state)
+
+    def as_cpp(self, codegen, symbols) -> str:
+        expr = super().as_cpp(codegen, symbols)
+        expr += 'continue;\n'
         return expr
 
     @property
@@ -142,6 +178,8 @@ class GeneralBlock(ControlFlow):
     General (or unrecognized) control flow block with gotos between states. 
     """
 
+    region: ControlFlowRegion
+
     # List of children control flow blocks
     elements: List[ControlFlow]
 
@@ -149,14 +187,6 @@ class GeneralBlock(ControlFlow):
     # to avoid generating extra assignments or gotos before entering a for
     # loop, for example.
     gotos_to_ignore: Sequence[Edge[InterstateEdge]]
-
-    # List or set of edges to generate `continue;` statements in lieu of goto.
-    # This is used for loop blocks.
-    gotos_to_continue: Sequence[Edge[InterstateEdge]]
-
-    # List or set of edges to generate `break;` statements in lieu of goto.
-    # This is used for loop blocks.
-    gotos_to_break: Sequence[Edge[InterstateEdge]]
 
     # List or set of edges to not generate inter-state assignments for.
     assignments_to_ignore: Sequence[Edge[InterstateEdge]]
@@ -169,10 +199,10 @@ class GeneralBlock(ControlFlow):
         for i, elem in enumerate(self.elements):
             expr += elem.as_cpp(codegen, symbols)
             # In a general block, emit transitions and assignments after each individual state.
-            if isinstance(elem, BasicBlock):
-                cfg = elem.state.parent_graph
-                sdfg = elem.state.sdfg
-                out_edges = cfg.out_edges(elem.state)
+            if isinstance(elem, (BasicBlock, GeneralBlock)):
+                cfg = elem.state.parent_graph if isinstance(elem, BasicBlock) else elem.region.parent_graph
+                sdfg = cfg if isinstance(cfg, SDFG) else cfg.sdfg
+                out_edges = cfg.out_edges(elem.state) if isinstance(elem, BasicBlock) else cfg.out_edges(elem.region)
                 for j, e in enumerate(out_edges):
                     if e not in self.gotos_to_ignore:
                         # Skip gotos to immediate successors
@@ -188,15 +218,10 @@ class GeneralBlock(ControlFlow):
                                 if next_block is not None:
                                     successor = next_block.first_block
 
-                        expr += elem.generate_transition(sdfg, e, successor)
-                    else:
-                        if e not in self.assignments_to_ignore:
-                            # Need to generate assignments but not gotos
-                            expr += elem.generate_transition(sdfg, e, assignments_only=True)
-                        if e in self.gotos_to_break:
-                            expr += 'break;\n'
-                        elif e in self.gotos_to_continue:
-                            expr += 'continue;\n'
+                        expr += elem.generate_transition(sdfg, cfg, e, successor)
+                    elif e not in self.assignments_to_ignore:
+                        # Need to generate assignments but not gotos
+                        expr += elem.generate_transition(sdfg, cfg, e, assignments_only=True)
                 # Add exit goto as necessary
                 if elem.last_block:
                     continue
@@ -207,7 +232,7 @@ class GeneralBlock(ControlFlow):
                 # One unconditional edge
                 if (len(out_edges) == 1 and out_edges[0].data.is_unconditional()):
                     continue
-                expr += f'goto __state_exit_{cfg.cfg_id};\n'
+                expr += f'goto __state_exit_{sdfg.cfg_id};\n'
 
         return expr
 
@@ -470,17 +495,6 @@ def _cases_from_branches(
     return switchvar, result
 
 
-def _ignore_recursive(edges: List[Edge[InterstateEdge]], block: ControlFlow):
-    """ 
-    Ignore a list of edges recursively in a control flow block and its children.
-    """
-    if isinstance(block, GeneralBlock):
-        block.gotos_to_ignore.extend(edges)
-        block.assignments_to_ignore.extend(edges)
-    for subblock in block.children:
-        _ignore_recursive(edges, subblock)
-
-
 def _child_of(node: SDFGState, parent: SDFGState, ptree: Dict[SDFGState, SDFGState]) -> bool:
     curnode = node
     while curnode is not None:
@@ -556,7 +570,7 @@ def _structured_control_flow_traversal(cfg: ControlFlowRegion,
     start = start if start is not None else cfg.start_block
 
     def make_empty_block():
-        return GeneralBlock(dispatch_state, parent_block, False, [], [], [], [], [], True)
+        return GeneralBlock(dispatch_state, parent_block, False, None, [], [], [], True)
 
     # Traverse states in custom order
     visited = set() if visited is None else visited
@@ -574,32 +588,27 @@ def _structured_control_flow_traversal(cfg: ControlFlowRegion,
             cfg_block = BasicBlock(dispatch_state, parent_block, False, node)
 
             if isinstance(node, LoopRegion.BreakState):
-                for break_edge in cfg.out_edges(node):
-                    cfg_block.last_block = True
-                    parent_block.assignments_to_ignore.append(break_edge)
-                    parent_block.gotos_to_ignore.append(break_edge)
-                    parent_block.gotos_to_break.append(break_edge)
+                cfg_block = BreakBlock.from_basic_block(cfg_block)
+                cfg_block.last_block = True
             elif isinstance(node, LoopRegion.ContinueState):
-                for continue_edge in cfg.out_edges(node):
-                    cfg_block.last_block = True
-                    parent_block.assignments_to_ignore.append(continue_edge)
-                    parent_block.gotos_to_ignore.append(continue_edge)
-                    parent_block.gotos_to_continue.append(continue_edge)
+                cfg_block = ContinueBlock.from_basic_block(cfg_block)
+                cfg_block.last_block = True
         elif isinstance(node, ControlFlowRegion):
-            body = make_empty_block()
             if isinstance(node, LoopRegion):
+                body = make_empty_block()
                 if node.inverted:
                     cfg_block = DoWhileScope(dispatch_state, parent_block, False, node, body)
                 elif node.init_statement and node.update_statement and node.loop_variable:
                     cfg_block = ForScope(dispatch_state, parent_block, False, node, body)
                 else:
                     cfg_block = WhileScope(dispatch_state, parent_block, False, node, body)
+
+                body.parent = cfg_block
+                _structured_control_flow_traversal(node, dispatch_state, body)
             else:
                 cfg_block = make_empty_block()
-                cfg_block.children.append(body)
-
-            body.parent = cfg_block
-            _structured_control_flow_traversal(node, dispatch_state, body)
+                cfg_block.region = node
+                _structured_control_flow_traversal(node, dispatch_state, cfg_block)
 
         oe = cfg.out_edges(node)
         if len(oe) == 0:  # End state
@@ -691,7 +700,7 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
     :param sdfg: The SDFG to iterate over.
     :return: Control-flow block representing the entire SDFG.
     """
-    root_block = GeneralBlock(dispatch_state, None, False, [], [], [], [], [], True)
+    root_block = GeneralBlock(dispatch_state, None, False, sdfg, [], [], [], True)
     _structured_control_flow_traversal(sdfg, dispatch_state, root_block)
     _reset_block_parents(root_block)
     return root_block

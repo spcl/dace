@@ -2625,13 +2625,17 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         for block in ordered_blocks:
             state_symbols = set()
             if isinstance(block, ControlFlowRegion):
-                b_free_syms, b_defined_syms, b_used_before_syms = block._used_symbols_internal(all_symbols)
+                b_free_syms, b_defined_syms, b_used_before_syms = block._used_symbols_internal(all_symbols,
+                                                                                               defined_syms,
+                                                                                               free_syms,
+                                                                                               used_before_assignment,
+                                                                                               keep_defined_in_mapping)
                 free_syms |= b_free_syms
                 defined_syms |= b_defined_syms
                 used_before_assignment |= b_used_before_syms
                 state_symbols = b_free_syms
             else:
-                state_symbols = block.used_symbols(all_symbols)
+                state_symbols = block.used_symbols(all_symbols, keep_defined_in_mapping)
                 free_syms |= state_symbols
 
             # Add free inter-state symbols
@@ -2838,9 +2842,10 @@ class LoopRegion(ControlFlowRegion):
         b_free_symbols, b_defined_symbols, b_used_before_assignment = super()._used_symbols_internal(
             all_symbols, keep_defined_in_mapping=keep_defined_in_mapping
         )
+        outside_defined = defined_syms - used_before_assignment
+        used_before_assignment |= ((b_used_before_assignment - {self.loop_variable}) - outside_defined)
         free_syms |= b_free_symbols
         defined_syms |= b_defined_symbols
-        used_before_assignment |= (b_used_before_assignment - {self.loop_variable})
 
         defined_syms -= used_before_assignment
         free_syms -= defined_syms

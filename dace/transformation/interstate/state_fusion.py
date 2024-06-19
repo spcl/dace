@@ -174,6 +174,9 @@ class StateFusion(transformation.MultiStateTransformation):
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
 
+        if type(first_state) is not SDFGState or type(second_state) is not SDFGState:
+            return False
+
         # First state must have only one output edge (with dst the second
         # state).
         if len(out_edges) != 1:

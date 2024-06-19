@@ -1,5 +1,4 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
 import dace
 import numpy as np
 
@@ -39,7 +38,6 @@ def for_loop_with_break_continue():
     return A
 
 
-@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_for_loop_with_break_continue():
     for_loop_with_break_continue.use_experimental_cfg_blocks = True
 
@@ -69,7 +67,6 @@ def nested_for_loop():
     return A
 
 
-@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_for_loop():
     nested_for_loop.use_experimental_cfg_blocks = True
 
@@ -186,7 +183,6 @@ def nested_for_while_loop():
     return A
 
 
-@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_for_while_loop():
     nested_for_while_loop.use_experimental_cfg_blocks = True
 
@@ -220,7 +216,6 @@ def nested_while_for_loop():
     return A
 
 
-@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_while_for_loop():
     nested_while_for_loop.use_experimental_cfg_blocks = True
 
@@ -459,7 +454,6 @@ def test_nested_map_with_symbol():
     assert (np.array_equal(val, ref))
 
 
-@pytest.mark.skip(reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_for_else():
 
     @dace.program

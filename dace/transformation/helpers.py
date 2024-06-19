@@ -4,6 +4,7 @@ import copy
 import itertools
 from networkx import MultiDiGraph
 
+from dace.sdfg.state import ControlFlowRegion
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
 from typing import Dict, List, Optional, Tuple, Set, Union
@@ -954,20 +955,21 @@ def offset_map(state: SDFGState,
         subgraph.replace(param, f'({param} - {offset})')
 
 
-def split_interstate_edges(sdfg: SDFG) -> None:
+def split_interstate_edges(cfg: ControlFlowRegion) -> None:
     """
-    Splits all inter-state edges into edges with conditions and edges with
-    assignments. This procedure helps in nested loop detection.
+    Splits all inter-state edges into edges with conditions and edges with assignments.
+    This procedure helps in nested loop detection.
 
-    :param sdfg: The SDFG to split
-    :note: Operates in-place on the SDFG.
+    :param cfg: The control flow graph to split
+    :note: Operates in-place on the graph.
     """
-    for e in sdfg.edges():
-        if e.data.assignments and not e.data.is_unconditional():
-            tmpstate = sdfg.add_state()
-            sdfg.add_edge(e.src, tmpstate, InterstateEdge(condition=e.data.condition))
-            sdfg.add_edge(tmpstate, e.dst, InterstateEdge(assignments=e.data.assignments))
-            sdfg.remove_edge(e)
+    for cfg in cfg.all_control_flow_regions():
+        for e in cfg.edges():
+            if e.data.assignments and not e.data.is_unconditional():
+                tmpstate = cfg.add_state()
+                cfg.add_edge(e.src, tmpstate, InterstateEdge(condition=e.data.condition))
+                cfg.add_edge(tmpstate, e.dst, InterstateEdge(assignments=e.data.assignments))
+                cfg.remove_edge(e)
 
 
 def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
