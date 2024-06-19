@@ -17,28 +17,28 @@ def test_reshaping_with_redundant_arrays():
                 "input",
                 shape=(6, 6, 6),
                 transient=False,
-                strides=(1, 6, 36),
+                strides=None,
                 dtype=dace.float64,
         )
         _, a_desc = sdfg.add_array(
                 "a",
                 shape=(6, 6, 6),
                 transient=True,
-                strides=(36, 6, 1),
+                strides=None,
                 dtype=dace.float64,
         )
         _, b_desc = sdfg.add_array(
                 "b",
                 shape=(36, 1, 6),
                 transient=True,
-                strides=(6, 6, 1),
+                strides=None,
                 dtype=dace.float64,
         )
         _, output_desc = sdfg.add_array(
                 "output",
                 shape=(36, 1, 6),
                 transient=False,
-                strides=(6, 6, 1 ),
+                strides=None,
                 dtype=dace.float64,
         )
         state = sdfg.add_state("state", is_start_block=True)
@@ -73,20 +73,23 @@ def test_reshaping_with_redundant_arrays():
                 dace.Memlet.from_array("b", b_desc),
         )
         sdfg.validate()
+        assert state.number_of_nodes() == 4
+        assert len(sdfg.arrays) == 4
         return sdfg, a_an, b_an, output_an
 
     def apply_trafo(
             sdfg: dace.SDFG,
             in_array: dace.nodes.AccessNode,
             out_array: dace.nodes.AccessNode,
-    ) -> None:
+            may_not_apply: bool = False,
+    ) -> dace.SDFG:
         trafo = RedundantArray()
 
         candidate = {type(trafo).in_array: in_array, type(trafo).out_array: out_array}
         state = sdfg.start_block
         state_id = sdfg.node_id(state)
-        assert state.number_of_nodes() == 4
-        assert len(sdfg.arrays) == 4
+        initial_arrays = len(sdfg.arrays)
+        initial_access_nodes = state.number_of_nodes()
 
         trafo.setup_match(sdfg, sdfg.cfg_id, state_id, candidate, 0, override=True)
         if trafo.can_be_applied(state, 0, sdfg):
@@ -94,19 +97,36 @@ def test_reshaping_with_redundant_arrays():
             if ret is not None:  # A view was created
                 assert False, f"A view was created instead removing '{in_array.data}'."
             sdfg.validate()
-            assert state.number_of_nodes() == 3
-            assert len(sdfg.arrays) == 3
+            assert state.number_of_nodes() == initial_access_nodes - 1
+            assert len(sdfg.arrays) == initial_arrays - 1
             assert in_array.data not in sdfg.arrays
-            return
+            return sdfg
+
+        if may_not_apply:
+            return sdfg
         assert False, "Could not apply the transformation."
 
-    # Case 1: Removing a
-    sdfg, a_an, b_an, _ = make_sdfg()
-    apply_trafo(sdfg, in_array=a_an, out_array=b_an)
+    input_array = np.array(np.random.rand(6, 6, 6), dtype=np.float64, order='C')
+    ref = input_array.reshape((36, 1, 6)).copy()
+    output_step1 = np.zeros_like(ref)
+    output_step2 = np.zeros_like(ref)
 
-    # Case 2: Removing b
-    sdfg, _, b_an, output_an = make_sdfg()
-    apply_trafo(sdfg, in_array=b_an, out_array=output_an)
+    # Step 1:
+    #  The Memlet between `a` and `b` is a reshaping Memlet, this call will
+    #  remove `a` and connect `input` with `b` and this connection will then become
+    #  the reshaping Memlet.
+    sdfg, a_an, b_an, output_an = make_sdfg()
+    sdfg = apply_trafo(sdfg, in_array=a_an, out_array=b_an)
+
+    sdfg(input=input_array, output=output_step1)
+    assert np.all(ref == output_step1)
+
+    # Step 2:
+    #  Now the Memlet between `input` and `b` is a reshaping Memlet, that we will now remove.
+    sdfg = apply_trafo(sdfg, in_array=b_an, out_array=output_an)
+
+    sdfg(input=input_array, output=output_step2)
+    assert np.all(ref == output_step2)
 
 
 def test_out():
