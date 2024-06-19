@@ -149,9 +149,8 @@ def inline_loop_region(loop: LoopRegion, parent: ControlFlowRegion):
     for node in continue_states | connect_to_tail:
         parent.add_edge(node, loop_tail_state, InterstateEdge())
     for node in break_states:
-        parent.add_edge(node, end_state, InterstateEdge())
-        for edge in parent.in_edges(node):
-            edge.data.assignments[f'did_break_{loop.label}'] = '1'
+        parent.add_edge(node, end_state, InterstateEdge(assignments={f'did_break_{loop.label}': '1'}))
+
     # Remove the original loop.
     parent.remove_node(loop)
     if parent.in_degree(end_state) == 0:

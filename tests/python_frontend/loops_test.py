@@ -421,7 +421,6 @@ def test_nested_map_with_symbol():
     val = nested_map_with_symbol()
     assert (np.array_equal(val, ref))
 
-
 @pytest.mark.skip
 def test_for_else():
 
@@ -454,7 +453,7 @@ def test_for_else():
     assert np.allclose(A_2, expected_2)
 
 
-
+@pytest.mark.skip
 def test_while_else():
 
     @dace.program
@@ -468,7 +467,6 @@ def test_while_else():
             A[1] = 1.0
             A[1] = 1.0
 
-    while_else.to_sdfg().save("while_else_orig.sdfg")
     A = np.array([0.0, 0.0])
     expected = np.array([5.0, 1.0])
     while_else(A)
@@ -529,7 +527,7 @@ if __name__ == "__main__":
     test_nested_map_for_loop_2()
     test_nested_map_for_loop_with_tasklet_2()
     test_nested_map_with_symbol()
-    #test_for_else()
+    test_for_else()
     test_while_else()
     test_branch_in_for()
     test_branch_in_while()

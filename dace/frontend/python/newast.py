@@ -2508,10 +2508,6 @@ class ProgramVisitor(ExtNodeVisitor):
     def _generate_orelse(self, loop_region: LoopRegion, postloop_block: ControlFlowBlock):
         did_break_symbol = 'did_break_' + loop_region.label
         self.sdfg.add_symbol(did_break_symbol, dace.int32)
-        for n in loop_region.nodes():
-            if isinstance(n, LoopRegion.BreakState):
-                for iedge in loop_region.in_edges(n):
-                    iedge.data.assignments[did_break_symbol] = '1'
         for iedge in self.cfg_target.in_edges(loop_region):
             iedge.data.assignments[did_break_symbol] = '0'
         oedges = self.cfg_target.out_edges(loop_region)
