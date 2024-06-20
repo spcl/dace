@@ -189,8 +189,9 @@ class CPUCodeGen(TargetCodeGenerator):
         self._generated_nodes.add(node)
         self._locals.clear_scope(self._ldepth + 1)
 
-    def allocate_view(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.AccessNode,
-                      global_stream: CodeIOStream, declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
+    def allocate_view(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.AccessNode,
+                      global_stream: CodeIOStream, declaration_stream: CodeIOStream,
+                      allocation_stream: CodeIOStream) -> None:
         """
         Allocates (creates pointer and refers to original) a view of an
         existing array, scalar, or view.
@@ -213,8 +214,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # Allocate the viewed data before the view, if necessary
         mpath = dfg.memlet_path(edge)
         viewed_dnode: nodes.AccessNode = mpath[-1].dst if is_write else mpath[0].src
-        self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, viewed_dnode, viewed_dnode.desc(sdfg), global_stream,
-                                           allocation_stream)
+        self._dispatcher.dispatch_allocate(sdfg, cfg, dfg, state_id, viewed_dnode, viewed_dnode.desc(sdfg),
+                                           global_stream, allocation_stream)
 
         # Memlet points to view, construct mirror memlet
         memlet = edge.data
@@ -277,12 +278,12 @@ class CPUCodeGen(TargetCodeGenerator):
                     atype = atype[:-1]
                 if value.startswith('&'):
                     value = value[1:]
-            declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
-        allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
+            declaration_stream.write(f'{atype} {aname};', cfg, state_id, node)
+        allocation_stream.write(f'{aname} = {value};', cfg, state_id, node)
 
-    def allocate_reference(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.AccessNode,
-                           global_stream: CodeIOStream, declaration_stream: CodeIOStream,
-                           allocation_stream: CodeIOStream):
+    def allocate_reference(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int,
+                           node: nodes.AccessNode, global_stream: CodeIOStream, declaration_stream: CodeIOStream,
+                           allocation_stream: CodeIOStream) -> None:
         name = node.data
         nodedesc = node.desc(sdfg)
         ptrname = cpp.ptr(name, nodedesc, sdfg, self._frame)
@@ -291,7 +292,7 @@ class CPUCodeGen(TargetCodeGenerator):
         declared = self._dispatcher.declared_arrays.has(ptrname)
 
         if not declared:
-            declaration_stream.write(f'{nodedesc.dtype.ctype} *{ptrname};', sdfg, state_id, node)
+            declaration_stream.write(f'{nodedesc.dtype.ctype} *{ptrname};', cfg, state_id, node)
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             self._dispatcher.declared_arrays.add(ptrname, DefinedType.Pointer, ctypedef)
             self._dispatcher.defined_vars.add(ptrname, DefinedType.Pointer, ctypedef)
@@ -333,7 +334,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
-            declaration_stream.write(f'{nodedesc.dtype.ctype} *{name} = nullptr;\n', sdfg, state_id, node)
+            declaration_stream.write(f'{nodedesc.dtype.ctype} *{name} = nullptr;\n', cfg, state_id, node)
             self._dispatcher.declared_arrays.add(name, DefinedType.Pointer, ctypedef)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
@@ -342,7 +343,7 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream.write(
                 "{ctype} *{name} = nullptr;\n"
                 "#pragma omp threadprivate({name})".format(ctype=nodedesc.dtype.ctype, name=name),
-                sdfg,
+                cfg,
                 state_id,
                 node,
             )
@@ -409,15 +410,16 @@ class CPUCodeGen(TargetCodeGenerator):
                                             function_stream, declaration_stream, allocation_stream)
             return
         if isinstance(nodedesc, data.View):
-            return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
+            return self.allocate_view(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
+                                      allocation_stream)
         if isinstance(nodedesc, data.Reference):
-            return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
+            return self.allocate_reference(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
                                            allocation_stream)
         if isinstance(nodedesc, data.Scalar):
             if node.setzero:
-                declaration_stream.write("%s %s = 0;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node)
+                declaration_stream.write("%s %s = 0;\n" % (nodedesc.dtype.ctype, name), cfg, state_id, node)
             else:
-                declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node)
+                declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name), cfg, state_id, node)
             define_var(name, DefinedType.Scalar, nodedesc.dtype.ctype)
         elif isinstance(nodedesc, data.Stream):
             ###################################################################
@@ -450,7 +452,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 ctype = 'dace::ArrayStreamView%s<%s>' % (threadlocal, arrnode.dtype.ctype)
                 declaration_stream.write(
                     "%s %s (%s);\n" % (ctype, name, array_expr),
-                    sdfg,
+                    cfg,
                     state_id,
                     node,
                 )
@@ -467,7 +469,7 @@ class CPUCodeGen(TargetCodeGenerator):
             else:
                 definition = "{} {};".format(ctypedef, name)
 
-            declaration_stream.write(definition, sdfg, state_id, node)
+            declaration_stream.write(definition, cfg, state_id, node)
             define_var(name, DefinedType.Stream, ctypedef)
 
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
@@ -490,9 +492,9 @@ class CPUCodeGen(TargetCodeGenerator):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
             if not declared:
-                declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', sdfg, state_id, node)
+                declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
             allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), sdfg,
+                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
                 state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
@@ -500,7 +502,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
                                         (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
             if nodedesc.start_offset != 0:
-                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', sdfg, state_id,
+                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', cfg, state_id,
                                         node)
 
             return
@@ -511,7 +513,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.setzero:
                 declaration_stream.write(
                     "%s %s[%s]  DACE_ALIGN(64) = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
-                    sdfg,
+                    cfg,
                     state_id,
                     node,
                 )
@@ -519,7 +521,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 return
             declaration_stream.write(
                 "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
-                sdfg,
+                cfg,
                 state_id,
                 node,
             )
@@ -531,7 +533,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if not declared:
                 function_stream.write(
                     "{ctype} *{name};\n#pragma omp threadprivate({name})".format(ctype=nodedesc.dtype.ctype, name=name),
-                    sdfg,
+                    cfg,
                     state_id,
                     node,
                 )
@@ -545,7 +547,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     {name} = new {ctype} DACE_ALIGN(64)[{arrsize}];""".format(ctype=nodedesc.dtype.ctype,
                                                                               name=alloc_name,
                                                                               arrsize=cpp.sym2cpp(arrsize)),
-                sdfg,
+                cfg,
                 state_id,
                 node,
             )
@@ -553,7 +555,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
                                         (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
             if nodedesc.start_offset != 0:
-                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', sdfg, state_id,
+                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', cfg, state_id,
                                         node)
 
             # Close OpenMP parallel section
@@ -579,7 +581,7 @@ class CPUCodeGen(TargetCodeGenerator):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
-            callsite_stream.write("delete[] %s;\n" % alloc_name, sdfg, state_id, node)
+            callsite_stream.write("delete[] %s;\n" % alloc_name, cfg, state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             callsite_stream.write(
@@ -587,7 +589,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 {{
                     delete[] {name};
                 }}""".format(name=alloc_name),
-                sdfg,
+                cfg,
                 state_id,
                 node,
             )
@@ -600,8 +602,8 @@ class CPUCodeGen(TargetCodeGenerator):
         cfg: ControlFlowRegion,
         dfg: StateSubgraphView,
         state_id: int,
-        src_node: nodes.Node,
-        dst_node: nodes.Node,
+        src_node: nodes.Tasklet | nodes.AccessNode,
+        dst_node: nodes.Tasklet | nodes.AccessNode,
         edge: Tuple[nodes.Node, str | None, nodes.Node, str | None, mmlt.Memlet],
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,

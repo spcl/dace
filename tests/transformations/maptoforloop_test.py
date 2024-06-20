@@ -3,7 +3,7 @@
 
 import dace
 import numpy as np
-from dace.transformation.dataflow import MapExpansion, MapToForLoop
+from dace.transformation.dataflow import MapExpansion, MapToLegacyForLoop
 
 
 @dace.program
@@ -24,7 +24,7 @@ def test_map2for_overlap():
         expected[:, :, k + 1] = expected[:, :, k] + expected[:, :, k - 1]
 
     sdfg = map2for.to_sdfg()
-    assert sdfg.apply_transformations([MapExpansion, MapToForLoop]) == 2
+    assert sdfg.apply_transformations([MapExpansion, MapToLegacyForLoop]) == 2
     sdfg(A=A)
     assert np.allclose(A, expected)
 

@@ -594,8 +594,8 @@ class TargetDispatcher(object):
 
         return target
 
-    def dispatch_copy(self, src_node: nodes.Node, dst_node: nodes.Node, edge, sdfg: SDFG, cfg: ControlFlowRegion,
-                      dfg: StateSubgraphView, state_id: int, function_stream: CodeIOStream,
+    def dispatch_copy(self, src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet], sdfg: SDFG,
+                      cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, function_stream: CodeIOStream,
                       output_stream: CodeIOStream) -> None:
         """ Dispatches a code generator for a memory copy operation. """
         state = cfg.state(state_id)

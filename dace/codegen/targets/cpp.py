@@ -866,7 +866,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
     if node.label is None or node.label == "":
         return ""
 
-    state_dfg = cfg.nodes()[state_id]
+    state_dfg = cfg.state(state_id)
 
     # Not [], "" or None
     if not node.code:
@@ -876,11 +876,11 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
     if node.code_global and node.code_global.code:
         function_stream.write(
             codeblock_to_cpp(node.code_global),
-            sdfg,
+            cfg,
             state_id,
             node,
         )
-        function_stream.write("\n", sdfg, state_id, node)
+        function_stream.write("\n", cfg, state_id, node)
 
     # add node state_fields to the statestruct
     codegen._frame.statestruct.extend(node.state_fields)
@@ -896,14 +896,14 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
                 callsite_stream.write(
                     'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
                     % (node._cuda_stream, common.get_gpu_backend()),
-                    sdfg,
+                    cfg,
                     state_id,
                     node,
                 )
             else:
                 callsite_stream.write(
                     '%sStream_t __dace_current_stream = nullptr;' % common.get_gpu_backend(),
-                    sdfg,
+                    cfg,
                     state_id,
                     node,
                 )
@@ -916,7 +916,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             # Doesn't cause crashes due to missing pyMLIR if a MLIR tasklet is not present
             from dace.codegen.targets.mlir import utils
 
-            mlir_func_uid = "_" + str(sdfg.cfg_id) + "_" + str(state_id) + "_" + str(dfg.node_id(node))
+            mlir_func_uid = "_" + str(cfg.cfg_id) + "_" + str(state_id) + "_" + str(dfg.node_id(node))
 
             mlir_ast = utils.get_ast(node.code.code)
             mlir_is_generic = utils.is_generic(mlir_ast)
@@ -945,7 +945,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             callsite_stream.write(mlir_out_name + " = mlir_entry" + mlir_func_uid + "(" + mlir_in_untyped + ");")
 
         if node.language == dtypes.Language.CPP:
-            callsite_stream.write(type(node).__properties__["code"].to_string(node.code), sdfg, state_id, node)
+            callsite_stream.write(type(node).__properties__["code"].to_string(node.code), cfg, state_id, node)
 
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):
             # Get GPU codegen
@@ -954,7 +954,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
                 gpu_codegen = next(cg for cg in codegen._dispatcher.used_targets if isinstance(cg, cuda.CUDACodeGen))
             except StopIteration:
                 return
-            synchronize_streams(sdfg, state_dfg, state_id, node, node, callsite_stream, gpu_codegen)
+            synchronize_streams(sdfg, cfg, state_dfg, state_id, node, node, callsite_stream, gpu_codegen)
         return
 
     body = node.code.code
@@ -991,7 +991,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         if connector is not None:
             defined_symbols.update({connector: conntype})
 
-    callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg, state_id, node)
+    callsite_stream.write("// Tasklet code (%s)\n" % node.label, cfg, state_id, node)
     for stmt in body:
         stmt = copy.deepcopy(stmt)
         rk = StructInitializer(sdfg).visit(stmt)
@@ -1004,7 +1004,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             # Unparse to C++ and add 'auto' declarations if locals not declared
             result = StringIO()
             cppunparse.CPPUnparser(rk, ldepth + 1, locals, result, defined_symbols=defined_symbols)
-            callsite_stream.write(result.getvalue(), sdfg, state_id, node)
+            callsite_stream.write(result.getvalue(), cfg, state_id, node)
 
 
 def shape_to_strides(shape):
@@ -1385,7 +1385,7 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
-def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
+def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     if max_streams >= 0:
@@ -1415,11 +1415,11 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, 
             if isinstance(desc, data.Array) and desc.start_offset != 0:
                 ptrname = f'({ptrname} - {sym2cpp(desc.start_offset)})'
             if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-                callsite_stream.write(f'DACE_GPU_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', sdfg, state_id,
+                callsite_stream.write(f'DACE_GPU_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', cfg, state_id,
                                       scope_exit)
                 callsite_stream.write(f'DACE_GPU_CHECK({backend}DeviceSynchronize());')
             else:
-                callsite_stream.write(f'{backend}FreeAsync({ptrname}, {cudastream});\n', sdfg, state_id, scope_exit)
+                callsite_stream.write(f'{backend}FreeAsync({ptrname}, {cudastream});\n', cfg, state_id, scope_exit)
             to_remove.add((sd, name))
 
     # Clear all released memory from tracking
@@ -1447,7 +1447,7 @@ DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_strea
                         dst_stream=edge.dst._cuda_stream,
                         backend=backend,
                     ),
-                    sdfg,
+                    cfg,
                     state_id,
                     [edge.src, edge.dst],
                 )
@@ -1479,7 +1479,7 @@ DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_strea
                             dst_stream=e.dst._cuda_stream,
                             backend=backend,
                         ),
-                        sdfg,
+                        cfg,
                         state_id,
                         [e.src, e.dst],
                     )

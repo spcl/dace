@@ -325,11 +325,13 @@ class PatternTransformation(TransformationBase):
         sample_node = next(iter(where.values()))
 
         if isinstance(sample_node, SDFGState):
-            graph = sdfg
+            graph = sample_node.parent_graph
             state_id = -1
+            cfg_id = graph.cfg_id
         elif isinstance(sample_node, nd.Node):
-            graph = next(s for s in sdfg.nodes() if sample_node in s.nodes())
-            state_id = sdfg.node_id(graph)
+            graph = next(s for s in sdfg.states() if sample_node in s.nodes())
+            state_id = graph.block_id
+            cfg_id = graph.parent_graph.cfg_id
         else:
             raise TypeError('Invalid node type "%s"' % type(sample_node).__name__)
 
@@ -347,7 +349,7 @@ class PatternTransformation(TransformationBase):
         # Construct subgraph and instantiate transformation
         subgraph = {required_node_names[k]: graph.node_id(where[k]) for k in required}
         instance = cls()
-        instance.setup_match(sdfg, sdfg.cfg_id, state_id, subgraph, expr_index)
+        instance.setup_match(sdfg, cfg_id, state_id, subgraph, expr_index)
 
         # Construct transformation parameters
         for optname, optval in options.items():

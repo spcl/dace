@@ -1293,7 +1293,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 for stream in streams_to_sync:
                     callsite_stream.write(
                         'DACE_GPU_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));' %
-                        (self.backend, stream), sdfg, sdfg.node_id(state))
+                        (self.backend, stream), cfg, state.block_id)
 
             # After synchronizing streams, generate state footer normally
             callsite_stream.write('\n')
@@ -1311,12 +1311,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Special case: if this is a GPU grid state and something is reading
         # from a possible result of a collaborative write, sync first
         if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device:
-            state_id = next(i for i, s in enumerate(sdfg.nodes()) if s == state)
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
                         and state.in_degree(node) == 0 and state.out_degree(node) > 0):
                     if not self._scope_has_collaborative_copy:
-                        callsite_stream.write('__syncthreads();', sdfg, state_id)
+                        callsite_stream.write('__syncthreads();', cfg, state.block_id)
                     break
 
         # In GPU_Persistent scopes, states need global barriers between them,
@@ -1335,7 +1334,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             ]
             for stream in streams_to_reset:
                 ptrname = cpp.ptr(stream.data, stream.desc(sdfg), sdfg, self._frame)
-                callsite_stream.write("{}.reset();".format(ptrname), sdfg, state.node_id)
+                callsite_stream.write("{}.reset();".format(ptrname), cfg, state.block_id)
 
             components = dace.sdfg.concurrent_subgraphs(state)
             for c in components:
@@ -1360,14 +1359,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     if write_scope == 'grid':
                         callsite_stream.write("if (blockIdx.x == 0 "
                                               "&& threadIdx.x == 0) "
-                                              "{  // sub-graph begin", sdfg, state.node_id)
+                                              "{  // sub-graph begin", cfg, state.block_id)
                     elif write_scope == 'block':
                         callsite_stream.write("if (threadIdx.x == 0) "
-                                              "{  // sub-graph begin", sdfg, state.node_id)
+                                              "{  // sub-graph begin", cfg, state.block_id)
                     else:
-                        callsite_stream.write("{  // subgraph begin", sdfg, state.node_id)
+                        callsite_stream.write("{  // subgraph begin", cfg, state.block_id)
                 else:
-                    callsite_stream.write("{  // subgraph begin", sdfg, state.node_id)
+                    callsite_stream.write("{  // subgraph begin", cfg, state.block_id)
 
                 # Need to skip certain entry nodes to make sure that they are
                 # not processed twice
@@ -1378,15 +1377,16 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 skip_entry = len(comp_same_entry) > 0 and has_map
 
                 self._dispatcher.dispatch_subgraph(sdfg,
+                                                   cfg,
                                                    c,
-                                                   sdfg.node_id(state),
+                                                   state.block_id,
                                                    function_stream,
                                                    callsite_stream,
                                                    skip_entry_node=skip_entry)
 
-                callsite_stream.write("}  // subgraph end", sdfg, state.node_id)
+                callsite_stream.write("}  // subgraph end", cfg, state.block_id)
 
-            callsite_stream.write('__gbar.Sync();', sdfg, state.node_id)
+            callsite_stream.write('__gbar.Sync();', cfg, state.block_id)
 
             # done here, code is generated
             return
@@ -1611,7 +1611,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
 void __dace_runkernel_{fname}({fargs})
 {{
-""".format(fname=kernel_name, fargs=', '.join(state_param + kernel_args_typed + extra_call_args_typed)), sdfg, state_id,
+""".format(fname=kernel_name, fargs=', '.join(state_param + kernel_args_typed + extra_call_args_typed)), cfg, state_id,
             node)
 
         if is_persistent:
@@ -1625,11 +1625,11 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         if create_grid_barrier:
             gbar = '__gbar_' + kernel_name
-            self._localcode.write('    cub::GridBarrierLifetime %s;\n' % gbar, sdfg, state_id, node)
+            self._localcode.write('    cub::GridBarrierLifetime %s;\n' % gbar, cfg, state_id, node)
             self._localcode.write(
                 '{}.Setup({});'.format(gbar,
                                        ' * '.join(_topy(grid_dims)) if not is_persistent else 'dace_number_blocks'),
-                sdfg, state_id, node)
+                cfg, state_id, node)
             extra_kernel_args.append('(void *)((cub::GridBarrier *)&%s)' % gbar)
 
         # Compute dynamic shared memory
@@ -1660,7 +1660,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
             self._localcode.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
-                sdfg, state_id, scope_entry)
+                cfg, state_id, scope_entry)
 
         gdims = 'dace_number_blocks, 1, 1' if is_persistent else ', '.join(_topy(grid_dims))
         bdims = ', '.join(_topy(block_dims))
@@ -1688,7 +1688,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 if ({dimcheck}) {{
                     {emptygrid_warning}
                     return;
-                }}''', sdfg, state_id, scope_entry)
+                }}''', cfg, state_id, scope_entry)
 
         self._localcode.write(
             '''
@@ -1700,7 +1700,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     bdims=bdims,
                     dynsmem=_topy(dynsmem_size),
                     stream=cudastream,
-                    backend=self.backend), sdfg, state_id, scope_entry)
+                    backend=self.backend), cfg, state_id, scope_entry)
 
         # Check kernel launch for errors
         self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK(__err, "{kernel_name}", {gdims}, {bdims});')
@@ -1713,12 +1713,12 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # Add invocation to calling code (in another file)
         function_stream.write(
             'DACE_EXPORTED void __dace_runkernel_%s(%s);\n' %
-            (kernel_name, ', '.join(state_param + kernel_args_typed + extra_call_args_typed)), sdfg, state_id,
+            (kernel_name, ', '.join(state_param + kernel_args_typed + extra_call_args_typed)), cfg, state_id,
             scope_entry)
 
         # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
         if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
-            callsite_stream.write('{', sdfg, state_id, scope_entry)
+            callsite_stream.write('{', cfg, state_id, scope_entry)
 
         # Synchronize all events leading to dynamic map range connectors
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
@@ -1726,24 +1726,24 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 ev = e._cuda_event
                 callsite_stream.write(
                     'DACE_GPU_CHECK({backend}EventSynchronize(__state->gpu_context->events[{ev}]));'.format(
-                        ev=ev, backend=self.backend), sdfg, state_id, [e.src, e.dst])
+                        ev=ev, backend=self.backend), cfg, state_id, [e.src, e.dst])
             callsite_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
-                sdfg, state_id, node)
+                cfg, state_id, node)
 
         # Invoke kernel call
         callsite_stream.write(
             '__dace_runkernel_%s(%s);\n' %
             (kernel_name,
              ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg, self._frame)
-                                      for aname, arg in kernel_args.items()] + extra_call_args)), sdfg, state_id,
+                                      for aname, arg in kernel_args.items()] + extra_call_args)), cfg, state_id,
             scope_entry)
 
         # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
         if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
-            callsite_stream.write('}', sdfg, state_id, scope_entry)
+            callsite_stream.write('}', cfg, state_id, scope_entry)
 
-        synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit, callsite_stream, self)
+        synchronize_streams(sdfg, cfg, state, state_id, scope_entry, scope_exit, callsite_stream, self)
 
         # Instrumentation (post-kernel)
         if instr is not None:
@@ -2054,7 +2054,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     )
 
                     expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
-                    kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', sdfg, state_id, node)
+                    kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', cfg, state_id, node)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
 
         # Dispatch internal code

@@ -110,6 +110,9 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # create object field for external nsdfg access
         self.nsdfg = nsdfg
 
+        # Ensure the SDFG is marked as containing CFG regions
+        sdfg.cfg_list[0].using_experimental_blocks = True
+
         return node, nstate
 
 
