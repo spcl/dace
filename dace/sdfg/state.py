@@ -1354,7 +1354,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         return ret
 
     @classmethod
-    def from_json(cls, json_obj, context={'sdfg': None}):
+    def from_json(cls, json_obj, context={'sdfg': None}, pre_ret=None):
         """ Loads the node properties, label and type into a dict.
 
             :param json_obj: The object containing information about this node.
@@ -1370,7 +1370,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
-        ret = SDFGState(label=json_obj['label'], sdfg=context['sdfg'], debuginfo=None)
+        ret = pre_ret if pre_ret is not None else SDFGState(label=json_obj['label'],
+                                                            sdfg=context['sdfg'],
+                                                            debuginfo=None)
 
         rec_ci = {
             'sdfg': context['sdfg'],
@@ -2892,9 +2894,27 @@ class LoopRegion(ControlFlowRegion):
         def __repr__(self) -> str:
             return f"SDFGState ({self.label}) [Break]"
 
+        @classmethod
+        def from_json(cls, json_obj, context={'sdfg': None}):
+            _type = json_obj['type']
+            if _type != cls.__name__:
+                raise Exception('Class type mismatch')
+            ret = LoopRegion.BreakState(label=json_obj['label'], sdfg=context['sdfg'], debuginfo=None)
+            json_obj['type'] = SDFGState.__name__
+            return SDFGState.from_json(json_obj, context, ret)
+
 
     class ContinueState(SDFGState):
         """ Special state representing continue statements inside of loop regions. """
 
         def __repr__(self) -> str:
             return f"SDFGState ({self.label}) [Continue]"
+
+        @classmethod
+        def from_json(cls, json_obj, context={'sdfg': None}):
+            _type = json_obj['type']
+            if _type != cls.__name__:
+                raise Exception('Class type mismatch')
+            ret = LoopRegion.ContinueState(label=json_obj['label'], sdfg=context['sdfg'], debuginfo=None)
+            json_obj['type'] = SDFGState.__name__
+            return SDFGState.from_json(json_obj, context, ret)

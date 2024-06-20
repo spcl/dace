@@ -609,7 +609,7 @@ class FPGACodeGen(TargetCodeGenerator):
                         continue
                     if (data.storage == dtypes.StorageType.FPGA_Global and not isinstance(data, dt.View)):
                         allocated.add(node.data)
-                        self._dispatcher.dispatch_allocate(sdfg, kern, state_id, node, data, function_stream,
+                        self._dispatcher.dispatch_allocate(sdfg, cfg, kern, state_id, node, data, function_stream,
                                                            callsite_stream)
 
                 # Create a unique kernel name to avoid name clashes
@@ -2374,7 +2374,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
                           src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[memlet.Memlet],
                           function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-        self._dispatcher.dispatch_copy(src_node, dst_node, edge, sdfg, state_dfg, state_id, function_stream,
+        self._dispatcher.dispatch_copy(src_node, dst_node, edge, sdfg, cfg, state_dfg, state_id, function_stream,
                                        callsite_stream)
 
     def process_out_memlets(self, *args, **kwargs):

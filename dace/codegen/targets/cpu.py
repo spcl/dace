@@ -1734,13 +1734,13 @@ class CPUCodeGen(TargetCodeGenerator):
         # Take care of nested SDFG I/O (arguments)
         # Arguments are input connectors, output connectors, and symbols
         codegen = self.calling_codegen
-        memlet_references = codegen.generate_nsdfg_arguments(sdfg, dfg, state_dfg, node)
+        memlet_references = codegen.generate_nsdfg_arguments(sdfg, cfg, dfg, state_dfg, node)
 
         if not inline and (not unique_functions or not code_already_generated):
             nested_stream.write(
                 ('inline ' if codegen is self else '') +
-                codegen.generate_nsdfg_header(sdfg, state_dfg, state_id, node, memlet_references, sdfg_label), sdfg,
-                state_id, node)
+                codegen.generate_nsdfg_header(sdfg, cfg, state_dfg, state_id, node, memlet_references, sdfg_label),
+                cfg, state_id, node)
 
         #############################
         # Generate function contents
