@@ -312,7 +312,10 @@ class Graph(Generic[NodeT, EdgeT]):
 
     def edge_bfs(self, node: Union[NodeT, Sequence[NodeT]], reverse: bool = False) -> Iterable[Edge[EdgeT]]:
         """Returns a generator over edges in the graph originating from the
-        passed node in BFS order"""
+        passed node in BFS order.
+
+        :note: All reachable edges are yielded including back edges
+        """
         if isinstance(node, (tuple, list)):
             queue = deque(node)
         else:
