@@ -6,6 +6,7 @@ from dace.sdfg.state import LoopRegion
 
 def test_loop_regular_for():
     sdfg = dace.SDFG('regular_for')
+    sdfg.using_experimental_blocks = True
     state0 = sdfg.add_state('state0', is_start_block=True)
     loop1 = LoopRegion(label='loop1', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0',
                        update_expr='i = i + 1', inverted=False)
@@ -32,6 +33,7 @@ def test_loop_regular_for():
 
 def test_loop_regular_while():
     sdfg = dace.SDFG('regular_while')
+    sdfg.using_experimental_blocks = True
     state0 = sdfg.add_state('state0', is_start_block=True)
     loop1 = LoopRegion(label='loop1', condition_expr='i < 10')
     sdfg.add_array('A', [10], dace.float32)
@@ -59,6 +61,7 @@ def test_loop_regular_while():
 
 def test_loop_do_while():
     sdfg = dace.SDFG('do_while')
+    sdfg.using_experimental_blocks = True
     sdfg.add_symbol('i', dace.int32)
     state0 = sdfg.add_state('state0', is_start_block=True)
     loop1 = LoopRegion(label='loop1', condition_expr='i < 10', inverted=True)
@@ -85,6 +88,7 @@ def test_loop_do_while():
 
 def test_loop_do_for():
     sdfg = dace.SDFG('do_for')
+    sdfg.using_experimental_blocks = True
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [10], dace.float32)
     state0 = sdfg.add_state('state0', is_start_block=True)
@@ -113,6 +117,7 @@ def test_loop_do_for():
 
 def test_triple_nested_for():
     sdfg = dace.SDFG('gemm')
+    sdfg.using_experimental_blocks = True
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
     sdfg.add_symbol('k', dace.int32)

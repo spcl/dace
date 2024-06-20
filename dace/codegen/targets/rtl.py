@@ -74,7 +74,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 self.dispatcher.dispatch_output_definition(node, dst_node, edge, sdfg, cfg, dfg, state_id,
                                                            function_stream, callsite_stream)
             # generate tasklet code
-            self.unparse_tasklet(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+            self.unparse_tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
             callsite_stream.write('}', cfg, state_id, dfg.node_id(node))
         else:
             raise RuntimeError(

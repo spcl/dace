@@ -821,8 +821,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             desc = node.desc(tsdfg)
 
-            self._dispatcher.dispatch_allocate(tsdfg, cfg, state, state_id, node, desc, function_stream,
-                                               callsite_stream, declare, allocate)
+            self._dispatcher.dispatch_allocate(tsdfg, cfg if state is None else state.parent_graph, state, state_id,
+                                               node, desc, function_stream, callsite_stream, declare, allocate)
 
     def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion,
                                    scope: Union[nodes.EntryNode, SDFGState, SDFG], function_stream: CodeIOStream,

@@ -379,9 +379,16 @@ class ForScope(ControlFlow):
         update = unparse_interstate_edge(self.loop.update_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
         update = update.strip(';')
 
-        expr = f'for ({init}; {cond}; {update}) {{\n'
-        expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
-        expr += '\n}\n'
+        if self.loop.inverted:
+            expr = f'{init};\n'
+            expr += 'do {\n'
+            expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
+            expr += f'{update};\n'
+            expr += f'\n}} while({cond});\n'
+        else:
+            expr = f'for ({init}; {cond}; {update}) {{\n'
+            expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
+            expr += '\n}\n'
         return expr
 
     @property
@@ -597,11 +604,15 @@ def _structured_control_flow_traversal(cfg: ControlFlowRegion,
             if isinstance(node, LoopRegion):
                 body = make_empty_block()
                 if node.inverted:
-                    cfg_block = DoWhileScope(dispatch_state, parent_block, False, node, body)
-                elif node.init_statement and node.update_statement and node.loop_variable:
-                    cfg_block = ForScope(dispatch_state, parent_block, False, node, body)
+                    if node.init_statement and node.update_statement and node.loop_variable:
+                        cfg_block = ForScope(dispatch_state, parent_block, False, node, body)
+                    else:
+                        cfg_block = DoWhileScope(dispatch_state, parent_block, False, node, body)
                 else:
-                    cfg_block = WhileScope(dispatch_state, parent_block, False, node, body)
+                    if node.init_statement and node.update_statement and node.loop_variable:
+                        cfg_block = ForScope(dispatch_state, parent_block, False, node, body)
+                    else:
+                        cfg_block = WhileScope(dispatch_state, parent_block, False, node, body)
 
                 body.parent = cfg_block
                 _structured_control_flow_traversal(node, dispatch_state, body)
