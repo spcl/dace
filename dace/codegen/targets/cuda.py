@@ -2577,20 +2577,21 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
-    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references, sdfg_label):
+    def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label):
         return 'DACE_DFI ' + self._cpu_codegen.generate_nsdfg_header(
-            sdfg, state, state_id, node, memlet_references, sdfg_label, state_struct=False)
+            sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=False)
 
-    def generate_nsdfg_call(self, sdfg, state, node, memlet_references, sdfg_label):
+    def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label):
         return self._cpu_codegen.generate_nsdfg_call(sdfg,
+                                                     cfg,
                                                      state,
                                                      node,
                                                      memlet_references,
                                                      sdfg_label,
                                                      state_struct=False)
 
-    def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
-        result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, dfg, state, node)
+    def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
+        result = self._cpu_codegen.generate_nsdfg_arguments(sdfg, cfg, dfg, state, node)
         if self.create_grid_barrier:
             result.append(('cub::GridBarrier&', '__gbar', '__gbar'))
 

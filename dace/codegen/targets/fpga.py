@@ -2338,6 +2338,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label):
         return self._cpu_codegen.generate_nsdfg_header(sdfg,
+                                                       cfg,
                                                        state,
                                                        state_id,
                                                        node,
@@ -2347,6 +2348,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label):
         return self._cpu_codegen.generate_nsdfg_call(sdfg,
+                                                     cfg,
                                                      state,
                                                      node,
                                                      memlet_references,
@@ -2354,7 +2356,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                                      state_struct=False)
 
     def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
-        return self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, dfg, node)
+        return self._cpu_codegen.generate_nsdfg_arguments(sdfg, cfg, state, dfg, node)
 
     def generate_host_function_boilerplate(self, sdfg, cfg, state, nested_global_transients, host_code_stream):
         """
