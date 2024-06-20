@@ -1890,9 +1890,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             self._cpu_codegen.calling_codegen = old_codegen
 
     def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                    src_node: nodes.CodeNode | nodes.AccessNode, dst_node: nodes.CodeNode | nodes.AccessNode,
-                    edge: MultiConnectorEdge[memlet.Memlet], function_stream: CodeIOStream,
-                    callsite_stream: CodeIOStream) -> None:
+                    src_node: Union[nodes.CodeNode, nodes.AccessNode],
+                    dst_node: Union[nodes.CodeNode, nodes.AccessNode], edge: MultiConnectorEdge[memlet.Memlet],
+                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         if isinstance(src_node, dace.sdfg.nodes.CodeNode):
             src_storage = dtypes.StorageType.Register
             try:

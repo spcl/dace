@@ -602,9 +602,9 @@ class CPUCodeGen(TargetCodeGenerator):
         cfg: ControlFlowRegion,
         dfg: StateSubgraphView,
         state_id: int,
-        src_node: nodes.Tasklet | nodes.AccessNode,
-        dst_node: nodes.Tasklet | nodes.AccessNode,
-        edge: Tuple[nodes.Node, str | None, nodes.Node, str | None, mmlt.Memlet],
+        src_node: Union[nodes.Tasklet, nodes.AccessNode],
+        dst_node: Union[nodes.Tasklet, nodes.AccessNode],
+        edge: Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], mmlt.Memlet],
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ) -> None:
@@ -657,7 +657,7 @@ class CPUCodeGen(TargetCodeGenerator):
         dst_node: nodes.Node,
         dst_storage: dtypes.StorageType,
         dst_schedule: dtypes.ScheduleType,
-        edge: Tuple[nodes.Node, str | None, nodes.Node, str | None, mmlt.Memlet],
+        edge: Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], mmlt.Memlet],
         dfg: StateSubgraphView,
         stream: CodeIOStream,
     ) -> None:

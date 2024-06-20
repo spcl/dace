@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
+from typing import Union
 import dace
 import itertools
 import numpy as np
@@ -493,8 +494,8 @@ class SnitchCodeGen(TargetCodeGenerator):
         cfg: ControlFlowRegion,
         dfg: StateSubgraphView,
         state_id: int,
-        src_node: nodes.Tasklet | nodes.AccessNode,
-        dst_node: nodes.Tasklet | nodes.AccessNode,
+        src_node: Union[nodes.Tasklet, nodes.AccessNode],
+        dst_node: Union[nodes.Tasklet, nodes.AccessNode],
         edge: MultiConnectorEdge[Memlet],
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,

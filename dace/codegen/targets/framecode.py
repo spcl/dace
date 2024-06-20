@@ -43,7 +43,7 @@ class DaCeCodeGenerator(object):
         self.environments: List[Any] = []
         self.targets: Set[TargetCodeGenerator] = set()
         self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
-                                      List[Tuple[SDFG, SDFGState | None, nodes.AccessNode | None, bool, bool,
+                                      List[Tuple[SDFG, Optional[SDFGState], Optional[nodes.AccessNode], bool, bool,
                                                  bool]]] = collections.defaultdict(list)
         self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
         self.fsyms: Dict[int, Set[str]] = {}

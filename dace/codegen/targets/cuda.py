@@ -1188,7 +1188,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
 
     def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                    src_node: nodes.Tasklet | nodes.AccessNode, dst_node: nodes.CodeNode | nodes.AccessNode,
+                    src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
                     memlet: Memlet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         state = cfg.state(state_id)
         if isinstance(src_node, nodes.Tasklet):

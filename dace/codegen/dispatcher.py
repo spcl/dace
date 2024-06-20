@@ -273,7 +273,7 @@ class TargetDispatcher(object):
         return list(self._node_dispatchers)
 
     def register_map_dispatcher(self,
-                                schedule_type: List[dtypes.ScheduleType] | dtypes.ScheduleType,
+                                schedule_type: Union[List[dtypes.ScheduleType], dtypes.ScheduleType],
                                 func: target.TargetCodeGenerator) -> None:
         """ Registers a function that processes a scope, used when calling
             ``dispatch_subgraph`` and ``dispatch_scope``.
@@ -516,8 +516,8 @@ class TargetDispatcher(object):
                                                                    function_stream, callsite_stream)
 
     # Dispatches copy code for a memlet
-    def get_copy_dispatcher(self, src_node: nodes.CodeNode | nodes.AccessNode,
-                            dst_node: nodes.CodeNode | nodes.AccessNode | nodes.EntryNode,
+    def get_copy_dispatcher(self, src_node: Union[nodes.CodeNode, nodes.AccessNode],
+                            dst_node: Union[nodes.CodeNode, nodes.AccessNode, nodes.EntryNode],
                             edge: MultiConnectorEdge[Memlet],
                             sdfg: SDFG, state: SDFGState) -> Optional[target.TargetCodeGenerator]:
         """
