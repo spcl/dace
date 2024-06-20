@@ -1573,7 +1573,7 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', cfg, state_id, src_node)
 
-    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
+    def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
         arguments = []
 
@@ -1608,7 +1608,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments = ', '.join(arguments)
         return f'void {sdfg_label}({arguments}) {{'
 
-    def generate_nsdfg_call(self, sdfg, state, node, memlet_references, sdfg_label, state_struct=True):
+    def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label, state_struct=True):
         prepend = []
         if state_struct:
             prepend = ['__state']
@@ -1619,7 +1619,7 @@ class CPUCodeGen(TargetCodeGenerator):
         ])
         return f'{sdfg_label}({args});'
 
-    def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
+    def generate_nsdfg_arguments(self, sdfg, cfg, dfg, state, node):
         # Connectors that are both input and output share the same name
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
@@ -1805,7 +1805,8 @@ class CPUCodeGen(TargetCodeGenerator):
         ########################
         if not inline:
             # Generate function call
-            callsite_stream.write(codegen.generate_nsdfg_call(sdfg, state_dfg, node, memlet_references, sdfg_label),
+            callsite_stream.write(codegen.generate_nsdfg_call(sdfg, cfg, state_dfg, node, memlet_references,
+                                                              sdfg_label),
                                   cfg, state_id, node)
 
             ###############################################################
