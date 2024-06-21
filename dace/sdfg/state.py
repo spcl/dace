@@ -8,7 +8,7 @@ import copy
 import inspect
 import itertools
 import warnings
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Never, Optional, Set, Tuple, Union,
+from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
                     overload)
 
 import dace
@@ -1117,10 +1117,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.post_conditions = {}
         self.invariant_conditions = {}
 
-    def nodes(self) -> List[Never]:
+    def nodes(self):
         return []
 
-    def edges(self) -> List[Never]:
+    def edges(self):
         return []
 
     def set_default_lineinfo(self, lineinfo: dace.dtypes.DebugInfo):
