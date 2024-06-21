@@ -189,9 +189,9 @@ def test_loop_inlining_for_continue_break():
                        update_expr='i = i + 1', inverted=False)
     sdfg.add_node(loop1)
     state1 = loop1.add_state('state1', is_start_block=True)
-    state2 = loop1.add_state('state2', is_continue=True)
+    state2 = loop1.add_continue('state2')
     state3 = loop1.add_state('state3')
-    state4 = loop1.add_state('state4', is_break=True)
+    state4 = loop1.add_break('state4')
     state5 = loop1.add_state('state5')
     state6 = loop1.add_state('state6')
     loop1.add_edge(state1, state2, dace.InterstateEdge(condition='i < 5'))
@@ -210,14 +210,20 @@ def test_loop_inlining_for_continue_break():
     assert not any(isinstance(s, LoopRegion) for s in states)
     end_state = None
     tail_state = None
+    break_state = None
+    continue_state = None
     for state in states:
         if state.label == 'loop1_end':
             end_state = state
         elif state.label == 'loop1_tail':
             tail_state = state
+        elif state.label == 'loop1_state2':
+            continue_state = state
+        elif state.label == 'loop1_state4':
+            break_state = state
     assert end_state is not None
-    assert len(sdfg.edges_between(state4, end_state)) == 1
-    assert len(sdfg.edges_between(state2, tail_state)) == 1
+    assert len(sdfg.edges_between(break_state, end_state)) == 1
+    assert len(sdfg.edges_between(continue_state, tail_state)) == 1
 
 
 def test_loop_inlining_multi_assignments():

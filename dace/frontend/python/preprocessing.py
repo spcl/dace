@@ -935,6 +935,9 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         for stmt in reversed(self.with_statements):
             if until_loop_end and not isinstance(stmt, (ast.With, ast.AsyncWith)):
                 break
+            elif not until_loop_end and isinstance(stmt, (ast.For, ast.While)):
+                break
+
             for mgrname, mgr in reversed(self.context_managers[stmt]):
                 # Call __exit__ (without exception management all three arguments are set to None)
                 exit_call = ast.copy_location(ast.parse(f'{mgrname}.__exit__(None, None, None)').body[0], stmt)

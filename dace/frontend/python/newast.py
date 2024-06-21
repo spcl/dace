@@ -32,7 +32,7 @@ from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import ControlFlowBlock, LoopRegion, ControlFlowRegion
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, LoopRegion, ControlFlowRegion
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
@@ -2456,11 +2456,16 @@ class ProgramVisitor(ExtNodeVisitor):
         if test_region is not None:
             iter_end_blocks = set()
             for n in loop_region.nodes():
-                if isinstance(n, LoopRegion.ContinueState):
-                    iter_end_blocks.add(n)
-                    # If it needs to be connected back to the test region, it does no longer need
-                    # to be handled specially and thus is no longer a special continue state.
-                    n.__class__ = SDFGState
+                if isinstance(n, ContinueBlock):
+                    # If it needs to be connected back to the test region, it does no longer need to be handled
+                    # specially and thus is no longer a special continue state. Add an empty state and redirect the
+                    # edges leading into the continue into it.
+                    replacer_state = loop_region.add_state()
+                    iter_end_blocks.add(replacer_state)
+                    for ie in loop_region.in_edges(n):
+                        loop_region.add_edge(ie.src, replacer_state, ie.data)
+                        loop_region.remove_edge(ie)
+                    loop_region.remove_node(n)
             for inner_node in loop_region.nodes():
                 if loop_region.out_degree(inner_node) == 0:
                     iter_end_blocks.add(inner_node)
@@ -2509,7 +2514,7 @@ class ProgramVisitor(ExtNodeVisitor):
         did_break_symbol = 'did_break_' + loop_region.label
         self.sdfg.add_symbol(did_break_symbol, dace.int32)
         for n in loop_region.nodes():
-            if isinstance(n, LoopRegion.BreakState):
+            if isinstance(n, BreakBlock):
                 for iedge in loop_region.in_edges(n):
                     iedge.data.assignments[did_break_symbol] = '1'
         for iedge in self.cfg_target.in_edges(loop_region):
@@ -2528,8 +2533,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Break(self, node: ast.Break):
         if isinstance(self.cfg_target, LoopRegion):
-            break_state = self.cfg_target.add_state('break_%s' % node.lineno, is_break=True)
-            self._on_block_added(break_state)
+            self._on_block_added(self.cfg_target.add_break(f'break_{self.cfg_target.label}_{node.lineno}'))
         else:
             error_msg = "'break' is only supported inside loops "
             if self.nested:
@@ -2539,8 +2543,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Continue(self, node: ast.Continue):
         if isinstance(self.cfg_target, LoopRegion):
-            continue_state = self.cfg_target.add_state('continue_%s' % node.lineno, is_continue=True)
-            self._on_block_added(continue_state)
+            self._on_block_added(self.cfg_target.add_continue(f'continue_{self.cfg_target.label}_{node.lineno}'))
         else:
             error_msg = ("'continue' is only supported inside loops ")
             if self.nested:
@@ -4684,6 +4687,10 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             ast_name = ast.copy_location(ast.Name(id='__return'), node)
             self._visit_assign(new_node, ast_name, None, is_return=True)
+
+        if not isinstance(self.cfg_target, SDFG):
+            # In a nested control flow region, a return needs to be explicitly marked with a return block.
+            self._on_block_added(self.cfg_target.add_return(f'return_{self.cfg_target.label}_{node.lineno}'))
 
     def visit_With(self, node, is_async=False):
         # "with dace.tasklet" syntax

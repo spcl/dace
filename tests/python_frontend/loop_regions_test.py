@@ -560,10 +560,57 @@ def test_branch_in_while():
     sdfg = branch_in_while.to_sdfg(simplify=False)
     assert len(sdfg.source_nodes()) == 1
 
+def test_for_with_return():
+
+    @dace.program
+    def for_with_return(A: dace.int32[10]):
+        for i in range(10):
+            if A[i] < 0:
+                return 1
+        return 0
+
+    for_with_return.use_experimental_cfg_blocks = True
+    sdfg = for_with_return.to_sdfg()
+
+    A = np.full((10,), 1).astype(np.int32)
+    A2 = np.full((10,), 1).astype(np.int32)
+    A2[5] = -1
+    rval1 = sdfg(A)
+    expected1 = for_with_return.f(A)
+    rval2 = sdfg(A2)
+    expected2 = for_with_return.f(A2)
+    assert rval1 == expected1
+    assert rval2 == expected2
+
+def test_for_while_with_return():
+
+    @dace.program
+    def for_while_with_return(A: dace.int32[10, 10]):
+        for i in range(10):
+            j = 0
+            while (j < 10):
+                if A[i,j] < 0:
+                    return 1
+                j += 1
+        return 0
+
+    for_while_with_return.use_experimental_cfg_blocks = True
+    sdfg = for_while_with_return.to_sdfg()
+
+    A = np.full((10,10), 1).astype(np.int32)
+    A2 = np.full((10,10), 1).astype(np.int32)
+    A2[5,5] = -1
+    rval1 = sdfg(A)
+    expected1 = for_while_with_return.f(A)
+    rval2 = sdfg(A2)
+    expected2 = for_while_with_return.f(A2)
+    assert rval1 == expected1
+    assert rval2 == expected2
+
 
 if __name__ == "__main__":
     test_for_loop()
-    #test_for_loop_with_break_continue()
+    test_for_loop_with_break_continue()
     test_nested_for_loop()
     test_while_loop()
     test_while_loop_with_break_continue()
@@ -584,3 +631,5 @@ if __name__ == "__main__":
     test_while_else()
     test_branch_in_for()
     test_branch_in_while()
+    test_for_with_return()
+    test_for_while_with_return()
