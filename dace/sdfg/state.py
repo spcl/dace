@@ -108,8 +108,9 @@ class BlockGraphView(object):
     # Traversal methods
 
     @abc.abstractmethod
-    def all_nodes_recursive(self,
-                            predicate: Optional[Callable[[NodeT, GraphT], bool]]) -> Iterator[Tuple[NodeT, GraphT]]:
+    def all_nodes_recursive(
+        self,
+        predicate: Optional[Callable[[NodeT, GraphT], bool]] = None) -> Iterator[Tuple[NodeT, GraphT]]:
         """
         Iterate over all nodes in this graph or subgraph.
         This includes control flow blocks, nodes in those blocks, and recursive control flow blocks and nodes within
@@ -220,7 +221,7 @@ class BlockGraphView(object):
         :param keep_defined_in_mapping: If True, symbols defined in inter-state edges that are in the symbol mapping
                                         will be removed from the set of defined symbols.
         """
-        raise NotImplementedError()
+        return set()
 
     @property
     def free_symbols(self) -> Set[str]:
@@ -241,13 +242,13 @@ class BlockGraphView(object):
         
         :return: A two-tuple of sets of things denoting ({data read}, {data written}).
         """
-        raise NotImplementedError()
+        return set(), set()
 
     @abc.abstractmethod
     def unordered_arglist(self,
                           defined_syms=None,
                           shared_transients=None) -> Tuple[Dict[str, dt.Data], Dict[str, dt.Data]]:
-        raise NotImplementedError()
+        return {}, {}
 
     def arglist(self, defined_syms=None, shared_transients=None) -> Dict[str, dt.Data]:
         """
@@ -292,12 +293,12 @@ class BlockGraphView(object):
     @abc.abstractmethod
     def top_level_transients(self) -> Set[str]:
         """Iterate over top-level transients of this graph."""
-        raise NotImplementedError()
+        return set()
 
     @abc.abstractmethod
     def all_transients(self) -> List[str]:
         """Iterate over all transients in this graph."""
-        raise NotImplementedError()
+        return []
 
     @abc.abstractmethod
     def replace(self, name: str, new_name: str):
