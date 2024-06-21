@@ -2226,7 +2226,6 @@ class SDFG(ControlFlowRegion):
             # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
             # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
             inline(sdfg)
-            sdfg.simplify()
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
