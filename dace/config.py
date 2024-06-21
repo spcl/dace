@@ -3,6 +3,7 @@ import contextlib
 import os
 import platform
 import tempfile
+import io
 from typing import Any, Dict
 import yaml
 import warnings
@@ -39,10 +40,11 @@ def temporary_config():
             Config.set("optimizer", "autooptimize", value=True)
             foo()
     """
-    with tempfile.NamedTemporaryFile() as fp:
-        Config.save(fp.name)
+    with tempfile.NamedTemporaryFile(mode='w+t') as fp:
+        Config.save(file=fp)
         yield
-        Config.load(fp.name)
+        fp.seek(0)  # rewind to the beginning of the file.
+        Config.load(file=fp)
 
 
 def _env2bool(envval):
@@ -157,19 +159,21 @@ class Config(object):
             Config.save(all=False)
 
     @staticmethod
-    def load(filename=None):
+    def load(filename=None, file=None):
         """
         Loads a configuration from an existing file.
         
         :param filename: The file to load. If unspecified,
                          uses default configuration file.
+        :param file: Load the configuration from the file object.
         """
-        if filename is None:
-            filename = Config._cfg_filename
 
-        # Read configuration file
-        with open(filename, 'r') as f:
-            Config._config = yaml.load(f.read(), Loader=yaml.SafeLoader)
+        if file is not None:
+            assert filename is None
+            Config._config = yaml.load(file.read(), Loader=yaml.SafeLoader)
+        else:
+            with open(filename if filename else Config._cfg_filename, 'r') as f:
+                Config._config = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
         if Config._config is None:
             Config._config = {}
@@ -191,7 +195,7 @@ class Config(object):
             Config._config_metadata = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
     @staticmethod
-    def save(path=None, all: bool = False):
+    def save(path=None, all: bool = False, file=None):
         """
         Saves the current configuration to a file.
 
@@ -199,8 +203,9 @@ class Config(object):
                      uses default configuration file.
         :param all: If False, only saves non-default configuration entries.
                     Otherwise saves all entries.
+        :param file: A file object to use directly.
         """
-        if path is None:
+        if path is None and file is None:
             path = Config._cfg_filename
             if path is None:
                 # Try to create a new config file in reversed priority order, and if all else fails keep config in memory
@@ -217,8 +222,11 @@ class Config(object):
                 return
 
         # Write configuration file
-        with open(path, 'w') as f:
-            yaml.dump(Config._config if all else Config.nondefaults(), f, default_flow_style=False)
+        if file is not None:
+            yaml.dump(Config._config if all else Config.nondefaults(), file, default_flow_style=False)
+        else:
+            with open(path, 'w') as f:
+                yaml.dump(Config._config if all else Config.nondefaults(), f, default_flow_style=False)
 
     @staticmethod
     def get_metadata(*key_hierarchy):
