@@ -16,6 +16,7 @@ def create_conditional_sdfg():
     t1 = state1.add_tasklet('t1', None, {'a'}, 'a = 20')
     state1.add_edge(t1, 'a', acc_a, None, dace.Memlet('A[0]'))
 
+    if1.init_else_branch()
     state2 = if1.else_branch.add_state('state2', is_start_block=True)
     acc_a2 = state2.add_access('A')
     t2 = state2.add_tasklet('t2', None, {'a'}, 'a = 30')

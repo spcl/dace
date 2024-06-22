@@ -2889,7 +2889,10 @@ class ConditionalRegion(ControlFlowRegion):
         self.else_branch = ControlFlowRegion(label + "else", self.sdfg)
         self.condition_expr = CodeBlock(condition_expr)
         self.condition_else_expr = CodeBlock(condition_else_expr)
+
+    def init_else_branch(self):
         self.else_branch.parent_graph = self
+        self.else_branch.sdfg = self.sdfg
         self.update_cfg_list([self.else_branch])
 
     def _used_symbols_internal(self,

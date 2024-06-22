@@ -2544,6 +2544,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self._recursive_visit(node.body, f'if_{node.lineno}', node.lineno, cond_region, False)
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
+            cond_region.init_else_branch()
             self._recursive_visit(node.orelse, f'if_{node.lineno}_else', node.orelse[0].lineno, cond_region.else_branch, False)
         self.last_block = cond_region
 
