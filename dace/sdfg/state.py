@@ -3055,21 +3055,9 @@ class ConditionalRegion(ControlFlowRegion):
         yield from super().all_control_flow_regions(recursive=recursive)
         yield from self.else_branch.all_control_flow_regions(recursive=recursive)
 
-    def all_sdfgs_recursive(self) -> Iterator['SDFG']:
-        yield from super().all_sdfgs_recursive()
-        yield from self.else_branch.all_sdfgs_recursive()
-
     def all_states(self) -> Iterator[SDFGState]:
         yield from super().all_states()
         yield from self.else_branch.all_states()
-
-    def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
-        yield from super().all_control_flow_blocks(recursive=recursive)
-        yield from self.else_branch.all_control_flow_blocks(recursive=recursive)
-
-    def all_interstate_edges(self, recursive=False) -> Iterator[Edge['dace.sdfg.InterstateEdge']]:
-        yield from super().all_interstate_edges(recursive=recursive)
-        yield from self.else_branch.all_interstate_edges(recursive=recursive)
 
 class ReturnState(SDFGState):
     """ Special state representing return expression. """
