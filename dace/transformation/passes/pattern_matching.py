@@ -4,6 +4,7 @@
 import collections
 from dataclasses import dataclass
 import time
+import warnings
 
 from dace import properties
 from dace.config import Config
@@ -97,6 +98,19 @@ class PatternMatchAndApply(ppl.Pass):
 
         # For every transformation in the list, find first match and apply
         for xform in self.transformations:
+            if sdfg.root_sdfg.using_experimental_blocks:
+                if (not hasattr(xform, '__experimental_cfg_block_compatible__') or
+                    xform.__experimental_cfg_block_compatible__ == False):
+                    warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
+                                  ' due to incompatibility with experimental control flow blocks. If the ' +
+                                  'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
+                                  'not have `SDFG.using_experimental_blocks` set to True. If ' +
+                                  xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
+                                  'please annotate it with the class decorator ' +
+                                  '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                                  '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` for more.')
+                    continue
+
             # Find only the first match
             try:
                 match = next(m for m in match_patterns(
@@ -201,6 +215,20 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             while applied_anything:
                 applied_anything = False
                 for xform in xforms:
+                    if sdfg.root_sdfg.using_experimental_blocks:
+                        if (not hasattr(xform, '__experimental_cfg_block_compatible__') or
+                            xform.__experimental_cfg_block_compatible__ == False):
+                            warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
+                                          ' due to incompatibility with experimental control flow blocks. If the ' +
+                                          'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
+                                          'not have `SDFG.using_experimental_blocks` set to True. If ' +
+                                          xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
+                                          'please annotate it with the class decorator ' +
+                                          '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                                          '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                                          'for more.')
+                            continue
+
                     applied = True
                     while applied:
                         applied = False
@@ -379,6 +407,19 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
                 for oname, oval in opts.items():
                     setattr(match, oname, oval)
 
+        if sdfg.root_sdfg.using_experimental_blocks:
+            if (not hasattr(match, '__experimental_cfg_block_compatible__') or
+                match.__experimental_cfg_block_compatible__ == False):
+                warnings.warn('Pattern matching is skipping transformation ' + match.__class__.__name__ +
+                              ' due to incompatibility with experimental control flow blocks. If the ' +
+                              'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
+                              'not have `SDFG.using_experimental_blocks` set to True. If ' +
+                              match.__class__.__name__ + ' is compatible with experimental blocks, ' +
+                              'please annotate it with the class decorator ' +
+                              '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` for more.')
+                return None
+
         cfg_id = graph.parent_graph.cfg_id if isinstance(graph, SDFGState) else graph.cfg_id
         match.setup_match(sdfg, cfg_id, state_id, subgraph, expr_idx, options=options)
         match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
@@ -538,7 +579,7 @@ def match_patterns(sdfg: SDFG,
         if len(singlestate_transformations) == 0:
             continue
         for state_id, state in enumerate(cfr.nodes()):
-            if states is not None and state not in states:
+            if (states is not None and state not in states) or not isinstance(state, SDFGState):
                 continue
 
             # Collapse multigraph into directed graph in order to use VF2

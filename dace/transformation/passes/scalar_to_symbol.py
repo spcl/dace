@@ -23,6 +23,7 @@ from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.sdfg import InterstateEdge
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as passes
+from dace.transformation.transformation import experimental_cfg_block_compatible
 
 
 class AttributedCallDetector(ast.NodeVisitor):
@@ -585,6 +586,7 @@ def translate_cpp_tasklet_to_python(code: str):
 
 @dataclass(unsafe_hash=True)
 @props.make_properties
+@experimental_cfg_block_compatible
 class ScalarToSymbolPromotion(passes.Pass):
 
     CATEGORY: str = 'Simplification'

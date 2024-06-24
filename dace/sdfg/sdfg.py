@@ -22,7 +22,7 @@ from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
-from dace.sdfg.state import SDFGState, ControlFlowRegion
+from dace.sdfg.state import ControlFlowBlock, SDFGState, ControlFlowRegion
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
@@ -174,7 +174,9 @@ class InterstateEdge(object):
                            desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
 
-    def __init__(self, condition: Optional[CodeBlock] = None, assignments: Optional[Dict] = None):
+    def __init__(self,
+                 condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None,
+                 assignments: Optional[Dict] = None):
         if condition is None:
             condition = CodeBlock("1")
 
@@ -2671,3 +2673,15 @@ class SDFG(ControlFlowRegion):
            :return: a Memlet that fully transfers array
         """
         return dace.Memlet.from_array(array, self.data(array))
+
+    def recheck_using_experimental_blocks(self) -> bool:
+        found_experimental_block = False
+        for node, graph in self.root_sdfg.all_nodes_recursive():
+            if isinstance(graph, ControlFlowRegion) and not isinstance(graph, SDFG):
+                found_experimental_block = True
+                break
+            if isinstance(node, ControlFlowBlock) and not isinstance(node, SDFGState):
+                found_experimental_block = True
+                break
+        self.root_sdfg.using_experimental_blocks = found_experimental_block
+        return found_experimental_block

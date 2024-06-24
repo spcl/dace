@@ -734,6 +734,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
 
 @make_properties
+@transformation.single_level_sdfg_only
 class InlineTransients(transformation.SingleStateTransformation):
     """
     Inlines all transient arrays that are not used anywhere else into a
@@ -877,6 +878,7 @@ class ASTRefiner(ast.NodeTransformer):
 
 
 @make_properties
+@transformation.single_level_sdfg_only
 class RefineNestedAccess(transformation.SingleStateTransformation):
     """
     Reduces memlet shape when a memlet is connected to a nested SDFG, but not
@@ -1100,6 +1102,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
 
 @make_properties
+@transformation.single_level_sdfg_only
 class NestSDFG(transformation.MultiStateTransformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
         nested SDFG node from it. """
