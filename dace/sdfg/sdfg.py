@@ -30,7 +30,7 @@ from dace.config import Config
 from dace.frontend.python import astutils, wrappers
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
-from dace.sdfg.state import SDFGState, ControlFlowRegion
+from dace.sdfg.state import ControlFlowBlock, SDFGState, ControlFlowRegion
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
@@ -2686,3 +2686,15 @@ class SDFG(ControlFlowRegion):
            :return: a Memlet that fully transfers array
         """
         return dace.Memlet.from_array(array, self.data(array))
+
+    def recheck_using_experimental_blocks(self) -> bool:
+        found_experimental_block = False
+        for node, graph in self.cfg_list[0].all_nodes_recursive():
+            if isinstance(graph, ControlFlowRegion) and not isinstance(SDFG):
+                found_experimental_block = True
+                break
+            if isinstance(node, ControlFlowBlock) and not isinstance(node, SDFGState):
+                found_experimental_block = True
+                break
+        self.root_sdfg.using_experimental_blocks = found_experimental_block
+        return found_experimental_block

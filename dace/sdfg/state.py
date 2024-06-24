@@ -2442,6 +2442,12 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self._cached_start_block: Optional[ControlFlowBlock] = None
         self._cfg_list: List['ControlFlowRegion'] = [self]
 
+    @property
+    def root_sdfg(self) -> 'SDFG':
+        if not isinstance(self.cfg_list[0], SDFG):
+            raise RuntimeError('Root CFG is not of type SDFG')
+        return self.cfg_list[0]
+
     def reset_cfg_list(self) -> List['ControlFlowRegion']:
         """
         Reset the CFG list when changes have been made to the SDFG's CFG tree.
