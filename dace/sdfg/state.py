@@ -1238,7 +1238,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             :param sdfg: A reference to the parent SDFG.
             :param debuginfo: Source code locator for debugging.
         """
-        from dace.sdfg.sdfg import SDFG  # Avoid import loop
         OrderedMultiDiConnectorGraph.__init__(self)
         ControlFlowBlock.__init__(self, label, sdfg)
         super(SDFGState, self).__init__()
@@ -2444,6 +2443,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
     @property
     def root_sdfg(self) -> 'SDFG':
+        from dace.sdfg.sdfg import SDFG  # Avoid import loop
         if not isinstance(self.cfg_list[0], SDFG):
             raise RuntimeError('Root CFG is not of type SDFG')
         return self.cfg_list[0]
