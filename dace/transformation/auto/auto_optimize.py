@@ -62,15 +62,15 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
 
         # recurse into graphs
         for graph in graph_or_subgraph.nodes():
-
-            greedy_fuse(graph,
-                        validate_all=validate_all,
-                        device=device,
-                        recursive=recursive,
-                        stencil=stencil,
-                        stencil_tile=stencil_tile,
-                        permutations_only=permutations_only,
-                        expand_reductions=expand_reductions)
+            if isinstance(graph, (SDFGState, ControlFlowRegion)):
+                greedy_fuse(graph,
+                            validate_all=validate_all,
+                            device=device,
+                            recursive=recursive,
+                            stencil=stencil,
+                            stencil_tile=stencil_tile,
+                            permutations_only=permutations_only,
+                            expand_reductions=expand_reductions)
     else:
         # we are in graph or subgraph
         sdfg, graph, subgraph = None, None, None
@@ -194,7 +194,8 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         graph = graph_or_subgraph.graph
     if isinstance(graph, ControlFlowRegion):
         for block in graph_or_subgraph.nodes():
-            tile_wcrs(block, validate_all)
+            if isinstance(block, SDFGState):
+                tile_wcrs(block, validate_all)
         return
 
     if not isinstance(graph, SDFGState):

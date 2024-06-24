@@ -14,6 +14,7 @@ from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_
 from dace.transformation import transformation as xf
 
 @make_properties
+@xf.experimental_cfg_block_compatible
 class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
     """ Unrolls a state machine for-loop into multiple states """
 

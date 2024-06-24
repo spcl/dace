@@ -32,6 +32,7 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
+@transformation.experimental_cfg_block_compatible
 class StateFusion(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation.
 

@@ -12,9 +12,11 @@ from dace.sdfg import utils as sdutil
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from dace.transformation.interstate.loop_unroll import LoopUnroll
+from dace.transformation.transformation import experimental_cfg_block_compatible
 
 
 @make_properties
+@experimental_cfg_block_compatible
 class LoopPeeling(LoopUnroll):
     """
     Splits the first `count` iterations of a state machine for-loop into

@@ -32,6 +32,11 @@ import pydoc
 import warnings
 
 
+def experimental_cfg_block_compatible(cls: ppl.Pass):
+    cls.__experimental_cfg_block_compatible__ = True
+    return cls
+
+
 class TransformationBase(ppl.Pass):
     """
     Base class for graph rewriting transformations. An instance of a TransformationBase object represents a match
@@ -404,6 +409,7 @@ class PatternTransformation(TransformationBase):
 
 
 @make_properties
+@experimental_cfg_block_compatible
 class SingleStateTransformation(PatternTransformation, abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within a single SDFG state.

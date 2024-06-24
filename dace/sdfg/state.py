@@ -20,7 +20,7 @@ from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
 from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
-                             CodeProperty, make_properties, ListProperty)
+                             CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
 from dace.sdfg.propagation import propagate_memlet

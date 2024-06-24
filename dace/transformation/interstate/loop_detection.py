@@ -13,6 +13,7 @@ from dace.transformation import transformation
 
 
 # NOTE: This class extends PatternTransformation directly in order to not show up in the matches
+@transformation.experimental_cfg_block_compatible
 class DetectLoop(transformation.PatternTransformation):
     """ Detects a for-loop construct from an SDFG. """
 
