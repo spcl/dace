@@ -3,11 +3,12 @@
 import ast
 from dataclasses import dataclass
 from dace.frontend.python import astutils
+from dace.sdfg.analysis import cfg
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes, utils as sdutil
 from dace.transformation import pass_pipeline as ppl
 from dace.cli.progress import optional_progressbar
-from dace import SDFG, SDFGState, dtypes, symbolic, properties
+from dace import data, SDFG, SDFGState, dtypes, symbolic, properties
 from typing import Any, Dict, Set, Optional, Tuple
 
 
@@ -129,13 +130,13 @@ class ConstantPropagation(ppl.Pass):
 
         if self.recursive:
             # Change result to set of tuples
-            sid = sdfg.sdfg_id
+            sid = sdfg.cfg_id
             result = set((sid, sym) for sym in result)
 
             for state in sdfg.nodes():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
-                        nested_id = node.sdfg.sdfg_id
+                        nested_id = node.sdfg.cfg_id
                         const_syms = {k: v for k, v in node.symbol_mapping.items() if not symbolic.issymbolic(v)}
                         internal = self.apply_pass(node.sdfg, _, const_syms)
                         if internal:
@@ -166,6 +167,20 @@ class ConstantPropagation(ppl.Pass):
         arrays: Set[str] = set(sdfg.arrays.keys() | sdfg.constants_prop.keys())
         result: Dict[SDFGState, Dict[str, Any]] = {}
 
+        # Add nested data to arrays
+        def _add_nested_datanames(name: str, desc: data.Structure):
+            for k, v in desc.members.items():
+                if isinstance(v, data.Structure):
+                    _add_nested_datanames(f'{name}.{k}', v)
+                elif isinstance(v, data.ContainerArray):
+                    # TODO: How are we handling this?
+                    pass
+                arrays.add(f'{name}.{k}')
+    
+        for name, desc in sdfg.arrays.items():
+            if isinstance(desc, data.Structure):
+                _add_nested_datanames(name, desc)
+
         # Process:
         # * Collect constants in topologically ordered states
         # * If unvisited state has one incoming edge - propagate symbols forward and edge assignments
@@ -178,7 +193,7 @@ class ConstantPropagation(ppl.Pass):
             result[start_state].update(initial_symbols)
 
         # Traverse SDFG topologically
-        for state in optional_progressbar(sdfg.topological_sort(start_state), 'Collecting constants',
+        for state in optional_progressbar(cfg.stateorder_topological_sort(sdfg), 'Collecting constants',
                                           sdfg.number_of_nodes(), self.progress):
             # NOTE: We must always check the start-state regardless if there are initial symbols. This is necessary
             # when the start-state is a scope's guard instead of a special initialization state, i.e., when the start-

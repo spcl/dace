@@ -13,7 +13,7 @@ from dace.transformation import pass_pipeline as ppl
 @properties.make_properties
 class RemoveUnusedSymbols(ppl.Pass):
     """
-    Prunes unused symbols from the SDFG symbol repository (``sdfg.symbols``).
+    Prunes unused symbols from the SDFG symbol repository (``sdfg.symbols``) and interstate edges.
     Also includes uses in Tasklets of all languages.
     """
 
@@ -30,7 +30,7 @@ class RemoveUnusedSymbols(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[Tuple[int, str]]]:
         """
-        Propagates constants throughout the SDFG.
+        Removes unused symbols from the SDFG.
         
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
@@ -41,20 +41,26 @@ class RemoveUnusedSymbols(ppl.Pass):
         """
         result: Set[str] = set()
 
-        symbols_to_consider = self.symbols or set(sdfg.symbols.keys())
+        repository_symbols_to_consider = self.symbols or set(sdfg.symbols.keys())
 
         # Compute used symbols
         used_symbols = self.used_symbols(sdfg)
 
-        # Remove unused symbols
-        for sym in symbols_to_consider - used_symbols:
+        # Remove unused symbols from interstate edge assignments.
+        for isedge in sdfg.all_interstate_edges():
+            edge_symbols_to_consider = set(isedge.data.assignments.keys())
+            for sym in edge_symbols_to_consider - used_symbols:
+                del isedge.data.assignments[sym]
+
+        # Remove unused symbols from the SDFG's symbols repository.
+        for sym in repository_symbols_to_consider - used_symbols:
             if sym in sdfg.symbols:
                 sdfg.remove_symbol(sym)
                 result.add(sym)
 
         if self.recursive:
             # Prune nested SDFGs recursively
-            sid = sdfg.sdfg_id
+            sid = sdfg.cfg_id
             result = set((sid, sym) for sym in result)
 
             for state in sdfg.nodes():

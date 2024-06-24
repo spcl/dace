@@ -11,9 +11,9 @@ def test():
     print('SDFG multiple tasklet test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
-    N.set(20)
-    input = dp.ndarray([N], dp.int32)
-    output = dp.ndarray([N], dp.int32)
+    n = 20
+    input = dp.ndarray([n], dp.int32)
+    output = dp.ndarray([n], dp.int32)
     input[:] = dp.int32(5)
     output[:] = dp.int32(0)
 
@@ -38,9 +38,9 @@ def test():
     state.add_edge(A, None, map_entry, None, Memlet.simple(A, '0:N'))
     state.add_edge(map_exit, None, B, None, Memlet.simple(B, '0:N'))
 
-    mysdfg(A=input, B=output, N=N)
+    mysdfg(A=input, B=output, N=n)
 
-    diff = np.linalg.norm(5 * input - output) / N.get()
+    diff = np.linalg.norm(5 * input - output) / n
     print("Difference:", diff)
     assert diff <= 1e-5
 

@@ -358,13 +358,13 @@ def test_for_with_external_init_nested():
 
     sdfg = dace.SDFG('for_with_external_init_nested')
     sdfg.add_array('A', (N, ), dace.int32)
-    init = sdfg.add_state('init', is_start_state=True)
+    init = sdfg.add_state('init', is_start_block=True)
     main = sdfg.add_state('main')
     sdfg.add_edge(init, main, dace.InterstateEdge(assignments={'i': 'N-1'}))
 
     nsdfg = dace.SDFG('nested_sdfg')
-    nsdfg.add_array('inner_A', (N,), dace.int32)
-    ninit = nsdfg.add_state('nested_init', is_start_state=True)
+    nsdfg.add_array('inner_A', (N, ), dace.int32)
+    ninit = nsdfg.add_state('nested_init', is_start_block=True)
     nguard = nsdfg.add_state('nested_guard')
     nbody = nsdfg.add_state('nested_body')
     nexit = nsdfg.add_state('nested_exit')
@@ -403,13 +403,13 @@ def test_for_with_external_init_nested_start_with_guard():
 
     sdfg = dace.SDFG('for_with_external_init_nested_start_with_guard')
     sdfg.add_array('A', (N, ), dace.int32)
-    init = sdfg.add_state('init', is_start_state=True)
+    init = sdfg.add_state('init', is_start_block=True)
     main = sdfg.add_state('main')
     sdfg.add_edge(init, main, dace.InterstateEdge(assignments={'i': '1'}))
 
     nsdfg = dace.SDFG('nested_sdfg')
-    nsdfg.add_array('inner_A', (N,), dace.int32)
-    nguard = nsdfg.add_state('nested_guard', is_start_state=True)
+    nsdfg.add_array('inner_A', (N, ), dace.int32)
+    nguard = nsdfg.add_state('nested_guard', is_start_block=True)
     nbody = nsdfg.add_state('nested_body')
     nexit = nsdfg.add_state('nested_exit')
     nsdfg.add_edge(nguard, nbody, dace.InterstateEdge(condition='i <= N'))
@@ -436,6 +436,37 @@ def test_for_with_external_init_nested_start_with_guard():
     assert np.allclose(val1, ref)
 
 
+def test_skip_branch():
+    sdfg = dace.SDFG('skip_branch')
+    sdfg.add_symbol('k', dace.int32)
+    sdfg.add_array('__return', (1,), dace.int32)
+    init = sdfg.add_state('init')
+    if_guard = sdfg.add_state('if_guard')
+    if_state = sdfg.add_state('if_state')
+    if_end = sdfg.add_state('if_end')
+    sdfg.add_edge(init, if_guard, dace.InterstateEdge(assignments=dict(j=0)))
+    sdfg.add_edge(if_guard, if_end, dace.InterstateEdge('k<0'))
+    sdfg.add_edge(if_guard, if_state, dace.InterstateEdge('not (k<0)', assignments=dict(j=1)))
+    sdfg.add_edge(if_state, if_end, dace.InterstateEdge())
+    ret_a = if_end.add_access('__return')
+    tasklet = if_end.add_tasklet('c1', {}, {'o1'}, 'o1 = j')
+    if_end.add_edge(tasklet, 'o1', ret_a, None, dace.Memlet('__return[0]'))
+
+    sdfg.validate()
+
+    rval_1 = sdfg(k=-1)
+    assert (rval_1[0] == 0)
+    rval_2 = sdfg(k=1)
+    assert (rval_2[0] == 1)
+
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    rval_1 = sdfg(k=-1)
+    assert (rval_1[0] == 0)
+    rval_2 = sdfg(k=1)
+    assert (rval_2[0] == 1)
+
+
 if __name__ == '__main__':
     test_simple_constants()
     test_nested_constants()
@@ -452,3 +483,4 @@ if __name__ == '__main__':
     test_for_with_external_init()
     test_for_with_external_init_nested()
     test_for_with_external_init_nested_start_with_guard()
+    test_skip_branch()

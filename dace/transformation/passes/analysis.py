@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from dace.transformation import pass_pipeline as ppl
-from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt
+from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt, symbolic
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd
 from dace.sdfg.analysis import cfg
@@ -45,7 +45,7 @@ class StateReachability(ppl.Pass):
             for n, v in reachable_nodes(sdfg.nx):
                 result[n] = set(v)
 
-            reachable[sdfg.sdfg_id] = result
+            reachable[sdfg.cfg_id] = result
 
         return reachable
 
@@ -130,7 +130,7 @@ class SymbolAccessSets(ppl.Pass):
                     edge_readset = oedge.data.read_symbols() - adesc
                     edge_writeset = set(oedge.data.assignments.keys())
                     result[oedge] = (edge_readset, edge_writeset)
-            top_result[sdfg.sdfg_id] = result
+            top_result[sdfg.cfg_id] = result
         return top_result
 
 
@@ -174,7 +174,7 @@ class AccessSets(ppl.Pass):
                     result[e.src][0].update(fsyms)
                     result[e.dst][0].update(fsyms)
 
-            top_result[sdfg.sdfg_id] = result
+            top_result[sdfg.cfg_id] = result
         return top_result
 
 
@@ -212,7 +212,7 @@ class FindAccessStates(ppl.Pass):
                 for access in fsyms:
                     result[access].update({e.src, e.dst})
 
-            top_result[sdfg.sdfg_id] = result
+            top_result[sdfg.cfg_id] = result
         return top_result
 
 
@@ -248,7 +248,7 @@ class FindAccessNodes(ppl.Pass):
                         result[anode.data][state][1].add(anode)
                     if state.out_degree(anode) > 0:
                         result[anode.data][state][0].add(anode)
-            top_result[sdfg.sdfg_id] = result
+            top_result[sdfg.cfg_id] = result
         return top_result
 
 
@@ -313,8 +313,8 @@ class SymbolWriteScopes(ppl.Pass):
             all_doms = cfg.all_dominators(sdfg, idom)
             symbol_access_sets: Dict[Union[SDFGState, Edge[InterstateEdge]],
                                      Tuple[Set[str],
-                                           Set[str]]] = pipeline_results[SymbolAccessSets.__name__][sdfg.sdfg_id]
-            state_reach: Dict[SDFGState, Set[SDFGState]] = pipeline_results[StateReachability.__name__][sdfg.sdfg_id]
+                                           Set[str]]] = pipeline_results[SymbolAccessSets.__name__][sdfg.cfg_id]
+            state_reach: Dict[SDFGState, Set[SDFGState]] = pipeline_results[StateReachability.__name__][sdfg.cfg_id]
 
             for read_loc, (reads, _) in symbol_access_sets.items():
                 for sym in reads:
@@ -352,7 +352,7 @@ class SymbolWriteScopes(ppl.Pass):
             for sym, write in to_remove:
                 del result[sym][write]
 
-            top_result[sdfg.sdfg_id] = result
+            top_result[sdfg.cfg_id] = result
         return top_result
 
 
@@ -445,10 +445,10 @@ class ScalarWriteShadowScopes(ppl.Pass):
             idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
             all_doms = cfg.all_dominators(sdfg, idom)
             access_sets: Dict[SDFGState, Tuple[Set[str],
-                                               Set[str]]] = pipeline_results[AccessSets.__name__][sdfg.sdfg_id]
+                                               Set[str]]] = pipeline_results[AccessSets.__name__][sdfg.cfg_id]
             access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]] = pipeline_results[
-                FindAccessNodes.__name__][sdfg.sdfg_id]
-            state_reach: Dict[SDFGState, Set[SDFGState]] = pipeline_results[StateReachability.__name__][sdfg.sdfg_id]
+                FindAccessNodes.__name__][sdfg.cfg_id]
+            state_reach: Dict[SDFGState, Set[SDFGState]] = pipeline_results[StateReachability.__name__][sdfg.cfg_id]
 
             anames = sdfg.arrays.keys()
             for desc in sdfg.arrays:
@@ -503,7 +503,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                     result[desc][write] = set()
                 for write in to_remove:
                     del result[desc][write]
-            top_result[sdfg.sdfg_id] = result
+            top_result[sdfg.cfg_id] = result
         return top_result
 
 
@@ -539,7 +539,7 @@ class AccessRanges(ppl.Pass):
                         # Find (hopefully propagated) root memlet
                         e = state.memlet_tree(e).root().edge
                         result[anode.data].add(e.data)
-            top_result[sdfg.sdfg_id] = result
+            top_result[sdfg.cfg_id] = result
         return top_result
 
 
@@ -581,5 +581,40 @@ class FindReferenceSources(ppl.Pass):
                         else:
                             # Array -> Reference
                             result[anode.data].add(e.data)
-            top_result[sdfg.sdfg_id] = result
+            top_result[sdfg.cfg_id] = result
         return top_result
+
+
+@properties.make_properties
+class DeriveSDFGConstraints(ppl.Pass):
+
+    CATEGORY: str = 'Analysis'
+
+    assume_max_data_size = properties.Property(dtype=int, default=None, allow_none=True,
+                                               desc='Assume that all data containers have no dimension larger than ' +
+                                               'this value. If None, no assumption is made.')
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.Everything
+
+    def _derive_parameter_datasize_constraints(self, sdfg: SDFG, invariants: Dict[str, Set[str]]) -> None:
+        handled = set()
+        for arr in sdfg.arrays.values():
+            for dim in arr.shape:
+                if isinstance(dim, symbolic.symbol) and not dim in handled:
+                    ds = str(dim)
+                    if ds not in invariants:
+                        invariants[ds] = set()
+                    invariants[ds].add(f'{ds} > 0')
+                    if self.assume_max_data_size is not None:
+                        invariants[ds].add(f'{ds} <= {self.assume_max_data_size}')
+                    handled.add(ds)
+
+    def apply_pass(self, sdfg: SDFG, _) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]], Dict[str, Set[str]]]:
+        invariants: Dict[str, Set[str]] = {}
+        self._derive_parameter_datasize_constraints(sdfg, invariants)
+        return {}, invariants, {}

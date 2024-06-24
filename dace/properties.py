@@ -24,35 +24,6 @@ T = TypeVar('T')
 ###############################################################################
 
 
-def set_property_from_string(prop, obj, string, sdfg=None, from_json=False):
-    """ Interface function that guarantees that a property will always be
-    correctly set, if possible, by accepting all possible input arguments to
-    from_string. """
-
-    # If the property is a string (property name), obtain it from the object
-    if isinstance(prop, str):
-        prop = type(obj).__properties__[prop]
-
-    if isinstance(prop, CodeProperty):
-        if from_json:
-            val = prop.from_json(string)
-        else:
-            val = prop.from_string(string, obj.language)
-    elif isinstance(prop, (ReferenceProperty, DataProperty)):
-        if sdfg is None:
-            raise ValueError("You cannot pass sdfg=None when editing a ReferenceProperty!")
-        if from_json:
-            val = prop.from_json(string, sdfg)
-        else:
-            val = prop.from_string(string, sdfg)
-    else:
-        if from_json:
-            val = prop.from_json(string, sdfg)
-        else:
-            val = prop.from_string(string)
-    setattr(obj, prop.attr_name, val)
-
-
 ###############################################################################
 # Property base implementation
 ###############################################################################
@@ -74,8 +45,6 @@ class Property(Generic[T]):
             setter=None,
             dtype: Type[T] = None,
             default=None,
-            from_string=None,
-            to_string=None,
             from_json=None,
             to_json=None,
             meta_to_json=None,
@@ -114,35 +83,8 @@ class Property(Generic[T]):
                 if not isinstance(choice, dtype):
                     raise TypeError("All choices must be an instance of dtype")
 
-        if from_string is not None:
-            self._from_string = from_string
-        elif choices is not None:
-            self._from_string = lambda s: choices[s]
-        else:
-            self._from_string = self.dtype
-
-        if to_string is not None:
-            self._to_string = to_string
-        elif choices is not None:
-            self._to_string = lambda val: val.__name__
-        else:
-            self._to_string = str
-
         if from_json is None:
-            if self._from_string is not None:
-
-                def fs(obj, *args, **kwargs):
-                    if isinstance(obj, str):
-                        # The serializer does not know about this property, so if
-                        # we can convert using our to_string method, do that here
-                        return self._from_string(obj)
-                    # Otherwise ship off to the serializer, telling it which type
-                    # it's dealing with as a sanity check
-                    return dace.serialize.from_json(obj, *args, known_type=dtype, **kwargs)
-
-                self._from_json = fs
-            else:
-                self._from_json = lambda *args, **kwargs: dace.serialize.from_json(*args, known_type=dtype, **kwargs)
+            self._from_json = lambda *args, **kwargs: dace.serialize.from_json(*args, known_type=dtype, **kwargs)
         else:
             self._from_json = from_json
             if self.from_json != from_json:
@@ -226,7 +168,6 @@ class Property(Generic[T]):
         if (self.dtype is not None and not isinstance(val, self.dtype) and not (val is None and self.allow_none)):
             if isinstance(val, str):
                 raise TypeError("Received str for property {} of type {}. Use "
-                                "dace.properties.set_property_from_string or the "
                                 "from_string method of the property.".format(self.attr_name, self.dtype))
             raise TypeError("Invalid type \"{}\" for property {}: expected {}".format(
                 type(val).__name__, self.attr_name, self.dtype.__name__))
@@ -295,14 +236,6 @@ class Property(Generic[T]):
     @property
     def desc(self):
         return self._desc
-
-    @property
-    def from_string(self):
-        return self._from_string
-
-    @property
-    def to_string(self):
-        return self._to_string
 
     @property
     def from_json(self):
@@ -853,8 +786,6 @@ class SetProperty(Property):
             getter=None,
             setter=None,
             default=None,
-            from_string=None,
-            to_string=None,
             from_json=None,
             to_json=None,
             unmapped=False,  # Don't enforce 1:1 mapping with a member variable
@@ -867,8 +798,6 @@ class SetProperty(Property):
                                           setter=setter,
                                           dtype=set,
                                           default=default,
-                                          from_string=from_string,
-                                          to_string=to_string,
                                           from_json=from_json,
                                           to_json=to_json,
                                           choices=None,

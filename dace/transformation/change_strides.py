@@ -101,7 +101,7 @@ def change_strides(
     # Map of array names in the nested sdfg:  key: array name in parent sdfg (this sdfg), value: name in the nsdfg
     # Assumes that name changes only appear in the first level of nsdfg nesting
     array_names_map = {}
-    for graph in sdfg.sdfg_list:
+    for graph in sdfg.cfg_list:
         if graph.parent_nsdfg_node is not None:
             if graph.parent_sdfg == sdfg:
                 for connector in graph.parent_nsdfg_node.in_connectors:
