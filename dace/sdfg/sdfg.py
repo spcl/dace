@@ -2690,7 +2690,7 @@ class SDFG(ControlFlowRegion):
     def recheck_using_experimental_blocks(self) -> bool:
         found_experimental_block = False
         for node, graph in self.cfg_list[0].all_nodes_recursive():
-            if isinstance(graph, ControlFlowRegion) and not isinstance(SDFG):
+            if isinstance(graph, ControlFlowRegion) and not isinstance(graph, SDFG):
                 found_experimental_block = True
                 break
             if isinstance(node, ControlFlowBlock) and not isinstance(node, SDFGState):
