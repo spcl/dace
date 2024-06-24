@@ -8,7 +8,7 @@ import copy
 import inspect
 import itertools
 import warnings
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Literal, Optional, Set, Tuple, Union,
+from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
                     overload)
 
 import dace
