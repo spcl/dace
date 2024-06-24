@@ -1,7 +1,13 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains test cases for the work depth analysis. """
+from typing import Dict, List, Tuple
+
+import pytest
 import dace as dc
-from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_tasklet_work_depth, get_tasklet_avg_par, parse_assumptions
+from dace import symbolic
+from dace.frontend.python.parser import DaceProgram
+from dace.sdfg.performance_evaluation.work_depth import (analyze_sdfg, get_tasklet_work_depth, get_tasklet_avg_par,
+                                                         parse_assumptions)
 from dace.sdfg.performance_evaluation.helpers import get_uuid
 from dace.sdfg.performance_evaluation.assumptions import ContradictingAssumptions
 import sympy as sp
@@ -191,53 +197,55 @@ def gemm_library_node_symbolic(x: dc.float64[M, K], y: dc.float64[K, N], z: dc.f
 
 
 #(sdfg, (expected_work, expected_depth))
-tests_cases = [
-    (single_map, (N, 1)),
-    (single_for_loop, (N, N)),
-    (if_else, (1000, 100)),
-    (if_else_sym, (sp.Max(K, N), sp.Max(1, K))),
-    (nested_sdfg, (2 * N, N + 1)),
-    (nested_maps, (M * N, 1)),
-    (nested_for_loops, (K * N, K * N)),
-    (nested_if_else, (sp.Max(K, 3 * N, M + N), sp.Max(3, K, M + 1))),
-    (max_of_positive_symbol, (3 * N**2, 3 * N)),
-    (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
-    (unbounded_while_do, (sp.Symbol('num_execs_0_2') * N, sp.Symbol('num_execs_0_2'))),
+work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType, symbolic.SymbolicType]]] = {
+    'single_map': (single_map, (N, 1)),
+    'single_for_loop': (single_for_loop, (N, N)),
+    'if_else': (if_else, (1000, 100)),
+    'if_else_sym': (if_else_sym, (sp.Max(K, N), sp.Max(1, K))),
+    'nested_sdfg': (nested_sdfg, (2 * N, N + 1)),
+    'nested_maps': (nested_maps, (M * N, 1)),
+    'nested_for_loops': (nested_for_loops, (K * N, K * N)),
+    'nested_if_else': (nested_if_else, (sp.Max(K, 3 * N, M + N), sp.Max(3, K, M + 1))),
+    'max_of_positive_symbols': (max_of_positive_symbol, (3 * N**2, 3 * N)),
+    'multiple_array_sizes': (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
+    'unbounded_while_do': (unbounded_while_do, (sp.Symbol('num_execs_0_2') * N, sp.Symbol('num_execs_0_2'))),
     # We get this Max(1, num_execs), since it is a do-while loop, but the num_execs symbol does not capture this.
-    (unbounded_do_while, (sp.Max(1, sp.Symbol('num_execs_0_1')) * N, sp.Max(1, sp.Symbol('num_execs_0_1')))),
-    (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_7') * N, 2 * sp.Symbol('num_execs_0_7'))),
-    (continue_for_loop, (sp.Symbol('num_execs_0_6') * N, sp.Symbol('num_execs_0_6'))),
-    (break_for_loop, (N**2, N)),
-    (break_while_loop, (sp.Symbol('num_execs_0_5') * N, sp.Symbol('num_execs_0_5'))),
-    (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
-    (reduction_library_node, (456, sp.log(456))),
-    (reduction_library_node_symbolic, (N, sp.log(N))),
-    (gemm_library_node, (2 * 456 * 200 * 111, sp.log(200))),
-    (gemm_library_node_symbolic, (2 * M * K * N, sp.log(K)))
-]
+    'unbounded_do_while': (unbounded_do_while,
+                           (sp.Max(1, sp.Symbol('num_execs_0_1')) * N, sp.Max(1, sp.Symbol('num_execs_0_1')))),
+    'unbounded_nonnegify': (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_7') * N, 2 * sp.Symbol('num_execs_0_7'))),
+    'continue_for_loop': (continue_for_loop, (sp.Symbol('num_execs_0_6') * N, sp.Symbol('num_execs_0_6'))),
+    'break_for_loop': (break_for_loop, (N**2, N)),
+    'break_while_loop': (break_while_loop, (sp.Symbol('num_execs_0_5') * N, sp.Symbol('num_execs_0_5'))),
+    'sequential_ifs': (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
+    'reduction_library_node': (reduction_library_node, (456, sp.log(456))),
+    'reduction_library_node_symbolic': (reduction_library_node_symbolic, (N, sp.log(N))),
+    'gemm_library_node': (gemm_library_node, (2 * 456 * 200 * 111, sp.log(200))),
+    'gemm_library_node_symbolic': (gemm_library_node_symbolic, (2 * M * K * N, sp.log(K)))
+}
 
 
-def test_work_depth():
-    for test, correct in tests_cases:
-        w_d_map = {}
-        sdfg = test.to_sdfg()
-        if 'nested_sdfg' in test.name:
-            sdfg.apply_transformations(NestSDFG)
-        if 'nested_maps' in test.name:
-            sdfg.apply_transformations(MapExpansion)
-        analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
-        res = w_d_map[get_uuid(sdfg)]
-        # substitue each symbol without assumptions.
-        # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
-        reps = {s: sp.Symbol(s.name) for s in (res[0].free_symbols | res[1].free_symbols)}
-        res = (res[0].subs(reps), res[1].subs(reps))
-        reps = {
-            s: sp.Symbol(s.name)
-            for s in (sp.sympify(correct[0]).free_symbols | sp.sympify(correct[1]).free_symbols)
-        }
-        correct = (sp.sympify(correct[0]).subs(reps), sp.sympify(correct[1]).subs(reps))
-        # check result
-        assert correct == res
+@pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
+def test_work_depth(test_name):
+    test, correct = work_depth_test_cases[test_name]
+    w_d_map: Dict[str, sp.Expr] = {}
+    sdfg = test.to_sdfg()
+    if 'nested_sdfg' in test.name:
+        sdfg.apply_transformations(NestSDFG)
+    if 'nested_maps' in test.name:
+        sdfg.apply_transformations(MapExpansion)
+    analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
+    res = w_d_map[get_uuid(sdfg)]
+    # substitue each symbol without assumptions.
+    # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
+    reps = {s: sp.Symbol(s.name) for s in (res[0].free_symbols | res[1].free_symbols)}
+    res = (res[0].subs(reps), res[1].subs(reps))
+    reps = {
+        s: sp.Symbol(s.name)
+        for s in (sp.sympify(correct[0]).free_symbols | sp.sympify(correct[1]).free_symbols)
+    }
+    correct = (sp.sympify(correct[0]).subs(reps), sp.sympify(correct[1]).subs(reps))
+    # check result
+    assert correct == res
 
 
 #(sdfg, expected_avg_par)
@@ -250,24 +258,24 @@ tests_cases_avg_par = [(single_map, N), (single_for_loop, 1), (if_else, 1), (nes
                        (gemm_library_node_symbolic, 2 * M * K * N / sp.log(K))]
 
 
-def test_avg_par():
-    for test, correct in tests_cases_avg_par:
-        w_d_map = {}
-        sdfg = test.to_sdfg()
-        if 'nested_sdfg' in test.name:
-            sdfg.apply_transformations(NestSDFG)
-        if 'nested_maps' in test.name:
-            sdfg.apply_transformations(MapExpansion)
-        analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
-        res = w_d_map[get_uuid(sdfg)][0] / w_d_map[get_uuid(sdfg)][1]
-        # substitue each symbol without assumptions.
-        # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
-        reps = {s: sp.Symbol(s.name) for s in res.free_symbols}
-        res = res.subs(reps)
-        reps = {s: sp.Symbol(s.name) for s in sp.sympify(correct).free_symbols}
-        correct = sp.sympify(correct).subs(reps)
-        # check result
-        assert correct == res
+@pytest.mark.parametrize('test,correct', tests_cases_avg_par)
+def test_avg_par(test: DaceProgram, correct: sp.Expr):
+    w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]] = {}
+    sdfg = test.to_sdfg()
+    if 'nested_sdfg' in test.name:
+        sdfg.apply_transformations(NestSDFG)
+    if 'nested_maps' in test.name:
+        sdfg.apply_transformations(MapExpansion)
+    analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
+    res = w_d_map[get_uuid(sdfg)][0] / w_d_map[get_uuid(sdfg)][1]
+    # substitue each symbol without assumptions.
+    # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
+    reps = {s: sp.Symbol(s.name) for s in res.free_symbols}
+    res = res.subs(reps)
+    reps = {s: sp.Symbol(s.name) for s in sp.sympify(correct).free_symbols}
+    correct = sp.sympify(correct).subs(reps)
+    # check result
+    assert correct == res
 
 
 x, y, z, a = sp.symbols('x y z a')
@@ -292,24 +300,33 @@ tests_for_exception = [['x>10', 'x<9'], ['x==y', 'x>10', 'y<9'],
                        ['x==5', 'x<4']]
 
 
-def test_assumption_system():
-    for expr, assums, res in assumptions_tests:
-        equality_subs, all_subs = parse_assumptions(assums, set())
-        initial_expr = expr
-        expr = expr.subs(equality_subs[0])
-        expr = expr.subs(equality_subs[1])
-        for subs1, subs2 in all_subs:
-            expr = expr.subs(subs1)
-            expr = expr.subs(subs2)
-        assert expr == res
+@pytest.mark.parametrize('expr,assums,res', assumptions_tests)
+def test_assumption_system(expr: sp.Expr, assums: List[str], res: sp.Expr):
+    equality_subs, all_subs = parse_assumptions(assums, set())
+    expr = expr.subs(equality_subs[0])
+    expr = expr.subs(equality_subs[1])
+    for subs1, subs2 in all_subs:
+        expr = expr.subs(subs1)
+        expr = expr.subs(subs2)
+    assert expr == res
 
-    for assums in tests_for_exception:
-        # check that the Exception gets raised.
-        with raises(ContradictingAssumptions):
-            parse_assumptions(assums, set())
+
+@pytest.mark.parametrize('assumptions', tests_for_exception)
+def test_assumption_system_contradictions(assumptions):
+    # check that the Exception gets raised.
+    with raises(ContradictingAssumptions):
+        parse_assumptions(assumptions, set())
 
 
 if __name__ == '__main__':
-    test_work_depth()
-    test_avg_par()
-    test_assumption_system()
+    for test_name in work_depth_test_cases.keys():
+        test_work_depth(test_name)
+
+    for test, correct in tests_cases_avg_par:
+        test_avg_par(test, correct)
+
+    for expr, assums, res in assumptions_tests:
+        test_assumption_system(expr, assums, res)
+
+    for assumptions in tests_for_exception:
+        test_assumption_system_contradictions(assumptions)

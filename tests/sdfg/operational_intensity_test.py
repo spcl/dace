@@ -1,10 +1,14 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains test cases for the operational intensity analysis. """
+from typing import Dict, Tuple
+
+import pytest
 import dace as dc
 import sympy as sp
 import numpy as np
 from dace.sdfg.performance_evaluation.operational_intensity import analyze_sdfg_op_in
 from dace.sdfg.performance_evaluation.helpers import get_uuid
+from dace.frontend.python.parser import DaceProgram
 
 from math import isclose
 
@@ -98,64 +102,45 @@ def reduction_library_node(x: dc.float64[N]):
 
 
 #(sdfg, c, l, assumptions, expected_result)
-tests_cases = [
-    (single_map64, 64 * 64, 64, {
-        'N': 512
-    }, 1 / 24),
-    (single_map16, 64 * 64, 64, {
-        'N': 512
-    }, 1 / 6),
+test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], dc.symbolic.SymbolicType]] = {
+    'single_map64_even': (single_map64, 64 * 64, 64, { 'N': 512 }, 1 / 24),
+    'single_map16_even': (single_map16, 64 * 64, 64, { 'N': 512 }, 1 / 6),
     # now num_elements_on_single_cache_line does not divie N anymore
     # -->513 work, 520 elements loaded --> 513 / (520*8*3)
-    (single_map64, 64 * 64, 64, {
-        'N': 513
-    }, 513 / (3 * 8 * 520)),
-    (sequential_maps, 1024, 3 * 8, {
-        'N': 29
-    }, 87 / (90 * 8)),
+    'single_map64_uneven': (single_map64, 64 * 64, 64, { 'N': 513 }, 513 / (3 * 8 * 520)),
+    'sequential_maps': (sequential_maps, 1024, 3 * 8, { 'N': 29 }, 87 / (90 * 8)),
     # smaller cache --> only two arrays fit --> x loaded twice now
-    (sequential_maps, 6, 3 * 8, {
-        'N': 7
-    }, 21 / (13 * 3 * 8)),
-    (nested_reuse, 1024, 64, {
-        'N': 1024
-    }, 2048 / (3 * 1024 * 8 + 128)),
-    (mmm, 20, 16, {
-        'N': 24
-    }, (2 * 24**3) / ((36 * 24**2 + 24 * 12) * 16)),
-    (tiled_mmm, 20, 16, {
-        'N': 24,
-        'TILE_SIZE': 4
-    }, (2 * 24**3) / (16 * 24 * 6**3)),
-    (tiled_mmm_32, 10, 16, {
-        'N': 24,
-        'TILE_SIZE': 4
-    }, (2 * 24**3) / (16 * 12 * 6**3)),
-    (reduction_library_node, 1024, 64, {
-        'N': 128
-    }, 128.0 / (dc.symbol('Reduce_misses') * 64.0 + 64.0)),
-]
+    'sequential_maps_small': (sequential_maps, 6, 3 * 8, { 'N': 7 }, 21 / (13 * 3 * 8)),
+    'nested_reuse': (nested_reuse, 1024, 64, { 'N': 1024 }, 2048 / (3 * 1024 * 8 + 128)),
+    'mmm': (mmm, 20, 16, { 'N': 24 }, (2 * 24**3) / ((36 * 24**2 + 24 * 12) * 16)),
+    'tiled_mmm': (tiled_mmm, 20, 16, { 'N': 24, 'TILE_SIZE': 4 }, (2 * 24**3) / (16 * 24 * 6**3)),
+    'tiled_mmm_32': (tiled_mmm_32, 10, 16, { 'N': 24, 'TILE_SIZE': 4 }, (2 * 24**3) / (16 * 12 * 6**3)),
+    'reduction_library_node': (reduction_library_node, 1024, 64, { 'N': 128 },
+                               128.0 / (dc.symbol('Reduce_misses') * 64.0 + 64.0)),
+}
 
 
-def test_operational_intensity():
-    for test, c, l, assumptions, correct in tests_cases:
-        op_in_map = {}
-        sdfg = test.to_sdfg()
-        if test.name == 'nested_reuse':
-            sdfg.expand_library_nodes()
-        analyze_sdfg_op_in(sdfg, op_in_map, c * l, l, assumptions)
-        res = (op_in_map[get_uuid(sdfg)])
-        if test.name == 'reduction_library_node':
-            # substitue each symbol without assumptions.
-            # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
-            reps = {s: sp.Symbol(s.name) for s in res.free_symbols}
-            res = res.subs(reps)
-            reps = {s: sp.Symbol(s.name) for s in sp.sympify(correct).free_symbols}
-            correct = sp.sympify(correct).subs(reps)
-            assert correct == res
-        else:
-            assert isclose(correct, res)
+@pytest.mark.parametrize('test_name', list(test_cases.keys()))
+def test_operational_intensity(test_name: str):
+    test, c, l, assumptions, correct = test_cases[test_name]
+    op_in_map: Dict[str, sp.Expr] = {}
+    sdfg = test.to_sdfg()
+    if test_name == 'nested_reuse':
+        sdfg.expand_library_nodes()
+    analyze_sdfg_op_in(sdfg, op_in_map, c * l, l, assumptions)
+    res = (op_in_map[get_uuid(sdfg)])
+    if test_name == 'reduction_library_node':
+        # substitue each symbol without assumptions.
+        # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
+        reps = {s: sp.Symbol(s.name) for s in res.free_symbols}
+        res = res.subs(reps)
+        reps = {s: sp.Symbol(s.name) for s in sp.sympify(correct).free_symbols}
+        correct = sp.sympify(correct).subs(reps)
+        assert correct == res
+    else:
+        assert isclose(correct, res)
 
 
 if __name__ == '__main__':
-    test_operational_intensity()
+    for test_name in test_cases.keys():
+        test_operational_intensity(test_name)
