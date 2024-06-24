@@ -1255,7 +1255,7 @@ def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = No
     for _block in optional_progressbar(reversed(blocks), title='Inlining Loops',
                                        n=len(blocks), progress=progress):
         block: LoopRegion = _block
-        if block.inline():
+        if block.inline()[0]:
             count += 1
 
     return count
@@ -1269,7 +1269,7 @@ def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: 
     for _block in optional_progressbar(reversed(blocks), title='Inlining control flow blocks',
                                        n=len(blocks), progress=progress):
         block: ControlFlowRegion = _block
-        if block.inline():
+        if block.inline()[0]:
             count += 1
 
     return count

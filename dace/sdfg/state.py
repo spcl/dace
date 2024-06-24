@@ -8,7 +8,7 @@ import copy
 import inspect
 import itertools
 import warnings
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
+from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Literal, Optional, Set, Tuple, Union,
                     overload)
 
 import dace
@@ -2492,7 +2492,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         else:
             self._cfg_list = sub_cfg_list
 
-    def inline(self) -> bool:
+    def inline(self) -> Tuple[bool, Any]:
         """
         Inlines the control flow region into its parent control flow region (if it exists).
 
@@ -2540,9 +2540,9 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             sdfg = parent if isinstance(parent, dace.SDFG) else parent.sdfg
             sdfg.reset_cfg_list()
 
-            return True
+            return True, end_state
 
-        return False
+        return False, None
 
     def add_return(self, label=None) -> ReturnBlock:
         label = self._ensure_unique_block_name(label)
@@ -2920,7 +2920,7 @@ class LoopRegion(ControlFlowRegion):
         self.loop_variable = loop_var or ''
         self.inverted = inverted
 
-    def inline(self) -> None:
+    def inline(self) -> Tuple[bool, Any]:
         """
         Inlines the loop region into its parent control flow region.
 
@@ -2938,12 +2938,12 @@ class LoopRegion(ControlFlowRegion):
             if isinstance(self.init_statement.code, list):
                 for stmt in self.init_statement.code:
                     if not isinstance(stmt, astutils.ast.Assign):
-                        return False
+                        return False, None
         if self.update_statement is not None:
             if isinstance(self.update_statement.code, list):
                 for stmt in self.update_statement.code:
                     if not isinstance(stmt, astutils.ast.Assign):
-                        return False
+                        return False, None
 
         # First recursively inline any other contained control flow regions other than loops to ensure break, continue,
         # and return are inlined correctly.
@@ -3038,7 +3038,7 @@ class LoopRegion(ControlFlowRegion):
         sdfg = parent if isinstance(parent, dace.SDFG) else parent.sdfg
         sdfg.reset_cfg_list()
 
-        return True
+        return True, (init_state, guard_state, end_state)
 
     def _used_symbols_internal(self,
                                all_symbols: bool,

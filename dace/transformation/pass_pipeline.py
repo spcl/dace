@@ -493,12 +493,12 @@ class Pipeline(Pass):
         :param state: The pipeline results state.
         :return: The pass return value.
         """
-        if sdfg.cfg_list[0].using_experimental_blocks:
+        if sdfg.root_sdfg.using_experimental_blocks:
             if (not hasattr(p, '__experimental_cfg_block_compatible__') or
                 p.__experimental_cfg_block_compatible__ == False):
                 warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
                               'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
-                              'ensure the top level SDFG does not have `SDFG.using_experimental_cfg_blocks` set to ' +
+                              'ensure the top level SDFG does not have `SDFG.using_experimental_blocks` set to ' +
                               'True. If ' + p.__class__.__name__ + ' is compatible with experimental blocks, ' +
                               'please annotate it with the class decorator ' +
                               '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
@@ -508,12 +508,12 @@ class Pipeline(Pass):
         return p.apply_pass(sdfg, state)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if sdfg.cfg_list[0].using_experimental_blocks:
+        if sdfg.root_sdfg.using_experimental_blocks:
             if (not hasattr(self, '__experimental_cfg_block_compatible__') or
                 self.__experimental_cfg_block_compatible__ == False):
                 warnings.warn('Pipeline ' + self.__class__.__name__ + ' is being skipped due to incompatibility with ' +
                               'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
-                              'ensure the top level SDFG does not have `SDFG.using_experimental_cfg_blocks` set to ' +
+                              'ensure the top level SDFG does not have `SDFG.using_experimental_blocks` set to ' +
                               'True. If ' + self.__class__.__name__ + ' is compatible with experimental blocks, ' +
                               'please annotate it with the class decorator ' +
                               '`@dace.transformation.experimental_cfg_block_compatible`. see ' +

@@ -111,7 +111,7 @@ class MapToForLoopRegion(transformation.SingleStateTransformation):
         self.nsdfg = nsdfg
 
         sdfg.reset_cfg_list()
-        sdfg.cfg_list[0].using_experimental_cfg_blocks = True
+        sdfg.root_sdfg.using_experimental_blocks = True
 
         return node, nstate
 
@@ -123,9 +123,13 @@ class MapToForLoop(MapToForLoopRegion):
         a state-machine of a for-loop. Creates a nested SDFG, if necessary.
     """
 
+    before_state: SDFGState
+    guard: SDFGState
+    after_state: SDFGState
+
     def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.NestedSDFG, SDFGState]:
         node, nstate = super().apply(graph, sdfg)
-        self.loop_region.inline()
+        _, (self.before_state, self.guard, self.after_state) = self.loop_region.inline()
 
         sdfg.reset_cfg_list()
         sdfg.recheck_using_experimental_blocks()

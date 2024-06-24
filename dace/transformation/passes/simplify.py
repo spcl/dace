@@ -81,12 +81,12 @@ class SimplifyPass(ppl.FixedPointPipeline):
         """
         Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
         """
-        if sdfg.cfg_list[0].using_experimental_blocks:
+        if sdfg.root_sdfg.using_experimental_blocks:
             if (not hasattr(p, '__experimental_cfg_block_compatible__') or
                 p.__experimental_cfg_block_compatible__ == False):
                 warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
                               'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
-                              'ensure the top level SDFG does not have `SDFG.using_experimental_cfg_blocks` set to ' +
+                              'ensure the top level SDFG does not have `SDFG.using_experimental_blocks` set to ' +
                               'True. If ' + p.__class__.__name__ + ' is compatible with experimental blocks, ' +
                               'please annotate it with the class decorator ' +
                               '`@dace.transformation.experimental_cfg_block_compatible`. see ' +

@@ -129,7 +129,7 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
 
             # Replace conditions in subgraph edges
             data: sd.InterstateEdge = copy.deepcopy(edge.data)
-            if data.condition:
+            if not data.is_unconditional():
                 ASTFindReplace({itervar: str(value)}).visit(data.condition)
 
             graph.add_edge(src, dst, data)

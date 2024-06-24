@@ -183,7 +183,7 @@ class InterstateEdge(object):
                            desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
 
-    def __init__(self, condition: CodeBlock = None, assignments=None):
+    def __init__(self, condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None, assignments=None):
         if condition is None:
             condition = CodeBlock("1")
 
@@ -2689,7 +2689,7 @@ class SDFG(ControlFlowRegion):
 
     def recheck_using_experimental_blocks(self) -> bool:
         found_experimental_block = False
-        for node, graph in self.cfg_list[0].all_nodes_recursive():
+        for node, graph in self.root_sdfg.all_nodes_recursive():
             if isinstance(graph, ControlFlowRegion) and not isinstance(graph, SDFG):
                 found_experimental_block = True
                 break
