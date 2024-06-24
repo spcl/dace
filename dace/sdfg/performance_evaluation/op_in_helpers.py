@@ -3,12 +3,12 @@
 and class AccessStack which which corresponds to the stack used to compute the stack distance. 
 Further, provides a curve fitting method and plotting function. """
 
+import warnings
 from dace.data import Array
 import sympy as sp
 from collections import deque
 from scipy.optimize import curve_fit
 import numpy as np
-import matplotlib.pyplot as plt
 from dace import symbol
 
 
@@ -132,6 +132,17 @@ class AccessStack:
 
 
 def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, element, name):
+    plt = None
+    try:
+        import matplotlib.pyplot as plt_import
+        plt = plt_import
+    except ModuleNotFoundError:
+        pass
+
+    if plt is None:
+        warnings.warn('Plotting only possible with matplotlib installed')
+        return
+
     work_map = work_map[element]
     cache_misses = cache_misses[element]
     op_in_map = op_in_map[element]

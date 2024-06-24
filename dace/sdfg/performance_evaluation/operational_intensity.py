@@ -368,7 +368,7 @@ def sdfg_op_in(sdfg: SDFG,
                     try:
                         update_mapping(mapping, e)
                     except:
-                        print('\nWARNING: Strange assignment detected on InterstateEdge (e.g. bitwise operators).'
+                        print('\nWARNING: Uncommon assignment detected on InterstateEdge (e.g. bitwise operators).'
                               'Analysis may give wrong results.')
                         print(e.data.assignments, 'was the edge\'s assignments.')
                     curr_state = e.dst
