@@ -337,7 +337,7 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
             common_frontier |= frontier
         if len(common_frontier) == 1:
             branch_merges[state] = next(iter(common_frontier))
-        elif len(common_frontier) > 1 and ipostdom[state] in common_frontier:
+        elif len(common_frontier) > 1 and ipostdom and ipostdom[state] in common_frontier:
             branch_merges[state] = ipostdom[state]
 
     for block in _blockorder_topological_sort(cfg, cfg.start_block, ptree, branch_merges, loopexits=loopexits):

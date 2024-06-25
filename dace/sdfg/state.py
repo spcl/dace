@@ -1148,6 +1148,19 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         }
         return tmp
 
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        context = context or {'sdfg': None, 'parent_graph': None}
+        _type = json_obj['type']
+        if _type != cls.__name__:
+            raise TypeError("Class type mismatch")
+
+        ret = cls(label=json_obj['label'], sdfg=context['sdfg'])
+
+        dace.serialize.set_properties_from_json(ret, json_obj)
+
+        return ret
+
     def __str__(self):
         return self._label
 
@@ -2404,6 +2417,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     node.add_in_connector(edge.dst_conn)
 
 
+@make_properties
 class ContinueBlock(ControlFlowBlock):
     """ Special control flow block to represent a continue inside of loops. """
 
@@ -2411,6 +2425,7 @@ class ContinueBlock(ControlFlowBlock):
         return f'ContinueBlock ({self.label})'
 
 
+@make_properties
 class BreakBlock(ControlFlowBlock):
     """ Special control flow block to represent a continue inside of loops or switch / select blocks. """
 
@@ -2418,6 +2433,7 @@ class BreakBlock(ControlFlowBlock):
         return f'BreakBlock ({self.label})'
 
 
+@make_properties
 class ReturnBlock(ControlFlowBlock):
     """ Special control flow block to represent an early return out of the SDFG or a nested procedure / SDFG. """
 
@@ -2806,7 +2822,6 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
 
-        attrs = json_obj['attributes']
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 

@@ -6,7 +6,7 @@ from typing import (TYPE_CHECKING, Callable, Dict, List, Optional, Sequence, Set
 import sympy as sp
 from dace import dtypes
 from dace.properties import CodeBlock
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState, BreakBlock, ContinueBlock
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.graph import Edge
@@ -137,39 +137,45 @@ class BasicBlock(ControlFlow):
 
 
 @dataclass
-class BreakBlock(BasicBlock):
-    """ A CFG basic block that generates a 'break' statement after itself. """
+class BreakCF(ControlFlow):
+    """ A CFG block that generates a 'break' statement. """
 
-    @classmethod
-    def from_basic_block(cls, block: BasicBlock) -> 'BreakBlock':
-        return BreakBlock(block.dispatch_state, block.parent, block.last_block, block.state)
+    block: BreakBlock
 
     def as_cpp(self, codegen, symbols) -> str:
-        expr = super().as_cpp(codegen, symbols)
-        expr += 'break;\n'
-        return expr
+        return 'break;\n'
 
     @property
-    def first_block(self) -> SDFGState:
-        return self.state
+    def first_block(self) -> BreakBlock:
+        return self.block
 
 
 @dataclass
-class ContinueBlock(BasicBlock):
-    """ A CFG basic block that generates a 'continue' statement after itself. """
+class ContinueCF(ControlFlow):
+    """ A CFG block that generates a 'continue' statement. """
 
-    @classmethod
-    def from_basic_block(cls, block: BasicBlock) -> 'ContinueBlock':
-        return ContinueBlock(block.dispatch_state, block.parent, block.last_block, block.state)
+    block: ContinueBlock
 
     def as_cpp(self, codegen, symbols) -> str:
-        expr = super().as_cpp(codegen, symbols)
-        expr += 'continue;\n'
-        return expr
+        return 'continue;\n'
 
     @property
-    def first_block(self) -> SDFGState:
-        return self.state
+    def first_block(self) -> ContinueBlock:
+        return self.block
+
+
+@dataclass
+class ReturnCF(ControlFlow):
+    """ A CFG block that generates a 'return' statement. """
+
+    block: ReturnBlock
+
+    def as_cpp(self, codegen, symbols) -> str:
+        return 'return;\n'
+
+    @property
+    def first_block(self) -> ReturnBlock:
+        return self.block
 
 
 @dataclass
@@ -568,7 +574,7 @@ def _structured_control_flow_traversal(cfg: ControlFlowRegion,
                 common_frontier |= frontier
             if len(common_frontier) == 1:
                 branch_merges[block] = next(iter(common_frontier))
-            elif len(common_frontier) > 1 and ipostdom[block] in common_frontier:
+            elif len(common_frontier) > 1 and ipostdom and ipostdom[block] in common_frontier:
                 branch_merges[block] = ipostdom[block]
 
     if ptree is None:
@@ -593,13 +599,12 @@ def _structured_control_flow_traversal(cfg: ControlFlowRegion,
         cfg_block: ControlFlow
         if isinstance(node, SDFGState):
             cfg_block = BasicBlock(dispatch_state, parent_block, False, node)
-
-            if isinstance(node, BreakBlock):
-                cfg_block = BreakBlock.from_basic_block(cfg_block)
-                cfg_block.last_block = True
-            elif isinstance(node, ContinueBlock):
-                cfg_block = ContinueBlock.from_basic_block(cfg_block)
-                cfg_block.last_block = True
+        elif isinstance(node, BreakBlock):
+            cfg_block = BreakCF(dispatch_state, parent_block, True, node)
+        elif isinstance(node, ContinueBlock):
+            cfg_block = ContinueCF(dispatch_state, parent_block, True, node)
+        elif isinstance(node, ReturnBlock):
+            cfg_block = ReturnCF(dispatch_state, parent_block, True, node)
         elif isinstance(node, ControlFlowRegion):
             if isinstance(node, LoopRegion):
                 body = make_empty_block()
