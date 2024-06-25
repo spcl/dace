@@ -49,7 +49,7 @@ def inline_control_flow_region(region: ControlFlowRegion, parent: ControlFlowReg
     # Add all region states and make sure to keep track of all the ones that need to be connected in the end.
     to_connect: Set[ControlFlowBlock] = set()
     for node in region.nodes():
-        parent.add_node(node)
+        parent.add_node(node, ensure_unique_name=True)
         if region.out_degree(node) == 0 and not isinstance(node, (LoopRegion.BreakState, LoopRegion.ContinueState, ReturnState)):
             to_connect.add(node)
 
@@ -100,7 +100,7 @@ def inline_loop_region(loop: LoopRegion, parent: ControlFlowRegion):
     connect_to_tail: Set[SDFGState] = set()
     for node in loop.nodes():
         node.label = loop.label + '_' + node.label
-        parent.add_node(node)
+        parent.add_node(node, ensure_unique_name=True)
         if loop.out_degree(node) == 0 and not isinstance(node, (LoopRegion.BreakState, LoopRegion.ContinueState, ReturnState)):
             connect_to_tail.add(node)
 
@@ -167,10 +167,10 @@ def inline_conditional_region(conditional: ConditionalRegion, parent: ControlFlo
     endif_state = parent.add_state(conditional.label + '_endinf')
 
     connect_to_end : Set[ControlFlowBlock] = set()
-    # Add all loop states and make sure to keep track of all the ones that need to be connected in the end.
+    # Add all states and make sure to keep track of all the ones that need to be connected in the end.
     for node in conditional.nodes():
         node.label = conditional.label + '_' + node.label
-        parent.add_node(node)
+        parent.add_node(node, ensure_unique_name=True)
         if conditional.out_degree(node) == 0 and not isinstance(node, (LoopRegion.BreakState, LoopRegion.ContinueState, ReturnState)):
             connect_to_end.add(node)
 
