@@ -127,6 +127,8 @@ def test_operational_intensity(test_name: str):
     sdfg = test.to_sdfg()
     if test_name == 'nested_reuse':
         sdfg.expand_library_nodes()
+    if test_name in ['sequential_maps', 'sequential_maps_small', 'nested_reuse', 'mmm', 'tiled_mmm', 'tiled_mmm_32']:
+        sdfg.simplify()
     analyze_sdfg_op_in(sdfg, op_in_map, c * l, l, assumptions)
     res = (op_in_map[get_uuid(sdfg)])
     if test_name == 'reduction_library_node':

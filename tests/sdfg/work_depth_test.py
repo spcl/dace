@@ -226,6 +226,10 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
 
 @pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
 def test_work_depth(test_name):
+    if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False and
+        test_name in ['unbounded_while_do', 'unbounded_do_while', 'unbounded_nonnegify',
+                      'continue_for_loop', 'break_while_loop']):
+        pytest.skip('Malformed loop when not simplifying')
     test, correct = work_depth_test_cases[test_name]
     w_d_map: Dict[str, sp.Expr] = {}
     sdfg = test.to_sdfg()
@@ -249,22 +253,39 @@ def test_work_depth(test_name):
 
 
 #(sdfg, expected_avg_par)
-tests_cases_avg_par = [(single_map, N), (single_for_loop, 1), (if_else, 1), (nested_sdfg, 2 * N / (N + 1)),
-                       (nested_maps, N * M), (nested_for_loops, 1),
-                       (max_of_positive_symbol, N), (unbounded_while_do, N), (unbounded_do_while, N),
-                       (unbounded_nonnegify, N), (continue_for_loop, N), (break_for_loop, N), (break_while_loop, N),
-                       (reduction_library_node, 456 / sp.log(456)), (reduction_library_node_symbolic, N / sp.log(N)),
-                       (gemm_library_node, 2 * 456 * 200 * 111 / sp.log(200)),
-                       (gemm_library_node_symbolic, 2 * M * K * N / sp.log(K))]
+tests_cases_avg_par = {
+    'single_map': (single_map, N),
+    'single_for_loop': (single_for_loop, 1),
+    'if_else': (if_else, 1),
+    'nested_sdfg': (nested_sdfg, 2 * N / (N + 1)),
+    'nested_maps': (nested_maps, N * M),
+    'nested_for_loops': (nested_for_loops, 1),
+    'max_of_positive_symbol': (max_of_positive_symbol, N),
+    'unbounded_while_do': (unbounded_while_do, N),
+    'unbounded_do_while': (unbounded_do_while, N),
+    'unbounded_nonnegify': (unbounded_nonnegify, N),
+    'continue_for_loop': (continue_for_loop, N),
+    'break_for_loop': (break_for_loop, N),
+    'break_while_loop': (break_while_loop, N),
+    'reduction_library_node': (reduction_library_node, 456 / sp.log(456)),
+    'reduction_library_node_symbolic': (reduction_library_node_symbolic, N / sp.log(N)),
+    'gemm_library_node': (gemm_library_node, 2 * 456 * 200 * 111 / sp.log(200)),
+    'gemm_library_node_symbolic': (gemm_library_node_symbolic, 2 * M * K * N / sp.log(K)),
+}
 
+@pytest.mark.parametrize('test_name', list(tests_cases_avg_par.keys()))
+def test_avg_par(test_name: str):
+    if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False and
+        test_name in ['unbounded_while_do', 'unbounded_do_while', 'unbounded_nonnegify',
+                      'continue_for_loop', 'break_while_loop']):
+        pytest.skip('Malformed loop when not simplifying')
 
-@pytest.mark.parametrize('test,correct', tests_cases_avg_par)
-def test_avg_par(test: DaceProgram, correct: sp.Expr):
+    test, correct = tests_cases_avg_par[test_name]
     w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]] = {}
     sdfg = test.to_sdfg()
-    if 'nested_sdfg' in test.name:
+    if 'nested_sdfg' in test_name:
         sdfg.apply_transformations(NestSDFG)
-    if 'nested_maps' in test.name:
+    if 'nested_maps' in test_name:
         sdfg.apply_transformations(MapExpansion)
     analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
     res = w_d_map[get_uuid(sdfg)][0] / w_d_map[get_uuid(sdfg)][1]

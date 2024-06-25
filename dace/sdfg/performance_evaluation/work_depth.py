@@ -7,7 +7,7 @@ from collections import deque
 from dace.sdfg import nodes as nd, propagation, InterstateEdge
 from dace import SDFG, SDFGState, dtypes
 from dace.subsets import Range
-from typing import Tuple, Dict
+from typing import List, Tuple, Dict
 import os
 import sympy as sp
 from copy import deepcopy
@@ -724,7 +724,7 @@ def state_work_depth(state: SDFGState,
 def analyze_sdfg(sdfg: SDFG,
                  w_d_map: Dict[str, sp.Expr],
                  analyze_tasklet,
-                 assumptions: [str],
+                 assumptions: List[str],
                  detailed_analysis: bool = False) -> None:
     """
     Analyze a given SDFG. We can either analyze work, work and depth or average parallelism.
