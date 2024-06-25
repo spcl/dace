@@ -375,7 +375,11 @@ class ForScope(ControlFlow):
         # Initialize to either "int i = 0" or "i = 0" depending on whether the type has been defined.
         defined_vars = codegen.dispatcher.defined_vars
         if not defined_vars.has(self.loop.loop_variable):
-            init = f'{symbols[self.loop.loop_variable]} '
+            try:
+                init = f'{symbols[self.loop.loop_variable]} '
+            except KeyError:
+                init = 'auto '
+                symbols[self.loop.loop_variable] = None
         init += unparse_interstate_edge(self.loop.init_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
         init = init.strip(';')
 
