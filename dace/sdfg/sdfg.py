@@ -577,8 +577,8 @@ class SDFG(ControlFlowRegion):
         return tmp
 
     @classmethod
-    def from_json(cls, json_obj, context_info=None):
-        context_info = context_info or {'sdfg': None}
+    def from_json(cls, json_obj, context=None):
+        context = context or {'sdfg': None}
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -592,7 +592,7 @@ class SDFG(ControlFlowRegion):
         else:
             constants_prop = None
 
-        ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context_info['sdfg'])
+        ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
         dace.serialize.set_properties_from_json(ret,
                                                 json_obj,
@@ -600,12 +600,12 @@ class SDFG(ControlFlowRegion):
 
         nodelist = []
         for n in nodes:
-            nci = copy.copy(context_info)
+            nci = copy.copy(context)
             nci['sdfg'] = ret
 
-            state = SDFGState.from_json(n, context=nci)
-            ret.add_node(state)
-            nodelist.append(state)
+            block = dace.serialize.from_json(n, context=nci)
+            ret.add_node(block)
+            nodelist.append(block)
 
         for e in edges:
             e = dace.serialize.from_json(e)

@@ -1382,7 +1382,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Prepare preamble and code for after memlets
         after_memlets_stream = CodeIOStream()
-        codegen.generate_tasklet_preamble(sdfg, dfg, state_id, node, function_stream, callsite_stream,
+        codegen.generate_tasklet_preamble(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream,
                                           after_memlets_stream)
 
         self._dispatcher.defined_vars.enter_scope(node)
@@ -1513,7 +1513,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Generate pre-memlet tasklet postamble
         after_memlets_stream = CodeIOStream()
-        codegen.generate_tasklet_postamble(sdfg, dfg, state_id, node, function_stream, inner_stream,
+        codegen.generate_tasklet_postamble(sdfg, cfg, dfg, state_id, node, function_stream, inner_stream,
                                            after_memlets_stream)
 
         # Process outgoing memlets
@@ -2236,7 +2236,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         pass
 
-    def generate_tasklet_preamble(self, sdfg, dfg_scope, state_id, node, function_stream, before_memlets_stream,
+    def generate_tasklet_preamble(self, sdfg, cfg, dfg_scope, state_id, node, function_stream, before_memlets_stream,
                                   after_memlets_stream):
         """
         Generates code for the beginning of a tasklet. This method is
@@ -2256,7 +2256,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         pass
 
-    def generate_tasklet_postamble(self, sdfg, dfg_scope, state_id, node, function_stream, before_memlets_stream,
+    def generate_tasklet_postamble(self, sdfg, cfg, dfg_scope, state_id, node, function_stream, before_memlets_stream,
                                    after_memlets_stream):
         """
         Generates code for the end of a tasklet. This method is intended to be

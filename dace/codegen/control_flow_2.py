@@ -594,10 +594,10 @@ def _structured_control_flow_traversal(cfg: ControlFlowRegion,
         if isinstance(node, SDFGState):
             cfg_block = BasicBlock(dispatch_state, parent_block, False, node)
 
-            if isinstance(node, LoopRegion.BreakState):
+            if isinstance(node, BreakBlock):
                 cfg_block = BreakBlock.from_basic_block(cfg_block)
                 cfg_block.last_block = True
-            elif isinstance(node, LoopRegion.ContinueState):
+            elif isinstance(node, ContinueBlock):
                 cfg_block = ContinueBlock.from_basic_block(cfg_block)
                 cfg_block.last_block = True
         elif isinstance(node, ControlFlowRegion):

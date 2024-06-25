@@ -2800,8 +2800,8 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         return graph_json
 
     @classmethod
-    def from_json(cls, json_obj, context_info=None):
-        context_info = context_info or {'sdfg': None, 'parent_graph': None}
+    def from_json(cls, json_obj, context=None):
+        context = context or {'sdfg': None, 'parent_graph': None}
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -2810,18 +2810,18 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
-        ret = ControlFlowRegion(label=attrs['label'], sdfg=context_info['sdfg'])
+        ret = cls(label=json_obj['label'], sdfg=context['sdfg'])
 
         dace.serialize.set_properties_from_json(ret, json_obj)
 
         nodelist = []
         for n in nodes:
-            nci = copy.copy(context_info)
+            nci = copy.copy(context)
             nci['parent_graph'] = ret
 
-            state = SDFGState.from_json(n, context=nci)
-            ret.add_node(state)
-            nodelist.append(state)
+            block = dace.serialize.from_json(n, context=nci)
+            ret.add_node(block)
+            nodelist.append(block)
 
         for e in edges:
             e = dace.serialize.from_json(e)
@@ -2921,12 +2921,13 @@ class LoopRegion(ControlFlowRegion):
 
     def __init__(self,
                  label: str,
-                 condition_expr: str,
+                 condition_expr: Optional[str] = None,
                  loop_var: Optional[str] = None,
                  initialize_expr: Optional[str] = None,
                  update_expr: Optional[str] = None,
-                 inverted: bool = False):
-        super(LoopRegion, self).__init__(label)
+                 inverted: bool = False,
+                 sdfg: Optional['SDFG'] = None):
+        super(LoopRegion, self).__init__(label, sdfg)
 
         if initialize_expr is not None:
             self.init_statement = CodeBlock(initialize_expr)
@@ -3108,9 +3109,6 @@ class LoopRegion(ControlFlowRegion):
                 self.loop_variable = repl[self.loop_variable]
 
         super().replace_dict(repl, symrepl, replace_in_graph)
-
-    def to_json(self, parent=None):
-        return super().to_json(parent)
 
     def add_break(self, label=None) -> BreakBlock:
         label = self._ensure_unique_block_name(label)
