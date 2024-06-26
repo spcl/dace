@@ -263,7 +263,7 @@ def test_promote_loop():
     def testprog8(A: dace.float32[20, 20]):
         i = dace.ndarray([1], dtype=dace.int32)
         i = 0
-        while i[0] < N:
+        while i < N:
             A += i
             i += 2
 

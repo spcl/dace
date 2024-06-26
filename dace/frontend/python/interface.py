@@ -44,6 +44,7 @@ def program(f: F,
             recompile: bool = True,
             distributed_compilation: bool = False,
             constant_functions=False,
+            use_experimental_cfg_blocks: bool = False,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     """
     Entry point to a data-centric program. For methods and ``classmethod``s, use
@@ -83,7 +84,8 @@ def program(f: F,
                               recreate_sdfg=recreate_sdfg,
                               regenerate_code=regenerate_code,
                               recompile=recompile,
-                              distributed_compilation=distributed_compilation)
+                              distributed_compilation=distributed_compilation,
+                              use_experimental_cfg_blocks=use_experimental_cfg_blocks)
 
 
 function = program

@@ -159,7 +159,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
             xform = InLocalStorage()
             xform._sdfg = sdfg
-            xform.state_id = sdfg.node_id(graph)
+            xform.state_id = graph.parent_graph.node_id(graph)
             xform.node_a = edge.src
             xform.node_b = edge.dst
             xform.array = intermediate_access_node.data
@@ -177,7 +177,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             if edge.data.wcr is None:
                 xform = OutLocalStorage()
                 xform._sdfg = sdfg
-                xform.state_id = sdfg.node_id(graph)
+                xform.state_id = graph.parent_graph.node_id(graph)
                 xform.node_a = edge.src
                 xform.node_b = edge.dst
                 xform.array = intermediate_access_node.data
@@ -192,7 +192,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             else:
                 xform = AccumulateTransient()
                 xform._sdfg = sdfg
-                xform.state_id = sdfg.node_id(graph)
+                xform.state_id = graph.parent_graph.node_id(graph)
                 xform.map_exit = edge.src
                 xform.outer_map_exit = edge.dst
                 xform.array = intermediate_access_node.data

@@ -201,9 +201,10 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         if not dtypes.validate_name(sdfg.name):
             raise InvalidSDFGError("Invalid name", sdfg, None)
 
-        all_blocks = set(sdfg.all_control_flow_blocks())
-        if len(all_blocks) != len(set([s.label for s in all_blocks])):
-            raise InvalidSDFGError('Found multiple blocks with the same name', sdfg, None)
+        for cfg in sdfg.all_control_flow_regions():
+            blocks = cfg.nodes()
+            if len(blocks) != len(set([s.label for s in blocks])):
+                raise InvalidSDFGError('Found multiple blocks with the same name in ' + cfg.name, sdfg, None)
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():

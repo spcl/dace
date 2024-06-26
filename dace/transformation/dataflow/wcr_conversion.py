@@ -150,7 +150,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         # If state fission is necessary to keep semantics, do it first
         if state.in_degree(input) > 0:
-            new_state = helpers.state_fission_after(sdfg, state, tasklet)
+            new_state = helpers.state_fission_after(state, tasklet)
         else:
             new_state = state
 

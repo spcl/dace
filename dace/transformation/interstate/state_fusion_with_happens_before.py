@@ -5,7 +5,7 @@ from typing import Dict, List, Set
 
 import networkx as nx
 
-from dace import data as dt, dtypes, registry, sdfg, subsets, memlet
+from dace import data as dt, sdfg, subsets, memlet
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -31,6 +31,7 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
+@transformation.single_level_sdfg_only
 class StateFusionExtended(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation extended to fuse states with RAW and WAW dependencies.
         An empty memlet is used to represent a dependency between two subgraphs with RAW and WAW dependencies.

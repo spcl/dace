@@ -127,7 +127,7 @@ def test_state_fission():
     vec_add1 = state.nodes()[3]
 
     subg = dace.sdfg.graph.SubgraphView(state, [node_x, node_y, vec_add1, node_z])
-    helpers.state_fission(sdfg, subg)
+    helpers.state_fission(subg)
     sdfg.validate()
 
     assert (len(sdfg.states()) == 2)

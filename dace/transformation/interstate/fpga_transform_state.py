@@ -29,6 +29,7 @@ def fpga_update(sdfg, state, depth):
                 fpga_update(node.sdfg, s, depth + 1)
 
 
+@transformation.single_level_sdfg_only
 class FPGATransformState(transformation.MultiStateTransformation):
     """ Implements the FPGATransformState transformation. """
 

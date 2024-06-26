@@ -2,10 +2,8 @@
 """ This module contains classes and functions that implement the orthogonal
     tiling with overlap transformation. """
 
-from dace import registry
 from dace.properties import make_properties, ShapeProperty
 from dace.transformation.dataflow import MapTiling
-from dace.sdfg import nodes
 from dace.symbolic import pystr_to_symbolic
 
 

@@ -6,7 +6,7 @@ from dace.frontend.python import astutils
 from dace.sdfg.analysis import cfg
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes, utils as sdutil
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace.cli.progress import optional_progressbar
 from dace import data, SDFG, SDFGState, dtypes, symbolic, properties
 from typing import Any, Dict, Set, Optional, Tuple
@@ -19,6 +19,7 @@ class _UnknownValue:
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class ConstantPropagation(ppl.Pass):
     """
     Propagates constants and symbols that were assigned to one value forward through the SDFG, reducing

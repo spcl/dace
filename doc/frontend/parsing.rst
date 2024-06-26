@@ -76,14 +76,15 @@ Abstract Syntax sub-Tree. The :class:`~dace.frontend.python.newast.ProgramVisito
 - ``annotated_types``: A dictionary from Python variables to Data-Centric datatypes. Used when variables are explicitly type-annotated in the Python code.
 - ``map_symbols``: The :class:`~dace.sdfg.nodes.Map` symbols defined in the :class:`~dace.sdfg.sdfg.SDFG`. Useful when deciding when an augmented assignment should be implemented with WCR or not.
 - ``sdfg``: The generated :class:`~dace.sdfg.sdfg.SDFG` object.
-- ``last_state``: The (current) last :class:`~dace.sdfg.state.SDFGState` object created and added to the :class:`~dace.sdfg.sdfg.SDFG`.
+- ``last_block``: The (current) last :class:`~dace.sdfg.state.ControlFlowBlock` object created and added to the current :class:`~dace.sdfg.state.ControlFlowRegion`.
+- ``current_state``: The (current) last :class:`~dace.sdfg.state.SDFGState` object created and added to the current :class:`~dace.sdfg.state.ControlFlowRegion`, similar to `last_block`, but only tracking states.
+- ``sdfg``: The current :class:`~dace.sdfg.sdfg.SDFG` being worked on.
+- ``cfg_target``: The current :class:`~dace.sdfg.state.ControlFlowRegion` being worked on (may be the current :class:`~dace.sdfg.sdfg.SDFG` or a sub-region, such as a :class:`~dace.sdfg.state.LoopRegion`).
+- ``last_cfg_target``: The previous :class:`~dace.sdfg.state.ControlFlowRegion` that blocks were being added to.
 - ``inputs``: The input connectors of the generated :class:`~dace.sdfg.nodes.NestedSDFG` and a :class:`~dace.memlet.Memlet`-like representation of the corresponding Data subsets read.
 - ``outputs``: The output connectors of the generated :class:`~dace.sdfg.nodes.NestedSDFG` and a :class:`~dace.memlet.Memlet`-like representation of the corresponding Data subsets written.
 - ``current_lineinfo``: The current :class:`~dace.dtypes.DebugInfo`. Used for debugging.
 - ``modules``: The modules imported in the file of the top-level Data-Centric Python program. Produced by filtering `globals`.
-- ``loop_idx``: The current scope-depth in a nested loop construct.
-- ``continue_states``: The generated :class:`~dace.sdfg.state.SDFGState` objects corresponding to Python `continue <https://docs.python.org/3/library/ast.html#ast.Continue>`_ statements. Useful for generating proper nested loop control-flow.
-- ``break_states``: The generated :class:`~dace.sdfg.state.SDFGState` objects corresponding to Python `break <https://docs.python.org/3/library/ast.html#ast.Break>`_ statements. Useful for generating proper nested loop control-flow.
 - ``symbols``: The loop symbols defined in the :class:`~dace.sdfg.sdfg.SDFG` object. Useful for memlet/state propagation when multiple loops use the same iteration variable but with different ranges.
 - ``indirections``: A dictionary from Python code indirection expressions to Data-Centric symbols.
 
@@ -167,6 +168,10 @@ Example:
     :align: center
     :alt: Generated SDFG for-loop for the above Data-Centric Python program
 
+If the :class:`~dace.frontend.python.parser.DaceProgram`'s
+:attr:`~dace.frontend.python.parser.DaceProgram.use_experimental_cfg_blocks` attribute is set to true, this will utilize
+:class:`~dace.sdfg.state.LoopRegion`s instead of the explicit state machine depicted above.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_While`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -184,6 +189,10 @@ Parses `while <https://docs.python.org/3/library/ast.html#ast.While>`_ statement
     :width: 500
     :align: center
     :alt: Generated SDFG while-loop for the above Data-Centric Python program
+
+If the :class:`~dace.frontend.python.parser.DaceProgram`'s
+:attr:`~dace.frontend.python.parser.DaceProgram.use_experimental_cfg_blocks` attribute is set to true, this will utilize
+:class:`~dace.sdfg.state.LoopRegion`s instead of the explicit state machine depicted above.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Break`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -204,6 +213,11 @@ behaves as an if-else statement. This is also evident from the generated dataflo
     :align: center
     :alt: Generated SDFG for-loop with a break statement for the above Data-Centric Python program
 
+If the :class:`~dace.frontend.python.parser.DaceProgram`'s
+:attr:`~dace.frontend.python.parser.DaceProgram.use_experimental_cfg_blocks` attribute is set to true, loops are
+represented with :class:`~dace.sdfg.state.LoopRegion`s, and a break is represented with a special
+:class:`~dace.sdfg.state.LoopRegion.BreakState`.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Continue`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -222,6 +236,11 @@ of `continue` makes the ``A[i] = i`` statement unreachable. This is also evident
     :width: 500
     :align: center
     :alt: Generated SDFG for-loop with a continue statement for the above Data-Centric Python program
+
+If the :class:`~dace.frontend.python.parser.DaceProgram`'s
+:attr:`~dace.frontend.python.parser.DaceProgram.use_experimental_cfg_blocks` attribute is set to true, loops are
+represented with :class:`~dace.sdfg.state.LoopRegion`s, and a continue is represented with a special
+:class:`~dace.sdfg.state.LoopRegion.ContinueState`.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_If`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

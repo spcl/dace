@@ -390,7 +390,8 @@ class ForScope(ControlFlow):
 
         update = ''
         if self.update is not None:
-            update = f'{self.itervar} = {self.update}'
+            cppupdate = unparse_interstate_edge(self.update, sdfg, codegen=codegen)
+            update = f'{self.itervar} = {cppupdate}'
 
         expr = f'{preinit}\nfor ({init}; {cond}; {update}) {{\n'
         expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))

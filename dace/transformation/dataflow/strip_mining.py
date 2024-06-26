@@ -466,7 +466,7 @@ class StripMining(transformation.SingleStateTransformation):
 
         # Skew if necessary
         if self.skew:
-            xfh.offset_map(sdfg, graph, map_entry, dim_idx, td_rng[0])
+            xfh.offset_map(graph, map_entry, dim_idx, td_rng[0])
 
         # Return strip-mined dimension.
         return target_dim, new_dim, new_map

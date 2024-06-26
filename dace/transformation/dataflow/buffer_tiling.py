@@ -7,7 +7,6 @@ from dace.properties import ShapeProperty, make_properties
 from dace.transformation import transformation
 from dace.transformation.dataflow import MapTiling, MapTilingWithOverlap, MapFusion, TrivialMapElimination
 
-
 @make_properties
 class BufferTiling(transformation.SingleStateTransformation):
     """ Implements the buffer tiling transformation.

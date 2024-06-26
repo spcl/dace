@@ -3,17 +3,14 @@
     Subgraph Fusion - Stencil Tiling Transformation
 """
 
-import dace
-from dace.transformation.subgraph import stencil_tiling
-
-import dace.transformation.transformation as transformation
 from dace.transformation.subgraph import SubgraphFusion, MultiExpansion
 from dace.transformation.subgraph.stencil_tiling import StencilTiling
 from dace.transformation.subgraph import helpers
+from dace.transformation import transformation
 
-from dace import dtypes, registry, symbolic, subsets, data
+from dace import dtypes
 from dace.properties import EnumProperty, make_properties, Property, ShapeProperty
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG
 from dace.sdfg.graph import SubgraphView
 
 import copy
@@ -21,6 +18,7 @@ import warnings
 
 
 @make_properties
+@transformation.single_level_sdfg_only
 class CompositeFusion(transformation.SubgraphTransformation):
     """ MultiExpansion + SubgraphFusion in one Transformation
         Additional StencilTiling is also possible as a canonicalizing
