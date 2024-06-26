@@ -108,7 +108,8 @@ class PatternMatchAndApply(ppl.Pass):
                                   xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
                                   'please annotate it with the class decorator ' +
                                   '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
-                                  '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` for more.')
+                                  '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                                  'for more information.')
                     continue
 
             # Find only the first match
@@ -226,7 +227,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                                           'please annotate it with the class decorator ' +
                                           '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
                                           '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
-                                          'for more.')
+                                          'for more information.')
                             continue
 
                     applied = True
@@ -417,7 +418,8 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
                               match.__class__.__name__ + ' is compatible with experimental blocks, ' +
                               'please annotate it with the class decorator ' +
                               '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
-                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` for more.')
+                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                              'for more information.')
                 return None
 
         cfg_id = graph.parent_graph.cfg_id if isinstance(graph, SDFGState) else graph.cfg_id
@@ -579,7 +581,7 @@ def match_patterns(sdfg: SDFG,
         if len(singlestate_transformations) == 0:
             continue
         for state_id, state in enumerate(cfr.nodes()):
-            if (states is not None and state not in states) or not isinstance(state, SDFGState):
+            if not isinstance(state, SDFGState) or (states is not None and state not in states):
                 continue
 
             # Collapse multigraph into directed graph in order to use VF2

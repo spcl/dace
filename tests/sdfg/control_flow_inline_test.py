@@ -209,21 +209,21 @@ def test_loop_inlining_for_continue_break():
     assert len(states) == 12
     assert not any(isinstance(s, LoopRegion) for s in states)
     end_state = None
-    tail_state = None
+    latch_state = None
     break_state = None
     continue_state = None
     for state in states:
         if state.label == 'loop1_end':
             end_state = state
-        elif state.label == 'loop1_tail':
-            tail_state = state
+        elif state.label == 'loop1_latch':
+            latch_state = state
         elif state.label == 'loop1_state2':
             continue_state = state
         elif state.label == 'loop1_state4':
             break_state = state
     assert end_state is not None
     assert len(sdfg.edges_between(break_state, end_state)) == 1
-    assert len(sdfg.edges_between(continue_state, tail_state)) == 1
+    assert len(sdfg.edges_between(continue_state, latch_state)) == 1
 
 
 def test_loop_inlining_multi_assignments():
@@ -251,18 +251,18 @@ def test_loop_inlining_multi_assignments():
 
     guard_state = None
     init_state = None
-    tail_state = None
+    latch_state = None
     for state in sdfg.states():
         if state.label == 'loop1_guard':
             guard_state = state
         elif state.label == 'loop1_init':
             init_state = state
-        elif state.label == 'loop1_tail':
-            tail_state = state
+        elif state.label == 'loop1_latch':
+            latch_state = state
     init_edge = sdfg.edges_between(init_state, guard_state)[0]
     assert 'i' in init_edge.data.assignments
     assert 'j' in init_edge.data.assignments
-    update_edge = sdfg.edges_between(tail_state, guard_state)[0]
+    update_edge = sdfg.edges_between(latch_state, guard_state)[0]
     assert 'i' in update_edge.data.assignments
     assert 'j' in update_edge.data.assignments
 
