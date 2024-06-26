@@ -105,23 +105,24 @@ class ThreadTiling(transformation.SingleStateTransformation):
 
         # Create the new dimension sizes for the ThreadBlock Map.
         # The dimensions of the thread block map to the step sizes of the device scheduled map.
-        # They need to be scaled according to the tilesize
+        # They need to be scaled according to the tilesize, and the order of how they are mapped
         params = dict()
         if len(thread_block_entry.map.params) >= 3:
-            #tile_sizes = (tz, ty, tx)
-            params[f"dim_size_z"] = thread_block_entry.map.range[0][2]*tz
-            params[f"dim_size_y"] = thread_block_entry.map.range[1][2]*ty
-            params[f"dim_size_x"] = thread_block_entry.map.range[2][2]*tx
+            # Means: tile_sizes = (tz, ty, tx)
+            params[f"dim_size_z"] = dev_entry.map.range[0][2] * tz
+            params[f"dim_size_y"] = dev_entry.map.range[1][2] * ty
+            params[f"dim_size_x"] = dev_entry.map.range[2][2] * tx
         elif len(thread_block_entry.map.params) == 2:
-            #tile_sizes = (ty, tx, 1)
+            #Means: tile_sizes = (ty, tx, 1)
             params[f"dim_size_z"] = 1
-            params[f"dim_size_y"] = thread_block_entry.map.range[0][2]*ty
-            params[f"dim_size_x"] = thread_block_entry.map.range[1][2]*tx
+            params[f"dim_size_y"] = dev_entry.map.range[0][2] * ty
+            params[f"dim_size_x"] = dev_entry.map.range[1][2] * tx
         else: #1, 0 is impossible
-            #tile_sizes = (tx, 1, 1)
+            # Means:  tile_sizes = (tx, 1, 1)
             params[f"dim_size_z"] = 1
             params[f"dim_size_y"] = 1
-            params[f"dim_size_x"] = thread_block_entry.map.range[0][2]*tx
+            params[f"dim_size_x"] = dev_entry.map.range[0][2] * tx
+
 
         ThreadBlockMapRangeChange.apply_to(sdfg=sdfg, verify=False, device_scheduled_map_entry = dev_entry, 
                                            thread_block_scheduled_map_entry = thread_block_entry, 
