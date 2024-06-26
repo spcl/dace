@@ -111,6 +111,7 @@ class FlashAttentionFunction(Function):
                     row_sums.copy_(new_row_sums)
                 
                 else:
+                    a = 1
                     # perform only vc = qc @ kc and qc @ vc
                     
 

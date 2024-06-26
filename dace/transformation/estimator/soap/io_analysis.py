@@ -8,6 +8,7 @@ from dace.transformation.estimator.soap.solver import Solver
 from dace.transformation.estimator.soap.einsum_to_sdfg import sdfg_gen
 from dataclasses import dataclass, field
 from dace import SDFG, Config
+import dace
 import networkx as nx
 from collections import OrderedDict
 
@@ -176,9 +177,8 @@ def generate_code(subgraphs_graph: nx.DiGraph, decomp_params: List = []):
 
     # merge trivial kernels into the previous or the next kernel's loop
     for subgr_name in nx.topological_sort(subgraphs_graph):
-        subgr: SoapStatement = subgraphs_graph.nodes[subgr_name]['st']
-        trivial = subgr.init_decomposition(decomp_params)        
-        if trivial:
+        subgr: SoapStatement = subgraphs_graph.nodes[subgr_name]['st']    
+        if subgr.trivial:
             # check if this kernel has predecessors. If yes, merge it into the previous kernel
             pred = list(subgraphs_graph.predecessors(subgr_name))
             if len(pred) > 0:
@@ -192,19 +192,85 @@ def generate_code(subgraphs_graph: nx.DiGraph, decomp_params: List = []):
                 succ = succ[0]
                 succ_subgr: SoapStatement = subgraphs_graph.nodes[succ]['st']
                 succ_subgr.append_trivial_kernel_start(subgr)
+        else:
+            # If the subgraph is not trivial, check if its output is used by the next kernel.
+            # Why we need this: even if subgr cannot be merged with the next kernel, the final result
+            # (e.g., after the reduction) can be used by the next kernel. In this case, we generate a single 
+            # kernel that includes two sequential parts: first, the entire computation of subgr local domain,
+            # and then, second kernel that reuses local results from the first kernel.
             
+            # The important thing is index renaming. E.g., if the first kernel computes C[i,j] += A[i,k] * B[k,j],
+            # and the second kernel computes D[i,j] += C[i,k] * E[k,j], the index k in the second kernel should be renamed
+            # to j. This is because the local domain of the second kernel is C[i,k] and not C[i,j].
+            succ = [subgraphs_graph.nodes[s]['st'] for s in list(subgraphs_graph.successors(subgr_name))]
+            if len(succ) > 0:
+                # if more than one successor, find which one uses the output of this kernel
+                output_arrs = set(subgr.output_arrays)
+                
+                # succ_matching are the successors with nonzero intersection between output_arrs and succ.subgraph_inputs
+                succ_matching = [s for s in succ if len(output_arrs & set(s.phis)) > 0]
+                assert(len(succ_matching) == 1)
+                succ_matching = succ_matching[0]
+                matching_arrays = output_arrs & set(succ_matching.phis)
+                assert(len(matching_arrays) == 1)
+                matching_arr = matching_arrays.pop()
+                
+                # check if the matching array is used in the same way in both kernels
+                out_access = subgr.output_accesses[matching_arr].baseAccess
+                assert(len(succ_matching.phis[matching_arr]) == 1)
+                [in_access,acc_params] = list(succ_matching.phis[matching_arr].items())[0]
+                if in_access != out_access:
+                    # if the access is different, we need to rename the index
+                    # find the index that is different
+                    out_indices = out_access.split('*')
+                    in_indices = in_access.split('*')
+                    swaplist = {}
+                    inv_swaplist = {}
+                    for in_ind, out_ind in zip(in_indices, out_indices):
+                        if in_ind != out_ind:
+                            swaplist[in_ind] = out_ind
+                            inv_swaplist[out_ind] = in_ind
+                            
+                    # succ_matching.swap_iter_vars(swaplist, inv_swaplist)
+                
+                # find the reuse dimension of the matching array. It is the reduction dimension of the 
+                # successor kernel (taken from its output access)
+                assert(len(succ_matching.output_accesses))
+                red_dim = list(succ_matching.output_accesses.values())[0].ssa_dim[0]
+                if isinstance(red_dim[0], dace.symbolic.symbol):
+                    subgr.later_reuse_dim = str(red_dim[0])
+                    if subgr.later_reuse_dim in swaplist:
+                        subgr.later_reuse_dim = swaplist[subgr.later_reuse_dim]
+                else:
+                    raise ValueError("The reduction dimension must be a symbolic variable")
+            
+        subgr.init_decomposition(decomp_params)    
+                
+            
+    statements = []
 
     for subgr_name in nx.topological_sort(subgraphs_graph):
         subgr: SoapStatement = subgraphs_graph.nodes[subgr_name]['st']
-        
-        if len(subgr.outer_tile) == 0:
-            # it means that this kernel is trivial and has been merged into the previous or the next kernel
-            continue
-        kernel_code = subgr.generate_code(decomp_params)
-        code.statements += kernel_code.statements
-        code_str += nested_loop2str(code.statements)
-            
-    return code
+        statements.append(subgr)
+    #     if len(subgr.outer_tile) == 0:
+    #         # it means that this kernel is trivial and has been merged into the previous or the next kernel
+    #         continue
+    #     kernel_code = subgr.generate_code(decomp_params)
+    #     code.statements += kernel_code.statements
+    #     code_str += nested_loop2str(code.statements)
+    #     kernel = parallelize_nested_loops(code.statements)
+    #     # code = str(kernel) 
+    
+    code = ParallelKernel()
+    code.statements = statements
+    code_str = code.generate_code(decomp_params)
+    a = 1
+    # kernel = parallelize_nested_loops(code.statements) 
+    # code = str(kernel) 
+    # return code
+
+
+
 
 def nested_loop2str(statements) -> str:
     code_str = ""
@@ -218,12 +284,224 @@ def nested_loop2str(statements) -> str:
             code_str += str(statement) + "\n"
     return code_str
 
-# def code2str(code:LoopBody) -> str:
-#     code_str = ""
+
+@dataclass
+class SequentialKernel:
+    id: int
+    id_counter: int = 0
+    name : str = ""
+    arrays: set[str] = field(default_factory=set)
+    loop_headers: List[LoopHeader] = field(default_factory=list)
+    outer_variables: List[str] = field(default_factory=list)
     
-#     for st in code.statements:
-#         code_str += nested_loop2str(st) + "\n"
-#     return code_str
+    statements: list = field(default_factory=list)
+    
+    def get_name(self):
+        if self.name == "":
+            self.name = f"sequential_kernel_{self.id}"
+        return self.name
+    
+    def __str__(self):
+        if self.name == "":
+            self.name = f"sequential_kernel_{self.id}"
+        
+        if self.arrays == set():
+            self.get_arrays()
+            
+        if self.outer_variables == []:
+            self.outer_variables = [h.loopvar+"_outer" for h in self.loop_headers]
+            
+        code_str = f"def {self.name}({', '.join(self.arrays)}, {', '.join(self.outer_variables)}):\n"
+        code_str += nested_loop2str(self.sequential_loop_head)
+        return code_str
+    
+    def __init__(self):
+        SequentialKernel.id_counter += 1
+        self.id = SequentialKernel.id_counter
+        self.name = ""
+        self.arrays = set()
+        self.loop_headers = []
+        self.statements = []
+        self.sequential_loop_head = None
+        self.outer_variables = []
+        
+    def get_arrays(self):
+        '''
+        Iterate over all statements and collect all arrays that are accessed in the kernel.
+        Each statement is a string of a form "arr_1[accesses] = arr_2[accesses] op arr_3[accesses]", e.g. , "A[i,j] = B[i,j] + C[i,j]".
+        The arrays returned by this function are the arrays that are accessed in the kernel, e.g., A, B, C.
+        '''
+        arrays = set()
+        for statement in self.statements:
+            # this is a statement
+            arrs = re.findall(r"\w+\[", statement)
+            # remove the last character, which is "["
+            arrs = [arr[:-1] for arr in arrs]
+            arrays.update(arrs)
+        
+        self.arrays = arrays
+        return self.arrays
+
+
+
+@dataclass
+class ParallelKernel:
+    id: int
+    id_counter: int = 0
+    parallel_ker_name : str = ""
+    arrays: List[str] = field(default_factory=list)
+    statements: List[SoapStatement] = field(default_factory=list)
+    # headers: List[LoopHeader] = field(default_factory=list)
+    
+    # kernels: list[SequentialKernel] = field(default_factory=list)
+    
+    def __init__(self):
+        ParallelKernel.id_counter += 1
+        self.id = ParallelKernel.id_counter
+        self.parallel_ker_name = ""
+        self.seqential_ker_name = ""
+        self.arrays = set()
+        
+    def generate_code(self, decomposition_params: List = []):
+        if len(self.arrays) == 0:
+            self.get_arrays()
+        code = self.generate_sequential_kernels()
+        code += "\n\n" + self.generate_parallel_call(decomposition_params)        
+        return code
+        
+    def generate_sequential_kernels(self):
+        code_str = "\n"
+        for i, statement in enumerate(self.statements):
+            code_str += f"def sequential_kernel_{i}({', '.join(self.arrays)}, p):\n"
+            code_str += statement.generate_CUDA_code()
+            code_str += "\n\n"
+        return code_str
+    
+    def generate_parallel_call(self, decomposition_params: List = []):
+        if self.parallel_ker_name == "":
+            self.parallel_ker_name = f"parallel_kernel_{self.id}"
+            
+        P = [x[1] for x in decomposition_params if x[0] == "P"][0]
+        
+        code_str = f"def {self.parallel_ker_name}({', '.join(self.arrays)}):\n"
+        code_str += f"    with concurrent.futures.ThreadPoolExecutor() as executor:\n"
+        for i, _ in enumerate(self.statements):
+            code_str += f"        futures = [executor.submit(sequential_kernel_{i}, {', '.join(self.arrays)}, p)"
+            code_str += f" for p in range({P})"
+            code_str += f"]\n        concurrent.futures.wait(futures)\n\n"
+        return code_str
+    
+    def get_arrays(self):
+        '''
+        Collect all arrays that are accessed in all sequential kernels in
+        this parallel kernel using the get_arrays method of the SequentialKernel class. Store them in self.arrays
+        '''
+        for st in self.statements:
+            self.arrays |= set(st.phis.keys()) | set(st.output_arrays.keys())
+        self.arrays = sorted(list(self.arrays))
+
+
+# @dataclass
+# class ParallelKernel:
+#     id: int
+#     id_counter: int = 0
+#     name : str = ""
+#     arrays: List[str] = field(default_factory=list)
+#     headers: List[LoopHeader] = field(default_factory=list)
+    
+#     kernels: list[SequentialKernel] = field(default_factory=list)
+    
+#     def __init__(self):
+#         ParallelKernel.id_counter += 1
+#         self.id = ParallelKernel.id_counter
+#         self.name = ""
+#         self.arrays = set()
+#         self.headers = []
+#         self.kernels = []
+        
+#     def __str__(self):
+#         '''
+#         generate the parallel kernel with the given outer_variables, ranges, and tile_sizes.
+#         Example kernel:
+        
+#         def parallel_outer_sequential_inner(A):
+#             with concurrent.futures.ThreadPoolExecutor() as executor:
+#                 futures = [executor.submit(process_tile, i_outer, j_outer, tile_size, A) for i_outer in range(0, N, tile_size) for j_outer in range(0, N, tile_size)]
+#                 concurrent.futures.wait(futures)   
+#         '''
+#         if self.name == "":
+#             self.name = f"parallel_kernel_{self.id}"
+            
+#         # instantiate self.arrays, self.tile_sizes, self.outer_variables, self.starts, self.ends from the list of LoopHeaders
+#         [self.outer_variables, self.starts, self.ends, self.tile_sizes] = \
+#             [list(x) for x in zip(*[(h.loopvar, h.start, h.end, h.step) for h in self.headers])]
+#         # [(h.loopvar, h.start, h.end, h.step) for h in self.headers]
+        
+#         if len(self.arrays) == 0:
+#             self.get_arrays()
+           
+#         code_str = "\n" 
+#         for kernel in self.kernels:
+#             code_str += str(kernel)
+        
+#         code_str += "\n\n"
+            
+#         code_str += f"def {self.name}({', '.join(self.arrays)}):\n"
+#         code_str += f"    with concurrent.futures.ThreadPoolExecutor() as executor:\n"
+#         code_str += f"        futures = []\n"
+#         for kernel in self.kernels:
+#             code_str += f"        futures += [executor.submit({kernel.get_name()}, {', '.join(self.arrays)}, {', '.join(self.outer_variables)})"
+#         for (out_var, start, end, tile_size) in zip(self.outer_variables, self.starts, self.ends, self.tile_sizes):
+#             code_str += f" for {out_var} in range({start}, {end}, {tile_size})"
+#         code_str += f"]\n        concurrent.futures.wait(futures)\n\n"
+    
+        
+
+#         return code_str
+    
+#     def get_arrays(self):
+#         '''
+#         Collect all arrays that are accessed in all sequential kernels in
+#         this parallel kernel using the get_arrays method of the SequentialKernel class. Store them in self.arrays
+#         '''
+#         for kernel in self.kernels:
+#             self.arrays |= kernel.get_arrays()
+        
+
+def parallelize_nested_loops(statements:LoopBody) -> ParallelKernel:
+    par_kernel = ParallelKernel()
+    parallelize_nested_loops_recursive(statements, par_kernel)
+    return par_kernel
+    
+def parallelize_nested_loops_recursive(statements:LoopBody, par_kernel: ParallelKernel):
+    for statement in statements:
+        if isinstance(statement, Loop):
+            inner_loop_header: LoopHeader = statement.header
+            if 'parallel' in inner_loop_header.pragmas:
+                par_kernel.headers.append(inner_loop_header)
+                parallelize_nested_loops_recursive(statement.body.statements, par_kernel)                
+            else:
+                # this means that the inner loop is sequential
+                kernel = SequentialKernel()
+                kernel.sequential_loop_head = [statement]
+                kernel.loop_headers.append(inner_loop_header)
+                process_sequential_nested_loops(statement.body.statements, kernel)
+                par_kernel.kernels.append(kernel)
+
+
+def process_sequential_nested_loops(statements:LoopBody, seq_kernel: SequentialKernel):
+    
+    for statement in statements:
+        if isinstance(statement, Loop):
+            inner_loop_header = statement.header
+            seq_kernel.loop_headers.append(inner_loop_header)
+            inner_loop_body = statement.body
+            process_sequential_nested_loops(inner_loop_body.statements, seq_kernel)
+        else:
+            seq_kernel.statements.append(str(statement))
+    
+
+
 
 
 
@@ -301,4 +579,5 @@ def perform_soap_analysis_einsum(einsum_string : str, decomp_params: List = [],
         print()
     
     return(IOAnalysis(SDFG.__name__, Q, sdg, subgraphs_res))
+
 

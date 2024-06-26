@@ -585,7 +585,7 @@ for mode in ["fwd", "bwd"]:
 
 
 @triton.testing.perf_report(configs)
-def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, device="cuda"):
+def bench_flash_attention(BATCH, H, N_CTX, HEAD_DIM, causal, mode, provider, device="cpu"):
     assert mode in ["fwd", "bwd"]
     warmup = 25
     rep = 100

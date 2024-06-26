@@ -17,8 +17,7 @@ head_dim = dim // heads
 @dc.program
 def Transformers_forward(x: dc.float16[batch,seq, dim], 
             to_qkv: dc.float32[dim, 3*dim],
-            W_0: dc.float32[dim, dim]
-            ):
+            W_0: dc.float32[dim, dim]):
     # Step 1
     qkv: dc.float32[batch, seq, 3*dim] #= x @ to_qkv
     qkv = torch.einsum('b t emb, emb emb3 -> b t emb3', x, to_qkv) # [batch, tokens, dim*3*heads ]
@@ -37,8 +36,7 @@ def Transformers_forward(x: dc.float16[batch,seq, dim],
     scaled_dot_prod: dc.float32[batch, heads, seq, seq]
     scaled_dot_prod = torch.einsum('b h t1 head_d , b h t2 head_d -> b h t1 t2', q, k)
 
-    # attention = torch.softmax(scaled_dot_prod, dim=-1)
-    attention = scaled_dot_prod
+    attention = torch.softmax(scaled_dot_prod, dim=-1)
 
     # Step 4. Calc result per batch and per head h
     out: dc.float32[batch, heads, seq, head_dim]

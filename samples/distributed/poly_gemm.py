@@ -49,7 +49,7 @@ def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc
     dc.comm.Scatter(B2, lB)
     dc.comm.Scatter(C2, lC)
 
-    tmp = distr.MatMult(lA, lB, (NI, NJ, NK))
+    tmp = # placeholder for Andrei's code????? distr.MatMult(lA, lB, (NI, NJ, NK))
 
     lC[:] = alpha * tmp + beta * lC
 

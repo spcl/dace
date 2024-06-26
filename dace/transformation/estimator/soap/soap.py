@@ -2,6 +2,7 @@ import ast
 from collections import defaultdict, namedtuple
 from dataclasses import dataclass, field
 from collections import OrderedDict
+import numbers
 
 
 import astunparse
@@ -30,6 +31,7 @@ from typing import Optional
 import concurrent.futures
 import dace.symbolic as ds
 import networkx as nx
+import math
 
 # from ordered_set import OrderedSet
 from dace.transformation.estimator.soap.utils import *
@@ -172,9 +174,14 @@ class SoapStatement:
     out_transients: Set = field(default_factory=set)
     inner_tile: List = field(default_factory=list)
     outer_tile: List = field(default_factory=list)
+    loc_domain_dims: List = field(default_factory=list)
+    p_grid: List = field(default_factory=list)
+    domain_grid: List = field(default_factory=list)
     wcr_edges: List = field(default_factory=list)
     prefix_trivial_kernels: List = field(default_factory=list)
     suffix_trivial_kernels: List = field(default_factory=list)
+    trivial: bool = True
+    later_reuse_dim = None
 
     def __post_init__(self):
         self.ranges = defaultdict(list)
@@ -265,6 +272,8 @@ class SoapStatement:
         self.parse_solution(solver.send_command(input + ";" + output))
         if self.rhoOpts == 0:
             self.rhoOpts = oo
+        else:
+            self.trivial = False
         if "J" in str(self.rhoOpts) or "I" in str(self.rhoOpts):
             a = 1
         self.Q = self.V / self.rhoOpts
@@ -358,7 +367,8 @@ class SoapStatement:
         # we EXPLICITLY fix the inner_tile dimension in the streaming dimension to "streaming"
         self.inner_tile[self.variables.index(self.stream_dim)] = streaming
 
-    def init_decomposition(self, subs_list) -> bool:
+
+    def init_decomposition(self, subs_list) -> None:
         dimensions = {
             str(d[0]).replace("_", "x"): d[2] - d[1] + 1
             for d in list(self.ranges.values())[0]
@@ -372,16 +382,16 @@ class SoapStatement:
         self.param_vals = [(sp.symbols(p), val) for (p, val) in subs_list]
         Ss = sp.symbols("Ss")
         X = sp.symbols("X")
-        p = sp.symbols("p")
+        p = sp.symbols("P")
         comm_world = [x[1] for x in self.param_vals if x[0] == p][0]
         S_val = [x[1] for x in self.param_vals if x[0] == Ss][0]
 
         loc_domain_found = False
 
-        if not hasattr(self, "varsOpt"):
-            self.variables = self.H_size.free_symbols
-            return True
+        if self.trivial:
+            return
 
+        self.trivial = False
         # xpart_dims is the size of the local domain as a function of X
         xpart_dims = copy.deepcopy(self.varsOpt[0])
         # xpart_opt_dims is the size of the local domain as a function of S
@@ -438,8 +448,9 @@ class SoapStatement:
                     loc_domain_dims = [dim.subs(Ss, X_size) for dim in loc_domain_dims]
 
             self.loc_domain_dims = [
-                sp.ceiling(dim.subs(self.param_vals)) for dim in loc_domain_dims
-            ]
+                min(sp.ceiling(loc_dim.subs(self.param_vals)), glob_dim) 
+                for (loc_dim, glob_dim) in zip(loc_domain_dims, self.dimensions_ordered)
+                ]
             for dim_num, (loc_dim, glob_dim) in enumerate(
                 zip(self.loc_domain_dims, self.dimensions_ordered)
             ):
@@ -459,6 +470,28 @@ class SoapStatement:
             sp.ceiling((v / t).subs(self.param_vals))
             for v, t in zip(self.dimensions_ordered, self.loc_domain_dims)
         ]
+        
+        
+        # Set the number of local domains per processor. By default, it is 1, that is,
+        # we have eonugh processors to have one local domain per processor and interpolate
+        # between 2D decomposition (just enough memory, lower bound on P) 
+        # and 3D decomposition (strong scaling). If P is too low, we have a "multicore"
+        # scenario, where a single processor will have to handle multiple local domains.
+        self.num_domains_per_proc = 1
+        
+        # if self.num_domains_per_proc == 1, then the outer tile is the same as the local domain size. If we increase the number of local domains per processor, we need to increase the outer tile size (while the local domain size remains the same).
+        self.outer_tile = copy.deepcopy(self.loc_domain_dims)        
+        self.domain_grid = [1] * len(self.variables)
+        
+        subs_list = {str(k): v for k, v in subs_list}
+        alignment = 1
+        if "aligment" in subs_list:
+            alignment = subs_list["alignment"]
+            # if alignment is specified, we round down the values of hte outer tile to the nearest multiple of the alignment. Rembember that the original values of the outer tiles are floats, so we cannot use the % operator
+            if alignment > 1:
+                self.loc_domain_dims = [max(1, math.floor(x / alignment) * alignment) for x in self.loc_domain_dims]
+                self.outer_tile = [max(1, math.floor(x / alignment) * alignment) if isinstance(x, numbers.Number) else x for x in self.outer_tile]
+        
 
         strategy = "squeeze_dims"
         strategy = "increaseX"
@@ -470,13 +503,70 @@ class SoapStatement:
                 and stream_dim_number >= 0
             ):
                 if self.p_grid[stream_dim_number] == 1:
+                    # Now we are in the multi-core case. What it means:
+                    # Given the local domain size self.loc_domain_dims, and the number of local domains 
+                    # sp.prod(self.p_grid), we have less processors (comm_world) than needed.
+                    # It means that a single processor will have to handle multiple local domains.
+                    
+                    self.num_domains_per_proc = math.ceil(sp.prod(self.p_grid) / comm_world)
+                    
+                    if self.later_reuse_dim is not None:
+                        # one processor will handle multiple local domains in the later_reuse_dim            
+                        # find out which dimension is the later_reuse_dim (in order) from self.variables
+                        reuse_dim_number = list(map(str, self.variables)).index(self.later_reuse_dim)
+                        
+                        if self.p_grid[reuse_dim_number] == 1:
+                            # if the later_reuse_dim is already squeezed, we need to squeeze another dimension
+                            raise NotImplementedError("Later reuse dimension is already squeezed. Need to implement another strategy.")
+                        else:
+                            if self.num_domains_per_proc > self.p_grid[reuse_dim_number]:
+                                # if the number of local domains per processor is greater than the number of local domains in the later_reuse_dim, we need to decrease the number of local domains in the later_reuse_dim
+                                remaining_domains_to_squeze = self.num_domains_per_proc / self.p_grid[reuse_dim_number]
+                                self.outer_tile[reuse_dim_number] = \
+                                    self.loc_domain_dims[reuse_dim_number]*self.p_grid[reuse_dim_number]
+                                self.p_grid[reuse_dim_number] = 1
+                                
+                                while remaining_domains_to_squeze > 1:
+                                    # squeeze another dimension
+                                    dim = np.argmax(self.p_grid)
+                                    if self.p_grid[dim] == 1:
+                                        raise NotImplementedError("All dimensions are squeezed.")
+                                    if self.p_grid[dim] >= remaining_domains_to_squeze:
+                                        self.outer_tile[dim] = self.loc_domain_dims[dim]*remaining_domains_to_squeze
+                                        self.p_grid[dim] /= remaining_domains_to_squeze
+                                        remaining_domains_to_squeze = 1
+                                        break
+                                    remaining_domains_to_squeze /= self.p_grid[dim]
+                                    self.outer_tile[dim] = self.loc_domain_dims[dim]*self.p_grid[dim]
+                                    self.p_grid[dim] = 1
+                            else:
+                                raise NotImplementedError("TODO: do something.")
+                    else:
+                        remaining_domains_to_squeze = self.num_domains_per_proc
+                        while remaining_domains_to_squeze > 1:
+                            # squeeze another dimension
+                            dim = np.argmax(self.p_grid)
+                            if self.p_grid[dim] == 1:
+                                raise NotImplementedError("All dimensions are squeezed.")
+                            if self.p_grid[dim] >= remaining_domains_to_squeze:
+                                self.outer_tile[dim] = self.loc_domain_dims[dim]*remaining_domains_to_squeze
+                                self.p_grid[dim] /= remaining_domains_to_squeze
+                                remaining_domains_to_squeze = 1
+                                break
+                            remaining_domains_to_squeze /= self.p_grid[dim]
+                            self.outer_tile[dim] = self.loc_domain_dims[dim]*self.p_grid[dim]
+                            self.p_grid[dim] = 1
+                                
+                        
+                        
+            
+                    # comm_world *= self.num_domains_per_proc
                     print(
-                        "\n\nERROR!!!\nMemory-dependent bound. For S={}, the minimum number of ranks is p_min={}. \
-                        \nHowever, only {} ranks are given\n\n".format(
-                            S_val, sp.prod(self.p_grid), comm_world
+                        "\n\nWARNING!!!\nMemory-dependent bound. For S={}, the minimum number of ranks is p_min={}. \
+                        \nHowever, only {} ranks are given.\nTherefore,a single rank will sequentially execute {} local domains.\n\n\n".format(
+                            S_val, sp.prod(self.p_grid), comm_world, self.num_domains_per_proc
                         )
                     )
-                    return False
                 else:
                     self.p_grid[stream_dim_number] -= 1
             else:
@@ -523,7 +613,7 @@ class SoapStatement:
                     if sp.prod(self.p_grid) <= comm_world:
                         correct_decomp = True
 
-        self.loc_domain_dims = [
+        self.outer_tile = [
             np.ceil(d / p) for (d, p) in zip(self.dimensions_ordered, self.p_grid)
         ]
 
@@ -537,7 +627,6 @@ class SoapStatement:
         else:
             print("\nUsing all {} processors.\n".format(comm_world))
 
-        return False
 
     def get_data_decomposition(self, pp):
         # p_pos is an N -> N^d mapping, translating a global rank to a cooridnate rank in
@@ -1390,8 +1479,8 @@ class SoapStatement:
         self.rhoOpts = rhoOpts
         self.varsOpt = varsOpt
         self.Xopts = Xopts
-        if not rhoOpts:
-            a = 1
+        
+        self.trivial = False
         return [rhoOpts, varsOpt, Xopts]
 
     def swap_iter_vars(self, swaplist, inv_swaplist, solver=[]):
@@ -1435,8 +1524,8 @@ class SoapStatement:
 # --------------------------------------------
 # ---------- code generation  ----------------
 # --------------------------------------------
-    
-    def generate_code(self, decomp_params: dict) -> LoopBody:
+        
+    def generate_omp_code(self, decomp_params: dict, alignment:int=32) -> LoopBody:
         """
         Create a nested loop structure for the given statement given
         the outer_tile for parallelization and the inner_tile for streaming (sequential schedule for a single parallel rank).
@@ -1478,10 +1567,17 @@ for i_outer in range(0, M, tile_i_outer):
         # for the outer_tile, we subs with S_shared, which corresponds to the shared memory size in the GPU or the L3 cache in CPU
         if "Ss" in str(self.outer_tile):
             self.outer_tile = [x.subs("Ss", "S_shared") for x in self.outer_tile]
-
+            
         # substitute the tile size with the actual value
         self.inner_tile = [x.subs(decomp_params) for x in self.inner_tile]
-        self.outer_tile = [x.subs(decomp_params) for x in self.outer_tile]
+        # self.outer_tile = [x.subs(decomp_params) for x in self.outer_tile]
+        
+        if "aligment" in decomp_params:
+            alignment = decomp_params["alignment"]
+            # if alignment is specified, we round down the values of hte outer tile to the nearest multiple of the alignment. Rembember that the original values of the outer tiles are floats, so we cannot use the % operator
+            if alignment > 1:
+                self.loc_domain_dims = [max(1, math.floor(x / alignment) * alignment) for x in self.outer_tile]
+                self.inner_tile = [max(1, math.floor(x / alignment) * alignment) if isinstance(x, numbers.Number) else x for x in self.inner_tile]
         
         # prepare the trivial (no-data-reuse) kernels. Since for them the order of execution does not matter,
         # we place them only according to the depth of the loop nest.
@@ -1538,10 +1634,9 @@ for i_outer in range(0, M, tile_i_outer):
 
             # create the loop object
             loop_start = outer_var
-            loop_end = f"min({str(self.outer_tile[i])} + {outer_var}, {self.dimensions_ordered[i]})"
+            loop_end = f"min({str(self.loc_domain_dims[i])} + {outer_var}, {self.dimensions_ordered[i]})"
             if str(inner_tile_size) != "streaming":
-                pragma = "@pragma omp simd"
-                # end = self.outer_tile[i] + outer_var
+                pragma = "# simd exec (vectorization or tensor cores)"
             else:
                 pragma = ""
                 
@@ -1575,10 +1670,10 @@ for i_outer in range(0, M, tile_i_outer):
         for i, var in enumerate(self.variables):
             cur_indent -= 1
             # get tile size:
-            tile_size = self.outer_tile[i]
+            tile_size = self.loc_domain_dims[i]
 
             # substitute the tile size with the actual value
-            tile_size = tile_size.subs(decomp_params)
+            # tile_size = tile_size.subs(decomp_params)
             # create the loop object
 
             header = LoopHeader(
@@ -1595,6 +1690,115 @@ for i_outer in range(0, M, tile_i_outer):
             inner_loop_body.statements.append(loop)
 
         code = inner_loop_body #OrderedDict(inner_loop_body)
+        return code      
+
+    def generate_CUDA_code(self) -> str:
+        """
+        Create a nested loop structure for the given statement given.
+        the outer_tile for parallelization and the inner_tile for streaming (sequential schedule for a single parallel rank).
+        Parallelization is done in a kernel call. 
+        
+        WARNING: For now, we generate Python code, not CUDA C code. CUDA is just an inspiration.
+        As an input argument, we pass the parallel rank p, which corresponds to CUDA thread block.
+        Given p, we calculate offsets from global indices to local indices.
+
+        Example genarated code for tiled MMM:
+
+def sequential_kernal(A, B, C, p):
+    # we are threadblock p, simiarly to the CUDA counterpart:
+    # p = blockIdx.x
+    # get the 3D mapping of p to process grid
+    p_i = p // (self.p_grid[1] * self.p_grid[2])
+    p_j = (p // self.p_grid[2]) % self.p_grid[1]
+    p_k = p % self.p_grid[2]
+    #
+    # calculate the offsets given the self.outer_tile
+    i_outer = p_i * self.tile_outer[0]
+    j_outer = p_j * self.tile_outer[1]
+    k_outer = p_k * self.tile_outer[2]
+
+    # each threadblock computes self.num_domains_per_proc local domains
+    for domain_nr in range(self.num_domains_per_proc):
+        # calculate the offsets given the self.loc_domain_dims
+        i_inner = domain_nr // (self.loc_domain_dims[0] * self.loc_domain_dims[1])
+        j_inner = (domain_nr // self.loc_domain_dims[0]) % self.loc_domain_dims[1]
+        k_inner = domain_nr % self.loc_domain_dims[2]
+
+        # calculate the global indices
+        i_start = i_outer + i_inner
+        j_start = j_outer + j_inner
+        k_start = k_outer + k_inner
+        
+        # sequential schedule within the tile (streaming dimension)
+        for k in range(k_start, min(K, k_start + loc_domain_dims[2])):
+        # two innermost loops are for SIMD parallelism (vectorization or tensor cores)
+            for i in range(i_start, min(M, i_start + loc_domain_dims[0])):
+                for j in range(j_start, min(N, j_start + loc_domain_dims[1])):            
+                    C[i, j] += A[i, k] * B[k, j]
+
+        """
+        
+        # function header will be applied elsewhere
+        code = f"""
+    # we are threadblock p, simiarly to the CUDA counterpart:
+    # p = blockIdx.x
+    # get the n-D mapping of p to process grid
+    p_remain = p
+"""
+        grid_remain = np.prod(self.p_grid[1:])
+        for i, var in enumerate(self.variables):
+            code += f"    p_{var} = p_remain // {grid_remain}\n"
+            code += f"    p_remain = p_remain % {grid_remain}\n"
+            if i == len(self.variables) - 1:
+                break
+            grid_size = self.p_grid[i + 1]
+            grid_remain = math.ceil(grid_remain/ grid_size)
+        
+        code += """
+
+    # calculate the offsets given the self.outer_tile
+"""
+        for i, (var, tile_size) in enumerate(zip(self.variables, self.outer_tile)):
+            code += f"    {var}_outer = p_{var} * {tile_size}\n"
+            
+        # calculate the self.domain_grid based on the self.outer_tile_size and self.loc_domain_dims
+        self.domain_grid = [math.ceil(x / y) for x, y in zip(self.outer_tile, self.loc_domain_dims)]
+        code += f"""
+    # each threadblock computes self.num_domains_per_proc local domains
+    for domain_nr in range({self.num_domains_per_proc}):
+        # calculate the offsets given the loc_domain_dims
+        domain_remain = domain_nr
+"""
+        grid_remain = np.prod(self.domain_grid[1:])
+        for i, var in enumerate(self.variables):
+            code += f"        {var}_inner = domain_remain // {grid_remain}\n"
+            code += f"        domain_remain = domain_remain % {grid_remain}\n"
+            if i == len(self.variables) - 1:
+                break
+            grid_size = self.domain_grid[i + 1]
+            grid_remain = math.ceil(grid_remain / grid_size)
+            
+        code += """
+        # calculate the global indices
+"""
+        for i, var in enumerate(self.variables):
+            code += f"        {var}_start = {var}_outer + {var}_inner*{self.loc_domain_dims[i]}\n"
+        
+        code += "\n        # sequential schedule within the tile (streaming dimension)\n"
+        cur_indent = "    "
+
+        loops = list(enumerate(self.inner_tile))
+        # order by putting the streaming dimension last
+        loops_ordered = sorted(loops, key=lambda x: str(x[1]) == "streaming", reverse=True)        
+        cur_depth = len(loops_ordered) + 1
+        for j, (i, _) in enumerate(loops_ordered):
+            inner_tile_size = self.loc_domain_dims[i]
+            cur_indent += "    "
+            code += f"{cur_indent}for {self.variables[i]} in range({self.variables[i]}_start, min({self.dimensions_ordered[i]}, {self.variables[i]}_start + {inner_tile_size})):\n"
+        
+        for t in self.tasklet:
+            code += f"{cur_indent}    {t}\n"
+        
         return code      
             
     # Fusing trivial statements, that is the one with no data reuse (rho is constant).
