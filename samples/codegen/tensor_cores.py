@@ -159,9 +159,9 @@ class TensorCoreCodegen(TargetCodeGenerator):
                                                            stride=dst_desc.strides[0 if row_major else 1]), cfg,
                 state_id, [src_node, dst_node])
 
-    def define_out_memlet(self, sdfg: dace.SDFG, dfg: StateSubgraphView, state_id: int, src_node: nodes.Node,
-                          dst_node: nodes.Node, edge: MultiConnectorEdge, function_stream: CodeIOStream,
-                          callsite_stream: CodeIOStream):
+    def define_out_memlet(self, sdfg: dace.SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                          src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge,
+                          function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         # Output memlets that are directed at WMMA fragments can use the "auto"
         # keyword for simplicity.
         callsite_stream.write(f'auto& {edge.src_conn} = {edge.data.data};')
