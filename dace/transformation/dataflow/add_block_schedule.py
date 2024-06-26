@@ -55,7 +55,17 @@ class AddBlockSchedule(transformation.SingleStateTransformation):
         ty = self.thread_block_size_y
         tz = self.thread_block_size_z
 
-        MapTiling.apply_to(sdfg=sdfg, options=dict(prefix="grid_", tile_sizes=(tx,ty,tz)),  map_entry=map_entry)
+        # The thread block sizes depend on the number of dimensions we have
+        # GPU code gen maps the params i0:...,i1:...,i2:... respectively to blockDim.z,.y,.x
+        tile_sizes = None
+        if len(map_entry.map.params) >= 3:
+            tile_sizes = (tz, ty, tx)
+        elif len(map_entry.map.params) == 2:
+            tile_sizes = (ty, tx, 1)
+        else: #1, 0 is impossible
+            tile_sizes = (tx, 1, 1)
+
+        MapTiling.apply_to(sdfg=sdfg, options=dict(prefix="grid_", tile_sizes=tile_sizes),  map_entry=map_entry)
 
         map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
 

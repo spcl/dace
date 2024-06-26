@@ -25,7 +25,7 @@ class ThreadTiling(transformation.SingleStateTransformation):
 
     # Properties
     tile_size_x = SymbolicProperty(dtype=int, default=4, desc="Number threads in the threadBlock X Dim")
-    tile_size_y = SymbolicProperty(dtype=int, default=4, desc="Number threads in the threadBlock Y Dim")
+    tile_size_y = SymbolicProperty(dtype=int, default=1, desc="Number threads in the threadBlock Y Dim")
     tile_size_z = SymbolicProperty(dtype=int, default=1, desc="Number threads in the threadBlock Z Dim")
 
     @classmethod
@@ -33,14 +33,15 @@ class ThreadTiling(transformation.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.thread_block_map_entry, cls.device_map_entry)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-
         dev_entry = self.device_map_entry
         thread_block_entry = self.thread_block_map_entry
 
         # Applicable if the map is a GPU_ThreadBlock Scheduled Map
         if thread_block_entry.map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
+            print("CBA1:", False)
             return False
 
+        print("CBA2:", MapTiling.can_be_applied(self, graph, expr_index=expr_index, sdfg=sdfg, permissive=permissive))
         return MapTiling.can_be_applied(self, graph, expr_index=expr_index, sdfg=sdfg, permissive=permissive)
 
     def update_names():
@@ -58,27 +59,71 @@ class ThreadTiling(transformation.SingleStateTransformation):
         tx = self.tile_size_x
         ty = self.tile_size_y
         tz = self.tile_size_z
-        tile_sizes=(tx, ty, tz)
+
+        tile_sizes = None
+        if len(thread_block_entry.map.params) >= 3:
+            tile_sizes = (tz, ty, tx)
+        elif len(thread_block_entry.map.params) == 2:
+            tile_sizes = (ty, tx, 1)
+        else: #1, 0 is impossible
+            tile_sizes = (tx, 1, 1)
 
         MapTiling.apply_to(sdfg=sdfg, options=dict(prefix="block_", tile_sizes=tile_sizes),  map_entry=thread_block_entry)
 
         thread_entry = thread_block_entry
-
         thread_entry.map.schedule = dtypes.ScheduleType.Sequential
+        thread_entry.map.unroll = True
 
         # Find the thread block map encapsulating the sequential map
         # Entry node of a map should be the map scope avoce
         thread_block_entry = graph.entry_node(thread_block_entry)
 
+        # Update the range if the inner sequential map
+        thread_map : nodes.Map = thread_entry.map
+        thread_range_str = ""
+        assert(min(len(thread_block_entry.map.range), len(thread_map.range), len(dev_entry.map.range)) >= 1)
+        assert(len(thread_block_entry.map.range) == len(dev_entry.map.range))
+        #assert(len(thread_block_entry.map.range) == len(thread_map.range))
+
+        #for i in range(3):
+        #    if i < min(len(thread_block_entry.map.range), len(thread_map.range), len(dev_entry.map.range)):
+        #        (beg, end, step) = thread_map.range[i]
+        #        (_, block_end, block_step) = thread_block_entry.map.range[i]
+        #        (_, dev_end, _) = dev_entry.map.range[i]
+        #        thread_range_str += f"{beg}:Min({dev_end}, {block_end}, {beg}+{block_step}-1)+1:{step}, "
+        #thread_map.range = subsets.Range.from_string(thread_range_str[:-2])
+
+        # Last param of inner map is always the last iteration variable the map above
+        num_iter = min(len(thread_block_entry.map.range), len(thread_map.range))
+        ranges_from_last = []
+        # Access from last
+        for i in range(-1, -(num_iter+1), -1):
+            (beg, end, step) = thread_map.range[i]
+            (_, block_end, block_step) = thread_block_entry.map.range[i]
+            (_, dev_end, _) = dev_entry.map.range[i]
+            ranges_from_last.append(f"{beg}:Min({dev_end}, {block_end}, {beg}+{block_step}-1)+1:{step}")
+        range_str = ", ".join(list(reversed(ranges_from_last)))
+        thread_map.range = subsets.Range.from_string(range_str)
+
         # Create the new dimension sizes for the ThreadBlock Map.
         # The dimensions of the thread block map to the step sizes of the device scheduled map.
         # They need to be scaled according to the tilesize
         params = dict()
-        dimensions_suffixes = ["x", "y", "z"]
-        dev_ranges : List[subsets.Range] = dev_entry.map.range
-        for i, dev_range in enumerate(dev_ranges):
-            (_, _, step) = dev_range
-            params[f"dim_size_{dimensions_suffixes[i]}"] = step*tile_sizes[i]
+        if len(thread_block_entry.map.params) >= 3:
+            #tile_sizes = (tz, ty, tx)
+            params[f"dim_size_z"] = thread_block_entry.map.range[0][2]*tz
+            params[f"dim_size_y"] = thread_block_entry.map.range[1][2]*ty
+            params[f"dim_size_x"] = thread_block_entry.map.range[2][2]*tx
+        elif len(thread_block_entry.map.params) == 2:
+            #tile_sizes = (ty, tx, 1)
+            params[f"dim_size_z"] = 1
+            params[f"dim_size_y"] = thread_block_entry.map.range[0][2]*ty
+            params[f"dim_size_x"] = thread_block_entry.map.range[1][2]*tx
+        else: #1, 0 is impossible
+            #tile_sizes = (tx, 1, 1)
+            params[f"dim_size_z"] = 1
+            params[f"dim_size_y"] = 1
+            params[f"dim_size_x"] = thread_block_entry.map.range[0][2]*tx
 
         ThreadBlockMapRangeChange.apply_to(sdfg=sdfg, verify=False, device_scheduled_map_entry = dev_entry, 
                                            thread_block_scheduled_map_entry = thread_block_entry, 

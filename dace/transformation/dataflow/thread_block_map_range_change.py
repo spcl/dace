@@ -60,6 +60,15 @@ class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
         block_map : nodes.Map = block_entry.map
 
         new_block_dimensions = (self.dim_size_x, self.dim_size_y, self.dim_size_z)
+        # The thread block sizes depend on the number of dimensions we have
+        # GPU code gen maps the params i0:...,i1:...,i2:... respectively to blockDim.z,.y,.x
+        new_block_dimensions = None
+        if len(dev_entry.map.params) >= 3:
+            new_block_dimensions = (self.dim_size_z, self.dim_size_y, self.dim_size_x)
+        elif len(dev_entry.map.params) == 2:
+            new_block_dimensions = (self.dim_size_y, self.dim_size_x, 1)
+        else: #1, 0 is impossible
+            new_block_dimensions = (self.dim_size_x, 1, 1)
 
         # Step 1. Update step sizes of device map
         dev_old_step_sizes = []
@@ -130,18 +139,21 @@ class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
         # Apparently gpu_block_size only necessary if there is no gpu_thread_block schedule
         # Therefore the code-gen now choose the values in gpu_block_size if it conflicts with the
         # detected blocksizes, and these transformatiosn need to update them
-        thread_counts = []
-        for i in range(3):
-            block_step = 1
-            if i < len(block_steps):
-                block_step = block_steps[i]
-            assert(new_block_dimensions[i] % block_step == 0)
-            thread_counts.append(new_block_dimensions[i] // block_step)
-        dev_map.gpu_block_size = thread_counts
-        dev_map.gpu_launch_bounds = str(thread_counts[0] * thread_counts[1] * thread_counts[2])
-        block_map.gpu_block_size = thread_counts
-        block_map.gpu_launch_bounds = str(thread_counts[0] * thread_counts[1] * thread_counts[2])
+        # Block steps are returned in the form of z, y, x
+        print(block_steps)
+        print(self.dim_size_x, self.dim_size_y, self.dim_size_z)
+        if len(block_steps) == 3:
+            dev_map.gpu_block_size = (self.dim_size_x // block_steps[2], self.dim_size_y // block_steps[1], self.dim_size_z // block_steps[0])
+            block_map.gpu_block_size = dev_map.gpu_block_size
+        elif len(block_steps) == 2:
+            dev_map.gpu_block_size = (self.dim_size_x // block_steps[1], self.dim_size_y // block_steps[0], self.dim_size_z)
+            block_map.gpu_block_size = dev_map.gpu_block_size
+        elif len(block_steps) == 1:
+            dev_map.gpu_block_size = (self.dim_size_x // block_steps[0], self.dim_size_y, self.dim_size_z)
+            block_map.gpu_block_size = dev_map.gpu_block_size
 
+        # TODO:
+        # Implement launch bounds
 
     @staticmethod
     def annotates_memlets():
