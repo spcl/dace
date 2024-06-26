@@ -90,7 +90,8 @@ class SimplifyPass(ppl.FixedPointPipeline):
                               'True. If ' + p.__class__.__name__ + ' is compatible with experimental blocks, ' +
                               'please annotate it with the class decorator ' +
                               '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
-                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` for more.')
+                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                              'for more information.')
                 return None
 
         if type(p) in _nonrecursive_passes:  # If pass needs to run recursively, do so and modify return value

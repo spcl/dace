@@ -3000,12 +3000,12 @@ class LoopRegion(ControlFlowRegion):
         init_state = parent.add_state(self.label + '_init')
         guard_state = parent.add_state(self.label + '_guard')
         end_state = parent.add_state(self.label + '_end')
-        loop_tail_state = parent.add_state(self.label + '_tail')
+        loop_latch_state = parent.add_state(self.label + '_latch')
 
         # Add all loop states and make sure to keep track of all the ones that need to be connected in the end.
         # Return blocks are inlined as-is. If the parent graph is an SDFG, they are converted to states, otherwise
         # they are left as explicit exit blocks.
-        connect_to_tail: Set[SDFGState] = set()
+        connect_to_latch: Set[SDFGState] = set()
         connect_to_end: Set[SDFGState] = set()
         block_to_state_map: Dict[ControlFlowBlock, SDFGState] = dict()
         for node in self.nodes():
@@ -3016,14 +3016,14 @@ class LoopRegion(ControlFlowRegion):
                 block_to_state_map[node] = newnode
             elif isinstance(node, ContinueBlock):
                 newnode = parent.add_state(node.label)
-                connect_to_tail.add(newnode)
+                connect_to_latch.add(newnode)
                 block_to_state_map[node] = newnode
             elif isinstance(node, ReturnBlock) and isinstance(parent, dace.SDFG):
                 newnode = parent.add_state(node.label)
                 block_to_state_map[node] = newnode
             else:
                 if self.out_degree(node) == 0:
-                    connect_to_tail.add(node)
+                    connect_to_latch.add(node)
                 parent.add_node(node, ensure_unique_name=True)
 
         # Add all internal loop edges.
@@ -3060,7 +3060,7 @@ class LoopRegion(ControlFlowRegion):
             for stmt in self.update_statement.code:
                 assign: astutils.ast.Assign = stmt
                 update_edge.assignments[assign.targets[0].id] = astutils.unparse(assign.value)
-        parent.add_edge(loop_tail_state, guard_state, update_edge)
+        parent.add_edge(loop_latch_state, guard_state, update_edge)
 
         # Add condition checking edges and connect the guard state.
         cond_expr = self.loop_condition.code
@@ -3070,8 +3070,8 @@ class LoopRegion(ControlFlowRegion):
 
         # Connect any end states from the loop's internal state machine to the tail state so they end a
         # loop iteration. Do the same for any continue states, and connect any break states to the end of the loop.
-        for node in connect_to_tail:
-            parent.add_edge(node, loop_tail_state, dace.InterstateEdge())
+        for node in connect_to_latch:
+            parent.add_edge(node, loop_latch_state, dace.InterstateEdge())
         for node in connect_to_end:
             parent.add_edge(node, end_state, dace.InterstateEdge())
 

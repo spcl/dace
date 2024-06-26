@@ -502,7 +502,8 @@ class Pipeline(Pass):
                               'True. If ' + p.__class__.__name__ + ' is compatible with experimental blocks, ' +
                               'please annotate it with the class decorator ' +
                               '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
-                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` for more.')
+                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                              'for more information.')
                 return None
 
         return p.apply_pass(sdfg, state)
@@ -517,7 +518,8 @@ class Pipeline(Pass):
                               'True. If ' + self.__class__.__name__ + ' is compatible with experimental blocks, ' +
                               'please annotate it with the class decorator ' +
                               '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
-                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` for more.')
+                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                              'for more information.')
                 return None
 
         state = pipeline_results
