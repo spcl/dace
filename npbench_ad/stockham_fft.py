@@ -1,7 +1,8 @@
 import numpy as np
 import dace as dc
 from dace.autodiff import add_backward_pass
-R, K, M1, M2 = 32, 32, 3, 32
+R, K, M1, M2 = (dc.symbol(s, dtype=dc.int64, integer=True, positive=True)
+                for s in ('R', 'K', 'M1', 'M2'))
 N = R**K
 
 @dc.program

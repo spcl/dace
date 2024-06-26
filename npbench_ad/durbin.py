@@ -1,8 +1,8 @@
 import numpy as np
 import dace as dc
 from dace.autodiff import add_backward_pass
-N = 32
-M = 32
+
+M, N = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N'))
 
 @dc.program
 def flip(A: dc.float64[M]):
@@ -25,11 +25,7 @@ def durbin(r: dc.float64[N], S: dc.float64[1]):
         y[:k] += alpha * flip(y[:k])
         y[k] = alpha
 
-    @dc.map(_[0:N,])
-    def summap(i):
-        s >> S(1, lambda x, y: x + y)[0]
-        z << y[i]
-        s = z
+    S[0] = np.sum(y)
 
 
 

@@ -6,8 +6,8 @@ N = 32
 M = 32
 
 @dc.program
-def compute(array_1: dc.int64[M, N], array_2: dc.int64[M, N], a: dc.int64,
-            b: dc.int64, B: dc.float64[M, N], c: dc.int64, S: dc.float64[1]):
+def compute(array_1: dc.float64[M, N], array_2: dc.float64[M, N], a: dc.float64,
+            b: dc.float64, B: dc.float64[M, N], c: dc.float64, S: dc.float64[1]):
 
     B[:] = np.minimum(np.maximum(array_1, 2), 10) * a + array_2 * b + c
 

@@ -21,12 +21,12 @@ def compute_bin(x: dc.float64, bin_edges: dc.float64[bins + 1]):
     # assuming uniform bins for now
     a_min = bin_edges[0]
     a_max = bin_edges[bins]
-    return dc.int64(bins * (x - a_min) / (a_max - a_min))
+    return dc.float64(bins * (x - a_min) / (a_max - a_min))
 
 
 @dc.program
 def histogram(a: dc.float64[N], bin_edges: dc.float64[bins + 1]):
-    hist = np.ndarray((bins, ), dtype=np.int64)
+    hist = np.ndarray((bins, ), dtype=np.float64)
     hist[:] = 0
     get_bin_edges(a, bin_edges)
 
@@ -53,10 +53,10 @@ def histogram_weights(a: dc.float64[N], bin_edges: dc.float64[bins + 1],
 
 @dc.program
 def azimint_hist(data: dc.float64[N], radius: dc.float64[N], D: dc.float64[bins], S: dc.float64[1]):
-    # histu = np.histogram(radius, npt)[0]
+    
     bin_edges_u = np.ndarray((npt + 1, ), dtype=np.float64)
     histu = histogram(radius, bin_edges_u)
-    # histw = np.histogram(radius, npt, weights=data)[0]
+    
     bin_edges_w = np.ndarray((npt + 1, ), dtype=np.float64)
     histw = histogram_weights(radius, bin_edges_w, data)
     D[:] = histw / histu

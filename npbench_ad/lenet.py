@@ -2,8 +2,9 @@ import numpy as np
 import dace as dc
 from dace.autodiff import add_backward_pass
 
-N, H, W, C_before_fc1, S0, S1, S2, S3, S4, S5 = 32, 32, 32, 32, 32, 32, 32, 32, 32, 32
-
+N, H, W, C_before_fc1, S0, S1, S2, S3, S4, S5 = (dc.symbol(
+    s, dtype=dc.int64) for s in ('N', 'H', 'W', 'C_before_fc1', 'S0', 'S1',
+                                 'S2', 'S3', 'S4', 'S5'))
 
 @dc.program
 def relu2(x: dc.float32[S0, S1]):
@@ -71,13 +72,8 @@ def lenet5(input: dc.float32[N, H, W, 1], conv1: dc.float32[5, 5, 1, 6],
            fc1b: dc.float32[120], fc2w: dc.float32[120, 84],
            fc2b: dc.float32[84], fc3w: dc.float32[84,
                                                   10], fc3b: dc.float32[10], S:dc.float64[1]):
-    # x = relu(conv2d(input, conv1) + conv1bias)
-    # x = maxpool2d(x)
-    # x = relu(conv2d(x, conv2) + conv2bias)
-    # x = maxpool2d(x)
-    # x = np.reshape(x, (N, C_before_fc1))
-    # x = relu(x @ fc1w + fc1b)
-    # x = relu(x @ fc2w + fc2b)
+
+
     x1 = relu4(conv2d(input, conv1) + conv1bias)
     x2 = maxpool2d(x1)
     x3 = relu4(conv2d(x2, conv2) + conv2bias)

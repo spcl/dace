@@ -2,8 +2,7 @@ import numpy as np
 import dace as dc
 from dace.autodiff import add_backward_pass
 
-XN, YN, N = 32, 32, 32
-
+XN, YN, N = (dc.symbol(s, dtype=dc.int64) for s in ['XN', 'YN', 'N'])
 
 @dc.program
 def linspace(start: dc.float64, stop: dc.float64, X: dc.float64[N]):

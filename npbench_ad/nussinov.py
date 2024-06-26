@@ -1,7 +1,8 @@
 import numpy as np
 import dace as dc
 from dace.autodiff import add_backward_pass
-N = 32
+
+N = dc.symbol('N', dtype=dc.int64)
 
 @dc.program
 def match(b1: dc.int32, b2: dc.int32):

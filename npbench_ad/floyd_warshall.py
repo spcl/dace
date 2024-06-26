@@ -4,7 +4,7 @@ from dace.autodiff import add_backward_pass
 N = 32
 
 @dc.program
-def floyd_warshall(path: dc.int32[N, N], S: dc.float64[1]):
+def floyd_warshall(path: dc.float64[N, N], S: dc.float64[1]):
 
     for k in range(N):
         path[:] = np.minimum(path[:], np.add.outer(path[:, k], path[k, :]))

@@ -454,7 +454,7 @@ class BackwardPassGenerator:
             assert state in self.states_view_map
             forward_subgraph = self.states_view_map[state]
 
-            # check that all edges are float
+            # check that all edges are float or booleans
             self.check_edges_type_in_state(forward_subgraph)
 
             self._disambiguate_direction_dependent_views(state)
@@ -997,11 +997,187 @@ class BackwardPassGenerator:
 
             if edge.data.data:
                 edge_type = parent_sdfg.arrays[edge.data.data].dtype
-                if edge_type not in [dace.float16, dace.float32, dace.float64]:
+                if edge_type not in [dace.float16, dace.float32, dace.float64, dace.bool]:
                     raise AutoDiffException(
-                        f"Expected Subgraph to differentiate to only contain float edges, but data {edge.data}"
+                        f"Expected Subgraph to differentiate to only contain float and bool edges, but data {edge.data}"
                         f" on edge {edge} has type {edge_type}")
+                
+    def _zero_out_conditional_assingement(self, forward_state: SDFGState, backward_state: SDFGState, bool_an:nodes.AccessNode, target_an: nodes.AccessNode):
+        """
+        """
+        # we need to make sure the booleans are still usable
+        # since this is a temporary array this can only happen if the state is within a loop
+        overwritten, _ = self._check_node_overwrite(state=forward_state, node=bool_an)
+        
+        if overwritten:
+            raise AutoDiffException(
+                f"Necessary values to support conditional assignement were overwritten.")
+        
+        # we have the values we need to we will create the maps for the assignement
+        # first create a new state to add the nodes to
+        new_backward_state = self.backward_sdfg.add_state_after(backward_state)
 
+        # we want to copy the assingement map from the forward pass to the backward pass
+        # duplicate and add the bool_an
+        replicated_bool_an = copy.deepcopy(bool_an)
+        new_backward_state.add_node(replicated_bool_an)
+
+        # duplicate and add the memlet to the map
+        bool_an_out_edges = forward_state.out_edges(bool_an)
+        assert len(bool_an_out_edges) == 1
+        bool_an_out_edge = bool_an_out_edges[0]
+
+        # duplicate and add the map
+        map_entry = bool_an_out_edge.dst
+        assert isinstance(map_entry, nodes.MapEntry)
+        replicated_map_entry = copy.deepcopy(map_entry)
+
+        # get the map connector 
+        in_conn = list(replicated_map_entry.in_connectors.keys())[0]
+
+        # copy the memlet
+        memlet_copy = copy.deepcopy(bool_an_out_edge.data)
+
+        # add the edge between the replicated nodes
+        new_backward_state.add_edge(
+            replicated_bool_an,
+            None,
+            replicated_map_entry,
+            in_conn,
+            memlet_copy
+        )
+        
+        # add the connection to the tasklet
+        map_out_edges = forward_state.out_edges(map_entry)
+        assert len(map_out_edges) == 1
+
+        map_out_edge = map_out_edges[0]
+        tasklet_node = map_out_edge.dst
+        replicated_tasklet: nodes.Tasklet = copy.deepcopy(tasklet_node)
+        assert isinstance(replicated_tasklet, nodes.Tasklet)
+
+        tasklet_memlet = copy.deepcopy(map_out_edge.data)
+        new_backward_state.add_node(replicated_tasklet)
+
+        # get the tasklet connector
+        tasklet_in_conn = list(replicated_tasklet.in_connectors.keys())[0]
+        tasklet_out_conn = list(replicated_tasklet.out_connectors.keys())[0]
+        new_backward_state.add_edge(
+            replicated_map_entry,
+            list(replicated_map_entry.out_connectors.keys())[0],
+            replicated_tasklet,
+            tasklet_in_conn,
+            tasklet_memlet
+        )
+
+        # we also need to modify the code of the tasklet to assign a zero to the overwritten values
+        # create new tasklet code
+        tasklet_code = f"if {tasklet_in_conn}:\n  {tasklet_out_conn} = 0"
+        replicated_tasklet.code = CodeBlock(tasklet_code)
+
+        # replicate the gradient access node and connect it to the map exit
+        assert target_an in self.reverse_map
+        backward_target_node = self.reverse_map[target_an]
+        replicated_backward_target_node = copy.deepcopy(backward_target_node)
+        
+        # replicate the map exist and connect it to the tasklet
+        tasklet_out_edges = forward_state.out_edges(tasklet_node)
+        assert len(tasklet_out_edges) == 1
+        
+        tasklet_out_edge = tasklet_out_edges[0]
+        map_exit = tasklet_out_edge.dst
+        assert isinstance(map_exit, nodes.MapExit)
+
+        replicated_map_exit = copy.deepcopy(map_exit)
+        new_backward_state.add_node(replicated_map_exit)
+        memlet_data = copy.deepcopy(tasklet_out_edge.data)
+        memlet_data.data = replicated_backward_target_node.data
+
+        new_backward_state.add_edge(
+            replicated_tasklet,
+            list(replicated_tasklet.out_connectors.keys())[0],
+            replicated_map_exit,
+            list(replicated_map_exit.in_connectors.keys())[0],
+            memlet_data
+        )
+
+        # get the map exist edge
+        mapexit_out_edges = forward_state.out_edges(map_exit)
+        assert len(mapexit_out_edges) == 1
+        mapexit_out_edge = mapexit_out_edges[0]
+
+
+        # clean out the added edge and map exit
+
+        bwd_target_out = backward_state.out_edges(backward_target_node)
+        assert len(bwd_target_out) == 1
+        bwd_target_out = bwd_target_out[0]
+        backward_state.remove_node(bwd_target_out.dst)
+        
+        memlet_data = copy.deepcopy(mapexit_out_edge.data)
+        memlet_data.data = replicated_backward_target_node.data
+        # add the final edge
+        new_backward_state.add_edge(
+            replicated_map_exit,
+            list(replicated_map_exit.out_connectors.keys())[0],
+            replicated_backward_target_node,
+            None,
+            memlet_data
+        )
+
+        # return the new backward state
+        return new_backward_state
+
+    def _conditional_tasklet(self, tasklet_node: nodes.Tasklet):
+        """
+        Checks if this tasklet contains a conditional. 
+        This only happens in conditional array assignements and requires special treatement in reversing the graph.
+        TODO: how to more accuratly check this?
+        """
+        # sanity check
+        assert isinstance(tasklet_node, nodes.Tasklet)
+
+        # get the code string and check if there is an if
+        return "if" in tasklet_node.code.as_string
+    
+    def _extract_conditional_array_assignement_block(self, forward_state: SDFGState, tasklet_node: nodes.Tasklet):
+        """
+        Given a conditional tasklet, check if this is a conditional array assignement of the type
+        A[A>=0 and A<=5] = cst. At the moment the function only supports constant assignements. 
+        """
+        try:
+            
+            tasklet_out_edges = forward_state.out_edges(tasklet_node)
+
+            # sanitity check
+            assert len(tasklet_out_edges) == 1
+
+            # extract the access node that the conditional array assignement writes to
+            tasklet_out_memlet_path = forward_state.memlet_path(tasklet_out_edges[0])
+            target_access_node: nodes.AccessNode = tasklet_out_memlet_path[-1].dst
+            assert isinstance(target_access_node, nodes.AccessNode)
+
+            # get the AccessNode containing the boolean values for this assignement
+            tasklet_in_edges = forward_state.in_edges(tasklet_node)
+
+            # sanitity check
+            assert len(tasklet_in_edges) == 1
+
+            tasklet_in_memlet_path = forward_state.memlet_path(tasklet_in_edges[0])
+            bools_an = tasklet_in_memlet_path[0].src
+            assert isinstance(bools_an, nodes.AccessNode)
+
+            # save all the nodes in the path to the assignement block list
+            conditional_assingement_block_nodes = {n for e in forward_state.bfs_edges(target_access_node, reverse=True) for n in [e.src, e.dst]}
+
+        except Exception as e:
+            # if this is not the structure we are expecting, fail
+            raise AutoDiffException(
+                f"The boolean datatype in edges is limited to conditional array assingements."
+                    f" This stucture is not supported.") from e
+        
+        return conditional_assingement_block_nodes, bools_an, target_access_node
+    
     def _find_subgraph_to_differentiate(self) -> dstate.StateSubgraphView:
         """ 
         Determine which nodes we need to reverse; this forms the subgraph we will differentiate:
@@ -1193,10 +1369,27 @@ class BackwardPassGenerator:
         """ Reverse a given subgraph. All nodes in the subgraph will be reversed. """
         from dace.libraries.onnx.nodes.onnx_op import ONNXSum  # avoid import loop
 
+        # condiitonal assignement nodes
+        conditional_assignement_nodes: List[nodes.Node] = []
         # a reversed topological sort is a topological sort on the reverse graph
         for node in reversed(list(dutils.dfs_topological_sort(subgraph, subgraph.source_nodes()))):
 
             try:
+                # if this node is a part of the conditional assignement block, we skip it
+                if node in conditional_assignement_nodes:
+                    continue
+                
+                # if this node is a tasklet with a condition, we won't need to reverse it
+                if isinstance(node, nodes.Tasklet) and self._conditional_tasklet(node):
+                    # extract the conditional assignement block or fail if this is an unexpected structure
+                    conditional_block, bool_an, target_an  = self._extract_conditional_array_assignement_block(forward_state=forward_state, tasklet_node=node)
+                    
+                    # use the conditionals to zero-out the assigned values in the gradients
+                    backward_state = self._zero_out_conditional_assingement(forward_state=forward_state, backward_state=backward_state, target_an=target_an, bool_an=bool_an)
+                    
+                    # add these nodes to be skipped in the future 
+                    conditional_assignement_nodes.extend(conditional_block)
+                    continue
                 # output names on the forward node
                 # (for which the gradient will be connected as an input on the reverse node)
                 given_gradients = [
