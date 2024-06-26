@@ -22,9 +22,9 @@ class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
     thread_block_scheduled_map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
-    num_threads_x = SymbolicProperty(dtype=int, default=32, desc="Number threads in the threadBlock X Dim")
-    num_threads_y = SymbolicProperty(dtype=int, default=1, desc="Number threads in the threadBlock Y Dim")
-    num_threads_z = SymbolicProperty(dtype=int, default=1, desc="Number threads in the threadBlock Z Dim")
+    dim_size_x = SymbolicProperty(dtype=int, default=32, desc="Number threads in the threadBlock X Dim")
+    dim_size_y = SymbolicProperty(dtype=int, default=1, desc="Number threads in the threadBlock Y Dim")
+    dim_size_z = SymbolicProperty(dtype=int, default=1, desc="Number threads in the threadBlock Z Dim")
 
     @classmethod
     def expressions(cls):
@@ -58,7 +58,7 @@ class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
         dev_map : nodes.Map = dev_entry.map
         block_map : nodes.Map = block_entry.map
 
-        new_block_dimensions = (self.num_threads_x, self.num_threads_y, self.num_threads_z)
+        new_block_dimensions = (self.dim_size_x, self.dim_size_y, self.dim_size_z)
 
         # Step 1. Update step sizes of device map
         dev_old_step_sizes = []
@@ -74,9 +74,9 @@ class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
         new_thread_block_map_range_str = ""
         for i, (dev_range, block_range) in enumerate(zip(dev_ranges, block_ranges)):
             (_, dev_end, _) = dev_range
-            (block_beg, _, _) = block_range
+            (block_beg, _, block_step) = block_range
             new_block_dim = new_block_dimensions[i]
-            new_thread_block_map_range_str += f"{block_beg}:Min({dev_end}, {block_beg} + {new_block_dim} - 1) + 1:1"
+            new_thread_block_map_range_str += f"{block_beg}:Min({dev_end}, {block_beg} + {new_block_dim} - 1) + 1:{block_step}"
             new_thread_block_map_range_str += ", "
         block_map.range = subsets.Range.from_string(new_thread_block_map_range_str[:-2])
 
