@@ -3067,7 +3067,3 @@ class ReturnState(SDFGState):
 
     def __repr__(self) -> str:
         return f"State ({self.label}) [Return]"
-
-    def to_json(self, parent=None):
-        ReturnState.__name__ = "SDFGState"
-        return super().to_json(parent)
