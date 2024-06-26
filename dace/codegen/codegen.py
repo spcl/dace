@@ -189,6 +189,7 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
     # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
     # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
     sdutils.inline_loop_blocks(sdfg)
+    sdutils.inline_control_flow_regions(sdfg)
 
     # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)
