@@ -193,6 +193,8 @@ def inline_conditional_region(conditional: ConditionalRegion, parent: ControlFlo
 
     for node in connect_to_end:
         parent.add_edge(node, endif_state, InterstateEdge())
+    for node in return_states:
+        parent.add_edge(node, endif_state, InterstateEdge(condition="False"))
     parent.add_edge(conditional.else_branch, endif_state, InterstateEdge())
     bs, cs, rs = inline_control_flow_region(conditional.else_branch, parent)
     break_states.update(bs)
