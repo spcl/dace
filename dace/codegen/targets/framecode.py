@@ -10,7 +10,7 @@ import numpy as np
 import dace
 from dace import config, data, dtypes
 from dace.cli import progress
-from dace.codegen import control_flow as cflow, control_flow_2 as cflow2
+from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
