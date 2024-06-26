@@ -51,6 +51,7 @@ class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
         #    It will look as bm=gm:Min(M-1, gm + #X):1, bk=gk:Min(K-1, gk + #Y):1, bn=gn:Min(N-1, gn + #Z):1
         # 3. Update all memlets, meaning their subsets and volumes accordingly to changes in the eges between the two maps
         #    This needs to be done both for Map entry and Map exit
+        # 4. Update the gpu_block_size and gpu_launch_bounds according to the new number of threads
 
         dev_entry : nodes.MapEntry = self.device_scheduled_map_entry
         block_entry : nodes.MapEntry = self.thread_block_scheduled_map_entry
@@ -71,11 +72,13 @@ class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
 
         # Step 2. Update the range of the thread block map (end)
         block_ranges : List[subsets.Range] = block_map.range
+        block_steps = []
         new_thread_block_map_range_str = ""
         for i, (dev_range, block_range) in enumerate(zip(dev_ranges, block_ranges)):
             (_, dev_end, _) = dev_range
             (block_beg, _, block_step) = block_range
             new_block_dim = new_block_dimensions[i]
+            block_steps.append(block_step)
             new_thread_block_map_range_str += f"{block_beg}:Min({dev_end}, {block_beg} + {new_block_dim} - 1) + 1:{block_step}"
             new_thread_block_map_range_str += ", "
         block_map.range = subsets.Range.from_string(new_thread_block_map_range_str[:-2])
@@ -122,6 +125,23 @@ class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
             memlet.volume = new_volume
             memlet._subset = subsets.Range.from_string(range_str[:-2])
             edge = (u, u_conn, v, v_conn, memlet)
+        
+        # Changes for 4: change gpu_block_size and gpu_launch_bounds
+        # Apparently gpu_block_size only necessary if there is no gpu_thread_block schedule
+        # Therefore the code-gen now choose the values in gpu_block_size if it conflicts with the
+        # detected blocksizes, and these transformatiosn need to update them
+        thread_counts = []
+        for i in range(3):
+            block_step = 1
+            if i < len(block_steps):
+                block_step = block_steps[i]
+            assert(new_block_dimensions[i] % block_step == 0)
+            thread_counts.append(new_block_dimensions[i] // block_step)
+        dev_map.gpu_block_size = thread_counts
+        dev_map.gpu_launch_bounds = str(thread_counts[0] * thread_counts[1] * thread_counts[2])
+        block_map.gpu_block_size = thread_counts
+        block_map.gpu_launch_bounds = str(thread_counts[0] * thread_counts[1] * thread_counts[2])
+
 
     @staticmethod
     def annotates_memlets():

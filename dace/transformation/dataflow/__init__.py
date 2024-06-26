@@ -14,7 +14,6 @@ from .map_unroll import MapUnroll
 from .trivial_map_elimination import TrivialMapElimination
 from .trivial_map_range_elimination import TrivialMapRangeElimination
 from .otf_map_fusion import OTFMapFusion
-from .add_block_schedule import AddBlockSchedule
 
 # Data movement
 from .strip_mining import StripMining
@@ -59,7 +58,8 @@ from .lift_einsum import LiftEinsum
 
 # Distributions
 from .map_distribution import (ElementWiseArrayOperation, ElementWiseArrayOperation2D, RedundantComm2D)
+
 # GPU Abstract Machine Model Guided Parametric Transformations
 from .add_block_schedule import AddBlockSchedule
-from .map_range_change import ThreadBlockMapRangeChange
+from .thread_block_map_range_change import ThreadBlockMapRangeChange
 from .thread_tiling import ThreadTiling

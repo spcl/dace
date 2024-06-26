@@ -1900,17 +1900,18 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             #       overapproximation.
 
             if len(detected_block_sizes) > 1:
-
                 # Error when both gpu_block_size and thread-block maps were defined and conflict
                 if kernelmap_entry.map.gpu_block_size is not None:
-                    raise ValueError('Both the `gpu_block_size` property and internal thread-block '
+                    print('Both the `gpu_block_size` property and internal thread-block '
                                      'maps were defined with conflicting sizes for kernel '
                                      f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
                                      'Use `gpu_block_size` only if you do not need access to individual '
                                      'thread-block threads, or explicit block-level synchronization (e.g., '
                                      '`__syncthreads`). Otherwise, use internal maps with the `GPU_Threadblock` or '
                                      '`GPU_ThreadBlock_Dynamic` schedules. For more information, see '
-                                     'https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
+                                     'https://spcldace.readthedocs.io/en/latest/optimization/gpu.html'
+                                     'Using what it was provided int the gpu_block_size')
+                    block_size = kernelmap_entry.map.gpu_block_size
 
                 warnings.warn('Multiple thread-block maps with different sizes detected for '
                               f'kernel "{kernelmap_entry.map.label}": {detected_block_sizes}. '
