@@ -1145,6 +1145,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
             'collapsed': self.is_collapsed,
             'label': self._label,
             'id': parent.node_id(self) if parent is not None else None,
+            'attributes': serialize.all_properties_to_json(self),
         }
         return tmp
 
@@ -2424,6 +2425,12 @@ class ContinueBlock(ControlFlowBlock):
     def __repr__(self):
         return f'ContinueBlock ({self.label})'
 
+    def to_json(self, parent=None):
+        tmp = super().to_json(parent)
+        tmp['nodes'] = []
+        tmp['edges'] = []
+        return tmp
+
 
 @make_properties
 class BreakBlock(ControlFlowBlock):
@@ -2432,6 +2439,12 @@ class BreakBlock(ControlFlowBlock):
     def __repr__(self):
         return f'BreakBlock ({self.label})'
 
+    def to_json(self, parent=None):
+        tmp = super().to_json(parent)
+        tmp['nodes'] = []
+        tmp['edges'] = []
+        return tmp
+
 
 @make_properties
 class ReturnBlock(ControlFlowBlock):
@@ -2439,6 +2452,12 @@ class ReturnBlock(ControlFlowBlock):
 
     def __repr__(self):
         return f'ReturnBlock ({self.label})'
+
+    def to_json(self, parent=None):
+        tmp = super().to_json(parent)
+        tmp['nodes'] = []
+        tmp['edges'] = []
+        return tmp
 
 
 class StateSubgraphView(SubgraphView, DataflowGraphView):
