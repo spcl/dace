@@ -38,10 +38,8 @@ class ThreadTiling(transformation.SingleStateTransformation):
 
         # Applicable if the map is a GPU_ThreadBlock Scheduled Map
         if thread_block_entry.map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
-            print("CBA1:", False)
             return False
 
-        print("CBA2:", MapTiling.can_be_applied(self, graph, expr_index=expr_index, sdfg=sdfg, permissive=permissive))
         return MapTiling.can_be_applied(self, graph, expr_index=expr_index, sdfg=sdfg, permissive=permissive)
 
     def update_names():
