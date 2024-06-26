@@ -59,3 +59,7 @@ from .lift_einsum import LiftEinsum
 
 # Distributions
 from .map_distribution import (ElementWiseArrayOperation, ElementWiseArrayOperation2D, RedundantComm2D)
+# GPU Abstract Machine Model Guided Parametric Transformations
+from .add_block_schedule import AddBlockSchedule
+from .map_range_change import ThreadBlockMapRangeChange
+from .thread_tiling import ThreadTiling
