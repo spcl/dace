@@ -1111,10 +1111,6 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     _sdfg: Optional['SDFG'] = None
     _parent_graph: Optional['ControlFlowRegion'] = None
 
-    _default_lineinfo: Optional[dace.dtypes.DebugInfo] = None
-    _sdfg: Optional['SDFG'] = None
-    _parent_graph: Optional['ControlFlowRegion'] = None
-
     def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None, parent: Optional['ControlFlowRegion'] = None):
         super(ControlFlowBlock, self).__init__()
         self._label = label
