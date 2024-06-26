@@ -11,10 +11,6 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace import dtypes
 from dace import subsets
-from dace.sdfg.scope import ScopeTree
-from dace.sdfg.propagation import propagate_memlets_scope, propagate_memlets_state, propagate_memlets_sdfg
-from dace.transformation.dataflow.strip_mining import calc_set_image
-import copy
 
 @make_properties
 class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
