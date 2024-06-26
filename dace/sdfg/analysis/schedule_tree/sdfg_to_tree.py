@@ -668,7 +668,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                 # Use the sub-nodes directly
                 result = subnodes
 
-        elif isinstance(node, cf.SingleState):
+        elif isinstance(node, cf.BasicCFBlock):
             result = state_schedule_tree(node.state)
 
             # Add interstate assignments unrelated to structured control flow
@@ -726,8 +726,8 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
             # e.g., "SwitchCaseScope"
             raise tn.UnsupportedScopeException(type(node).__name__)
 
-        if node.first_state is not None:
-            result = [tn.StateLabel(state=node.first_state)] + result
+        if node.first_block is not None:
+            result = [tn.StateLabel(state=node.first_block)] + result
 
         return result
 

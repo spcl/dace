@@ -271,7 +271,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
     components = {}
     visited = {}  # Dict[SDFGState, bool]: True if SDFGState in Scope (non-SingleState)
     for i, child in enumerate(cft.children):
-        if isinstance(child, cf.SingleState):
+        if isinstance(child, cf.BasicCFBlock):
             if child.state in visited:
                 continue
             components[child.state] = (set([child.state]), child)
@@ -300,7 +300,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     del components[guard]
                     del visited[guard]
 
-            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.SingleState)
+            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.BasicCFBlock)
                     and cft.children[i + 1].state is fexit):
                 fexit_copy = _copy_state(sdfg, fexit, True, states)
                 fexit.remove_nodes_from(fexit.nodes())
@@ -310,7 +310,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             components[guard] = (states, child)
             visited.update({s: True for s in states})
         elif isinstance(child, (cf.IfScope, cf.IfElseChain)):
-            guard = child.branch_state
+            guard = child.branch_block
             ifexit = ipostdom[guard]
 
             states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
@@ -326,7 +326,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     del components[guard]
                     del visited[guard]
 
-            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.SingleState)
+            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.BasicCFBlock)
                     and cft.children[i + 1].state is ifexit):
                 ifexit_copy = _copy_state(sdfg, ifexit, True, states)
                 ifexit.remove_nodes_from(ifexit.nodes())

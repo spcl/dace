@@ -474,9 +474,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
-        if sdfg.cfg_list[0].using_experimental_blocks:
+        if sdfg.root_sdfg.using_experimental_blocks:
             # Use control flow blocks embedded in the SDFG to generate control flow.
-            cft = cflow2.structured_control_flow_tree(sdfg, dispatch_state)
+            cft = cflow.structured_control_flow_tree_with_regions(sdfg, dispatch_state)
         elif config.Config.get_bool('optimizer', 'detect_control_flow'):
             # Handle specialized control flow
             # Avoid import loop
@@ -492,7 +492,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_topological = list(sdfg.topological_sort(sdfg.start_state))
             last = states_topological[-1]
             cft = cflow.GeneralBlock(dispatch_state, None,
-                                    [cflow.SingleState(dispatch_state, s, s is last) for s in states_topological],
+                                    [cflow.BasicCFBlock(dispatch_state, s, s is last) for s in states_topological],
                                     [], [], [], [], False)
 
         callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
