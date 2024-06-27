@@ -91,18 +91,6 @@ class ThreadTiling(transformation.SingleStateTransformation):
         #        thread_range_str += f"{beg}:Min({dev_end}, {block_end}, {beg}+{block_step}-1)+1:{step}, "
         #thread_map.range = subsets.Range.from_string(thread_range_str[:-2])
 
-        # Last param of inner map is always the last iteration variable the map above
-        num_iter = min(len(thread_block_entry.map.range), len(thread_map.range))
-        ranges_from_last = []
-        # Access from last
-        for i in range(-1, -(num_iter+1), -1):
-            (beg, end, step) = thread_map.range[i]
-            (_, block_end, block_step) = thread_block_entry.map.range[i]
-            (_, dev_end, _) = dev_entry.map.range[i]
-            ranges_from_last.append(f"{beg}:Min({dev_end}, {block_end}, {beg}+{block_step}-1)+1:{step}")
-        range_str = ", ".join(list(reversed(ranges_from_last)))
-        thread_map.range = subsets.Range.from_string(range_str)
-
         # Create the new dimension sizes for the ThreadBlock Map.
         # The dimensions of the thread block map to the step sizes of the device scheduled map.
         # They need to be scaled according to the tilesize, and the order of how they are mapped
@@ -122,6 +110,19 @@ class ThreadTiling(transformation.SingleStateTransformation):
             params[f"dim_size_z"] = 1
             params[f"dim_size_y"] = 1
             params[f"dim_size_x"] = dev_entry.map.range[0][2] * tx
+
+        # Last param of inner map is always the last iteration variable the map above
+        range_str = ""
+        assert(len(thread_map.range) == len(thread_block_entry.map.params))
+        # Thread block map is i0,i1,i2,i3
+        # Which maps to           z, y, x
+        # If more the 3 parameters they are linearized
+        # The thread map (sequential range inside) can have less parameters than above
+        # Todo: fix this ugly as fuck code
+        for i in range(1, len(thread_map.params), 1):
+            (beg, _, step) = thread_map.range[-i]
+            (_, dev_end, _) = dev_entry.map.range[-i]
+            range_str += f"{beg}:{dev_end}+1:{step}"
 
 
         ThreadBlockMapRangeChange.apply_to(sdfg=sdfg, verify=False, device_scheduled_map_entry = dev_entry, 

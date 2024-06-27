@@ -88,7 +88,7 @@ class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
             (block_beg, _, block_step) = block_range
             new_block_dim = new_block_dimensions[i]
             block_steps.append(block_step)
-            new_thread_block_map_range_str += f"{block_beg}:Min({dev_end}, {block_beg} + {new_block_dim} - 1) + 1:{block_step}"
+            new_thread_block_map_range_str += f"{block_beg}:{dev_end}+1:{block_step}"
             new_thread_block_map_range_str += ", "
         block_map.range = subsets.Range.from_string(new_thread_block_map_range_str[:-2])
 
