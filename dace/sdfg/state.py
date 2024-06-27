@@ -2675,7 +2675,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
         try:
-            ordered_blocks = self.topological_sort(self.start_block)
+            ordered_blocks = self.bfs_nodes(self.start_block)
         except ValueError:  # Failsafe (e.g., for invalid or empty SDFGs)
             ordered_blocks = self.nodes()
 
