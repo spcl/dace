@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from dace.sdfg import SDFG
     from dace.sdfg import graph as gr
     from dace.memlet import Memlet
+    from dace.sdfg.state import ControlFlowRegion
 
 ###########################################
 # Validation
@@ -28,13 +29,13 @@ def validate(graph: 'dace.sdfg.graph.SubgraphView'):
         validate_state(graph)
 
 
-def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
-                                 region: 'dace.sdfg.state.ControlFlowRegion',
+def validate_control_flow_region(sdfg: 'SDFG',
+                                 region: 'ControlFlowRegion',
                                  initialized_transients: Set[str],
                                  symbols: dict,
                                  references: Set[int] = None,
                                  **context: bool):
-    from dace.sdfg import SDFGState
+    from dace.sdfg.state import SDFGState, ControlFlowRegion
     from dace.sdfg.scope import is_in_scope
 
     if len(region.source_nodes()) > 1 and region.start_block is None:
@@ -70,7 +71,7 @@ def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
             if isinstance(edge.src, SDFGState):
                 validate_state(edge.src, region.node_id(edge.src), sdfg, symbols, initialized_transients, references,
                                **context)
-            else:
+            elif isinstance(edge.src, ControlFlowRegion):
                 validate_control_flow_region(sdfg, edge.src, initialized_transients, symbols, references, **context)
 
         ##########################################
@@ -118,7 +119,7 @@ def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
             if isinstance(edge.dst, SDFGState):
                 validate_state(edge.dst, region.node_id(edge.dst), sdfg, symbols, initialized_transients, references,
                                **context)
-            else:
+            elif isinstance(edge.dst, ControlFlowRegion):
                 validate_control_flow_region(sdfg, edge.dst, initialized_transients, symbols, references, **context)
     # End of block DFS
 
@@ -127,7 +128,7 @@ def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
         if isinstance(start_block, SDFGState):
             validate_state(start_block, region.node_id(start_block), sdfg, symbols, initialized_transients, references,
                            **context)
-        else:
+        elif isinstance(start_block, ControlFlowRegion):
             validate_control_flow_region(sdfg, start_block, initialized_transients, symbols, references, **context)
 
     # Validate all inter-state edges (including self-loops not found by DFS)
@@ -201,9 +202,10 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         if not dtypes.validate_name(sdfg.name):
             raise InvalidSDFGError("Invalid name", sdfg, None)
 
-        all_blocks = set(sdfg.all_control_flow_blocks())
-        if len(all_blocks) != len(set([s.label for s in all_blocks])):
-            raise InvalidSDFGError('Found multiple blocks with the same name', sdfg, None)
+        for cfg in sdfg.all_control_flow_regions():
+            blocks = cfg.nodes()
+            if len(blocks) != len(set([s.label for s in blocks])):
+                raise InvalidSDFGError('Found multiple blocks with the same name in ' + cfg.name, sdfg, None)
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():

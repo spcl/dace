@@ -32,6 +32,7 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
+@transformation.experimental_cfg_block_compatible
 class StateFusion(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation.
 
@@ -458,29 +459,31 @@ class StateFusion(transformation.MultiStateTransformation):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
 
+        graph = first_state.parent_graph
+
         # Remove interstate edge(s)
-        edges = sdfg.edges_between(first_state, second_state)
+        edges = graph.edges_between(first_state, second_state)
         for edge in edges:
             if edge.data.assignments:
-                for src, dst, other_data in sdfg.in_edges(first_state):
+                for src, dst, other_data in graph.in_edges(first_state):
                     other_data.assignments.update(edge.data.assignments)
-            sdfg.remove_edge(edge)
+            graph.remove_edge(edge)
 
         # Special case 1: first state is empty
         if first_state.is_empty():
-            sdutil.change_edge_dest(sdfg, first_state, second_state)
-            sdfg.remove_node(first_state)
-            if sdfg.start_state == first_state:
-                sdfg.start_state = sdfg.node_id(second_state)
+            sdutil.change_edge_dest(graph, first_state, second_state)
+            graph.remove_node(first_state)
+            if graph.start_block == first_state:
+                graph.start_block = graph.node_id(second_state)
             return
 
         # Special case 2: second state is empty
         if second_state.is_empty():
-            sdutil.change_edge_src(sdfg, second_state, first_state)
-            sdutil.change_edge_dest(sdfg, second_state, first_state)
-            sdfg.remove_node(second_state)
-            if sdfg.start_state == second_state:
-                sdfg.start_state = sdfg.node_id(first_state)
+            sdutil.change_edge_src(graph, second_state, first_state)
+            sdutil.change_edge_dest(graph, second_state, first_state)
+            graph.remove_node(second_state)
+            if graph.start_block == second_state:
+                graph.start_block = graph.node_id(first_state)
             return
 
         # Normal case: both states are not empty
@@ -562,7 +565,7 @@ class StateFusion(transformation.MultiStateTransformation):
             merged_nodes.add(n)
 
         # Redirect edges and remove second state
-        sdutil.change_edge_src(sdfg, second_state, first_state)
-        sdfg.remove_node(second_state)
-        if sdfg.start_state == second_state:
-            sdfg.start_state = sdfg.node_id(first_state)
+        sdutil.change_edge_src(graph, second_state, first_state)
+        graph.remove_node(second_state)
+        if graph.start_block == second_state:
+            graph.start_block = graph.node_id(first_state)

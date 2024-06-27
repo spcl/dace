@@ -10,10 +10,12 @@ from dace import SDFG, properties
 from dace.sdfg import nodes
 from dace.sdfg.utils import fuse_states, inline_sdfgs
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.transformation import experimental_cfg_block_compatible
 
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+@experimental_cfg_block_compatible
 class FuseStates(ppl.Pass):
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs).
@@ -87,6 +89,7 @@ class InlineSDFGs(ppl.Pass):
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+@experimental_cfg_block_compatible
 class FixNestedSDFGReferences(ppl.Pass):
     """
     Fixes nested SDFG references to parent state/SDFG/node
