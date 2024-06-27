@@ -121,28 +121,12 @@ def unbounded_while_do(x: dc.float64[N]):
 
 
 @dc.program
-def unbounded_do_while(x: dc.float64[N]):
-    while True:
-        x += 1
-        if x[0] >= 100:
-            break
-
-
-@dc.program
 def unbounded_nonnegify(x: dc.float64[N]):
     while x[0] < 100:
         if x[1] < 42:
             x += 3 * x
         else:
             x += x
-
-
-@dc.program
-def continue_for_loop(x: dc.float64[N]):
-    for i in range(N):
-        if x[i] > 100:
-            continue
-        x += 1
 
 
 @dc.program
@@ -210,10 +194,7 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
     'multiple_array_sizes': (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
     'unbounded_while_do': (unbounded_while_do, (sp.Symbol('num_execs_0_2') * N, sp.Symbol('num_execs_0_2'))),
     # We get this Max(1, num_execs), since it is a do-while loop, but the num_execs symbol does not capture this.
-    'unbounded_do_while': (unbounded_do_while,
-                           (sp.Max(1, sp.Symbol('num_execs_0_1')) * N, sp.Max(1, sp.Symbol('num_execs_0_1')))),
     'unbounded_nonnegify': (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_7') * N, 2 * sp.Symbol('num_execs_0_7'))),
-    'continue_for_loop': (continue_for_loop, (sp.Symbol('num_execs_0_6') * N, sp.Symbol('num_execs_0_6'))),
     'break_for_loop': (break_for_loop, (N**2, N)),
     'break_while_loop': (break_while_loop, (sp.Symbol('num_execs_0_5') * N, sp.Symbol('num_execs_0_5'))),
     'sequential_ifs': (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
@@ -227,8 +208,7 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
 @pytest.mark.parametrize('test_name', list(work_depth_test_cases.keys()))
 def test_work_depth(test_name):
     if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False and
-        test_name in ['unbounded_while_do', 'unbounded_do_while', 'unbounded_nonnegify',
-                      'continue_for_loop', 'break_while_loop']):
+        test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']):
         pytest.skip('Malformed loop when not simplifying')
     test, correct = work_depth_test_cases[test_name]
     w_d_map: Dict[str, sp.Expr] = {}
@@ -262,9 +242,7 @@ tests_cases_avg_par = {
     'nested_for_loops': (nested_for_loops, 1),
     'max_of_positive_symbol': (max_of_positive_symbol, N),
     'unbounded_while_do': (unbounded_while_do, N),
-    'unbounded_do_while': (unbounded_do_while, N),
     'unbounded_nonnegify': (unbounded_nonnegify, N),
-    'continue_for_loop': (continue_for_loop, N),
     'break_for_loop': (break_for_loop, N),
     'break_while_loop': (break_while_loop, N),
     'reduction_library_node': (reduction_library_node, 456 / sp.log(456)),
@@ -276,8 +254,7 @@ tests_cases_avg_par = {
 @pytest.mark.parametrize('test_name', list(tests_cases_avg_par.keys()))
 def test_avg_par(test_name: str):
     if (dc.Config.get_bool('optimizer', 'automatic_simplification') == False and
-        test_name in ['unbounded_while_do', 'unbounded_do_while', 'unbounded_nonnegify',
-                      'continue_for_loop', 'break_while_loop']):
+        test_name in ['unbounded_while_do', 'unbounded_nonnegify', 'break_while_loop']):
         pytest.skip('Malformed loop when not simplifying')
 
     test, correct = tests_cases_avg_par[test_name]

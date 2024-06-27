@@ -18,7 +18,7 @@ import ast
 import astunparse
 import warnings
 
-from dace.sdfg.performance_evaluation.helpers import get_uuid, find_loop_guards_tails_exits
+from dace.sdfg.performance_evaluation.helpers import LoopExtractionError, get_uuid, find_loop_guards_tails_exits
 from dace.sdfg.performance_evaluation.assumptions import parse_assumptions
 from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 from dace.transformation.pass_pipeline import FixedPointPipeline
@@ -344,7 +344,21 @@ def sdfg_work_depth(sdfg: SDFG,
     # Additionally, construct a dummy exit state and connect every state that has no outgoing edges to it.
 
     # identify all loops in the SDFG
-    nodes_oNodes_exits = find_loop_guards_tails_exits(sdfg._nx)
+    try:
+        nodes_oNodes_exits = find_loop_guards_tails_exits(sdfg._nx)
+    except LoopExtractionError:
+        # If loop detection fails, we cannot make proper propagation.
+        print('Analysis failed since not all loops got detected. It may help to use more structured loop constructs.' +
+              ' The analysis per state remains correct, but no SDFG-wide analysis can be performed.')
+        sdfg_result = (sp.oo, sp.oo)
+        w_d_map[get_uuid(sdfg)] = sdfg_result
+    
+        for k, (v_w, v_d) in w_d_map.items():
+            # The symeval replaces nested SDFG symbols with their global counterparts.
+            v_w = symeval(v_w, symbols)
+            v_d = symeval(v_d, symbols)
+            w_d_map[k] = (v_w, v_d)
+        return sdfg_result
 
     # Now we need to go over each triple (node, oNode, exits). For each triple, we
     #       - remove edge (oNode, node), i.e. the backward edge
@@ -483,7 +497,7 @@ def sdfg_work_depth(sdfg: SDFG,
     except KeyError:
         # If we get a KeyError above, this means that the traversal never reached the dummy_exit state.
         # This happens if the loops were not properly detected and broken.
-        raise Exception(
+        raise LoopExtractionError(
             'Analysis failed, since not all loops got detected. It may help to use more structured loop constructs.')
 
     sdfg_result = (max_work, max_depth)
