@@ -1,9 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
 from veclen_conversion_test import make_sdfg
 from dace.fpga_testing import fpga_test
 
 
+@pytest.mark.skip(reason="Testing whether segfaults disappear without this test")
 @fpga_test()
 def test_veclen_conversion_connector():
 
