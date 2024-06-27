@@ -42,3 +42,4 @@ def add_backward_pass(sdfg: SDFG,
                                 zero_non_transients=False,
                                 overwrite_strategy=overwite_strategy)
     gen.backward()
+    sdfg.validate()
