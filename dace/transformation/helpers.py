@@ -645,6 +645,8 @@ def nest_state_subgraph(sdfg: SDFG,
         if state.in_degree(edge.dst) + state.out_degree(edge.dst) == 0:
             state.remove_node(edge.dst)
 
+    sdfg.reset_cfg_list()
+
     return nested_sdfg
 
 
