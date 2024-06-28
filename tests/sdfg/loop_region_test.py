@@ -1,10 +1,12 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import LoopRegion
+from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t, treenodes as tn
 
 
-def test_loop_regular_for():
+def _make_regular_for_loop() -> SDFG:
     sdfg = dace.SDFG('regular_for')
     sdfg.using_experimental_blocks = True
     state0 = sdfg.add_state('state0', is_start_block=True)
@@ -20,18 +22,10 @@ def test_loop_regular_for():
     state3 = sdfg.add_state('state3')
     sdfg.add_edge(state0, loop1, dace.InterstateEdge())
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
-
-    assert sdfg.is_valid()
-
-    a_validation = np.zeros([10], dtype=np.float32)
-    a_test = np.zeros([10], dtype=np.float32)
-    sdfg(A=a_test)
-    for i in range(10):
-        a_validation[i] = i
-    assert np.allclose(a_validation, a_test)
+    return sdfg
 
 
-def test_loop_regular_while():
+def _make_regular_while_loop() -> SDFG:
     sdfg = dace.SDFG('regular_while')
     sdfg.using_experimental_blocks = True
     state0 = sdfg.add_state('state0', is_start_block=True)
@@ -48,18 +42,10 @@ def test_loop_regular_while():
     state3 = sdfg.add_state('state3')
     sdfg.add_edge(state0, loop1, dace.InterstateEdge(assignments={'i': '0'}))
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
-
-    assert sdfg.is_valid()
-
-    a_validation = np.zeros([10], dtype=np.float32)
-    a_test = np.zeros([10], dtype=np.float32)
-    sdfg(A=a_test)
-    for i in range(10):
-        a_validation[i] = i
-    assert np.allclose(a_validation, a_test)
+    return sdfg
 
 
-def test_loop_do_while():
+def _make_do_while_loop() -> SDFG:
     sdfg = dace.SDFG('do_while')
     sdfg.using_experimental_blocks = True
     sdfg.add_symbol('i', dace.int32)
@@ -76,17 +62,10 @@ def test_loop_do_while():
     state3 = sdfg.add_state('state3')
     sdfg.add_edge(state0, loop1, dace.InterstateEdge(assignments={'i': '10'}))
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
-
-    assert sdfg.is_valid()
-
-    a_validation = np.zeros([11], dtype=np.float32)
-    a_test = np.zeros([11], dtype=np.float32)
-    a_validation[10] = 10
-    sdfg(A=a_test)
-    assert np.allclose(a_validation, a_test)
+    return sdfg
 
 
-def test_loop_do_for():
+def _make_do_for_loop() -> SDFG:
     sdfg = dace.SDFG('do_for')
     sdfg.using_experimental_blocks = True
     sdfg.add_symbol('i', dace.int32)
@@ -104,18 +83,10 @@ def test_loop_do_for():
     state3 = sdfg.add_state('state3')
     sdfg.add_edge(state0, loop1, dace.InterstateEdge())
     sdfg.add_edge(loop1, state3, dace.InterstateEdge())
-
-    assert sdfg.is_valid()
-
-    a_validation = np.zeros([10], dtype=np.float32)
-    a_test = np.zeros([10], dtype=np.float32)
-    sdfg(A=a_test)
-    for i in range(10):
-        a_validation[i] = i
-    assert np.allclose(a_validation, a_test)
+    return sdfg
 
 
-def test_triple_nested_for():
+def _make_tripple_nested_for_loop() -> SDFG:
     sdfg = dace.SDFG('gemm')
     sdfg.using_experimental_blocks = True
     sdfg.add_symbol('i', dace.int32)
@@ -151,6 +122,62 @@ def test_triple_nested_for():
     red = reduce_state.add_reduce('lambda a, b: a + b', (2,), 0)
     reduce_state.add_edge(tmpnode2, None, red, None, dace.Memlet.simple('tmp', '0:N, 0:M, 0:K'))
     reduce_state.add_edge(red, None, cnode, None, dace.Memlet.simple('C', '0:N, 0:M'))
+    return sdfg
+
+
+def test_loop_regular_for():
+    sdfg = _make_regular_for_loop()
+
+    assert sdfg.is_valid()
+
+    a_validation = np.zeros([10], dtype=np.float32)
+    a_test = np.zeros([10], dtype=np.float32)
+    sdfg(A=a_test)
+    for i in range(10):
+        a_validation[i] = i
+    assert np.allclose(a_validation, a_test)
+
+
+def test_loop_regular_while():
+    sdfg = _make_regular_while_loop()
+
+    assert sdfg.is_valid()
+
+    a_validation = np.zeros([10], dtype=np.float32)
+    a_test = np.zeros([10], dtype=np.float32)
+    sdfg(A=a_test)
+    for i in range(10):
+        a_validation[i] = i
+    assert np.allclose(a_validation, a_test)
+
+
+def test_loop_do_while():
+    sdfg = _make_do_while_loop()
+
+    assert sdfg.is_valid()
+
+    a_validation = np.zeros([11], dtype=np.float32)
+    a_test = np.zeros([11], dtype=np.float32)
+    a_validation[10] = 10
+    sdfg(A=a_test)
+    assert np.allclose(a_validation, a_test)
+
+
+def test_loop_do_for():
+    sdfg = _make_do_for_loop()
+
+    assert sdfg.is_valid()
+
+    a_validation = np.zeros([10], dtype=np.float32)
+    a_test = np.zeros([10], dtype=np.float32)
+    sdfg(A=a_test)
+    for i in range(10):
+        a_validation[i] = i
+    assert np.allclose(a_validation, a_test)
+
+
+def test_loop_triple_nested_for():
+    sdfg = _make_tripple_nested_for_loop()
 
     assert sdfg.is_valid()
 
@@ -169,9 +196,79 @@ def test_triple_nested_for():
     assert np.allclose(C_validation, C_test)
 
 
+def test_loop_to_stree_regular_for():
+    sdfg = _make_regular_for_loop()
+
+    assert sdfg.is_valid()
+
+    stree = s2t.as_schedule_tree(sdfg)
+
+    assert stree.as_string() == (f'{tn.INDENTATION}for i = 0; (i < 10); i = (i + 1):\n' +
+                                 f'{2 * tn.INDENTATION}A[i] = tasklet()')
+
+
+def test_loop_to_stree_regular_while():
+    sdfg = _make_regular_while_loop()
+
+    assert sdfg.is_valid()
+
+    stree = s2t.as_schedule_tree(sdfg)
+
+    assert stree.as_string() == (f'{tn.INDENTATION}assign i = 0\n' +
+                                 f'{tn.INDENTATION}while (i < 10):\n' + 
+                                 f'{2 * tn.INDENTATION}A[i] = tasklet()\n' +
+                                 f'{2 * tn.INDENTATION}assign i = (i + 1)')
+
+
+def test_loop_to_stree_do_while():
+    sdfg = _make_do_while_loop()
+
+    assert sdfg.is_valid()
+
+    stree = s2t.as_schedule_tree(sdfg)
+
+    assert stree.as_string() == (f'{tn.INDENTATION}assign i = 10\n' +
+                                 f'{tn.INDENTATION}do:\n' +
+                                 f'{2 * tn.INDENTATION}A[i] = tasklet()\n' +
+                                 f'{2 * tn.INDENTATION}assign i = (i + 1)\n' +
+                                 f'{tn.INDENTATION}while (i < 10)')
+
+
+def test_loop_to_stree_do_for():
+    sdfg = _make_do_for_loop()
+
+    assert sdfg.is_valid()
+
+    stree = s2t.as_schedule_tree(sdfg)
+
+    assert stree.as_string() == (f'{tn.INDENTATION}i = 0\n' +
+                                 f'{tn.INDENTATION}do:\n' +
+                                 f'{2 * tn.INDENTATION}A[i] = tasklet()\n' +
+                                 f'{2 * tn.INDENTATION}i = (i + 1)\n' +
+                                 f'{tn.INDENTATION}while (i < 10)')
+
+
+def test_loop_to_stree_triple_nested_for():
+    sdfg = _make_tripple_nested_for_loop()
+
+    assert sdfg.is_valid()
+
+    stree = s2t.as_schedule_tree(sdfg)
+
+    po_nodes = list(stree.preorder_traversal())[1:]
+    assert [type(n) for n in po_nodes] == [tn.GeneralLoopScope, tn.GeneralLoopScope, tn.GeneralLoopScope,
+                                           tn.TaskletNode, tn.LibraryCall]
+    
+
+
 if __name__ == '__main__':
     test_loop_regular_for()
     test_loop_regular_while()
     test_loop_do_while()
     test_loop_do_for()
-    test_triple_nested_for()
+    test_loop_triple_nested_for()
+    test_loop_to_stree_regular_for()
+    test_loop_to_stree_regular_while()
+    test_loop_to_stree_do_while()
+    test_loop_to_stree_do_for()
+    test_loop_to_stree_triple_nested_for()

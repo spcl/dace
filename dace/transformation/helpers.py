@@ -1394,7 +1394,7 @@ def replace_code_to_code_edges(sdfg: SDFG):
 
     :param sdfg: The SDFG to process.
     """
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         for edge in state.edges():
             if not isinstance(edge.src, nodes.CodeNode) or not isinstance(edge.dst, nodes.CodeNode):
                 continue

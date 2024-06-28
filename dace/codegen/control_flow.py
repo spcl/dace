@@ -959,70 +959,6 @@ def _structured_control_flow_traversal(sdfg: SDFG,
     return visited - {stop}
 
 
-def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState], str]) -> ControlFlow:
-    """
-    Returns a structured control-flow tree (i.e., with constructs such as 
-    branches and loops) from an SDFG, which can be used to generate its code
-    in a compiler- and human-friendly way.
-    
-    :param sdfg: The SDFG to iterate over.
-    :return: Control-flow block representing the entire SDFG.
-    """
-    # Avoid import loops
-    from dace.sdfg.analysis import cfg
-
-    # Get parent states and back-edges
-    ptree = cfg.block_parent_tree(sdfg)
-    back_edges = cfg.back_edges(sdfg)
-
-    # Annotate branches
-    branch_merges: Dict[SDFGState, SDFGState] = {}
-    adf = cfg.acyclic_dominance_frontier(sdfg)
-    for state in sdfg.nodes():
-        oedges = sdfg.out_edges(state)
-        # Skip if not branch
-        if len(oedges) <= 1:
-            continue
-        # Skip if natural loop
-        if len(oedges) == 2 and ((ptree[oedges[0].dst] == state and ptree[oedges[1].dst] != state) or
-                                 (ptree[oedges[1].dst] == state and ptree[oedges[0].dst] != state)):
-            continue
-
-        # If branch without else (adf of one successor is equal to the other)
-        if len(oedges) == 2:
-            if {oedges[0].dst} & adf[oedges[1].dst]:
-                branch_merges[state] = oedges[0].dst
-                continue
-            elif {oedges[1].dst} & adf[oedges[0].dst]:
-                branch_merges[state] = oedges[1].dst
-                continue
-
-        # Try to obtain common DF to find merge state
-        common_frontier = set()
-        for oedge in oedges:
-            frontier = adf[oedge.dst]
-            if not frontier:
-                frontier = {oedge.dst}
-            common_frontier |= frontier
-        if len(common_frontier) == 1:
-            branch_merges[state] = next(iter(common_frontier))
-
-    root_block = GeneralBlock(dispatch_state=dispatch_state,
-                              parent=None,
-                              last_block=False,
-                              region=None,
-                              elements=[],
-                              gotos_to_ignore=[],
-                              gotos_to_continue=[],
-                              gotos_to_break=[],
-                              assignments_to_ignore=[],
-                              sequential=True)
-    _structured_control_flow_traversal(sdfg, sdfg.start_state, ptree, branch_merges, back_edges, dispatch_state,
-                                       root_block)
-    _reset_block_parents(root_block)
-    return root_block
-
-
 def _structured_control_flow_traversal_with_regions(cfg: ControlFlowRegion,
                                                     dispatch_state: Callable[[SDFGState], str],
                                                     parent_block: GeneralBlock,
@@ -1201,5 +1137,72 @@ def structured_control_flow_tree_with_regions(sdfg: SDFG, dispatch_state: Callab
                               assignments_to_ignore=[],
                               sequential=True)
     _structured_control_flow_traversal_with_regions(sdfg, dispatch_state, root_block)
+    _reset_block_parents(root_block)
+    return root_block
+
+
+def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState], str]) -> ControlFlow:
+    """
+    Returns a structured control-flow tree (i.e., with constructs such as 
+    branches and loops) from an SDFG, which can be used to generate its code
+    in a compiler- and human-friendly way.
+    
+    :param sdfg: The SDFG to iterate over.
+    :return: Control-flow block representing the entire SDFG.
+    """
+    if sdfg.root_sdfg.using_experimental_blocks:
+        return structured_control_flow_tree_with_regions(sdfg, dispatch_state)
+
+    # Avoid import loops
+    from dace.sdfg.analysis import cfg
+
+    # Get parent states and back-edges
+    ptree = cfg.block_parent_tree(sdfg)
+    back_edges = cfg.back_edges(sdfg)
+
+    # Annotate branches
+    branch_merges: Dict[SDFGState, SDFGState] = {}
+    adf = cfg.acyclic_dominance_frontier(sdfg)
+    for state in sdfg.nodes():
+        oedges = sdfg.out_edges(state)
+        # Skip if not branch
+        if len(oedges) <= 1:
+            continue
+        # Skip if natural loop
+        if len(oedges) == 2 and ((ptree[oedges[0].dst] == state and ptree[oedges[1].dst] != state) or
+                                 (ptree[oedges[1].dst] == state and ptree[oedges[0].dst] != state)):
+            continue
+
+        # If branch without else (adf of one successor is equal to the other)
+        if len(oedges) == 2:
+            if {oedges[0].dst} & adf[oedges[1].dst]:
+                branch_merges[state] = oedges[0].dst
+                continue
+            elif {oedges[1].dst} & adf[oedges[0].dst]:
+                branch_merges[state] = oedges[1].dst
+                continue
+
+        # Try to obtain common DF to find merge state
+        common_frontier = set()
+        for oedge in oedges:
+            frontier = adf[oedge.dst]
+            if not frontier:
+                frontier = {oedge.dst}
+            common_frontier |= frontier
+        if len(common_frontier) == 1:
+            branch_merges[state] = next(iter(common_frontier))
+
+    root_block = GeneralBlock(dispatch_state=dispatch_state,
+                              parent=None,
+                              last_block=False,
+                              region=None,
+                              elements=[],
+                              gotos_to_ignore=[],
+                              gotos_to_continue=[],
+                              gotos_to_break=[],
+                              assignments_to_ignore=[],
+                              sequential=True)
+    _structured_control_flow_traversal(sdfg, sdfg.start_state, ptree, branch_merges, back_edges, dispatch_state,
+                                       root_block)
     _reset_block_parents(root_block)
     return root_block
