@@ -17,7 +17,8 @@ from typing import List
 @make_properties
 class ThreadTiling(transformation.SingleStateTransformation):
     """
-    Adds a thread block schedule to a device map scope
+    Thread tiling means for GPU code-gen one thread does not comute 1 cell of the output, but
+    a tile_size_x * tile_size_y * tile_size_t sub domain of the output.
     """
 
     device_map_entry = transformation.PatternNode(nodes.MapEntry)
