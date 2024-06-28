@@ -174,7 +174,11 @@ def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
 
 
 class CompiledSDFG(object):
-    """ A compiled SDFG object that can be called through Python. """
+    """ A compiled SDFG object that can be called through Python. 
+
+    Todo:
+        Scalar return values are not handled properly, this is a code gen issue.
+    """
 
     def __init__(self, sdfg, lib: ReloadableDLL, argnames: List[str] = None):
         from dace.sdfg import SDFG
@@ -675,6 +679,7 @@ class CompiledSDFG(object):
 
     def _convert_return_values(self):
         # Return the values as they would be from a Python function
+        # NOTE: Currently it is not possible to return a scalar value, see `tests/sdfg/scalar_return.py`
         if self._return_arrays is None or len(self._return_arrays) == 0:
             return None
         elif len(self._return_arrays) == 1:
