@@ -174,10 +174,10 @@ class TargetDispatcher(object):
         self.instrumentation: Dict[Union[dtypes.InstrumentationType, dtypes.DataInstrumentationType],
                                    instrumentation.InstrumentationProvider] = {}
 
-        self._array_dispatchers = dict()
-        self._map_dispatchers = dict()
-        self._copy_dispatchers = dict()
-        self._generic_copy_dispatchers = dict()
+        self._array_dispatchers = {}
+        self._map_dispatchers = {}
+        self._copy_dispatchers = {}
+        self._generic_copy_dispatchers = {}
         self._node_dispatchers = []
         self._generic_node_dispatcher = None
         self._state_dispatchers = []

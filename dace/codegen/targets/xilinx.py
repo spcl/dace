@@ -1052,7 +1052,7 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
         module_stream = CodeIOStream()
         entry_stream = CodeIOStream()
 
-        state_id = state.block_id
+        state_id = cfg.node_id(state)
 
         self.generate_kernel_boilerplate_pre(sdfg, cfg, state_id, kernel_name, global_data_parameters, bank_assignments,
                                              module_stream, entry_stream, external_streams, multi_pumped)
