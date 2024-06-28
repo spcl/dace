@@ -194,7 +194,7 @@ class ConstantPropagation(ppl.Pass):
             result[start_state].update(initial_symbols)
 
         # Traverse SDFG topologically
-        for state in optional_progressbar(cfg.stateorder_topological_sort(sdfg), 'Collecting constants',
+        for state in optional_progressbar(cfg.blockorder_topological_sort(sdfg), 'Collecting constants',
                                           sdfg.number_of_nodes(), self.progress):
             # NOTE: We must always check the start-state regardless if there are initial symbols. This is necessary
             # when the start-state is a scope's guard instead of a special initialization state, i.e., when the start-

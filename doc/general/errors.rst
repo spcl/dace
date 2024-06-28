@@ -11,7 +11,7 @@ The default traversal order of DaCe is not guaranteed to be deterministic. This 
 write a transformation that depends on the order of nodes in the SDFG, it may not work as expected.
 To fix this, you can use the :func:`~dace.sdfg.utils.dfs_topological_sort` function to sort the nodes in a state.
 
-For SDFG state machines, you can also use :func:`~dace.sdfg.analysis.cfg.stateorder_topological_sort`, which will 
+For SDFG state machines, you can also use :func:`~dace.sdfg.analysis.cfg.blockorder_topological_sort`, which will 
 traverse the states in the approximate order of execution (i.e., preserving order and entering if/for scopes before 
 continuing). 
 

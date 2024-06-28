@@ -744,7 +744,7 @@ can be added to the SDFG using the :meth:`~dace.sdfg.sdfg.SDFG.add_datadesc` met
 
 **Traversal**: Since nodes and edges are stored in arbitrary order, the API provides methods for traversing the graph
 by topological order. The method :func:`~dace.sdfg.utils.dfs_topological_sort` returns a list of nodes in a state, and 
-:func:`~dace.sdfg.analysis.cfg.stateorder_topological_sort` traverses the state machine in approximate order of execution
+:func:`~dace.sdfg.analysis.cfg.blockorder_topological_sort` traverses the state machine in approximate order of execution
 (i.e., preserving order and entering if/for scopes before continuing).
 
 

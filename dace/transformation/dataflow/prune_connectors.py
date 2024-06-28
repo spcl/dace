@@ -124,7 +124,7 @@ class PruneSymbols(pm.SingleStateTransformation):
             candidates -= set(map(str, desc.free_symbols))
 
         ignore = set()
-        for nstate in cfg.stateorder_topological_sort(nsdfg.sdfg):
+        for nstate in cfg.blockorder_topological_sort(nsdfg.sdfg):
             state_syms = nstate.free_symbols
 
             # Try to be conservative with C++ tasklets

@@ -65,7 +65,7 @@ class DeadDataflowElimination(ppl.Pass):
 
         # Traverse SDFG backwards
         try:
-            state_order = list(cfg.stateorder_topological_sort(sdfg))
+            state_order = list(cfg.blockorder_topological_sort(sdfg))
         except KeyError:
             return None
         for state in reversed(state_order):
