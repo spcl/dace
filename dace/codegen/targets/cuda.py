@@ -2123,7 +2123,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # Get all non-sequential scopes from the same level
         all_scopes = [
-            node for node in parent_scope.topological_sort(scope_entry)
+            node for node in parent_scope.bfs_nodes(scope_entry)
             if isinstance(node, nodes.EntryNode) and node.map.schedule != dtypes.ScheduleType.Sequential
         ]
 
