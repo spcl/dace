@@ -610,7 +610,7 @@ class SDFG(ControlFlowRegion):
             nci = copy.copy(context_info)
             nci['sdfg'] = ret
 
-            state = SDFGState.from_json(n, context=nci)
+            state = dace.serialize.from_json(n, context=nci)
             ret.add_node(state)
             nodelist.append(state)
 

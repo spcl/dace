@@ -22,7 +22,7 @@ from dace import symbolic
 from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
                              CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
+from dace.sdfg.graph import MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
@@ -2740,11 +2740,10 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
 
-        attrs = json_obj['attributes']
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
-        ret = ControlFlowRegion(label=attrs['label'], sdfg=context_info['sdfg'])
+        ret = ControlFlowRegion(label=json_obj['label'], sdfg=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(ret, json_obj)
 
@@ -2753,7 +2752,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             nci = copy.copy(context_info)
             nci['parent_graph'] = ret
 
-            state = SDFGState.from_json(n, context=nci)
+            state = dace.serialize.from_json(n, nci)
             ret.add_node(state)
             nodelist.append(state)
 
@@ -3119,3 +3118,76 @@ class LoopRegion(ControlFlowRegion):
             if isinstance(node, ReturnBlock):
                 return True
         return False
+
+@dace.serialize.serializable
+class ConditionalRegion(ControlFlowBlock):
+    def __init__(self, label: str):
+        super().__init__(label)
+        self.branches: List[Tuple[CodeBlock, ControlFlowRegion]] = []
+    
+    def nodes(self) -> List['ControlFlowBlock']:
+        return [node for branch in self.branches for node in branch[1].nodes()]
+
+    def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return [edge for branch in self.branches for edge in branch[1].edges()]
+    
+    def node_id(self, node: ControlFlowBlock) -> int:
+        try:
+            return self.nodes().index(node)
+        except ValueError:
+            raise NodeNotFoundError(node)
+    
+    def _used_symbols_internal(self,
+                            all_symbols: bool,
+                            defined_syms: Optional[Set] = None,
+                            free_syms: Optional[Set] = None,
+                            used_before_assignment: Optional[Set] = None,
+                            keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
+        defined_syms = set() if defined_syms is None else defined_syms
+        free_syms = set() if free_syms is None else free_syms
+        used_before_assignment = set() if used_before_assignment is None else used_before_assignment
+
+        b_free_symbols, b_defined_symbols, b_used_before_assignment = super()._used_symbols_internal(
+            all_symbols, keep_defined_in_mapping=keep_defined_in_mapping)
+        free_syms |= b_free_symbols
+        defined_syms |= b_defined_symbols
+        used_before_assignment |= b_used_before_assignment
+
+        for condition, cfg in self.branches:
+            free_syms |= condition.get_free_symbols()
+            b_free_symbols, b_defined_symbols, b_used_before_assignment = cfg._used_symbols_internal(
+                all_symbols, keep_defined_in_mapping=keep_defined_in_mapping)
+            free_syms |= b_free_symbols
+            defined_syms |= b_defined_symbols
+            used_before_assignment |= b_used_before_assignment
+
+        defined_syms -= used_before_assignment
+        free_syms -= defined_syms
+
+        return free_syms, defined_syms, used_before_assignment
+
+    def replace_dict(self,
+                        repl: Dict[str, str],
+                        symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+                        replace_in_graph: bool = True,
+                        replace_keys: bool = True):
+        if replace_keys:
+            from dace.sdfg.replace import replace_properties_dict
+            replace_properties_dict(self, repl, symrepl)
+
+        super().replace_dict(repl, symrepl, replace_in_graph)
+        for _, cfg in self.branches:
+            cfg.replace_dict(repl, symrepl, replace_in_graph)
+
+    def to_json(self, parent=None):
+        json = super().to_json(parent)
+        json["branches"] = [(condition.to_json(), cfg.to_json()) for condition, cfg in self.branches]
+        return json
+    
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        cond_region = ConditionalRegion(json_obj["label"])
+        cond_region.is_collapsed = json_obj["collapsed"]
+        cond_region.branches = [(CodeBlock.from_json(condition), ControlFlowRegion.from_json(cfg, context_info=context)) 
+                                for condition, cfg in json_obj["branches"]]
+        return cond_region
