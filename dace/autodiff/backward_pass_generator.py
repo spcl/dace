@@ -8,8 +8,9 @@ import collections
 import copy
 import logging
 import numbers
+import re
 from typing import List, Tuple, Set, Dict, Union, Deque, cast, Optional, Callable, Sequence
-
+import numpy as np
 import dace
 from dace.properties import CodeBlock
 import dace.sdfg.nodes as nodes
@@ -396,7 +397,6 @@ class BackwardPassGenerator:
 
         # connect the new reversed state to the other states correctly
         self._connect_reversed_state(forward_states=self.state_order)
-
         # fill the interstate edges with the correct conditions
         self._fill_interstate_edge_conditions(forward_states=self.state_order)
 
@@ -1048,7 +1048,9 @@ class BackwardPassGenerator:
         # remove the boolean connectors from the map exist and add it to the map entry
         assert backward_map_exist.remove_in_connector(bool_an_out_edge.dst_conn)
         assert backward_map_entry.add_in_connector(bool_an_out_edge.dst_conn)
-
+        
+        #TODO: check after removing connector if there are no more connectors
+        # this is the case where constant assignement only in where too probably
         # get the out connector for this in connector
         out_connector = "afif"
         assert backward_map_exist.remove_out_connector(out_connector)
@@ -1094,7 +1096,202 @@ class BackwardPassGenerator:
 
         # return the new backward state
         return backward_state
+    
+    def _differentiate_code_symbolically(self, code_str: str, forward_state: SDFGState, tasklet: nodes.Tasklet, given_gradients: List[str], required_gradients: List[str],):
+        """
+        
+        """
+        output_exprs = code_to_exprs(code_str, tasklet.in_connectors, tasklet.out_connectors)
 
+        # for each output that an input is used in, there will be an entry for the expression of the
+        # grad in this list in the final code snippet. When we generate the final code for the
+        # reverse tasklet, we need to add them all up.
+        rev_code = collections.defaultdict(list)
+
+        # the outputs of the reversed nodes are the grads of inputs of the original node
+        rev_outputs = set()
+        rev_inputs = set()
+
+        result = BackwardResult(required_grad_names={}, given_grad_names={})
+
+        # symbol generator to use for CSE
+        symbol_generator = sp.numbered_symbols()
+
+        code = ""
+
+        for output_conn in sorted(given_gradients):
+
+            # for each output_conn...
+            for inp in sorted(required_gradients):
+                # ...add the code to generate {inp}_grad
+
+                if inp not in result.required_grad_names:
+                    # pick a name for the gradient
+                    rev_output_grad_name = find_str_not_in_set(rev_outputs, inp + "_gradient")
+                    result.required_grad_names[inp] = rev_output_grad_name
+                    rev_outputs.add(rev_output_grad_name)
+                else:
+                    rev_output_grad_name = result.required_grad_names[inp]
+
+                output_expr = output_exprs[output_conn]
+                # if the expression is a constant assignement, we need to cast the float to the sympy equivalent
+                if type(output_expr) in [np.float64, np.float32, np.float16]:
+                    output_expr = sp.Float(output_expr)
+
+                # symbolically differentiate the output w.r.t inp
+                diff_expr = output_expr.diff(sp.symbols(inp))
+
+                # do common subexpression elimination
+                sub_expressions, diff_expr = sp.cse(diff_expr, symbols=symbol_generator)
+
+                diff_expr = diff_expr[0]
+
+                if diff_expr.atoms(sp.Derivative):
+                    # the final result contains a call to sp.Derivative
+                    raise AutoDiffException("Unable to symbolically differentiate expression: {}".format(
+                        diff_expr.expr))
+
+                if output_conn not in result.given_grad_names:
+                    # pick a name for the input gradient
+                    rev_input_grad_name = find_str_not_in_set(rev_inputs, output_conn + "_gradient")
+                    result.given_grad_names[output_conn] = rev_input_grad_name
+                else:
+                    rev_input_grad_name = result.given_grad_names[output_conn]
+
+                input_symbols = diff_expr.free_symbols\
+                    .union(s for _, e in sub_expressions for s in e.free_symbols)\
+                    .difference(e for e, _ in sub_expressions)
+
+                rev_inputs |= _symbols_to_strings(input_symbols) | {rev_input_grad_name}
+
+                diff_code_str = "{input} * ({diff_expr})".format(input=rev_input_grad_name, diff_expr=str(diff_expr))
+                # small hack: our heaviside is lowercase
+                diff_code_str = diff_code_str.replace("Heaviside", "heaviside")
+
+                diff_code_str = astunparse.unparse(SympyCleaner().visit(ast.parse(diff_code_str)))
+
+                sub_expression_code_strs = "\n".join(f"{target} = {expression}"
+                                                     for target, expression in sub_expressions)
+
+                # get the the final type of the gradient: this is just the type of the input connector we creating the
+                # gradient for
+                cands = list(forward_state.in_edges_by_connector(tasklet, inp))
+                if len(cands) != 1:
+                    raise AutoDiffException(f"Unexpected graph structure, could not find input edge for connector {inp}"
+                                            f" on tasklet {tasklet}")
+
+                converted_code = cast_consts_to_type(diff_code_str, self.sdfg.arrays[cands[0].data.data].dtype)
+                converted_code = converted_code.replace("\n", " ")
+
+                converted_sub_expressions = cast_consts_to_type(sub_expression_code_strs,
+                                                                self.sdfg.arrays[cands[0].data.data].dtype)
+
+                code += converted_sub_expressions + "\n"
+                rev_code[rev_output_grad_name].append(converted_code)
+
+        for output, exprs in sorted(rev_code.items()):
+            code += "\n" + output + " = " + " + ".join(exprs)
+        
+        return code, rev_inputs, rev_outputs, result
+    
+    def _extract_conitional_expressions(self, tasklet_node: nodes.Tasklet):
+        """
+        Given a conditional tasklet node, extract the if and else expressions and return them with the conditional.
+        The else statement could be None in case there is only an if statement. The current supported formats are the following:
+        1 - if cond:
+                out = expression_1
+        which would return ("out = expression_1", None, "if cond")
+        2- out = expression_1 if cond else expression 2
+        """
+
+        tasklet_code = tasklet_node.code.as_string
+
+        # check which type of assignment this is
+        if ":" in tasklet_code:
+            # get the conditional input connector through regular expression matching
+            matches = re.search(r"if (.)*:", tasklet_code)
+            assert matches
+            conditional = matches.group()
+            
+            # remove the conditional from the code to get the expression
+            if_statement = tasklet_code.replace(conditional, "")
+            if_statement = if_statement.replace("\n", "")
+            
+            # remove indentation
+            if_statement = if_statement[3:]
+
+            # extract the in connector only
+            conditional = conditional.replace(":", "")
+            conditional = conditional.replace("if ", "")
+            assert conditional in tasklet_node.in_connectors
+
+            else_statement = None
+
+            # match the out connector
+            matches = re.search(r"^(.)* =", if_statement)
+            assert matches
+            out_connector = matches.group()
+
+            # remove the assingment from the if statement
+            if_statement = if_statement.replace(out_connector, "")
+            
+            # extract the out connector only
+            out_connector = out_connector[1:].replace(" =", "")
+
+        else:
+            # get the conditional input connector through regular expression matching
+            matches = re.search(r"if (.)* else", tasklet_code)
+            assert matches
+            conditional = matches.group()
+
+            # extract the in connector only
+            conditional = conditional.replace("if ", "")
+            conditional = conditional.replace(" else", "")
+            
+            assert conditional in tasklet_node.in_connectors
+
+            # get the if statement by matching what comes before the if until we encounter a paranthesis or =
+            matches = re.search(r"= \((.)* if", tasklet_code)
+            if not matches:
+                # try without the parenthesis
+                matches = re.search(r"= (.)* if", tasklet_code)
+                assert matches 
+
+            if_statement = matches.group()
+
+            # extract the in statement only
+            if_statement = if_statement.replace("= (", "")
+            if_statement = if_statement.replace(" if", "")
+
+            # get the else statement by matching the else and what comes after it until we encounter a paranthesis
+            matches = re.search(r"else (.)*\)", tasklet_code)
+            assert matches
+            else_statement = matches.group()
+
+            # extract the in statement only
+            else_statement = else_statement.replace("else ", "")
+
+            # remove the last closing parenthesis if it exists
+            if else_statement.endswith(")"):
+                else_statement = else_statement[:-1]
+        
+            # match the out connector
+            matches = re.search(r"^(.)* =", tasklet_code)
+            assert matches
+            out_connector = matches.group()
+
+            # extract the in statement only
+            out_connector = out_connector.replace(" =", "")
+
+        # sanity check this should be in the out connectors of the tasklet
+        assert out_connector in tasklet_node.out_connectors
+
+        # create the return expressions
+        if_expression = f"{out_connector} = {if_statement}"
+        else_expression = f"{out_connector} = {else_statement}" if else_statement else None
+        
+        return if_expression, else_expression, conditional
+    
     def _conditional_tasklet(self, tasklet_node: nodes.Tasklet):
         """
         Checks if this tasklet contains a conditional. 
@@ -1392,8 +1589,9 @@ class BackwardPassGenerator:
                 ]
 
                 # input names on the forward node that gradients should be generated for
+                # note that the edge for the conditional is not included
                 required_gradients = [
-                    edge.dst_conn for edge in subgraph.in_edges(node) if _path_src_node_in_subgraph(edge, subgraph)
+                    edge.dst_conn for edge in subgraph.in_edges(node) if _path_src_node_in_subgraph(edge, subgraph) and self.sdfg.arrays[edge.data.data].dtype != dace.bool
                 ]
 
                 reversed_node, backward_result = self._get_reverse_node(forward_state, backward_state, node,
@@ -1484,6 +1682,7 @@ class BackwardPassGenerator:
                     # extract the conditional assignement block or fail if this is an unexpected structure
                     conditional_block, bool_an, target_an  = self._extract_conditional_array_assignement_block(forward_state=forward_state, tasklet_node=node)
                     
+                    self.sdfg.save("log_sdfgs/where_debug_before_connecting.sdfg")
                     # use the conditionals to zero-out the assigned values in the gradients
                     backward_state = self._zero_out_conditional_assingement(forward_state=forward_state, backward_state=backward_state, target_an=target_an, bool_an=bool_an)
                     
@@ -3030,103 +3229,51 @@ class BackwardPassGenerator:
 
         code_str = tasklet.code.as_string
         
-        # check that if this is a conditional tasklet
+        # check if this is a conditional tasklet
         if self._conditional_tasklet(tasklet):
-            raise AutoDiffException("Conditional tasklet assignement support is in progress")
+            # we want to extract the if and else expressions and pass them to sympy
+            if_expression, else_expression, conditional = self._extract_conitional_expressions(tasklet)
         
-        output_exprs = code_to_exprs(code_str, tasklet.in_connectors, tasklet.out_connectors)
+            if_code, if_rev_inputs, if_rev_outputs, if_result = self._differentiate_code_symbolically(if_expression, state, tasklet, given_gradients, required_gradients)
 
-        # for each output that an input is used in, there will be an entry for the expression of the
-        # grad in this list in the final code snippet. When we generate the final code for the
-        # reverse tasklet, we need to add them all up.
-        rev_code = collections.defaultdict(list)
+            if else_expression:
+                else_code, else_rev_inputs, else_rev_outputs, else_result = self._differentiate_code_symbolically(else_expression, state, tasklet, given_gradients, required_gradients)
+                assert else_rev_inputs == if_rev_inputs
+                assert if_rev_outputs == else_rev_outputs
+                assert else_result == if_result
 
-        # the outputs of the reversed nodes are the grads of inputs of the original node
-        rev_outputs = set()
-        rev_inputs = set()
+            # prepare the tasklet code depending on the conditional type                
+            # add the same conditional to the if_code
+            # first, add indentation
+            if_code = if_code.replace("\n", "\n\t")
+            if_code = f"if {conditional}:\n{if_code}"
 
-        result = BackwardResult(required_grad_names={}, given_grad_names={})
+            # add the conditional to the in connectors
+            if_rev_inputs.add(conditional)
+            joint_code = if_code
+            
+            if ":" not in code_str:
+                # only an if in the original code
+                assert else_expression
+                else_code = else_code.replace("\n", "\n\t")
+                else_code = f"else:\n{else_code}"
+                joint_code = f"{if_code}\n{else_code}"
 
-        # symbol generator to use for CSE
-        symbol_generator = sp.numbered_symbols()
-
-        code = ""
-
-        for output_conn in sorted(given_gradients):
-
-            # for each output_conn...
-            for inp in sorted(required_gradients):
-                # ...add the code to generate {inp}_grad
-
-                if inp not in result.required_grad_names:
-                    # pick a name for the gradient
-                    rev_output_grad_name = find_str_not_in_set(rev_outputs, inp + "_gradient")
-                    result.required_grad_names[inp] = rev_output_grad_name
-                    rev_outputs.add(rev_output_grad_name)
-                else:
-                    rev_output_grad_name = result.required_grad_names[inp]
-
-                output_expr = output_exprs[output_conn]
-
-                # symbolically differentiate the output w.r.t inp
-                diff_expr = output_expr.diff(sp.symbols(inp))
-
-                # do common subexpression elimination
-                sub_expressions, diff_expr = sp.cse(diff_expr, symbols=symbol_generator)
-
-                diff_expr = diff_expr[0]
-
-                if diff_expr.atoms(sp.Derivative):
-                    # the final result contains a call to sp.Derivative
-                    raise AutoDiffException("Unable to symbolically differentiate expression: {}".format(
-                        diff_expr.expr))
-
-                if output_conn not in result.given_grad_names:
-                    # pick a name for the input gradient
-                    rev_input_grad_name = find_str_not_in_set(rev_inputs, output_conn + "_gradient")
-                    result.given_grad_names[output_conn] = rev_input_grad_name
-                else:
-                    rev_input_grad_name = result.given_grad_names[output_conn]
-
-                input_symbols = diff_expr.free_symbols\
-                    .union(s for _, e in sub_expressions for s in e.free_symbols)\
-                    .difference(e for e, _ in sub_expressions)
-
-                rev_inputs |= _symbols_to_strings(input_symbols) | {rev_input_grad_name}
-
-                diff_code_str = "{input} * ({diff_expr})".format(input=rev_input_grad_name, diff_expr=str(diff_expr))
-                # small hack: our heaviside is lowercase
-                diff_code_str = diff_code_str.replace("Heaviside", "heaviside")
-
-                diff_code_str = astunparse.unparse(SympyCleaner().visit(ast.parse(diff_code_str)))
-
-                sub_expression_code_strs = "\n".join(f"{target} = {expression}"
-                                                     for target, expression in sub_expressions)
-
-                # get the the final type of the gradient: this is just the type of the input connector we creating the
-                # gradient for
-                cands = list(state.in_edges_by_connector(tasklet, inp))
-                if len(cands) != 1:
-                    raise AutoDiffException(f"Unexpected graph structure, could not find input edge for connector {inp}"
-                                            f" on tasklet {tasklet}")
-
-                converted_code = cast_consts_to_type(diff_code_str, self.sdfg.arrays[cands[0].data.data].dtype)
-                converted_code = converted_code.replace("\n", " ")
-
-                converted_sub_expressions = cast_consts_to_type(sub_expression_code_strs,
-                                                                self.sdfg.arrays[cands[0].data.data].dtype)
-
-                code += converted_sub_expressions + "\n"
-                rev_code[rev_output_grad_name].append(converted_code)
-
-        for output, exprs in sorted(rev_code.items()):
-            code += "\n" + output + " = " + " + ".join(exprs)
-        rev = nodes.Tasklet("_" + tasklet.label + "_reverse_",
-                            inputs=rev_inputs,
-                            outputs=rev_outputs,
-                            code=code,
+            rev = nodes.Tasklet("_" + tasklet.label + "_reverse_",
+                            inputs=if_rev_inputs,
+                            outputs=if_rev_outputs,
+                            code=joint_code,
                             debuginfo=tasklet.debuginfo)
-        backward_state.add_node(rev)
+            
+            result = if_result
+        else:
+            code, rev_inputs, rev_outputs, result = self._differentiate_code_symbolically(code_str, state, tasklet, given_gradients, required_gradients)
+            rev = nodes.Tasklet("_" + tasklet.label + "_reverse_",
+                                inputs=rev_inputs,
+                                outputs=rev_outputs,
+                                code=code,
+                                debuginfo=tasklet.debuginfo)
+            backward_state.add_node(rev)
         return rev, result
 
 
