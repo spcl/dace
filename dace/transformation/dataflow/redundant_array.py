@@ -368,11 +368,8 @@ class RedundantArray(pm.SingleStateTransformation):
                 return True
 
         # Find occurrences in this and other states
-        occurrences = []
-        for state in sdfg.nodes():
-            occurrences.extend(
-                [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data])
-        for isedge in sdfg.edges():
+        occurrences = [n for n in sdfg.data_nodes() if n.data == in_array.data]
+        for isedge in sdfg.all_interstate_edges():
             if in_array.data in isedge.data.free_symbols:
                 occurrences.append(isedge)
 
@@ -811,11 +808,8 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 return False
 
         # Find occurrences in this and other states
-        occurrences = []
-        for state in sdfg.nodes():
-            occurrences.extend(
-                [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_array.data])
-        for isedge in sdfg.edges():
+        occurrences = [n for n in sdfg.data_nodes() if n.data == out_array.data]
+        for isedge in sdfg.all_interstate_edges():
             if out_array.data in isedge.data.free_symbols:
                 occurrences.append(isedge)
 

@@ -8,9 +8,11 @@ from dace import data as dt, sdfg, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, SDFG, SDFGState
 from dace.sdfg import utils as sdutil
+from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import transformation
 
 
+@transformation.experimental_cfg_block_compatible
 class EndStateElimination(transformation.MultiStateTransformation):
     """
     End-state elimination removes a redundant state that has one incoming edge
@@ -48,18 +50,19 @@ class EndStateElimination(transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, _, sdfg):
+    def apply(self, graph, sdfg):
         state = self.end_state
         # Handle orphan symbols (due to the deletion the incoming edge)
-        edge = sdfg.in_edges(state)[0]
+        edge = graph.in_edges(state)[0]
         sym_assign = edge.data.assignments.keys()
-        sdfg.remove_node(state)
+        graph.remove_node(state)
         # Remove orphan symbols
         for sym in sym_assign:
             if sym in sdfg.free_symbols:
                 sdfg.remove_symbol(sym)
 
 
+@transformation.experimental_cfg_block_compatible
 class StartStateElimination(transformation.MultiStateTransformation):
     """
     Start-state elimination removes a redundant state that has one outgoing edge
@@ -105,14 +108,14 @@ class StartStateElimination(transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, _, sdfg):
+    def apply(self, graph, sdfg):
         state = self.start_state
         # Move assignments to the nested SDFG node's symbol mappings
         node = sdfg.parent_nsdfg_node
-        edge = sdfg.out_edges(state)[0]
+        edge = graph.out_edges(state)[0]
         for k, v in edge.data.assignments.items():
             node.symbol_mapping[k] = v
-        sdfg.remove_node(state)
+        graph.remove_node(state)
 
 
 def _assignments_to_consider(sdfg, edge, is_constant=False):
@@ -134,6 +137,7 @@ def _assignments_to_consider(sdfg, edge, is_constant=False):
     return assignments_to_consider
 
 
+@transformation.experimental_cfg_block_compatible
 class StateAssignElimination(transformation.MultiStateTransformation):
     """
     State assign elimination removes all assignments into the final state
@@ -169,7 +173,7 @@ class StateAssignElimination(transformation.MultiStateTransformation):
 
         # Otherwise, ensure the symbols are never set/used again in edges
         akeys = set(assignments_to_consider.keys())
-        for e in sdfg.edges():
+        for e in sdfg.all_interstate_edges():
             if e is edge:
                 continue
             if e.data.free_symbols & akeys:
@@ -177,7 +181,7 @@ class StateAssignElimination(transformation.MultiStateTransformation):
                 return False
 
         # If used in any state that is not the current one, fail
-        for s in sdfg.nodes():
+        for s in sdfg.states():
             if s is state:
                 continue
             if s.free_symbols & akeys:
@@ -186,9 +190,9 @@ class StateAssignElimination(transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, _, sdfg):
+    def apply(self, graph, sdfg):
         state = self.end_state
-        edge = sdfg.in_edges(state)[0]
+        edge = graph.in_edges(state)[0]
         # Since inter-state assignments that use an assigned value leads to
         # undefined behavior (e.g., {m: n, n: m}), we can replace each
         # assignment separately.
@@ -204,7 +208,7 @@ class StateAssignElimination(transformation.MultiStateTransformation):
             # Remove assignments from edge
             del edge.data.assignments[varname]
 
-            for e in sdfg.edges():
+            for e in sdfg.all_interstate_edges():
                 if varname in e.data.free_symbols:
                     break
             else:
@@ -232,6 +236,7 @@ def _alias_assignments(sdfg, edge):
     return assignments_to_consider
 
 
+@transformation.single_level_sdfg_only
 class SymbolAliasPromotion(transformation.MultiStateTransformation):
     """
     SymbolAliasPromotion moves inter-state assignments that create symbolic
@@ -344,6 +349,7 @@ class SymbolAliasPromotion(transformation.MultiStateTransformation):
             in_edge.assignments[k] = v
 
 
+@transformation.single_level_sdfg_only
 class HoistState(transformation.SingleStateTransformation):
     """ Move a state out of a nested SDFG """
     nsdfg = transformation.PatternNode(nodes.NestedSDFG)
@@ -502,6 +508,7 @@ class HoistState(transformation.SingleStateTransformation):
         nsdfg.sdfg.start_state = nsdfg.sdfg.node_id(nisedge.dst)
 
 
+@transformation.experimental_cfg_block_compatible
 class TrueConditionElimination(transformation.MultiStateTransformation):
     """
     If a state transition condition is always true, removes condition from edge.
@@ -530,13 +537,14 @@ class TrueConditionElimination(transformation.MultiStateTransformation):
 
         return False
 
-    def apply(self, _, sdfg: SDFG):
+    def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
         a: SDFGState = self.state_a
         b: SDFGState = self.state_b
-        edge = sdfg.edges_between(a, b)[0]
+        edge = graph.edges_between(a, b)[0]
         edge.data.condition = CodeBlock("1")
 
 
+@transformation.experimental_cfg_block_compatible
 class FalseConditionElimination(transformation.MultiStateTransformation):
     """
     If a state transition condition is always false, removes edge.
@@ -574,8 +582,8 @@ class FalseConditionElimination(transformation.MultiStateTransformation):
 
         return False
 
-    def apply(self, _, sdfg: SDFG):
+    def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
         a: SDFGState = self.state_a
         b: SDFGState = self.state_b
-        edge = sdfg.edges_between(a, b)[0]
+        edge = graph.edges_between(a, b)[0]
         sdfg.remove_edge(edge)

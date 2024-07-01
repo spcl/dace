@@ -3,9 +3,10 @@
 import ast
 from dataclasses import dataclass
 from dace.frontend.python import astutils
+from dace.sdfg.analysis import cfg
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes, utils as sdutil
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace.cli.progress import optional_progressbar
 from dace import data, SDFG, SDFGState, dtypes, symbolic, properties
 from typing import Any, Dict, Set, Optional, Tuple
@@ -18,6 +19,7 @@ class _UnknownValue:
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class ConstantPropagation(ppl.Pass):
     """
     Propagates constants and symbols that were assigned to one value forward through the SDFG, reducing
@@ -192,7 +194,7 @@ class ConstantPropagation(ppl.Pass):
             result[start_state].update(initial_symbols)
 
         # Traverse SDFG topologically
-        for state in optional_progressbar(sdfg.topological_sort(start_state), 'Collecting constants',
+        for state in optional_progressbar(cfg.stateorder_topological_sort(sdfg), 'Collecting constants',
                                           sdfg.number_of_nodes(), self.progress):
             # NOTE: We must always check the start-state regardless if there are initial symbols. This is necessary
             # when the start-state is a scope's guard instead of a special initialization state, i.e., when the start-

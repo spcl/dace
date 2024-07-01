@@ -23,6 +23,7 @@ def offset(memlet_subset_ranges, value):
     return (memlet_subset_ranges[0] + value, memlet_subset_ranges[1] + value, memlet_subset_ranges[2])
 
 
+@transformation.single_level_sdfg_only
 class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
     """
     Moves a loop around a map into the map

@@ -8,6 +8,7 @@ from dace.transformation import transformation
 
 
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class FPGATransformSDFG(transformation.MultiStateTransformation):
     """ Implements the FPGATransformSDFG transformation, which takes an entire
         SDFG and transforms it into an FPGA-capable SDFG. """
