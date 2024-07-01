@@ -60,6 +60,7 @@ from .lift_einsum import LiftEinsum
 from .map_distribution import (ElementWiseArrayOperation, ElementWiseArrayOperation2D, RedundantComm2D)
 
 # GPU Abstract Machine Model Guided Parametric Transformations
-from .add_block_schedule import AddBlockSchedule
-from .thread_block_map_range_change import ThreadBlockMapRangeChange
-from .thread_tiling import ThreadTiling
+from .add_thread_block_map import AddThreadBlockMap
+from .change_thread_block_map import ChangeThreadBlockMap
+from .thread_coarsening import ThreadCoarsening
+from .block_coarsening import BlockCoarsening

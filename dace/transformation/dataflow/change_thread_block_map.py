@@ -13,7 +13,7 @@ from dace import dtypes
 from dace import subsets
 
 @make_properties
-class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
+class ChangeThreadBlockMap(transformation.SingleStateTransformation):
     """
     Changes the range and step size of a thread block scheduled map
     """
@@ -59,17 +59,15 @@ class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
         dev_map : nodes.Map = dev_entry.map
         block_map : nodes.Map = block_entry.map
 
-        new_block_dimensions = None
+
         # The thread block sizes depend on the number of dimensions we have
         # GPU code gen maps the params i0:...,i1:...,i2:... respectively to blockDim.z,.y,.x
-        new_block_dimensions = None
-        if len(dev_entry.map.params) >= 3:
-            new_block_dimensions = (self.dim_size_z, self.dim_size_y, self.dim_size_x)
-        elif len(dev_entry.map.params) == 2:
-            new_block_dimensions = (self.dim_size_y, self.dim_size_x, 1)
-        else: #1, 0 is impossible
-            new_block_dimensions = (self.dim_size_x, 1, 1)
-
+        new_block_dimensions = [1, 1, 1]
+        dims = [self.dim_size_z, self.dim_size_y, self.dim_size_x]
+        for i in range(min(3, len(dev_entry.map.range)), 0, -1):
+            ri = min(3, len(dev_entry.map.params)) - i
+            new_block_dimensions[ri] = dims[-i]
+    
         # Step 1. Update step sizes of device map
         dev_old_step_sizes = []
 
@@ -79,20 +77,18 @@ class ThreadBlockMapRangeChange(transformation.SingleStateTransformation):
             dev_old_step_sizes.append(step)
             dev_map.range[i] = (beg, end, new_block_dimensions[i])
 
-        # Step 2. Update the range of the thread block map (end)
+        # Step 2. Update the range of the thread block map
         block_ranges : List[subsets.Range] = block_map.range
         block_steps = []
         new_thread_block_map_range_str = ""
         for i, (dev_range, block_range) in enumerate(zip(dev_ranges, block_ranges)):
-            (_, dev_end, _) = dev_range
+            (_, dev_end, dev_step) = dev_range
             (block_beg, _, block_step) = block_range
-            new_block_dim = new_block_dimensions[i]
             block_steps.append(block_step)
-            new_thread_block_map_range_str += f"{block_beg}:{dev_end}+1:{block_step}"
+            new_thread_block_map_range_str += f"{block_beg}:Min({dev_end}+1, {block_beg}+{dev_step}):{block_step}"
             new_thread_block_map_range_str += ", "
         block_map.range = subsets.Range.from_string(new_thread_block_map_range_str[:-2])
 
-        # TODO: Improve volume and subset computation
         # Step 3. Propagate memlets
         # In the device Map the step size has changed.
         # 1. The input  volume of the memlets of the device map are not changed
