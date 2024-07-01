@@ -3126,16 +3126,10 @@ class ConditionalRegion(ControlFlowBlock):
         self.branches: List[Tuple[CodeBlock, ControlFlowRegion]] = []
     
     def nodes(self) -> List['ControlFlowBlock']:
-        return [node for branch in self.branches for node in branch[1].nodes()]
+        return [node for _, node in self.branches]
 
     def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
-        return [edge for branch in self.branches for edge in branch[1].edges()]
-    
-    def node_id(self, node: ControlFlowBlock) -> int:
-        try:
-            return self.nodes().index(node)
-        except ValueError:
-            raise NodeNotFoundError(node)
+        return []
     
     def _used_symbols_internal(self,
                             all_symbols: bool,
@@ -3191,3 +3185,40 @@ class ConditionalRegion(ControlFlowBlock):
         cond_region.branches = [(CodeBlock.from_json(condition), ControlFlowRegion.from_json(cfg, context_info=context)) 
                                 for condition, cfg in json_obj["branches"]]
         return cond_region
+    
+    def inline(self) -> Tuple[bool, Any]:
+        """
+        Inlines the conditional region into its parent control flow region.
+
+        :return: True if the inlining succeeded, false otherwise.
+        """
+        parent = self.parent_graph
+        if not parent:
+            raise RuntimeError('No top-level SDFG present to inline into')
+
+        # Add all boilerplate states necessary for the structure.
+        guard_state = parent.add_state(self.label + '_guard')
+        end_state = parent.add_state(self.label + '_end')
+
+        # Redirect all edges to the region to the init state.
+        for b_edge in parent.in_edges(self):
+            parent.add_edge(b_edge.src, guard_state, b_edge.data)
+            parent.remove_edge(b_edge)
+        # Redirect all edges exiting the region to instead exit the end state.
+        for a_edge in parent.out_edges(self):
+            parent.add_edge(end_state, a_edge.dst, a_edge.data)
+            parent.remove_edge(a_edge)
+
+        from dace.sdfg.sdfg import InterstateEdge
+        for condition, cfg in self.branches:
+            parent.add_node(cfg)
+            parent.add_edge(guard_state, cfg, InterstateEdge(condition=condition))
+            parent.add_edge(cfg, end_state, InterstateEdge())
+
+        parent.remove_node(self)
+
+        sdfg = parent if isinstance(parent, dace.SDFG) else parent.sdfg
+        sdfg.reset_cfg_list()
+
+        return True, (guard_state, end_state)
+
