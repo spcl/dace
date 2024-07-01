@@ -55,6 +55,40 @@ def test_serialization():
         assert condition == CodeBlock(f"i == {j}")
         assert cfg.label == f"cfg_{j}"
 
+def test_if_else():
+    sdfg = dace.SDFG('regular_if_else')
+    sdfg.add_array("A", (1,), dace.float32)
+    sdfg.add_symbol("i", dace.int32)
+    state0 = sdfg.add_state('state0', is_start_block=True)
+    
+    if1 = ConditionalRegion("if1")
+    sdfg.add_node(if1)
+    sdfg.add_edge(state0, if1, InterstateEdge())
+
+    if_body = ControlFlowRegion("if_body", sdfg=sdfg)
+    state1 = if_body.add_state("state1", is_start_block=True)
+    acc_a = state1.add_access('A')
+    t1 = state1.add_tasklet("t1", None, {"a"}, "a = 100")
+    state1.add_edge(t1, 'a', acc_a, None, dace.Memlet('A[0]'))
+    if1.branches.append((CodeBlock("i == 1"), if_body))
+
+    else_body = ControlFlowRegion("else_body", sdfg=sdfg)
+    state2 = else_body.add_state("state1", is_start_block=True)
+    acc_a2 = state2.add_access('A')
+    t2 = state2.add_tasklet("t1", None, {"a"}, "a = 200")
+    state2.add_edge(t2, 'a', acc_a2, None, dace.Memlet('A[0]'))
+    if1.branches.append((CodeBlock("i == 0"), else_body))
+    
+    assert sdfg.is_valid()
+    A = np.ones((1,), dtype=np.float32)
+    sdfg(i=1, A=A)
+    assert A[0] == 100
+
+    A = np.ones((1,), dtype=np.float32)
+    sdfg(i=0, A=A)
+    assert A[0] == 200    
+
 if __name__ == '__main__':
     test_cond_region_if()
     test_serialization()
+    test_if_else()
