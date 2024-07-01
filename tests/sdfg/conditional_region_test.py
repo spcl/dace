@@ -26,21 +26,14 @@ def test_cond_region_if():
     t1 = state1.add_tasklet("t1", None, {"a"}, "a = 100")
     state1.add_edge(t1, 'a', acc_a, None, dace.Memlet('A[0]'))
     
-    def assertions(sdfg):
-        assert sdfg.is_valid()
-        A = np.ones((1,), dtype=np.float32)
-        sdfg(i=1, A=A)
-        assert A[0] == 100
+    assert sdfg.is_valid()
+    A = np.ones((1,), dtype=np.float32)
+    sdfg(i=1, A=A)
+    assert A[0] == 100
 
-        A = np.ones((1,), dtype=np.float32)
-        sdfg(i=0, A=A)
-        assert A[0] == 1
-    
-    assertions(sdfg)
-
-    json = sdfg.to_json()
-    new_sdfg = SDFG.from_json(json)
-    assertions(new_sdfg)
+    A = np.ones((1,), dtype=np.float32)
+    sdfg(i=0, A=A)
+    assert A[0] == 1
 
 def test_serialization():
     sdfg = SDFG("test_serialization")
