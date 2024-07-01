@@ -160,7 +160,7 @@ class TrivialMapPseudoInitEliminationTest(unittest.TestCase):
 
         count = graph.apply_transformations(TrivialMapElimination, validate=False, validate_all=False)
         graph.validate()
-        graph.view()
+        #graph.view()
 
         self.assertGreater(count, 0)
 
