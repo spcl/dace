@@ -75,7 +75,7 @@ def test_if_else():
     else_body = ControlFlowRegion("else_body", sdfg=sdfg)
     state2 = else_body.add_state("state1", is_start_block=True)
     acc_a2 = state2.add_access('A')
-    t2 = state2.add_tasklet("t1", None, {"a"}, "a = 200")
+    t2 = state2.add_tasklet("t2", None, {"a"}, "a = 200")
     state2.add_edge(t2, 'a', acc_a2, None, dace.Memlet('A[0]'))
     if1.branches.append((CodeBlock("i == 0"), else_body))
     
