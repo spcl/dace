@@ -95,7 +95,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         # Thread block map is i0,i1,i2,i3
         # Which maps to           z, y, x
         # If more the 3 parameters they are linearized
-        for i in range(1, len(thread_map.params)+1, 1):
+        for i in range(len(thread_map.params), 0, -1):
             (beg, _, step) = thread_map.range[-i]
             (_, _, tstep) = thread_block_entry.map.range[-i]
             (_, dev_end, _) = dev_entry.map.range[-i]

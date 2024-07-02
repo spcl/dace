@@ -64,25 +64,34 @@ class BlockCoarsening(transformation.SingleStateTransformation):
         bx = self.block_iter_x
         by = self.block_iter_y
         bz = self.block_iter_z
+        possible_block_iters = [bz, by, bx]
 
         # Map the block iterations (bx, by, bz) to the mapranges
         # In code-gen i0=...,i1=...,i2=...,i3=... is mapped to block dimensions as
         # i0xi1 -> z, i2 -> y, i3 -> x. If less than 2 or 1 then to x,y or x respectively
         block_iterations = [1, 1, 1]
-        possible_block_iters = [bz, by, bx]
         for i in range(min(3, len(thread_block_entry.map.params)), 0, -1):
             ri = min(3, len(thread_block_entry.map.params)) - i
             block_iterations[ri] = possible_block_iters[-i]
-        # Pad such that it has form (dX, dY, 1) if len <3
-        block_iterations += [1] * (3 - len(block_iterations))
 
-        # Update inner tile sizes, starting from the highest possible tile size (up to 3 for GPU dimensions)
-        # The non-one tile sizes are set by the ThreadTiling transformation
-        inner_tile_sizes = [1, 1, 1]
+        thread_tile_sizes = [1, 1, 1]
+        for i in range(min(3, len(thread_block_entry.map.params)), 0, -1):
+            ri = min(3, len(thread_block_entry.map.params)) - i
+            thread_tile_sizes[ri] = thread_block_entry.map.range[-i][2]
+
+        saved_block_strides = [1, 1, 1]
+        for i in range(min(3, len(dev_entry.map.params)), 0, -1):
+            ri = min(3, len(dev_entry.map.params)) - i
+            saved_block_strides[ri] = dev_entry.map.range[-i][2] # Get step size of Dev map, it is same as the block stride
+
+        # Save the current step sizes of the thread block as map tiling changes is incorrectly as we rely on different strides
+        # Which is not implemented
+        saved_thread_block_steps = [1, 1, 1]
+        assert(len(dev_entry.map.range) >= len(thread_block_entry.map.range))
         for i in range(min(3, len(thread_block_entry.map.range)), 0, -1):
             ri = min(3, len(thread_block_entry.map.range)) - i
-            (_, _, step) = thread_block_entry.map.range[-i]
-            inner_tile_sizes[ri] = step
+            (_, _, thread_block_step) = thread_block_entry.map.range[-i]
+            saved_thread_block_steps[ri] = thread_block_step
 
         # We need to change the step sized and ranges according to the following formula, here only for first dimension X,
         # Implementation is same for every dimensions, before the trasnformation the map ranges are as follows:
@@ -95,20 +104,8 @@ class BlockCoarsening(transformation.SingleStateTransformation):
         # GPU_ThreadBlock: [g=d:N:dX]
         # Sequential(BlockCoarsening): [b=g:N:blockDim.x*dX]
         # Sequential(ThreadCoarsening): [t=b:Min(N, t+dX):1]
-
-        # The strides for the block iterations can be computed by the tile size (steps sizes of thread block schedule)
-        # And the step size of the device schedule map devStep.x // threadBlockStep.x gives the exact number of threads
-        block_strides = [1, 1, 1]
-        saved_thread_block_steps = [1, 1, 1]
-        assert(len(dev_entry.map.range) >= len(thread_block_entry.map.range))
-        for i in range(min(3, len(thread_block_entry.map.range)), 0, -1):
-            ri = min(3, len(thread_block_entry.map.range)) - i
-            (_, _, block_step) = sequential_entry.map.range[-i]
-            (_, _, dev_step) = dev_entry.map.range[-i]
-            (_, _, thread_block_step) = thread_block_entry.map.range[-i]
-            saved_thread_block_steps[ri] = thread_block_step
-            block_strides[ri] = dev_step
-            assert(dev_step % block_step == 0)
+        # bX = block_iteration
+        # blockDim.x = block_stride
 
         # block_strides != tile_sizes is not implemented, we will update them in this transformation
         MapTiling.apply_to(sdfg=sdfg, options=dict(prefix="s", tile_sizes=block_iterations, tile_trivial=True),  map_entry=thread_block_entry)
@@ -120,28 +117,45 @@ class BlockCoarsening(transformation.SingleStateTransformation):
         thread_block_entry = graph.entry_node(thread_block_entry)
 
         # The hierarchy now is: dev_entry -> thread_block_entry -> grid_strided_entry -> sequential_entry
-        # Update step size of dev_entry, need to update volumes and subsets accordingly 
+        # Dev_step = block_iterations * old dev_step
         for i in range(min(3, len(dev_entry.map.range)), 0, -1):
             ri = min(3, len(dev_entry.map.range)) - i
             (dev_beg, dev_end, dev_step) = dev_entry.map.range[-i]
             iter_count = block_iterations[ri]
             dev_entry.map.range[-i] = (dev_beg, dev_end, dev_step * iter_count)
 
-        # Assign the step size of block scheduled map as the saved sizes, map tiling changes this falsely
-        for i in range(min(3, len(thread_block_entry.map.range)), 0, -1):
-            (thread_block_beg, thread_block_end, _) = thread_block_entry.map.range[-i]
-            thread_block_entry.map.range[-i] = (thread_block_beg, thread_block_end, saved_thread_block_steps[-i])
+        # Assign the step size and range of block scheduled map as. Dev step is update at this point
+        range_str = ""
+        for i in range(len(thread_block_entry.map.range), 0, -1):
+            if i <= 3:
+                ri = 3 - i
+                (thread_block_beg, _, _) = thread_block_entry.map.range[-i]
+                (_, dev_end, dev_step) = dev_entry.map.range[-i]
+                range_str += f"{thread_block_beg}:Min({dev_end}+1, {thread_block_beg} + {dev_step}):{saved_thread_block_steps[ri]}, "
+            else:
+                (beg, end, step) = thread_block_entry.map.range[-i]
+                range_str += f"{beg}:{end}:{step}, "
+        thread_block_entry.map.range = subsets.Range.from_string(range_str[:-2])
 
         # Update step size of the grided strided (block-coarsened) map
         # Only the innermost map needs the minimum computation, and the current range needs to change as well, update it
+        # [b=g:N:blockDim.x*dX] can be implemented as [b=g:Min(N, g + dev_step):blockDim.x*dX], dev_step = blockDim.x*dX*bX
         range_str = ""
-        for i in range(min(3, len(grid_strided_entry.map.range)), 0, -1):
-            ri = min(3, len(dev_entry.map.range)) - i
-            blockDims = dev_entry.map.gpu_block_size
-            (_, dev_end, _) = dev_entry.map.range[-i]
+        for i in range(len(grid_strided_entry.map.range), 0, -1):
+            (_, dev_end, dev_step) = dev_entry.map.range[-i]
             (grid_strided_beg, _, _) = grid_strided_entry.map.range[-i]
-            iter_count = block_iterations[ri]
-            range_str += f"{grid_strided_beg}:Min({dev_end},{grid_strided_beg}+({iter_count}*{saved_thread_block_steps[-i] * blockDims[ri]})-1)+1:{saved_thread_block_steps[-i] * blockDims[ri]}, "
+            # Only the last 3 dimensions are affected by the step and range changes
+            if i <= 3:
+                ri = 3 - i
+                # We iterate i0, i1, i2, i3
+                #                 z,  y,  x | are blocks
+                # When we are the at the last 3 elements, we need to access the block_sizes that are saved as [x, y, z]
+                block_dim = dev_entry.map.gpu_block_size[i-1]
+                tile_size = thread_tile_sizes[ri]
+            else:
+                block_dim = 1
+                tile_size = 1
+            range_str += f"{grid_strided_beg}:Min({dev_end}+1,{grid_strided_beg}+{dev_step}):{tile_size * block_dim}, "
         grid_strided_entry.map.range = subsets.Range.from_string(range_str[:-2])
 
         # TODO: Extend this to multiple edges
@@ -152,10 +166,11 @@ class BlockCoarsening(transformation.SingleStateTransformation):
             u, u_conn, v, v_conn, memlet = edge
             new_volume = memlet.volume
             range_str = ""
-            for i, (dev_range, block_range) in enumerate(zip(dev_entry.map.range, thread_block_entry.map.range)):
-                (dev_beg, dev_end, dev_step) = dev_range
-                (block_beg, _, _) = block_range
-                new_volume *= block_iterations[i]
+            for i in range(min(3, len(grid_strided_entry.map.range)), 0, -1):
+                ri = min(3, len(dev_entry.map.range)) - i
+                (dev_beg, dev_end, dev_step) = dev_entry.map.range[-i]
+                (block_beg, _, _) = thread_block_entry.map.range[-i]
+                new_volume *= block_iterations[ri]
                 range_str += f"{block_beg}:{block_beg}+{dev_step}, "
             memlet.volume = new_volume
             memlet._subset = subsets.Range.from_string(range_str[:-2])
