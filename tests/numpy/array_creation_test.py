@@ -77,6 +77,7 @@ def test_zeros_like(A: dace.complex64[N, M, 2]):
     return np.zeros_like(A)
 
 
+# TODO: FIX ME
 @compare_numpy_output()
 def test_full():
     return np.full([N, N], fill_value=np.complex32(5 + 6j))
