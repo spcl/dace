@@ -2507,14 +2507,15 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             block_to_state_map: Dict[ControlFlowBlock, SDFGState] = dict()
             for node in self.nodes():
                 node.label = self.label + '_' + node.label
-                parent.add_node(node, ensure_unique_name=True)
                 if isinstance(node, ReturnBlock) and isinstance(parent, dace.SDFG):
                     # If a return block is being inlined into an SDFG, convert it into a regular state. Otherwise it
                     # remains as-is.
                     newnode = parent.add_state(node.label)
                     block_to_state_map[node] = newnode
-                elif self.out_degree(node) == 0 and not isinstance(node, (BreakBlock, ContinueBlock)):
-                    to_connect.add(node)
+                else:
+                    parent.add_node(node, ensure_unique_name=True)
+                    if self.out_degree(node) == 0 and not isinstance(node, (BreakBlock, ContinueBlock, ReturnBlock)):
+                        to_connect.add(node)
 
             # Add all region edges.
             for edge in self.edges():
@@ -2534,6 +2535,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             for node in to_connect:
                 parent.add_edge(node, end_state, dace.InterstateEdge())
             
+            # NOTE: this should be unnecessesary
             if parent.in_degree(end_state) == 0:
                 parent.remove_node(end_state)
 
@@ -3213,9 +3215,12 @@ class ConditionalRegion(ControlFlowBlock):
 
         from dace.sdfg.sdfg import InterstateEdge
         for condition, cfg in self.branches:
-            parent.add_node(cfg)
-            parent.add_edge(guard_state, cfg, InterstateEdge(condition=condition))
-            parent.add_edge(cfg, end_state, InterstateEdge())
+            if cfg.number_of_nodes() > 0:
+                parent.add_node(cfg)
+                parent.add_edge(guard_state, cfg, InterstateEdge(condition=condition))
+                parent.add_edge(cfg, end_state, InterstateEdge())
+            else:
+                parent.add_edge(guard_state, end_state, InterstateEdge(condition=condition))
 
         parent.remove_node(self)
 
