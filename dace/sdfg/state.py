@@ -2513,7 +2513,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                     # remains as-is.
                     newnode = parent.add_state(node.label)
                     block_to_state_map[node] = newnode
-                elif self.out_degree(node) == 0:
+                elif self.out_degree(node) == 0 and not isinstance(node, (BreakBlock, ContinueBlock)):
                     to_connect.add(node)
 
             # Add all region edges.
@@ -2533,6 +2533,9 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
             for node in to_connect:
                 parent.add_edge(node, end_state, dace.InterstateEdge())
+            
+            if parent.in_degree(end_state) == 0:
+                parent.remove_node(end_state)
 
             # Remove the original control flow region (self) from the parent graph.
             parent.remove_node(self)
@@ -2948,7 +2951,7 @@ class LoopRegion(ControlFlowRegion):
         # and return are inlined correctly.
         def recursive_inline_cf_regions(region: ControlFlowRegion) -> None:
             for block in region.nodes():
-                if isinstance(block, ControlFlowRegion) and not isinstance(block, LoopRegion):
+                if (isinstance(block, ControlFlowRegion) or isinstance(block, ConditionalRegion)) and not isinstance(block, LoopRegion):
                     recursive_inline_cf_regions(block)
                     block.inline()
         recursive_inline_cf_regions(self)
@@ -3169,7 +3172,6 @@ class ConditionalRegion(ControlFlowBlock):
             from dace.sdfg.replace import replace_properties_dict
             replace_properties_dict(self, repl, symrepl)
 
-        super().replace_dict(repl, symrepl, replace_in_graph)
         for _, cfg in self.branches:
             cfg.replace_dict(repl, symrepl, replace_in_graph)
 
