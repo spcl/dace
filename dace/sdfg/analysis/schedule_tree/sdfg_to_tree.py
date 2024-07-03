@@ -180,6 +180,17 @@ def dealias_sdfg(sdfg: SDFG):
                     e._src_conn = replacements[e.src_conn]
                 elif e.dst_conn in replacements:
                     e._dst_conn = replacements[e.dst_conn]
+            
+            # Remove multiple edges to the same connectors
+            for name in replacements.values():
+                in_edges = list(parent_state.in_edges_by_connector(parent_node, name))
+                out_edges = list(parent_state.out_edges_by_connector(parent_node, name))
+                if len(in_edges) > 1:
+                    for edge in in_edges[1:]:
+                        parent_state.remove_memlet_path(edge)
+                if len(out_edges) > 1:
+                    for edge in out_edges[1:]:
+                        parent_state.remove_memlet_path(edge)
 
 
 def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEdge[Memlet], data: str) -> Memlet:
