@@ -44,6 +44,7 @@ def dealias_sdfg(sdfg: SDFG):
 
         replacements: Dict[str, str] = {}
         inv_replacements: Dict[str, List[str]] = {}
+        inner_replacements: Dict[str, str] = {}
         parent_edges: Dict[str, Memlet] = {}
         to_unsqueeze: Set[str] = set()
 
@@ -65,7 +66,14 @@ def dealias_sdfg(sdfg: SDFG):
                         to_unsqueeze.add(parent_name)
                     else:
                         inv_replacements[parent_name] = [name]
+                        # Rename nested arrays that happen to have the same name with an unrelated parent array.
+                        if parent_name in nsdfg.arrays:
+                            new_name = nsdfg._find_new_name(parent_name)
+                            inner_replacements[parent_name] = new_name
                     break
+        
+        if inner_replacements:
+            symbolic.safe_replace(inner_replacements, lambda d: replace_datadesc_names(nsdfg, d), value_as_string=True)
 
         if to_unsqueeze:
             for parent_name in to_unsqueeze:
