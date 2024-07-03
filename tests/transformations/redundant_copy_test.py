@@ -111,18 +111,14 @@ def test_reshaping_with_redundant_arrays():
     output_step1 = np.zeros_like(ref)
     output_step2 = np.zeros_like(ref)
 
-    # Step 1:
-    #  The Memlet between `a` and `b` is a reshaping Memlet, this call will
-    #  remove `a` and connect `input` with `b` and this connection will then become
-    #  the reshaping Memlet.
+    # The Memlet between `a` and `b` is a reshaping Memlet, that are not handled.
     sdfg, a_an, b_an, output_an = make_sdfg()
-    sdfg = apply_trafo(sdfg, in_array=a_an, out_array=b_an)
+    sdfg = apply_trafo(sdfg, in_array=a_an, out_array=b_an, may_not_apply=True)
 
     sdfg(input=input_array, output=output_step1)
     assert np.all(ref == output_step1)
 
-    # Step 2:
-    #  Now the Memlet between `input` and `b` is a reshaping Memlet, that we will now remove.
+    # The Memlet between `b` and `output` is not reshaping, and thus `b` should be removed.
     sdfg = apply_trafo(sdfg, in_array=b_an, out_array=output_an)
 
     sdfg(input=input_array, output=output_step2)
