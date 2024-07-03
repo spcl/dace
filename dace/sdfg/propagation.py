@@ -1158,7 +1158,7 @@ def propagate_memlets_sdfg(sdfg):
     # Reset previous annotations first
     reset_state_annotations(sdfg)
 
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         propagate_memlets_state(sdfg, state)
 
     propagate_states(sdfg)
