@@ -11,6 +11,7 @@ import pytest
 import dace
 from dace.sdfg import nodes, propagation
 from dace.transformation.interstate import LoopToMap
+from dace.transformation.interstate.loop_detection import DetectLoop
 
 
 def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after, log_path):

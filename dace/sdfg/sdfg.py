@@ -30,7 +30,7 @@ from dace.config import Config
 from dace.frontend.python import astutils, wrappers
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
-from dace.sdfg.state import SDFGState, ControlFlowRegion
+from dace.sdfg.state import ControlFlowBlock, SDFGState, ControlFlowRegion
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
@@ -183,7 +183,7 @@ class InterstateEdge(object):
                            desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
 
-    def __init__(self, condition: CodeBlock = None, assignments=None):
+    def __init__(self, condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None, assignments=None):
         if condition is None:
             condition = CodeBlock("1")
 
@@ -452,6 +452,9 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
+    using_experimental_blocks = Property(dtype=bool, default=False,
+                                         desc="Whether the SDFG contains experimental control flow blocks")
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
@@ -508,6 +511,8 @@ class SDFG(ControlFlowRegion):
         # Counter to resolve name conflicts
         self._orig_name = name
         self._num = 0
+
+        self._sdfg = self
 
     def __deepcopy__(self, memo):
         cls = self.__class__
@@ -2220,6 +2225,7 @@ class SDFG(ControlFlowRegion):
             # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
             # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
             sdutils.inline_loop_blocks(sdfg)
+            sdutils.inline_control_flow_regions(sdfg)
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
@@ -2680,3 +2686,15 @@ class SDFG(ControlFlowRegion):
            :return: a Memlet that fully transfers array
         """
         return dace.Memlet.from_array(array, self.data(array))
+
+    def recheck_using_experimental_blocks(self) -> bool:
+        found_experimental_block = False
+        for node, graph in self.root_sdfg.all_nodes_recursive():
+            if isinstance(graph, ControlFlowRegion) and not isinstance(graph, SDFG):
+                found_experimental_block = True
+                break
+            if isinstance(node, ControlFlowBlock) and not isinstance(node, SDFGState):
+                found_experimental_block = True
+                break
+        self.root_sdfg.using_experimental_blocks = found_experimental_block
+        return found_experimental_block

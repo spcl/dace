@@ -476,7 +476,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             cft = cflow.structured_control_flow_tree(sdfg, dispatch_state)
         else:
             # If disabled, generate entire graph as general control flow block
-            states_topological = list(sdfg.topological_sort(sdfg.start_state))
+            states_topological = list(sdfg.bfs_nodes(sdfg.start_state))
             last = states_topological[-1]
             cft = cflow.GeneralBlock(dispatch_state, None,
                                      [cflow.SingleState(dispatch_state, s, s is last) for s in states_topological], [],
@@ -553,7 +553,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             array_names = sdfg.arrays.keys(
             )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
             # Iterate topologically to get state-order
-            for state in sdfg.topological_sort():
+            for state in sdfg.bfs_nodes():
                 for node in state.data_nodes():
                     if node.data not in array_names:
                         continue

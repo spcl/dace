@@ -1848,7 +1848,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         parent_scope = dfg.scope_subgraph(parent_scope_entry)
 
         # Get all scopes from the same level
-        all_scopes = [node for node in parent_scope.topological_sort() if isinstance(node, dace.sdfg.nodes.EntryNode)]
+        all_scopes = [node for node in parent_scope.bfs_nodes() if isinstance(node, dace.sdfg.nodes.EntryNode)]
 
         return all_scopes[all_scopes.index(scope_entry) + 1:]
 

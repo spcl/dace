@@ -3,10 +3,11 @@ from collections import defaultdict
 from typing import Any, Dict, Optional, Set
 
 from dace import SDFG, SDFGState
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
 
+@transformation.single_level_sdfg_only
 class StrictSymbolSSA(ppl.Pass):
     """
     Perform an SSA transformation on all symbols in the SDFG in a strict manner, i.e., without introducing phi nodes.
