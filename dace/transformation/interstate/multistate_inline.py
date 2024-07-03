@@ -87,7 +87,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Must be
         # - connected to access nodes only
-        # - read full subsets
+        # - read/write subsets must start at 0
         # - not use views inside
         for edge in state.in_edges(nested_sdfg):
             if edge.data.data is None:
@@ -96,7 +96,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if not isinstance(edge.src, nodes.AccessNode):
                 return False
 
-            if edge.data.subset != subsets.Range.from_array(sdfg.arrays[edge.data.data]):
+            if edge.data.subset.min_element() != [0] * len(edge.data.subset):
                 return False
 
             outer_desc = sdfg.arrays[edge.data.data]
@@ -114,7 +114,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if not isinstance(edge.dst, nodes.AccessNode):
                 return False
 
-            if edge.data.subset != subsets.Range.from_array(sdfg.arrays[edge.data.data]):
+            if edge.data.subset.min_element() != [0] * len(edge.data.subset):
                 return False
 
             outer_desc = sdfg.arrays[edge.data.data]
