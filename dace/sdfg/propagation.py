@@ -978,7 +978,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
     # the corresponding memlets and use them to calculate the memlet volume and
     # subset corresponding to the outside memlet attached to that connector.
     # This is passed out via `border_memlets` and propagated along from there.
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         for node in state.data_nodes():
             for direction in border_memlets:
                 if (node.label not in border_memlets[direction]):
