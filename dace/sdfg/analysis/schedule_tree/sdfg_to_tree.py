@@ -70,6 +70,18 @@ def dealias_sdfg(sdfg: SDFG):
         if to_unsqueeze:
             for parent_name in to_unsqueeze:
                 parent_arr = parent_sdfg.arrays[parent_name]
+
+                # Add new symbols from the parent datadescriptor to the symbol mapping.
+                previous_syms = set()
+                for name in inv_replacements[parent_name]:
+                    child_arr = nsdfg.arrays[name]
+                    previous_syms |= child_arr.used_symbols(all_symbols=True)
+                new_syms = parent_arr.used_symbols(all_symbols=True) - previous_syms
+                for sym in new_syms:
+                    if sym not in parent_node.symbol_mapping:
+                        nsdfg.add_symbol(str(sym), parent_sdfg.symbols[str(sym)])
+                        parent_node.symbol_mapping[str(sym)] = str(sym)
+                
                 if isinstance(parent_arr, data.View):
                     parent_arr = parent_arr.as_array()
                 elif isinstance(parent_arr, data.StructureView):
@@ -107,9 +119,23 @@ def dealias_sdfg(sdfg: SDFG):
                             dst_data = None
                             new_dst_memlet = None
 
+                        # NOTE: If new symbols appear in the Memlet, we need to add them to the symbol mapping.
+                        # NOTE: We assume that these symbols are defined (in any sense) in the immediate parent scope.
+                        # NOTE: Since these symbols appear in Memlets, we assume that they are integers.
+                        previous_syms = e.data.used_symbols(all_symbols=True)
                         if new_src_memlet is not None:
+                            new_syms = new_src_memlet.used_symbols(all_symbols=True) - previous_syms
+                            for sym in new_syms:
+                                if sym not in parent_node.symbol_mapping:
+                                    nsdfg.add_symbol(str(sym), dace.int32)
+                                    parent_node.symbol_mapping[sym] = sym
                             e.data.src_subset = new_src_memlet.subset
                         if new_dst_memlet is not None:
+                            new_syms = new_dst_memlet.used_symbols(all_symbols=True) - previous_syms
+                            for sym in new_syms:
+                                if sym not in parent_node.symbol_mapping:
+                                    nsdfg.add_symbol(str(sym), dace.int32)
+                                    parent_node.symbol_mapping[sym] = sym
                             e.data.dst_subset = new_dst_memlet.subset
                         if e.data.data == src_data:
                             e.data.data = new_src_memlet.data
