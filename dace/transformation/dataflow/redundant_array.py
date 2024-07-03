@@ -204,11 +204,6 @@ class RedundantArray(pm.SingleStateTransformation):
             warnings.warn(f'validate_subsets failed: {ex}')
             return False
 
-        # Because of a bug the transformation is not able to handle reshaping Memlets,
-        #  see [issue 1595](https://github.com/spcl/dace/issues/1595) for more.
-        if self._is_reshaping_memlet(graph=graph, edge=e1):
-            return False
-
         # Find the true in desc (in case in_array is a view).
         true_in_array = in_array
         true_in_desc = in_desc
@@ -571,8 +566,23 @@ class RedundantArray(pm.SingleStateTransformation):
         # 3. The memlet does not cover the removed array; or
         # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
-        if reduction or len(a_dims_to_pop) == len(in_desc.shape) or any(
-                m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
+        if (
+                reduction
+                or len(a_dims_to_pop) == len(in_desc.shape)
+                or any(m != a for m, a in zip(a1_subset.size(), in_desc.shape))
+        ):
+            self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
+            return in_array
+
+        # TODO: Fix me.
+        #  As described in [issue 1595](https://github.com/spcl/dace/issues/1595) the
+        #  transformation is unable to handle certain cases of reshaping Memlets
+        #  correctly and fixing this case has proven rather difficult. In a first
+        #  attempt the case of reshaping Memlets was forbidden (in the
+        #  `can_be_applied()` method), however, this caused other (useful) cases to
+        #  fail. For that reason such Memlets are transformed to Views.
+        #  This is a fix and it should be addressed.
+        if self._is_reshaping_memlet(graph=graph, edge=e1):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
             return in_array
 
@@ -598,6 +608,7 @@ class RedundantArray(pm.SingleStateTransformation):
                     compose_and_push_back(bset, aset, b_dims_to_pop, popped)
         except (ValueError, NotImplementedError):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
+            print(f"CREATED VIEW(2): {in_array}")
             return in_array
 
         # 2. Iterate over the e2 edges and traverse the memlet tree

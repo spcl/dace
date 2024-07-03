@@ -81,7 +81,8 @@ def test_reshaping_with_redundant_arrays():
             sdfg: dace.SDFG,
             in_array: dace.nodes.AccessNode,
             out_array: dace.nodes.AccessNode,
-            may_not_apply: bool = False,
+            will_not_apply: bool = False,
+            will_create_view: bool = False,
     ) -> dace.SDFG:
         trafo = RedundantArray()
 
@@ -95,6 +96,8 @@ def test_reshaping_with_redundant_arrays():
         if trafo.can_be_applied(state, 0, sdfg):
             ret = trafo.apply(state, sdfg)
             if ret is not None:  # A view was created
+                if will_create_view:
+                    return sdfg
                 assert False, f"A view was created instead removing '{in_array.data}'."
             sdfg.validate()
             assert state.number_of_nodes() == initial_access_nodes - 1
@@ -102,7 +105,7 @@ def test_reshaping_with_redundant_arrays():
             assert in_array.data not in sdfg.arrays
             return sdfg
 
-        if may_not_apply:
+        if will_not_apply:
             return sdfg
         assert False, "Could not apply the transformation."
 
@@ -113,7 +116,7 @@ def test_reshaping_with_redundant_arrays():
 
     # The Memlet between `a` and `b` is a reshaping Memlet, that are not handled.
     sdfg, a_an, b_an, output_an = make_sdfg()
-    sdfg = apply_trafo(sdfg, in_array=a_an, out_array=b_an, may_not_apply=True)
+    sdfg = apply_trafo(sdfg, in_array=a_an, out_array=b_an, will_create_view=True)
 
     sdfg(input=input_array, output=output_step1)
     assert np.all(ref == output_step1)
