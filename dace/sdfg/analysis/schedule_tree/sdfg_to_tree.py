@@ -78,7 +78,7 @@ def dealias_sdfg(sdfg: SDFG):
                     previous_syms |= child_arr.used_symbols(all_symbols=True)
                 new_syms = parent_arr.used_symbols(all_symbols=True) - previous_syms
                 for sym in new_syms:
-                    if sym not in parent_node.symbol_mapping:
+                    if str(sym) not in nsdfg.symbols:
                         nsdfg.add_symbol(str(sym), parent_sdfg.symbols[str(sym)])
                         parent_node.symbol_mapping[str(sym)] = str(sym)
                 
@@ -126,14 +126,14 @@ def dealias_sdfg(sdfg: SDFG):
                         if new_src_memlet is not None:
                             new_syms = new_src_memlet.used_symbols(all_symbols=True) - previous_syms
                             for sym in new_syms:
-                                if sym not in parent_node.symbol_mapping:
+                                if sym not in nsdfg.symbols:
                                     nsdfg.add_symbol(str(sym), dace.int32)
                                     parent_node.symbol_mapping[sym] = sym
                             e.data.src_subset = new_src_memlet.subset
                         if new_dst_memlet is not None:
                             new_syms = new_dst_memlet.used_symbols(all_symbols=True) - previous_syms
                             for sym in new_syms:
-                                if sym not in parent_node.symbol_mapping:
+                                if sym not in nsdfg.symbols:
                                     nsdfg.add_symbol(str(sym), dace.int32)
                                     parent_node.symbol_mapping[sym] = sym
                             e.data.dst_subset = new_dst_memlet.subset
