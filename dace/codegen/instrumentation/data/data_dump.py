@@ -1,5 +1,5 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import config, data as dt, dtypes, registry, SDFG
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+from dace import data as dt, dtypes, registry, SDFG
 from dace.sdfg import nodes, is_devicelevel_gpu
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
@@ -87,6 +87,60 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         from dace.codegen.targets.framecode import DaCeCodeGenerator  # Avoid import loop
         self.codegen: DaCeCodeGenerator = None
 
+    def _save_var(self, varname: str, vardesc: dt.Data, sdfg: SDFG, local_stream: CodeIOStream,
+                  global_stream: CodeIOStream, state: Optional[SDFGState] = None,
+                  node: Optional[SDFGState] = None, filename: Optional[str] = None) -> None:
+        from dace.codegen.dispatcher import DefinedType  # Avoid import loop
+
+        if isinstance(vardesc, dt.Structure):
+            for member_name, member_desc in vardesc.members.items():
+                self._save_var(varname + '->' + member_name, member_desc, sdfg, local_stream, global_stream,
+                               state, node, varname + '.' + member_name)
+        else:
+            ptrname = cpp.ptr(varname, vardesc, sdfg, self.codegen)
+            try:
+                defined_type, _ = self.codegen.dispatcher.defined_vars.get(ptrname)
+            except KeyError:
+                print('skipping saving of' + ptrname)
+                return
+
+            if defined_type == DefinedType.Scalar:
+                ptrname = '&' + ptrname
+
+            # Create UUID
+            if node is not None:
+                state_id = state.parent_graph.node_id(state)
+                node_id = state.node_id(node)
+                uuid = f'{sdfg.cfg_id}_{state_id}_{node_id}'
+            elif state is not None:
+                state_id = state.parent_graph.node_id(state)
+                node_id = None
+                uuid = f'{sdfg.cfg_id}_{state_id}'
+            else:
+                state_id = None
+                node_id = None
+                uuid = f'{sdfg.cfg_id}'
+
+            # Get optional pre/postamble for instrumenting device data
+            preamble, postamble = '', ''
+            if vardesc.storage == dtypes.StorageType.GPU_Global and node is not None:
+                self._setup_gpu_runtime(sdfg, global_stream)
+                preamble, postamble, ptrname = self._generate_copy_to_host(node, vardesc, ptrname)
+
+            # Encode runtime shape and strides
+            shape = ', '.join(cpp.sym2cpp(s) for s in vardesc.shape)
+            strides = ', '.join(cpp.sym2cpp(s) for s in vardesc.strides)
+
+            if filename is None:
+                filename = varname
+            filename = filename.replace('->', '.')
+
+            local_stream.write(preamble, sdfg, state_id, node_id)
+            local_stream.write(
+                f'__state->serializer->save({ptrname}, {cpp.sym2cpp(vardesc.total_size - vardesc.start_offset)}, '
+                f'"{filename}", "{uuid}", {shape}, {strides});\n', sdfg, state_id, node_id)
+            local_stream.write(postamble, sdfg, state_id, node_id)
+
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream,
                       codegen: 'DaCeCodeGenerator'):
         # Initialize serializer versioning object
@@ -95,6 +149,11 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             path = os.path.abspath(os.path.join(sdfg.build_folder, 'data')).replace('\\', '/')
             codegen.statestruct.append('dace::DataSerializer *serializer;')
             sdfg.append_init_code(f'__state->serializer = new dace::DataSerializer("{path}");\n')
+
+            # If the SDFG is supposed to save or restore its initial state, do that here.
+            if sdfg.save_restore_initial_state == dtypes.DataInstrumentationType.Save:
+                for argname, desc in sdfg.arglist().items():
+                    self._save_var(argname, desc, sdfg, local_stream, global_stream)
 
     def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream):
         # Teardown serializer versioning object
@@ -152,34 +211,13 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
 
         desc = node.desc(sdfg)
 
-        # Obtain a pointer for arrays and scalars
-        ptrname = cpp.ptr(node.data, desc, sdfg, self.codegen)
-        defined_type, _ = self.codegen.dispatcher.defined_vars.get(ptrname)
-        if defined_type == DefinedType.Scalar:
-            ptrname = '&' + ptrname
-
         # Create UUID
-        state_id = sdfg.node_id(state)
+        state_id = state.parent_graph.node_id(state)
         node_id = state.node_id(node)
-        uuid = f'{sdfg.cfg_id}_{state_id}_{node_id}'
-
-        # Get optional pre/postamble for instrumenting device data
-        preamble, postamble = '', ''
-        if desc.storage == dtypes.StorageType.GPU_Global:
-            self._setup_gpu_runtime(sdfg, global_stream)
-            preamble, postamble, ptrname = self._generate_copy_to_host(node, desc, ptrname)
-
-        # Encode runtime shape and strides
-        shape = ', '.join(cpp.sym2cpp(s) for s in desc.shape)
-        strides = ', '.join(cpp.sym2cpp(s) for s in desc.strides)
 
         # Write code
         inner_stream.write(condition_preamble, sdfg, state_id, node_id)
-        inner_stream.write(preamble, sdfg, state_id, node_id)
-        inner_stream.write(
-            f'__state->serializer->save({ptrname}, {cpp.sym2cpp(desc.total_size - desc.start_offset)}, '
-            f'"{node.data}", "{uuid}", {shape}, {strides});\n', sdfg, state_id, node_id)
-        inner_stream.write(postamble, sdfg, state_id, node_id)
+        self._save_var(node.data, desc, sdfg, inner_stream, global_stream, state, node)
         inner_stream.write(condition_postamble, sdfg, state_id, node_id)
 
 
@@ -192,6 +230,57 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         self.gpu_runtime_init = False
         from dace.codegen.targets.framecode import DaCeCodeGenerator  # Avoid import loop
         self.codegen: DaCeCodeGenerator = None
+
+    def _restore_var(self, varname: str, vardesc: dt.Data, sdfg: SDFG, local_stream: CodeIOStream,
+                     global_stream: CodeIOStream, state: Optional[SDFGState] = None,
+                     node: Optional[SDFGState] = None, filename: Optional[str] = None) -> None:
+        from dace.codegen.dispatcher import DefinedType  # Avoid import loop
+
+        if isinstance(vardesc, dt.Structure):
+            for member_name, member_desc in vardesc.members.items():
+                self._restore_var(varname + '->' + member_name, member_desc, sdfg, local_stream, global_stream,
+                                  state, node, varname + '.' + member_name)
+        else:
+            ptrname = cpp.ptr(varname, vardesc, sdfg, self.codegen)
+            try:
+                defined_type, _ = self.codegen.dispatcher.defined_vars.get(ptrname)
+            except KeyError:
+                print('skipping restoring of' + ptrname)
+                return
+
+            if defined_type == DefinedType.Scalar:
+                ptrname = '&' + ptrname
+
+            # Create UUID
+            if node is not None:
+                state_id = state.parent_graph.node_id(state)
+                node_id = state.node_id(node)
+                uuid = f'{sdfg.cfg_id}_{state_id}_{node_id}'
+            elif state is not None:
+                state_id = state.parent_graph.node_id(state)
+                node_id = None
+                uuid = f'{sdfg.cfg_id}_{state_id}'
+            else:
+                state_id = None
+                node_id = None
+                uuid = f'{sdfg.cfg_id}'
+
+            # Get optional pre/postamble for instrumenting device data
+            preamble, postamble = '', ''
+            if vardesc.storage == dtypes.StorageType.GPU_Global and node is not None:
+                self._setup_gpu_runtime(sdfg, global_stream)
+                preamble, postamble, ptrname = self._generate_copy_to_device(node, vardesc, ptrname)
+
+            if filename is None:
+                filename = varname
+            filename = filename.replace('->', '.')
+
+            # Write code
+            local_stream.write(preamble, sdfg, state_id, node_id)
+            local_stream.write(
+                f'__state->serializer->restore({ptrname}, {cpp.sym2cpp(vardesc.total_size - vardesc.start_offset)}, '
+                f'"{filename}", "{uuid}");\n', sdfg, state_id, node_id)
+            local_stream.write(postamble, sdfg, state_id, node_id)
 
     def _generate_report_setter(self, sdfg: SDFG) -> str:
         return f'''
@@ -210,6 +299,10 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
 
             # Add method that controls serializer input
             global_stream.write(self._generate_report_setter(sdfg))
+
+            if sdfg.save_restore_initial_state == dtypes.DataInstrumentationType.Restore:
+                for argname, desc in sdfg.arglist().items():
+                    self._restore_var(argname, desc, sdfg, local_stream, global_stream)
 
     def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream):
         # Teardown serializer versioning object
@@ -268,28 +361,10 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
 
         desc = node.desc(sdfg)
 
-        # Obtain a pointer for arrays and scalars
-        ptrname = cpp.ptr(node.data, desc, sdfg, self.codegen)
-        defined_type, _ = self.codegen.dispatcher.defined_vars.get(ptrname)
-        if defined_type == DefinedType.Scalar:
-            ptrname = '&' + ptrname
-
-        # Create UUID
         state_id = sdfg.node_id(state)
         node_id = state.node_id(node)
-        uuid = f'{sdfg.cfg_id}_{state_id}_{node_id}'
-
-        # Get optional pre/postamble for instrumenting device data
-        preamble, postamble = '', ''
-        if desc.storage == dtypes.StorageType.GPU_Global:
-            self._setup_gpu_runtime(sdfg, global_stream)
-            preamble, postamble, ptrname = self._generate_copy_to_device(node, desc, ptrname)
 
         # Write code
         inner_stream.write(condition_preamble, sdfg, state_id, node_id)
-        inner_stream.write(preamble, sdfg, state_id, node_id)
-        inner_stream.write(
-            f'__state->serializer->restore({ptrname}, {cpp.sym2cpp(desc.total_size - desc.start_offset)}, '
-            f'"{node.data}", "{uuid}");\n', sdfg, state_id, node_id)
-        inner_stream.write(postamble, sdfg, state_id, node_id)
+        self._restore_var(node.data, desc, sdfg, inner_stream, global_stream, state, node)
         inner_stream.write(condition_postamble, sdfg, state_id, node_id)

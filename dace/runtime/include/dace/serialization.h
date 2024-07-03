@@ -145,6 +145,7 @@ public:
     void save(const T *buffer, size_t size, const std::string &arrayname, const std::string &filename, Args... shape_stride) {
         // NOTE: The "shape_stride" parameter is two concatenated tuples of shape, strides
         if (!this->enable) return;
+        if (!buffer) return;
         std::lock_guard<std::mutex> guard(this->_mutex);
 
         // Update version
@@ -189,7 +190,12 @@ public:
         // Read contents from file
         std::stringstream ss;
         ss << this->folder << "/" << arrayname << "/" << filename << "_" << version << ".bin";
-        std::ifstream ifs(ss.str(), std::ios::binary);
+        const std::string fname = ss.str();
+        // Do not restore anything if the target file does not exist.
+        struct stat statbuff;
+        if (!stat(fname.c_str(), &statbuff))
+            return;
+        std::ifstream ifs(fname, std::ios::binary);
         
         // Ignore header (dimensions, shape, and strides)
         uint32_t ndims;

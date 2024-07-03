@@ -418,6 +418,9 @@ class SDFG(ControlFlowRegion):
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
+    save_restore_initial_state = EnumProperty(dtype=dtypes.DataInstrumentationType,
+                                              desc="Save or restore the entire SDFG state before executing",
+                                              default=dtypes.DataInstrumentationType.No_Instrumentation)
 
     global_code = DictProperty(str, CodeBlock, desc="Code generated in a global scope on the output files.")
     init_code = DictProperty(str, CodeBlock, desc="Code generated in the `__dace_init` function.")
@@ -847,6 +850,21 @@ class SDFG(ControlFlowRegion):
         if location not in self.init_code:
             self.init_code[location] = CodeBlock('', dtypes.Language.CPP)
         self.init_code[location].code += cpp_code
+
+    def prepend_init_code(self, cpp_code: str, location: str = 'frame'):
+        """
+        Prepends C++ code that will be generated in the __dace_init_* functions on
+        one of the generated code files.
+
+        :param cpp_code: The code to prepend.
+        :param location: The file/backend in which to generate the code.
+                         Options are None (all files), "frame", "openmp",
+                         "cuda", "xilinx", "intel_fpga", or any code generator
+                         name.
+        """
+        if location not in self.init_code:
+            self.init_code[location] = CodeBlock('', dtypes.Language.CPP)
+        self.init_code[location].code = cpp_code + self.init_code[location].code
 
     def append_exit_code(self, cpp_code: str, location: str = 'frame'):
         """

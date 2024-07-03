@@ -635,7 +635,11 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 new_symbols |= set(n.new_symbols(sdfg, self, {}).keys())
             elif isinstance(n, nd.AccessNode):
                 # Add data descriptor symbols
-                freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))
+                root_sdfg: SDFG = sdfg.cfg_list[0]
+                desc_all_symbols = all_symbols
+                if root_sdfg.save_restore_initial_state != dtypes.DataInstrumentationType.No_Instrumentation:
+                    desc_all_symbols = True
+                freesyms |= set(map(str, n.desc(sdfg).used_symbols(desc_all_symbols)))
             elif isinstance(n, nd.Tasklet):
                 if n.language == dtypes.Language.Python:
                     # Consider callbacks defined as symbols as free
@@ -2603,12 +2607,14 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                                free_syms: Optional[Set] = None,
                                used_before_assignment: Optional[Set] = None,
                                keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
+        from dace.sdfg.analysis import cfg as cfg_analysis # Avoid import loops.
+
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
         try:
-            ordered_blocks = self.topological_sort(self.start_block)
+            ordered_blocks = cfg_analysis.stateorder_topological_sort(self)
         except ValueError:  # Failsafe (e.g., for invalid or empty SDFGs)
             ordered_blocks = self.nodes()
 
