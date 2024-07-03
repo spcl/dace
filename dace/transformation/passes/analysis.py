@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from dace.transformation import pass_pipeline as ppl
-from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt
+from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt, symbolic
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd
 from dace.sdfg.analysis import cfg
@@ -156,7 +156,7 @@ class AccessSets(ppl.Pass):
         top_result: Dict[int, Dict[SDFGState, Tuple[Set[str], Set[str]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[SDFGState, Tuple[Set[str], Set[str]]] = {}
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 readset, writeset = set(), set()
                 for anode in state.data_nodes():
                     if state.in_degree(anode) > 0:
@@ -583,3 +583,38 @@ class FindReferenceSources(ppl.Pass):
                             result[anode.data].add(e.data)
             top_result[sdfg.cfg_id] = result
         return top_result
+
+
+@properties.make_properties
+class DeriveSDFGConstraints(ppl.Pass):
+
+    CATEGORY: str = 'Analysis'
+
+    assume_max_data_size = properties.Property(dtype=int, default=None, allow_none=True,
+                                               desc='Assume that all data containers have no dimension larger than ' +
+                                               'this value. If None, no assumption is made.')
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.Everything
+
+    def _derive_parameter_datasize_constraints(self, sdfg: SDFG, invariants: Dict[str, Set[str]]) -> None:
+        handled = set()
+        for arr in sdfg.arrays.values():
+            for dim in arr.shape:
+                if isinstance(dim, symbolic.symbol) and not dim in handled:
+                    ds = str(dim)
+                    if ds not in invariants:
+                        invariants[ds] = set()
+                    invariants[ds].add(f'{ds} > 0')
+                    if self.assume_max_data_size is not None:
+                        invariants[ds].add(f'{ds} <= {self.assume_max_data_size}')
+                    handled.add(ds)
+
+    def apply_pass(self, sdfg: SDFG, _) -> Tuple[Dict[str, Set[str]], Dict[str, Set[str]], Dict[str, Set[str]]]:
+        invariants: Dict[str, Set[str]] = {}
+        self._derive_parameter_datasize_constraints(sdfg, invariants)
+        return {}, invariants, {}

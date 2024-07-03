@@ -8,10 +8,12 @@ from typing import AnyStr, Optional, Tuple, List
 
 from dace import sdfg as sd, symbolic
 from dace.sdfg import graph as gr, utils as sdutil
+from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import transformation
 
 
 # NOTE: This class extends PatternTransformation directly in order to not show up in the matches
+@transformation.experimental_cfg_block_compatible
 class DetectLoop(transformation.PatternTransformation):
     """ Detects a for-loop construct from an SDFG. """
 
@@ -64,8 +66,8 @@ class DetectLoop(transformation.PatternTransformation):
             return False
 
         # All nodes inside loop must be dominated by loop guard
-        dominators = nx.dominance.immediate_dominators(sdfg.nx, sdfg.start_state)
-        loop_nodes = sdutil.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard)
+        dominators = nx.dominance.immediate_dominators(graph.nx, graph.start_block)
+        loop_nodes = sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != guard)
         backedge = None
         for node in loop_nodes:
             for e in graph.out_edges(node):
@@ -101,7 +103,7 @@ class DetectLoop(transformation.PatternTransformation):
 
 
 def find_for_loop(
-    sdfg: sd.SDFG,
+    graph: ControlFlowRegion,
     guard: sd.SDFGState,
     entry: sd.SDFGState,
     itervar: Optional[str] = None
@@ -119,8 +121,8 @@ def find_for_loop(
     """
 
     # Extract state transition edge information
-    guard_inedges = sdfg.in_edges(guard)
-    condition_edge = sdfg.edges_between(guard, entry)[0]
+    guard_inedges = graph.in_edges(guard)
+    condition_edge = graph.edges_between(guard, entry)[0]
     
     # All incoming edges to the guard must set the same variable
     if itervar is None:

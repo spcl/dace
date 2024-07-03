@@ -6,11 +6,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from dace import SDFG, SDFGState, data, properties, Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
 
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class ReferenceToView(ppl.Pass):
     """
     Replaces Reference data descriptors that are only set to one source with views.

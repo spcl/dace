@@ -13,6 +13,7 @@ from dace.sdfg.nodes import Tasklet, AccessNode
 from dace.transformation import transformation
 
 
+@transformation.single_level_sdfg_only
 class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
 
     if_guard = transformation.PatternNode(sd.SDFGState)
