@@ -42,15 +42,44 @@ def dealias_sdfg(sdfg: SDFG):
         if not nsdfg.parent:
             continue
 
-        replacements: Dict[str, str] = {}
-        inv_replacements: Dict[str, List[str]] = {}
-        inner_replacements: Dict[str, str] = {}
-        parent_edges: Dict[str, Memlet] = {}
-        to_unsqueeze: Set[str] = set()
-
         parent_sdfg = nsdfg.parent_sdfg
         parent_state = nsdfg.parent
         parent_node = nsdfg.parent_nsdfg_node
+
+        inner_replacements: Dict[str, str] = {}
+
+        # Rename nested arrays that happen to have the same name with an unrelated parent array.
+        for name, desc in nsdfg.arrays.items():
+            if desc.transient:
+                continue
+            if name in parent_sdfg.arrays:
+                for edge in parent_state.edges_by_connector(parent_node, name):
+                    parent_name = edge.data.data
+                    assert parent_name in parent_sdfg.arrays
+                    if name != parent_name:
+                        new_name = nsdfg._find_new_name(parent_name)
+                        inner_replacements[parent_name] = new_name
+        
+        if inner_replacements:
+            symbolic.safe_replace(inner_replacements, lambda d: replace_datadesc_names(nsdfg, d), value_as_string=True)
+            parent_node.in_connectors = {
+                inner_replacements[c] if c in inner_replacements else c: t
+                for c, t in parent_node.in_connectors.items()
+            }
+            parent_node.out_connectors = {
+                inner_replacements[c] if c in inner_replacements else c: t
+                for c, t in parent_node.out_connectors.items()
+            }
+            for e in parent_state.all_edges(parent_node):
+                if e.src_conn in inner_replacements:
+                    e._src_conn = inner_replacements[e.src_conn]
+                elif e.dst_conn in inner_replacements:
+                    e._dst_conn = inner_replacements[e.dst_conn]
+
+        replacements: Dict[str, str] = {}
+        inv_replacements: Dict[str, List[str]] = {}
+        parent_edges: Dict[str, Memlet] = {}
+        to_unsqueeze: Set[str] = set()
 
         for name, desc in nsdfg.arrays.items():
             if desc.transient:
@@ -66,14 +95,7 @@ def dealias_sdfg(sdfg: SDFG):
                         to_unsqueeze.add(parent_name)
                     else:
                         inv_replacements[parent_name] = [name]
-                        # Rename nested arrays that happen to have the same name with an unrelated parent array.
-                        if parent_name in nsdfg.arrays:
-                            new_name = nsdfg._find_new_name(parent_name)
-                            inner_replacements[parent_name] = new_name
                     break
-        
-        if inner_replacements:
-            symbolic.safe_replace(inner_replacements, lambda d: replace_datadesc_names(nsdfg, d), value_as_string=True)
 
         if to_unsqueeze:
             for parent_name in to_unsqueeze:
