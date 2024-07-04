@@ -488,7 +488,7 @@ class RedundantArray(pm.SingleStateTransformation):
             return False
 
         # Reshaping implies that the shape is different.
-        if dst_desc.shape == src_desc.shape and dst_desc.total_size == src_desc.total_size:
+        if dst_desc.shape == src_desc.shape:
             return False
 
         # A reshaping Memlet must read the whole source array and write the whole destination array.
