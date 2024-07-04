@@ -2591,7 +2591,6 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             node.label = self._ensure_unique_block_name(node.label)
 
         super().add_node(node)
-        self._cached_start_block = None
         node.parent_graph = self
         if isinstance(self, dace.SDFG):
             node.sdfg = self
