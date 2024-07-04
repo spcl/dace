@@ -2537,7 +2537,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self._on_block_added(break_block)
 
     def visit_Continue(self, node: ast.Continue):
-        continue_block = BreakBlock(f'continue_{node.lineno}')
+        continue_block = ContinueBlock(f'continue_{node.lineno}')
         self.cfg_target.add_node(continue_block, ensure_unique_name=True)
         self._on_block_added(continue_block)
 
