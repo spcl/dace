@@ -75,7 +75,11 @@ class ChangeThreadBlockMap(transformation.SingleStateTransformation):
         for i, dev_range in enumerate(dev_ranges):
             (beg, end, step) = dev_range
             dev_old_step_sizes.append(step)
-            dev_map.range[i] = (beg, end, new_block_dimensions[i])
+
+        for i in range(min(3, len(dev_entry.map.range)), 0, -1):
+            (beg, end, step) = dev_entry.map.range[-i]
+            dev_map.range[-i] = (beg, end, new_block_dimensions[-i])
+
 
         # Step 2. Update the range of the thread block map
         block_ranges : List[subsets.Range] = block_map.range
