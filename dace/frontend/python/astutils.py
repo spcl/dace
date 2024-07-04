@@ -230,6 +230,12 @@ def subscript_to_ast_slice_recursive(node):
 
 
 class ExtUnparser(astunparse.Unparser):
+
+    def _Constant(self, t):
+        # NOTE: This is needed since NumPy 2.0 to avoid unparsing NumPy scalars as calls, e.g. `numpy.int32(1)`
+        if isinstance(t.value, numbers.Number):
+            self.write(str(t.value))
+
     def _Subscript(self, t):
         self.dispatch(t.value)
         self.write('[')
