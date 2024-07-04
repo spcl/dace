@@ -46,6 +46,9 @@ def dealias_sdfg(sdfg: SDFG):
         parent_state = nsdfg.parent
         parent_node = nsdfg.parent_nsdfg_node
 
+        # TODO: Without this, tests/python_frontend/conditional_test.py:test_call_while fails
+        parent_sdfg = parent_sdfg or parent_state.parent
+
         inner_replacements: Dict[str, str] = {}
 
         # Rename nested arrays that happen to have the same name with an unrelated parent array.
