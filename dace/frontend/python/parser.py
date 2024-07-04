@@ -15,6 +15,7 @@ from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
 from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
+from dace.sdfg.state import BreakBlock, ContinueBlock
 
 try:
     from typing import get_origin, get_args
@@ -494,9 +495,15 @@ class DaceProgram(pycommon.SDFGConvertible):
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
 
         if not self.use_experimental_cfg_blocks:
-            sdutils.inline_conditional_regions(sdfg)
-            sdutils.inline_loop_blocks(sdfg)
-            sdutils.inline_control_flow_regions(sdfg)
+            for nsdfg in sdfg.all_sdfgs_recursive():
+                sdutils.inline_conditional_regions(nsdfg)
+                sdutils.inline_loop_blocks(nsdfg)
+                sdutils.inline_control_flow_regions(nsdfg)
+                for node in nsdfg.nodes():
+                    if isinstance(node, (BreakBlock, ContinueBlock)):
+                        raise pycommon.DaceSyntaxError(None, None, "Break or continue blocks were not handled")
+                from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+                DeadStateElimination().apply_pass(nsdfg, {})
         sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
 
         # Apply simplification pass automatically
