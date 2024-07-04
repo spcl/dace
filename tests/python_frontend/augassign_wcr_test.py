@@ -61,9 +61,10 @@ def test_augassign_wcr():
         test_sdfg = augassign_wcr.to_sdfg(simplify=False)
     wcr_count = 0
     for sdfg in test_sdfg.cfg_list:
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for edge in state.edges():
-                if edge.data.wcr:
+                if edge.data.wcr and (isinstance(edge.src, dace.nodes.Tasklet) or
+                                      isinstance(edge.dst, dace.nodes.Tasklet)):
                     wcr_count += 1
     assert (wcr_count == 1)
 
@@ -82,9 +83,10 @@ def test_augassign_wcr2():
         test_sdfg = augassign_wcr2.to_sdfg(simplify=False)
     wcr_count = 0
     for sdfg in test_sdfg.cfg_list:
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for edge in state.edges():
-                if edge.data.wcr:
+                if edge.data.wcr and (isinstance(edge.src, dace.nodes.Tasklet) or
+                                      isinstance(edge.dst, dace.nodes.Tasklet)):
                     wcr_count += 1
     assert (wcr_count == 2)
 
@@ -106,9 +108,10 @@ def test_augassign_wcr3():
         test_sdfg = augassign_wcr3.to_sdfg(simplify=False)
     wcr_count = 0
     for sdfg in test_sdfg.cfg_list:
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for edge in state.edges():
-                if edge.data.wcr:
+                if edge.data.wcr and (isinstance(edge.src, dace.nodes.Tasklet) or
+                                      isinstance(edge.dst, dace.nodes.Tasklet)):
                     wcr_count += 1
     assert (wcr_count == 2)
 
