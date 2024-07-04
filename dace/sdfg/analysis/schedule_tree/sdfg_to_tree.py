@@ -49,19 +49,28 @@ def dealias_sdfg(sdfg: SDFG):
         # TODO: Without this, tests/python_frontend/conditional_test.py:test_call_while fails
         parent_sdfg = parent_sdfg or parent_state.parent
 
-        inner_replacements: Dict[str, str] = {}
 
-        # Rename nested arrays that happen to have the same name with an unrelated parent array.
+        # Rename nested arrays that happen to have the same name with an unrelated parent array connected to the node
+        parent_names = set()
+        for edge in parent_state.all_edges(parent_node):
+            if edge.data.data in parent_sdfg.arrays:
+                parent_names.add(edge.data.data)
+        inner_replacements: Dict[str, str] = {}
         for name, desc in nsdfg.arrays.items():
-            if desc.transient:
-                continue
-            if name in parent_sdfg.arrays:
-                for edge in parent_state.edges_by_connector(parent_node, name):
-                    parent_name = edge.data.data
-                    assert parent_name in parent_sdfg.arrays
-                    if name != parent_name:
-                        new_name = nsdfg._find_new_name(parent_name)
-                        inner_replacements[parent_name] = new_name
+            if name in parent_names:
+                replace = False
+                if desc.transient:
+                    replace = True
+                else:
+                    for edge in parent_state.edges_by_connector(parent_node, name):
+                        parent_name = edge.data.data
+                        assert parent_name in parent_sdfg.arrays
+                        if name != parent_name:
+                            replace = True
+                            break
+                if replace:
+                    new_name = nsdfg._find_new_name(name)
+                    inner_replacements[name] = new_name
         
         if inner_replacements:
             symbolic.safe_replace(inner_replacements, lambda d: replace_datadesc_names(nsdfg, d), value_as_string=True)
