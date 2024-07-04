@@ -650,6 +650,8 @@ def _filter_undefined_symbols(border_memlet: Memlet,
             for rng in subset:
                 fall_back = False
                 for item in rng:
+                    if not symbolic.issymbolic(item):
+                        continue
                     if any(str(s) not in outer_symbols for s in item.free_symbols):
                         fall_back = True
                         break
