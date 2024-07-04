@@ -57,12 +57,12 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         tx = self.tile_size_x
         ty = self.tile_size_y
         tz = self.tile_size_z
-        possible_tile_sizes = (tz, ty, tx)
-        tile_sizes = [1, 1, 1]
+        possible_tile_sizes = [tz, ty, tx]
         # Depending on the sizes of the params use: (tz,ty,tx), (ty,tx) or (tx)
-        for i in range(min(3, len(thread_block_entry.map.params)), 0, -1):
-            ri = min(3, len(thread_block_entry.map.params)) - i
-            tile_sizes[ri] = possible_tile_sizes[-i]
+        if len(thread_block_entry.map.params) <= 3:
+            tile_sizes = possible_tile_sizes[:-len(thread_block_entry.map.params)]
+        else:
+            tile_sizes = [1] * (len(thread_block_entry.map.params) - 3) + possible_tile_sizes
 
         MapTiling.apply_to(sdfg=sdfg, options=dict(prefix="block", tile_sizes=tile_sizes, tile_trivial=True),  map_entry=thread_block_entry)
 
@@ -83,15 +83,10 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         params = {"dim_size_z":1, "dim_size_y":1, "dim_size_x":1}
         dimension_names = ["dim_size_z", "dim_size_y", "dim_size_x"]
         for i in range(min(3, len(thread_block_entry.map.params)), 0, -1):
-            ri = min(3, len(thread_block_entry.map.params)) - i
-            params[dimension_names[-i]] = dev_entry.map.range[ri][2] * possible_tile_sizes[-i]
+            params[dimension_names[-i]] = dev_entry.map.range[-i][2] * possible_tile_sizes[-i]
 
         # Last param of inner map is always the last iteration variable the map above
         range_str = ""
-        if (len(thread_map.range) != len(thread_block_entry.map.params)):
-            print(len(thread_map.range))
-            print(len(thread_block_entry.map.params))
-        assert(len(thread_map.range) == len(thread_block_entry.map.params))
         # Thread block map is i0,i1,i2,i3
         # Which maps to           z, y, x
         # If more the 3 parameters they are linearized

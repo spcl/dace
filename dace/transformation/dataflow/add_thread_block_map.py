@@ -65,6 +65,8 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         else:
             # Pad left 1 to match the length of parameters, and use all block sizes
             tile_sizes = [1]*(len(map_entry.map.params) - 3) + block_dims
+        gpu_block_dims = list(reversed(block_dims[:-3]))
+        map_entry.map.gpu_block_size = gpu_block_dims
 
         # Tile trivial simplifies come checks for the BlockCoarsening and ThreadCoarsening transformations
         MapTiling.apply_to(sdfg=sdfg, options=dict(prefix="grid", tile_sizes=tile_sizes, tile_trivial=True),  map_entry=map_entry)

@@ -138,16 +138,8 @@ class ChangeThreadBlockMap(transformation.SingleStateTransformation):
         # Therefore the code-gen now choose the values in gpu_block_size if it conflicts with the
         # detected blocksizes, and these transformatiosn need to update them
         # Block steps are returned in the form of z, y, x
-        if len(block_steps) == 3:
-            dev_map.gpu_block_size = (self.dim_size_x // block_steps[2], self.dim_size_y // block_steps[1], self.dim_size_z // block_steps[0])
-            block_map.gpu_block_size = dev_map.gpu_block_size
-        elif len(block_steps) == 2:
-            dev_map.gpu_block_size = (self.dim_size_x // block_steps[1], self.dim_size_y // block_steps[0], self.dim_size_z)
-            block_map.gpu_block_size = dev_map.gpu_block_size
-        elif len(block_steps) == 1:
-            dev_map.gpu_block_size = (self.dim_size_x // block_steps[0], self.dim_size_y, self.dim_size_z)
-            block_map.gpu_block_size = dev_map.gpu_block_size
-
+        block_map.gpu_block_size =  list(reversed(dims))
+        dev_map.gpu_block_size = block_map.gpu_block_size
 
     @staticmethod
     def annotates_memlets():
