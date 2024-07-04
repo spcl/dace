@@ -770,16 +770,16 @@ def _get_internal_subset(internal_memlet: Memlet,
                          external_memlet: Memlet,
                          use_src_subset: bool = False,
                          use_dst_subset: bool = False) -> subsets.Subset:
-    if (internal_memlet.data != external_memlet.data and internal_memlet.other_subset is not None):
-        return internal_memlet.other_subset
-    if not use_src_subset and not use_dst_subset:
-        return internal_memlet.subset
     if use_src_subset and use_dst_subset:
         raise ValueError('Source and destination subsets cannot be specified at the same time')
     if use_src_subset and internal_memlet.src_subset is not None:
         return internal_memlet.src_subset
     if use_dst_subset and internal_memlet.dst_subset is not None:
         return internal_memlet.dst_subset
+    if (internal_memlet.data != external_memlet.data and internal_memlet.other_subset is not None):
+        return internal_memlet.other_subset
+    if not use_src_subset and not use_dst_subset:
+        return internal_memlet.subset
     return internal_memlet.subset
 
 
