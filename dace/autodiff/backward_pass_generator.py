@@ -20,6 +20,8 @@ from dace import dtypes, subsets, data as dt
 
 from dace.frontend.operations import detect_reduction_type
 from dace.sdfg import SDFG, SDFGState, graph as dgraph, state as dstate, utils as dutils, infer_types
+from dace.sdfg.state import LoopRegion
+
 from dace.sdfg.analysis import cfg
 from dace.memlet import Memlet
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
@@ -76,10 +78,6 @@ def init_grad(data: str, sdfg: SDFG, current_state: SDFGState) -> SDFGState:
     return state
 
 
-def _strings_to_symbols(strings: Set[str]) -> Set[sp.Symbol]:
-    return {sp.symbols(string) for string in strings}
-
-
 def _symbols_to_strings(symbs: Set[sp.Symbol]) -> Set[str]:
     return {str(symb) for symb in symbs}
 
@@ -102,15 +100,6 @@ def generate_grad_connector_names(existing_connectors: Set[str], forward_connect
         existing_connectors.add(result)
 
     return names
-
-
-def is_initialization_state(state: SDFGState) -> bool:
-    """ Check if state is an initialization state, i.e. it initializes one or more arrays with zero values
-    """
-    for n in state.data_nodes():
-        if len(state.out_edges(n)) > 0:
-            return False
-    return True
 
 
 def code_to_exprs(code: str, inputs: Set[str], outputs: Set[str]) -> Dict[str, sp.Expr]:
@@ -167,6 +156,7 @@ def symbolic_execution({}):
             "Exception occured while attempting to symbolically execute code:\n{}".format(code)) from e
 
 
+# TODO: use this function if the compare memlet assignement
 def _is_int_value(value, target_value: int) -> bool:
     if isinstance(value, numbers.Integral):
         return value == target_value
@@ -195,63 +185,20 @@ def _invert_map_connector(conn):
         raise AutoDiffException("Could not parse map connector '{}'".format(conn))
 
 
-def _walk_up_memlet_tree_through_view_nodes(
-        sdfg, start_name) -> Tuple[Union[dt.Scalar, dt.Array], str, Deque[Tuple[str, dt.Data, Memlet]]]:
-    """ 
-    Starting from the (singular) access node for ``start_name`` in ``forward_state``, walk up the
-    memlet path until a non-view node is reached
-
-    :param sdfg: the forward sdfg
-    :param forward_state: the forward state
-    :param start_name: the name of the array to start at
-    :return: the descriptor at the root of the path, the name at the root of the path, the list of
-                array names, view data descriptor and memlets encountered along the path.
-    """
-    forwarded_name = start_name
-    view_nodes_to_clone: Deque[Tuple[str, dt.Data, Memlet]] = collections.deque()
-    if isinstance(sdfg.arrays[start_name], dt.View):
-        # this is complicated slightly by views: we need to walk up the memlet path until we reach a
-        # non-view access node. We then need to replicate the sequence of views in the backward SDFG.
-        for forward_state in sdfg.nodes():
-            query = [n for n in forward_state.nodes() if isinstance(n, nodes.AccessNode) and n.data == start_name]
-            if len(query) != 1:
-                raise AutoDiffException(f"Could not find access node to forward with data {start_name}")
-            current_node = query[0]
-            while isinstance(sdfg.arrays[current_node.data], dt.View):
-
-                in_edges = forward_state.in_edges(current_node)
-                if len(in_edges) != 1:
-                    raise AutoDiffException(
-                        f"Expected view node with in degree 1, got {len(in_edges)} for view node {current_node}")
-                if not isinstance(in_edges[0].src, nodes.AccessNode):
-                    raise AutoDiffException(
-                        f"Expected view node {current_node} to be connected to access node, got {in_edges[0].src}"
-                        f" (of type {type(in_edges[0].src)})")
-                view_nodes_to_clone.append((current_node.data, sdfg.arrays[current_node.data], in_edges[0].data))
-                current_node = in_edges[0].src
-                forwarded_name = current_node.data
-
-    return sdfg.arrays[forwarded_name], forwarded_name, view_nodes_to_clone
-
-
 def _path_src_node_in_subgraph(edge: dgraph.MultiConnectorEdge, subgraph: dstate.StateSubgraphView):
     path_src = subgraph.memlet_path(edge)[0].src
     return path_src in subgraph.nodes()
 
 
 class BackwardPassGenerator:
-    """ Class that holds the state for one backward pass creation.
+    """ Class that holds the states for one backward pass creation.
 
         See autodiff.py, _reverse_NestedSDFG and pytorch.py for examples of usage.
-
-        :param state: the forward pass to differentiate should be in this state
         :param given_gradients: the outputs that gradients must be provided for (i.e. access nodes will be created for
                these)
         :param required_gradients: the inputs to generate gradients for
         :param backward_sdfg: the sdfg the backward pass will be contained in. If it is the same as the forward_sdfg,
                               outputs must be a list containing a single scalar.
-        :param backward_state: the state which the backward pass should be added to (must be added to `backward_sdfg`
-                               before calling this method).
         :param zero_non_transients: Whether non-transient gradient buffers should be zero initialized in the backward
                                     SDFG.
         :param array_grad_map: A mapping from array name to the gradient array name. May be passed when certain
@@ -268,7 +215,7 @@ class BackwardPassGenerator:
         sdfg: SDFG,
         given_gradients: Sequence[Union[nodes.AccessNode, str]],
         required_gradients: Sequence[Union[nodes.AccessNode, str]],
-        backward_sdfg: SDFG,  # this can be the same as SDFG
+        backward_sdfg: SDFG,  # This can be the same as sdfg
         zero_non_transients: bool,
         array_grad_map: Optional[Dict[str, str]] = None,
         conflicted_gradient_buffers: Optional[Set[str]] = None,
@@ -290,67 +237,70 @@ class BackwardPassGenerator:
         self.given_gradients = given_gradients
         self.required_gradients = required_gradients
 
-        self.given_gradients_all_states = {n.data for n in given_gradients}
-        self.required_gradients_all_states = {n.data for n in required_gradients}
+        self.given_gradients_data = {n.data for n in given_gradients}
+        self.required_gradients_data = {n.data for n in required_gradients}
 
         self.input_names = {n.data for n in required_gradients}
         self.output_names = {n.data for n in given_gradients}
 
-        #: arrays descs for the gradients
+        #: Arrays descs for the gradients
         self.backward_grad_arrays: Dict[str, dt.Array] = {}
 
-        #: arrays descs for inputs that are required from the forward pass
+        #: Arrays descs for inputs that are required from the forward pass
         self.backward_input_arrays: Dict[str, dt.Array] = {}
 
-        #: mapping from forward node -> backward node, and forward map -> backward map
+        #: Mapping from forward node -> backward node, and forward map -> backward map
         self.reverse_map: Dict[nodes.Node, Union[nodes.Node, nodes.Map]] = {}
 
-        #: mapping from forward state -> backward state
-        self.reversed_states_map: Dict[nodes.Node, nodes.Node] = {}
+        #: Mapping from forward state -> backward state
+        self.reversed_states_map: Dict[SDFGState, SDFGState] = {}
 
-        #: mapping from forward state -> backward state for loop states
+        #: Mapping from forward LoopRegion -> backward LoopRegion
+        self.reversed_loops_map: Dict[LoopRegion, LoopRegion] = {}
+
+        #: Mapping from forward state -> backward state for loop states
         self.reversed_loop_states_map: Dict[nodes.Node, nodes.Node] = {}
 
-        #: mapping between states and their views that indicate what to AD
+        #: Mapping between states and their views that indicate what to AD
         self.states_view_map: Dict[SDFGState, dstate.StateSubgraphView] = {}
 
-        #: mapping between states and their views that indicate what to AD
+        #: Mapping between states and their views that indicate what to AD
         self.loop_states_view_map: Dict[SDFGState, dstate.StateSubgraphView] = {}
 
-        #: mapping between states and their necessary initialization states
+        #: Mapping between states and their necessary initialization states
         self.init_states: Dict[SDFGState, SDFGState] = {}
 
-        #: mapping from forward_node -> BackwardResult for that node
+        #: Mapping from forward_node -> BackwardResult for that node
         self.result_map: Dict[nodes.Node, BackwardResult] = {}
 
-        #: mapping from access nodes required from the forward pass, and their stored access nodes
+        #: Mapping from access nodes required from the forward pass, and their stored access nodes
         self.stored_data_map: Dict[Tuple[SDFGState, nodes.AccessNode], Tuple[nodes.AccessNode, List[Memlet]]] = {}
 
-        #: mapping from forward name to gradient name for arrays
+        #: Mapping from forward name to gradient name for arrays
         self.array_grad_map: Dict[str, str] = array_grad_map or {}
 
-        # topological orderning of the states
-        self.state_order = list(cfg.stateorder_topological_sort(self.sdfg))
+        # Topological orderning of the states
+        self.state_order = self.sdfg.states()
         self.conflicted_gradient_buffers: Set[str] = conflicted_gradient_buffers or set()
 
-        # checks if backward has already been applied
+        # Variable to check if backward has already been applied
         self._applied = False
         self.zero_non_transients = zero_non_transients
 
-        # check if the outputs are present in at least one of the states of the sdfg
+        # Sanity-check: the outputs need to be present in at least one of the states of the sdfg
         for outp in self.given_gradients:
             found = False
-            for state in self.sdfg.states():
+            for state in self.state_order:
                 if outp in state:
                     found = True
                     break
             if not found:
                 raise AutoDiffException(f"Could not find output {outp} in any of the SDFG states")
 
-        # check if the inputs are present in at least one of the states of the sdfg
+        # Sanity-check: the inputs need to be present in at least one of the states of the sdfg
         for inp in self.required_gradients:
             found = False
-            for state in self.sdfg.states():
+            for state in self.state_order:
                 if inp in state:
                     found = True
                     break
@@ -358,6 +308,7 @@ class BackwardPassGenerator:
                 raise AutoDiffException(f"Could not find input {inp} in any of the SDFG states")
 
         if sdfg is backward_sdfg:
+            # TODO: why is this condition necessary
             # this only makes sense if the output is a single scalar.
             if len(given_gradients) != 1:
                 raise AutoDiffException("When the forward sdfg is the same as the backward sdfg, outputs must be a"
@@ -390,34 +341,42 @@ class BackwardPassGenerator:
         if self._applied:
             raise AutoDiffException("Backward may only be called once. Instantiate a new BackwardPassGenerator.")
 
-        # create state views mapping and exapnd all the SDFG nodes
+        # If any of the inputs is overwritten before it is ever used,
+        # we will return zero for its gradients and skip AD for it.
+        # Identify what gradients follow this pattern and remove them from the gradients list if necessary
+        self._identify_overwritten_inputs()
+
+        # Create state views mapping and exapnd all the SDFG nodes
         self._create_stateviews_mapping()
 
-        # reverse each state in the graph
-        self._reverse_states(forward_states=self.state_order)
+        # Reverse each state in the graph
+        self._reverse_states()
 
-        # connect the new reversed state to the other states correctly
-        self._connect_reversed_state(forward_states=self.state_order)
+        # Connect the new reversed states to the other states correctly
+        self._connect_reversed_state()
 
-        # fill the interstate edges with the correct conditions
-        self._fill_interstate_edge_conditions(forward_states=self.state_order)
+        # Fill the interstate edges with the correct conditions
+        self._fill_interstate_edge_conditions()
 
-        # in some cases (accessnode -> accessnode), the descriptors for the gradients of the function outputs are not
-        # added yet. Add them now
+        # Zero out the necessary gradients
+        # These are the overwritten inputs and inputs that don't contribute to the desired output
+        self._zero_out_required_gradients()
+
+        # In some cases (accessnode -> accessnode), the descriptors for the gradients of the function outputs are not
+        # added yet. Add them now.
         for given_grad in sorted(self.given_gradients, key=lambda k: k.data):
             if self.array_grad_name(given_grad.data) not in self.backward_sdfg.arrays:
                 self._add_gradient_data_descriptor(given_grad.data)
 
-        # execute hooks
+        # Execute completion hooks
         for hook in self.completion_hooks:
             hook(self)
 
-        # prepare the output
+        # Prepare the output
         required_grad_names = {name.data: self.array_grad_name(name.data) for name in self.required_gradients}
         given_grad_names = {name.data: self.array_grad_name(name.data) for name in self.given_gradients}
 
-        # set mapping from gradient name to whether it should be zeroed out on
-        # initialization
+        # Set mapping from gradient name to whether it should be zeroed out on initialization
         zero_init: Dict[str, bool] = {}
         for node, bres in self.result_map.items():
             forward_state = self._get_node_state(node=node)
@@ -436,278 +395,290 @@ class BackwardPassGenerator:
                                 zero_init=zero_init)
         return result, self.backward_grad_arrays, self.backward_input_arrays
 
-    def _reverse_states(self, forward_states: List[SDFGState]):
+    def _identify_overwritten_inputs(self):
         """
-        Go through all the state of the forward SDFG, reverse it and add it to the backward SDFG.
-        :param forward_states: a list of states from the forward SDFG in topological order
+        Go through all the inputs we want to differentiate the output w.r.t,
+        if any of them are overwritten to before they are used in the SDFG,
+        the resulting gradient for this input is zero. 
+        Any changes to this input of the function will be overwritten immediatly.
+        In this method we identify which inputs are overwritten to and save them
+        in the overwritten_inputs list. 
+        We also save the memlet of this overwrite to later only zero-out the correct indices
+        in the case where not the whole array has been overwritten.
+        To identify which which inputs have been overwritten:
+            - We get the first AccessNode to this data in the SDFG
+            - If this first occurance has any incoming edges (i.e. write)
+            - Save this data to later be zeroed-out by the _zero_out_required_gradients method
         """
 
-        # for reversal we want to iterate through the states in reverse topological order
-        for state in reversed(forward_states):
-            # check if this state has already been reversed
-            assert state not in self.reversed_states_map
-            reversed_state_label = f"{state.label}_reversed" if state.label else None
+        self.overwritten_inputs: List[str, Memlet] = []
 
-            # create new state for reversal
-            reversed_state = self.backward_sdfg.add_state(label=reversed_state_label)
+        # For each input we to differentiate with respect to
+        for required_gradient in self.required_gradients_data:
+            # Get the first instance of this input node in the SDFG
+            first_occurance = None
 
-            # add the new state to the reversed map dict
-            self.reversed_states_map[state] = reversed_state
+            # This assumes topological sort of states
+            for state in self.sdfg.states():
+                for node in state.all_nodes_recursive():
+                    if isinstance(node, nodes.AccessNode) and node.data == required_gradient:
+                        first_occurance = node
+                        first_occurance_state = state
+                        break
+
+                # If we already found the AccessNode, break
+                if first_occurance:
+                    break
+
+            # If the data is used in the SDFG
+            # We will deal with the case where the data is not used
+            # or not used in the critical computation graph in the
+            # _zero_out_required_gradients method
+            if first_occurance:
+                in_edges = first_occurance_state.in_edges(first_occurance)
+
+                # Check if the first occurance is a write
+                if len(in_edges) > 0:
+
+                    # This is an AN so there only should be one incoming edge
+                    assert len(in_edges) == 1
+                    memlet = in_edges[0].data
+
+                    # Save this data and the overwrite memlet to the list
+                    self.overwritten_inputs.append((first_occurance.data, memlet))
+
+                    # If this is a complete overwrite of the input, we don't want to do AD for it
+                    comparison_result = self._compare_memlet_accesses_to_array_size(first_occurance.data, memlet)
+                    if comparison_result and comparison_result == 0:
+                        # The whole array is overwritten at the start of the program
+                        # Remove this from the required gradients list
+                        self.required_gradients_data.remove(first_occurance.data)
+                        node = [n for n in self.required_gradients if n.data == first_occurance.data]
+                        assert len(node) == 1
+                        self.required_gradients.remove(node[0])
+
+    def _create_stateviews_mapping(self):
+        """
+        Maps each state in the SDFG to the views that indicates what to differentiate
+        """
+        self._find_subgraph_to_differentiate()
+
+        # Expand until there is nothing left to expand
+        while self._expand_nodes():
+            # Nodes have been expanded again on the expanded graph; recalculate the forward graph
+            self._find_subgraph_to_differentiate()
+
+    def _reverse_states(self):
+        """
+        Go through all the state of the forward SDFG, reverse them and add them to the backward SDFG.
+        """
+        # For reversal we want to iterate through the states in reverse topological order
+        for state in reversed(self.state_order):
+            # Get all the views of this state
             assert state in self.states_view_map
-            forward_subgraph = self.states_view_map[state]
+            state_subgraph_views = [self.states_view_map[state]]
 
-            # check that all edges are float or booleans
-            self.check_edges_type_in_state(forward_subgraph)
-
-            self._disambiguate_direction_dependent_views(state)
-
-            # recursively reverse the subgraph
-            self._reverse_subgraph(forward_state=state, backward_state=reversed_state, subgraph=forward_subgraph)
-
-            # in case this is a state loop
+            # In case this is a state loop
+            state_subgraph_loop_view = []
             if state in self.loop_states_view_map:
-                # if the two views are different
-                if len(self.loop_states_view_map[state]) != len(self.states_view_map[state]):
-                    # here we only check if the number of nodes is the same
-                    # since states_view_map[state] is a subset of loop_states_view_map[state]
-                    # check if this state has already been reversed
-                    assert state not in self.reversed_loop_states_map
+                loop_view = self.loop_states_view_map[state]
+                # If the two views are different
+                if len(loop_view) != len(self.states_view_map[state]):
+                    state_subgraph_loop_view.append(loop_view)
+
+            all_views = state_subgraph_views + state_subgraph_loop_view
+            for state_subgraph_view in state_subgraph_views:
+
+                # Make sure this state has not already been reversed
+                assert state not in self.reversed_states_map
+
+                # Create the new reversed state label
+                if state_subgraph_view in state_subgraph_loop_view:
                     reversed_state_label = f"{state.label}_loop_reversed" if state.label else None
+                else:
+                    reversed_state_label = f"{state.label}_reversed" if state.label else None
 
-                    # create new state for reversal
-                    reversed_state = self.backward_sdfg.add_state(label=reversed_state_label)
+                # Create new state for reversal
+                # At the moment we add all states to the backward_sdfg directly
+                # This will later be modified when connecting the states
+                reversed_state = self.backward_sdfg.add_state(label=reversed_state_label)
 
-                    # add the new state to the reversed map dict
+                # Add the new state to the reversed map dict
+                if state_subgraph_view in state_subgraph_loop_view:
                     self.reversed_loop_states_map[state] = reversed_state
-                    forward_subgraph = self.loop_states_view_map[state]
+                else:
+                    self.reversed_states_map[state] = reversed_state
 
-                    # check that all edges are float
-                    self.check_edges_type_in_state(forward_subgraph)
+                # Check that all edges are float or booleans
+                self.check_edges_type_in_state(state_subgraph_view)
 
-                    # recursively reverse the subgraph
-                    self._reverse_subgraph(forward_state=state,
-                                           backward_state=reversed_state,
-                                           subgraph=forward_subgraph)
+                self._disambiguate_direction_dependent_views(state)
 
-    def _connect_reversed_state(self, forward_states: List[SDFGState]):
+                # Recursively reverse the subgraph
+                self._reverse_subgraph(forward_state=state, backward_state=reversed_state, subgraph=state_subgraph_view)
+
+        # We also reverse all the LoopRegions in the graph
+        for node in self.sdfg.nodes():
+            if not isinstance(node, LoopRegion):
+                continue
+            self._reverse_loop_region(node)
+
+    def _connect_reversed_state(self):
         """
         Go through all the state of the forward SDFG and connect the equivelent backward state as necessary.
         All the incoming edges of a state in the forward SDFG will result in outgoing edges in the backward SDFG.
-        :param forward_states: a list of states from the forward SDFG in topological order
         """
-        for state in forward_states:
-            # all states should be reversed already
+
+        for state in self.state_order:
+            # All states should be reversed already
             assert state in self.reversed_states_map
             backward_state = self.reversed_states_map[state]
 
-            # check if a gradient initialization state has been added
+            # Check if a gradient initialization state has been added
             if backward_state in self.init_states:
-                # in this case we want to connect any in edges to the initialization instead
+                # In this case we want to connect any in edges to the initialization instead
                 backward_state = self.init_states[backward_state]
 
-            # get all the out edges of the forward state
-            state_out_edges = self.sdfg.out_edges(state)
+            # Get all the out edges of the forward state
+            parent_graph = state.parent_graph
+            state_out_edges = parent_graph.out_edges(state)
 
-            # if there are no outgoing connections
+            # If there are no outgoing connections
             if len(state_out_edges) == 0:
-                # this is an end state and it needs to be connected to its reversed state
+                # This is an end-state and it needs to be connected to its reversed state
                 # we do this only if the backward sdfg is the same as the forward one
-                if not self.separate_sdfgs:
-                    self.sdfg.add_edge(src=state, dst=backward_state, data=dace.InterstateEdge())
+                if parent_graph == self.sdfg and not self.separate_sdfgs:
+                    self.backward_sdfg.add_edge(src=state, dst=backward_state, data=dace.InterstateEdge())
 
-            # get all the in connections of the forward state
-            forward_state_in_edges = self.sdfg.in_edges(state)
+            # Get all the in connections of the forward state
+            forward_state_in_edges = parent_graph.in_edges(state)
 
-            # get the backward state again
-            # we need to do this in case the state is linked to an initialization state
-            # for outgoing edges, we connect the actual state not its initialization
+            # Get the backward state again
+            # We need to do this in case the state is linked to an initialization state
+            # For outgoing edges, we connect the actual state not its initialization
             backward_state = self.reversed_states_map[state]
 
-            # for each incoming edge
             for edge in forward_state_in_edges:
-                # each incoming edge to a forward state will add an outgoing edge to a backward state
+                # Each incoming edge to a forward state will add an outgoing edge to a backward state
                 fwd_src = edge.src
-                bwd_src = self.reversed_states_map[fwd_src]
+                if isinstance(fwd_src, SDFGState):
+                    bwd_src = self.reversed_states_map[fwd_src]
+                elif isinstance(fwd_src, LoopRegion):
+                    bwd_src = self.reversed_loops_map[fwd_src]
 
-                # again, we need to check if we should make the connection to the state itself
+                graph = bwd_src.parent_graph
+                # Again, we need to check if we should make the connection to the state itself
                 # or to its initialization if it exists
                 if bwd_src in self.init_states:
                     bwd_src = self.init_states[bwd_src]
-                self.backward_sdfg.add_edge(src=backward_state, dst=bwd_src, data=dace.InterstateEdge())
+                graph.add_edge(src=backward_state, dst=bwd_src, data=dace.InterstateEdge())
 
-                # if a state is in a loop, connect the first iteration states with the guard
-                if state in self.loop_states_view_map:
-                    if self._state_is_guard(fwd_src):
-                        # connect the guard to the first iteration state if it exists
-                        if state in self.reversed_loop_states_map:
-                            # there is another view of this state and we need to connect it
-                            loop_state = self.reversed_loop_states_map[state]
-                            self.backward_sdfg.add_edge(src=loop_state, dst=bwd_src, data=dace.InterstateEdge())
-                    else:
-                        # the general case within a loop
-                        # the source of this edge needs to either be in a loop or be the guard
-                        assert fwd_src in self.loop_states_view_map
+        # Connect all the loops
+        for loop in self.reversed_loops_map.keys():
 
-                        # we need to add a connection between the first iteration states too if they exist
-                        if state in self.reversed_loop_states_map and fwd_src in self.reversed_loop_states_map:
-                            loop_state_src = self.reversed_loop_states_map[state]
-                            loop_state_dst = self.reversed_loop_states_map[fwd_src]
-                            if loop_state_dst in self.init_states:
-                                loop_state_dst = self.init_states[loop_state_dst]
-                            self.backward_sdfg.add_edge(src=loop_state_src,
-                                                        dst=loop_state_dst,
-                                                        data=dace.InterstateEdge())
+            # Get the loop parent
+            parent_graph = loop.parent_graph
 
-                if self._state_is_guard(state) and fwd_src in self.reversed_loop_states_map:
-                    # connect the guard to the first iteration state
-                    loop_state = self.reversed_loop_states_map[fwd_src]
-                    if loop_state in self.init_states:
-                        loop_state = self.init_states[loop_state]
-                    self.backward_sdfg.add_edge(src=backward_state, dst=loop_state, data=dace.InterstateEdge())
+            # Get the reversed loop
+            reversed_loop = self.reversed_loops_map[loop]
 
-    def _fill_interstate_edge_conditions(self, forward_states: List[SDFGState]):
+            # Get all the out edges of the forward state
+            loop_out_edges = parent_graph.out_edges(loop)
+
+            # If there are no outgoing connections
+            if len(loop_out_edges) == 0:
+                # This is an end-region and it needs to be connected to its reversed region
+                # We do this only if the backward sdfg is the same as the forward one
+                if parent_graph == self.sdfg and not self.separate_sdfgs:
+                    self.backward_sdfg.add_edge(src=state, dst=backward_state, data=dace.InterstateEdge())
+
+            # Get all the in edges
+            loop_in_edges = parent_graph.in_edges(loop)
+
+            for edge in loop_in_edges:
+
+                # A loop region could be connected to a state or another loop region
+                fwd_src = edge.src
+                if isinstance(fwd_src, SDFGState):
+                    bwd_src = self.reversed_states_map[fwd_src]
+                elif isinstance(fwd_src, LoopRegion):
+                    bwd_src = self.reversed_loops_map[fwd_src]
+
+                # Again, we need to check if we should make the connection to the state itself
+                # or to its initialization if it exists
+                if bwd_src in self.init_states:
+                    bwd_src = self.init_states[bwd_src]
+
+                # Get the graph to add the edge to
+                if isinstance(parent_graph, LoopRegion):
+                    bwd_parent_graph = self.reversed_loops_map[parent_graph]
+                else:
+                    bwd_parent_graph = self.backward_sdfg
+
+                bwd_parent_graph.add_edge(src=reversed_loop, dst=bwd_src, data=dace.InterstateEdge())
+
+    def _fill_interstate_edge_conditions(self):
         """
         Go through all of the states in the forward graph and fill the necessary conditions in the backward states.
-        Each edge in the backward SDFG will be the logical and between the equivelent edge in the forward SDFG and 
+        Each edge in the backward SDFG will be the logical AND between the equivelent edge in the forward SDFG and 
         all of the conditions that are necessary to get to this state in the forward pass.
-        :param forward_states: a list of states from the forward SDFG in topological order
         """
-        # a dictionary that keeps track of the conditions necessary to reach a state in the forward passs
+        # A dictionary that keeps track of the conditions necessary to reach a state in the forward passs
         conditions_map: dict[SDFGState, str] = {}
 
-        states_to_skip = []
+        # Iterate through all the state in topological order
+        for forward_state in self.state_order:
 
-        # iterate through all the state in topological order
-        # Traverse SDFG backwards
-        for forward_state in forward_states:
+            parent_graph = forward_state.parent_graph
 
-            # skip already connected states
-            if forward_state in states_to_skip:
-                continue
-
-            # get the backward state
+            # Make sure this state has already been reversed
             assert forward_state in self.reversed_states_map
 
-            # special case: this state is the guard for a for loop
-            if self._state_is_guard(forward_state):
+            # We will iterate through all the incoming edges to the forward state
+            edges_list = parent_graph.in_edges(forward_state)
 
-                found, begin_edge, after_loop_edge, after_loop_state = self._find_for_loop(guard=forward_state)
-                itervar, (start, end, step), (start_state, end_state) = found
-
-                # add the condition to the starting state of the loop
-                # get the equivelent edge from the backward pass
-                bwd_edge: dace.InterstateEdge = self._get_bcakward_state_edge(begin_edge)
-
-                # reverse the assignement from the last loop state
-                bwd_edge.data.assignments = {itervar: f"{itervar}-{step}"}
-
-                # add the condition to the last state in the loop
-                # first get the correct edge
-                end_state_out_edges = self.sdfg.out_edges(end_state)
-
-                assert len(end_state_out_edges) == 1
-
-                # get the equivelent edge from the backward pass
-                bwd_edge = self._get_bcakward_state_edge(end_state_out_edges[0])
-
-                # reverse the loop condition since we will be iterating backwards
-                bwd_edge.data.condition = CodeBlock(f"({itervar}>{start-1})")
-
-                # if there is a special case for the first iteration of the backward state
-                if end_state in self.loop_states_view_map and end_state in self.reversed_loop_states_map:
-
-                    # we remove one iteration from this loop that will be executed by the states we just added
-                    bwd_edge.data.condition = CodeBlock(f"({itervar} == {end})")
-
-                    bwd_beging_loop_edge: dace.InterstateEdge = self._get_bcakward_loop_state_edge(begin_edge)
-
-                    # reverse the assignement from the last loop state
-                    bwd_beging_loop_edge.data.assignments = {itervar: f"{itervar}-{step}"}
-
-                    # get the equivelent edge from the backward pass
-                    end_loop_edge = self._get_bcakward_loop_state_edge(end_state_out_edges[0])
-
-                    # reverse the loop condition since we will be iterating backwards
-                    end_loop_edge.data.condition = CodeBlock(f"({itervar}>{start-1}) and ({itervar}<{end})")
-
-                # add the condition for the after loop state which used to be the init state
-                guard_in_edges = self.sdfg.in_edges(forward_state)
-                assert len(guard_in_edges) == 2
-
-                # find the init state
-                init_state_edge = None
-                for edge in guard_in_edges:
-                    if edge.src != end_state:
-                        init_state_edge = edge
-                assert init_state_edge
-
-                # get the equivelent edge from the backward pass
-                bwd_edge = self._get_bcakward_state_edge(init_state_edge)
-
-                # the end condition for the for loop
-                bwd_edge.data.condition = CodeBlock(f"{itervar} == {start-1}")
-
-                # the loop start state, end state and proceeding state are already connected
-                # skip them in the future
-                states_to_skip.append(end_state)
-                states_to_skip.append(start_state)
-
-                # get the equivelent edge from the backward pass
-                bwd_edge = self._get_bcakward_state_edge(after_loop_edge)
-
-                # reverse the assignement from the last loop state
-                bwd_edge.data.assignments = {itervar: f"{end}"}
-
-                states_to_skip.append(after_loop_state)
-                continue
-
-            # we will iterate through incoming edges to the forward state
-            edges_list = self.sdfg.in_edges(forward_state)
-
-            # if there are none, this is a start state
+            # If there are none, this is a start state
+            # If there is only one incoming edge, no condition necessary
             if len(edges_list) < 2:
                 conditions_map[forward_state] = "1"
                 continue
 
-            # a list of the conditions on all the in edges for this statae
+            # A list of the conditions on all the in edges for this state
             in_edges_conditions: List[str] = []
             for edge in edges_list:
-                # get the src state
+                # Get the src state
                 src_state = edge.src
 
-                if self._state_is_guard(src_state):
-                    # we already made the connections of the loop guard
-                    continue
-
-                # get the condition to get to the src state in the forward pass
+                # Get the condition to get to the source state in the forward pass
                 src_state_condition = conditions_map[src_state]
 
-                # add the condition in the current edge
+                # Add the condition in the current edge
                 current_edge_condition = edge.data.condition.as_string
 
-                # new backward edge condition
+                # New backward edge condition
                 new_bwd_edge_condition = f"({src_state_condition}) and {current_edge_condition}" if current_edge_condition != "1" else src_state_condition
-
                 bwd_edge = self._get_bcakward_state_edge(edge)
 
-                # add the condition to the edge
+                # Add the condition to the edge
                 bwd_edge.data.condition = CodeBlock(new_bwd_edge_condition)
 
-                # if there is a special case for the first iteration of the backward state
+                # If there is a special case for the first iteration of the backward state
                 if forward_state in self.loop_states_view_map:
-                    # get the corresponding edge between the loop states
+
+                    # Get the corresponding edge between the loop states
                     bwd_loop_edge = self._get_bcakward_loop_state_edge(edge)
 
-                    # add the same condition to the edge
+                    # Add the same condition to the edge
                     bwd_loop_edge.data.condition = CodeBlock(new_bwd_edge_condition)
 
-                # add the forward condition to the list to update the conditions_map dict
+                # Add the forward condition to the list to update the conditions_map dict
                 if new_bwd_edge_condition != "1":
-                    # only add the condition if it exists
+                    # Only add the condition if it exists
                     in_edges_conditions.append(new_bwd_edge_condition)
 
-            # update the conditions mapping
-            # this will be the logical or of all the saved conditions
+            # Update the conditions mapping
+            # This will be the logical or of all the saved conditions
+            # because we can reach this state by taking any of the incoming edges
             if len(in_edges_conditions) == 0:
                 condition_for_state = "1"
             else:
@@ -715,68 +686,573 @@ class BackwardPassGenerator:
                 for i in range(1, len(in_edges_conditions)):
                     condition_for_state += f" or {in_edges_conditions[i]}"
 
-            # since we are doing topological sort before iterating
-            # this node should not have been updated before
+            # Since we are doing topological sort before iterating
+            # This node should not have been updated before
             assert forward_state not in conditions_map
             conditions_map[forward_state] = condition_for_state
 
-    def _find_for_loop(self, guard: SDFGState):
+        # Iterate through all the loop regions and connect the loop states if necessary
+        for loop in self.sdfg.all_control_flow_regions():
+            # Only iterate over loop regions
+            if not isinstance(loop, LoopRegion):
+                continue
+            # Get the start state
+            loop_start_state = loop.start_block
+            if not isinstance(loop_start_state, SDFGState):
+                # This would be the case for perfectly nested loops
+                # Nothing to do in this case
+                continue
+
+            if not loop_start_state in self.reversed_loop_states_map:
+                # There are no extra states to connect
+                continue
+
+            # If there are loop states to connect
+            # Prepare the condition for the new state
+            loop_it = loop.loop_variable
+            reversed_loop = self.reversed_loops_map[loop]
+            start, _ = self._extract_loop_region_info(reversed_loop)
+
+            # We only want the loop state to execute
+            # in the first iteration of the reversed loop
+            first_state_condition = f"{loop_it} == {start}"
+            first_state_condition = CodeBlock(first_state_condition)
+
+            leftover_loop_state = self.reversed_loop_states_map[loop_start_state]
+
+            # Get the reversed loop start state
+            reversed_loop_start_state = self.reversed_states_map[loop_start_state]
+
+            # In case there are initializations
+            if reversed_loop_start_state in self.init_states:
+                reversed_loop_start_state = self.init_states[reversed_loop_start_state]
+
+            # Add a state to the reversed loop region
+            new_start_state = reversed_loop.add_state_before(reversed_loop_start_state,
+                                                             is_start_block=True,
+                                                             condition=first_state_condition)
+
+            # The condition for this interstate edge should be all iterations expect the fist
+            leftover_iterations_condition = f"not {first_state_condition.as_string}"
+
+            # In case there are initializations
+            if leftover_loop_state in self.init_states:
+                leftover_loop_state = self.init_states[leftover_loop_state]
+
+            # Add a connection between this new start state and the first iteration state
+            reversed_loop.add_edge(src=new_start_state,
+                                   dst=leftover_loop_state,
+                                   data=dace.InterstateEdge(condition=leftover_iterations_condition))
+
+    def _zero_out_required_gradients(self):
         """
-        wrapper around the find loop function to get the start state automatically
+        Zero-out gradients that either didn't contribute to the desired output,
+        or were overwritten and identified by the _identify_overwritten_inputs method.
         """
-        # find the entry node of the for loop
-        guard_out_edges = self.sdfg.out_edges(guard)
+        gradients_to_zero_out: List[str, Memlet] = []
+        # First, we zero-out all the required gradients that didn't contribute at all to the output
+        for required_gradient in self.required_gradients_data:
+            gradient_name = self.array_grad_name(required_gradient)
+            added = False
+            for node, _ in self.backward_sdfg.all_nodes_recursive():
+                if isinstance(node, nodes.AccessNode) and node.data == gradient_name:
+                    added = True
+                    break
+            if not added:
+                gradients_to_zero_out.append((required_gradient, None))
 
-        # there should be only two edges coming out of the guard
-        assert len(guard_out_edges) == 2
-        begin = None
-        begin_edge = None
+        # Fuse the lists of gradients to remove
+        gradients_to_zero_out += self.overwritten_inputs
 
-        # the edge with the not condition is the exist state
-        for edge in guard_out_edges:
-            if "not" not in edge.data.condition.as_string:
-                begin = edge.dst
-                begin_edge = edge
-            else:
-                after_loop_edge = edge
-                after_loop_state = edge.dst
+        # We zero out the gradients that were already identified (if any)
+        if len(gradients_to_zero_out) == 0:
+            return
 
-        assert begin is not None and begin_edge is not None
-        found = find_for_loop(sdfg=self.sdfg, guard=guard, entry=begin)
+        # Get all the end-states of the backward SDFG
+        bwd_sdfg_exit_nodes = []
+        for node in self.backward_sdfg.nodes():
+            if len(self.backward_sdfg.out_edges(node)) == 0:
+                bwd_sdfg_exit_nodes.append(node)
+        assert bwd_sdfg_exit_nodes
 
-        # if loop cannot be detected, fail
-        assert found
-        return found, begin_edge, after_loop_edge, after_loop_state
+        # Create the state that we will be adding the initialization to
+        zero_out_state = self.backward_sdfg.add_state_after(bwd_sdfg_exit_nodes[0], label="__gradient_zero_out_state__")
+
+        # Connect all the leftover exit nodes to this new state
+        bwd_sdfg_exit_nodes = bwd_sdfg_exit_nodes[1:]
+        for exit_node in bwd_sdfg_exit_nodes:
+            self.backward_sdfg.add_edge(src=exit_node, dst=zero_out_state, data=dace.InterstateEdge())
+
+        # Add the initialization maps per data
+        for data, memlet in gradients_to_zero_out:
+            # Zero out each gradient
+            self._zero_out_gradient(zero_out_state, data, memlet)
+
+    def _zero_out_gradient(self, init_state: SDFGState, data: str, memlet: Memlet = None):
+        """
+        Add a zero assignment map to the data array in init_state that zeros-out
+        the elements that were previously accesses by memlet. 
+        By default we zero-out all the values of the array.
+        """
+
+        # Get the original array
+        array_desc = self.sdfg.arrays[data]
+        new_array_desc = copy.deepcopy(array_desc)
+        new_array = self.array_grad_name(data)
+
+        # Add the new array to the sdfg
+        self.backward_sdfg.add_datadesc(new_array, new_array_desc)
+
+        # If memlet was specified, only assign to the specified values
+        if memlet:
+            memlet.data = new_array
+        else:
+            memlet = dace.Memlet.simple(new_array, ", ".join("i{}".format(i) for i in range(len(new_array_desc.shape))))
+
+        scalar = 0
+        if dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, new_array_desc.storage):
+            cuda = False
+        elif dtypes.can_access(dtypes.ScheduleType.GPU_Default, new_array_desc.storage):
+            cuda = True
+        else:
+            raise ValueError(f"Unsupported storage {new_array_desc.storage}")
+
+        if isinstance(new_array_desc, (dt.Array, dt.Scalar)):
+            init_state.add_mapped_tasklet(
+                "_init_" + data + "_",
+                {"i{}".format(i): "0:{}".format(shape)
+                 for i, shape in enumerate(new_array_desc.shape)}, {},
+                "__out = {}".format(scalar), {"__out": memlet},
+                schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default,
+                external_edges=True)
+        elif type(new_array_desc) is dt.View:
+            # No need to initialize: the viewed array will always be visited
+            # (since a view can never be a required grad), and thus the viewed array will be initialized.
+            pass
+        else:
+            raise AutoDiffException("Unsupported data descriptor {}".format(new_array_desc))
+
+    def _find_subgraph_to_differentiate(self) -> None:
+        """ 
+        Determine which nodes we need to reverse; this forms the subgraph we will differentiate:
+        we do a reverse BFS and a forward BFS, then take the intersection of nodes found. 
+        In the case where a state is within a loop, this may result in different subgraphs
+        depending on the loop iteration.
+
+        To calculate the gradients for a node x in ``required_gradients``, we need to sum up the gradient
+        contributions from every node y where x is used as an input. We thus first do a forward BFS. Also, the
+        gradient contributions of all nodes that are not connected by a path to a ``given_gradient`` node are
+        implicitly zero. Thus, we take the intersection of the two BFSs.
+        """
+        forward_nodes: set[nodes.Node] = set()
+        backward_nodes: set[nodes.Node] = set()
+        required_gradients_all_states = {n.data for n in self.required_gradients}
+        given_gradients_all_states = {n.data for n in self.given_gradients}
+
+        # Do the forward BFS iterativly
+        for state in self.state_order:
+            state_required_gradients = []
+
+            # Get all the access nodes that are neccessary for AD and are present in this state
+            for node in state:
+                if isinstance(node, nodes.AccessNode) and node.data in required_gradients_all_states:
+                    state_required_gradients.append(node)
+
+            forward_nodes = forward_nodes.union(
+                {n
+                 for e in state.bfs_edges(state_required_gradients) for n in [e.src, e.dst]})
+
+            # Update the list of required gradients to use for states
+            for node in forward_nodes:
+                if isinstance(node, nodes.AccessNode) and node.data not in required_gradients_all_states:
+                    # We want all of the forward AccessNodes that made it to the intersection
+                    required_gradients_all_states.add(node.data)
+
+        # Do the backward BFS iterativly
+        for state in reversed(self.state_order):
+            state_given_gradients: List[nodes.AccessNode] = []
+
+            for node in state:
+                if isinstance(node, nodes.AccessNode) and node.data in given_gradients_all_states:
+                    state_given_gradients.append(node)
+
+            backward_nodes = {n for e in state.bfs_edges(state_given_gradients, reverse=True) for n in [e.src, e.dst]}
+
+            state_subgraph = dstate.StateSubgraphView(state, list(forward_nodes.intersection(backward_nodes)))
+
+            # Add mapping
+            self.states_view_map[state] = state_subgraph
+
+            # In the case where this state is within a for loop
+            if self._state_within_loop(state):
+                # Other elements that are not within state_subgraph will need to be reversed
+                # We create a separate mapping for these elements
+
+                # Get all the access nodes that are used in the previous view
+                subgraph_an = [node.data for node in state_subgraph.nodes() if isinstance(node, nodes.AccessNode)]
+
+                # For each access node in this view
+                for state_node in state:
+                    if isinstance(state_node, nodes.AccessNode) and state_node.data in subgraph_an:
+                        state_given_gradients.append(state_node)
+
+                # Do reverse BFS starting from this new set of nodes
+                backward_nodes = {
+                    n
+                    for e in state.bfs_edges(state_given_gradients, reverse=True) for n in [e.src, e.dst]
+                }
+
+                # Get the intersection with the forward nodes
+                # Note that these don't change even in the case of a for loop
+                loop_state_subgraph = dstate.StateSubgraphView(state, list(forward_nodes.intersection(backward_nodes)))
+
+                self.loop_states_view_map[state] = loop_state_subgraph
+
+            # Update the list of given gradients to use for states
+            for node in backward_nodes:
+                if isinstance(node, nodes.AccessNode) and node.data not in given_gradients_all_states:
+                    # We want all of the backward AccessNodes that made it to the intersection
+                    given_gradients_all_states.add(node.data)
+
+    def array_grad_name(self, forward_name: str) -> str:
+        """ Return the gradient name of a name from the forward pass """
+        if forward_name not in self.array_grad_map:
+            self.array_grad_map[forward_name] = \
+                find_str_not_in_set(set(self.backward_sdfg.arrays), "gradient_" + forward_name)
+
+        return self.array_grad_map[forward_name]
+
+    def _add_gradient_data_descriptor(self, data_name: str):
+        """ 
+        Add the data descriptor for the gradient for `data_name`.
+        :param data_name: the name of the forward descriptor.
+        """
+        grad_name = self.array_grad_name(data_name)
+
+        if grad_name in self.backward_sdfg.arrays:
+            raise AutoDiffException(f"descriptor for gradient of {data_name} ({grad_name}) already exists")
+
+        array = self.sdfg.arrays[data_name]
+
+        if not isinstance(array, (dt.Scalar, dt.Array, dt.View)):
+            raise AutoDiffException("Unsupported data descriptor {}".format(array))
+
+        cloned_datadesc = copy.deepcopy(array)
+
+        # only the grads of the inputs and the outputs are not transient
+        cloned_datadesc.transient = data_name not in self.input_names and data_name not in self.output_names
+
+        self.backward_grad_arrays[grad_name] = cloned_datadesc
+        self.backward_sdfg.arrays[grad_name] = copy.deepcopy(cloned_datadesc)
+
+    def _state_within_loop(self, forward_state: SDFGState) -> bool:
+        """
+        Check if this state will be executed several times within a loop.
+        We check if any of the parents of this state is a loop region.
+        """
+        parent = forward_state.parent_graph
+        while parent is not None:
+            if isinstance(parent, LoopRegion):
+                return True
+            parent = parent.parent_graph
+        return False
+
+    def _reverse_loop_conditional(self, loop: LoopRegion) -> str:
+        """
+        Given a loop region as a parameter, create the conditional for the reversed
+        version of this loop. 
+        """
+
+        # Get the loop iterator
+        it = loop.loop_variable
+
+        # Get the loop start
+        start, _ = self._extract_loop_region_info(loop)
+
+        # Get the stride sign
+        stride_sign = self._get_stride_sign(loop)
+
+        # Reverse the conditional to end at the start of the original loop
+        # This will be incremented or decremented depending on the stride
+        if stride_sign > 0:
+            reversed_condition = f"{it} > {start}-1"
+        else:
+            reversed_condition = f"{it} < {start}+1"
+
+        return reversed_condition
+
+    def _reverse_loop_initial_statement(self, loop: LoopRegion) -> str:
+        """
+        Given a loop region as a parameter, create the initialization statement for the reversed
+        version of this loop.
+        """
+        # Get the loop iterator
+        it = loop.loop_variable
+
+        stride_sign = self._get_stride_sign(loop)
+
+        # Get the loop end
+        _, end = self._extract_loop_region_info(loop)
+
+        # Reverse the initialization to start from the end of the forward loop
+        # This will be incremented or decremented depending on the stride
+        if stride_sign > 0:
+            init_expr = f"{it} = {end}-1"
+        else:
+            init_expr = f"{it} = {end}+1"
+
+        return init_expr
+
+    def _reverse_loop_update_statement(self, loop: LoopRegion) -> str:
+        """
+        Given a loop region as a parameter, create the update statement for the reversed
+        version of this loop.
+        """
+
+        # Get the original update statement
+        fwd_update = loop.update_statement.as_string
+
+        stride_sign = self._get_stride_sign(loop)
+
+        # If the stride is positive
+        if stride_sign > 0:
+            update_statement = fwd_update.replace("+", "-")
+        else:
+            # If the stride is negative
+            update_statement = fwd_update.replace("-", "+")
+
+        return update_statement
+
+    def _get_stride_sign(self, loop: LoopRegion) -> int:
+        """
+        Check if the stride for this loop is positive or negative.
+        returns: 1 if the stride is positive and -1 if it is negative
+        """
+        update_statement = loop.update_statement.as_string
+        if "-" in update_statement:
+            return -1
+        if "+" in update_statement:
+            return 1
+
+        # unsupported loop structure
+        raise AutoDiffException(f"Expected the loop region {loop.label} to have a regular update statement."
+                                f" Instead got: {update_statement}")
+
+    def _extract_loop_region_info(self, loop: LoopRegion):
+        """
+        Use regular expression matching to extract the start and end of the loop region.
+        We only treat regular for-loops with incrementation and decrementation updates.
+        """
+
+        # Extract the loop iterator
+        it = loop.loop_variable
+
+        # Extract the end of the loop from the conditional statement
+        conditional = loop.loop_condition.as_string
+
+        stride_sign = self._get_stride_sign(loop)
+
+        # If the stride is positive
+        if stride_sign > 0:
+            conditional_expression = fr".*{it} < .*"
+        else:
+            # If the stride is negative
+            conditional_expression = fr".*{it} > .*"
+
+        # Match the conditional using regular expressions
+        matches = re.search(conditional_expression, conditional)
+        assert matches
+        expression = matches.group()
+        matches = re.search(conditional_expression[:-2], conditional)
+        assert matches
+        expression_to_remove = matches.group()
+        end = expression.replace(expression_to_remove, "")
+
+        # Remove parenthesis and space
+        end = end.replace("(", "")
+        end = end.replace(")", "")
+        end = end.replace(" ", "")
+
+        # Get the start from the initialization code
+        init_code = loop.init_statement.as_string
+        matches = re.search(fr".*{it} = .*", init_code)
+        assert matches
+        expression = matches.group()
+        matches = re.search(fr"{it} =", init_code)
+        assert matches
+        expression_to_remove = matches.group()
+        start = expression.replace(expression_to_remove, "")
+
+        # Remove parenthesis and space
+        start = start.replace("(", "")
+        start = start.replace(")", "")
+        start = start.replace(" ", "")
+
+        return start, end
+
+    def _match_loop_region(self, fwd_loop: LoopRegion) -> LoopRegion:
+        """
+        Create the backward LoopRegion and fill it with the reversal of the forward LoopRegion.
+        """
+
+        init_expr = self._reverse_loop_initial_statement(fwd_loop)
+        reversed_condition = self._reverse_loop_conditional(fwd_loop)
+        update_statement = self._reverse_loop_update_statement(fwd_loop)
+
+        # Create the label
+        reversed_label = f"{fwd_loop.label}_reversed"
+
+        # Create the loop object and return it
+        reversed_loop = LoopRegion(label=reversed_label,
+                                   initialize_expr=init_expr,
+                                   condition_expr=reversed_condition,
+                                   update_expr=update_statement,
+                                   loop_var=fwd_loop.loop_variable)
+
+        return reversed_loop
+
+    def _reverse_loop_region(self, loop: LoopRegion):
+        """
+        Given a LoopRegion as a parameter, reverse it, add the loop states that belong in this region.
+        """
+
+        # Create the reversed loop region
+        reversed_loop = self._match_loop_region(fwd_loop=loop)
+        self.reversed_loops_map[loop] = reversed_loop
+
+        # Add the reversed loop directly
+        parent_graph = self._get_reversed_parent_graph(loop)
+        parent_graph.add_node(reversed_loop)
+
+        # Add all the loop nodes to the graph and recursivly reverse child loop regions
+        for node in loop.nodes():
+            if isinstance(node, LoopRegion):
+
+                # This node shouldn't be reversed already since we're going top-down
+                assert node not in self.reversed_loops_map
+                self._reverse_loop_region(node)
+            elif isinstance(node, SDFGState):
+
+                # Get the backward_node
+                bwd_node = self.reversed_states_map[node]
+
+                # Add the initialization states if any
+                if bwd_node in self.init_states:
+                    first_init_state = self.init_states[bwd_node]
+                    decendant_nodes = self.backward_sdfg.bfs_nodes(first_init_state)
+
+                    prev_node = None
+                    # Iterate through the decendants and add them
+                    for d_node in decendant_nodes:
+
+                        # Remove node from the backward SDFG
+                        self.backward_sdfg.remove_node(d_node)
+
+                        # Add it to the loop region
+                        reversed_loop.add_node(d_node)
+
+                        if prev_node:
+                            reversed_loop.add_edge(src=prev_node, dst=d_node, data=dace.InterstateEdge())
+
+                        # Prepare for the next iteration
+                        prev_node = d_node
+                else:
+                    # No initialization, we just add this state
+                    # Remove from the backward SDFG
+                    self.backward_sdfg.remove_node(bwd_node)
+
+                    # Add it to the loop region
+                    reversed_loop.add_node(bwd_node)
+
+                # Also add loop states if any
+                if node in self.reversed_loop_states_map:
+                    # Get the backward_node
+                    bwd_node = self.reversed_loop_states_map[node]
+
+                    # Add the initialization states if any
+                    if bwd_node in self.init_states:
+                        first_init_state = self.init_states[bwd_node]
+                        decendant_nodes = self.backward_sdfg.bfs_nodes(first_init_state)
+
+                        # Iterate through the decendants and add them
+                        prev_node = None
+                        for d_node in decendant_nodes:
+
+                            # Remove node from the backward SDFG
+                            self.backward_sdfg.remove_node(d_node)
+
+                            # Add it to the loop region
+                            reversed_loop.add_node(d_node)
+
+                            if prev_node:
+                                reversed_loop.add_edge(src=prev_node, dst=d_node, data=dace.InterstateEdge())
+
+                            # Prepare for the next iteration
+                            prev_node = d_node
+
+    def _compare_memlet_accesses_to_array_size(self, data_name: str, memlet: Memlet) -> int:
+        """
+        Compare the memlet range with the size of the array to see if the array is being overwritten.
+        """
+
+        total_size = self.backward_sdfg.arrays[data_name].total_size
+        try:
+            if total_size > memlet.num_accesses:
+                return 1
+            elif memlet.num_accesses == total_size:
+                return 0
+
+            # Something is wrong here raise an exception
+            raise AutoDiffException(f"Memlet {memlet} has more accesses than the size of the data {data_name}")
+
+        # If the comparison can not be made, return None
+        except TypeError as e:
+            return None
+
+    def _get_reversed_parent_graph(self, forward_node: nodes.Node):
+        """
+        Given a node in the SDFG, get the reversed parent of this node.
+        """
+        fwd_parent_graph = forward_node.parent_graph
+
+        if fwd_parent_graph == self.sdfg:
+            parent_graph = self.backward_sdfg
+        elif isinstance(fwd_parent_graph, SDFGState):
+            parent_graph = self.reversed_states_map[fwd_parent_graph]
+        elif isinstance(fwd_parent_graph, LoopRegion):
+            parent_graph = self.reversed_loops_map[fwd_parent_graph]
+
+        return parent_graph
 
     def _get_bcakward_loop_state_edge(self, forward_edge: dace.InterstateEdge) -> dace.InterstateEdge:
         """
         Given an edge from the forward pass, return the equivelent edge in the backward pass
         """
-        # get the source and destination states
+        # Get the source and destination states
         forward_state_src = forward_edge.src
         forward_state_dst = forward_edge.dst
 
-        # get the equivelent states in the backward pass
+        # Get the equivelent states in the backward pass
         assert forward_state_src in self.reversed_loop_states_map or self._state_is_guard(forward_state_src)
         assert forward_state_dst in self.reversed_loop_states_map or self._state_is_guard(forward_state_dst)
 
-        # note that the source will become the destination
+        # Note that the source will become the destination
         backward_state_dst = self.reversed_loop_states_map[forward_state_src] if not self._state_is_guard(
             forward_state_src) else self.reversed_states_map[forward_state_src]
         backward_state_src = self.reversed_loop_states_map[forward_state_dst] if not self._state_is_guard(
             forward_state_dst) else self.reversed_states_map[forward_state_dst]
 
-        # each one of these in edges needs to have an equivelent
+        # Each one of these in edges needs to have an equivelent
         # out edge in the backward part of the SDFG
         bwd_edge = None
         connection_state = backward_state_dst
 
-        # check if this state has a preceeding initialization state
+        # Check if this state has a preceeding initialization state
         if backward_state_dst in self.init_states:
-            # in this case the edge will be to this initialization state
+            # In this case the edge will be to this initialization state
             connection_state = self.init_states[backward_state_dst]
 
-        # find the equivelent edge in the backward SDFG
+        # Find the equivelent edge in the backward SDFG
         for b_edge in self.backward_sdfg.in_edges(connection_state):
             if b_edge.src == backward_state_src:
                 bwd_edge = b_edge
@@ -791,30 +1267,29 @@ class BackwardPassGenerator:
         """
         Given an edge from the forward pass, return the equivelent edge in the backward pass
         """
-        #TODO: bckward edge from which state
-        # get the source and destination states
+        # Get the source and destination states
         forward_state_src = forward_edge.src
         forward_state_dst = forward_edge.dst
 
-        # get the equivelent states in the backward pass
+        # Get the equivelent states in the backward pass
         assert forward_state_src in self.reversed_states_map
         assert forward_state_dst in self.reversed_states_map
 
-        # note that the src will become the destination
+        # Note that the src will become the destination
         backward_state_dst = self.reversed_states_map[forward_state_src]
         backward_state_src = self.reversed_states_map[forward_state_dst]
 
-        # each one of these in edges needs to have an equivelent
+        # Each one of these in edges needs to have an equivelent
         # out edge in the backward part of the SDFG
         bwd_edge = None
         connection_state = backward_state_dst
 
-        # check if this state has a preceeding initialization state
+        # Check if this state has a preceeding initialization state
         if backward_state_dst in self.init_states:
-            # in this case the edge will be to this initialization state
+            # In this case the edge will be to this initialization state
             connection_state = self.init_states[backward_state_dst]
 
-        # find the equivelent edge in the backward SDFG
+        # Find the equivelent edge in the backward SDFG
         for b_edge in self.backward_sdfg.in_edges(connection_state):
             if b_edge.src == backward_state_src:
                 bwd_edge = b_edge
@@ -827,28 +1302,30 @@ class BackwardPassGenerator:
 
     def _str_to_access(self, data: str, source: str) -> nodes.AccessNode:
         """
-            Given a string containing the name of the accessed array, return the AccessNode in the state
-            that points to this array.
-            If there are multiple AccessNodes, the behaviour will depend on whether we want
-            an output or input AccessNode.
-            Input: We will return the first occurance of this node in the state and make sure there are 
-                only outgoing edges from this node
-            Output: We will return the last occurance of this node in the state 
-                where the node only has incoming edges.
-            """
+        Given a string containing the name of the accessed array, return the AccessNode in the state
+        that points to this array.
+        If there are multiple AccessNodes, the behaviour will depend on whether we want
+        an output or input AccessNode.
+        Input: We will return the first occurance of this node in the state and make sure there are 
+            only outgoing edges from this node
+        Output: We will return the last occurance of this node in the state 
+            where the node only has incoming edges.
+        """
         matches = [(node, state) for state in self.sdfg.states() for node in state.nodes()
                    if isinstance(node, nodes.AccessNode) and node.data == data]
         # Unused in model
         if len(matches) == 0:
             return None
+
+        # there is only a single AccessNode with this name
         if len(matches) == 1:
-            # there is only a single AccessNode with this name
             return matches[0][0]
+
         # len(matches) > 1
         else:
             # There are multiple occurances of the same AccessNode
             if source == "inputs":
-                # we return the first node with this data
+                # We return the first node with this data
                 input_node: nodes.AccessNode = matches[0][0]
                 input_node_state: SDFGState = matches[0][1]
 
@@ -874,26 +1351,27 @@ class BackwardPassGenerator:
                                     f" but the source (inputs or outputs) was not specified correctly")
 
     def _expand_nodes(self) -> bool:
-        """ Expand all library nodes in the sdfg to pure implementations. Returns whether something was expanded
+        """ 
+        Expand all library nodes in the sdfg to pure implementations. Returns whether something was expanded
         """
         expanded_something = False
-        for node, state in self.sdfg.all_nodes_recursive():
-            if isinstance(state, dstate.StateSubgraphView):
-                state = state.graph
+        for node, parent_graph in self.sdfg.all_nodes_recursive():
+            if isinstance(parent_graph, dstate.StateSubgraphView):
+                parent_graph = parent_graph.graph
 
-            # check if the node exists in the backward implementation repository
-            if find_backward_implementation(state.parent, state, node) is not None:
+            # Check if the node exists in the backward implementation repository
+            if find_backward_implementation(parent_graph.parent_graph, parent_graph, node) is not None:
                 continue
 
-            # only check others if we didn't break out of the above loop
+            # Only check others if we didn't break out of the above loop
             if isinstance(node, ONNXOp):
                 impls = ONNXForward.registered_implementations(node.schema.name)
 
-                # order the implementations so that implementations containing "pure" are tried first
+                # Order the implementations so that implementations containing "pure" are tried first
                 impls = [i for name, i in impls if "pure" in name] + [i for name, i in impls if "pure" not in name]
                 for impl in impls:
-                    if impl.forward_can_be_applied(node, state, self.sdfg):
-                        # try to apply the expansion
+                    if impl.forward_can_be_applied(node, parent_graph, self.sdfg):
+                        # Try to apply the expansion
                         class Expansion(xf.ExpandTransformation):
                             environments = impl.environments if hasattr(impl, "environments") else []
                             _expansion_result = None
@@ -907,7 +1385,7 @@ class BackwardPassGenerator:
                                 return True
 
                         Expansion._match_node = xf.PatternNode(type(node))
-                        Expansion.apply_to(state.parent, verify=False, _match_node=node)
+                        Expansion.apply_to(parent_graph.parent, verify=False, _match_node=node)
                         expanded_something = True
                         break
 
@@ -915,7 +1393,7 @@ class BackwardPassGenerator:
             # on to the next expansion. For now we will just apply the first one that matches, prioritizing ones that
             # have "pure" in the name
             if isinstance(node, nodes.LibraryNode) and not isinstance(node, ONNXOp):
-                # try to select an expansion
+                # Try to select an expansion
                 if hasattr(node, "implementations"):
                     implementations = node.implementations
 
@@ -928,7 +1406,7 @@ class BackwardPassGenerator:
                     expansion = node.implementation
 
                 node.implementation = expansion
-                node.expand(state.parent, state)
+                node.expand(parent_graph.parent, parent_graph)
                 expanded_something = True
 
         return expanded_something
@@ -961,17 +1439,6 @@ class BackwardPassGenerator:
                         y.data = n.data
                         y.try_initialize(self.sdfg, state, in_edges[0])
 
-    def _create_stateviews_mapping(self):
-        """
-        Maps each state in the SDFG to the view that indicates what to differentiate
-        """
-        self._find_subgraph_to_differentiate()
-
-        # # expand until there is nothing left to expand
-        while self._expand_nodes():
-            # Nodes have been expanded again on the expanded graph; recalculate the forward graph
-            self._find_subgraph_to_differentiate()
-
     def _get_node_state(self, node: nodes.Node) -> SDFGState:
         """
         Return the SDFG state that contains this node
@@ -986,14 +1453,14 @@ class BackwardPassGenerator:
 
     def check_edges_type_in_state(self, subgraph: dstate.StateSubgraphView):
         """
-        Check if all the edges in this state are of type float.
+        Check if all the edges in this state are of type float, int, or boolean.
         """
         for edge, parent_subgraph in subgraph.all_edges_recursive():
             if isinstance(parent_subgraph, SDFGState):
                 parent_sdfg = parent_subgraph.parent
             elif isinstance(parent_subgraph, dstate.StateSubgraphView):
                 parent_sdfg = parent_subgraph.graph.parent
-            elif isinstance(parent_subgraph, SDFG):
+            elif isinstance(parent_subgraph, SDFG) or isinstance(parent_subgraph, LoopRegion):
                 # if there are any fancy things on the interstate edges we should probably throw an error
                 continue
             else:
@@ -1001,9 +1468,9 @@ class BackwardPassGenerator:
 
             if edge.data.data:
                 edge_type = parent_sdfg.arrays[edge.data.data].dtype
-                if edge_type not in [dace.float16, dace.float32, dace.float64, dace.bool, dace.uint16, dace.uint32]:
+                if edge_type in [dace.complex64, dace.complex128, dace.string]:
                     raise AutoDiffException(
-                        f"Expected Subgraph to differentiate to only contain float and bool edges, but data {edge.data}"
+                        f"Expected Subgraph to differentiate to only contain float, int, and bool edges, but data {edge.data}"
                         f" on edge {edge} has type {edge_type}")
 
     def _connect_conditional_map_exist(self, forward_state: SDFGState, backward_state: SDFGState,
@@ -1013,28 +1480,28 @@ class BackwardPassGenerator:
 
         assert len(backward_map_exit.in_connectors) == 0
 
-        # add the in and out connectors for the zero-out operation
+        # Add the in and out connectors for the zero-out operation
         assert backward_map_exit.add_in_connector("IN_zero_out")
         assert backward_map_exit.add_out_connector("OUT_zero_out")
 
-        # get the memlet data for the edge from the tasklet to the map exist
+        # Get the memlet data for the edge from the tasklet to the map exist
         tasklet_out_edge = forward_state.out_edges(fwd_tasklet)
         assert len(tasklet_out_edge) == 1
         tasklet_out_edge = tasklet_out_edge[0]
         tasklet_memlet_path = forward_state.memlet_path(tasklet_out_edge)
         assert len(tasklet_memlet_path) == 2
 
-        # copy the memlet and change the data name
+        # Copy the memlet and change the data name
         memlet_data = copy.deepcopy(tasklet_memlet_path[0].data)
         memlet_data.data = self.array_grad_map[memlet_data.data]
 
-        # get the reversed tasklet
+        # Get the reversed tasklet
         bwd_tasklet = self.reverse_map[fwd_tasklet]
 
-        # connect this map exist to the tasklet
+        # Connect this map exist to the tasklet
         backward_state.add_edge(bwd_tasklet, "__zero_out_conn__", backward_map_exit, "IN_zero_out", memlet_data)
 
-        # replicate the target accedd node and connect it
+        # Replicate the target accedd node and connect it
         fwd_target_an: nodes.AccessNode = tasklet_memlet_path[-1].dst
         assert isinstance(fwd_target_an, nodes.AccessNode)
         assert fwd_target_an in self.reverse_map
@@ -1059,7 +1526,6 @@ class BackwardPassGenerator:
         required_gradients: List[str],
     ):
         """
-        
         """
         output_exprs = code_to_exprs(code_str, tasklet.in_connectors, tasklet.out_connectors)
 
@@ -1392,83 +1858,6 @@ class BackwardPassGenerator:
                     nodes_to_track.append(node)
         return nodes_to_track
 
-    def _find_subgraph_to_differentiate(self) -> dstate.StateSubgraphView:
-        """ 
-        Determine which nodes we need to reverse; this forms the subgraph we will differentiate:
-        we do a reverse BFS and a forward BFS, then take the intersection of nodes found.
-
-        To calculate the gradients for a node x in ``required_gradients``, we need to sum up the gradient
-        contributions from every node y where x is used as an input. We thus first do a forward BFS. Also, the
-        gradient contributions of all nodes that are not connected by a path to a ``given_gradient`` node are
-        implicitly zero. Thus, we take the intersection of the two BFSs.
-        """
-        forward_nodes: set[nodes.Node] = set()
-        backward_nodes: set[nodes.Node] = set()
-        required_gradients_all_states = {n.data for n in self.required_gradients}
-        given_gradients_all_states = {n.data for n in self.given_gradients}
-        # do the forward bfs iterativly
-        for state in self.state_order:
-            state_required_gradients = []
-            # get all the access nodes that are neccessary for AD and are present in this state
-            for node in state:
-                if isinstance(node, nodes.AccessNode) and node.data in required_gradients_all_states:
-                    state_required_gradients.append(node)
-
-            forward_nodes = forward_nodes.union(
-                {n
-                 for e in state.bfs_edges(state_required_gradients) for n in [e.src, e.dst]})
-
-            # update the list of required gradients to use for states
-            for node in forward_nodes:
-                if isinstance(node, nodes.AccessNode) and node.data not in required_gradients_all_states:
-                    # we want all of the forward AccessNodes that made it to the intersection
-                    required_gradients_all_states.add(node.data)
-
-        # do the backward bfs iterativly
-        for state in reversed(self.state_order):
-            state_given_gradients: List[nodes.AccessNode] = []
-
-            for node in state:
-                if isinstance(node, nodes.AccessNode) and node.data in given_gradients_all_states:
-                    state_given_gradients.append(node)
-
-            backward_nodes = {n for e in state.bfs_edges(state_given_gradients, reverse=True) for n in [e.src, e.dst]}
-
-            state_subgraph = dstate.StateSubgraphView(state, list(forward_nodes.intersection(backward_nodes)))
-
-            # add mapping
-            self.states_view_map[state] = state_subgraph
-
-            # in the case where this state is within a for loop
-            if self._state_within_loop(state):
-                # other elements that are not within state_subgraph will need to be reversed
-                # we create a separate mapping for these elements
-                # get all the access nodes that are used in the previous view
-                subgraph_an = [node.data for node in state_subgraph.nodes() if isinstance(node, nodes.AccessNode)]
-
-                # for each access node in this view
-                # add all of the write occurances of these nodes into the list
-                for state_node in state:
-                    if isinstance(state_node, nodes.AccessNode) and state_node.data in subgraph_an:
-                        state_given_gradients.append(state_node)
-
-                # do reverse bfs starting from this new set of nodes
-                backward_nodes = {
-                    n
-                    for e in state.bfs_edges(state_given_gradients, reverse=True) for n in [e.src, e.dst]
-                }
-                # get the intersection with the forward nodes
-                # note that these don't change even in the case of a for loop
-                loop_state_subgraph = dstate.StateSubgraphView(state, list(forward_nodes.intersection(backward_nodes)))
-
-                self.loop_states_view_map[state] = loop_state_subgraph
-
-            # update the list of given gradients to use for states
-            for node in backward_nodes:
-                if isinstance(node, nodes.AccessNode) and node.data not in given_gradients_all_states:
-                    # we want all of the backward AccessNodes that made it to the intersection
-                    given_gradients_all_states.add(node.data)
-
     def _get_state_given_gradients(self, forward_state: SDFGState):
         """
         Given
@@ -1525,35 +1914,6 @@ class BackwardPassGenerator:
                     required_gradients_all_states.add(node.data)
 
         raise AutoDiffException(f"Parameter {forward_state} is not in the state order")
-
-    def _state_within_loop(self, forward_state: SDFGState) -> bool:
-        """
-        Check if this state will be executed several times within a loop.
-        We do a forward and backward bfs and see if the intersection is empty.
-        """
-        # we make a special case for the guard state
-        if self._state_is_guard(forward_state):
-            return False
-
-        connected_states_reverse = {
-            n
-            for e in self.sdfg.bfs_edges(forward_state, reverse=True) for n in [e.src, e.dst] if n is not forward_state
-        }
-        connected_states = {
-            n
-            for e in self.sdfg.bfs_edges(forward_state) for n in [e.src, e.dst] if n is not forward_state
-        }
-        intersection = connected_states_reverse.intersection(connected_states)
-        length_difference = len(intersection)
-        return length_difference != 0
-
-    def array_grad_name(self, forward_name: str) -> str:
-        """ Return the gradient name of a name from the forward pass """
-        if forward_name not in self.array_grad_map:
-            self.array_grad_map[forward_name] = \
-                find_str_not_in_set(set(self.backward_sdfg.arrays), "gradient_" + forward_name)
-
-        return self.array_grad_map[forward_name]
 
     def _init_grad(self, forward_state: SDFGState, backward_state: SDFGState, data: str):
         desc = self.backward_sdfg.arrays[data]
@@ -1966,16 +2326,10 @@ class BackwardPassGenerator:
             # get the memlet range
             write_memlet = edge.data
 
-            if write_memlet.num_accesses.is_number:
-                # compare the memlet range with the size of the array
-                total_size = self.backward_sdfg.arrays[contribution_accessnode.data].total_size
-                has_free_symbols = len(total_size.free_symbols) > 0 if type(total_size) != int else False
-                has_free_symbols = has_free_symbols or len(write_memlet.num_accesses.free_symbols) > 0
-                if has_free_symbols or write_memlet.num_accesses < total_size:
-                    #TODO this should be a safe prohibitive decsision
-                    self._init_grad(forward_state=forward_state, backward_state=backward_state, data=edge.data.data)
-            else:
-                # the number of accesses is a sympy expression, to be safe we will initialize these arrays
+            # compare the memlet range with the size of the array
+            comparison_result = self._compare_memlet_accesses_to_array_size(contribution_accessnode.data, write_memlet)
+            if comparison_result is None or comparison_result > 0:
+                #TODO this should be a safe prohibitive decsision
                 self._init_grad(forward_state=forward_state, backward_state=backward_state, data=edge.data.data)
 
     def _input_used_with_a_wcr(self, forward_state: SDFGState, backward_node: nodes.AccessNode):
@@ -2034,28 +2388,6 @@ class BackwardPassGenerator:
                             return True
 
         return False
-
-    def _add_gradient_data_descriptor(self, data_name: str):
-        """ Add the data descriptor for the gradient for `data_name`.
-            :param data_name: the name of the forward descriptor.
-        """
-        grad_name = self.array_grad_name(data_name)
-
-        if grad_name in self.backward_sdfg.arrays:
-            raise AutoDiffException(f"descriptor for gradient of {data_name} ({grad_name}) already exists")
-
-        array = self.sdfg.arrays[data_name]
-
-        if not isinstance(array, (dt.Scalar, dt.Array, dt.View)):
-            raise AutoDiffException("Unsupported data descriptor {}".format(array))
-
-        cloned_datadesc = copy.deepcopy(array)
-
-        # only the grads of the inputs and the outputs are not transient
-        cloned_datadesc.transient = data_name not in self.input_names and data_name not in self.output_names
-
-        self.backward_grad_arrays[grad_name] = cloned_datadesc
-        self.backward_sdfg.arrays[grad_name] = copy.deepcopy(cloned_datadesc)
 
     def _connect_given_gradients(self, forward_state: SDFGState, backward_state: SDFGState,
                                  subgraph: dstate.StateSubgraphView, forward_node: nodes.Node) -> SDFGState:
@@ -2341,18 +2673,27 @@ class BackwardPassGenerator:
                         new_edge_data.data = new_data_name
 
                 if isinstance(edge_src, nodes.AccessNode) and isinstance(data_desc, dt.View):
-                    # if this is a view, we need to connect it to the AccessNode it is viewing
-                    edge_src_in_edge = state.in_edges(edge_src)
+                    if self.separate_sdfgs:
+                        # remove the view connector
+                        assert replicated_edge_src.remove_in_connector("views")
+                    else:
+                        # if this is a view, we need to connect it to the AccessNode it is viewing
+                        edge_src_in_edge = state.in_edges(edge_src)
 
-                    # a view should only have one incoming edge
-                    assert len(edge_src_in_edge) == 1
-                    edge_src_in_edge = edge_src_in_edge[0]
+                        # a view should only have one incoming edge
+                        assert len(edge_src_in_edge) == 1
+                        edge_src_in_edge = edge_src_in_edge[0]
 
-                    # replicate the viewed node and its memlet and connect it
-                    view_origin = edge_src_in_edge.src
-                    replicated_view = copy.deepcopy(view_origin)
-                    view_memlet = copy.deepcopy(edge_src_in_edge.data)
-                    backward_state.add_edge(replicated_view, None, replicated_edge_src, "views", view_memlet)
+                        # replicate the viewed node and its memlet and connect it
+                        view_origin = edge_src_in_edge.src
+                        replicated_view = copy.deepcopy(view_origin)
+                        view_memlet = copy.deepcopy(edge_src_in_edge.data)
+                        if self.separate_sdfgs:
+                            # if the sdfgs are separate, we need to add the descriptor for this data
+                            origin_desc = self.sdfg.arrays[view_origin.data]
+                            origin_desc.transient = False
+                            backward_state.sdfg.add_datadesc(view_origin.data, origin_desc)
+                        backward_state.add_edge(replicated_view, None, replicated_edge_src, "views", view_memlet)
 
                 # add the new edge
                 backward_state.add_edge(replicated_edge_src, replicated_edge_src_conn, backward_node,
@@ -2868,13 +3209,14 @@ class BackwardPassGenerator:
         if self._state_within_loop(state):
             # add an extra dimension to the shapes
             # we need to check all of the loops tha enclose this state and their information
-            loop_guards = self._get_loop_guard_enclosing_state(forward_state=state)
-            nb_enclosing_loops = len(loop_guards)
-            for guard in loop_guards:
-                found, begin_edge, after_loop_edge, after_loop_state = self._find_for_loop(guard=guard)
-                itervar, (start, end, step), (start_state, end_state) = found
+            loops = self._get_state_enclosing_loops(forward_state=state)
+
+            for loop in loops:
+                # TODO create the find loop function for LoopRegions
+                itervar, start, end = loop.loop_variable
 
                 # add to the shapes and ranges list
+                # TODO if the loop bounds are symbolic what to do
                 shape_list.insert(0, end + 1)
                 start_range.insert(0, start)
                 param_list.insert(0, itervar)
@@ -2965,29 +3307,16 @@ class BackwardPassGenerator:
 
         return new_store_node, memlets_stack
 
-    def _get_loop_guard_enclosing_state(self, forward_state: SDFGState):
+    def _get_state_enclosing_loops(self, forward_state: SDFGState) -> List[LoopRegion]:
         """
         Get all the enclosing loops of this state.
         """
-        # get all the nodes that are reachable from this state
-        connected_states_reverse = {
-            n
-            for e in self.sdfg.bfs_edges(forward_state, reverse=True) for n in [e.src, e.dst] if n is not forward_state
-        }
-        connected_states = {
-            n
-            for e in self.sdfg.bfs_edges(forward_state) for n in [e.src, e.dst] if n is not forward_state
-        }
-        all_reachable_states = connected_states_reverse.union(connected_states)
-
-        guard_list: List[SDFGState] = []
-        # get all the guards
-        # TODO: not every guard in this list is a loop enclosing this state
-        for state in all_reachable_states:
-            if self._state_is_guard(state):
-                guard_list.append(state)
-
-        return guard_list
+        loop_list = []
+        parent_graph = forward_state.parent_graph
+        while isinstance(parent_graph, LoopRegion):
+            loop_list.append()
+            parent_graph = parent_graph.parent_graph
+        return loop_list
 
     def _state_is_guard(self, state: SDFGState):
         """
@@ -3003,11 +3332,38 @@ class BackwardPassGenerator:
         :param edge: the AccessNode to perform the check for.
         :return: a tuple of wether this node has been overwritten, and if it can be recomputed
         """
+        #TODO remove developement code
+        return False, False
+
         overwritten = False
         decided = False
         recomputable = False
+
+        # get the decendant states to look in for an overwrite
+        assert state in self.state_order
+        index = self.state_order.index(state)
+        decendant_states = self.state_order[index:]
+        ascendant_states = self.state_order[:index]
+
+        # check if this access node is a view
+        if type(node.desc(self.sdfg)) is dt.ArrayView:
+            # the view should have one incoming edge from the original access node
+            in_edges = state.in_edges(node)
+
+            # sanity checks
+            assert len(in_edges) == 1
+            assert "views" in node.in_connectors
+
+            # we want to check if the source has been overwritten
+            node = in_edges[0].src
+
         # get all the AccessNodes with the same data
-        matches = [nd for nd in state.nodes() if isinstance(nd, nodes.AccessNode) and nd.data == node.data]
+        matches = []
+        for d_state in decendant_states:
+            matches += [
+                nd for nd, _ in d_state.all_nodes_recursive()
+                if isinstance(nd, nodes.AccessNode) and nd.data == node.data
+            ]
 
         # there needs to be at least one occurance which is the node passed as a parameter
         assert len(matches) > 0 and node in matches
@@ -3020,7 +3376,7 @@ class BackwardPassGenerator:
         # get the index of the parameter node
         index = matches.index(node)
 
-        # if the parameter node is the last occurance in the forward state
+        # if the parameter node is the last occurance in the forward states
         # return False
         if len(matches) - 1 == index:
             overwritten = False
@@ -3035,30 +3391,34 @@ class BackwardPassGenerator:
                     overwritten = True
 
         if not overwritten:
-            # there is no overwrite in this state
-            # check if this state is within a loop and if there is an overwrite in that context
+            # there is no overwrite so far
+            # check if this state is within a loop
             loop_state = self._state_within_loop(state)
             if loop_state:
-                # iterate through all the predecessor occurances in the same state
-                for nd in matches[:index]:
-                    # check if this node has an incoming edge
-                    if len(state.in_edges(nd)) > 0:
+                loop = state.parent_graph
+                # check if there is any write to this access node within the loop
+                loop_matches = [
+                    nd for nd, _ in loop.all_nodes_recursive()
+                    if isinstance(nd, nodes.AccessNode) and nd.data == node.data
+                ]
+
+                for match in loop_matches:
+                    if len(state.in_edges(match)) > 0:
                         overwritten = True
-                if not overwritten:
-                    # check all the states in the loop for a write operation
-                    connected_states = {n for e in self.sdfg.bfs_edges(state) for n in [e.src, e.dst] if n is not state}
-                    for loop_state in connected_states:
-                        if self._state_has_write_to_data(state=loop_state, node=node):
-                            overwritten = True
 
         if overwritten:
             # we only check if the node is recomputable if it has been overwritten
             # iterate through all the predecessor occurances
+            # TODO: currently this only checks for a single state
             for nd in matches[:index + 1]:
                 # check if this node has an incoming edge
                 if len(state.in_edges(nd)) > 0:
                     recomputable = True
-        # if the loop didn't return True, all of the successor occurances are read only
+
+            if not recomputable:
+                # fall back to the store strategy
+                self.strategy = "store_all"
+
         return overwritten, recomputable
 
     def _state_has_write_to_data(self, state: SDFGState, node: nodes.AccessNode) -> bool:
@@ -3199,10 +3559,14 @@ class BackwardPassGenerator:
                 #    from the output to there
                 # 3) add a read node to the backward state, and an edge into it
 
-                desc, forwarded_name, _ = _walk_up_memlet_tree_through_view_nodes(node.sdfg, state_to_diff, name)
+                desc = node.sdfg.arrays[name]
+
+                # if the original view node is in the in-connector, no need to connect it, continue
+                # if forwarded_name in node.in_connectors:
+                #     continue
 
                 # (1)
-                new_name = find_str_not_in_set(set(self.sdfg.arrays), forwarded_name + "_forwarded")
+                new_name = find_str_not_in_set(set(self.sdfg.arrays), name + "_forwarded")
                 if new_name in self.sdfg.arrays or new_name in self.backward_input_arrays:
                     raise AutoDiffException(
                         "Attempted to create array with name '{}', but it already existed".format(new_name))
@@ -3216,19 +3580,19 @@ class BackwardPassGenerator:
                     self.backward_sdfg.add_datadesc(new_name, to_add)
 
                 # (2)
-                node.sdfg.arrays[forwarded_name].transient = False
-                assert node.add_out_connector(forwarded_name)
+                node.sdfg.arrays[name].transient = False
+                assert node.add_out_connector(name, force=True)
                 write = forward_state.add_write(new_name)
-                forward_state.add_edge(node, forwarded_name, write, None, self.sdfg.make_array_memlet(new_name))
+                forward_state.add_edge(node, name, write, None, self.sdfg.make_array_memlet(new_name))
 
                 # (3)
                 read = backward_state.add_read(new_name)
                 deferred_edges.append(
                     dict(u=read,
                          u_connector=None,
-                         v_connector=forwarded_name,
+                         v_connector=name,
                          memlet=self.backward_sdfg.make_array_memlet(new_name)))
-                inputs.add(forwarded_name)
+                inputs.add(name)
             else:
                 inputs.add(name)
 
