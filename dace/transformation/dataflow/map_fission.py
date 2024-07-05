@@ -122,6 +122,7 @@ class MapFission(transformation.SingleStateTransformation):
                 return False
 
             # Get NestedSDFG control flow components
+            nsdfg_node.sdfg.reset_cfg_list()
             cf_comp = helpers.find_sdfg_control_flow(nsdfg_node.sdfg)
             if len(cf_comp) == 1:
                 child = list(cf_comp.values())[0][1]
