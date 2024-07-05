@@ -3035,6 +3035,8 @@ class LoopRegion(ControlFlowRegion):
             parent.add_edge(node, loop_latch_state, dace.InterstateEdge())
         for node in connect_to_end:
             parent.add_edge(node, end_state, dace.InterstateEdge())
+            for iedge in parent.in_edges(node):
+                iedge.data.assignments['did_break_' + self.label] = '1'
 
         parent.remove_node(self)
 
