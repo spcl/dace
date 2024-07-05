@@ -1428,6 +1428,8 @@ class SDFG(ControlFlowRegion):
                                 only symbols and scalars are included.
             :param arglist: An optional cached argument list.
         """
+        if (self.save_restore_initial_state == dtypes.DataInstrumentationType.Restore):
+            return ''
         return ", ".join(self.signature_arglist(with_types, for_call, with_arrays, arglist))
 
     def python_signature(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> str:

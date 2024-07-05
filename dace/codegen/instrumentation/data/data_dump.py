@@ -89,20 +89,33 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
 
     def _save_var(self, varname: str, vardesc: dt.Data, sdfg: SDFG, local_stream: CodeIOStream,
                   global_stream: CodeIOStream, state: Optional[SDFGState] = None,
-                  node: Optional[SDFGState] = None, filename: Optional[str] = None) -> None:
+                  node: Optional[SDFGState] = None, filename: Optional[str] = None,
+                  write_to_local_stream: bool = True) -> str:
         from dace.codegen.dispatcher import DefinedType  # Avoid import loop
 
         if isinstance(vardesc, dt.Structure):
+            retval = ''
             for member_name, member_desc in vardesc.members.items():
-                self._save_var(varname + '->' + member_name, member_desc, sdfg, local_stream, global_stream,
-                               state, node, varname + '.' + member_name)
+                retval += self._save_var(varname + '->' + member_name, member_desc, sdfg, local_stream, global_stream,
+                                         state, node, varname + '.' + member_name, write_to_local_stream)
+            return retval
         else:
             ptrname = cpp.ptr(varname, vardesc, sdfg, self.codegen)
             try:
                 defined_type, _ = self.codegen.dispatcher.defined_vars.get(ptrname)
             except KeyError:
-                print('skipping saving of' + ptrname)
-                return
+                if (ptrname.startswith('__f2dace_SA_') or ptrname.startswith('__f2dace_SOA_') or
+                    ptrname.startswith('tmp_struct_symbol_')):
+                    # This is a special fortran frontend symbol for dynamically sized structs and struct arrays, so it
+                    # must be saved.
+                    # TODO: Remove this once the system has been changed - this is hacky!
+                    retval = f'__state->serializer->save_symbol("{ptrname}", "0", {cpp.sym2cpp(ptrname)});\n'
+                    if write_to_local_stream:
+                        local_stream.write(retval, sdfg, state_id, node_id)
+                    return retval
+                else:
+                    print('Skipping saving of ' + ptrname + ' as it is not defined yet')
+                    return ''
 
             if defined_type == DefinedType.Scalar:
                 ptrname = '&' + ptrname
@@ -135,11 +148,15 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
                 filename = varname
             filename = filename.replace('->', '.')
 
-            local_stream.write(preamble, sdfg, state_id, node_id)
-            local_stream.write(
-                f'__state->serializer->save({ptrname}, {cpp.sym2cpp(vardesc.total_size - vardesc.start_offset)}, '
-                f'"{filename}", "{uuid}", {shape}, {strides});\n', sdfg, state_id, node_id)
-            local_stream.write(postamble, sdfg, state_id, node_id)
+            retval = preamble
+            retval += f'__state->serializer->save({ptrname}, {cpp.sym2cpp(vardesc.total_size - vardesc.start_offset)}, '
+            retval += f'"{filename}", "{uuid}", {shape}, {strides});\n'
+            retval += postamble
+
+            if write_to_local_stream:
+                local_stream.write(retval, sdfg, state_id, node_id)
+
+            return retval
 
     def on_sdfg_begin(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream,
                       codegen: 'DaCeCodeGenerator'):
@@ -148,12 +165,14 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             self.codegen = codegen
             path = os.path.abspath(os.path.join(sdfg.build_folder, 'data')).replace('\\', '/')
             codegen.statestruct.append('dace::DataSerializer *serializer;')
-            sdfg.append_init_code(f'__state->serializer = new dace::DataSerializer("{path}");\n')
 
-            # If the SDFG is supposed to save or restore its initial state, do that here.
+            # If the SDFG is supposed to save its initial state, do that here.
+            save_string = f'__state->serializer = new dace::DataSerializer("{path}");\n'
             if sdfg.save_restore_initial_state == dtypes.DataInstrumentationType.Save:
                 for argname, desc in sdfg.arglist().items():
-                    self._save_var(argname, desc, sdfg, local_stream, global_stream)
+                    save_string += self._save_var(argname, desc, sdfg, local_stream, global_stream,
+                                                  write_to_local_stream=False)
+            sdfg.append_init_code(save_string)
 
     def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream):
         # Teardown serializer versioning object
@@ -233,23 +252,58 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
 
     def _restore_var(self, varname: str, vardesc: dt.Data, sdfg: SDFG, local_stream: CodeIOStream,
                      global_stream: CodeIOStream, state: Optional[SDFGState] = None,
-                     node: Optional[SDFGState] = None, filename: Optional[str] = None) -> None:
+                     node: Optional[SDFGState] = None, filename: Optional[str] = None,
+                     write_to_local_stream: bool = True, include_alloc: bool = False) -> None:
         from dace.codegen.dispatcher import DefinedType  # Avoid import loop
 
         if isinstance(vardesc, dt.Structure):
+            retval = ''
+            if include_alloc:
+                alloc_struct = f'{varname} = new {vardesc.dtype.base_type};\n'
+                retval += alloc_struct
+                if write_to_local_stream:
+                    local_stream.write(alloc_struct, sdfg, state_id, node_id)
+
             for member_name, member_desc in vardesc.members.items():
-                self._restore_var(varname + '->' + member_name, member_desc, sdfg, local_stream, global_stream,
-                                  state, node, varname + '.' + member_name)
+                retval += self._restore_var(varname + '->' + member_name, member_desc, sdfg, local_stream,
+                                            global_stream, state, node, varname + '.' + member_name,
+                                            write_to_local_stream, include_alloc)
+            return retval
         else:
             ptrname = cpp.ptr(varname, vardesc, sdfg, self.codegen)
             try:
                 defined_type, _ = self.codegen.dispatcher.defined_vars.get(ptrname)
             except KeyError:
-                print('skipping restoring of' + ptrname)
-                return
+                if (ptrname.startswith('__f2dace_SA_') or ptrname.startswith('__f2dace_SOA_') or
+                    ptrname.startswith('tmp_struct_symbol_')):
+                    # This is a special fortran frontend symbol for dynamically sized structs and struct arrays, so it
+                    # must be saved.
+                    # TODO: Remove this once the system has been changed - this is hacky!
+                    retval = f'{cpp.sym2cpp(ptrname)} = '
+                    retval += f'__state->serializer->restore_symbol<{sdfg.symbols[ptrname].ctype}>("{ptrname}", "0");\n'
+                    if write_to_local_stream:
+                        local_stream.write(retval, sdfg, state_id, node_id)
+                    return retval
+                else:
+                    print('Skipping restoring of ' + ptrname + ' as it is not defined yet')
+                    return ''
 
+            retval = ''
             if defined_type == DefinedType.Scalar:
                 ptrname = '&' + ptrname
+            else:
+                retval += f'if ({cpp.sym2cpp(vardesc.total_size)} > 0) {{\n'
+                if include_alloc:
+                    if (isinstance(vardesc.dtype, dtypes.pointer) and
+                        isinstance(vardesc.dtype.base_type, (dtypes.pointer, dtypes.struct))):
+                        ctype_str = vardesc.dtype.base_type.ctype
+                        retval += f'{ptrname} = new {ctype_str} DACE_ALIGN(64)*[{cpp.sym2cpp(vardesc.total_size)}];\n'    
+                    else:
+                        ctype_str = vardesc.dtype.ctype
+                        retval += f'{ptrname} = new {ctype_str} DACE_ALIGN(64)[{cpp.sym2cpp(vardesc.total_size)}];\n'    
+
+                    if vardesc.start_offset != 0:
+                        retval += f'{ptrname} += {cpp.sym2cpp(vardesc.start_offset)};\n'
 
             # Create UUID
             if node is not None:
@@ -276,16 +330,29 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             filename = filename.replace('->', '.')
 
             # Write code
-            local_stream.write(preamble, sdfg, state_id, node_id)
-            local_stream.write(
-                f'__state->serializer->restore({ptrname}, {cpp.sym2cpp(vardesc.total_size - vardesc.start_offset)}, '
-                f'"{filename}", "{uuid}");\n', sdfg, state_id, node_id)
-            local_stream.write(postamble, sdfg, state_id, node_id)
+            retval += preamble
+            retval += f'__state->serializer->restore({ptrname}, '
+            retval += f'{cpp.sym2cpp(vardesc.total_size - vardesc.start_offset)}, '
+            retval += f'"{filename}", "{uuid}");\n'
+            retval += postamble
+            if defined_type != DefinedType.Scalar:
+                retval += '}\n'
+
+            if write_to_local_stream:
+                local_stream.write(retval, sdfg, state_id, node_id)
+
+            return retval
 
     def _generate_report_setter(self, sdfg: SDFG) -> str:
         return f'''
-        DACE_EXPORTED void __dace_set_instrumented_data_report({cpp.mangle_dace_state_struct_name(sdfg)} *__state, const char *dirpath) {{
-            __state->serializer->set_folder(dirpath);
+        char *__dace_data_report_dirpath;
+        DACE_EXPORTED void __dace_set_instrumented_data_report({cpp.mangle_dace_state_struct_name(sdfg)} *__state, char *dirpath) {{
+            if (dirpath) {{
+                __dace_data_report_dirpath = dirpath;
+            }}
+            if (__state && __state->serializer) {{
+                __state->serializer->set_folder(__dace_data_report_dirpath);
+            }}
         }}
         '''
 
@@ -295,14 +362,40 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         if sdfg.parent is None:
             self.codegen = codegen
             codegen.statestruct.append('dace::DataSerializer *serializer;')
-            sdfg.append_init_code(f'__state->serializer = new dace::DataSerializer("");\n')
 
             # Add method that controls serializer input
             global_stream.write(self._generate_report_setter(sdfg))
 
+            # If the SDFG is supposed to restore its initial state, do that here.
+            restore_string = f'__state->serializer = new dace::DataSerializer("");\n'
+            restore_string += f'__dace_set_instrumented_data_report(__state, NULL);\n'
+            # TODO: Tracking these symbols separately is a hack for the current fortran frontend limitations based on
+            #       the dynamically sized struct arrays stuff. Make analogous to saving after that is fixed.
+            restore_symbols = []
+            restore_other_args = []
             if sdfg.save_restore_initial_state == dtypes.DataInstrumentationType.Restore:
+                # We need to declare all arguments as global variables so they can be allocated when restoring.
+                for argname, desc, in codegen.arglist.items():
+                    ptrname = cpp.ptr(argname, desc, sdfg, codegen)
+                    if (isinstance(desc, dt.Scalar) or isinstance(desc, dt.Structure)):
+                        global_stream.write(f'{desc.dtype.ctype} {ptrname};\n', sdfg)
+                    else:
+                        global_stream.write(f'{desc.dtype.ctype} *{ptrname} = nullptr;\n', sdfg)
+                global_stream.write('\n', sdfg)
+
                 for argname, desc in sdfg.arglist().items():
-                    self._restore_var(argname, desc, sdfg, local_stream, global_stream)
+                    if (not isinstance(desc, dt.Structure) and
+                        not codegen.dispatcher.defined_vars.has(cpp.ptr(argname, desc, sdfg, codegen))):
+                        restore_symbols.append(self._restore_var(argname, desc, sdfg, local_stream, global_stream,
+                                                                 write_to_local_stream=False, include_alloc=True))
+                    else:
+                        restore_other_args.append(self._restore_var(argname, desc, sdfg, local_stream, global_stream,
+                                                                    write_to_local_stream=False, include_alloc=True))
+            for line in restore_symbols:
+                restore_string += line
+            for line in restore_other_args:
+                restore_string += line
+            sdfg.prepend_init_code(restore_string)
 
     def on_sdfg_end(self, sdfg: SDFG, local_stream: CodeIOStream, global_stream: CodeIOStream):
         # Teardown serializer versioning object

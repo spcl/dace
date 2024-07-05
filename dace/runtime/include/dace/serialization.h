@@ -8,6 +8,7 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <iostream>
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
@@ -89,6 +90,10 @@ public:
         this->folder = folder;
     }
 
+    const char* get_folder() {
+        return this->folder.c_str();
+    }
+
     template <typename T>
     void save_symbol(const std::string &symbol_name, const std::string &filename, const T symbol_value) {
         if (!this->enable) return;
@@ -121,6 +126,8 @@ public:
     template <typename T>
     T restore_symbol(const std::string &symbol_name, const std::string &filename) {
         std::lock_guard<std::mutex> guard(this->_mutex);
+        std::cout << "Restoring symbol " << symbol_name << std::endl;
+        std::flush(std::cout);
 
         // Update version
         int version;
@@ -138,6 +145,8 @@ public:
         // Read the symbol back
         T val;
         ifs >> val;
+        std::cout << "Restored value: " << val << std::endl;
+        std::flush(std::cout);
         return val;
     }
 
@@ -178,6 +187,9 @@ public:
     template <typename T>
     void restore(T *buffer, size_t size, const std::string &arrayname, const std::string &filename) {
         std::lock_guard<std::mutex> guard(this->_mutex);
+        std::cout << "Restoring buffer " << arrayname << std::endl;
+        std::cout << "Restore size: " << size << std::endl;
+        std::flush(std::cout);
 
         // Update version
         int version;
@@ -204,6 +216,8 @@ public:
 
         // Read contents
         ifs.read((char *)buffer, sizeof(T) * size);
+        std::cout << "Restored" << std::endl;
+        std::flush(std::cout);
     }
 };
 
