@@ -86,7 +86,7 @@ def _make_do_for_loop() -> SDFG:
     return sdfg
 
 
-def _make_tripple_nested_for_loop() -> SDFG:
+def _make_triple_nested_for_loop() -> SDFG:
     sdfg = dace.SDFG('gemm')
     sdfg.using_experimental_blocks = True
     sdfg.add_symbol('i', dace.int32)
@@ -161,6 +161,7 @@ def test_loop_do_while():
     a_validation[10] = 10
     sdfg(A=a_test)
     assert np.allclose(a_validation, a_test)
+    assert 'do {' in sdfg.generate_code()[0].code
 
 
 def test_loop_do_for():
@@ -177,7 +178,7 @@ def test_loop_do_for():
 
 
 def test_loop_triple_nested_for():
-    sdfg = _make_tripple_nested_for_loop()
+    sdfg = _make_triple_nested_for_loop()
 
     assert sdfg.is_valid()
 
@@ -249,7 +250,7 @@ def test_loop_to_stree_do_for():
 
 
 def test_loop_to_stree_triple_nested_for():
-    sdfg = _make_tripple_nested_for_loop()
+    sdfg = _make_triple_nested_for_loop()
 
     assert sdfg.is_valid()
 
