@@ -1589,7 +1589,7 @@ def is_fpga_kernel(sdfg, state):
 def postdominators(
     sdfg: SDFG,
     return_alldoms: bool = False
-) -> Union[Dict[SDFGState, SDFGState], Tuple[Dict[SDFGState, SDFGState], Dict[SDFGState, Set[SDFGState]]]]:
+) -> Optional[Union[Dict[SDFGState, SDFGState], Tuple[Dict[SDFGState, SDFGState], Dict[SDFGState, Set[SDFGState]]]]]:
     """
     Return the immediate postdominators of an SDFG. This may require creating new nodes and removing them, which
     happens in-place on the SDFG.
@@ -1606,6 +1606,8 @@ def postdominators(
         sink = sdfg.add_state()
         for snode in sink_nodes:
             sdfg.add_edge(snode, sink, dace.InterstateEdge())
+    elif len(sink_nodes) == 0:
+        return None
     else:
         sink = sink_nodes[0]
     ipostdom: Dict[SDFGState, SDFGState] = nx.immediate_dominators(sdfg._nx.reverse(), sink)

@@ -5,8 +5,7 @@ from dace.dtypes import DebugInfo
 import os
 from typing import TYPE_CHECKING, Dict, List, Set
 import warnings
-from dace import dtypes, subsets
-from dace import symbolic
+from dace import dtypes, subsets, symbolic
 
 if TYPE_CHECKING:
     import dace
@@ -188,6 +187,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         on failure.
     """
     # Avoid import loop
+    from dace import data as dt
     from dace.codegen.targets import fpga
     from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
 
@@ -217,6 +217,11 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     f'Duplicate data descriptor object detected: "{name}". Please copy objects '
                     'rather than using multiple references to the same one', sdfg, None)
             references.add(id(desc))
+
+            # Because of how the code generator works Scalars can not be return values.
+            #  TODO: Remove this limitation as the CompiledSDFG contains logic for that.
+            if isinstance(desc, dt.Scalar) and name.startswith("__return") and not desc.transient:
+                raise InvalidSDFGError(f'Can not use scalar "{name}" as return value.', sdfg, None)
 
             # Validate array names
             if name is not None and not dtypes.validate_name(name):

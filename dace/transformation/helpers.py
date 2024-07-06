@@ -4,6 +4,7 @@ import copy
 import itertools
 from networkx import MultiDiGraph
 
+from dace.sdfg.state import ControlFlowRegion
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
 from typing import Dict, List, Optional, Tuple, Set, Union
@@ -270,7 +271,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
     components = {}
     visited = {}  # Dict[SDFGState, bool]: True if SDFGState in Scope (non-SingleState)
     for i, child in enumerate(cft.children):
-        if isinstance(child, cf.SingleState):
+        if isinstance(child, cf.BasicCFBlock):
             if child.state in visited:
                 continue
             components[child.state] = (set([child.state]), child)
@@ -299,7 +300,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     del components[guard]
                     del visited[guard]
 
-            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.SingleState)
+            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.BasicCFBlock)
                     and cft.children[i + 1].state is fexit):
                 fexit_copy = _copy_state(sdfg, fexit, True, states)
                 fexit.remove_nodes_from(fexit.nodes())
@@ -309,7 +310,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             components[guard] = (states, child)
             visited.update({s: True for s in states})
         elif isinstance(child, (cf.IfScope, cf.IfElseChain)):
-            guard = child.branch_state
+            guard = child.branch_block
             ifexit = ipostdom[guard]
 
             states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
@@ -325,7 +326,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     del components[guard]
                     del visited[guard]
 
-            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.SingleState)
+            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.BasicCFBlock)
                     and cft.children[i + 1].state is ifexit):
                 ifexit_copy = _copy_state(sdfg, ifexit, True, states)
                 ifexit.remove_nodes_from(ifexit.nodes())
@@ -644,6 +645,8 @@ def nest_state_subgraph(sdfg: SDFG,
         if state.in_degree(edge.dst) + state.out_degree(edge.dst) == 0:
             state.remove_node(edge.dst)
 
+    sdfg.reset_cfg_list()
+
     return nested_sdfg
 
 
@@ -954,20 +957,21 @@ def offset_map(state: SDFGState,
         subgraph.replace(param, f'({param} - {offset})')
 
 
-def split_interstate_edges(sdfg: SDFG) -> None:
+def split_interstate_edges(cfg: ControlFlowRegion) -> None:
     """
-    Splits all inter-state edges into edges with conditions and edges with
-    assignments. This procedure helps in nested loop detection.
+    Splits all inter-state edges into edges with conditions and edges with assignments.
+    This procedure helps in nested loop detection.
 
-    :param sdfg: The SDFG to split
-    :note: Operates in-place on the SDFG.
+    :param cfg: The control flow graph to split
+    :note: Operates in-place on the graph.
     """
-    for e in sdfg.edges():
-        if e.data.assignments and not e.data.is_unconditional():
-            tmpstate = sdfg.add_state()
-            sdfg.add_edge(e.src, tmpstate, InterstateEdge(condition=e.data.condition))
-            sdfg.add_edge(tmpstate, e.dst, InterstateEdge(assignments=e.data.assignments))
-            sdfg.remove_edge(e)
+    for cfg in cfg.all_control_flow_regions():
+        for e in cfg.edges():
+            if e.data.assignments and not e.data.is_unconditional():
+                tmpstate = cfg.add_state()
+                cfg.add_edge(e.src, tmpstate, InterstateEdge(condition=e.data.condition))
+                cfg.add_edge(tmpstate, e.dst, InterstateEdge(assignments=e.data.assignments))
+                cfg.remove_edge(e)
 
 
 def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
@@ -1392,7 +1396,7 @@ def replace_code_to_code_edges(sdfg: SDFG):
 
     :param sdfg: The SDFG to process.
     """
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         for edge in state.edges():
             if not isinstance(edge.src, nodes.CodeNode) or not isinstance(edge.dst, nodes.CodeNode):
                 continue

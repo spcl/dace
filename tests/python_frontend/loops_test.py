@@ -5,16 +5,6 @@ import numpy as np
 
 from dace.frontend.python.common import DaceSyntaxError
 
-# NOTE: Some tests have been disabled due to issues with our control flow detection during codegen.
-#       The issue is documented in #1586, and in parts in #635. The problem causes the listed tests to fail when
-#       automatic simplification is turned off ONLY. There are several active efforts to address this issue.
-#       For one, there are fixes being made to the control flow detection itself (commits da7af41 and c830f92
-#       are the start of that). Additionally, codegen is being adapted (in a separate, following PR) to make use
-#       of the control flow region constructs directly, circumventing this issue entirely.
-#       As such, disabling these tests is a very temporary solution that should not be longer lived than
-#       a few weeks at most.
-# TODO: Re-enable after issues are addressed.
-
 @dace.program
 def for_loop():
     A = dace.ndarray([10], dtype=dace.int32)

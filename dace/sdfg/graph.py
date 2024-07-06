@@ -6,7 +6,7 @@ import itertools
 import networkx as nx
 from dace.dtypes import deduplicate
 import dace.serialize
-from typing import Any, Callable, Generic, Iterable, List, Sequence, TypeVar, Union
+from typing import Any, Callable, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
 
 
 class NodeNotFoundError(Exception):
@@ -364,19 +364,19 @@ class Graph(Generic[NodeT, EdgeT]):
         """Returns nodes with no outgoing edges."""
         return [n for n in self.nodes() if self.out_degree(n) == 0]
 
-    def topological_sort(self, source: NodeT = None) -> Sequence[NodeT]:
-        """Returns nodes in topological order iff the graph contains exactly
-        one node with no incoming edges."""
+    def bfs_nodes(self, source: Optional[NodeT] = None) -> Iterable[NodeT]:
+        """Returns an iterable over nodes traversed in breadth-first search
+        order starting from ``source``."""
         if source is not None:
             sources = [source]
         else:
             sources = self.source_nodes()
-            if len(sources) == 0:
-                sources = [self.nodes()[0]]
-                #raise RuntimeError("No source nodes found")
-            if len(sources) > 1:
-                sources = [self.nodes()[0]]
-                #raise RuntimeError("Multiple source nodes found")
+            if len(sources) != 1:
+                source = next(iter(self.nodes()), None)
+                if source is None:
+                    return [] # graph has no nodes
+                sources = [source]
+
         seen = OrderedDict()  # No OrderedSet in Python
         queue = deque(sources)
         while len(queue) > 0:
