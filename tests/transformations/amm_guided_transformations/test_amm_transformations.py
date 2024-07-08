@@ -85,7 +85,7 @@ def apply_load_compute(sdfg):
 def tensor_add_kernel(A, B):
    A += 0.5 * B
 
-def test_transformations(opt_sdfg, A, B, A2, B2, _N):
+def _test_transformations(opt_sdfg, A, B, A2, B2, _N):
   tensor_add_kernel(A, B)
   apply_add_thread_block_schedule(opt_sdfg)
   opt_sdfg(A=A2, B=B2, N=_N)
@@ -116,7 +116,7 @@ def test_tensor_add_1d():
   A2 = cp.asarray(A, cp.float32)
   B2 = cp.asarray(B, cp.float32)
 
-  test_transformations(opt_sdfg, A, B, A2, B2, _N)
+  _test_transformations(opt_sdfg, A, B, A2, B2, _N)
 
 def test_tensor_add_2d():
   @dace.program
@@ -131,7 +131,7 @@ def test_tensor_add_2d():
   A2 = cp.asarray(A, cp.float32)
   B2 = cp.asarray(B, cp.float32)
 
-  test_transformations(opt_sdfg, A, B, A2, B2, _N)
+  _test_transformations(opt_sdfg, A, B, A2, B2, _N)
 
 
 def test_tensor_add_3d():
@@ -147,7 +147,7 @@ def test_tensor_add_3d():
   A2 = cp.asarray(A, cp.float32)
   B2 = cp.asarray(B, cp.float32)
 
-  test_transformations(opt_sdfg, A, B, A2, B2, _N)
+  _test_transformations(opt_sdfg, A, B, A2, B2, _N)
 
 
 
@@ -164,7 +164,7 @@ def test_tensor_add_4d():
   A2 = cp.asarray(A, cp.float32)
   B2 = cp.asarray(B, cp.float32)
 
-  test_transformations(opt_sdfg, A, B, A2, B2, _N)
+  _test_transformations(opt_sdfg, A, B, A2, B2, _N)
 
 def test_jacobi_2d():
   def jacobi_kernel(TSTEPS, A, B):
