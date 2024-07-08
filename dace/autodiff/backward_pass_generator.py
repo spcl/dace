@@ -20,7 +20,7 @@ from dace import dtypes, subsets, data as dt
 
 from dace.frontend.operations import detect_reduction_type
 from dace.sdfg import SDFG, SDFGState, graph as dgraph, state as dstate, utils as dutils, infer_types
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.state import LoopRegion, ControlFlowRegion
 
 from dace.sdfg.analysis import cfg
 from dace.memlet import Memlet
@@ -341,6 +341,9 @@ class BackwardPassGenerator:
         if self._applied:
             raise AutoDiffException("Backward may only be called once. Instantiate a new BackwardPassGenerator.")
 
+        self._remove_unnecessary_conditional_regions()
+        self.sdfg.save("log_sdfgs/after_removal.sdfg")
+
         # If any of the inputs is overwritten before it is ever used,
         # we will return zero for its gradients and skip AD for it.
         # Identify what gradients follow this pattern and remove them from the gradients list if necessary
@@ -354,6 +357,8 @@ class BackwardPassGenerator:
 
         # Connect the new reversed states to the other states correctly
         self._connect_reversed_state()
+
+        self.sdfg.save("log_sdfgs/after_connect.sdfg")
 
         # Fill the interstate edges with the correct conditions
         self._fill_interstate_edge_conditions()
@@ -394,6 +399,42 @@ class BackwardPassGenerator:
                                 given_grad_names=given_grad_names,
                                 zero_init=zero_init)
         return result, self.backward_grad_arrays, self.backward_input_arrays
+
+    def _remove_unnecessary_conditional_regions(self):
+        """
+        """
+        for region in self.sdfg.all_control_flow_regions():
+            if isinstance(region, SDFG) or isinstance(region, LoopRegion):
+                continue
+            if isinstance(region, ControlFlowRegion):
+                # Make sure this region has only one state
+                state = region.nodes()
+                assert len(state) == 1
+                state = state[0]
+                assert isinstance(state, SDFGState)
+
+                # Add this state to the parent graph of the control region
+                parent_graph = region.parent_graph
+                parent_graph.add_node(state)
+
+                # Get all the out edges of the region
+                out_edges = parent_graph.out_edges(region)
+
+                # Replicate all the edges to the state
+                for edge in out_edges:
+                    src, dst, data = edge
+                    parent_graph.add_edge(src=state, dst=dst, data=data)
+
+                # Get all the in edges of the region
+                in_edges = parent_graph.in_edges(region)
+
+                # Replicate all the edges to the state
+                for edge in in_edges:
+                    src, dst, data = edge
+                    parent_graph.add_edge(src=src, dst=state, data=data)
+
+                # Remove the uncessary region from the graph
+                parent_graph.remove_node(region)
 
     def _identify_overwritten_inputs(self):
         """
@@ -482,9 +523,7 @@ class BackwardPassGenerator:
             state_subgraph_loop_view = []
             if state in self.loop_states_view_map:
                 loop_view = self.loop_states_view_map[state]
-                # If the two views are different
-                if len(loop_view) != len(self.states_view_map[state]):
-                    state_subgraph_loop_view.append(loop_view)
+                state_subgraph_loop_view.append(loop_view)
 
             all_views = state_subgraph_views + state_subgraph_loop_view
             for state_subgraph_view in state_subgraph_views:
@@ -906,7 +945,11 @@ class BackwardPassGenerator:
                 # Note that these don't change even in the case of a for loop
                 loop_state_subgraph = dstate.StateSubgraphView(state, list(forward_nodes.intersection(backward_nodes)))
 
-                self.loop_states_view_map[state] = loop_state_subgraph
+                # If the two views are different
+                # Here we only check if the number of nodes is the same
+                # Since states_view_map[state] is a subset of loop_states_view_map[state]
+                if len(state_subgraph) != len(loop_state_subgraph):
+                    self.loop_states_view_map[state] = loop_state_subgraph
 
             # Update the list of given gradients to use for states
             for node in backward_nodes:
@@ -1233,14 +1276,12 @@ class BackwardPassGenerator:
         forward_state_dst = forward_edge.dst
 
         # Get the equivelent states in the backward pass
-        assert forward_state_src in self.reversed_loop_states_map or self._state_is_guard(forward_state_src)
-        assert forward_state_dst in self.reversed_loop_states_map or self._state_is_guard(forward_state_dst)
+        assert forward_state_src in self.reversed_loop_states_map
+        assert forward_state_dst in self.reversed_loop_states_map
 
         # Note that the source will become the destination
-        backward_state_dst = self.reversed_loop_states_map[forward_state_src] if not self._state_is_guard(
-            forward_state_src) else self.reversed_states_map[forward_state_src]
-        backward_state_src = self.reversed_loop_states_map[forward_state_dst] if not self._state_is_guard(
-            forward_state_dst) else self.reversed_states_map[forward_state_dst]
+        backward_state_dst = self.reversed_loop_states_map[forward_state_src]
+        backward_state_src = self.reversed_loop_states_map[forward_state_dst]
 
         # Each one of these in edges needs to have an equivelent
         # out edge in the backward part of the SDFG
@@ -1290,7 +1331,7 @@ class BackwardPassGenerator:
             connection_state = self.init_states[backward_state_dst]
 
         # Find the equivelent edge in the backward SDFG
-        for b_edge in self.backward_sdfg.in_edges(connection_state):
+        for b_edge in connection_state.parent_graph.in_edges(connection_state):
             if b_edge.src == backward_state_src:
                 bwd_edge = b_edge
                 break
@@ -1468,7 +1509,7 @@ class BackwardPassGenerator:
 
             if edge.data.data:
                 edge_type = parent_sdfg.arrays[edge.data.data].dtype
-                if edge_type in [dace.complex64, dace.complex128, dace.string]:
+                if edge_type in [dace.string]:
                     raise AutoDiffException(
                         f"Expected Subgraph to differentiate to only contain float, int, and bool edges, but data {edge.data}"
                         f" on edge {edge} has type {edge_type}")
@@ -3317,11 +3358,6 @@ class BackwardPassGenerator:
             loop_list.append()
             parent_graph = parent_graph.parent_graph
         return loop_list
-
-    def _state_is_guard(self, state: SDFGState):
-        """
-        """
-        return "guard" in state.label and "if" not in state.label
 
     def _check_node_overwrite(self, state: SDFGState, node: nodes.AccessNode) -> Tuple[bool, bool]:
         """
