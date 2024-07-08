@@ -64,7 +64,7 @@ class ChangeThreadBlockMap(transformation.SingleStateTransformation):
         # GPU code gen maps the params i0:...,i1:...,i2:... respectively to blockDim.z,.y,.x
         new_block_dimensions = [1, 1, 1]
         dims = [self.dim_size_z, self.dim_size_y, self.dim_size_x]
-        new_block_dimensions[-min(3, len(dev_entry.map.range)):] = dims[-min(3, len(dev_entry.map.range)):]
+        new_block_dimensions[-min(3, len(dev_map.range)):] = dims[-min(3, len(dev_map.range)):]
 
 
         # Step 1. Update step sizes of device map
@@ -75,9 +75,10 @@ class ChangeThreadBlockMap(transformation.SingleStateTransformation):
             (beg, end, step) = dev_range
             dev_old_step_sizes.append(step)
 
-        for i in range(min(3, len(dev_entry.map.range)), 0, -1):
-            (beg, end, step) = dev_entry.map.range[-i]
-            dev_map.range[-i] = (beg, end, new_block_dimensions[-i])
+        for i in range(min(3, len(dev_map.range)), 0, -1):
+            (beg, end, _) = dev_map.range[-i]
+            (_, _, step) = block_map.range[-i]
+            dev_map.range[-i] = (beg, end, new_block_dimensions[-i] * step)
 
 
         # Step 2. Update the range of the thread block map
@@ -137,7 +138,6 @@ class ChangeThreadBlockMap(transformation.SingleStateTransformation):
         # Therefore the code-gen now choose the values in gpu_block_size if it conflicts with the
         # detected blocksizes, and these transformatiosn need to update them
         # Block steps are returned in the form of z, y, x
-        block_map.gpu_block_size =  list(reversed(new_block_dimensions))
         dev_map.gpu_block_size =  list(reversed(new_block_dimensions))
 
     @staticmethod

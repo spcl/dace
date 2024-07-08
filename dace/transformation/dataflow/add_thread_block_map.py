@@ -61,23 +61,25 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         # If more tile sizes are given than the available number of parameters cull the list and ignore 
         # the additional parameters
         tile_sizes = [1] * len(map_entry.map.params)
-        tile_offsets = [0] * len(map_entry.map.params)
-        tile_sizes[-min(3, len(map_entry.map.params)):] = block_dims[-min(3, len(map_entry.map.params)):]
+        used_dimensions = min(3, len(map_entry.map.params))
+        tile_sizes[-used_dimensions:] = block_dims[-used_dimensions:]
         applied_gpu_block_dims = [1, 1, 1]
-        applied_gpu_block_dims[-min(3, len(map_entry.map.params)):] = block_dims[-min(3, len(map_entry.map.params)):]
+        applied_gpu_block_dims[-used_dimensions:] = block_dims[-used_dimensions:]
         gpu_block_dims_ordered = list(reversed(applied_gpu_block_dims))
-        map_entry.map.gpu_block_size = gpu_block_dims_ordered
 
         # Tile trivial simplifies come checks for the BlockCoarsening and ThreadCoarsening transformations
         MapTiling.apply_to(sdfg=sdfg, 
-                           options=dict(prefix="grid", 
+                           options=dict(prefix="b", 
                                         tile_sizes=tile_sizes, 
-                                        tile_trivial=True,
-                                        tile_offset=tile_offsets),
+                                        tile_trivial=True),
                             map_entry=map_entry)
 
         map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
         map_entry.map.gpu_block_size = gpu_block_dims_ordered
+
+        # The dev map is a new map where the gpu_block_size param is not transferred over
+        dev_entry = graph.entry_node(map_entry)
+        dev_entry.map.gpu_block_size = gpu_block_dims_ordered
 
     @staticmethod
     def annotates_memlets():

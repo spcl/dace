@@ -58,13 +58,12 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         ty = self.tile_size_y
         tz = self.tile_size_z
         possible_tile_sizes = [tz, ty, tx]
+        used_dimensions = min(3, len(thread_block_entry.map.params))
+        tile_sizes = [1] * len(thread_block_entry.map.params)
         # Depending on the sizes of the params use: (tz,ty,tx), (ty,tx) or (tx)
-        if len(thread_block_entry.map.params) <= 3:
-            tile_sizes = possible_tile_sizes[-len(thread_block_entry.map.params):]
-        else:
-            tile_sizes = [1] * (len(thread_block_entry.map.params) - 3) + possible_tile_sizes
+        tile_sizes[-used_dimensions:] = possible_tile_sizes[-used_dimensions:]
 
-        MapTiling.apply_to(sdfg=sdfg, options=dict(prefix="block", tile_sizes=tile_sizes, tile_trivial=True),  map_entry=thread_block_entry)
+        MapTiling.apply_to(sdfg=sdfg, options=dict(prefix="d", tile_sizes=tile_sizes, tile_trivial=True),  map_entry=thread_block_entry)
 
         thread_entry = thread_block_entry
         thread_entry.map.schedule = dtypes.ScheduleType.Sequential
@@ -83,7 +82,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         params = {"dim_size_z":1, "dim_size_y":1, "dim_size_x":1}
         dimension_names = ["dim_size_z", "dim_size_y", "dim_size_x"]
         for i in range(min(3, len(thread_block_entry.map.params)), 0, -1):
-            params[dimension_names[-i]] = dev_entry.map.range[-i][2] * possible_tile_sizes[-i]
+            params[dimension_names[-i]] = dev_entry.map.range[-i][2]
 
         # Last param of inner map is always the last iteration variable the map above
         range_str = ""
@@ -92,15 +91,31 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         # If more the 3 parameters they are linearized
         for i in range(len(thread_map.params), 0, -1):
             (beg, _, step) = thread_map.range[-i]
-            (_, _, tstep) = thread_block_entry.map.range[-i]
-            (_, dev_end, _) = dev_entry.map.range[-i]
-            range_str += f"{beg}:Min({dev_end}+1, {beg}+{tstep}):{step}, "
+            (_, _, block_step) = thread_block_entry.map.range[-i]
+            (dev_beg, dev_end, dev_step) = dev_entry.map.range[-i]
+            dev_entry.map.range[-i] = (dev_beg, dev_end, dev_step * step)
+            range_str += f"{beg}:Min({dev_end}, {beg}+{block_step}-1)+1:{step}, "
         thread_map.range = subsets.Range.from_string(range_str[:-2])
 
         ChangeThreadBlockMap.apply_to(sdfg=sdfg, verify=False, device_scheduled_map_entry = dev_entry, 
                                            thread_block_scheduled_map_entry = thread_block_entry, 
                                            options=params)
 
+        thread_block_exit = graph.exit_node(thread_block_entry)
+        for edge in graph.out_edges(thread_block_entry) + graph.in_edges(thread_block_exit):
+            u, u_conn, v, v_conn, memlet = edge
+            new_volume = 1
+            range_str = ""
+            for i in range(len(dev_entry.map.range), 0, -1):
+                (dev_beg, dev_end, dev_step) = dev_entry.map.range[-i]
+                (tblock_beg, _, tblock_step) = thread_block_entry.map.range[-i]
+                assert(dev_step % tblock_step == 0)
+                new_volume *= dev_step // tblock_step
+                range_str += f"{tblock_beg}:{tblock_beg}+{dev_step}, "
+            memlet.volume = new_volume
+            memlet._subset = subsets.Range.from_string(range_str[:-2])
+            memlet._dynamic = False
+            edge = (u, u_conn, v, v_conn, memlet)
 
     @staticmethod
     def annotates_memlets():
