@@ -13,7 +13,7 @@ import warnings
 from dace import data, dtypes, hooks, symbolic
 from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
 
 try:
@@ -152,7 +152,8 @@ class DaceProgram(pycommon.SDFGConvertible):
                  regenerate_code: bool = True,
                  recompile: bool = True,
                  distributed_compilation: bool = False,
-                 method: bool = False):
+                 method: bool = False,
+                 use_experimental_cfg_blocks: bool = False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
@@ -172,6 +173,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.recreate_sdfg = recreate_sdfg
         self.regenerate_code = regenerate_code
         self.recompile = recompile
+        self.use_experimental_cfg_blocks = use_experimental_cfg_blocks
         self.distributed_compilation = distributed_compilation
 
         self.global_vars = _get_locals_and_globals(f)
@@ -491,6 +493,11 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Obtain DaCe program as SDFG
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
 
+        if not self.use_experimental_cfg_blocks:
+            sdutils.inline_loop_blocks(sdfg)
+            sdutils.inline_control_flow_regions(sdfg)
+        sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
+
         # Apply simplification pass automatically
         if not cached and (simplify == True or
                            (simplify is None and Config.get_bool('optimizer', 'automatic_simplification'))):
@@ -801,7 +808,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         _, key = self._load_sdfg(None, *args, **kwargs)
         return key
 
-    def _generate_pdp(self, args: Tuple[Any], kwargs: Dict[str, Any], simplify: Optional[bool] = None) -> SDFG:
+    def _generate_pdp(self, args: Tuple[Any], kwargs: Dict[str, Any],
+                      simplify: Optional[bool] = None) -> Tuple[SDFG, bool]:
         """ Generates the parsed AST representation of a DaCe program.
         
             :param args: The given arguments to the program.

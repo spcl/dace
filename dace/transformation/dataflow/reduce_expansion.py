@@ -16,11 +16,6 @@ from dace.frontend.operations import detect_reduction_type
 from dace.sdfg.propagation import propagate_memlets_scope
 
 from copy import deepcopy as dcpy
-from typing import List
-
-import numpy as np
-
-import timeit
 
 
 @make_properties
@@ -229,8 +224,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         # inline fuse back our nested SDFG
         from dace.transformation.interstate import InlineSDFG
         inline_sdfg = InlineSDFG()
-        inline_sdfg.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(graph), {InlineSDFG.nested_sdfg: graph.node_id(nsdfg)},
-                                0)
+        inline_sdfg.setup_match(sdfg, sdfg.cfg_id, graph.block_id, {InlineSDFG.nested_sdfg: graph.node_id(nsdfg)}, 0)
         inline_sdfg.apply(graph, sdfg)
 
         new_schedule = dtypes.ScheduleType.Default

@@ -6,11 +6,12 @@ from typing import Optional, Set, Tuple
 
 from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
 
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class RemoveUnusedSymbols(ppl.Pass):
     """
     Prunes unused symbols from the SDFG symbol repository (``sdfg.symbols``) and interstate edges.

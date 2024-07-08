@@ -7,6 +7,7 @@ from dace.transformation import helpers, transformation
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 
 
+@transformation.single_level_sdfg_only
 class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation):
     """
     Eliminates loops with a single loop iteration.
