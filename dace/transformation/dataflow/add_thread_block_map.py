@@ -58,22 +58,26 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
         # The thread block sizes depend on the number of dimensions we have
         # GPU code gen maps the params i0:...,i1:...,i2:... respectively to blockDim.z,.y,.x
-        tile_sizes = []
-        if len(map_entry.map.params) <= 3:
-            # Get up to last 3 elements
-            tile_sizes = block_dims[:-min(3, len(map_entry.map.params))]
-        else:
-            # Pad left 1 to match the length of parameters, and use all block sizes
-            tile_sizes = [1]*(len(map_entry.map.params) - 3) + block_dims
-        gpu_block_dims = list(reversed(block_dims[:-3]))
-        map_entry.map.gpu_block_size = gpu_block_dims
+        # If more tile sizes are given than the available number of parameters cull the list and ignore 
+        # the additional parameters
+        tile_sizes = [1] * len(map_entry.map.params)
+        tile_offsets = [0] * len(map_entry.map.params)
+        tile_sizes[-min(3, len(map_entry.map.params)):] = block_dims[-min(3, len(map_entry.map.params)):]
+        applied_gpu_block_dims = [1, 1, 1]
+        applied_gpu_block_dims[-min(3, len(map_entry.map.params)):] = block_dims[-min(3, len(map_entry.map.params)):]
+        gpu_block_dims_ordered = list(reversed(applied_gpu_block_dims))
+        map_entry.map.gpu_block_size = gpu_block_dims_ordered
 
         # Tile trivial simplifies come checks for the BlockCoarsening and ThreadCoarsening transformations
-        MapTiling.apply_to(sdfg=sdfg, options=dict(prefix="grid", tile_sizes=tile_sizes, tile_trivial=True),  map_entry=map_entry)
+        MapTiling.apply_to(sdfg=sdfg, 
+                           options=dict(prefix="grid", 
+                                        tile_sizes=tile_sizes, 
+                                        tile_trivial=True,
+                                        tile_offset=tile_offsets),
+                            map_entry=map_entry)
 
         map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
-
-        # TODO: simplify ranges
+        map_entry.map.gpu_block_size = gpu_block_dims_ordered
 
     @staticmethod
     def annotates_memlets():

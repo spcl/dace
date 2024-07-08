@@ -60,7 +60,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         possible_tile_sizes = [tz, ty, tx]
         # Depending on the sizes of the params use: (tz,ty,tx), (ty,tx) or (tx)
         if len(thread_block_entry.map.params) <= 3:
-            tile_sizes = possible_tile_sizes[:-len(thread_block_entry.map.params)]
+            tile_sizes = possible_tile_sizes[-len(thread_block_entry.map.params):]
         else:
             tile_sizes = [1] * (len(thread_block_entry.map.params) - 3) + possible_tile_sizes
 
