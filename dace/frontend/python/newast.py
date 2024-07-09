@@ -2534,12 +2534,24 @@ class ProgramVisitor(ExtNodeVisitor):
         self.cfg_target.remove_edge(oedge)
         self.cfg_target.add_edge(loop_region, postloop_block, dace.InterstateEdge(condition=f"{did_break_symbol} == 1"))
 
+    def _has_loop_ancestor(self, node: ControlFlowBlock) -> bool:
+        while node is not None and node != self.sdfg:
+            if isinstance(node, LoopRegion):
+                return True
+            node = node.parent_graph
+        return False
+
+
     def visit_Break(self, node: ast.Break):
+        if not self._has_loop_ancestor(self.cfg_target):
+            raise DaceSyntaxError(self, node, "Break block outside loop region")
         break_block = BreakBlock(f'break_{node.lineno}')
         self.cfg_target.add_node(break_block, ensure_unique_name=True)
         self._on_block_added(break_block)
 
     def visit_Continue(self, node: ast.Continue):
+        if not self._has_loop_ancestor(self.cfg_target):
+            raise DaceSyntaxError(self, node, "Continue block outside loop region")
         continue_block = ContinueBlock(f'continue_{node.lineno}')
         self.cfg_target.add_node(continue_block, ensure_unique_name=True)
         self._on_block_added(continue_block)
@@ -2555,12 +2567,14 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if_body = ControlFlowRegion(cond_region.label + "_body", sdfg=self.sdfg)
         cond_region.branches.append((CodeBlock(cond), if_body))
+        if_body.parent_graph = cond_region
 
         # Visit recursively
         self._recursive_visit(node.body, 'if', node.lineno, if_body, False)
 
         else_body = ControlFlowRegion("", sdfg=self.sdfg)
         cond_region.branches.append((CodeBlock(cond_else), else_body))
+        else_body.parent_graph = cond_region
 
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
