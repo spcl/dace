@@ -342,7 +342,6 @@ class BackwardPassGenerator:
             raise AutoDiffException("Backward may only be called once. Instantiate a new BackwardPassGenerator.")
 
         self._remove_unnecessary_conditional_regions()
-        self.sdfg.save("log_sdfgs/after_removal.sdfg")
 
         # If any of the inputs is overwritten before it is ever used,
         # we will return zero for its gradients and skip AD for it.
@@ -357,8 +356,6 @@ class BackwardPassGenerator:
 
         # Connect the new reversed states to the other states correctly
         self._connect_reversed_state()
-
-        self.sdfg.save("log_sdfgs/after_connect.sdfg")
 
         # Fill the interstate edges with the correct conditions
         self._fill_interstate_edge_conditions()
