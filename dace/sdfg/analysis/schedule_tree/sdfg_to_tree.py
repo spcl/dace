@@ -42,14 +42,56 @@ def dealias_sdfg(sdfg: SDFG):
         if not nsdfg.parent:
             continue
 
+        parent_sdfg = nsdfg.parent_sdfg
+        parent_state = nsdfg.parent
+        parent_node = nsdfg.parent_nsdfg_node
+
+        # TODO: Without this, tests/python_frontend/conditional_test.py:test_call_while fails
+        parent_sdfg = parent_sdfg or parent_state.parent
+
+
+        # Rename nested arrays that happen to have the same name with an unrelated parent array connected to the node
+        parent_names = set()
+        for edge in parent_state.all_edges(parent_node):
+            if edge.data.data in parent_sdfg.arrays:
+                parent_names.add(edge.data.data)
+        inner_replacements: Dict[str, str] = {}
+        for name, desc in nsdfg.arrays.items():
+            if name in parent_names:
+                replace = False
+                if desc.transient:
+                    replace = True
+                else:
+                    for edge in parent_state.edges_by_connector(parent_node, name):
+                        parent_name = edge.data.data
+                        assert parent_name in parent_sdfg.arrays
+                        if name != parent_name:
+                            replace = True
+                            break
+                if replace:
+                    new_name = nsdfg._find_new_name(name)
+                    inner_replacements[name] = new_name
+        
+        if inner_replacements:
+            symbolic.safe_replace(inner_replacements, lambda d: replace_datadesc_names(nsdfg, d), value_as_string=True)
+            parent_node.in_connectors = {
+                inner_replacements[c] if c in inner_replacements else c: t
+                for c, t in parent_node.in_connectors.items()
+            }
+            parent_node.out_connectors = {
+                inner_replacements[c] if c in inner_replacements else c: t
+                for c, t in parent_node.out_connectors.items()
+            }
+            for e in parent_state.all_edges(parent_node):
+                if e.src_conn in inner_replacements:
+                    e._src_conn = inner_replacements[e.src_conn]
+                elif e.dst_conn in inner_replacements:
+                    e._dst_conn = inner_replacements[e.dst_conn]
+
         replacements: Dict[str, str] = {}
         inv_replacements: Dict[str, List[str]] = {}
         parent_edges: Dict[str, Memlet] = {}
         to_unsqueeze: Set[str] = set()
-
-        parent_sdfg = nsdfg.parent_sdfg
-        parent_state = nsdfg.parent
-        parent_node = nsdfg.parent_nsdfg_node
 
         for name, desc in nsdfg.arrays.items():
             if desc.transient:
@@ -70,6 +112,18 @@ def dealias_sdfg(sdfg: SDFG):
         if to_unsqueeze:
             for parent_name in to_unsqueeze:
                 parent_arr = parent_sdfg.arrays[parent_name]
+
+                # Add new symbols from the parent datadescriptor to the symbol mapping.
+                previous_syms = set()
+                for name in inv_replacements[parent_name]:
+                    child_arr = nsdfg.arrays[name]
+                    previous_syms |= child_arr.used_symbols(all_symbols=True)
+                new_syms = parent_arr.used_symbols(all_symbols=True) - previous_syms
+                for sym in new_syms:
+                    if str(sym) not in nsdfg.symbols:
+                        nsdfg.add_symbol(str(sym), parent_sdfg.symbols[str(sym)])
+                        parent_node.symbol_mapping[str(sym)] = str(sym)
+                
                 if isinstance(parent_arr, data.View):
                     parent_arr = parent_arr.as_array()
                 elif isinstance(parent_arr, data.StructureView):
@@ -107,9 +161,23 @@ def dealias_sdfg(sdfg: SDFG):
                             dst_data = None
                             new_dst_memlet = None
 
+                        # NOTE: If new symbols appear in the Memlet, we need to add them to the symbol mapping.
+                        # NOTE: We assume that these symbols are defined (in any sense) in the immediate parent scope.
+                        # NOTE: Since these symbols appear in Memlets, we assume that they are integers.
+                        previous_syms = e.data.used_symbols(all_symbols=True)
                         if new_src_memlet is not None:
+                            new_syms = new_src_memlet.used_symbols(all_symbols=True) - previous_syms
+                            for sym in new_syms:
+                                if sym not in nsdfg.symbols:
+                                    nsdfg.add_symbol(str(sym), dace.int32)
+                                    parent_node.symbol_mapping[sym] = sym
                             e.data.src_subset = new_src_memlet.subset
                         if new_dst_memlet is not None:
+                            new_syms = new_dst_memlet.used_symbols(all_symbols=True) - previous_syms
+                            for sym in new_syms:
+                                if sym not in nsdfg.symbols:
+                                    nsdfg.add_symbol(str(sym), dace.int32)
+                                    parent_node.symbol_mapping[sym] = sym
                             e.data.dst_subset = new_dst_memlet.subset
                         if e.data.data == src_data:
                             e.data.data = new_src_memlet.data
@@ -154,6 +222,17 @@ def dealias_sdfg(sdfg: SDFG):
                     e._src_conn = replacements[e.src_conn]
                 elif e.dst_conn in replacements:
                     e._dst_conn = replacements[e.dst_conn]
+            
+            # Remove multiple edges to the same connectors
+            for name in replacements.values():
+                in_edges = list(parent_state.in_edges_by_connector(parent_node, name))
+                out_edges = list(parent_state.out_edges_by_connector(parent_node, name))
+                if len(in_edges) > 1:
+                    for edge in in_edges[1:]:
+                        parent_state.remove_memlet_path(edge)
+                if len(out_edges) > 1:
+                    for edge in out_edges[1:]:
+                        parent_state.remove_memlet_path(edge)
 
 
 def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEdge[Memlet], data: str) -> Memlet:

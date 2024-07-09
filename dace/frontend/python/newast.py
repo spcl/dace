@@ -3,8 +3,6 @@ import ast
 from collections import OrderedDict
 import copy
 import itertools
-import inspect
-import networkx as nx
 import re
 import sys
 import time
@@ -16,7 +14,6 @@ import operator
 
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
-from dace import sourcemap
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
@@ -25,10 +22,9 @@ from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConve
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
-from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet, pyexpr_to_symbolic, ParseMemlet,
-                                                inner_eval_ast, MemletExpr)
-from dace.sdfg import nodes, utils as sdutil
-from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
+from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, ParseMemlet, inner_eval_ast, MemletExpr
+from dace.sdfg import nodes
+from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states, propagate_memlets_sdfg
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
@@ -238,6 +234,11 @@ def parse_dace_program(name: str,
     try:
         sdfg, _, _, _ = visitor.parse_program(preprocessed_ast.preprocessed_ast.body[0])
         sdfg.set_sourcecode(preprocessed_ast.src, 'python')
+
+        # De-alias arrays
+        from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import dealias_sdfg
+        dealias_sdfg(sdfg)
+        propagate_memlets_sdfg(sdfg)
 
         # Combine nested closures with the current one
         nested_closure_replacements: Dict[str, str] = {}
