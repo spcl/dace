@@ -75,7 +75,8 @@ class MemoryMovementNode(CodeLibraryNode):
         formatted_for_loops_close_fitting_to_num_threads_is_0  = ["}" for _ in self.load_lengths[1:]]
 
 
-        formatted_for_loops_open_fitting_to_num_threads_is_geq_2 = [f"#pragma unroll\nfor (int i_d1 = 0; i_d1 < {self.load_lengths[1]}; i_d1 += {lines_fitting_to_num_threds}){{"]
+        formatted_for_loops_open_fitting_to_num_threads_is_geq_2 = [] if len(self.load_lengths) <= 1 else \
+          [f"#pragma unroll\nfor (int i_d1 = 0; i_d1 < {self.load_lengths[1]}; i_d1 += {lines_fitting_to_num_threds}){{"]
         if len(self.load_lengths) > 2:
             [f"#pragma unroll\nfor (int i_d{i+2} = 0; i_d{i+2} < {load_len}; ++i_d{i+2}){{" for i, load_len in enumerate(self.load_lengths[2:])]
         formatted_for_loops_close_fitting_to_num_threads_is_geq_2  = ["}" for _ in self.load_lengths[1:]]
@@ -101,7 +102,7 @@ class MemoryMovementNode(CodeLibraryNode):
         ats = ["0"] +  [f"shr_at_d{i+1}" for i in range(len(self.offsets[1:]))]
         local_access_offset = f"const int shr_access_offset = {' + '.join(ats)}"
 
-        d1_shared_offset = f"{shared_offsets[1]} * line_num"
+        d1_shared_offset = "0" if len(shared_offsets) <= 1 else f"{shared_offsets[1]} * line_num"
 
         # Construct for loops
         code = f"""//Code Library Node to Load Memory from GPU Global to GPU Shared
