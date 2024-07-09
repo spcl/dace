@@ -1,15 +1,11 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes and functions that implement the grid-strided map tiling
-    transformation."""
-
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from sympy import Integer
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+import sympy
 from dace import subsets
+import dace
 from dace.data import Array
 from dace.properties import Property, make_properties
 from dace.libraries.standard.nodes import CodeLibraryNode
-import typing
-from typing import Dict
+from typing import Dict, List
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
@@ -17,48 +13,147 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import transformation
 from dace import dtypes
+import functools
+import operator
+from operator import mul
+import warnings
 
 @make_properties
 class MemoryMovementNode(CodeLibraryNode):
     src_location = Property(dtype=dtypes.StorageType, default=dtypes.StorageType.GPU_Global, desc="Src location")
     dst_location = Property(dtype=dtypes.StorageType, default=dtypes.StorageType.GPU_Global, desc="Dst location")
-    input_name = Property(dtype=str, default=None, desc="")
-    output_name = Property(dtype=str, default=None, desc="")
-    offset = Property(dtype=str, default="0", desc="")
-    load_len = Property(dtype=typing.Union[Integer, int], default=Integer(32), desc="")
-    num_threads = Property(dtype=typing.Union[Integer, int], default=Integer(32), desc="")
+    input_name = Property(dtype=str, default="", desc="")
+    output_name = Property(dtype=str, default="", desc="")
+    offsets = Property(dtype=List, default=[], desc="")
+    load_lengths = Property(dtype=List, default=[], desc="")
+    thread_dims = Property(dtype=List, default=[], desc="")
+    in_arr = Property(dtype=str, default="", desc="")
+    out_arr = Property(dtype=str, default="", desc="")
+    global_tensor_dims = Property(dtype=List, default=[], desc="")
 
-    def __init__(self, name, input_name, output_name, src_location, dst_location, offset, load_len, num_threads, *args, **kwargs):
+    def __init__(self, name, input_name, output_name, src_location, dst_location, offsets, load_lengths, thread_dims, global_tensor_dims, in_arr, out_arr, *args, **kwargs):
         self.src_location = src_location
         self.dst_location = dst_location
-        self.offset = offset
-        self.load_len = load_len
-        self.num_threads = num_threads
+        self.offsets = offsets
+        self.load_lengths = load_lengths
+        self.thread_dims = thread_dims
+        self.global_tensor_dims = global_tensor_dims
         self.input_name = input_name
         self.output_name = output_name
+        self.in_arr = in_arr
+        self.out_arr = out_arr
         super().__init__(name=name, input_names=[self.input_name], output_names=[self.output_name])
 
     def generate_code(self, inputs: Dict[str, Array], outputs: Dict[str, Array]):
         assert len(inputs) == 1
         assert len(outputs) == 1
+        assert len(self.load_lengths)  >= 1
+        assert len(self.offsets) == len(self.load_lengths)
+        dims_to_load = len(self.load_lengths)
+        line_length = self.load_lengths[0]
+        total_memory_to_load = functools.reduce(operator.mul, self.load_lengths)
+        assert total_memory_to_load % line_length == 0
+        num_lines = total_memory_to_load // line_length
+        self.thread_dims = [1 if x == 0 else x for x in self.thread_dims]
+        num_threads = functools.reduce(operator.mul, self.thread_dims)
+        lines_fitting_to_num_threds = num_threads // line_length
+        if num_threads % line_length != 0 and line_length % num_threads != 0:
+            warnings.warn(f"Memory move requested involves moving contiguous memory blocks ({num_lines}) of length ({line_length}) with"
+                            f" {num_threads} threads. Attempt to arrange the parameters such that a line of contiguous memory ({line_length})"
+                            f" is a multiple of (or divides evenly) the number of threads ({num_threads}) if possible")
+
+        # The code is a loop of N dimensions (equal to the given length of offsets and load lengths)
+        # If the lines fitting is >= 1 then X line at a time is loaded, where X is the number of lines fit to the
+        # number of threads available.
+        # If the lines fitting is == 0 then all threads collectively load a line with a possible remainder at time
+        # 
+        # Depending on the number of lines and fitting lines the innermost loop is unrolled
+
+        formatted_load_lengths = [f"constexpr int load_len_d{i} = {load_len};" for i, load_len in enumerate(self.load_lengths)]
+        # Load first dimension in contiguous lines, lest to loop
+        formatted_for_loops_open_fitting_to_num_threads_is_0 = [f"#pragma unroll\nfor (int i_d{i+1} = 0; i_d{i+1} < {load_len}; ++i_d{i+1}){{" for i, load_len in enumerate(self.load_lengths[1:])]
+        formatted_for_loops_close_fitting_to_num_threads_is_0  = ["}" for _ in self.load_lengths[1:]]
+
+
+        formatted_for_loops_open_fitting_to_num_threads_is_geq_2 = [f"#pragma unroll\nfor (int i_d1 = 0; i_d1 < {self.load_lengths[1]}; i_d1 += {lines_fitting_to_num_threds}){{"]
+        if len(self.load_lengths) > 2:
+            [f"#pragma unroll\nfor (int i_d{i+2} = 0; i_d{i+2} < {load_len}; ++i_d{i+2}){{" for i, load_len in enumerate(self.load_lengths[2:])]
+        formatted_for_loops_close_fitting_to_num_threads_is_geq_2  = ["}" for _ in self.load_lengths[1:]]
+
+        # To access an n dimensional tensor (contigously stored in 1d memory in row major fashion),
+        # The offset can be computed for for the dimensions 1 -> n-1 (0 excluded)
+        # 1d_offset_d0 = load_offset_d0 + i_d0 * num_threads
+        # 1d_offset_d1 = global_dim_d0 * (load_offset_d1 + i_d1)
+        # 1d_offset_d2 = (global_dim_d0 * global_dim_d1) * (load_offset_d2 + i_d2)
+        # and so on...
+        # This means we can use a partially accumulated array
+        #global_offsets = [0] + [", ".join(self.global_tensor_dims[:i-1]) for i in range(1, len(self.global_tensor_dims))]
+        global_offsets = [0] + [", ".join(self.global_tensor_dims[:i]) for i in range(1, len(self.global_tensor_dims))]
+        shared_offsets = [0] + [functools.reduce(operator.mul, self.load_lengths[:i]) for i in range(1, len(self.load_lengths))]
+
+        global_access_offsets = [f"const int glb_at_d{i+1} = {global_offsets[i+1]} * (i_d{i+1});" for i in range(len((self.offsets[1:])))]
+        ats = ["0"] + [f"glb_at_d{i+1}" for i in range(len(self.offsets[1:]))]
+        global_access_offset = f"const int glb_access_offset = {' + '.join(ats)}"
+
+        d1_global_offset = f"{self.global_tensor_dims[0]} * line_num"
+
+        shared_access_offsets = [f"const int shr_at_d{i+1} = {shared_offsets[i+1]} * (i_d{i+1});" for i in range(len((self.offsets[1:])))]
+        ats = ["0"] +  [f"shr_at_d{i+1}" for i in range(len(self.offsets[1:]))]
+        local_access_offset = f"const int shr_access_offset = {' + '.join(ats)}"
+
+        d1_shared_offset = f"{shared_offsets[1]} * line_num"
 
         # Construct for loops
-        code = f"""//Code Library Node to Load 1D Memory
+        code = f"""//Code Library Node to Load Memory from GPU Global to GPU Shared
 {{
-    constexpr int num_threads = {self.num_threads};
-    constexpr int load_len = {self.load_len};
-    constexpr int load_iter = (num_threads + load_len - 1) / load_len;
-    constexpr int load_remainder = num_threads % load_len;
-    const int offset = {self.offset};
-    const int tid = threadIdx.x;
+    constexpr int num_threads = {num_threads};
+    // Load lengths for each dimension
+    {"\n".join(formatted_load_lengths)}
+    // Load lengths for each dimension end
+    constexpr int lines_fitting_to_num_threads = {lines_fitting_to_num_threds};
+    constexpr int load_iter_d0 = lines_fitting_to_num_threads == 0? ((num_threads + load_len_d0 - 1) / load_len_d0) : 1;
+    constexpr int load_remainder_d0 = lines_fitting_to_num_threads == 0? 0 : num_threads % load_len_d0;
+    constexpr int active_load_threads = {line_length} * lines_fitting_to_num_threads;
+    constexpr int dimensions_to_load = {dims_to_load}; 
 
-    #pragma unroll
-    for (int _mem_move_i = 0; _mem_move_i < load_iter; ++_mem_move_i) {{
-        {self.output_name}[_mem_move_i*num_threads + tid] = {self.input_name}[_mem_move_i*num_threads + tid];
-    }}
+    const int tid = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
+    const int line_num = tid / {line_length};
+    const int line_offset = tid % {line_length};
 
-    if (tid < load_remainder){{
-        {self.output_name}[load_iter*num_threads + tid] = {self.input_name}[load_iter*num_threads + tid];
+    if constexpr (lines_fitting_to_num_threads <= 1 || dimensions_to_load == 1){{
+        {"\n".join(formatted_for_loops_open_fitting_to_num_threads_is_0)}
+        // Global access offsets
+        {"\n".join(global_access_offsets)}
+        // Shared access offsets
+        {"\n".join(shared_access_offsets)}
+        // Joined access offset
+        {global_access_offset};
+        {local_access_offset};
+        #pragma unroll
+        for (int i_d0 = 0; i_d0 < load_iter_d0; ++i_d0){{
+            {self.output_name}[i_d0*num_threads + tid] = {self.input_name}[i_d0*num_threads + tid];
+        }}
+        if constexpr (load_remainder_d0 != 0){{
+            if (tid < load_remainder_d0){{
+                if (load_iter_d0*num_threads + tid < {self.global_tensor_dims[0]}){{
+                  {self.output_name}[load_iter_d0*num_threads + tid] = {self.input_name}[load_iter_d0*num_threads + tid];
+                }}
+            }}
+        }}
+        {"\n".join(formatted_for_loops_close_fitting_to_num_threads_is_0)}
+    }} else {{
+        {"\n".join(formatted_for_loops_open_fitting_to_num_threads_is_geq_2)}
+        // Global access offsets
+        {"\n".join(global_access_offsets)}
+        // Shared access offsets
+        {"\n".join(shared_access_offsets)}
+        // Joined global access offset
+        {global_access_offset} + ({d1_global_offset});
+        {local_access_offset} + ({d1_shared_offset});
+        if (tid < active_load_threads){{
+            {self.output_name}[shr_access_offset + line_offset] = {self.input_name}[glb_access_offset + line_offset];
+        }}
+        {"\n".join(formatted_for_loops_close_fitting_to_num_threads_is_geq_2)}
     }}
 
     __syncthreads();
@@ -73,15 +168,16 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
     For all memlets that connect the outer map to inner map,
     The src location is inferred and the memory is moved explicitly using a library not the given memory location
     """
-    outer_map_entry = transformation.PatternNode(nodes.MapEntry)
-    inner_map_entry = transformation.PatternNode(nodes.MapEntry)
+    device_map_entry = transformation.PatternNode(nodes.MapEntry)
+    grid_strided_map_entry = transformation.PatternNode(nodes.MapEntry)
+    thread_block_map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
     memory_location = Property(dtype=dtypes.StorageType, default=dtypes.StorageType.GPU_Shared, desc="Destination memory location")
 
     @classmethod
     def expressions(cls):
-        return [sdutil.node_path_graph(cls.outer_map_entry, cls.inner_map_entry)]
+        return [sdutil.node_path_graph(cls.device_map_entry, cls.grid_strided_map_entry, cls.thread_block_map_entry)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         return True
@@ -124,41 +220,114 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
               assert(graph.in_degree(u) == 1 and graph.out_degree(u) == 1)
               u, u_conn, _, _, _ = graph.in_edges(u)[0]
 
+    location_to_prefix = {
+        dtypes.StorageType.GPU_Global: "glb",
+        dtypes.StorageType.GPU_Shared: "shr",
+    }
+
+    def filter_map_params_from_subset(self, subset_range : subsets.Range, map_params : set):
+      exprs = []
+      for sr in subset_range:
+        (beg, end, step) = sr
+        for expr in [beg, end, step]:
+          symbols_to_remove = map_params
+          expanded_expr = expr.expand()
+          terms = expanded_expr.as_ordered_terms()
+          filtered_terms = []
+          for term in terms:
+              has = False
+              for sub_term in term.as_ordered_factors():
+                for sym in symbols_to_remove:
+                  if sub_term.has(sym) or str(sub_term) == str(sym):
+                    has = True
+              if not has:
+                filtered_terms.append(term)
+          filtered_expr = sympy.Add(*filtered_terms)
+          exprs.append(filtered_expr)
+      return exprs
+
+    def gen_access_str_from_exprs(self, exprs: List, dst_arr_name: str):
+      split_expr = [exprs[i:i + 3] for i in range(0, len(exprs), 3)]
+      new_access_str = f"{dst_arr_name}["
+      # Sympy is end range that is included, +1 for correct range computation
+      for range_expr in split_expr:
+        new_access_str += f"{range_expr[0]}:{range_expr[1]+1}:{range_expr[2]}, "
+      new_access_str = new_access_str[:-2] + "]"
+      return new_access_str
+
     def apply(self, graph: SDFGState, sdfg: SDFG):
-        for edge in graph.out_edges(self.outer_map_entry):
+        for edge in graph.out_edges(self.grid_strided_map_entry):
           src_arr_name, src_storage_type_of_memlet = self.infer_source(graph=graph, sdfg=sdfg, edge=edge)
-          dst_arr_name = f"shr{src_arr_name}"
+          dst_arr_name = self.location_to_prefix.get(self.memory_location, "") + f"{src_arr_name}"
           # The current state (and assumptions), the other edges connect outer map to the inner map,
           # With a volume and subset, this needs to go through a library node now that writes to an access node of the new type
           u, u_conn, v, v_conn, memlet = edge
-          
+
           parsed_storage_type = f"{src_storage_type_of_memlet}".split(".")[-1]
           parsed_memory_location = f"{self.memory_location}".split(".")[-1]
-          lib_node = MemoryMovementNode(name=f"move_{memlet.data}_from_{parsed_storage_type}_to_{parsed_memory_location}",
+          # Build the offsets, load_lengths, num_threads 
+          # DaCe maps of form i0, i1, i2, i3 are mapped to the GPU block dimensions
+          # (i0 x i1) -> z, i2 -> y, i3 -> x, therefore we iterate from back up to three
+          offsets = ["0"] * len(self.grid_strided_map_entry.map.range)
+          load_lengths = [0] * len(self.grid_strided_map_entry.map.range)
+          num_threads = [0, 0, 0]
+          for i in range(len(self.grid_strided_map_entry.map.range), 0, -1):
+              (_, grid_end, grid_step) = self.grid_strided_map_entry.map.range[-i]
+              (tblock_beg, tblock_end, tblock_step) = self.thread_block_map_entry.map.range[-i]
+              # Both statements need to be simplifiable to integers
+              num_thread = sympy.simplify(((tblock_end+1) - tblock_beg) // tblock_step)
+              load_len = sympy.simplify((tblock_end+1) - tblock_beg)
+              # Should not stay in sympy type Zero
+              if isinstance(num_thread, sympy.Integer):
+                  num_thread = int(num_thread)
+              else:
+                  raise Exception("Number of threads expression needs to be simplifiable to an integer for the memory movement trasnformation")
+              if isinstance(load_len, sympy.Integer):
+                  load_len = int(load_len)
+              else:
+                  raise Exception("The length of data need to be loaded needs to be simplifiable to an integer for the memory movement trasnformation")
+              num_threads[-i] = num_thread
+              load_lengths[-i] = load_len
+              offsets[-i] = str(self.device_map_entry.map.params[-i])
+
+          mem_loc_a = parsed_storage_type
+          mem_loc_b = parsed_memory_location
+          lib_node_name = f"move_{memlet.data}_from_{mem_loc_a}_to_{mem_loc_b}"
+          lib_node = MemoryMovementNode(name=lib_node_name,
                                         input_name="IN" + u_conn[3:],
                                         output_name=u_conn,
                                         src_location=src_storage_type_of_memlet,
                                         dst_location=self.memory_location,
-                                        offset=str(self.outer_map_entry.map.params[0]),
-                                        load_len=self.outer_map_entry.map.range[0][2],
-                                        num_threads=self.outer_map_entry.map.range[0][2])
+                                        offsets=list(reversed(offsets)),
+                                        load_lengths=list(reversed(load_lengths)),
+                                        thread_dims=list(reversed(num_threads)),
+                                        global_tensor_dims=list(reversed([str(d) for d in sdfg.arrays[src_arr_name].shape])),
+                                        in_arr=src_arr_name,
+                                        out_arr=dst_arr_name)
 
           graph.add_node(lib_node)
           graph.remove_edge(edge)
 
-          # We have a new access node after the code library node, new data too
           src_arr : Array = sdfg.arrays[src_arr_name]
-          # The memlet subset of from i -> i + 128 is used to derive the shape (remove i)
           shape = []
-          access_str = ""
-          for r in self.outer_map_entry.map.range:
-              (dev_begin, _, dev_step) = r
-              shape.append(dev_step)
-              access_str = f"{dev_begin}:({dev_begin}+{dev_step}), "
-          (dst_arr_name, dst_arr) = sdfg.add_array(name=dst_arr_name, dtype=src_arr.dtype, shape=shape, transient=True, storage=self.memory_location)
+          for dev_range, grid_range, thread_block_range in zip(self.device_map_entry.map.range, self.grid_strided_map_entry.map.range, self.thread_block_map_entry.map.range):
+              (_, _, dev_step) = dev_range
+              (grid_begin, grid_end, grid_step) = grid_range
+              (tblock_begin, tblock_end, tblock_step) = thread_block_range
+              num_thread = int(sympy.simplify((tblock_end+1) - tblock_begin))
+              grid_len = int(sympy.simplify((grid_end+1) - grid_begin))
+              assert(dev_step % grid_step == 0)
+              assert(dev_step % grid_len == 0)
+              shape.append(dev_step // grid_len)
+
+          memlet_to_lib_node : Memlet = memlet
+          exprs = self.filter_map_params_from_subset(memlet_to_lib_node.subset, 
+                                                     set(self.device_map_entry.map.params + self.grid_strided_map_entry.map.params))
+          new_access_str = self.gen_access_str_from_exprs(exprs, dst_arr_name)
+          (dst_arr_name, _) = sdfg.add_array(name=dst_arr_name, dtype=src_arr.dtype, shape=shape, transient=True, storage=self.memory_location)
           dst_access_node = nodes.AccessNode(data=dst_arr_name)
-          to_dst_memlet = Memlet(f"{dst_arr_name}[{access_str[:-2]}]")
-          to_map_memlet = Memlet(f"{dst_arr_name}[{access_str[:-2]}]")
+          to_dst_memlet = Memlet(expr=new_access_str, data=dst_arr_name)
+          to_map_memlet = Memlet(expr=new_access_str, data=dst_arr_name)
 
           # Outer Map -> Lib Node
           graph.add_edge(u, u_conn, lib_node, "IN" + u_conn[3:], memlet)
@@ -172,26 +341,27 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
           # Now we have to update every other memlet until we reach the map exit
           # Start from the inner map
           itnodes = set()
-          itnodes.add(self.inner_map_entry)
+          itnodes.add(self.thread_block_map_entry)
           while len(itnodes) != 0:
             node = itnodes.pop()
             for out_edge in graph.out_edges(node):
-                ou, ou_conn, ov, ov_conn, omemlet = out_edge
-                if isinstance(ov, nodes.MapExit):
+                out_u, out_u_conn, out_v, out_v_conn, out_memlet = out_edge
+                if isinstance(out_v, nodes.MapExit):
                   continue
-                assert(not isinstance(ov, nodes.MapExit))
-                itnodes.add(ov)
-                if omemlet.data == src_arr_name:
-                  subset_range : subsets.Range = omemlet.subset
-                  new_access_str = f"{dst_arr_name}["
-                  for map_param, sr in zip(self.outer_map_entry.params, subset_range):
-                      (beg, end, step) = sr
-                      map_len = end - beg
-                      new_access_str += f"{beg}-{map_param}:1+{beg}+{(map_len+step-1)//step}-{map_param}:1"
-                  new_access_str = new_access_str[:-2] + "]"
-                  nm = Memlet(expr=new_access_str, data=dst_arr_name)
+                assert(not isinstance(out_v, nodes.MapExit))
+                itnodes.add(out_v)
+                if out_memlet.data == src_arr_name:
+                  subset_range : subsets.Range = out_memlet.subset
+                  # Filter anything from the subset string of the memlet that involves terms that include
+                  # Patameters from the grid-strided or device maps, this way effectively one computes the offset mapping
+                  # From the global tensor to shared memory tensor
+                  exprs = self.filter_map_params_from_subset(subset_range, set(self.device_map_entry.map.params + self.grid_strided_map_entry.map.params))
+                  # For each dimension we get (beg:end:step) expressions
+                  new_access_str = self.gen_access_str_from_exprs(exprs, dst_arr_name)
+                  # Update the state with the new memlet annotation
+                  updated_memlet = Memlet(expr=new_access_str, data=dst_arr_name)
                   graph.remove_edge(out_edge)
-                  graph.add_edge(ou, ou_conn, ov, ov_conn, nm)
+                  graph.add_edge(out_u, out_u_conn, out_v, out_v_conn, updated_memlet)
 
     @staticmethod
     def annotates_memlets():
