@@ -3093,8 +3093,6 @@ class LoopRegion(ControlFlowRegion):
             parent.add_edge(node, loop_latch_state, dace.InterstateEdge())
         for node in connect_to_end:
             parent.add_edge(node, end_state, dace.InterstateEdge())
-            for iedge in parent.in_edges(node):
-                iedge.data.assignments['did_break_' + self.label] = '1'
 
         parent.remove_node(self)
 
@@ -3182,7 +3180,7 @@ class LoopRegion(ControlFlowRegion):
         return False
 
 @dace.serialize.serializable
-class ConditionalRegion(ControlFlowBlock):
+class ConditionalRegion(ControlFlowBlock, ControlGraphView):
     def __init__(self, label: str):
         super().__init__(label)
         self.branches: List[Tuple[CodeBlock, ControlFlowRegion]] = []

@@ -2371,7 +2371,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                                             extra_symbols=extra_syms, parent=loop_region,
                                                             unconnected_last_block=False)
             loop_region.start_block = loop_region.node_id(first_subblock)
-
+            self._connect_break_blocks(loop_region)
             # Handle else clause
             if node.orelse:
                 # Continue visiting body
@@ -2509,6 +2509,13 @@ class ProgramVisitor(ExtNodeVisitor):
             self._generate_orelse(loop_region, postloop_block)
 
         self.last_block = loop_region
+        self._connect_break_blocks(loop_region)
+
+    def _connect_break_blocks(self, loop_region: LoopRegion):
+        for node, parent in loop_region.all_nodes_recursive(lambda n, _: not isinstance(n, (LoopRegion, SDFGState))):
+            if isinstance(node, BreakBlock):
+                for in_edge in parent.in_edges(node):
+                    in_edge.data.assignments["did_break_" + loop_region.label] = "1"
 
     def _generate_orelse(self, loop_region: LoopRegion, postloop_block: ControlFlowBlock):
         did_break_symbol = 'did_break_' + loop_region.label

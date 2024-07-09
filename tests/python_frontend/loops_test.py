@@ -416,7 +416,7 @@ def test_nested_map_with_symbol():
                     reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_for_else():
 
-    @dace.program
+    @dace.program(use_experimental_cfg_blocks=True)
     def for_else(A: dace.float64[20]):
         for i in range(1, 20):
             if A[i] >= 10:
