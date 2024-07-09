@@ -111,8 +111,8 @@ class SDFGCutout(SDFG):
         return cutout_json
 
     @classmethod
-    def from_json(cls, json_obj, context_info=None):
-        return super(SDFGCutout, cls).from_json(json_obj, context_info)
+    def from_json(cls, json_obj, context=None):
+        return super(SDFGCutout, cls).from_json(json_obj, context)
 
     @classmethod
     def from_transformation(

@@ -3,35 +3,26 @@ import ast
 import collections
 import copy
 import ctypes
-import itertools
 import gzip
 from numbers import Integral
 import os
-import pickle, json
+import json
 from hashlib import md5, sha256
-from pydoc import locate
 import random
-import re
 import shutil
 import sys
-import time
-from typing import Any, AnyStr, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
+from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
-import numpy as np
-import sympy as sp
 
 import dace
 import dace.serialize
-from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, properties, symbolic)
-from dace.sdfg.scope import ScopeTree
-from dace.sdfg.replace import replace, replace_properties, replace_properties_dict
+from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic)
+from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
-from dace.frontend.python import astutils, wrappers
+from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
-from dace.sdfg.state import SDFGState, ControlFlowRegion
-from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg.state import ControlFlowBlock, SDFGState, ControlFlowRegion
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
@@ -183,7 +174,9 @@ class InterstateEdge(object):
                            desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
 
-    def __init__(self, condition: CodeBlock = None, assignments=None):
+    def __init__(self,
+                 condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None,
+                 assignments: Optional[Dict] = None):
         if condition is None:
             condition = CodeBlock("1")
 
@@ -452,6 +445,9 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
+    using_experimental_blocks = Property(dtype=bool, default=False,
+                                         desc="Whether the SDFG contains experimental control flow blocks")
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
@@ -508,6 +504,8 @@ class SDFG(ControlFlowRegion):
         # Counter to resolve name conflicts
         self._orig_name = name
         self._num = 0
+
+        self._sdfg = self
 
     def __deepcopy__(self, memo):
         cls = self.__class__
@@ -579,8 +577,8 @@ class SDFG(ControlFlowRegion):
         return tmp
 
     @classmethod
-    def from_json(cls, json_obj, context_info=None):
-        context_info = context_info or {'sdfg': None}
+    def from_json(cls, json_obj, context=None):
+        context = context or {'sdfg': None}
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -594,7 +592,7 @@ class SDFG(ControlFlowRegion):
         else:
             constants_prop = None
 
-        ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context_info['sdfg'])
+        ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
         dace.serialize.set_properties_from_json(ret,
                                                 json_obj,
@@ -602,12 +600,12 @@ class SDFG(ControlFlowRegion):
 
         nodelist = []
         for n in nodes:
-            nci = copy.copy(context_info)
+            nci = copy.copy(context)
             nci['sdfg'] = ret
 
-            state = SDFGState.from_json(n, context=nci)
-            ret.add_node(state)
-            nodelist.append(state)
+            block = dace.serialize.from_json(n, context=nci)
+            ret.add_node(block)
+            nodelist.append(block)
 
         for e in edges:
             e = dace.serialize.from_json(e)
@@ -1229,7 +1227,7 @@ class SDFG(ControlFlowRegion):
             if isinstance(arr, dt.Structure) and include_nested_data:
                 yield from _yield_nested_data(aname, arr)
             yield self, aname, arr
-        for state in self.nodes():
+        for state in self.states():
             for node in state.nodes():
                 if isinstance(node, nd.NestedSDFG):
                     yield from node.sdfg.arrays_recursive(include_nested_data=include_nested_data)
@@ -2196,7 +2194,6 @@ class SDFG(ControlFlowRegion):
 
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
-        from dace.sdfg import utils as sdutils
 
         # Compute build folder path before running codegen
         build_folder = self.build_folder
@@ -2216,10 +2213,6 @@ class SDFG(ControlFlowRegion):
             # Fix the build folder name on the copied SDFG to avoid it changing
             # if the codegen modifies the SDFG (thereby changing its hash)
             sdfg.build_folder = build_folder
-
-            # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
-            # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
-            sdutils.inline_loop_blocks(sdfg)
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
@@ -2680,3 +2673,15 @@ class SDFG(ControlFlowRegion):
            :return: a Memlet that fully transfers array
         """
         return dace.Memlet.from_array(array, self.data(array))
+
+    def recheck_using_experimental_blocks(self) -> bool:
+        found_experimental_block = False
+        for node, graph in self.root_sdfg.all_nodes_recursive():
+            if isinstance(graph, ControlFlowRegion) and not isinstance(graph, SDFG):
+                found_experimental_block = True
+                break
+            if isinstance(node, ControlFlowBlock) and not isinstance(node, SDFGState):
+                found_experimental_block = True
+                break
+        self.root_sdfg.using_experimental_blocks = found_experimental_block
+        return found_experimental_block

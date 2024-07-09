@@ -1,9 +1,9 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import pytest
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 
 from dace.frontend.python.common import DaceSyntaxError
+from dace.sdfg.state import LoopRegion
 
 @dace.program
 def for_loop():
@@ -15,7 +15,12 @@ def for_loop():
 
 
 def test_for_loop():
-    A = for_loop()
+    for_loop.use_experimental_cfg_blocks = True
+
+    sdfg = for_loop.to_sdfg()
+    assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
+
+    A = sdfg()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
     assert (np.array_equal(A, A_ref))
 
@@ -33,10 +38,13 @@ def for_loop_with_break_continue():
     return A
 
 
-@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
-                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_for_loop_with_break_continue():
-    A = for_loop_with_break_continue()
+    for_loop_with_break_continue.use_experimental_cfg_blocks = True
+
+    sdfg = for_loop_with_break_continue.to_sdfg()
+    assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
+
+    A = sdfg()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
     assert (np.array_equal(A, A_ref))
 
@@ -59,10 +67,13 @@ def nested_for_loop():
     return A
 
 
-@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
-                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_for_loop():
-    A = nested_for_loop()
+    nested_for_loop.use_experimental_cfg_blocks = True
+
+    sdfg = nested_for_loop.to_sdfg()
+    assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
+
+    A = sdfg()
     A_ref = np.zeros([10, 10], dtype=np.int32)
     for i in range(0, 10, 2):
         A_ref[i] = [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
@@ -81,7 +92,12 @@ def while_loop():
 
 
 def test_while_loop():
-    A = while_loop()
+    while_loop.use_experimental_cfg_blocks = True
+
+    sdfg = while_loop.to_sdfg()
+    assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
+
+    A = sdfg()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
     assert (np.array_equal(A, A_ref))
 
@@ -102,7 +118,12 @@ def while_loop_with_break_continue():
 
 
 def test_while_loop_with_break_continue():
-    A = while_loop_with_break_continue()
+    while_loop_with_break_continue.use_experimental_cfg_blocks = True
+
+    sdfg = while_loop_with_break_continue.to_sdfg()
+    assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
+
+    A = sdfg()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
     assert (np.array_equal(A, A_ref))
 
@@ -130,7 +151,12 @@ def nested_while_loop():
 
 
 def test_nested_while_loop():
-    A = nested_while_loop()
+    nested_while_loop.use_experimental_cfg_blocks = True
+
+    sdfg = nested_while_loop.to_sdfg()
+    assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
+
+    A = sdfg()
     A_ref = np.zeros([10, 10], dtype=np.int32)
     for i in range(0, 10, 2):
         A_ref[i] = [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
@@ -157,10 +183,13 @@ def nested_for_while_loop():
     return A
 
 
-@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
-                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_for_while_loop():
-    A = nested_for_while_loop()
+    nested_for_while_loop.use_experimental_cfg_blocks = True
+
+    sdfg = nested_for_while_loop.to_sdfg()
+    assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
+
+    A = sdfg()
     A_ref = np.zeros([10, 10], dtype=np.int32)
     for i in range(0, 10, 2):
         A_ref[i] = [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
@@ -187,10 +216,13 @@ def nested_while_for_loop():
     return A
 
 
-@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
-                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_nested_while_for_loop():
-    A = nested_while_for_loop()
+    nested_while_for_loop.use_experimental_cfg_blocks = True
+
+    sdfg = nested_while_for_loop.to_sdfg()
+    assert any(isinstance(x, LoopRegion) for x in sdfg.nodes())
+
+    A = sdfg()
     A_ref = np.zeros([10, 10], dtype=np.int32)
     for i in range(0, 10, 2):
         A_ref[i] = [0, 0, 2, 0, 4, 0, 6, 0, 8, 0]
@@ -212,6 +244,7 @@ def map_with_break_continue():
 
 def test_map_with_break_continue():
     try:
+        map_with_break_continue.use_experimental_cfg_blocks = True
         map_with_break_continue()
     except Exception as e:
         if isinstance(e, DaceSyntaxError):
@@ -233,6 +266,7 @@ def test_nested_map_for_loop():
     for i in range(10):
         for j in range(10):
             ref[i, j] = i * 10 + j
+    nested_map_for_loop.use_experimental_cfg_blocks = True
     val = nested_map_for_loop()
     assert (np.array_equal(val, ref))
 
@@ -253,6 +287,7 @@ def test_nested_map_for_for_loop():
         for j in range(10):
             for k in range(10):
                 ref[i, j, k] = i * 100 + j * 10 + k
+    nested_map_for_for_loop.use_experimental_cfg_blocks = True
     val = nested_map_for_for_loop()
     assert (np.array_equal(val, ref))
 
@@ -273,6 +308,7 @@ def test_nested_for_map_for_loop():
         for j in range(10):
             for k in range(10):
                 ref[i, j, k] = i * 100 + j * 10 + k
+    nested_for_map_for_loop.use_experimental_cfg_blocks = True
     val = nested_for_map_for_loop()
     assert (np.array_equal(val, ref))
 
@@ -296,6 +332,7 @@ def test_nested_map_for_loop_with_tasklet():
     for i in range(10):
         for j in range(10):
             ref[i, j] = i * 10 + j
+    nested_map_for_loop_with_tasklet.use_experimental_cfg_blocks = True
     val = nested_map_for_loop_with_tasklet()
     assert (np.array_equal(val, ref))
 
@@ -321,6 +358,7 @@ def test_nested_map_for_for_loop_with_tasklet():
         for j in range(10):
             for k in range(10):
                 ref[i, j, k] = i * 100 + j * 10 + k
+    nested_map_for_for_loop_with_tasklet.use_experimental_cfg_blocks = True
     val = nested_map_for_for_loop_with_tasklet()
     assert (np.array_equal(val, ref))
 
@@ -346,6 +384,7 @@ def test_nested_for_map_for_loop_with_tasklet():
         for j in range(10):
             for k in range(10):
                 ref[i, j, k] = i * 100 + j * 10 + k
+    nested_for_map_for_loop_with_tasklet.use_experimental_cfg_blocks = True
     val = nested_for_map_for_loop_with_tasklet()
     assert (np.array_equal(val, ref))
 
@@ -365,6 +404,7 @@ def test_nested_map_for_loop_2():
     for i in range(10):
         for j in range(10):
             ref[i, j] = 2 + i * 10 + j
+    nested_map_for_loop_2.use_experimental_cfg_blocks = True
     val = nested_map_for_loop_2(B)
     assert (np.array_equal(val, ref))
 
@@ -390,6 +430,7 @@ def test_nested_map_for_loop_with_tasklet_2():
     for i in range(10):
         for j in range(10):
             ref[i, j] = 2 + i * 10 + j
+    nested_map_for_loop_with_tasklet_2.use_experimental_cfg_blocks = True
     val = nested_map_for_loop_with_tasklet_2(B)
     assert (np.array_equal(val, ref))
 
@@ -408,12 +449,11 @@ def test_nested_map_with_symbol():
     for i in range(10):
         for j in range(i, 10):
             ref[i, j] = i * 10 + j
+    nested_map_with_symbol.use_experimental_cfg_blocks = True
     val = nested_map_with_symbol()
     assert (np.array_equal(val, ref))
 
 
-@pytest.mark.skipif(dace.Config.get_bool('optimizer', 'automatic_simplification') == False,
-                    reason='Control flow detection issues through extraneous states, needs control flow detection fix')
 def test_for_else():
 
     @dace.program
@@ -437,6 +477,8 @@ def test_for_else():
     for_else.f(expected_1)
     for_else.f(expected_2)
 
+    for_else.use_experimental_cfg_blocks = True
+
     for_else(A)
     assert np.allclose(A, expected_1)
 
@@ -457,6 +499,8 @@ def test_while_else():
         else:
             A[1] = 1.0
             A[1] = 1.0
+
+    while_else.use_experimental_cfg_blocks = True
 
     A = np.array([0.0, 0.0])
     expected = np.array([5.0, 1.0])
@@ -479,6 +523,7 @@ def branch_in_for(cond: dace.int32):
 
 
 def test_branch_in_for():
+    branch_in_for.use_experimental_cfg_blocks = True
     sdfg = branch_in_for.to_sdfg(simplify=False)
     assert len(sdfg.source_nodes()) == 1
 
@@ -495,8 +540,56 @@ def branch_in_while(cond: dace.int32):
 
 
 def test_branch_in_while():
+    branch_in_while.use_experimental_cfg_blocks = True
     sdfg = branch_in_while.to_sdfg(simplify=False)
     assert len(sdfg.source_nodes()) == 1
+
+def test_for_with_return():
+
+    @dace.program
+    def for_with_return(A: dace.int32[10]):
+        for i in range(10):
+            if A[i] < 0:
+                return 1
+        return 0
+
+    for_with_return.use_experimental_cfg_blocks = True
+    sdfg = for_with_return.to_sdfg()
+
+    A = np.full((10,), 1).astype(np.int32)
+    A2 = np.full((10,), 1).astype(np.int32)
+    A2[5] = -1
+    rval1 = sdfg(A)
+    expected1 = for_with_return.f(A)
+    rval2 = sdfg(A2)
+    expected2 = for_with_return.f(A2)
+    assert rval1 == expected1
+    assert rval2 == expected2
+
+def test_for_while_with_return():
+
+    @dace.program
+    def for_while_with_return(A: dace.int32[10, 10]):
+        for i in range(10):
+            j = 0
+            while (j < 10):
+                if A[i,j] < 0:
+                    return 1
+                j += 1
+        return 0
+
+    for_while_with_return.use_experimental_cfg_blocks = True
+    sdfg = for_while_with_return.to_sdfg()
+
+    A = np.full((10,10), 1).astype(np.int32)
+    A2 = np.full((10,10), 1).astype(np.int32)
+    A2[5,5] = -1
+    rval1 = sdfg(A)
+    expected1 = for_while_with_return.f(A)
+    rval2 = sdfg(A2)
+    expected2 = for_while_with_return.f(A2)
+    assert rval1 == expected1
+    assert rval2 == expected2
 
 
 if __name__ == "__main__":
@@ -522,3 +615,5 @@ if __name__ == "__main__":
     test_while_else()
     test_branch_in_for()
     test_branch_in_while()
+    test_for_with_return()
+    test_for_while_with_return()
