@@ -31,19 +31,21 @@ class EndStateElimination(transformation.MultiStateTransformation):
         out_edges = graph.out_edges(state)
         in_edges = graph.in_edges(state)
 
-        # If this is an end state, there are no outgoing edges
         if len(out_edges) != 0:
+            self._cba_failure_reason = 'Not an end state, there are outgoing edges.'
             return False
 
-        # We only match end states with one source and no conditions
         if len(in_edges) != 1:
+            self._cba_failure_reason = 'Only end states with a single incoming edge can be eliminated.'
             return False
         edge = in_edges[0]
         if not edge.data.is_unconditional():
+            self._cba_failure_reason = ('Only end states where the incoming edge is taken unconditionally or the ' + 
+                                        'condition is symbolically = 1 can be eliminated.')
             return False
 
-        # Only empty states can be eliminated
         if state.number_of_nodes() > 0:
+            self._cba_failure_reason = 'The state is not empty.'
             return False
 
         return True
@@ -76,30 +78,32 @@ class StartStateElimination(transformation.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         state = self.start_state
 
-        # The transformation applies only to nested SDFGs
         if not graph.parent:
+            self._cba_failure_reason = 'This can not be done on the root SDFG.'
             return False
 
-        # Only empty states can be eliminated
         if state.number_of_nodes() > 0:
+            self._cba_failure_reason = 'The state is not empty.'
             return False
 
         out_edges = graph.out_edges(state)
         in_edges = graph.in_edges(state)
 
-        # If this is a start state, there are no incoming edges
         if len(in_edges) != 0:
+            self._cba_failure_reason = 'There are incoming edges, so this is not a start state.'
             return False
 
-        # We only match start states with one sink and no conditions
         if len(out_edges) != 1:
+            self._cba_failure_reason = 'Only start states with a single outgoing edge can be eliminated.'
             return False
         edge = out_edges[0]
         if not edge.data.is_unconditional():
+            self._cba_failure_reason = ('Only start states where the outgoing edge is taken unconditionally or the ' + 
+                                        'condition is symbolically = 1 can be eliminated.')
             return False
-        # Assignments that make descriptors into symbols cannot be eliminated
         for assign in edge.data.assignments.values():
             if graph.arrays.keys() & symbolic.free_symbols_and_functions(assign):
+                self._cba_failure_reason = 'Assignments that make descriptors into symbols cannot be eliminated.'
                 return False
 
         return True
@@ -152,15 +156,15 @@ class StateAssignElimination(transformation.MultiStateTransformation):
         out_edges = graph.out_edges(state)
         in_edges = graph.in_edges(state)
 
-        # We only match end states with one source and at least one assignment
         if len(in_edges) != 1:
+            self._cba_failure_reason = 'Only states with one source and at least one assignment are considered.'
             return False
         edge = in_edges[0]
 
         assignments_to_consider = _assignments_to_consider(sdfg, edge)
 
-        # No assignments to eliminate
         if len(assignments_to_consider) == 0:
+            self._cba_failure_reason = 'No assignments to eliminate.'
             return False
 
         # If this is an end state, there are no other edges to consider
@@ -173,6 +177,7 @@ class StateAssignElimination(transformation.MultiStateTransformation):
             if e is edge:
                 continue
             if e.data.free_symbols & akeys:
+                self._cba_failure_reason = 'Symbols being eliminated may be used again in other interstate edges.'
                 return False
 
         # If used in any state that is not the current one, fail
@@ -180,6 +185,7 @@ class StateAssignElimination(transformation.MultiStateTransformation):
             if s is state:
                 continue
             if s.free_symbols & akeys:
+                self._cba_failure_reason = 'Symbols being eliminated may be used again in other states.'
                 return False
 
         return True
@@ -254,14 +260,21 @@ class SymbolAliasPromotion(transformation.MultiStateTransformation):
         # 1. First state must have unique input edge.
         in_fedges = graph.in_edges(fstate)
         if len(in_fedges) != 1:
+            self._cba_failure_reason = ('The first state (' + str(fstate) + ') does not have a unique input edge, ' +
+                                        'leading to an ambiguous topological order.')
             return False
         in_edge = in_fedges[0].data
         # 2. There must be a unique edge from the first state to the second
         # one and no edge from the second state to the first one.
         edges = graph.edges_between(fstate, sstate)
         if len(edges) != 1:
+            self._cba_failure_reason = ('There is no unique edge from the first to the second state, ' +
+                                        'leading to an ambiguous topological order.')
             return False
         if len(graph.edges_between(sstate, fstate)) > 1:
+            self._cba_failure_reason = ('There is an edge from the second state (' + str(sstate) +
+                                        ') to the first one (' + str(fstate) +
+                                        '), leading to an ambiguous topological order.')
             return False
 
         edge = edges[0].data
@@ -294,6 +307,7 @@ class SymbolAliasPromotion(transformation.MultiStateTransformation):
 
         # No assignments to promote
         if len(to_consider) == 0:
+            self._cba_failure_reason = 'No promoteable assignments.'
             return False
 
         return True
@@ -347,28 +361,33 @@ class HoistState(transformation.SingleStateTransformation):
     def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
         nsdfg = self.nsdfg
 
-        # Must be a free nested SDFG
         if graph.entry_node(nsdfg) is not None:
+            self._cba_failure_reason = 'Must be a free nested SDFG (not nested in a scope, such as a map).'
             return False
 
-        # Must have two states with an empty source state.
-        # Otherwise structured control flow (loop init states, for example)
-        # may be broken.
         if not permissive:
             if nsdfg.sdfg.number_of_nodes() != 2:
+                self._cba_failure_reason = ('The nested SDFG must have two states with an empty source in strict ' +
+                                            'mode. Otherwise structured control flow, such as loop init states, may ' +
+                                            'be broken. This nested SDFG does not have two states.')
                 return False
             if nsdfg.sdfg.start_state.number_of_nodes() != 0:
+                self._cba_failure_reason = ('The nested SDFG must have two states with an empty source in strict ' +
+                                            'mode. Otherwise structured control flow, such as loop init states, may ' +
+                                            'be broken. This nested SDFG\'s start state is not empty.')
                 return False
 
-        # Must have at least two states with a hoistable source state
         if nsdfg.sdfg.number_of_nodes() < 2:
+            self._cba_failure_reason = 'Must have at least two states to be able to hoist the start state out.'
             return False
-        # Source state must not lead to more than one state or be conditional
         source_state = nsdfg.sdfg.start_state
         if nsdfg.sdfg.out_degree(source_state) != 1:
+            self._cba_failure_reason = 'Start state must not lead to more than one state.'
             return False
         nisedge = nsdfg.sdfg.out_edges(source_state)[0]
         if not nisedge.data.is_unconditional():
+            self._cba_failure_reason = ('The edge leaving the start state must be unconditional or the condition ' +
+                                        'must symbolically equal 1.')
             return False
 
         # Keep all data descriptors to check for potential issues

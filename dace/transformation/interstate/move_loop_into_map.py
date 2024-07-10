@@ -42,14 +42,19 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         # Obtain iteration variable, range, and stride
         loop_info = find_for_loop(sdfg, guard, body)
         if not loop_info:
+            self._cba_failure_reason = 'Failed to detect a well-structured for loop in the state machine.'
             return False
         itervar, (start, end, step), (_, body_end) = loop_info
 
         if step not in [-1, 1]:
+            self._cba_failure_reason = ('The loop stride is not +/-1. ' + self.__class__.__name__ +
+                                        ' only applies when the step size is +/-1.')
             return False
 
         # Body must contain a single state
         if body != body_end:
+            self._cba_failure_reason = ('The loop body contains more than one state. ' + self.__class__.__name__ +
+                                        ' only applies for loops with a single state in the loop body.')
             return False
 
         # Body must have only a single connected component
@@ -59,11 +64,18 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         # which is unlikely after simplification transformations. Alternatively, we could try to apply the
         # transformation to each component separately, but this would require a lot more checks.
         if len(list(nx.weakly_connected_components(body._nx))) > 1:
+            self._cba_failure_reason = ('The loop body\'s dataflow contains more than one connected component. ' +
+                                        self.__class__.__name__ +
+                                        ' only applies for loops with a single connected component in the dataflow.')
             return False
 
         # Check if body contains exactly one map
         maps = [node for node in body.nodes() if isinstance(node, nodes.MapEntry)]
-        if len(maps) != 1:
+        if len(maps) < 1:
+            self._cba_failure_reason = 'No map can be found in the loop body.'
+            return False
+        elif len(maps) > 1:
+            self._cba_failure_reason = 'There is more than one map in the loop body.'
             return False
 
         map_entry = maps[0]
@@ -73,9 +85,12 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
 
         # Check for iteration variable in map and data descriptors
         if str(itervar) in map_entry.free_symbols:
+            self._cba_failure_reason = 'The loop iteration cannot be a free symbol on the map inside the loop.'
             return False
         for arr in (read_set | write_set):
             if str(itervar) in set(map(str, sdfg.arrays[arr].free_symbols)):
+                self._cba_failure_reason = ('The loop iteration cannot be a free symbol on any data container ' +
+                                            'written or read inside the loop.')
                 return False
 
         # Check that everything else outside the Map is independent of the loop's itervar
@@ -87,6 +102,8 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             if e.src is map_exit and isinstance(e.dst, nodes.AccessNode):
                 continue
             if str(itervar) in e.data.free_symbols:
+                self._cba_failure_reason = ('The loop iteration cannot be a free symbol on any data container ' +
+                                            'written or read inside the loop.')
                 return False
             if isinstance(e.dst, nodes.AccessNode) and e.dst.data in read_set:
                 # NOTE: This is strict check that can be potentially relaxed.
@@ -96,11 +113,17 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                 # likely that the simplification redundant array/copying transformations trigger first. If they don't,
                 # this is a good hint that there is a RW dependency.
                 if nx.has_path(body._nx, map_exit, e.dst):
+                    self._cba_failure_reason = ('Some data in the loop is being written to indirectly by the Map ' +
+                                                '(i.e., it is not an immediate output of the map\'s exit, but is ' +
+                                                'being written to inside of it), and is also being read. ' +
+                                                self.__class__.__name__ + ' may not be applied in that case.')
                     return False
         for n in body.nodes():
             if n in subgraph.nodes():
                 continue
             if str(itervar) in n.free_symbols:
+                self._cba_failure_reason = ('The loop iteration cannot be a free symbol on any dataflow nodes ' +
+                                            'found inside the loop.')
                 return False
 
         def test_subset_dependency(subset: sbs.Subset, mparams: Set[int]) -> Tuple[bool, List[int]]:
@@ -145,10 +168,15 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                                 access = body.memlet_path(e)[-1].dst
                             passed, dims = test_subset_dependency(subset, mparams)
                             if not passed:
+                                self._cba_failure_reason = ('An invalid dependency of map memlets on the loop ' +
+                                                            'iteration variable ' + str(itervar) + ' was found.')
                                 return False
                             if dims:
                                 if access.data in data_dependency:
                                     if data_dependency[access.data] != dims:
+                                        self._cba_failure_reason = ('An invalid dependency of map memlets on the ' +
+                                                                    'loop iteration variable ' + str(itervar) +
+                                                                    ' was found.')
                                         return False
                                 else:
                                     data_dependency[access.data] = dims
