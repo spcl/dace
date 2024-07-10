@@ -1301,7 +1301,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return new_nodes
 
         # Map view access nodes to their respective data
-        for state in self.sdfg.states():
+        for state in self.sdfg.all_states():
             # NOTE: We need to support views of views
             nodes = list(state.data_nodes())
             while nodes:

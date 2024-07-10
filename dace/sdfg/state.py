@@ -2751,6 +2751,9 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                 yield block
             elif isinstance(block, ControlFlowRegion):
                 yield from block.all_states()
+            elif isinstance(block, ConditionalRegion):
+                for _, cfr in block.branches:
+                    yield from cfr.all_states()
 
     def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
         """ Iterate over all control flow blocks in this control flow graph. """
