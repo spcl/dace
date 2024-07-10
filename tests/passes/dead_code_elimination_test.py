@@ -190,6 +190,42 @@ def test_dde_inout(libnode):
     sdfg.validate()
 
 
+def test_dde_read_write_map():
+    """
+    Test the DeadDataflowElimination pass for the case of transient arrays that are both read and written to by a map-nest.
+    These arrays should not be removed from the graph even if they are no longer used.
+    
+    The code of this test comes from this issue: https://github.com/spcl/dace/issues/1561
+    """
+    size = 4
+
+    # A matrix-matrix multiplication that stores all the intermediate values in T
+    @dace.program()
+    def mmm_dace(
+        X: dace.float32[size, size],
+        Y: dace.float32[size, size],
+        Z: dace.float32[size, size],
+    ):
+        T: dace.float32[size, size, size] = np.zeros((size, size, size), dtype=dace.float32)
+
+        for i in dace.map[0:size]:
+            for j in dace.map[0:size]:
+                for k in dace.map[0:size]:
+                    T[i, j, k] = X[i, k] * Y[k, j]
+                Z[i, j] = np.sum(T[i, j])
+
+    # Input initialization
+    X = np.random.rand(size, size).astype(np.float32)
+    Y = np.random.rand(size, size).astype(np.float32)
+    Z = np.zeros((size, size), dtype=np.float32)
+
+    sdfg = mmm_dace.to_sdfg(simplify=True)
+    sdfg(X=X, Y=Y, Z=Z)
+
+    # Numerically validate the results of the simplified SDFG
+    assert np.allclose(Z, np.matmul(X, Y))
+
+
 def test_dce():
     """ End-to-end test evaluating both dataflow and state elimination. """
     # Code should end up as b[:] = a + 2; b += 1
@@ -290,7 +326,6 @@ _out = _tmp
     assert np.all(out == np.where(cond, 3.0, 7.0))
 
 
-
 if __name__ == '__main__':
     test_dse_simple()
     test_dse_unconditional()
@@ -302,6 +337,7 @@ if __name__ == '__main__':
     test_dde_scope_reconnect()
     test_dde_inout(False)
     test_dde_inout(True)
+    test_dde_read_write_map()
     test_dce()
     test_dce_callback()
     test_dce_callback_manual()
