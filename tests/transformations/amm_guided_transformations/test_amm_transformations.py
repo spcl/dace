@@ -108,23 +108,23 @@ def apply_mem_move(sdfg):
         print(e)
         raise Exception(e)
 
-def tensor_add_kernel(A, B):
+def _tensor_add_kernel(A, B):
    A += 0.5 * B
 
 def _test_transformations(opt_sdfg, A, B, A2, B2, _N):
-  tensor_add_kernel(A, B)
+  _tensor_add_kernel(A, B)
   apply_add_thread_block_schedule(opt_sdfg)
   opt_sdfg(A=A2, B=B2, N=_N)
   assert(np.allclose(A, A2.get()))
-  tensor_add_kernel(A, B)
+  _tensor_add_kernel(A, B)
   apply_change_thread_block_schedule(opt_sdfg)
   opt_sdfg(A=A2, B=B2, N=_N)
   assert(np.allclose(A, A2.get()))
-  tensor_add_kernel(A, B)
+  _tensor_add_kernel(A, B)
   apply_thread_coarsening(opt_sdfg)
   opt_sdfg(A=A2, B=B2, N=_N)
   assert(np.allclose(A, A2.get()))
-  tensor_add_kernel(A, B)
+  _tensor_add_kernel(A, B)
   apply_block_coarsening(opt_sdfg)
   opt_sdfg(A=A2, B=B2, N=_N)
   assert(np.allclose(A, A2.get()))
@@ -247,7 +247,7 @@ def test_mem_move_1d():
   B = np.random.rand(_M).astype(np.float32)
   A2 = cp.asarray(A, cp.float32)
   B2 = cp.asarray(B, cp.float32)
-  tensor_add_kernel(A, B)
+  _tensor_add_kernel(A, B)
   sdfg(A=A2, B=B2, M=_M)
   sdfg.validate()
   AH = A2.get()
@@ -272,7 +272,7 @@ def test_mem_move_1d_type_2():
   B = np.random.rand(_M).astype(np.float32)
   A2 = cp.asarray(A, cp.float32)
   B2 = cp.asarray(B, cp.float32)
-  tensor_add_kernel(A, B)
+  _tensor_add_kernel(A, B)
   sdfg(A=A2, B=B2, M=_M)
   sdfg.validate()
   AH = A2.get()
@@ -298,7 +298,7 @@ def test_mem_move_2d():
   B = np.random.rand(_M, _M).astype(np.float32)
   A2 = cp.asarray(A, cp.float32)
   B2 = cp.asarray(B, cp.float32)
-  tensor_add_kernel(A, B)
+  _tensor_add_kernel(A, B)
   sdfg(A=A2, B=B2, M=_M)
   sdfg.validate()
   AH = A2.get()
@@ -324,7 +324,7 @@ def test_mem_move_2d_type_2():
   B = np.random.rand(_M, _M).astype(np.float32)
   A2 = cp.asarray(A, cp.float32)
   B2 = cp.asarray(B, cp.float32)
-  tensor_add_kernel(A, B)
+  _tensor_add_kernel(A, B)
   sdfg(A=A2, B=B2, M=_M)
   sdfg.validate()
   AH = A2.get()
@@ -354,7 +354,7 @@ def test_mem_move_3d():
   B = np.random.rand(_M, _N, _N).astype(np.float32)
   A2 = cp.asarray(A, cp.float32)
   B2 = cp.asarray(B, cp.float32)
-  tensor_add_kernel(A, B)
+  _tensor_add_kernel(A, B)
   sdfg(A=A2, B=B2, M=_M, N=_N)
   sdfg.validate()
   AH = A2.get()
@@ -381,7 +381,7 @@ def test_mem_move_3d_type_2():
   B = np.random.rand(_M, _N, _N).astype(np.float32)
   A2 = cp.asarray(A, cp.float32)
   B2 = cp.asarray(B, cp.float32)
-  tensor_add_kernel(A, B)
+  _tensor_add_kernel(A, B)
   sdfg(A=A2, B=B2, M=_M, N=_N)
   sdfg.validate()
   AH = A2.get()
@@ -408,13 +408,13 @@ def test_mem_move_4d_type_2():
   B = np.random.rand(_M, _N, _N, _N).astype(np.float32)
   A2 = cp.asarray(A, cp.float32)
   B2 = cp.asarray(B, cp.float32)
-  tensor_add_kernel(A, B)
+  _tensor_add_kernel(A, B)
   sdfg(A=A2, B=B2, M=_M, N=_N)
   sdfg.validate()
   AH = A2.get()
   assert(np.allclose(A, AH))
 
-def tensor_add_kernel_transposed_1d(A, B, N):
+def _tensor_add_kernel_transposed_1d(A, B, N):
   for i in range(N):
     A[i] += 0.5 * B[N - (i+1)]
 
@@ -437,12 +437,41 @@ def test_mem_move_transposed_1d_type_2():
   B = np.random.rand(_M).astype(np.float32)
   A2 = cp.asarray(A, cp.float32)
   B2 = cp.asarray(B, cp.float32)
-  tensor_add_kernel_transposed_1d(A, B, _M)
+  _tensor_add_kernel_transposed_1d(A, B, _M)
   sdfg(A=A2, B=B2, M=_M)
   sdfg.validate()
   AH = A2.get()
   assert(np.allclose(A, AH))
 
+def _tensor_add_kernel_transposed_2d(A, B, N):
+  for i in range(N):
+    for j in range(N):
+      A[i, j] += 0.5 * B[j, i]
+
+def test_mem_move_2d_transposed_type_2():
+  @dace.program
+  def dace_kernel_2d_transposed_type_2(A: dace.float32[M, M] @ dtypes.StorageType.GPU_Global,
+                                       B: dace.float32[M, M] @ dtypes.StorageType.GPU_Global):
+    for i0, i1 in dace.map[0:M:32, 0:M:32] @ dtypes.ScheduleType.GPU_Device:
+      for g0, g1 in dace.map[i0:i0+32:16, i1:i1+32:16] @ dtypes.ScheduleType.Sequential:
+        for j0, j1 in dace.map[g0:g0+16:1, g1:g1+16:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
+            A[j0, j1] = A[j0, j1] +  np.float32(0.5) * B[j1, j0]
+
+  sdfg = dace_kernel_2d_transposed_type_2.to_sdfg()
+  sdfg.validate()
+  apply_mem_move(sdfg)
+  sdfg.validate()
+
+  _M = 256
+  A = np.random.rand(_M, _M).astype(np.float32)
+  B = np.random.rand(_M, _M).astype(np.float32)
+  A2 = cp.asarray(A, cp.float32)
+  B2 = cp.asarray(B, cp.float32)
+  _tensor_add_kernel_transposed_2d(A, B, _M)
+  sdfg(A=A2, B=B2, M=_M)
+  sdfg.validate()
+  AH = A2.get()
+  assert(np.allclose(A, AH))
 
 if __name__ == '__main__':
   """
@@ -460,3 +489,4 @@ if __name__ == '__main__':
   test_mem_move_4d_type_2()
   """
   test_mem_move_transposed_1d_type_2()
+  test_mem_move_2d_transposed_type_2()

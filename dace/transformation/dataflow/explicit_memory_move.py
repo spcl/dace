@@ -238,7 +238,8 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
         return False
 
     def filter_map_params_from_subset(self, subset_range : subsets.Range, dev_map_params : set,
-                                      grid_map_params : set, thread_block_map_params : set, src_arr_shape : tuple, 
+                                      grid_map_params : set, thread_block_map_params : set, 
+                                      thread_block_map : nodes.Map,  src_arr_shape : tuple, 
                                       dst_arr_shape : tuple, map_mode : int):
       assert(map_mode == 1 or map_mode == 0)
       exprs = []
@@ -264,11 +265,37 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
           # If the inner loop begins from the variable of the loop above
           # Then we need to subtract the subset,
           # If the variable is negative we need to add
+          # Since the order of parameters do not need to be the same (e.g., transposed access)
+          # We need to find the order of it, this can be done by check the initial value of the inner param
           if map_mode == 1 and (i == 1 or i == 0):
-            if next(iter(param_signs.values())) == True:
-              filtered_expr = filtered_expr - dace.symbolic.symbol(grid_map_params[sid])
-            else:
-              filtered_expr = filtered_expr + dace.symbolic.symbol(grid_map_params[sid])
+            params_used_in_access = list(expr.free_symbols)
+            # Assume thread block map j0=g0...,j1=g1...
+            # But we access shrA[j1,j0] (instead of j0, j1)
+            # Then we need to subset g1 from j1, first index.
+            # For this we find the ordering of param j1, and then
+            # get the param g1 with the same id and substract that.
+            # Filter the params that appear in the thread block map, to avoid
+            # issues with for example M - i0, where we iterate from reverse
+            tblock_param_strs = [str(param) for param in thread_block_map_params]
+            used_param_strs = [str(param) for param in params_used_in_access]
+            params_used_from_tblock_params = []
+            for i, used_param_str in enumerate(used_param_strs):
+              if used_param_str in tblock_param_strs:
+                params_used_from_tblock_params.append(params_used_in_access[i])
+
+            for used_param in params_used_from_tblock_params:
+              corresponding_grid_param = None
+              corresponding_sign = None
+              for tb_id, tblock_param in enumerate(thread_block_map.params):
+                if used_param == tblock_param or str(used_param) == str(tblock_param):
+                  corresponding_grid_param = thread_block_map.range[tb_id][0]
+                  corresponding_sign = param_signs[str(used_param)]
+                  break
+              assert(corresponding_grid_param != None and corresponding_sign != None)
+              if corresponding_sign == True:
+                filtered_expr = filtered_expr - corresponding_grid_param
+              else:
+                filtered_expr = filtered_expr + corresponding_grid_param
           for old_dim, new_dim in zip(src_arr_shape, dst_arr_shape):
             filtered_expr = filtered_expr.subs(old_dim, new_dim)
           exprs.append(filtered_expr)
@@ -367,6 +394,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                                                      self.device_map_entry.map.params,
                                                      self.grid_strided_map_entry.map.params,
                                                      self.thread_block_map_entry.map.params,
+                                                     self.thread_block_map_entry.map,
                                                      src_arr.shape,
                                                      shape,
                                                      0)
@@ -406,6 +434,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                                                              self.device_map_entry.map.params,
                                                              self.grid_strided_map_entry.map.params,
                                                              self.thread_block_map_entry.map.params,
+                                                             self.thread_block_map_entry.map,
                                                              src_arr.shape,
                                                              shape,
                                                              map_mode)
