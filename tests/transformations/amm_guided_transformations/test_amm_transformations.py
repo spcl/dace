@@ -9,9 +9,12 @@ from dace.transformation.dataflow.change_thread_block_map import ChangeThreadBlo
 from dace.transformation.dataflow.block_coarsening import BlockCoarsening
 from dace.transformation.dataflow.add_thread_block_map import AddThreadBlockMap
 from dace.transformation.dataflow.thread_coarsening import ThreadCoarsening
+from dace.transformation.dataflow.explicit_memory_move import ExplicitMemoryMove
 from dace import dtypes
 
+
 N = dace.symbol('N')
+M = dace.symbol('M')
 
 def apply_add_thread_block_schedule(sdfg):
   for state in sdfg.states():
@@ -79,8 +82,31 @@ def apply_block_coarsening(sdfg):
                 inner = None
                 seq = None
 
-def apply_load_compute(sdfg):
-  pass
+def apply_mem_move(sdfg):
+    sdfg.save("base.sdfg")
+    try:
+        for state in sdfg.states():
+            dev = None
+            outer = None
+            inner = None
+            for node in sdutil.dfs_topological_sort(state):
+                if isinstance(node, nodes.MapEntry):
+                    if dev == None and node.map.schedule == dtypes.ScheduleType.GPU_Device:
+                        dev = node
+                    elif outer == None and node.map.schedule == dtypes.ScheduleType.Sequential:
+                        outer = node
+                    elif inner == None and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+                        inner = node
+                if outer and inner and dev:
+                    ExplicitMemoryMove.apply_to(sdfg=sdfg, verify=False, device_map_entry=dev, grid_strided_map_entry=outer, thread_block_map_entry=inner, options={"memory_location":dtypes.StorageType.GPU_Shared})
+                    sdfg.save("memory_moved.sdfg")
+                    outer = None
+                    inner = None
+                    dev = None
+    except Exception as e:
+        sdfg.save("failed_transformed.sdfg")
+        print(e)
+        raise Exception(e)
 
 def tensor_add_kernel(A, B):
    A += 0.5 * B
@@ -202,9 +228,235 @@ def test_jacobi_2d():
   assert(np.allclose(A, A2.get()))
   assert(np.allclose(B, B2.get()))
 
+def test_mem_move_1d():
+  @dace.program
+  def dace_kernel_1d(A: dace.float32[M] @ dtypes.StorageType.GPU_Global, 
+                     B: dace.float32[M] @ dtypes.StorageType.GPU_Global):
+    for i0 in dace.map[0:M:256] @ dtypes.ScheduleType.GPU_Device:
+      for g0 in dace.map[0:2:1] @ dtypes.ScheduleType.Sequential:
+        for j0 in dace.map[0:128:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
+            A[i0 + g0*128 + j0] = A[i0 + g0*128 + j0] +  np.float32(0.5) * B[i0 + g0*128 + j0]
+
+  sdfg = dace_kernel_1d.to_sdfg()
+  sdfg.validate()
+  apply_mem_move(sdfg)
+  sdfg.validate()
+
+  _M = 1024
+  A = np.random.rand(_M).astype(np.float32)
+  B = np.random.rand(_M).astype(np.float32)
+  A2 = cp.asarray(A, cp.float32)
+  B2 = cp.asarray(B, cp.float32)
+  tensor_add_kernel(A, B)
+  sdfg(A=A2, B=B2, M=_M)
+  sdfg.validate()
+  AH = A2.get()
+  assert(np.allclose(A, AH))
+
+def test_mem_move_1d_type_2():
+  @dace.program
+  def dace_kernel_1d_type_2(A: dace.float32[M] @ dtypes.StorageType.GPU_Global, 
+                            B: dace.float32[M] @ dtypes.StorageType.GPU_Global):
+    for i0 in dace.map[0:M:256] @ dtypes.ScheduleType.GPU_Device:
+      for g0 in dace.map[i0:i0+256:128] @ dtypes.ScheduleType.Sequential:
+        for j0 in dace.map[g0:g0+128:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
+            A[j0] = A[j0] +  np.float32(0.5) * B[j0]
+
+  sdfg = dace_kernel_1d_type_2.to_sdfg()
+  sdfg.validate()
+  apply_mem_move(sdfg)
+  sdfg.validate()
+
+  _M = 1024
+  A = np.random.rand(_M).astype(np.float32)
+  B = np.random.rand(_M).astype(np.float32)
+  A2 = cp.asarray(A, cp.float32)
+  B2 = cp.asarray(B, cp.float32)
+  tensor_add_kernel(A, B)
+  sdfg(A=A2, B=B2, M=_M)
+  sdfg.validate()
+  AH = A2.get()
+  assert(np.allclose(A, AH))
+
+
+def test_mem_move_2d():
+  @dace.program
+  def dace_kernel_2d(A: dace.float32[M, M] @ dtypes.StorageType.GPU_Global, 
+                     B: dace.float32[M, M] @ dtypes.StorageType.GPU_Global):
+    for i0, i1 in dace.map[0:M:32, 0:M:32] @ dtypes.ScheduleType.GPU_Device:
+      for g0, g1 in dace.map[0:2:1, 0:2:1] @ dtypes.ScheduleType.Sequential:
+        for j0, j1 in dace.map[0:16:1, 0:16:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
+            A[i0 + g0*16 + j0, i1 + g1*16 + j1] = A[i0 + g0*16 + j0, i1 + g1*16 + j1] + np.float32(0.5) * B[i0 + g0*16 + j0, i1 + g1*16 + j1]
+
+  sdfg = dace_kernel_2d.to_sdfg()
+  sdfg.validate()
+  apply_mem_move(sdfg)
+  sdfg.validate()
+
+  _M = 256
+  A = np.random.rand(_M, _M).astype(np.float32)
+  B = np.random.rand(_M, _M).astype(np.float32)
+  A2 = cp.asarray(A, cp.float32)
+  B2 = cp.asarray(B, cp.float32)
+  tensor_add_kernel(A, B)
+  sdfg(A=A2, B=B2, M=_M)
+  sdfg.validate()
+  AH = A2.get()
+  assert(np.allclose(A, AH))
+
+
+def test_mem_move_2d_type_2():
+  @dace.program
+  def dace_kernel_2d_type_2(A: dace.float32[M, M] @ dtypes.StorageType.GPU_Global,
+                            B: dace.float32[M, M] @ dtypes.StorageType.GPU_Global):
+    for i0, i1 in dace.map[0:M:32, 0:M:32] @ dtypes.ScheduleType.GPU_Device:
+      for g0, g1 in dace.map[i0:i0+32:16, i1:i1+32:16] @ dtypes.ScheduleType.Sequential:
+        for j0, j1 in dace.map[g0:g0+16:1, g1:g1+16:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
+            A[j0, j1] = A[j0, j1] +  np.float32(0.5) * B[j0, j1]
+
+  sdfg = dace_kernel_2d_type_2.to_sdfg()
+  sdfg.validate()
+  apply_mem_move(sdfg)
+  sdfg.validate()
+
+  _M = 256
+  A = np.random.rand(_M, _M).astype(np.float32)
+  B = np.random.rand(_M, _M).astype(np.float32)
+  A2 = cp.asarray(A, cp.float32)
+  B2 = cp.asarray(B, cp.float32)
+  tensor_add_kernel(A, B)
+  sdfg(A=A2, B=B2, M=_M)
+  sdfg.validate()
+  AH = A2.get()
+  assert(np.allclose(A, AH))
+
+def test_mem_move_3d():
+  @dace.program
+  def dace_kernel_3d(A: dace.float32[M, N, N] @ dtypes.StorageType.GPU_Global, 
+                     B: dace.float32[M, N, N] @ dtypes.StorageType.GPU_Global):
+    for i0, i1, i2 in dace.map[0:M:32, 0:N:8, 0:N:8] @ dtypes.ScheduleType.GPU_Device:
+      for g0, g1, g2 in dace.map[0:2:1, 0:2:1, 0:2:1] @ dtypes.ScheduleType.Sequential:
+        for j0, j1, j2 in dace.map[0:16:1, 0:4:1, 0:4:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
+            A[i0 + g0*16 + j0, i1 + g1*4 + j1, i2 + g2*4 + j2] = \
+              A[i0 + g0*16 + j0, i1 + g1*4 + j1, i2 + g2*4 + j2] + \
+              np.float32(0.5) * \
+              B[i0 + g0*16 + j0, i1 + g1*4 + j1, i2 + g2*4 + j2]
+
+  sdfg = dace_kernel_3d.to_sdfg()
+  sdfg.validate()
+  apply_mem_move(sdfg)
+  sdfg.validate()
+
+
+  _M = 128
+  _N = 8
+  A = np.random.rand(_M, _N, _N).astype(np.float32)
+  B = np.random.rand(_M, _N, _N).astype(np.float32)
+  A2 = cp.asarray(A, cp.float32)
+  B2 = cp.asarray(B, cp.float32)
+  tensor_add_kernel(A, B)
+  sdfg(A=A2, B=B2, M=_M, N=_N)
+  sdfg.validate()
+  AH = A2.get()
+  assert(np.allclose(A, AH))
+
+
+def test_mem_move_3d_type_2():
+  @dace.program
+  def dace_kernel_3d_type_2(A: dace.float32[M, N, N] @ dtypes.StorageType.GPU_Global, 
+                            B: dace.float32[M, N, N] @ dtypes.StorageType.GPU_Global):
+    for i0, i1, i2 in dace.map[0:M:32, 0:N:8, 0:N:8] @ dtypes.ScheduleType.GPU_Device:
+      for g0, g1, g2 in dace.map[i0:i0+32:16, i1:i1+8:4, i2:i2+8:4] @ dtypes.ScheduleType.Sequential:
+        for j0, j1, j2 in dace.map[g0:g0+16:1, g1:g1+4:1, g2:g2+4:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
+            A[j0, j1, j2] = A[j0, j1, j2] +  np.float32(0.5) * B[j0, j1, j2]
+
+  sdfg = dace_kernel_3d_type_2.to_sdfg()
+  sdfg.validate()
+  apply_mem_move(sdfg)
+  sdfg.validate()
+
+  _M = 128
+  _N = 8
+  A = np.random.rand(_M, _N, _N).astype(np.float32)
+  B = np.random.rand(_M, _N, _N).astype(np.float32)
+  A2 = cp.asarray(A, cp.float32)
+  B2 = cp.asarray(B, cp.float32)
+  tensor_add_kernel(A, B)
+  sdfg(A=A2, B=B2, M=_M, N=_N)
+  sdfg.validate()
+  AH = A2.get()
+  assert(np.allclose(A, AH))
+
+
+def test_mem_move_4d_type_2():
+  @dace.program
+  def dace_kernel_4d_type_2(A: dace.float32[M, N, N, N] @ dtypes.StorageType.GPU_Global, 
+                            B: dace.float32[M, N, N, N] @ dtypes.StorageType.GPU_Global):
+    for i0, i1, i2, i3 in dace.map[0:M:32, 0:N:8, 0:N:8, 0:N:1] @ dtypes.ScheduleType.GPU_Device:
+      for g0, g1, g2, g3 in dace.map[i0:i0+32:16, i1:i1+8:4, i2:i2+8:4, i3:i3+1:1] @ dtypes.ScheduleType.Sequential:
+        for j0, j1, j2, j3 in dace.map[g0:g0+16:1, g1:g1+4:1, g2:g2+4:1, g3:g3+1:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
+            A[j0, j1, j2, j3] = A[j0, j1, j2, j3] +  np.float32(0.5) * B[j0, j1, j2, j3]
+
+  sdfg = dace_kernel_4d_type_2.to_sdfg()
+  sdfg.validate()
+  apply_mem_move(sdfg)
+  sdfg.validate()
+
+  _M = 64
+  _N = 8
+  A = np.random.rand(_M, _N, _N, _N).astype(np.float32)
+  B = np.random.rand(_M, _N, _N, _N).astype(np.float32)
+  A2 = cp.asarray(A, cp.float32)
+  B2 = cp.asarray(B, cp.float32)
+  tensor_add_kernel(A, B)
+  sdfg(A=A2, B=B2, M=_M, N=_N)
+  sdfg.validate()
+  AH = A2.get()
+  assert(np.allclose(A, AH))
+
+def tensor_add_kernel_transposed_1d(A, B, N):
+  for i in range(N):
+    A[i] += 0.5 * B[N - (i+1)]
+
+def test_mem_move_transposed_1d_type_2():
+  @dace.program
+  def dace_kernel_1d_transposed_type_2(A: dace.float32[M] @ dtypes.StorageType.GPU_Global, 
+                            B: dace.float32[M] @ dtypes.StorageType.GPU_Global):
+    for i0 in dace.map[0:M:256] @ dtypes.ScheduleType.GPU_Device:
+      for g0 in dace.map[i0:i0+256:128] @ dtypes.ScheduleType.Sequential:
+        for j0 in dace.map[g0:g0+128:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
+            A[j0] = A[j0] +  np.float32(0.5) * B[M - (j0 + 1)]
+
+  sdfg = dace_kernel_1d_transposed_type_2.to_sdfg()
+  sdfg.validate()
+  apply_mem_move(sdfg)
+  sdfg.validate()
+
+  _M = 1024
+  A = np.random.rand(_M).astype(np.float32)
+  B = np.random.rand(_M).astype(np.float32)
+  A2 = cp.asarray(A, cp.float32)
+  B2 = cp.asarray(B, cp.float32)
+  tensor_add_kernel_transposed_1d(A, B, _M)
+  sdfg(A=A2, B=B2, M=_M)
+  sdfg.validate()
+  AH = A2.get()
+  assert(np.allclose(A, AH))
+
+
 if __name__ == '__main__':
+  """
   test_tensor_add_1d()
   test_tensor_add_2d()
   test_tensor_add_3d()
   test_tensor_add_4d()
   test_jacobi_2d()
+  test_mem_move_1d()
+  test_mem_move_1d_type_2()
+  test_mem_move_2d()
+  test_mem_move_2d_type_2()
+  test_mem_move_3d()
+  test_mem_move_3d_type_2()
+  test_mem_move_4d_type_2()
+  """
+  test_mem_move_transposed_1d_type_2()
