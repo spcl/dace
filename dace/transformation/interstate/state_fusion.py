@@ -461,6 +461,8 @@ class StateFusion(transformation.MultiStateTransformation):
 
         graph = first_state.parent_graph
 
+        start_block = graph.start_block
+
         # Remove interstate edge(s)
         edges = graph.edges_between(first_state, second_state)
         for edge in edges:
@@ -471,24 +473,18 @@ class StateFusion(transformation.MultiStateTransformation):
 
         # Special case 1: first state is empty
         if first_state.is_empty():
-            new_start_block = False
-            if graph.start_block == first_state:
-                new_start_block = True
             sdutil.change_edge_dest(graph, first_state, second_state)
             graph.remove_node(first_state)
-            if new_start_block:
+            if start_block == first_state:
                 graph.start_block = graph.node_id(second_state)
             return
 
         # Special case 2: second state is empty
         if second_state.is_empty():
-            new_start_block = False
-            if graph.start_block == second_state:
-                new_start_block = True
             sdutil.change_edge_src(graph, second_state, first_state)
             sdutil.change_edge_dest(graph, second_state, first_state)
             graph.remove_node(second_state)
-            if new_start_block:
+            if start_block == second_state:
                 graph.start_block = graph.node_id(first_state)
             return
 
