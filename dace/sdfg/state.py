@@ -3244,7 +3244,7 @@ class ConditionalRegion(ControlFlowBlock, ControlGraphView):
     def from_json(cls, json_obj, context=None):
         cond_region = ConditionalRegion(json_obj["label"])
         cond_region.is_collapsed = json_obj["collapsed"]
-        cond_region.branches = [(CodeBlock.from_json(condition), ControlFlowRegion.from_json(cfg, context_info=context)) 
+        cond_region.branches = [(CodeBlock.from_json(condition), ControlFlowRegion.from_json(cfg, context)) 
                                 for condition, cfg in json_obj["branches"]]
         return cond_region
     
