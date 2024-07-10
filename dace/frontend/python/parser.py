@@ -496,10 +496,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         if not self.use_experimental_cfg_blocks:
             for nsdfg in sdfg.all_sdfgs_recursive():
                 sdutils.inline_conditional_regions(nsdfg)
-                sdutils.inline_loop_blocks(nsdfg)
                 sdutils.inline_control_flow_regions(nsdfg)
-                from dace.transformation.passes.dead_state_elimination import DeadStateElimination
-                DeadStateElimination().apply_pass(nsdfg, {})
+                sdutils.inline_loop_blocks(nsdfg)
         sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
 
         # Apply simplification pass automatically

@@ -2547,7 +2547,6 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         """
         parent = self.parent_graph
         if parent:
-            end_state = parent.add_state(self.label + '_end')
 
             # Add all region states and make sure to keep track of all the ones that need to be connected in the end.
             to_connect: Set[SDFGState] = set()
@@ -2574,18 +2573,25 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             for b_edge in parent.in_edges(self):
                 parent.add_edge(b_edge.src, self.start_block, b_edge.data)
                 parent.remove_edge(b_edge)
-            # Redirect all edges exiting the region to instead exit the end state.
-            for a_edge in parent.out_edges(self):
-                parent.add_edge(end_state, a_edge.dst, a_edge.data)
-                parent.remove_edge(a_edge)
-
-            for node in to_connect:
-                parent.add_edge(node, end_state, dace.InterstateEdge())
             
-            # NOTE: this should be unnecessesary
-            if parent.in_degree(end_state) == 0:
-                parent.remove_node(end_state)
+            end_state = None
+            if len(to_connect) > 0:
+                end_state = parent.add_state(self.label + '_end')
+                # Redirect all edges exiting the region to instead exit the end state.
+                for a_edge in parent.out_edges(self):
+                    parent.add_edge(end_state, a_edge.dst, a_edge.data)
+                    parent.remove_edge(a_edge)
 
+                for node in to_connect:
+                    parent.add_edge(node, end_state, dace.InterstateEdge())
+            else:
+                dead_blocks = [succ for succ in parent.successors(self) if parent.in_degree(succ) == 1]
+                while dead_blocks:
+                    layer = list(dead_blocks)
+                    dead_blocks.clear()
+                    for u in layer:
+                        dead_blocks.extend([succ for succ in parent.successors(u) if parent.in_degree(succ) == 1])
+                        parent.remove_node(u)
             # Remove the original control flow region (self) from the parent graph.
             parent.remove_node(self)
 
@@ -3200,12 +3206,6 @@ class ConditionalRegion(ControlFlowBlock, ControlGraphView):
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
-
-        b_free_symbols, b_defined_symbols, b_used_before_assignment = super()._used_symbols_internal(
-            all_symbols, keep_defined_in_mapping=keep_defined_in_mapping)
-        free_syms |= b_free_symbols
-        defined_syms |= b_defined_symbols
-        used_before_assignment |= b_used_before_assignment
 
         for condition, cfg in self.branches:
             free_syms |= condition.get_free_symbols()

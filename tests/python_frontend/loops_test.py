@@ -496,10 +496,12 @@ def branch_in_while(cond: dace.int32):
 
 def test_branch_in_while():
     sdfg = branch_in_while.to_sdfg(simplify=False)
+    sdfg.save("branch_in_while.sdfg")
     assert len(sdfg.source_nodes()) == 1
 
 
 if __name__ == "__main__":
+    test_branch_in_while()
     test_for_loop()
     test_for_loop_with_break_continue()
     test_nested_for_loop()
@@ -521,4 +523,3 @@ if __name__ == "__main__":
     test_for_else()
     test_while_else()
     test_branch_in_for()
-    test_branch_in_while()
