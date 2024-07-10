@@ -3208,9 +3208,9 @@ class ConditionalRegion(ControlFlowBlock, ControlGraphView):
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
         for condition, cfg in self.branches:
-            free_syms |= condition.get_free_symbols()
+            free_syms |= condition.get_free_symbols(defined_syms)
             b_free_symbols, b_defined_symbols, b_used_before_assignment = cfg._used_symbols_internal(
-                all_symbols, keep_defined_in_mapping=keep_defined_in_mapping)
+                all_symbols, defined_syms, free_syms, used_before_assignment, keep_defined_in_mapping)
             free_syms |= b_free_symbols
             defined_syms |= b_defined_symbols
             used_before_assignment |= b_used_before_assignment
