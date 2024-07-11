@@ -2787,7 +2787,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
         for block in ordered_blocks:
             state_symbols = set()
-            if isinstance(block, ControlFlowRegion):
+            if isinstance(block, (ControlFlowRegion, ConditionalRegion)):
                 b_free_syms, b_defined_syms, b_used_before_syms = block._used_symbols_internal(all_symbols,
                                                                                                defined_syms,
                                                                                                free_syms,
