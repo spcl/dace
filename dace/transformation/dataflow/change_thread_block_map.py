@@ -4,13 +4,19 @@
 
 
 from typing import List
-from dace.sdfg import SDFG, SDFGState
+from dace.memlet import Memlet
+from dace.sdfg import SDFG, SDFGState, propagation
 from dace.properties import make_properties, SymbolicProperty
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace import dtypes
 from dace import subsets
+from dace import symbolic
+import sympy
+import copy as cp
+import math
+from functools import reduce
 
 @make_properties
 class ChangeThreadBlockMap(transformation.SingleStateTransformation):
@@ -66,74 +72,37 @@ class ChangeThreadBlockMap(transformation.SingleStateTransformation):
         dims = [self.dim_size_z, self.dim_size_y, self.dim_size_x]
         new_block_dimensions[-min(3, len(dev_map.range)):] = dims[-min(3, len(dev_map.range)):]
 
+        if new_block_dimensions == dims:
+            # Same type requested, do no need the range recalculation, and only update the memlets
+            # Step 1. Update step sizes of device map
+            dev_old_step_sizes = []
 
-        # Step 1. Update step sizes of device map
-        dev_old_step_sizes = []
+            dev_ranges : List[subsets.Range] = dev_map.range
+            for i, dev_range in enumerate(dev_ranges):
+                (beg, end, step) = dev_range
+                dev_old_step_sizes.append(step)
 
-        dev_ranges : List[subsets.Range] = dev_map.range
-        for i, dev_range in enumerate(dev_ranges):
-            (beg, end, step) = dev_range
-            dev_old_step_sizes.append(step)
-
-        for i in range(min(3, len(dev_map.range)), 0, -1):
-            (beg, end, _) = dev_map.range[-i]
-            (_, _, step) = block_map.range[-i]
-            dev_map.range[-i] = (beg, end, new_block_dimensions[-i] * step)
+            for i in range(min(3, len(dev_map.range)), 0, -1):
+                (beg, end, _) = dev_map.range[-i]
+                (_, _, step) = block_map.range[-i]
+                dev_map.range[-i] = (beg, end, new_block_dimensions[-i] * step)
 
 
-        # Step 2. Update the range of the thread block map
-        block_ranges : List[subsets.Range] = block_map.range
-        block_steps = []
-        new_thread_block_map_range_str = ""
-        for i, (dev_range, block_range) in enumerate(zip(dev_ranges, block_ranges)):
-            (_, dev_end, dev_step) = dev_range
-            (block_beg, _, block_step) = block_range
-            block_steps.append(block_step)
-            new_thread_block_map_range_str += f"{block_beg}:Min({dev_end}, {block_beg}+{dev_step}-1)+1:{block_step}"
-            new_thread_block_map_range_str += ", "
-        block_map.range = subsets.Range.from_string(new_thread_block_map_range_str[:-2])
+            # Step 2. Update the range of the thread block map
+            block_ranges : List[subsets.Range] = block_map.range
+            block_steps = []
+            new_thread_block_map_range_str = ""
+            for i, (dev_range, block_range) in enumerate(zip(dev_ranges, block_ranges)):
+                (_, dev_end, dev_step) = dev_range
+                (block_beg, _, block_step) = block_range
+                block_steps.append(block_step)
+                new_thread_block_map_range_str += f"{block_beg}:Min({dev_end}, {block_beg}+{dev_step}-1)+1:{block_step}, "
+            block_map.range = subsets.Range.from_string(new_thread_block_map_range_str[:-2])
 
         # Step 3. Propagate memlets
-        # In the device Map the step size has changed.
-        # 1. The input  volume of the memlets of the device map are not changed
-        #    Yet due to the teiling size input dimensions are approximated as stepD * ceil(lenD / stepD),
-        #    and it needs to be updated as well (due to the Min this approximation can be improved)
-        # 2. The output volume of the memlets of the device map are changed because of the change in step size
-        # 3. The input  volume of the memlets of the thread block map are changed according to the device step size change
-        # 4. The output volume of the memlets of the thread block map are not changed
-        # Note: currently it is assuemd that all edges are of the from Device Map -> Thread Block Map
-        # Note: it needs to be repeated both for entry and exit
-        # Changes for 1:
-        dev_exit = graph.exit_node(dev_entry)
-        for edge in graph.in_edges(dev_entry) + graph.out_edges(dev_exit):
-            u, u_conn, v, v_conn, memlet = edge
-            new_volume = 1
-            range_str = ""
-            for i, (dev_range, block_range) in enumerate(zip(dev_ranges, block_ranges)):
-                (dev_beg, dev_end, dev_step) = dev_range
-                (block_beg, _, _) = block_range
-                new_volume *= (dev_end - dev_beg) + 1
-                range_str += f"{dev_beg}:{dev_end}+1, "
-            memlet.volume = new_volume
-            memlet._subset = subsets.Range.from_string(range_str[:-2])
-            memlet._dynamic = False
-            edge = (u, u_conn, v, v_conn, memlet)
+        # Overapproximate the memory moved such that the terms do not involve any min:
+        propagation.propagate_memlets_state(sdfg=sdfg, state=graph)
 
-        # Changes for 2: (Assumption means changes for 2 = changes for 3)
-        for edge in graph.out_edges(dev_entry) + graph.in_edges(dev_exit):
-            u, u_conn, v, v_conn, memlet = edge
-            new_volume = 1
-            range_str = ""
-            for i, (dev_range, block_range) in enumerate(zip(dev_ranges, block_ranges)):
-                (_, _, dev_step) = dev_range
-                (block_beg, _, _) = block_range
-                new_volume *= dev_step
-                range_str += f"{block_beg}:{block_beg}+{dev_step}, "
-            memlet.volume = new_volume
-            memlet._subset = subsets.Range.from_string(range_str[:-2])
-            edge = (u, u_conn, v, v_conn, memlet)
-        
-        # Changes for 4: change gpu_block_size and gpu_launch_bounds
         # Apparently gpu_block_size only necessary if there is no gpu_thread_block schedule
         # Therefore the code-gen now choose the values in gpu_block_size if it conflicts with the
         # detected blocksizes, and these transformatiosn need to update them

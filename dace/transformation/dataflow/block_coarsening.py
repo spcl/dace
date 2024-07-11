@@ -114,23 +114,6 @@ class BlockCoarsening(transformation.SingleStateTransformation):
             dev_entry.map.range[-i] = (dev_beg, dev_end, saved_dev_steps[-i] * block_iterations[-i])
         dev_entry.map.gpu_block_size = saved_dev_gpu_block_size 
 
-        # Now update the memlets (approximation of map tiling is not the best, can do better)
-        # Out edges from GPU_Device now how a different volume and subset due to step change
-        dev_exit = graph.exit_node(dev_entry)
-        for edge in graph.out_edges(dev_entry) + graph.in_edges(dev_exit):
-            u, u_conn, v, v_conn, memlet = edge
-            new_volume = 1
-            range_str = ""
-            for i in range(len(dev_entry.map.range), 0, -1):
-                (dev_beg, dev_end, dev_step) = dev_entry.map.range[-i]
-                (grid_beg, _, _) = grid_strided_entry.map.range[-i]
-                new_volume *= dev_step
-                range_str += f"{grid_beg}:{grid_beg}+{dev_step}, "
-            memlet.volume = new_volume
-            memlet._subset = subsets.Range.from_string(range_str[:-2])
-            memlet._dynamic = False
-            edge = (u, u_conn, v, v_conn, memlet)
-
     @staticmethod
     def annotates_memlets():
         return True

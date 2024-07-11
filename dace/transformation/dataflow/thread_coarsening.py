@@ -101,22 +101,6 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                                            thread_block_scheduled_map_entry = thread_block_entry, 
                                            options=params)
 
-        thread_block_exit = graph.exit_node(thread_block_entry)
-        for edge in graph.out_edges(thread_block_entry) + graph.in_edges(thread_block_exit):
-            u, u_conn, v, v_conn, memlet = edge
-            new_volume = 1
-            range_str = ""
-            for i in range(len(dev_entry.map.range), 0, -1):
-                (dev_beg, dev_end, dev_step) = dev_entry.map.range[-i]
-                (tblock_beg, _, tblock_step) = thread_block_entry.map.range[-i]
-                assert(dev_step % tblock_step == 0)
-                new_volume *= dev_step // tblock_step
-                range_str += f"{tblock_beg}:{tblock_beg}+{dev_step}, "
-            memlet.volume = new_volume
-            memlet._subset = subsets.Range.from_string(range_str[:-2])
-            memlet._dynamic = False
-            edge = (u, u_conn, v, v_conn, memlet)
-
     @staticmethod
     def annotates_memlets():
         return True

@@ -114,17 +114,11 @@ class MemoryMovementNode(CodeLibraryNode):
     // Load lengths for each dimension
     {"\n".join(formatted_load_lengths)}
     // Load lengths for each dimension end
-    constexpr int lines_fitting_to_num_threads = {lines_fitting_to_num_threads};
-    constexpr int load_iter_d0 = {line_length // num_threads if lines_fitting_to_num_threads == 0 else 1};
-    constexpr int load_remainder_d0 = {num_threads % self.load_lengths[0]};
-    constexpr int active_load_threads = {line_length * lines_fitting_to_num_threads if lines_fitting_to_num_threads > 0 else num_threads};
-    constexpr int dimensions_to_load = {dims_to_load}; 
-
     const int tid = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
-    const int line_num = tid / {line_length};
-    const int line_offset = tid % {line_length};
 
-    if constexpr (lines_fitting_to_num_threads == 0 || dimensions_to_load == 1){{
+    {f"""
+        constexpr int load_iter_d0 = {line_length // num_threads if lines_fitting_to_num_threads == 0 else 1};
+        constexpr int load_remainder_d0 = {num_threads % self.load_lengths[0]};
         {"\n".join(formatted_for_loops_open_fitting_to_num_threads_is_0)}
         // Global access offsets
         {"\n".join(global_access_offsets)}
@@ -145,7 +139,12 @@ class MemoryMovementNode(CodeLibraryNode):
             }}
         }}
         {"\n".join(formatted_for_loops_close_fitting_to_num_threads_is_0)}
-    }} else {{
+      """ if lines_fitting_to_num_threads == 0 or dims_to_load == 1 else 
+      f"""
+        constexpr int lines_fitting_to_num_threads = {lines_fitting_to_num_threads};
+        constexpr int active_load_threads = {line_length * lines_fitting_to_num_threads if lines_fitting_to_num_threads > 0 else num_threads};
+        const int line_num = tid / {line_length};
+        const int line_offset = tid % {line_length};
         {"\n".join(formatted_for_loops_open_fitting_to_num_threads_is_geq_2)}
         // Global access offsets
         {"\n".join(global_access_offsets)}
@@ -154,11 +153,12 @@ class MemoryMovementNode(CodeLibraryNode):
         // Joined global access offset
         {global_access_offset} + ({d1_global_offset});
         {local_access_offset} + ({d1_shared_offset});
-        if (tid < active_load_threads){{
+        if (tid < active_load_threads && (glb_access_offset + line_offset) < {self.global_tensor_dims[0]}){{
             {self.output_name}[shr_access_offset + line_offset] = {self.input_name}[glb_access_offset + line_offset];
         }}
         {"\n".join(formatted_for_loops_close_fitting_to_num_threads_is_geq_2)}
-    }}
+      """
+    }
 
     __syncthreads();
 }}
@@ -190,13 +190,14 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
         pass
 
     def infer_source(self, graph: SDFGState, sdfg: SDFG, edge : MultiConnectorEdge[Memlet]):
-        u, u_conn, _, _, _ = edge
         # Recurse back up to the first access node memlet comes from the derive the storage type
         # If a map, then find the corresponding in connector to the out connector and continue
         # If an access node, return the storage type of it
         # Other continue upwards, assert the number of in and out edges are one (for the other case
         # might need to find a fix)
+        u, u_conn, _, _, _ = edge
         while(True):
+          print(u, u_conn)
           if isinstance(u, nodes.AccessNode):
               return (u.data, sdfg.arrays[u.data].storage)
           elif isinstance(u, nodes.MapEntry):
@@ -236,6 +237,28 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
         elif term.is_Number:
             return term < 0
         return False
+
+    def split_min_expression(self, expr):
+        if expr.func == sympy.Min:
+            return expr.args
+        else:
+            return expr
+
+    def incr_expression(self, term):
+      return tuple(x + 1 for x in term)
+
+    def filter(self, expressions, symbol):
+      found_expressions = set()
+      for expr in expressions:
+        free_symbols = expr.free_symbols
+        free_symbol_strings = [str(x) for x in free_symbols]
+        if expr.has(symbol) or str(symbol) in free_symbol_strings:
+          found_expressions.add(expr)
+
+      if len(found_expressions) != 1:
+        raise Exception(f"After filter len should be 1, the length is {len(found_expressions)}: filtered: {expressions}, for the symbol: {symbol}")
+
+      return found_expressions.pop()
 
     def filter_map_params_from_subset(self, subset_range : subsets.Range, dev_map_params : set,
                                       grid_map_params : set, thread_block_map_params : set, 
@@ -298,6 +321,79 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 filtered_expr = filtered_expr + corresponding_grid_param
           for old_dim, new_dim in zip(src_arr_shape, dst_arr_shape):
             filtered_expr = filtered_expr.subs(old_dim, new_dim)
+          print(filtered_expr)
+          exprs.append(filtered_expr)
+      return exprs
+
+    def filter_map_params_from_subset_2(self, subset_range : subsets.Range, 
+                                        params_to_remove : set, 
+                                        current_map : nodes.Map,  src_arr_shape : tuple, 
+                                        dst_arr_shape : tuple, map_mode : int):
+      assert(map_mode == 1 or map_mode == 0)
+      exprs = []
+      for sid, sr in enumerate(subset_range):
+        (beg, end, step) = sr
+        print("SE", params_to_remove)
+        print("tes", beg, end, step)
+        for i, expr in enumerate([beg, end, step]):
+          param_signs = dict()
+          symbols_to_remove = params_to_remove
+          expanded_expr = expr.expand()
+          terms = expanded_expr.as_ordered_terms()
+          filtered_terms = []
+          for term in terms:
+              has = False
+              for sub_term in term.as_ordered_factors():
+                for sym in symbols_to_remove:
+                  if sub_term.has(sym) or str(sub_term) == str(sym):
+                    has = True
+                for sym_to_check_sign in current_map.params:
+                  param_signs[str(sym_to_check_sign)] = not self.has_minus_sign(term)
+              if not has:
+                filtered_terms.append(term)
+          filtered_expr = sympy.Add(*filtered_terms)
+          print("FE", filtered_expr)
+          # If the inner loop begins from the variable of the loop above
+          # Then we need to subtract the subset,
+          # If the variable is negative we need to add
+          # Since the order of parameters do not need to be the same (e.g., transposed access)
+          # We need to find the order of it, this can be done by check the initial value of the inner param
+          if map_mode == 1 and (i == 1 or i == 0):
+            params_used_in_access = list(expr.free_symbols)
+            # Assume thread block map j0=g0...,j1=g1...
+            # But we access shrA[j1,j0] (instead of j0, j1)
+            # Then we need to subset g1 from j1, first index.
+            # For this we find the ordering of param j1, and then
+            # get the param g1 with the same id and substract that.
+            # Filter the params that appear in the thread block map, to avoid
+            # issues with for example M - i0, where we iterate from reverse
+            param_strs = [str(param) for param in current_map.params]
+            used_param_strs = [str(param) for param in params_used_in_access]
+            params_used_from_map_params = []
+            print("1 ",param_strs)
+            print("11", used_param_strs)
+            for i, used_param_str in enumerate(used_param_strs):
+              if used_param_str in param_strs:
+                params_used_from_map_params.append(params_used_in_access[i])
+
+            print("2 ",params_used_from_map_params)
+            print("3 ",current_map.params)
+            for used_param in params_used_from_map_params:
+              corresponding_outer_param = None
+              corresponding_outer_sign = None
+              for tb_id, tblock_param in enumerate(current_map.params):
+                if used_param == tblock_param or str(used_param) == str(tblock_param):
+                  corresponding_outer_param = current_map.range[tb_id][0]
+                  corresponding_outer_sign = param_signs[str(used_param)]
+                  break
+              assert(corresponding_outer_param != None and corresponding_outer_sign != None)
+              if corresponding_outer_sign == True:
+                filtered_expr = filtered_expr - corresponding_outer_param
+              else:
+                filtered_expr = filtered_expr + corresponding_outer_param
+          for old_dim, new_dim in zip(src_arr_shape, dst_arr_shape):
+            filtered_expr = filtered_expr.subs(old_dim, new_dim)
+          print(filtered_expr)
           exprs.append(filtered_expr)
       return exprs
 
@@ -310,8 +406,21 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
       new_access_str = new_access_str[:-2] + "]"
       return new_access_str
 
+    def filter_integer_part(self, expr):
+      terms = expr.args
+      int_part = None
+      
+      for term in terms:
+          if term.is_Integer:
+              int_part = term
+              break
+      return int_part
+
+    a = 0
     def apply(self, graph: SDFGState, sdfg: SDFG):
-        map_mode = 1 # If the map mode is 1 (same as used by map tiling transformations)
+        print("APPLC CALL NUM ", ExplicitMemoryMove.a)
+        ExplicitMemoryMove.a += 1
+        map_mode: int = 1 # If the map mode is 1 (same as used by map tiling transformations)
         # Inner maps range depends on the outer map varaible, this requries different offset calculations
         # Of mode is 0, then it means all maps start from range 0, and the subset calcualtions need to consider
         # every type of access, then, subset computations need to adapt differently
@@ -330,26 +439,14 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
           # (i0 x i1) -> z, i2 -> y, i3 -> x, therefore we iterate from back up to three
           offsets = ["0"] * len(self.grid_strided_map_entry.map.range)
           load_lengths = [0] * len(self.grid_strided_map_entry.map.range)
-          num_threads = [0, 0, 0]
-          for i in range(len(self.grid_strided_map_entry.map.range), 0, -1):
-              (_, grid_end, grid_step) = self.grid_strided_map_entry.map.range[-i]
-              (tblock_beg, tblock_end, tblock_step) = self.thread_block_map_entry.map.range[-i]
-              # Both statements need to be simplifiable to integers
-              num_thread = sympy.simplify(((tblock_end+1) - tblock_beg) // tblock_step)
-              load_len = sympy.simplify((tblock_end+1) - tblock_beg)
-              # Should not stay in sympy type Zero
-              if isinstance(num_thread, sympy.Integer):
-                  num_thread = int(num_thread)
-              else:
-                  raise Exception("Number of threads expression needs to be simplifiable to an integer for the memory movement trasnformation")
-              if isinstance(load_len, sympy.Integer):
-                  load_len = int(load_len)
-              else:
-                  raise Exception("The length of data need to be loaded needs to be simplifiable to an integer for the memory movement trasnformation")
-              if (i < 3):
-                num_threads[-i] = num_thread
-              load_lengths[-i] = load_len
-              offsets[-i] = str(self.device_map_entry.map.params[-i])
+          num_threads = [int(t) for t in self.device_map_entry.map.gpu_block_size]
+          shape = [0] * len(memlet.subset)
+          for i, (beg, end, step) in enumerate(memlet.subset):
+            assert(step == 1)
+            assert(isinstance(sympy.simplify(end + 1- beg), sympy.Integer))
+            offsets[i] = str(beg)
+            load_lengths[i] = int(sympy.simplify(end + 1 - beg))
+            shape[i] = int(sympy.simplify(end + 1 - beg))
 
           mem_loc_a = parsed_storage_type
           mem_loc_b = parsed_memory_location
@@ -362,44 +459,31 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                                         offsets=list(reversed(offsets)),
                                         load_lengths=list(reversed(load_lengths)),
                                         thread_dims=list(reversed(num_threads)),
-                                        global_tensor_dims=list(reversed([str(d) for d in sdfg.arrays[src_arr_name].shape])),
+                                        global_tensor_dims=list(reversed([str(d) if isinstance(d, sympy.Symbol) else int(d) for d in sdfg.arrays[src_arr_name].shape])),
                                         in_arr=src_arr_name,
                                         out_arr=dst_arr_name)
-          if map_mode == 0 and len(load_lengths) > 3:
-            raise Exception("Inner maps (other than the outer-most device scheduled map) starting from 0 is not support above for rank > 3 tensors")
 
           graph.add_node(lib_node)
           graph.remove_edge(edge)
 
+
           src_arr : Array = sdfg.arrays[src_arr_name]
-          shape = []
-          for dev_range, grid_range, thread_block_range in zip(self.device_map_entry.map.range, self.grid_strided_map_entry.map.range, self.thread_block_map_entry.map.range):
-              (_, _, dev_step) = dev_range
-              (grid_begin, grid_end, grid_step) = grid_range
-              (tblock_begin, tblock_end, tblock_step) = thread_block_range
-              num_thread = int(sympy.simplify((tblock_end+1) - tblock_begin))
-              grid_len = int(sympy.simplify((grid_end+1) - grid_begin))
-              assert(dev_step % grid_step == 0)
-              assert(dev_step % grid_len == 0)
-              # It menas the grid strided loop is for example g=i:i+256:128 and dev step 256
-              if (dev_step // grid_len == 1):
-                shape.append(grid_step)
-                map_mode = 1
-              else: # Meaning that every map starts from 0
-                shape.append(dev_step // grid_len)
-                map_mode = 0
 
           memlet_to_lib_node : Memlet = memlet
-          exprs = self.filter_map_params_from_subset(memlet_to_lib_node.subset, 
-                                                     self.device_map_entry.map.params,
-                                                     self.grid_strided_map_entry.map.params,
-                                                     self.thread_block_map_entry.map.params,
+          exprs = self.filter_map_params_from_subset_2(memlet_to_lib_node.subset, 
+                                                     set.union(set(self.device_map_entry.map.params),
+                                                      set(self.grid_strided_map_entry.map.params)),
                                                      self.thread_block_map_entry.map,
                                                      src_arr.shape,
                                                      shape,
                                                      0)
+          print(exprs)
           new_access_str = self.gen_access_str_from_exprs(exprs, dst_arr_name)
-          (dst_arr_name, dst_arr) = sdfg.add_array(name=dst_arr_name, dtype=src_arr.dtype, shape=shape, transient=True, storage=self.memory_location)
+          if not dst_arr_name in sdfg.arrays.keys():
+            print(shape)
+            (dst_arr_name, dst_arr) = sdfg.add_array(name=dst_arr_name, dtype=src_arr.dtype, shape=shape, transient=True, storage=self.memory_location)
+          else:
+            (dst_arr_name, dst_arr) = (dst_arr_name, sdfg.arrays[dst_arr_name])
           dst_access_node = nodes.AccessNode(data=dst_arr_name)
           to_dst_memlet = Memlet(expr=new_access_str, data=dst_arr_name)
           to_map_memlet = Memlet(expr=new_access_str, data=dst_arr_name)
@@ -417,10 +501,15 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
           # Start from the inner map
           itnodes = set()
           itnodes.add(self.thread_block_map_entry)
+          innermost_map = self.thread_block_map_entry.map
+          outer_map = self.grid_strided_map_entry.map
           while len(itnodes) != 0:
             node = itnodes.pop()
             for out_edge in graph.out_edges(node):
                 out_u, out_u_conn, out_v, out_v_conn, out_memlet = out_edge
+                if isinstance(out_u, nodes.MapEntry):
+                  outer_map = innermost_map
+                  innermost_map = out_u.map
                 if isinstance(out_v, nodes.MapExit):
                   continue
                 assert(not isinstance(out_v, nodes.MapExit))
@@ -430,14 +519,13 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                   # Filter anything from the subset string of the memlet that involves terms that include
                   # Patameters from the grid-strided or device maps, this way effectively one computes the offset mapping
                   # From the global tensor to shared memory tensor
-                  exprs = self.filter_map_params_from_subset(subset_range, 
-                                                             self.device_map_entry.map.params,
-                                                             self.grid_strided_map_entry.map.params,
-                                                             self.thread_block_map_entry.map.params,
-                                                             self.thread_block_map_entry.map,
-                                                             src_arr.shape,
-                                                             shape,
-                                                             map_mode)
+                  exprs = self.filter_map_params_from_subset_2(subset_range=subset_range, 
+                                                                params_to_remove=set(),
+                                                                current_map=innermost_map,
+                                                                src_arr_shape=src_arr.shape,
+                                                                dst_arr_shape=shape,
+                                                                map_mode=1)
+                  print(exprs)
                   # For each dimension we get (beg:end:step) expressions
                   new_access_str = self.gen_access_str_from_exprs(exprs, dst_arr_name)
                   # Update the state with the new memlet annotation

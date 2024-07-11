@@ -11,12 +11,12 @@ from dace.transformation.dataflow.add_thread_block_map import AddThreadBlockMap
 from dace.transformation.dataflow.thread_coarsening import ThreadCoarsening
 from dace.transformation.dataflow.explicit_memory_move import ExplicitMemoryMove
 from dace import dtypes
+from dace.transformation.dataflow.underapproximate_memlet_subset import UnderApprorixmateMemletSubsets
 
 
 N = dace.symbol('N')
 M = dace.symbol('M')
-
-def apply_add_thread_block_schedule(sdfg):
+def _apply_add_thread_block_schedule(sdfg):
   for state in sdfg.states():
       outer = None
       for node in sdutil.dfs_topological_sort(state):
@@ -28,45 +28,66 @@ def apply_add_thread_block_schedule(sdfg):
               sdfg.save("added_thread_block_map.sdfg")
               outer = None
 
-def apply_change_thread_block_schedule(sdfg):
+def _apply_change_thread_block_schedule(sdfg):
+    i = 0
     for state in sdfg.states():
         outer = None
         inner = None
+        apply_list = []
+        for node in sdutil.dfs_topological_sort(state):
+            if isinstance(node, nodes.MapEntry):
+                if outer == None and node.map.schedule == dtypes.ScheduleType.GPU_Device:
+                    outer = node
+                if outer!= None and inner == None and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+                    inner = node
+            if outer != None and inner != None:
+                apply_list.append((outer, inner))
+                outer = None
+                inner = None
+        # If multiple maps are in the same state, changing map ranges result in changing memlet volumes, but
+        # Even the manually overapproximated ones are override. Therefore apply this transformation twice, to
+        # Have the memlets subsets updated
+        for (outer, inner) in reversed(apply_list):
+            ChangeThreadBlockMap.apply_to(sdfg=sdfg, verify=False, device_scheduled_map_entry = outer, 
+                                            thread_block_scheduled_map_entry = inner, 
+                                            options={"dim_size_x":32,"dim_size_y":2,"dim_size_z":2})
+            sdfg.save(f"changed_thread_block_map.sdfg")
+        for (outer, inner) in reversed(apply_list):
+            UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=outer)
+            UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=inner)
+            sdfg.save(f"changed_thread_block_map_and_underapproximate.sdfg")
+
+
+def _apply_thread_coarsening(sdfg):
+    for state in sdfg.states():
+        outer = None
+        inner = None
+        apply_list = []
         for node in sdutil.dfs_topological_sort(state):
             if isinstance(node, nodes.MapEntry):
                 if outer == None and node.map.schedule == dtypes.ScheduleType.GPU_Device:
                     outer = node
                 elif inner == None and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                     inner = node
-            if outer and inner:
-                ChangeThreadBlockMap.apply_to(sdfg=sdfg, verify=False, device_scheduled_map_entry = outer, 
-                                                    thread_block_scheduled_map_entry = inner, 
-                                                    options={"dim_size_x":32,"dim_size_y":2,"dim_size_z":2})
-                sdfg.save("changed_thread_block_map.sdfg")
+            if outer != None and inner != None:
+                apply_list.append((outer, inner))
                 outer = None
                 inner = None
+        for (outer, inner) in reversed(apply_list):
+            ThreadCoarsening.apply_to(sdfg=sdfg, verify=False, device_map_entry=outer, thread_block_map_entry=inner, options={"tile_size_x":4})
+            sdfg.save("thread_coarsened.sdfg")
+        for (outer, inner) in reversed(apply_list):
+            UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=state.entry_node(inner))
+            UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=inner)
+            UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=outer)
+            sdfg.save(f"thread_coarsened_and_underapproximated.sdfg")
 
-def apply_thread_coarsening(sdfg):
-    for state in sdfg.states():
-        outer = None
-        inner = None
-        for node in sdutil.dfs_topological_sort(state):
-            if isinstance(node, nodes.MapEntry):
-                if outer == None and node.map.schedule == dtypes.ScheduleType.GPU_Device:
-                    outer = node
-                elif inner == None and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
-                    inner = node
-            if outer and inner:
-                ThreadCoarsening.apply_to(sdfg=sdfg, verify=False, device_map_entry=outer, thread_block_map_entry=inner, options={"tile_size_x":4})
-                sdfg.save("thread_coarsened.sdfg")
-                outer = None
-                inner = None
-
-def apply_block_coarsening(sdfg):
+def _apply_block_coarsening(sdfg):
     for state in sdfg.states():
         outer = None
         inner = None
         seq = None
+        apply_list = []
         for node in sdutil.dfs_topological_sort(state):
             if isinstance(node, nodes.MapEntry):
                 if outer == None and node.map.schedule == dtypes.ScheduleType.GPU_Device:
@@ -75,57 +96,79 @@ def apply_block_coarsening(sdfg):
                     inner = node
                 elif seq == None and node.map.schedule == dtypes.ScheduleType.Sequential:
                     seq = node
-            if outer and inner and seq:
-                BlockCoarsening.apply_to(sdfg=sdfg, verify=False, device_map_entry=outer, thread_block_map_entry=inner, sequential_map_entry=seq, options={"block_iter_x":4, "block_iter_y":2, "block_iter_z":2})
-                sdfg.save("block_coarsened.sdfg")
+            if outer != None and inner != None and seq != None:
+                apply_list.append((outer, inner, seq))
                 outer = None
                 inner = None
                 seq = None
+        for (outer, inner, seq) in reversed(apply_list):
+            BlockCoarsening.apply_to(sdfg=sdfg, verify=False, device_map_entry=outer, thread_block_map_entry=inner, sequential_map_entry=seq, options={"block_iter_x":4, "block_iter_y":2, "block_iter_z":2})
+            sdfg.save("block_coarsened.sdfg")
+        for (outer, inner, seq) in reversed(apply_list):
+            UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=seq)
+            UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=inner)
+            UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=outer)
+            #UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=state.entry_node(outer))
+            sdfg.save(f"block_coarsened_and_underapproximated.sdfg")
 
-def apply_mem_move(sdfg):
+
+def _apply_mem_move(sdfg):
     sdfg.save("base.sdfg")
     try:
         for state in sdfg.states():
             dev = None
             outer = None
             inner = None
+            apply_list = []
             for node in sdutil.dfs_topological_sort(state):
                 if isinstance(node, nodes.MapEntry):
                     if dev == None and node.map.schedule == dtypes.ScheduleType.GPU_Device:
                         dev = node
-                    elif outer == None and node.map.schedule == dtypes.ScheduleType.Sequential:
+                    if dev != None and outer == None and node.map.schedule == dtypes.ScheduleType.Sequential:
                         outer = node
-                    elif inner == None and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+                    if dev != None and outer != None and inner == None and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                         inner = node
-                if outer and inner and dev:
-                    ExplicitMemoryMove.apply_to(sdfg=sdfg, verify=False, device_map_entry=dev, grid_strided_map_entry=outer, thread_block_map_entry=inner, options={"memory_location":dtypes.StorageType.GPU_Shared})
-                    sdfg.save("memory_moved.sdfg")
-                    outer = None
-                    inner = None
-                    dev = None
+                    if outer != None and inner != None and dev != None:
+                        apply_list.append((dev, outer, inner))
+                        outer = None
+                        inner = None
+                        dev = None
+            for dev, outer, inner in apply_list:
+                ExplicitMemoryMove.apply_to(sdfg=sdfg, verify=False, device_map_entry=dev, grid_strided_map_entry=outer, thread_block_map_entry=inner, options={"memory_location":dtypes.StorageType.GPU_Shared})
+                sdfg.save("memory_moved.sdfg")
+
     except Exception as e:
         sdfg.save("failed_transformed.sdfg")
         print(e)
         raise Exception(e)
+
+def _explicit_gpu_block_size(sdfg, blockdim):
+  for state in sdfg.states():
+      outer = None
+      for node in sdutil.dfs_topological_sort(state):
+          if isinstance(node, nodes.MapEntry):
+              if node.map.schedule == dtypes.ScheduleType.GPU_Device:
+                  node.map.gpu_block_size = blockdim
+
 
 def _tensor_add_kernel(A, B):
    A += 0.5 * B
 
 def _test_transformations(opt_sdfg, A, B, A2, B2, _N):
   _tensor_add_kernel(A, B)
-  apply_add_thread_block_schedule(opt_sdfg)
+  _apply_add_thread_block_schedule(opt_sdfg)
   opt_sdfg(A=A2, B=B2, N=_N)
   assert(np.allclose(A, A2.get()))
   _tensor_add_kernel(A, B)
-  apply_change_thread_block_schedule(opt_sdfg)
+  _apply_change_thread_block_schedule(opt_sdfg)
   opt_sdfg(A=A2, B=B2, N=_N)
   assert(np.allclose(A, A2.get()))
   _tensor_add_kernel(A, B)
-  apply_thread_coarsening(opt_sdfg)
+  _apply_thread_coarsening(opt_sdfg)
   opt_sdfg(A=A2, B=B2, N=_N)
   assert(np.allclose(A, A2.get()))
   _tensor_add_kernel(A, B)
-  apply_block_coarsening(opt_sdfg)
+  _apply_block_coarsening(opt_sdfg)
   opt_sdfg(A=A2, B=B2, N=_N)
   assert(np.allclose(A, A2.get()))
 
@@ -213,12 +256,12 @@ def test_jacobi_2d():
 
   sdfg = dace_jacobi_kernel.to_sdfg()
   opt_sdfg = aopt.auto_optimize(sdfg, dace.DeviceType.GPU)
-  apply_add_thread_block_schedule(opt_sdfg)
-  apply_change_thread_block_schedule(opt_sdfg)
-  apply_thread_coarsening(opt_sdfg)
-  apply_block_coarsening(opt_sdfg)
-  _N = 1024
-  steps = 10
+  _apply_add_thread_block_schedule(opt_sdfg)
+  _apply_change_thread_block_schedule(opt_sdfg)
+  _apply_thread_coarsening(opt_sdfg)
+  _apply_block_coarsening(opt_sdfg)
+  _N = 256
+  steps = 2
   A = np.random.rand(_N, _N).astype(np.float32)
   B = np.random.rand(_N, _N).astype(np.float32)
   A2 = cp.asarray(A, cp.float32)
@@ -239,7 +282,7 @@ def test_mem_move_1d():
 
   sdfg = dace_kernel_1d.to_sdfg()
   sdfg.validate()
-  apply_mem_move(sdfg)
+  _apply_mem_move(sdfg)
   sdfg.validate()
 
   _M = 1024
@@ -264,7 +307,7 @@ def test_mem_move_1d_type_2():
 
   sdfg = dace_kernel_1d_type_2.to_sdfg()
   sdfg.validate()
-  apply_mem_move(sdfg)
+  _apply_mem_move(sdfg)
   sdfg.validate()
 
   _M = 1024
@@ -290,7 +333,8 @@ def test_mem_move_2d():
 
   sdfg = dace_kernel_2d.to_sdfg()
   sdfg.validate()
-  apply_mem_move(sdfg)
+  _explicit_gpu_block_size(sdfg, [16, 16, 1])
+  _apply_mem_move(sdfg)
   sdfg.validate()
 
   _M = 256
@@ -316,7 +360,8 @@ def test_mem_move_2d_type_2():
 
   sdfg = dace_kernel_2d_type_2.to_sdfg()
   sdfg.validate()
-  apply_mem_move(sdfg)
+  _explicit_gpu_block_size(sdfg, [16, 16, 1])
+  _apply_mem_move(sdfg)
   sdfg.validate()
 
   _M = 256
@@ -344,7 +389,8 @@ def test_mem_move_3d():
 
   sdfg = dace_kernel_3d.to_sdfg()
   sdfg.validate()
-  apply_mem_move(sdfg)
+  _explicit_gpu_block_size(sdfg, [16, 4, 4])
+  _apply_mem_move(sdfg)
   sdfg.validate()
 
 
@@ -372,7 +418,8 @@ def test_mem_move_3d_type_2():
 
   sdfg = dace_kernel_3d_type_2.to_sdfg()
   sdfg.validate()
-  apply_mem_move(sdfg)
+  _explicit_gpu_block_size(sdfg, [16, 4, 4])
+  _apply_mem_move(sdfg)
   sdfg.validate()
 
   _M = 128
@@ -399,7 +446,8 @@ def test_mem_move_4d_type_2():
 
   sdfg = dace_kernel_4d_type_2.to_sdfg()
   sdfg.validate()
-  apply_mem_move(sdfg)
+  _explicit_gpu_block_size(sdfg, [16, 4, 4])
+  _apply_mem_move(sdfg)
   sdfg.validate()
 
   _M = 64
@@ -429,7 +477,8 @@ def test_mem_move_transposed_1d_type_2():
 
   sdfg = dace_kernel_1d_transposed_type_2.to_sdfg()
   sdfg.validate()
-  apply_mem_move(sdfg)
+  _explicit_gpu_block_size(sdfg, [128, 1, 1])
+  _apply_mem_move(sdfg)
   sdfg.validate()
 
   _M = 1024
@@ -459,7 +508,8 @@ def test_mem_move_2d_transposed_type_2():
 
   sdfg = dace_kernel_2d_transposed_type_2.to_sdfg()
   sdfg.validate()
-  apply_mem_move(sdfg)
+  _explicit_gpu_block_size(sdfg, [16, 16, 1])
+  _apply_mem_move(sdfg)
   sdfg.validate()
 
   _M = 256
@@ -473,20 +523,60 @@ def test_mem_move_2d_transposed_type_2():
   AH = A2.get()
   assert(np.allclose(A, AH))
 
+
+def test_jacobi_2d_mem_move():
+  def jacobi_kernel(TSTEPS, A, B):
+      for _ in range(0, TSTEPS):
+          B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] +
+                              A[2:, 1:-1] + A[:-2, 1:-1])
+          A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] +
+                              B[2:, 1:-1] + B[:-2, 1:-1])
+
+
+  @dace.program
+  def dace_jacobi_kernel(TSTEPS: dace.int32, 
+                  A: dace.float32[N, N] @ dtypes.StorageType.GPU_Global, 
+                  B: dace.float32[N, N] @ dtypes.StorageType.GPU_Global):
+      for _ in range(0, TSTEPS):
+          B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] +
+                              A[2:, 1:-1] + A[:-2, 1:-1])
+          A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] +
+                              B[2:, 1:-1] + B[:-2, 1:-1])
+
+  sdfg = dace_jacobi_kernel.to_sdfg()
+  opt_sdfg = aopt.auto_optimize(sdfg, dace.DeviceType.GPU)
+  _apply_add_thread_block_schedule(opt_sdfg)
+  _apply_change_thread_block_schedule(opt_sdfg)
+  _apply_thread_coarsening(opt_sdfg)
+  _apply_block_coarsening(opt_sdfg)
+  _apply_mem_move(opt_sdfg)
+
+  _N = 256
+  steps = 2
+  A = np.random.rand(_N, _N).astype(np.float32)
+  B = np.random.rand(_N, _N).astype(np.float32)
+  A2 = cp.asarray(A, cp.float32)
+  B2 = cp.asarray(B, cp.float32)
+  jacobi_kernel(TSTEPS=steps, A=A, B=B)
+  opt_sdfg(TSTEPS=steps, A=A2, B=B2, N=_N)
+  assert(np.allclose(A, A2.get()))
+  assert(np.allclose(B, B2.get()))
+
 if __name__ == '__main__':
-  """
   test_tensor_add_1d()
   test_tensor_add_2d()
   test_tensor_add_3d()
   test_tensor_add_4d()
-  test_jacobi_2d()
-  test_mem_move_1d()
-  test_mem_move_1d_type_2()
-  test_mem_move_2d()
-  test_mem_move_2d_type_2()
-  test_mem_move_3d()
-  test_mem_move_3d_type_2()
-  test_mem_move_4d_type_2()
   """
+  test_mem_move_1d()
+  test_mem_move_2d()
+  test_mem_move_3d()
+  """
+  test_mem_move_1d_type_2()
+  test_mem_move_2d_type_2()
   test_mem_move_transposed_1d_type_2()
   test_mem_move_2d_transposed_type_2()
+  test_mem_move_3d_type_2()
+  test_mem_move_4d_type_2()
+  test_jacobi_2d()
+  test_jacobi_2d_mem_move()
