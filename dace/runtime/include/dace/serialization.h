@@ -101,11 +101,11 @@ public:
 
         // Update version
         int version;
-        if (this->version.find(symbol_name) == this->version.end())
+        if (this->version.find(symbol_name + ".." + filename) == this->version.end())
             version = 0;
         else
-            version = this->version[symbol_name] + 1;
-        this->version[symbol_name] = version;
+            version = this->version[symbol_name + ".." + filename] + 1;
+        this->version[symbol_name + ".." + filename] = version;
 
         std::stringstream ss;
         ss << this->folder << "/" << symbol_name;
@@ -126,16 +126,14 @@ public:
     template <typename T>
     T restore_symbol(const std::string &symbol_name, const std::string &filename) {
         std::lock_guard<std::mutex> guard(this->_mutex);
-        std::cout << "Restoring symbol " << symbol_name << std::endl;
-        std::flush(std::cout);
 
         // Update version
         int version;
-        if (this->version.find(symbol_name) == this->version.end())
+        if (this->version.find(symbol_name + ".." + filename) == this->version.end())
             version = 0;
         else
-            version = this->version[symbol_name] + 1;
-        this->version[symbol_name] = version;
+            version = this->version[symbol_name + ".." + filename] + 1;
+        this->version[symbol_name + ".." + filename] = version;
 
         // Read contents from file
         std::stringstream ss;
@@ -145,8 +143,6 @@ public:
         // Read the symbol back
         T val;
         ifs >> val;
-        std::cout << "Restored value: " << val << std::endl;
-        std::flush(std::cout);
         return val;
     }
 
@@ -159,11 +155,11 @@ public:
 
         // Update version
         int version;
-        if (this->version.find(filename) == this->version.end())
+        if (this->version.find(arrayname + ".." + filename) == this->version.end())
             version = 0;
         else
-            version = this->version[filename] + 1;
-        this->version[filename] = version;
+            version = this->version[arrayname + ".." + filename] + 1;
+        this->version[arrayname + ".." + filename] = version;
 
         std::stringstream ss;
         ss << this->folder << "/" << arrayname;
@@ -187,17 +183,14 @@ public:
     template <typename T>
     void restore(T *buffer, size_t size, const std::string &arrayname, const std::string &filename) {
         std::lock_guard<std::mutex> guard(this->_mutex);
-        std::cout << "Restoring buffer " << arrayname << std::endl;
-        std::cout << "Restore size: " << size << std::endl;
-        std::flush(std::cout);
 
         // Update version
         int version;
-        if (this->version.find(filename) == this->version.end())
+        if (this->version.find(arrayname + ".." + filename) == this->version.end())
             version = 0;
         else
-            version = this->version[filename] + 1;
-        this->version[filename] = version;
+            version = this->version[arrayname + ".." + filename] + 1;
+        this->version[arrayname + ".." + filename] = version;
 
         // Read contents from file
         std::stringstream ss;
@@ -205,7 +198,7 @@ public:
         const std::string fname = ss.str();
         // Do not restore anything if the target file does not exist.
         struct stat statbuff;
-        if (!stat(fname.c_str(), &statbuff))
+        if (stat(fname.c_str(), &statbuff) == -1)
             return;
         std::ifstream ifs(fname, std::ios::binary);
         
@@ -216,8 +209,6 @@ public:
 
         // Read contents
         ifs.read((char *)buffer, sizeof(T) * size);
-        std::cout << "Restored" << std::endl;
-        std::flush(std::cout);
     }
 };
 

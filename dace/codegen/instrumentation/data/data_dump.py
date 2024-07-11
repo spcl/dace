@@ -372,10 +372,14 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             # TODO: Tracking these symbols separately is a hack for the current fortran frontend limitations based on
             #       the dynamically sized struct arrays stuff. Make analogous to saving after that is fixed.
             restore_symbols = []
+            restore_scalars = []
             restore_other_args = []
             if sdfg.save_restore_initial_state == dtypes.DataInstrumentationType.Restore:
                 # We need to declare all arguments as global variables so they can be allocated when restoring.
-                for argname, desc, in codegen.arglist.items():
+                for argname, desc, in sdfg.arglist().items():
+                    if (argname.startswith('__f2dace_SA_') or argname.startswith('__f2dace_SOA_') or
+                        argname.startswith('tmp_struct_symbol')):
+                        continue
                     ptrname = cpp.ptr(argname, desc, sdfg, codegen)
                     if (isinstance(desc, dt.Scalar) or isinstance(desc, dt.Structure)):
                         global_stream.write(f'{desc.dtype.ctype} {ptrname};\n', sdfg)
@@ -388,10 +392,15 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
                         not codegen.dispatcher.defined_vars.has(cpp.ptr(argname, desc, sdfg, codegen))):
                         restore_symbols.append(self._restore_var(argname, desc, sdfg, local_stream, global_stream,
                                                                  write_to_local_stream=False, include_alloc=True))
+                    elif isinstance(desc, dt.Scalar) or desc.total_size == 1:
+                        restore_scalars.append(self._restore_var(argname, desc, sdfg, local_stream, global_stream,
+                                                                 write_to_local_stream=False, include_alloc=True))
                     else:
                         restore_other_args.append(self._restore_var(argname, desc, sdfg, local_stream, global_stream,
                                                                     write_to_local_stream=False, include_alloc=True))
             for line in restore_symbols:
+                restore_string += line
+            for line in restore_scalars:
                 restore_string += line
             for line in restore_other_args:
                 restore_string += line
