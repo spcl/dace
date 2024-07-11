@@ -427,8 +427,9 @@ class CompiledSDFG(object):
         try:
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
-                self._lib.load()
-                self._initialize(initargs)
+                with hooks.invoke_compiled_sdfg_init_hooks(self, initargs):
+                    self._lib.load()
+                    self._initialize(initargs)
 
             with hooks.invoke_compiled_sdfg_call_hooks(self, callargs):
                 if self.do_not_execute is False:
