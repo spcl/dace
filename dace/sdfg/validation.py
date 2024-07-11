@@ -119,8 +119,9 @@ def validate_control_flow_region(sdfg: 'SDFG',
                 validate_state(edge.dst, region.node_id(edge.dst), sdfg, symbols, initialized_transients, references,
                                **context)
             elif isinstance(edge.dst, ConditionalRegion):
-                for _, cfg in edge.dst.branches:
-                    validate_control_flow_region(sdfg, cfg, initialized_transients, symbols, references, **context)
+                for _, r in edge.dst.branches:
+                    if r is not None:
+                        validate_control_flow_region(sdfg, r, initialized_transients, symbols, references, **context)
             elif isinstance(edge.dst, ControlFlowRegion):
                 validate_control_flow_region(sdfg, edge.dst, initialized_transients, symbols, references, **context)
     # End of block DFS

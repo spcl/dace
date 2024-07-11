@@ -2572,15 +2572,16 @@ class ProgramVisitor(ExtNodeVisitor):
         # Visit recursively
         self._recursive_visit(node.body, 'if', node.lineno, if_body, False)
 
-        else_body = ControlFlowRegion("", sdfg=self.sdfg)
-        cond_region.branches.append((CodeBlock(cond_else), else_body))
-        else_body.parent_graph = cond_region
 
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
-            else_body.label =  f"{cond_region.label}_else_{node.orelse[0].lineno}"
+            else_body = ControlFlowRegion(f"{cond_region.label}_else_{node.orelse[0].lineno}", sdfg=self.sdfg)
+            cond_region.branches.append((CodeBlock(cond_else), else_body))
+            else_body.parent_graph = cond_region
             # Visit recursively
             self._recursive_visit(node.orelse, 'else', node.lineno, else_body, False)
+        else:
+            cond_region.branches.append((CodeBlock(cond_else), None))
 
     def _parse_tasklet(self, state: SDFGState, node: TaskletType, name=None):
 

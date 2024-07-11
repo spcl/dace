@@ -2753,8 +2753,9 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             elif isinstance(block, ControlFlowRegion):
                 yield from block.all_states()
             elif isinstance(block, ConditionalRegion):
-                for _, cfr in block.branches:
-                    yield from cfr.all_states()
+                for _, region in block.branches:
+                    if region is not None:
+                        yield from region.all_states()
 
     def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
         """ Iterate over all control flow blocks in this control flow graph. """
@@ -3196,7 +3197,7 @@ class ConditionalRegion(ControlFlowBlock, ControlGraphView):
         self.branches: List[Tuple[CodeBlock, ControlFlowRegion]] = []
     
     def nodes(self) -> List['ControlFlowBlock']:
-        return [node for _, node in self.branches]
+        return [node for _, node in self.branches if node is not None]
 
     def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
         return []
@@ -3211,13 +3212,14 @@ class ConditionalRegion(ControlFlowBlock, ControlGraphView):
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
-        for condition, cfg in self.branches:
-            free_syms |= condition.get_free_symbols(defined_syms)
-            b_free_symbols, b_defined_symbols, b_used_before_assignment = cfg._used_symbols_internal(
-                all_symbols, defined_syms, free_syms, used_before_assignment, keep_defined_in_mapping)
-            free_syms |= b_free_symbols
-            defined_syms |= b_defined_symbols
-            used_before_assignment |= b_used_before_assignment
+        for condition, region in self.branches:
+            if region is not None:
+                free_syms |= condition.get_free_symbols(defined_syms)
+                b_free_symbols, b_defined_symbols, b_used_before_assignment = region._used_symbols_internal(
+                    all_symbols, defined_syms, free_syms, used_before_assignment, keep_defined_in_mapping)
+                free_syms |= b_free_symbols
+                defined_syms |= b_defined_symbols
+                used_before_assignment |= b_used_before_assignment
 
         defined_syms -= used_before_assignment
         free_syms -= defined_syms
@@ -3233,8 +3235,9 @@ class ConditionalRegion(ControlFlowBlock, ControlGraphView):
             from dace.sdfg.replace import replace_properties_dict
             replace_properties_dict(self, repl, symrepl)
 
-        for _, cfg in self.branches:
-            cfg.replace_dict(repl, symrepl, replace_in_graph)
+        for _, region in self.branches:
+            if region is not None:
+                region.replace_dict(repl, symrepl, replace_in_graph)
 
     def to_json(self, parent=None):
         json = super().to_json(parent)
@@ -3245,8 +3248,11 @@ class ConditionalRegion(ControlFlowBlock, ControlGraphView):
     def from_json(cls, json_obj, context=None):
         cond_region = ConditionalRegion(json_obj["label"])
         cond_region.is_collapsed = json_obj["collapsed"]
-        cond_region.branches = [(CodeBlock.from_json(condition), ControlFlowRegion.from_json(cfg, context)) 
-                                for condition, cfg in json_obj["branches"]]
+        for condition, region in json_obj["branches"]:
+            if region is not None:
+                cond_region.branches.append((CodeBlock.from_json(condition), ControlFlowRegion.from_json(region, context)))
+            else:
+                cond_region.branches.append((CodeBlock.from_json(condition), None))
         return cond_region
     
     def inline(self) -> Tuple[bool, Any]:
@@ -3273,11 +3279,11 @@ class ConditionalRegion(ControlFlowBlock, ControlGraphView):
             parent.remove_edge(a_edge)
 
         from dace.sdfg.sdfg import InterstateEdge
-        for condition, cfg in self.branches:
-            if cfg.number_of_nodes() > 0:
-                parent.add_node(cfg)
-                parent.add_edge(guard_state, cfg, InterstateEdge(condition=condition))
-                parent.add_edge(cfg, end_state, InterstateEdge())
+        for condition, region in self.branches:
+            if region is not None:
+                parent.add_node(region)
+                parent.add_edge(guard_state, region, InterstateEdge(condition=condition))
+                parent.add_edge(region, end_state, InterstateEdge())
             else:
                 parent.add_edge(guard_state, end_state, InterstateEdge(condition=condition))
 
