@@ -192,7 +192,7 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
     'nested_if_else': (nested_if_else, (sp.Max(K, 3 * N, M + N), sp.Max(3, K, M + 1))),
     'max_of_positive_symbols': (max_of_positive_symbol, (3 * N**2, 3 * N)),
     'multiple_array_sizes': (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
-    'unbounded_while_do': (unbounded_while_do, (sp.Symbol('num_execs_0_2') * N, sp.Symbol('num_execs_0_2'))),
+    'unbounded_while_do': (unbounded_while_do, (sp.Symbol('num_execs_0_3') * N, sp.Symbol('num_execs_0_3'))),
     # We get this Max(1, num_execs), since it is a do-while loop, but the num_execs symbol does not capture this.
     'unbounded_nonnegify': (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_7') * N, 2 * sp.Symbol('num_execs_0_7'))),
     'break_for_loop': (break_for_loop, (N**2, N)),
@@ -317,6 +317,7 @@ def test_assumption_system_contradictions(assumptions):
 
 
 if __name__ == '__main__':
+    test_work_depth("unbounded_while_do")
     for test_name in work_depth_test_cases.keys():
         test_work_depth(test_name)
 
