@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import Any, Dict, Tuple
 
 import dace
 from dace import registry
@@ -14,7 +13,6 @@ import dace.subsets
 import dace.sdfg
 from dace.sdfg import nodes as nd
 import dace.codegen.common
-from dace import dtypes, data as dt
 
 
 @registry.autoregister_params(name='unroll')
@@ -62,9 +60,8 @@ class UnrollCodeGen(TargetCodeGenerator):
             node.sdfg.constants_prop = constants
 
     #TODO: Expand the unroller so it can also generate openCL code
-    def generate_scope(self, sdfg: dace.SDFG, scope: ScopeSubgraphView, state_id: int, function_stream: CodeIOStream,
-                       callsite_stream: CodeIOStream):
-
+    def generate_scope(self, sdfg: dace.SDFG, cfg: state.ControlFlowRegion, scope: ScopeSubgraphView, state_id: int,
+                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         entry_node: nd.MapEntry = scope.source_nodes()[0]
         index_list = []
 
@@ -89,12 +86,13 @@ class UnrollCodeGen(TargetCodeGenerator):
                     self.nsdfg_prepare_unroll(scope, str(param), str(index))
                 callsite_stream.write(
                     f"constexpr {mapsymboltypes[param]} {param} = "
-                    f"{dace.codegen.common.sym2cpp(index)};\n", sdfg)
+                    f"{dace.codegen.common.sym2cpp(index)};\n", cfg)
                 sdfg.add_constant(param, int(index))
 
             callsite_stream.write('{')
             self._dispatcher.dispatch_subgraph(
                 sdfg,
+                cfg,
                 scope,
                 state_id,
                 function_stream,
