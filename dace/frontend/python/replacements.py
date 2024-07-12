@@ -568,7 +568,7 @@ def _arange(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
     if any(not isinstance(s, Number) for s in [start, stop, step]):
         shape = (symbolic.int_ceil(stop - start, step), )
     else:
-        shape = (np.ceil((stop - start) / step), )
+        shape = (np.int64(np.ceil((stop - start) / step)), )
 
     if not isinstance(shape[0], Number) and ('dtype' not in kwargs or kwargs['dtype'] == None):
         raise NotImplementedError("The current implementation of numpy.arange requires that the output dtype is given "
