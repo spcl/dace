@@ -477,8 +477,10 @@ class Structure(Data):
         return f"{self.name} ({', '.join([f'{k}: {v}' for k, v in self.members.items()])})"
 
     def as_arg(self, with_types=True, for_call=False, name=None):
-        if self.storage is dtypes.StorageType.GPU_Global:
-            return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
+        # NOTE: Since we already define Stuctures as pointers, we don't need to add a pointer here.
+        # TODO: Restore this if we decide to store structures as values.
+        # if self.storage is dtypes.StorageType.GPU_Global:
+        #     return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
         if not with_types or for_call:
             return name
         return self.dtype.as_arg(name)
