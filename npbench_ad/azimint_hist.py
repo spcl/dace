@@ -38,8 +38,7 @@ def histogram(a: dc.float64[N], bin_edges: dc.float64[bins + 1]):
 
 
 @dc.program
-def histogram_weights(a: dc.float64[N], bin_edges: dc.float64[bins + 1],
-                      weights: dc.float64[N]):
+def histogram_weights(a: dc.float64[N], bin_edges: dc.float64[bins + 1], weights: dc.float64[N]):
     hist = np.ndarray((bins, ), dtype=weights.dtype)
     hist[:] = 0
     get_bin_edges(a, bin_edges)
@@ -53,10 +52,10 @@ def histogram_weights(a: dc.float64[N], bin_edges: dc.float64[bins + 1],
 
 @dc.program
 def azimint_hist(data: dc.float64[N], radius: dc.float64[N], D: dc.float64[bins], S: dc.float64[1]):
-    
+
     bin_edges_u = np.ndarray((npt + 1, ), dtype=np.float64)
     histu = histogram(radius, bin_edges_u)
-    
+
     bin_edges_w = np.ndarray((npt + 1, ), dtype=np.float64)
     histw = histogram_weights(radius, bin_edges_w, data)
     D[:] = histw / histu
@@ -70,12 +69,11 @@ def azimint_hist(data: dc.float64[N], radius: dc.float64[N], D: dc.float64[bins]
     return histw / histu
 
 
+azimint_hist.use_experimental_cfg_blocks = True
 sdfg = azimint_hist.to_sdfg()
 
 sdfg.save("log_sdfgs/azimint_hist_forward.sdfg")
 
-
 add_backward_pass(sdfg=sdfg, inputs=["data"], outputs=["S"])
 
 sdfg.save("log_sdfgs/azimint_hist_backward.sdfg")
-

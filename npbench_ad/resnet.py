@@ -3,9 +3,9 @@ import dace as dc
 from dace.autodiff import add_backward_pass
 
 N, H, W, C1, C2, S0, S1, S2, S3, S4, S5 = (dc.symbol(s, dtype=dc.int64)
-                                           for s in ('N', 'H', 'W', 'C1', 'C2',
-                                                     'S0', 'S1', 'S2', 'S3',
-                                                     'S4', 'S5'))
+                                           for s in ('N', 'H', 'W', 'C1', 'C2', 'S0', 'S1', 'S2', 'S3', 'S4', 'S5'))
+N = 8
+S0 = 8
 
 
 @dc.program
@@ -15,8 +15,7 @@ def relu(x: dc.float32[S0, S1, S2, S3]):
 
 # Deep learning convolutional operator (stride = 1)
 @dc.program
-def conv2d(input: dc.float32[S0, S1, S2, S3], weights: dc.float32[S4, S4, S3,
-                                                                  S5]):
+def conv2d(input: dc.float32[S0, S1, S2, S3], weights: dc.float32[S4, S4, S3, S5]):
     # K = weights.shape[0]  # Assuming square kernel
     # N = input.shape[0]
     # H_out = input.shape[1] - K + 1
@@ -30,8 +29,7 @@ def conv2d(input: dc.float32[S0, S1, S2, S3], weights: dc.float32[S4, S4, S3,
     for i in range(S1 - S4 + 1):
         for j in range(S2 - S4 + 1):
             output[:, i, j, :] = np.sum(
-                input[:, i:i + S4, j:j + S4, :, np.newaxis] *
-                weights[np.newaxis, :, :, :],
+                input[:, i:i + S4, j:j + S4, :, np.newaxis] * weights[np.newaxis, :, :, :],
                 axis=(1, 2, 3),
             )
 
@@ -55,10 +53,8 @@ def batchnorm2d(x: dc.float32[S0, S1, S2, S3]):
 # Bottleneck residual block (after initial convolution, without downsampling)
 # in the ResNet-50 CNN (inference)
 @dc.program
-def resnet_basicblock(input: dc.float32[N, H, W,
-                                        C1], conv1: dc.float32[1, 1, C1, C2],
-                      conv2: dc.float32[3, 3, C2,
-                                        C2], conv3: dc.float32[1, 1, C2, C1]):
+def resnet_basicblock(input: dc.float32[N, H, W, C1], conv1: dc.float32[1, 1, C1, C2], conv2: dc.float32[3, 3, C2, C2],
+                      conv3: dc.float32[1, 1, C2, C1]):
     # Pad output of first convolution for second convolution
     # padded = np.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2,
     #                    conv1.shape[3]))
@@ -87,12 +83,8 @@ def resnet_basicblock(input: dc.float32[N, H, W,
 # Bottleneck residual block (after initial convolution, without downsampling)
 # in the ResNet-50 CNN (inference)
 @dc.program
-def resnet_basicblock_gpu(out: dc.float32[N, H, W,
-                                          C1], input: dc.float32[N, H, W, C1],
-                          conv1: dc.float32[1, 1, C1, C2],
-                          conv2: dc.float32[3, 3, C2,
-                                            C2], conv3: dc.float32[1, 1, C2,
-                                                                   C1], S: dc.float64[1]):
+def resnet_basicblock_gpu(out: dc.float32[N, H, W, C1], input: dc.float32[N, H, W, C1], conv1: dc.float32[1, 1, C1, C2],
+                          conv2: dc.float32[3, 3, C2, C2], conv3: dc.float32[1, 1, C2, C1], S: dc.float64[1]):
     # Pad output of first convolution for second convolution
     # padded = np.zeros((input.shape[0], input.shape[1] + 2, input.shape[2] + 2,
     #                    conv1.shape[3]))
@@ -121,10 +113,10 @@ def resnet_basicblock_gpu(out: dc.float32[N, H, W,
     S[0] = np.sum(x7)
     return x7
 
+
 sdfg = resnet_basicblock_gpu.to_sdfg()
 
 sdfg.save("log_sdfgs/resnet_forward.sdfg")
-
 
 add_backward_pass(sdfg=sdfg, inputs=["input"], outputs=["S"])
 

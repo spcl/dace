@@ -5,9 +5,10 @@ from dace.autodiff import add_backward_pass
 N = 32
 M = 32
 
+
 @dc.program
-def compute(array_1: dc.float64[M, N], array_2: dc.float64[M, N], a: dc.float64,
-            b: dc.float64, B: dc.float64[M, N], c: dc.float64, S: dc.float64[1]):
+def compute(array_1: dc.float64[M, N], array_2: dc.float64[M, N], a: dc.float64, b: dc.float64, B: dc.float64[M, N],
+            c: dc.float64, S: dc.float64[1]):
 
     B[:] = np.minimum(np.maximum(array_1, 2), 10) * a + array_2 * b + c
 
@@ -22,8 +23,34 @@ sdfg = compute.to_sdfg()
 
 sdfg.save("log_sdfgs/compute_forward.sdfg")
 
-
-add_backward_pass(sdfg=sdfg, inputs=["array_1"], outputs=["S"])
+add_backward_pass(sdfg=sdfg, inputs=["array_2"], outputs=["S"])
 
 sdfg.save("log_sdfgs/compute_backward.sdfg")
 
+array_1 = np.ones(shape=[M, N])
+array_2 = np.ones(shape=[M, N])
+B = np.ones(shape=[M, N])
+a = 10
+b = 15
+c = 3
+S = np.zeros(shape=[1])
+gradient_S = np.ones(shape=[1])
+gradient_A = np.zeros(shape=[N, N])
+sdfg(array_1, array_2, a, b, B, c, S, gradient_S=gradient_S, gradient_array_2=gradient_A)
+
+# JAX
+import jax
+import jax.numpy as jnp
+
+
+def k2mm_jax(array_1, array_2, a, b, B, c):
+    B = np.minimum(np.maximum(array_1, 2), 10) * a + array_2 * b + c
+    return jnp.sum(B)
+
+
+jax_grad = jax.grad(k2mm_jax, argnums=[1])
+
+B = jnp.ones(shape=[M, N])
+
+gradient_A_jax = jax_grad(array_1, array_2, a, b, B, c)
+assert np.allclose(gradient_A_jax, gradient_A)

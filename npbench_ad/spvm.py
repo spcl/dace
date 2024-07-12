@@ -4,9 +4,9 @@ from dace.autodiff import add_backward_pass
 
 M, N, nnz = 32, 32, 5
 
+
 @dc.program
-def spvm(A_row: dc.uint32[M + 1], A_col: dc.uint32[nnz],
-         A_val: dc.float64[nnz], x: dc.float64[N], S: dc.float64[1]):
+def spvm(A_row: dc.uint32[M + 1], A_col: dc.uint32[nnz], A_val: dc.float64[nnz], x: dc.float64[N], S: dc.float64[1]):
 
     # y = np.empty(A_row.size - 1, A_val.dtype)
     y = np.empty(M, A_val.dtype)
@@ -32,8 +32,6 @@ sdfg = spvm.to_sdfg()
 
 sdfg.save("log_sdfgs/spvm_forward.sdfg")
 
-
-add_backward_pass(sdfg=sdfg, inputs=["A_row"], outputs=["S"])
+add_backward_pass(sdfg=sdfg, inputs=["A_col"], outputs=["S"])
 
 sdfg.save("log_sdfgs/spvm_backward.sdfg")
-

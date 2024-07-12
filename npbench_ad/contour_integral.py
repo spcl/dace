@@ -7,9 +7,10 @@ M = 32
 
 NR, NM, slab_per_bc = 43, 43, 5
 
+
 @dc.program
-def contour(Ham: dc.complex128[slab_per_bc + 1, NR, NR],
-                     int_pts: dc.complex128[32], Y: dc.complex128[NR, NM], c: dc.int64, S: dc.float64[1]):
+def contour(Ham: dc.complex128[slab_per_bc + 1, NR, NR], int_pts: dc.complex128[32], Y: dc.complex128[NR, NM],
+            c: dc.int64, S: dc.float64[1]):
 
     P0 = np.zeros((NR, NM), dtype=np.complex128)
     P1 = np.zeros((NR, NM), dtype=np.complex128)
@@ -39,8 +40,6 @@ sdfg = contour.to_sdfg()
 
 sdfg.save("log_sdfgs/contour_forward.sdfg")
 
-
 add_backward_pass(sdfg=sdfg, inputs=["Y"], outputs=["S"])
 
 sdfg.save("log_sdfgs/contour_backward.sdfg")
-

@@ -13,8 +13,7 @@ N, Nt = 32, 32
 
 
 @dc.program
-def getAcc(pos: dc.float64[N, 3], mass: dc.float64[N], G: dc.float64,
-           softening: dc.float64):
+def getAcc(pos: dc.float64[N, 3], mass: dc.float64[N], G: dc.float64, softening: dc.float64):
     """
     Calculate the acceleration on each particle due to Newton's Law 
     pos  is an N x 3 matrix of positions
@@ -61,8 +60,7 @@ def getAcc(pos: dc.float64[N, 3], mass: dc.float64[N], G: dc.float64,
 
 
 @dc.program
-def getEnergy(pos: dc.float64[N, 3], vel: dc.float64[N, 3],
-              mass: dc.float64[N], G: dc.float64):
+def getEnergy(pos: dc.float64[N, 3], vel: dc.float64[N, 3], mass: dc.float64[N], G: dc.float64):
     """
     Get kinetic energy (KE) and potential energy (PE) of simulation
     pos is N x 3 matrix of positions
@@ -115,17 +113,14 @@ def getEnergy(pos: dc.float64[N, 3], vel: dc.float64[N, 3],
 
 
 @dc.program
-def nbody(mass: dc.float64[N], pos: dc.float64[N, 3], vel: dc.float64[N, 3],
-          dt: dc.float64, G: dc.float64, softening: dc.float64, S: dc.float64[1]):
+def nbody(mass: dc.float64[N], pos: dc.float64[N, 3], vel: dc.float64[N, 3], dt: dc.float64, G: dc.float64,
+          softening: dc.float64, S: dc.float64[1]):
 
     # Convert to Center-of-Mass frame
     # vel -= np.mean(mass * vel, axis=0) / np.mean(mass)
     # vel -= np.mean(np.reshape(mass, (N, 1)) * vel, axis=0) / np.mean(mass)
     # tmp = np.divide(np.mean(np.reshape(mass, (N, 1)) * vel, axis=0), np.mean(mass))
-    np.subtract(vel,
-                np.mean(np.reshape(mass,
-                                   (N, 1)) * vel, axis=0) / np.mean(mass),
-                out=vel)
+    np.subtract(vel, np.mean(np.reshape(mass, (N, 1)) * vel, axis=0) / np.mean(mass), out=vel)
 
     # calculate initial gravitational accelerations
     acc = getAcc(pos, mass, G, softening)
@@ -157,18 +152,13 @@ def nbody(mass: dc.float64[N], pos: dc.float64[N, 3], vel: dc.float64[N, 3],
         # get energy of system
         KE[i + 1], PE[i + 1] = getEnergy(pos, vel, mass, G)
 
-    @dc.map(_[0:Nt+1])
-    def summap(i):
-        s >> S(1, lambda x, y: x + y)[0]
-        z << KE[i]
-        s = z
+    S[0] = np.sum(KE)
     return KE, PE
 
 
 sdfg = nbody.to_sdfg()
 
 sdfg.save("log_sdfgs/nbody_forward.sdfg")
-
 
 add_backward_pass(sdfg=sdfg, inputs=["mass"], outputs=["S"])
 

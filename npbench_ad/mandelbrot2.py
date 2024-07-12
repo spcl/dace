@@ -4,6 +4,7 @@ from dace.autodiff import add_backward_pass
 
 XN, YN, N, M = 32, 32, 32, 32
 
+
 @dc.program
 def mgrid(X: dc.int64[M, N], Y: dc.int64[M, N]):
     for i in range(M):
@@ -20,8 +21,8 @@ def linspace(start: dc.float64, stop: dc.float64, X: dc.float64[N]):
 
 
 @dc.program
-def mandelbrot(xmin: dc.float64, xmax: dc.float64, ymin: dc.float64,
-               ymax: dc.float64, maxiter: dc.int64, horizon: dc.float64):
+def mandelbrot(xmin: dc.float64, xmax: dc.float64, ymin: dc.float64, ymax: dc.float64, maxiter: dc.int64,
+               horizon: dc.float64, S: dc.float64[1]):
     # Adapted from
     # https://thesamovar.wordpress.com/2009/03/22/fast-fractals-with-python-and-numpy/
     Xi = np.ndarray((XN, YN), dtype=np.int64)
@@ -48,10 +49,10 @@ def mandelbrot(xmin: dc.float64, xmax: dc.float64, ymin: dc.float64,
     I = np.ndarray((XN * YN, ), dtype=np.bool_)
     length = XN * YN
     k = 0
-    while length > 0 and k < maxiter:
-        # for k in range(maxiter):
-        #     if length <= 0:
-        #         break
+
+    for k in range(maxiter):
+        if length <= 0:
+            break
 
         # Compute for relevant points only
         Z[:length] = np.multiply(Z[:length], Z[:length])
@@ -67,8 +68,7 @@ def mandelbrot(xmin: dc.float64, xmax: dc.float64, ymin: dc.float64,
                 Z_[Xiv[j], Yiv[j]] = Z[j]
 
         # Keep going with those who have not diverged yet
-        I[:length] = np.logical_not(
-            I[:length])  # np.negative(I, I) not working any longer
+        I[:length] = np.logical_not(I[:length])  # np.negative(I, I) not working any longer
         count = 0
         # for j in range(length):
         #     if I[j]:
@@ -93,19 +93,14 @@ def mandelbrot(xmin: dc.float64, xmax: dc.float64, ymin: dc.float64,
                 Cv[count] = Cv[j]
                 count += 1
         length = count
-        k += 1
 
-    @dc.map(_[0:XN, 0:YN])
-    def summap(i, j):
-        s >> S(1, lambda x, y: x + y)[0]
-        z << N_[i, j]
-        s = z
+    S[0] = np.sum(Cv)
     return Z_.T, N_.T
+
 
 sdfg = mandelbrot.to_sdfg()
 
 sdfg.save("log_sdfgs/mandelbrot_forward.sdfg")
-
 
 add_backward_pass(sdfg=sdfg, inputs=["xmin"], outputs=["S"])
 

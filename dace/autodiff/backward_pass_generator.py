@@ -310,12 +310,12 @@ class BackwardPassGenerator:
         if sdfg is backward_sdfg:
             # TODO: why is this condition necessary
             # this only makes sense if the output is a single scalar.
-            if len(given_gradients) != 1:
-                raise AutoDiffException("When the forward sdfg is the same as the backward sdfg, outputs must be a"
-                                        "single scalar")
-            if not _is_int_value(sdfg.arrays[given_gradients[0].data].total_size, 1):
-                raise AutoDiffException("When the forward sdfg is the same as the backward sdfg, outputs must be a"
-                                        "single scalar")
+            # if len(given_gradients) != 1:
+            #     raise AutoDiffException("When the forward sdfg is the same as the backward sdfg, outputs must be a"
+            #                             "single scalar")
+            # if not _is_int_value(sdfg.arrays[given_gradients[0].data].total_size, 1):
+            #     raise AutoDiffException("When the forward sdfg is the same as the backward sdfg, outputs must be a"
+            #                             "single scalar")
             self.separate_sdfgs = False
         else:
             self.separate_sdfgs = True
@@ -1020,7 +1020,7 @@ class BackwardPassGenerator:
         self.backward_grad_arrays[grad_name] = cloned_datadesc
         self.backward_sdfg.arrays[grad_name] = copy.deepcopy(cloned_datadesc)
 
-    def _state_within_loop(self, forward_state: SDFGState) -> bool:
+    def _state_within_loop(self, forward_state: SDFGState) -> Tuple[bool, LoopRegion]:
         """
         Check if this state will be executed several times within a loop.
         We check if any of the parents of this state is a loop region.
@@ -1028,9 +1028,22 @@ class BackwardPassGenerator:
         parent = forward_state.parent_graph
         while parent is not None:
             if isinstance(parent, LoopRegion):
-                return True
+                return True, parent
             parent = parent.parent_graph
-        return False
+        return False, None
+
+    def _get_all_enclosing_loops(self, forward_state: SDFGState) -> List[LoopRegion]:
+        """
+        Check if this state will be executed several times within a loop.
+        We check if any of the parents of this state is a loop region.
+        """
+        all_loops = []
+        parent = forward_state.parent_graph
+        while parent is not None:
+            if isinstance(parent, LoopRegion):
+                all_loops.append(parent)
+            parent = parent.parent_graph
+        return all_loops
 
     def _reverse_loop_conditional(self, loop: LoopRegion) -> str:
         """
@@ -2547,6 +2560,215 @@ class BackwardPassGenerator:
             )
         return new_backward_state
 
+    def _get_all_path_edges(self, state: SDFGState, source: nodes.Node,
+                            starting_edge: dgraph.MultiConnectorEdge) -> List[dgraph.MultiConnectorEdge]:
+        """
+        We will start from the target node and go back until we reach the destination.
+        Starting edge should be an in node 
+        """
+        all_edges = []
+        memlet_path = state.memlet_path(starting_edge)
+        all_edges += memlet_path
+        first_source = memlet_path[0].src
+        if first_source == source:
+            return all_edges
+
+        # If there is only one edge coming to the first node
+        if state.in_degree(first_source) == 1:
+            edge = state.in_edges(first_source)[0]
+            memlet_path = state.memlet_path(edge)
+            all_edges += memlet_path
+            first_source = memlet_path[0].src
+            if first_source == source:
+                return all_edges
+
+        raise AutoDiffException("Can't easily find path. Upgrade function.")
+
+    def _connect_forward_accessnode_not_overwritten(self, forward_state: SDFGState, backward_state: SDFGState,
+                                                    forward_node: nodes.AccessNode, target_node: nodes.Node,
+                                                    starting_edge: dgraph.MultiConnectorEdge):
+        """
+        Replicate and connect the forward AccessNode to the requesting node in the backward pass.
+        Because the AccessNode has not been overwritten, we just need to create the same connection
+        in the backward pass.
+        """
+
+        # First, replicate the AccessNode and add it to the backward pass
+        replicated_node = copy.deepcopy(forward_node)
+        backward_state.add_node(replicated_node)
+        if self.separate_sdfgs:
+            # Need to copy over the descriptor from the forward pass
+            data_name = replicated_node.data
+            data_desc = copy.deepcopy(forward_node.desc(self.sdfg))
+            if data_name not in self.backward_sdfg.arrays:
+                self.backward_sdfg.add_datadesc(data_name, data_desc)
+
+            # We also need to forward this array
+            if data_name not in self.backward_input_arrays:
+                # If the data is needed inside a NestedSDFG
+                # This will make sure the added array is correcyly forwarded
+                # and an in connector to the NestedSDFG is added
+                self.backward_input_arrays[data_name] = data_desc
+
+        # We replicate the excat link between this forward access node and the target node
+        # Get all the edges in the path
+        all_edges_inbetween = self._get_all_path_edges(state=forward_state,
+                                                       source=forward_node,
+                                                       starting_edge=starting_edge)
+
+        # A dictionary to keep track of temporary nodes in the path
+        replicated_tmp_nodes = []
+
+        # For each edge in the path
+        for edge in all_edges_inbetween:
+            src, src_conn, dst, dst_conn, data = edge
+            bwd_src, bwd_src_conn, bwd_dst, bwd_dst_conn, bwd_data = src, src_conn, dst, dst_conn, copy.deepcopy(data)
+
+            # If the destination is a map entry,
+            if isinstance(dst, nodes.MapEntry):
+                # We need to get the corresponding map entry in the backward pass.
+                bwd_dst = self._find_backward_entry_node_for_map_entry(forward_state=forward_state,
+                                                                       backward_state=backward_state,
+                                                                       entry_node=dst)
+                # Add the dst connector to the map
+                assert bwd_dst.add_in_connector(bwd_dst_conn)
+
+            # If the destination is a map entry,
+            if isinstance(src, nodes.MapEntry):
+                # We need to get the corresponding map entry in the backward pass.
+                bwd_src = self._find_backward_entry_node_for_map_entry(forward_state=forward_state,
+                                                                       backward_state=backward_state,
+                                                                       entry_node=src)
+                # Add the src connector to the map
+                assert bwd_src.add_out_connector(bwd_src_conn)
+
+            if src is forward_node:
+                # If this is the node we replicated
+                bwd_src = replicated_node
+            elif isinstance(src, nodes.AccessNode):
+                # This is a temporary AccessNodes
+                # we should have already seen and replicated this
+                assert src in replicated_tmp_nodes
+                bwd_src = replicated_tmp_nodes[src]
+
+            if dst is target_node:
+                # if this is the final connection node
+                bwd_dst = self.reverse_map[dst]
+            elif isinstance(dst, nodes.AccessNode):
+                # This is a temporary AccessNodes
+                # we want to replicate and add it to the path
+                bwd_dst = copy.deepcopy(dst)
+                backward_state.add_node(bwd_dst)
+                replicated_tmp_nodes[dst] = bwd_dst
+
+            # Add the edge to the backward state
+            backward_state.add_edge(bwd_src, bwd_src_conn, bwd_dst, bwd_dst_conn, bwd_data)
+
+    def _connect_forward_accessnode(self, forward_state: SDFGState, backward_state: SDFGState,
+                                    forward_node: nodes.AccessNode, target_node: nodes.Node,
+                                    starting_edge: dgraph.MultiConnectorEdge):
+        """
+        We need to forward an array from the forward pass to the backward pass.
+        To do this we first check if this array has been overwritten or not.
+        If the array has not been overwritten, we just need to replicate it
+        in the backward pass and then forward it. 
+        If the array has been overwritten, we pick a strategy for this AN:
+            - Store strategy: 
+                - We modify the forward pass to save the values in a new array
+                - Connect this new array to the node in the backward pass
+            - Recomputation:
+                - Add the recomputation as a NestedSDFG
+                - Connect the output of the NestedSDFG to the node in the backward pass
+        """
+
+        # First, we check if the node has been overwritten
+        overwritten, recomputable = self._check_node_overwrite(state=forward_state, node=forward_node)
+
+        if not overwritten:
+            # We still have access to this data
+            self._connect_forward_accessnode_not_overwritten(forward_state, backward_state, forward_node, target_node,
+                                                             starting_edge)
+            return
+
+        # The data has been overwritten
+        # Choose what strategy to apply for this AN
+        strategy = self._get_overwrite_resolution_strategy()
+
+        if strategy == "store":
+            self._resolve_overwrite_with_store()
+        else:
+            self._resolve_overwrite_with_recomputation()
+
+        # Post-processing fixes
+
+    def _resolve_overwrite_with_recomputation(self):
+        """
+        """
+
+    def _connect_stored_array_to_taregt(self):
+        """
+        """
+
+    def _resolve_overwrite_with_store(self, forward_state: SDFGState, starting_edge: dstate.MultiConnectorEdge):
+        """
+        Given the AccessNode pointing to the data required by the backward pass,
+        We will save the values of this array in a new array and forward it to the backward pass.
+        """
+
+        # Modify the forward pass to save the data in a new array
+        new_stored_array, memlets = self._store_data(forward_state, starting_edge)
+
+        # Connect the new array to the target node
+        self._connect_stored_array_to_taregt()
+
+    def _get_overwrite_resolution_strategy(self):
+        """
+        Choose a strategy for resolving overwritten data that we need to forward to the backward passs.
+        If the user wants a specific strategy, we use it.
+        Otherwise, we evaluate what strategy is best for this specific node.
+        """
+        if self.strategy == "store_all":
+            return "store"
+        elif self.strategy == "recompute_all":
+            return "recompute"
+        elif self.strategy == "dynamic":
+            return self._choose_overwrite_resolution_strategy()
+
+        raise AutoDiffException("Please specify a valid overwrite resolution strategy."
+                                "Expected either store_all, recompute_all, or dynamic"
+                                f"but got {self.strategy}")
+
+    def _choose_overwrite_resolution_strategy(self):
+        """
+        Evaluate what is the best strategy to resolve the overwritten forward_node.
+        """
+        return "store"
+
+    def _get_accessnode_to_forward(self, forward_state: SDFGState, backward_state: SDFGState,
+                                   forward_node: nodes.AccessNode):
+        """
+        Check if this AccessNode is at the base level of the state. If yes, this is the node we want to connect
+        Otherwise, in the case the AN is encolsed by maps, we walk up the maps until we find the source AN.
+        """
+        scope_dict = forward_state.scope_dict()[forward_node]
+        is_base_level = scope_dict is None
+        if is_base_level:
+            return forward_node
+        else:
+            # The node is within a map nest
+            # It should have an in edge leading to the original AN
+            in_edges = forward_state.in_edges(forward_node)
+            assert len(in_edges) == 1
+
+            # Get the memlet path and the original AN
+            memlet_path = forward_state.memlet_path(in_edges[0])
+            original_an = memlet_path[0]
+            assert isinstance(original_an, nodes.AccessNode)
+
+            # This should be a base level AN
+            assert forward_state.scope_dict()[original_an] is None
+            return original_an
+
     def _connect_forward_inputs(self, state: SDFGState, backward_state: SDFGState, forward_node: nodes.Node,
                                 backward_node: nodes.Node, required_inputs: Dict[str, str]):
         """ Connect the reversed node of `forward_node` to all required non-gradient inputs.
@@ -2579,186 +2801,56 @@ class BackwardPassGenerator:
         input_edges_to_connect = (edge for edge in state.in_edges(forward_node) if edge.dst_conn in required_inputs)
 
         for edge in input_edges_to_connect:
-            # boolean to decide if the source of this edge needs to be replicated
+            # Boolean to decide if the source of this edge needs to be replicated
             replicate_node = False
 
-            # boolean to decide if the connection to the replicated node is required
-            # this is set to False if the connection has already been established
+            # Boolean to decide if the connection to the replicated node is required
+            # This is set to False if the connection has already been established
             connect_replicated_node = True
             edge_src = edge.src
             next_required_inputs: Dict[Optional[str], Optional[str]]
             replicated_edge_src: nodes.Node
             replicated_edge_src_conn: str
+
             if isinstance(edge_src, nodes.MapEntry):
-                # in the map case, the map must already exist in the bwd pass
-                # (the following function call internally asserts this)
-                replicated_edge_src = self._find_backward_entry_node_for_map_entry(forward_state=state,
-                                                                                   backward_state=backward_state,
-                                                                                   entry_node=edge_src)
-                new_in_conn, new_out_conn = _add_through_connector(replicated_edge_src)
+                # In the map case, we need to connect the AN at the start of this memlet path
+                memlet_path = state.memlet_path(edge)
 
-                replicated_edge_src_conn = new_out_conn
+                # Get the AccessNode at the start of this path
+                starting_edge = memlet_path[0]
+                starting_an = starting_edge.src
+                assert isinstance(starting_an, nodes.AccessNode)
 
-                # the inverse connector of edge.src_conn should be connected
-                # to the new through connector we made
-                next_required_inputs = {_invert_map_connector(edge.src_conn): new_in_conn}
-
-            elif isinstance(edge_src, nodes.AccessNode):
-                is_base_level = state.scope_dict()[edge_src] is None
-                data_name = edge_src.data
-                data_desc = copy.deepcopy(edge_src.desc(self.sdfg))
-                if self.separate_sdfgs:
-                    # need to copy over the descriptor from the forward pass
-                    if data_name not in self.backward_sdfg.arrays:
-                        self.backward_sdfg.add_datadesc(data_name, data_desc)
-
-                if not is_base_level:
-                    # this is a temporary value that needs to be stored
-                    # replicate the node now since we need to connect it to the new AccessNode
-                    replicate_node = False
-                    replicated_edge_src_conn = edge.src_conn
-
-                    # node has not been replicated yet: do it now
-                    replicated_edge_src = copy.deepcopy(edge_src)
-                    backward_state.add_node(replicated_edge_src)
-
-                    # add the connection from the repliacted node to the tasklet
-                    new_edge_data = copy.deepcopy(edge.data)
-                    backward_state.add_edge(replicated_edge_src, replicated_edge_src_conn, backward_node,
-                                            required_inputs[edge.dst_conn], new_edge_data)
-                    connect_replicated_node = False
-
-                    # get the sink edge going into this AccessNode
-                    sink_edge = state.in_edges(edge_src)
-
-                    assert len(sink_edge) == 1
-                    sink_edge = sink_edge[0]
-
-                    # get the AccessNode that the temporary values are coming from
-                    edge_list = state.memlet_path(sink_edge)
-                    assert len(edge_list) > 0
-                    source_edge = edge_list[0]
-                    original_accessnode = source_edge.src
-                    assert isinstance(original_accessnode, nodes.AccessNode)
-
-                    # check if this AccessNode has been overwritten
-                    overwritten, recomputable = self._check_node_overwrite(state=state, node=edge_src)
-                    if overwritten:
-                        # we lost values that are necessary for the backward pass
-                        if self.strategy == "store_all":
-                            # we need to modify the forward pass to store these neccessary values
-                            new_store_accessnode, memlets = self._store_data(state=state, edge=source_edge)
-
-                            # duplicate the memlets because this object is stored and can be used multiple times
-                            memlets = copy.deepcopy(memlets)
-
-                            self._connect_temporary_to_accessnode(state, new_store_accessnode, replicated_edge_src,
-                                                                  memlet_list, sink_edge)
-                        elif self.strategy == "recompute_all":
-                            replicate_node = False
-                            connect_replicated_node = False
-                    else:
-                        # the data has not been overwritten
-                        # we just need to connect the original AccessNode in the backward state
-                        # first, get the memlets
-                        memlet_list = []
-
-                        # for each map in the path
-                        for e in edge_list:
-                            edge_src = e.src
-                            if isinstance(edge_src, nodes.MapEntry):
-                                memlet_list.append(e.data)
-                        # replicate the original access node
-                        replicated_original_accessnode = copy.deepcopy(original_accessnode)
-                        backward_state.add_node(replicated_original_accessnode)
-                        # connect the nodes
-                        self._connect_temporary_to_accessnode(state, backward_state, replicated_original_accessnode,
-                                                              replicated_edge_src, memlet_list, sink_edge)
-                else:
-                    # base-case: we have reached a base level AccessNode.
-                    # check if this AccessNode has been overwritten
-                    overwritten, recomputable = self._check_node_overwrite(state=state, node=edge_src)
-
-                    if overwritten:
-                        # we lost values that are necessary for the backward pass
-                        if self.strategy == "store_all":
-
-                            # we need to modify the forward pass to store these neccessary values
-                            new_store_accessnode, memlets = self._store_data(state=state, edge=edge)
-
-                            # replicate the new store node from the forward state
-                            replicated_new_store_accessnode = copy.deepcopy(new_store_accessnode)
-                            backward_state.add_node(replicated_new_store_accessnode)
-
-                            # we will traverse the memlets in the reverse order
-                            # that they were added from the forward pass
-                            last_memlet = memlets.pop()
-                            last_memlet = copy.deepcopy(last_memlet)
-
-                            # add the new edge
-                            backward_state.add_edge(replicated_new_store_accessnode, None, backward_node,
-                                                    required_inputs[edge.dst_conn], last_memlet)
-
-                            # set the boolean to False to avoid adding the connection again
-                            connect_replicated_node = False
-
-                            # extract the edge to the new store node to get the memlet path
-                            new_edge = backward_state.out_edges(replicated_new_store_accessnode)
-
-                            # sanity check: there should be only one edge on this node
-                            assert len(new_edge) == 1
-                            new_edge = new_edge[0]
-
-                            # get the memlet path to update the memlets accordingly
-                            edge_list = backward_state.memlet_path(new_edge)
-
-                            # modify the memlets of the backward connections to the maps
-                            for e in edge_list:
-                                edge_src = e.src
-                                if isinstance(edge_src, nodes.MapEntry):
-                                    memlet_data = memlets.pop()
-                                    memlet_data = copy.deepcopy(memlet_data)
-                                    e.data = memlet_data
-
-                            # sanity check: there should be the same number of connections
-                            assert len(memlets) == 0
-
-                        elif self.strategy == "recompute_all":
-                            replicate_node = False
-                            connect_replicated_node = False
-                            # if we can recompute this value
-                            if recomputable:
-                                # call a function that inserts a recomputation nested-sdfg into the map nest
-                                self._recompute_data(state=state, backward_state=backward_state, edge=edge)
-                                connector_to_clean = required_inputs[edge.dst_conn]
-                                self._clean_after_recomputation(forward_state=state,
-                                                                backward_state=backward_state,
-                                                                edge=edge,
-                                                                connector_to_clean=connector_to_clean)
-                            else:
-                                # throw an exception in case a value can't be recomputed and the recompute all strategy was used
-                                raise AutoDiffException(
-                                    f"Attempting to recompute the node {edge_src.data}, but this node is not recomputable."
-                                )
-                            pass
-                    else:
-                        # if not, nothing to do
-                        # this value must be forwarded.
-                        replicate_node = True
-                        if data_name not in self.backward_input_arrays:
-                            self.backward_input_arrays[data_name] = data_desc
-
-                        if self.separate_sdfgs:
-                            # because we need to forward this, the descriptor
-                            # is no longer transient
-                            data_desc.transient = False
+                # Call the function to connect this required AccessNode
+                self._connect_forward_accessnode(state, backward_state, starting_an, forward_node, edge)
 
                 # No further recusrive calls are required
                 # in this branch; next_required_inputs stays empty
                 next_required_inputs = {}
+
+                # Everything will be done in the connect forward accessnode function
+                replicate_node = False
+                connect_replicated_node = False
+
+            elif isinstance(edge_src, nodes.AccessNode):
+                # Get the AccessNode to connect
+                an_to_connect = self._get_accessnode_to_forward(state, backward_state, edge_src)
+
+                # Call the function to connect this required AccessNode
+                self._connect_forward_accessnode(state, backward_state, an_to_connect, forward_node, edge)
+
+                # No further recusrive calls are required
+                # in this branch; next_required_inputs stays empty
+                next_required_inputs = {}
+
+                # Everything will be done in the connect forward accessnode function
+                replicate_node = False
+                connect_replicated_node = False
+
             elif isinstance(edge_src, nodes.Tasklet):
+
                 replicate_node = True
-                # in the tasklet case, we need to connect all inputs
+                # In the tasklet case, we need to connect all inputs
                 next_required_inputs = {c: c for c in edge_src.in_connectors}
             else:
                 raise AutoDiffException("Unsupported node")
@@ -2785,7 +2877,7 @@ class BackwardPassGenerator:
 
                 if isinstance(edge_src, nodes.AccessNode) and isinstance(data_desc, dt.View):
                     if self.separate_sdfgs:
-                        # remove the view connector
+                        # Remove the view connector
                         assert replicated_edge_src.remove_in_connector("views")
                     else:
                         # if this is a view, we need to connect it to the AccessNode it is viewing
@@ -2806,12 +2898,12 @@ class BackwardPassGenerator:
                             backward_state.sdfg.add_datadesc(view_origin.data, origin_desc)
                         backward_state.add_edge(replicated_view, None, replicated_edge_src, "views", view_memlet)
 
-                # add the new edge
+                # Add the new edge
                 backward_state.add_edge(replicated_edge_src, replicated_edge_src_conn, backward_node,
                                         required_inputs[edge.dst_conn], new_edge_data)
 
             if next_required_inputs:
-                # if there are any required inputs on the new node, we need to
+                # If there are any required inputs on the new node, we need to
                 # recursively call
                 self._connect_forward_inputs(state, backward_state, edge.src, replicated_edge_src, next_required_inputs)
 
@@ -3145,95 +3237,10 @@ class BackwardPassGenerator:
         forward_subgraph = dstate.StateSubgraphView(state, list(forward_nodes.intersection(backward_nodes)))
         return forward_subgraph
 
-    def _store_data_direct_access(self, state: SDFGState,
-                                  edge: dgraph.MultiConnectorEdge) -> Tuple[nodes.AccessNode, List[Memlet]]:
+    def _store_data(self, forward_state: SDFGState, backward_state: SDFGState, forward_an: nodes.AccessNode,
+                    target_node: nodes.Node, edge: dgraph.MultiConnectorEdge) -> Tuple[nodes.AccessNode, List[Memlet]]:
         """
-        """
-        # get the AccessNode we want to save data from
-        node: nodes.AccessNode = edge.src
-
-        # make sure this is indeed an AccessNode
-        assert isinstance(node, nodes.AccessNode)
-
-        # get all the maps in the path from the accessnode to the desired tasklet
-        edge_list = state.memlet_path(edge)
-
-        # there should be at least two edges in the path
-        assert len(edge_list) == 1
-
-        # create and add the new access node that contains the saved values
-        if "stored_" + node.data not in self.backward_sdfg.arrays:
-            new_store_node_name = "stored_" + node.data
-        else:
-            i = 0
-            while True:
-                if f"stored_{i}_" + node.data not in self.backward_sdfg.arrays:
-                    new_store_node_name = f"stored_{i}_" + node.data
-                    break
-                i += 1
-        # first, get the shape of the new array
-        shape_list = []
-        # we will also need the starting range of the maps in the path
-        start_range = []
-        # and the names of the parameters of the maps in the path
-        param_list = []
-
-        nb_enclosing_loops = 0
-        if self._state_within_loop(state):
-            # add an extra dimension to the shapes
-            # we need to check all of the loops tha enclose this state and their information
-            loop_guards = self._get_loop_guard_enclosing_state(forward_state=state)
-            nb_enclosing_loops = len(loop_guards)
-            for guard in loop_guards:
-                found, begin_edge, after_loop_edge, after_loop_state = self._find_for_loop(guard=guard)
-                itervar, (start, end, step), (start_state, end_state) = found
-
-                # add to the shapes and ranges list
-                shape_list.insert(0, end + 1)
-                start_range.insert(0, start)
-                param_list.insert(0, itervar)
-
-        # get the shape of the original array
-        shape = self.sdfg.arrays[node.data].shape
-        shape_list += shape
-        # create a map to copy all of the array
-        # add the array descriptor and AccessNode to the forward state
-        original_desc = node.desc(state)
-        new_store_node = state.add_array(
-            name=new_store_node_name,
-            shape=shape_list,
-            dtype=original_desc.dtype,
-            transient=True,
-        )
-
-        # the loop accesses will be the same within the state
-        # prepare them for all edges
-        loop_access = ','.join([f'{param_list[i]}' for i in range(0, nb_enclosing_loops)])
-
-        in_state_access = ','.join([f'0:{s}' for s in shape])
-
-        memlet_data = Memlet(expr=f"{new_store_node.data}[{loop_access},{in_state_access}]")
-
-        # connect the last map exist to the newly created store node
-        # add the new edge
-        state.add_edge(
-            node,  # the last MapExist
-            None,  # the last MapExist connector
-            new_store_node,  # the new store AccessNode
-            None,
-            memlet_data)
-
-        # create the memlet to add to the backward pass
-        for start, end, stride in edge.data.subset:
-            # add the subset to the list
-            loop_access += f",{start}:{end+1}" if len(start.free_symbols) == 0 else f",{start}"
-
-        memlet_data = Memlet(expr=f"{new_store_node.data}[{loop_access}]")
-        return new_store_node, [memlet_data]
-
-    def _store_data(self, state: SDFGState, edge: dgraph.MultiConnectorEdge) -> Tuple[nodes.AccessNode, List[Memlet]]:
-        """
-        Given an edge leading from a base-level AccessNode to a map in the forward state,
+        Given an edge leading an AccessNode or a map to the target node in the forward state,
         add a path from the connector for this AccessNode to store its values for all iterations.
         This can increase the dimension of the array. i.e. the size of the stored array is
         greater or equal to the size of the original array.
@@ -3242,181 +3249,102 @@ class BackwardPassGenerator:
         :return: the new AccessNode which contains the stored data, 
                  a list of memlets connecting an assign tasklet to this new AccessNode.
         """
-        # get the AccessNode we want to save data from
-        node: nodes.AccessNode = edge.src
 
-        # make sure this is indeed an AccessNode
-        assert isinstance(node, nodes.AccessNode)
+        # Get the connector and edge to save
+        if isinstance(edge.src, nodes.AccessNode) and edge.src is not forward_an:
 
-        # get all the maps in the path from the accessnode to the desired tasklet
-        edge_list = state.memlet_path(edge)
+            # Get the incoming edge to this AccessNode
+            in_edges = forward_state.in_edges()
 
-        # there should be at least two edges in the path
-        if len(edge_list) == 1:
-            new_store_node, memlets_stack = self._store_data_direct_access(state=state, edge=edge)
-            return new_store_node, memlets_stack
+            # There should only be one incoming edge
+            assert len(in_edges) == 1
 
-        # get the last map in the path.
-        last_edge = edge_list[-1]
+            # Get the memlet path for the edge incoming to this AccessNode
+            memlet_path = forward_state.memlet_path(in_edges[0])
 
-        # this is the map that contains the connector for the value we want to store
-        last_map: nodes.MapEntry = last_edge.src
+            # The start of this path should be the forward AccessNode
+            assert forward_an is memlet_path[0].src
 
-        # make sure this is indeed an MapEntry
-        assert isinstance(last_map, nodes.MapEntry)
+            # The last edge in the memlet path hsa the connector we want to save
+            edge = memlet_path[-1]
 
-        last_map_connector = last_edge.src_conn
-
-        # create the assign tasklet and add it to the forward state
-        assign_tasklet_node_in_connector = "in_stored_" + last_map_connector
-        assign_tasklet_node_out_connector = "out_stored_" + last_map_connector
-        assign_tasklet_node = nodes.Tasklet(
-            label=f"__store_{node.data}_assign_",
-            inputs={assign_tasklet_node_in_connector},
-            outputs={assign_tasklet_node_out_connector},
-            code=f"{assign_tasklet_node_out_connector} = {assign_tasklet_node_in_connector}",
-        )
-        state.add_node(assign_tasklet_node)
-
-        # create the memlet for the assignement
-        # this will be the same as the memlet going to the tasklet
-        assign_memlet_data = copy.deepcopy(last_edge.data)
-
-        # add the new edge from the last map to the new assign tasklet
-        state.add_edge(last_map, last_map_connector, assign_tasklet_node, assign_tasklet_node_in_connector,
-                       assign_memlet_data)
-
-        # create and add the new access node that contains the saved values
-        # first check if a stored array with this name already exists
-        if "stored_" + node.data not in self.backward_sdfg.arrays:
-            new_store_node_name = "stored_" + node.data
+        # Add a new AccessNode and array to the forward pass
+        # First, check if a stored array with this name already exists
+        if "stored_" + forward_an.data not in self.backward_sdfg.arrays:
+            new_store_node_name = "stored_" + forward_an.data
         else:
             i = 0
             while True:
-                if f"stored_{i}_" + node.data not in self.backward_sdfg.arrays:
-                    new_store_node_name = f"stored_{i}_" + node.data
+                if f"stored_{i}_" + forward_an.data not in self.backward_sdfg.arrays:
+                    new_store_node_name = f"stored_{i}_" + forward_an.data
                     break
                 i += 1
 
-        # first, get the shape of the new array
-        shape_list = []
-        # we will also need the starting range of the maps in the path
-        start_range = []
-        # and the names of the parameters of the maps in the path
-        param_list = []
+        # Get the new array shape
+        # This will be the shape of the current array
+        shape: List[int] = self.sdfg.arrays[forward_an.data].shape
 
-        for e in edge_list:
-            edge_src = e.src
-            if isinstance(edge_src, nodes.MapEntry):
-                for rng in edge_src.map.range.ranges:
-                    # the range contains the last index in the loop
-                    # while we want the size so we add 1
-                    shape_list.append(rng[1] + 1)
-                    start_range.append(rng[0])
-                for par in edge_src.map.params:
-                    param_list.append(par)
+        # Plus any enclosing loops
+        encolsed, _ = self._state_within_loop(forward_state=forward_state)
+        if encolsed:
+            # Get all incolsing loops
+            all_encolsing_loops = self._get_all_enclosing_loops(forward_state=forward_state)
 
-        nb_enclosing_loops = 0
-        if self._state_within_loop(state):
-            # add an extra dimension to the shapes
-            # we need to check all of the loops tha enclose this state and their information
-            loops = self._get_state_enclosing_loops(forward_state=state)
+            # Get the size of each loop and add it to the list
+            for loop in all_encolsing_loops:
+                # Get the end of the loop
+                _, end = self._extract_loop_region_info(loop)
 
-            for loop in loops:
-                # TODO create the find loop function for LoopRegions
-                itervar, start, end = loop.loop_variable
+                # TODO: This assumes the loop is increasing
+                shape.insert(0, end)
 
-                # add to the shapes and ranges list
-                # TODO if the loop bounds are symbolic what to do
-                shape_list.insert(0, end + 1)
-                start_range.insert(0, start)
-                param_list.insert(0, itervar)
-
-        # add the array descriptor and AccessNode to the forward state
-        original_desc = node.desc(state)
-        new_store_node = state.add_array(
+        # Add the array descriptor and AccessNode to the forward state
+        original_desc = forward_an.desc(forward_state)
+        new_store_node = forward_state.add_array(
             name=new_store_node_name,
-            shape=shape_list,
+            shape=shape,
             dtype=original_desc.dtype,
             transient=True,
         )
 
-        # we will save the memlets we create an return them
-        # this is useful to make the connections for the backward state
-        memlets_stack = []
+        # Connect the edge source and connector to the new access node
+        # If the AccessNode is at base level
+        if edge.src is forward_an:
+            # Copy the memlet
+            memlet_data = copy.deepcopy(edge.data)
 
-        # connect the assign tasklet to the corresponding mapexists iterativly
-        # until we reach the final AccessNode
-        parent_node = assign_tasklet_node
-        parent_node_connector = assign_tasklet_node_out_connector
+            # We can connect the two AccessNodes directly
+            backward_state.add_edge(forward_an, None, new_store_node, None, memlet_data)
 
-        # the parameters to add for the current memlet in the loop
-        # at first we will use all of the parameters
-        params_to_add = param_list
+            return new_store_node, [memlet_data]
 
-        # the loop accesses will be the same within the state
-        # prepare them for all edges
-        loop_access = ','.join([f'{param_list[i]}' for i in range(0, nb_enclosing_loops)])
+        # In the other cases, we need to route the storing through maps
+        all_edges = self._get_all_path_edges(forward_state, forward_an, target_node)
+        
+        # TODO: probably need to change this to an assign tasklet
+        previous_node = all_edges[-1].src
+        previous_node_in_connector = None
+        for edge in reversed(all_edges):
+            if isinstance(edge.dst, nodes.MapEntry):
+                # Get the corresponding map exit
+                map_exist = forward_state.exit_node(edge.dst)
 
-        # for each map in the path
-        for e in reversed(edge_list):
-            edge_src = e.src
-            if isinstance(edge_src, nodes.MapEntry):
-                # get the corresponding map exit
-                child_node = self._find_map_exist_for_map_entry(map_entry=edge_src, state=state)
-                # get a new connector id
-                next_conn = child_node.next_connector()
+                # Add the Connectors to the map
+                map_exist.add_in_connector(f"IN_{new_store_node.label}")
+                map_exist.add_out_connector(f"OUT_{new_store_node.label}")
 
-                # add a new in connector to the mapexit
-                child_node_in_connector = "IN_stored_" + node.data + "_" + next_conn
-                assert child_node.add_in_connector(child_node_in_connector)
+                # Connect the previous node to this map exist
+                forward_state.add_edge(previous_node, previous_node_in_connector, map_exist,
+                                       f"OUT_{new_store_node.label}", memlet_data)
 
-                # add a new out connector to the mapexit
-                child_node_out_connector = "OUT_stored_" + node.data + "_" + next_conn
-                assert child_node.add_out_connector(child_node_out_connector)
-                in_state_access = ','.join([
-                    f'{param_list[i]}' if param_list[i] in params_to_add else f'{start_range[i]}:{shape_list[i]}'
-                    for i in range(nb_enclosing_loops, len(param_list))
-                ])
+                previous_node = map_exist
+                previous_node_in_connector = f"IN_{new_store_node.label}"
+            else:
+                memlet_data = copy.deepcopy(edge.data)
 
-                memlet_data = Memlet(
-                    expr=f"{new_store_node.data}[{loop_access},{in_state_access}]") if loop_access else Memlet(
-                        expr=f"{new_store_node.data}[{in_state_access}]")
-                # save the memlet for later
-                memlets_stack.append(memlet_data)
-
-                # add the edge with the corresponding memlet
-                state.add_edge(parent_node, parent_node_connector, child_node, child_node_in_connector, memlet_data)
-
-                # prepare values for the next iteration
-                parent_node = child_node
-                parent_node_connector = child_node_out_connector
-
-                # remove the parameters seen in the current map
-                # since they will become out of scope in the next iteration
-                params_to_add = [element for element in params_to_add if element not in edge_src.params]
-
-        # sanity check: since we are out of scope for all maps,
-        # only the enclosig loop parameters should be left in the list
-        assert len(params_to_add) == nb_enclosing_loops
-
-        in_state_access = ','.join(
-            [f'{start_range[i]}:{shape_list[i]}' for i in range(nb_enclosing_loops, len(param_list))])
-        # get the memlet data for the connection between the last map exit and the new store AccessNode
-        memlet_data = Memlet(expr=f"{new_store_node.data}[{loop_access},{in_state_access}]") if loop_access else Memlet(
-            expr=f"{new_store_node.data}[{in_state_access}]")
-        memlets_stack.append(memlet_data)
-
-        # connect the last map exist to the newly created store node
-        # add the new edge
-        state.add_edge(
-            parent_node,  # the last MapExist
-            parent_node_connector,  # the last MapExist connector
-            new_store_node,  # the new store AccessNode
-            None,
-            memlet_data)
-
-        return new_store_node, memlets_stack
+                # This should be the last connection
+                forward_state.add_edge(previous_node, previous_node_in_connector, new_store_node, None, memlet_data)
+                break
 
     def _get_state_enclosing_loops(self, forward_state: SDFGState) -> List[LoopRegion]:
         """
@@ -3438,32 +3366,30 @@ class BackwardPassGenerator:
         :param edge: the AccessNode to perform the check for.
         :return: a tuple of wether this node has been overwritten, and if it can be recomputed
         """
-        #TODO remove developement code
-        return False, False
 
         overwritten = False
         decided = False
         recomputable = False
 
-        # get the decendant states to look in for an overwrite
+        # Get the decendant and accendant states to look in for an overwrite
         assert state in self.state_order
         index = self.state_order.index(state)
         decendant_states = self.state_order[index:]
         ascendant_states = self.state_order[:index]
 
-        # check if this access node is a view
+        # Check if this access node is a view
         if type(node.desc(self.sdfg)) is dt.ArrayView:
-            # the view should have one incoming edge from the original access node
+            # The view should have one incoming edge from the original access node
             in_edges = state.in_edges(node)
 
-            # sanity checks
+            # Sanity checks
             assert len(in_edges) == 1
             assert "views" in node.in_connectors
 
-            # we want to check if the source has been overwritten
+            # We want to check if the source has been overwritten
             node = in_edges[0].src
 
-        # get all the AccessNodes with the same data
+        # Get all the AccessNodes with the same data
         matches = []
         for d_state in decendant_states:
             matches += [
@@ -3471,59 +3397,53 @@ class BackwardPassGenerator:
                 if isinstance(nd, nodes.AccessNode) and nd.data == node.data
             ]
 
-        # there needs to be at least one occurance which is the node passed as a parameter
+        # There needs to be at least one occurance which is the node passed as a parameter
         assert len(matches) > 0 and node in matches
 
-        # if there is only one occurance of this data, it will not be overwritten later in the graph
+        # If there is only one occurance of this data, it will not be overwritten later in the graph
         if len(matches) == 1:
             overwritten = False
             decided = True
 
-        # get the index of the parameter node
+        # Get the index of the parameter node
         index = matches.index(node)
 
-        # if the parameter node is the last occurance in the forward states
-        # return False
+        # If the parameter node is the last occurance in the decendant states,
+        # it will not be overwritten
         if len(matches) - 1 == index:
             overwritten = False
             decided = True
 
-        # if we haven't already confirmed that this node has not been overwritten
+        # If we haven't already confirmed that this node has not been overwritten
         if not decided:
-            # iterate through all the successor occurances
+            # Iterate through all the successor occurances
             for nd in matches[index + 1:]:
-                # check if this node has an incoming edge
+                # Check if this node has an incoming edge
                 if len(state.in_edges(nd)) > 0:
                     overwritten = True
 
         if not overwritten:
-            # there is no overwrite so far
-            # check if this state is within a loop
-            loop_state = self._state_within_loop(state)
-            if loop_state:
-                loop = state.parent_graph
-                # check if there is any write to this access node within the loop
-                loop_matches = [
-                    nd for nd, _ in loop.all_nodes_recursive()
-                    if isinstance(nd, nodes.AccessNode) and nd.data == node.data
-                ]
+            # There is no overwrite so far
+            # Check if this state is within a loop
+            is_in_loop, loop = self._state_within_loop(state)
+            if is_in_loop:
 
-                for match in loop_matches:
-                    if len(state.in_edges(match)) > 0:
+                # Check if there is any write to this access node within the loop
+                loop_matches = [(nd, parent) for nd, parent in loop.all_nodes_recursive()
+                                if isinstance(nd, nodes.AccessNode) and nd.data == node.data]
+                for match, match_parent in loop_matches:
+                    # Check if this node has an incoming edge
+                    if len(match_parent.in_edges(match)) > 0:
                         overwritten = True
 
         if overwritten:
-            # we only check if the node is recomputable if it has been overwritten
-            # iterate through all the predecessor occurances
+            # We only check if the node is recomputable if it has been overwritten
+            # Iterate through all the predecessor occurances
             # TODO: currently this only checks for a single state
             for nd in matches[:index + 1]:
-                # check if this node has an incoming edge
+                # Check if this node has an incoming edge
                 if len(state.in_edges(nd)) > 0:
                     recomputable = True
-
-            if not recomputable:
-                # fall back to the store strategy
-                self.strategy = "store_all"
 
         return overwritten, recomputable
 
@@ -3640,7 +3560,7 @@ class BackwardPassGenerator:
         given_gradients: List[str],
         required_gradients: List[str],
     ) -> ReverseNodeReturnType:
-
+        self.sdfg.save("log_sdfgs/before_reverse.sdfg")
         reverse_sdfg = dace.SDFG(node.sdfg.name + "_backward")
         # recursive call
         gen = BackwardPassGenerator(sdfg=node.sdfg,
