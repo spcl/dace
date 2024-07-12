@@ -583,7 +583,12 @@ def _arange(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
             dtype = dtypes.dtype_to_typeclass(dtype)
         outname, outarr = sdfg.add_temp_transient(shape, dtype)
     else:
-        dtype = dtypes.dtype_to_typeclass(type(shape[0]))
+        # infer dtype based on args's dtype
+        # (since the `dtype` keyword argument isn't given, none of the arguments can be symbolic)
+        if any(isinstance(arg, (float, np.float32, np.float64)) for arg in args):
+            dtype = dtypes.float64
+        else:
+            dtype = dtypes.int64
         outname, outarr = sdfg.add_temp_transient(shape, dtype)
 
     state.add_mapped_tasklet(name="_numpy_arange_",
