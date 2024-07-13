@@ -8,7 +8,7 @@ import itertools
 import warnings
 from functools import reduce
 from numbers import Number, Integral
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union, TYPE_CHECKING
 
 import dace
 from dace.codegen.tools import type_inference
@@ -28,7 +28,10 @@ import sympy as sp
 
 Size = Union[int, dace.symbolic.symbol]
 Shape = Sequence[Size]
-ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
+else:
+    ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 
 
 def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
@@ -971,8 +974,8 @@ def _pymax(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Numbe
     for i, b in enumerate(args):
         if i > 0:
             pv._add_state('__min2_%d' % i)
-            pv.last_state.set_default_lineinfo(pv.current_lineinfo)
-            current_state = pv.last_state
+            pv.last_block.set_default_lineinfo(pv.current_lineinfo)
+            current_state = pv.last_block
         left_arg = _minmax2(pv, sdfg, current_state, left_arg, b, ismin=False)
     return left_arg
 
@@ -986,8 +989,8 @@ def _pymin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Numbe
     for i, b in enumerate(args):
         if i > 0:
             pv._add_state('__min2_%d' % i)
-            pv.last_state.set_default_lineinfo(pv.current_lineinfo)
-            current_state = pv.last_state
+            pv.last_block.set_default_lineinfo(pv.current_lineinfo)
+            current_state = pv.last_block
         left_arg = _minmax2(pv, sdfg, current_state, left_arg, b)
     return left_arg
 
@@ -3355,7 +3358,7 @@ def _create_subgraph(visitor: ProgramVisitor,
                     cond_state.add_nedge(r, w, dace.Memlet("{}[0]".format(r)))
                 true_state = sdfg.add_state(label=cond_state.label + '_true')
                 state = true_state
-                visitor.last_state = state
+                visitor.last_block = state
                 cond = name
                 cond_else = 'not ({})'.format(cond)
                 sdfg.add_edge(cond_state, true_state, dace.InterstateEdge(cond))
@@ -3374,7 +3377,7 @@ def _create_subgraph(visitor: ProgramVisitor,
                                dace.Memlet.from_array(arg, sdfg.arrays[arg]))
         if has_where and isinstance(where, str) and where in sdfg.arrays.keys():
             visitor._add_state(label=cond_state.label + '_true')
-            sdfg.add_edge(cond_state, visitor.last_state, dace.InterstateEdge(cond_else))
+            sdfg.add_edge(cond_state, visitor.last_block, dace.InterstateEdge(cond_else))
     else:
         # Map needed
         if has_where:

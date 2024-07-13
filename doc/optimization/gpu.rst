@@ -33,6 +33,14 @@ If multiple thread-block maps are present, the maximum of their parameters will 
 smaller map will have an ``if`` condition predicating a subset of the threads to work. This enables optimizing programs
 via thread/warp specialization.
 
+**Multi-Dimensional Maps**: If a Map scope is multi-dimensional, the code generator will map the order of the block and grid dimensions
+to the _reversed_ order of the map dimensions. This means that the last map dimension (which would correspond to, e.g., the most internal loop
+in CPU schedules) is ``{block,thread}Idx.x``. Any dimension of the Map scope beyond the third dimension will by default be linearized into
+``{block,thread}Idx.z``. This can sometimes result in slower code, as recovering the index in the kernel code involves delinearization,
+which uses modulo operations. For example, the Map scope ``for i, j, k, l in dace.map[0:N, 0:M, 0:K, 0:L]`` will result in ``threadIdx.x``
+mapping to ``l``, ``threadIdx.y`` to ``k``, and ``threadIdx.z``'s range will span ``N * M`` and map ``threadIdx.z % M`` to ``j`` and 
+``threadIdx.z / M`` to ``i``.
+
 Some examples of Example of an SDFG **without** a GPU thread-block map and its generated code:
 
 .. raw:: html

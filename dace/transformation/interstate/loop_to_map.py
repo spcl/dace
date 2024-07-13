@@ -75,6 +75,7 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
 
 
 @make_properties
+@xf.single_level_sdfg_only
 class LoopToMap(DetectLoop, xf.MultiStateTransformation):
     """Convert a control flow loop into a dataflow map. Currently only supports
        the simple case where there is no overlap between inputs and outputs in
@@ -114,7 +115,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             if symbolic.contains_sympy_functions(expr):
                 return False
 
-        in_order_states = list(cfg.stateorder_topological_sort(sdfg))
+        in_order_states = list(cfg.blockorder_topological_sort(sdfg))
         loop_begin_idx = in_order_states.index(begin)
         loop_end_idx = in_order_states.index(body_end)
 
@@ -137,7 +138,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         for state in states:
             for e in sdfg.out_edges(state):
                 # Collect read-before-assigned symbols (this works because the states are always in order,
-                # see above call to `stateorder_topological_sort`)
+                # see above call to `blockorder_topological_sort`)
                 read_symbols = e.data.read_symbols()
                 read_symbols -= symbols_that_may_be_used
                 used_before_assignment |= read_symbols

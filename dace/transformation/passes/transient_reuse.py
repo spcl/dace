@@ -6,9 +6,11 @@ import networkx as nx
 from dace import SDFG, properties
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.transformation import experimental_cfg_block_compatible
 
 
 @properties.make_properties
+@experimental_cfg_block_compatible
 class TransientReuse(ppl.Pass):
     """
     Reduces memory consumption by reusing allocated transient array memory. Only modifies arrays that can safely be
@@ -44,7 +46,7 @@ class TransientReuse(ppl.Pass):
             if arrays[a] == 1:
                 transients.add(a)
 
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             # Copy the whole graph
             G = nx.MultiDiGraph()
             for n in state.nodes():

@@ -23,11 +23,18 @@ import copy
 from dace import dtypes, serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.state import ControlFlowRegion
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
-from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union
+from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union, Callable
 import pydoc
+import warnings
+
+
+def experimental_cfg_block_compatible(cls: ppl.Pass):
+    cls.__experimental_cfg_block_compatible__ = True
+    return cls
 
 
 class TransformationBase(ppl.Pass):
@@ -108,15 +115,15 @@ class PatternTransformation(TransformationBase):
         raise NotImplementedError
 
     def can_be_applied(self,
-                       graph: Union[SDFG, SDFGState],
+                       graph: Union[ControlFlowRegion, SDFGState],
                        expr_index: int,
                        sdfg: SDFG,
                        permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate
             matched subgraph.
 
-            :param graph: SDFGState object if this transformation is
-                          single-state, or SDFG object otherwise.
+            :param graph: SDFGState object if this transformation is single-state, or ControlFlowRegion object
+                          otherwise.
             :param expr_index: The list index from `PatternTransformation.expressions`
                                that was matched.
             :param sdfg: If `graph` is an SDFGState, its parent SDFG. Otherwise
@@ -126,7 +133,7 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def apply(self, graph: Union[SDFG, SDFGState], sdfg: SDFG) -> Union[Any, None]:
+    def apply(self, graph: Union[ControlFlowRegion, SDFGState], sdfg: SDFG) -> Union[Any, None]:
         """
         Applies this transformation instance on the matched pattern graph.
 
@@ -142,7 +149,7 @@ class PatternTransformation(TransformationBase):
         self._pipeline_results = pipeline_results
         return self.apply_pattern()
 
-    def match_to_str(self, graph: Union[SDFG, SDFGState]) -> str:
+    def match_to_str(self, graph: Union[ControlFlowRegion, SDFGState]) -> str:
         """ Returns a string representation of the pattern match on the
             candidate subgraph. Used when identifying matches in the console
             UI.
@@ -323,11 +330,13 @@ class PatternTransformation(TransformationBase):
         sample_node = next(iter(where.values()))
 
         if isinstance(sample_node, SDFGState):
-            graph = sdfg
+            graph = sample_node.parent_graph
             state_id = -1
+            cfg_id = graph.cfg_id
         elif isinstance(sample_node, nd.Node):
-            graph = next(s for s in sdfg.nodes() if sample_node in s.nodes())
-            state_id = sdfg.node_id(graph)
+            graph = next(s for s in sdfg.states() if sample_node in s.nodes())
+            state_id = graph.block_id
+            cfg_id = graph.parent_graph.cfg_id
         else:
             raise TypeError('Invalid node type "%s"' % type(sample_node).__name__)
 
@@ -345,7 +354,7 @@ class PatternTransformation(TransformationBase):
         # Construct subgraph and instantiate transformation
         subgraph = {required_node_names[k]: graph.node_id(where[k]) for k in required}
         instance = cls()
-        instance.setup_match(sdfg, sdfg.cfg_id, state_id, subgraph, expr_index)
+        instance.setup_match(sdfg, cfg_id, state_id, subgraph, expr_index)
 
         # Construct transformation parameters
         for optname, optval in options.items():
@@ -364,16 +373,16 @@ class PatternTransformation(TransformationBase):
     def __str__(self) -> str:
         return type(self).__name__
 
-    def print_match(self, sdfg: SDFG) -> str:
+    def print_match(self, cfg: ControlFlowRegion) -> str:
         """ Returns a string representation of the pattern match on the
-            given SDFG. Used for printing matches in the console UI.
+            given Control Flow Region. Used for printing matches in the console UI.
         """
-        if not isinstance(sdfg, SDFG):
-            raise TypeError("Expected SDFG, got: {}".format(type(sdfg).__name__))
+        if not isinstance(cfg, ControlFlowRegion):
+            raise TypeError("Expected ControlFlowRegion, got: {}".format(type(cfg).__name__))
         if self.state_id == -1:
-            graph = sdfg
+            graph = cfg
         else:
-            graph = sdfg.nodes()[self.state_id]
+            graph = cfg.nodes()[self.state_id]
         string = type(self).__name__ + ' in '
         string += self.match_to_str(graph)
         return string
@@ -402,6 +411,7 @@ class PatternTransformation(TransformationBase):
 
 
 @make_properties
+@experimental_cfg_block_compatible
 class SingleStateTransformation(PatternTransformation, abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within a single SDFG state.
@@ -497,7 +507,7 @@ class MultiStateTransformation(PatternTransformation, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def can_be_applied(self, graph: SDFG, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+    def can_be_applied(self, graph: ControlFlowRegion, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate matched subgraph.
 
             :param graph: SDFG object in which the match was found.
@@ -553,16 +563,18 @@ class PatternNode(Generic[T]):
         # If an instance is used, we return the matched node
         node_id: int = instance.subgraph[self]
         state_id: int = instance.state_id
+        t_graph: ControlFlowRegion = instance._sdfg.cfg_list[instance.cfg_id]
 
         if not isinstance(node_id, int):  # Node ID is already an object
             return node_id
 
         # Inter-state transformation
         if state_id == -1:
-            return instance._sdfg.node(node_id)
+            return t_graph.node(node_id)
 
         # Single-state transformation
-        return instance._sdfg.node(state_id).node(node_id)
+        state: SDFGState = t_graph.node(state_id)
+        return state.node(node_id)
 
 
 @make_properties
@@ -706,7 +718,7 @@ class SubgraphTransformation(TransformationBase):
             if isinstance(subgraph.graph, SDFGState):
                 sdfg = subgraph.graph.parent
                 self.cfg_id = sdfg.cfg_id
-                self.state_id = sdfg.node_id(subgraph.graph)
+                self.state_id = subgraph.graph.block_id
             elif isinstance(subgraph.graph, SDFG):
                 self.cfg_id = subgraph.graph.cfg_id
                 self.state_id = -1
@@ -866,3 +878,62 @@ class SubgraphTransformation(TransformationBase):
         context['transformation'] = ret
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
         return ret
+
+
+def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Callable[[Any], Optional[SDFG]]):
+    if hasattr(cls, function_name):
+        vanilla_method = getattr(cls, function_name)
+        def blocksafe_wrapper(tgt, *args, **kwargs):
+            if isinstance(tgt, SDFG):
+                sdfg = tgt
+            elif kwargs and 'sdfg' in kwargs:
+                sdfg = kwargs['sdfg']
+            else:
+                sdfg = get_sdfg_arg(tgt, *args)
+            if sdfg and isinstance(sdfg, SDFG):
+                root_sdfg: SDFG = sdfg.cfg_list[0]
+                if not root_sdfg.using_experimental_blocks:
+                    return vanilla_method(tgt, *args, **kwargs)
+                else:
+                    warnings.warn('Skipping ' + function_name + ' from ' + cls.__name__ +
+                                  ' due to incompatibility with experimental control flow blocks')
+        setattr(cls, function_name, blocksafe_wrapper)
+
+
+def _subgraph_transformation_extract_sdfg_arg(*args) -> SDFG:
+    subgraph = args[1]
+    if isinstance(subgraph, SDFG):
+        return subgraph
+    elif isinstance(subgraph, SDFGState):
+        return subgraph.sdfg
+    elif isinstance(subgraph, gr.SubgraphView):
+        if isinstance(subgraph.graph, SDFGState):
+            return subgraph.graph.sdfg
+        elif isinstance(subgraph.graph, SDFG):
+            return subgraph.graph
+        raise TypeError('Unrecognized graph type "%s"' % type(subgraph.graph).__name__)
+    raise TypeError('Unrecognized graph type "%s"' % type(subgraph).__name__)
+
+
+def single_level_sdfg_only(cls: ppl.Pass):
+
+    for function_name in ['apply_pass', 'apply_to']:
+        _make_function_blocksafe(cls, function_name, lambda *args: args[1])
+
+    if issubclass(cls, SubgraphTransformation):
+        _make_function_blocksafe(cls, 'apply', lambda *args: args[1])
+        _make_function_blocksafe(cls, 'can_be_applied', lambda *args: args[1])
+        _make_function_blocksafe(cls, 'setup_match', _subgraph_transformation_extract_sdfg_arg)
+    elif issubclass(cls, ppl.StatePass):
+        _make_function_blocksafe(cls, 'apply', lambda *args: args[1].sdfg)
+    elif issubclass(cls, ppl.ScopePass):
+        _make_function_blocksafe(cls, 'apply', lambda *args: args[2].sdfg)
+    else:
+        _make_function_blocksafe(cls, 'apply', lambda *args: args[2])
+        _make_function_blocksafe(cls, 'can_be_applied', lambda *args: args[3])
+        _make_function_blocksafe(cls, 'setup_match', lambda *args: args[1])
+
+    if issubclass(cls, PatternTransformation):
+        _make_function_blocksafe(cls, 'apply_pattern', lambda *args: args[0]._sdfg)
+
+    return cls
