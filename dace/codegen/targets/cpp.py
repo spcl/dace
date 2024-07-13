@@ -371,9 +371,8 @@ def emit_memlet_reference(dispatcher,
 
         if is_scalar:
             defined_type = DefinedType.Scalar
-            if is_write is False:
+            if is_write is False and not isinstance(desc, (data.View, data.ContainerArray)):
                 typedef = make_const(typedef)
-            if not isinstance(desc, (data.View, data.ContainerArray)):
                 ref = '&'
         else:
             # constexpr arrays
