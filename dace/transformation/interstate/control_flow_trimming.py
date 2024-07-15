@@ -158,7 +158,7 @@ class MapSplit(transformation.SingleStateTransformation):
 
     @staticmethod
     def annotates_memlets():
-        return False
+        return True
 
     @classmethod
     def expressions(cls):

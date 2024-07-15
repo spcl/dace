@@ -1,7 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module initializes the inter-state transformations package."""
 
+from .if_extraction import IfExtraction
 from .if_raising import IfRaising
+from .state_replication import StateReplication
 from .control_flow_trimming import TrimControlFlow, MapSplit
 from .control_flow_inline import LoopRegionInline
 from .state_fusion import StateFusion
