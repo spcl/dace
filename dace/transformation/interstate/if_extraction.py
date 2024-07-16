@@ -75,11 +75,7 @@ class IfExtraction(transformation.MultiStateTransformation):
         outer_sdfg: sd.SDFG = if_branch.sdfg
         if_nested_sdfg_node = if_sdfg.parent_nsdfg_node
 
-        print('out symbols:', outer_sdfg.free_symbols)
-        print('in symbols:', if_sdfg.free_symbols)
-
         if_edge, else_edge = if_sdfg.out_edges(if_root_state)
-
 
         # create new state to perform the if, and have it replace the state containing the nested SDFG
         new_state = outer_sdfg.add_state()

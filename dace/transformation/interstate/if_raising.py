@@ -80,7 +80,6 @@ class IfRaising(transformation.MultiStateTransformation):
 
         sdfg.add_edge(root_replica, else_branch.dst, InterstateEdge())
         sdfg.add_edge(root_state, if_branch.dst, InterstateEdge())
-        
-        
+
         sdfg.add_edge(if_guard, root_state, if_branch.data)
         sdfg.add_edge(if_guard, root_replica, else_branch.data)

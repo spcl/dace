@@ -1,7 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module initializes the dataflow transformations package. """
-
-# Map-related
 from .mapreduce import MapReduceFusion, MapWCRFusion
 from .map_expansion import MapExpansion
 from .map_collapse import MapCollapse
