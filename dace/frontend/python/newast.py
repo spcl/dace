@@ -32,7 +32,7 @@ from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, LoopRegion, ControlFlowRegion
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, LoopRegion, ControlFlowRegion, UserRegion
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
@@ -4692,7 +4692,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # In a nested control flow region, a return needs to be explicitly marked with a return block.
             self._on_block_added(self.cfg_target.add_return(f'return_{self.cfg_target.label}_{node.lineno}'))
 
-    def visit_With(self, node, is_async=False):
+    def visit_With(self, node: ast.With, is_async=False):
         # "with dace.tasklet" syntax
         if len(node.items) == 1:
             dec = node.items[0].context_expr
@@ -4717,6 +4717,17 @@ class ProgramVisitor(ExtNodeVisitor):
                 self._add_dependencies(state, tasklet, None, None, inputs, outputs)
                 self.inputs.update({k: (state, *v) for k, v in sdfg_inp.items()})
                 self.outputs.update({k: (state, *v) for k, v in sdfg_out.items()})
+                return
+            elif funcname == "dace.user_region":
+                evald = astutils.evalnode(node.items[0].context_expr, self.globals)
+                if hasattr(evald, "name"):
+                    user_region_name: str = evald.name
+                else:            
+                    user_region_name = f"User Region {node.lineno}"
+                user_region = UserRegion(user_region_name, debuginfo=self.current_lineinfo)
+                self.cfg_target.add_node(user_region)
+                self._on_block_added(user_region)
+                self._recursive_visit(node.body, "", node.lineno, user_region, unconnected_last_block=False)
                 return
 
         raise DaceSyntaxError(self, node, 'General "with" statements disallowed in DaCe programs')

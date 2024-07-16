@@ -358,3 +358,14 @@ def in_program() -> bool:
     :return: True if in a DaCe program parsing context, or False otherwise.
     """
     return False
+
+class user_region:
+    def __init__(self, name: str | None=None):
+        self.name = name
+    
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return True
+

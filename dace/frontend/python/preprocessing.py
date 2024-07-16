@@ -990,7 +990,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         # Avoid parsing "with dace.tasklet"
         try:
             evald = astutils.evalnode(node.items[0].context_expr, self.globals)
-            if evald is dace.tasklet or isinstance(evald, dace.tasklet):
+            if evald is dace.tasklet or evald is dace.user_region or isinstance(evald, (dace.tasklet, dace.user_region)):
                 return self.generic_visit(node)
         except SyntaxError:
             pass
