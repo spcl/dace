@@ -31,10 +31,11 @@ class MemoryMovementNode(CodeLibraryNode):
     out_arr = Property(dtype=str, default="", desc="")
     global_tensor_dims = Property(dtype=List, default=[], desc="")
     grid_loop_params = Property(dtype=List, default=[], desc="")
+    tiles_evenly = Property(dtype=bool, default=False, desc="")
 
     def __init__(self, name, input_names, output_names, src_location, dst_location, 
                  offsets, load_lengths, thread_dims, global_tensor_dims, 
-                 in_arr, out_arr, grid_loop_params, *args, **kwargs):
+                 in_arr, out_arr, grid_loop_params, tiles_evenly, *args, **kwargs):
         self.src_location = src_location
         self.dst_location = dst_location
         self.offsets = offsets
@@ -46,6 +47,7 @@ class MemoryMovementNode(CodeLibraryNode):
         self.in_arr = in_arr
         self.out_arr = out_arr
         self.grid_loop_params = grid_loop_params
+        self.tiles_evenly = tiles_evenly
         super().__init__(name=name, input_names=self.input_names, output_names=self.output_names)
 
     def generate_code(self, inputs: Dict[str, Array], outputs: Dict[str, Array]):
@@ -104,21 +106,22 @@ class MemoryMovementNode(CodeLibraryNode):
         ats = [f"glb_at_d{i}" for i in range(len(self.offsets[:-1]))]
         global_access_offset = f"const int glb_access_offset = {' + '.join(ats) if len(ats) > 0 else "0"}"
 
-        d1_global_offset = f"{self.global_tensor_dims[-1]} * line_num"
+        d1_global_offset = f"{self.global_tensor_dims[-1]} * runtime_line_num"
 
         shared_access_offsets = [f"const int shr_at_d{i} = {shared_offsets[i]} * (i_d{i});" for i in range(len((self.offsets[:-1])))]
         ats = [f"shr_at_d{i}" for i in range(len(self.offsets[:-1]))]
         local_access_offset = f"const int shr_access_offset = {' + '.join(ats) if len(ats) > 0 else "0"}"
 
-        d1_shared_offset = "0" if len(shared_offsets) < 2 else f"{shared_offsets[-2]} * line_num"
+        d1_shared_offset = "0" if len(shared_offsets) < 2 else f"{shared_offsets[-2]} * runtime_line_num"
         bound_check_dim_0 = f'line_offset + {self.grid_loop_params[-1]} < {self.global_tensor_dims[-1]}' \
           if lines_fitting_to_num_threads != 0 and dims_to_load != 1 else \
           f'' # TODO
         pchecks = [f'i_d{i} + {param} < {dim}' for i, (param, dim) in enumerate(zip(self.grid_loop_params[:-1], self.global_tensor_dims[:-1]))] \
           + [bound_check_dim_0]
         bound_check = ' && '.join(pchecks)
+        multiple_line_bound_check = "true" if n < 2 else f"i_d{n-2} + {self.grid_loop_params[-2]} + runtime_line_num < {self.global_tensor_dims[-2]}"
         if bound_check == "":
-          bound_check = True
+          bound_check = "true"
         # Construct for loops
         code = f"""//Code Library Node to Load Memory from GPU Global to GPU Shared
 {{
@@ -129,8 +132,16 @@ class MemoryMovementNode(CodeLibraryNode):
     const int tid = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
 
     {f"""
-        constexpr int load_iter_d{n-1} = {line_length // num_threads if lines_fitting_to_num_threads == 0 else 1};
-        constexpr int load_remainder_d{n-1} = {self.load_lengths[n-1] - (num_threads*(line_length // num_threads if lines_fitting_to_num_threads == 0 else 1))};
+        //const int load_dim = {self.global_tensor_dims[-1]};
+        //const int load_param = {self.grid_loop_params[-1]};
+        //const int runtime_load_len = (load_dim - load_param) < {line_length}? (load_dim - load_param) : {line_length}; // could also do int min: b+((a-b)&((a-b)>>31))
+        //const int load_iter_d{n-1} = runtime_load_len / {num_threads}; //{line_length // num_threads if lines_fitting_to_num_threads == 0 else 1};
+        //const int load_remainder_d{n-1} = runtime_load_len % {num_threads}; //{self.load_lengths[n-1] - (num_threads*(line_length // num_threads if lines_fitting_to_num_threads == 0 else 1))};
+        //const int load_iter_d{n-1} = {line_length // num_threads if lines_fitting_to_num_threads == 0 else 1};
+        //const int load_remainder_d{n-1} = {self.load_lengths[n-1] - (num_threads*(line_length // num_threads if lines_fitting_to_num_threads == 0 else 1))};
+        const int runtime_line_length = {self.grid_loop_params[-1]} + {line_length} < {self.global_tensor_dims[-1]}? {line_length} : {self.global_tensor_dims[-1]} - {self.grid_loop_params[-1]};
+        const int runtime_load_iter_d{n-1} = runtime_line_length / num_threads;
+        const int runtime_load_remainder_d{n-1} = {line_length} - runtime_line_length;
         {"\n".join(formatted_for_loops_open_fitting_to_num_threads_is_0)}
         // Global access offsets
         {"\n".join(global_access_offsets)}
@@ -140,23 +151,30 @@ class MemoryMovementNode(CodeLibraryNode):
         {global_access_offset};
         {local_access_offset};
         #pragma unroll
-        for (int i_d{n-1} = 0; i_d{n-1} < load_iter_d{n-1}; ++i_d{n-1}){{
-          if ({bound_check} i_d{n-1}*num_threads + tid + {self.grid_loop_params[-1]} < {self.global_tensor_dims[0]}){{
+        for (int i_d{n-1} = 0; i_d{n-1} < runtime_load_iter_d{n-1}; ++i_d{n-1}){{
+          //{f"if ({bound_check} i_d{n-1}*num_threads + tid + {self.grid_loop_params[-1]} < {self.global_tensor_dims[-1]}){{" if not self.tiles_evenly else ""}
             {self.output_names[0]}[shr_access_offset + i_d{n-1}*num_threads + tid] = {self.input_names[0]}[glb_access_offset + i_d{n-1}*num_threads + tid];
-          }}
+          //{f"}}" if not self.tiles_evenly else ""}
         }}
-        if (tid < load_remainder_d{n-1}){{
-          if ({bound_check} load_iter_d{n-1}*num_threads + tid + {self.grid_loop_params[-1]} < {self.global_tensor_dims[0]}) {{
-            {self.output_names[0]}[shr_access_offset + load_iter_d{n-1}*num_threads + tid] = {self.input_names[0]}[glb_access_offset + load_iter_d{n-1}*num_threads + tid];
-          }}
+        //if (load_remainder_d{n-1} != 0){{
+        if (tid < runtime_load_remainder_d{n-1}){{
+          //{f"if ({bound_check} load_iter_d{n-1}*num_threads + tid + {self.grid_loop_params[-1]} < {self.global_tensor_dims[-1]}) {{"  if not self.tiles_evenly else ""}
+            {self.output_names[0]}[shr_access_offset + runtime_load_iter_d{n-1}*num_threads + tid] = {self.input_names[0]}[glb_access_offset + runtime_load_iter_d{n-1}*num_threads + tid];
+          //{f"}}" if not self.tiles_evenly else ""}
         }}
+        //}}
+
         {"\n".join(formatted_for_loops_close_fitting_to_num_threads_is_0)}
       """ if lines_fitting_to_num_threads == 0 or dims_to_load == 1 else 
       f"""
-        constexpr int lines_fitting_to_num_threads = {lines_fitting_to_num_threads};
-        constexpr int active_load_threads = {line_length * lines_fitting_to_num_threads if lines_fitting_to_num_threads > 0 else min(num_threads, line_length)};
-        const int line_num = tid / {line_length};
-        const int line_offset = tid % {line_length};
+        //constexpr int lines_fitting_to_num_threads = {lines_fitting_to_num_threads};
+        //const int active_load_threads = {line_length * lines_fitting_to_num_threads if lines_fitting_to_num_threads > 0 else min(num_threads, line_length)};
+        //const int line_num = tid / {line_length};
+        //const int line_offset = tid % {line_length};
+        const int runtime_line_length = {self.grid_loop_params[-1]} + {line_length} < {self.global_tensor_dims[-1]}? {line_length} : {self.global_tensor_dims[-1]} - {self.grid_loop_params[-1]};
+        const int runtime_line_num = tid / runtime_line_length;
+        const int runtime_load_threads = {lines_fitting_to_num_threads} * runtime_line_length;
+        const int runtime_line_offset = tid % runtime_line_length;
         {"\n".join(formatted_for_loops_open_fitting_to_num_threads_is_geq_2)}
         // Global access offsets
         {"\n".join(global_access_offsets)}
@@ -165,12 +183,10 @@ class MemoryMovementNode(CodeLibraryNode):
         // Joined global access offset
         {global_access_offset} + ({d1_global_offset});
         {local_access_offset} + ({d1_shared_offset});
-        if (tid < active_load_threads){{
-          assert(line_num < {lines_fitting_to_num_threads});
-          assert(line_offset < {line_length});
-          //if ({bound_check}) {{
-            {self.output_names[0]}[shr_access_offset + line_offset] = {self.input_names[0]}[glb_access_offset + line_offset];
-          //}}
+        if (tid < runtime_load_threads {f" && runtime_line_num + i_d{n-2} < {self.global_tensor_dims[-2]}" if len(self.global_tensor_dims) >= 2 else ""}){{
+          //{f"if ({bound_check} {multiple_line_bound_check}) {{" if not self.tiles_evenly else ""}
+            {self.output_names[0]}[shr_access_offset + runtime_line_offset] = {self.input_names[0]}[glb_access_offset + runtime_line_offset];
+          //{f"}}" if not self.tiles_evenly else ""}
         }}
         {"\n".join(formatted_for_loops_close_fitting_to_num_threads_is_geq_2)}
       """
@@ -194,6 +210,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
 
     # Properties
     memory_location = Property(dtype=dtypes.StorageType, default=dtypes.StorageType.GPU_Shared, desc="Destination memory location")
+    tiles_evenly = Property(dtype=bool, default=False, desc="")
 
     @classmethod
     def expressions(cls):
@@ -514,7 +531,8 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                                         global_tensor_dims=list(reversed([str(d) if isinstance(d, sympy.Symbol) else int(d) for d in sdfg.arrays[src_arr_name].shape])),
                                         in_arr=src_arr_name,
                                         out_arr=dst_arr_name,
-                                        grid_loop_params=self.grid_strided_map_entry.map.params)
+                                        grid_loop_params=self.grid_strided_map_entry.map.params,
+                                        tiles_evenly=self.tiles_evenly)
 
           graph.add_node(lib_node)
           graph.remove_edge(edge)
