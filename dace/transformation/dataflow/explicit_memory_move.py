@@ -135,7 +135,7 @@ class MemoryMovementNode(CodeLibraryNode):
         local_access_offset = f"const int shr_access_offset = {' + '.join(ats) if len(ats) > 0 else "0"}"
 
         d1_shared_offset = "0" if len(shared_offsets) < 2 else f"{shared_offsets[-2]} * runtime_line_num"
-        bound_check_dim_0 = f'line_offset + {self.grid_loop_params[-1]} < {self.global_tensor_dims[-1]}' \
+        bound_check_dim_0 = f'runtime_line_offset + {self.grid_loop_params[-1]} < {self.global_tensor_dims[-1]}' \
           if lines_fitting_to_num_threads != 0 and dims_to_load != 1 else \
           f'' # TODO
         pchecks = [f'i_d{i} + {param} < {dim}' for i, (param, dim) in enumerate(zip(self.grid_loop_params[:-1], self.global_tensor_dims[:-1]))] \
@@ -154,9 +154,19 @@ class MemoryMovementNode(CodeLibraryNode):
     const int tid = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
 
     {f"""
-        const int runtime_line_length = {self.grid_loop_params[-1]} + {line_length} < {self.global_tensor_dims[-1]}? {line_length} : {self.global_tensor_dims[-1]} - {self.grid_loop_params[-1]};
-        const int runtime_load_iter_d{n-1} = runtime_line_length / num_threads;
-        const int runtime_load_remainder_d{n-1} = runtime_line_length - (runtime_load_iter_d{n-1}*num_threads);
+        {f"const int runtime_line_length = {self.grid_loop_params[-1]} + {line_length} < {self.global_tensor_dims[-1]}? {line_length} : {self.global_tensor_dims[-1]} - {self.grid_loop_params[-1]};" \
+         if self.variant == 1 else \
+         f"constexpr int runtime_line_length = {line_length};"\
+        }
+        {f"const int runtime_load_iter_d{n-1} = runtime_line_length / num_threads;" \
+         if self.variant == 1 else \
+         f"constexpr int runtime_load_iter_d{n-1} = {line_length / num_threads};"\
+        }
+        {f"const int runtime_load_remainder_d{n-1} = runtime_line_length - (runtime_load_iter_d{n-1}*num_threads);" \
+         if self.variant == 1 else \
+         f"constexpr int runtime_load_remainder_d{n-1} = {line_length % num_threads}; "\
+        }
+        
         {"\n".join(formatted_for_loops_open_fitting_to_num_threads_is_0)}
         // Global access offsets
         {"\n".join(global_access_offsets)}
@@ -172,17 +182,30 @@ class MemoryMovementNode(CodeLibraryNode):
           {f"}}" if self.variant == 2 else ""}
         }}
         if (tid < runtime_load_remainder_d{n-1}){{
-          {f"if ({bound_check} load_iter_d{n-1}*num_threads + tid + {self.grid_loop_params[-1]} < {self.global_tensor_dims[0]}) {{" if self.variant == 2 else ""}
+          {f"if ({bound_check} runtime_load_iter_d{n-1}*num_threads + tid + {self.grid_loop_params[-1]} < {self.global_tensor_dims[0]}) {{" if self.variant == 2 else ""}
           {self.output_names[0]}[shr_access_offset + runtime_load_iter_d{n-1}*num_threads + tid] = {self.input_names[0]}[glb_access_offset + runtime_load_iter_d{n-1}*num_threads + tid];
           {f"}}" if self.variant == 2 else ""}
         }}
         {"\n".join(formatted_for_loops_close_fitting_to_num_threads_is_0)}
       """ if lines_fitting_to_num_threads == 0 or dims_to_load == 1 else 
       f"""
-        const int runtime_line_length = {self.grid_loop_params[-1]} + {line_length} < {self.global_tensor_dims[-1]}? {line_length} : {self.global_tensor_dims[-1]} - {self.grid_loop_params[-1]};
-        const int runtime_line_num = tid / runtime_line_length;
-        const int runtime_load_threads = {lines_fitting_to_num_threads} * runtime_line_length;
-        const int runtime_line_offset = tid % runtime_line_length;
+        
+        {f"const int runtime_line_length = {self.grid_loop_params[-1]} + {line_length} < {self.global_tensor_dims[-1]}? {line_length} : {self.global_tensor_dims[-1]} - {self.grid_loop_params[-1]};" \
+         if self.variant == 1 else \
+         f"constexpr int runtime_line_length = {line_length}"\
+        }
+        {f"const int runtime_line_num = tid / runtime_line_length;" \
+         if self.variant == 1 else \
+         f"const int runtime_line_num = tid / runtime_line_length;"\
+        }
+        {f"const int runtime_load_threads = {lines_fitting_to_num_threads} * runtime_line_length;" \
+         if self.variant == 1 else \
+         f"constexpr int runtime_load_threads = {lines_fitting_to_num_threads} * runtime_line_length;"\
+        }
+        {f"const int runtime_line_offset = tid % runtime_line_length;" \
+         if self.variant == 1 else \
+         f"const int runtime_line_offset = tid % runtime_line_length;"\
+        }
         if (tid < runtime_load_threads) {{
         {"\n".join(formatted_for_loops_open_fitting_to_num_threads_is_geq_2)}
         // Global access offsets
@@ -544,7 +567,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                                         out_arr=dst_arr_name,
                                         grid_loop_params=self.grid_strided_map_entry.map.params,
                                         tiles_evenly=self.tiles_evenly,
-                                        variant=1)
+                                        variant=self.variant)
 
           graph.add_node(lib_node)
           graph.remove_edge(edge)
