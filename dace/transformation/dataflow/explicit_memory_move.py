@@ -82,14 +82,19 @@ class MemoryMovementNode(CodeLibraryNode):
 
         formatted_load_lengths = [f"constexpr int load_len_d{i} = {load_len};" for i, load_len in enumerate(self.load_lengths)]
         # Load first dimension in contiguous lines, lest to loop
-        formatted_for_loops_open_fitting_to_num_threads_is_0 = [f"#pragma unroll\nfor (int i_d{i} = 0; i_d{i} < {load_len}; ++i_d{i}){{" \
-                                                                               for i, load_len in enumerate(self.load_lengths[:-1])]
+        formatted_for_loops_open_fitting_to_num_threads_is_0 = [f"#pragma unroll\nfor (int i_d{i} = 0; i_d{i} < Min({load_len}, {tensor_dim}-{iter_param}); ++i_d{i}){{" \
+                                                                               for i, (load_len, tensor_dim, iter_param) in \
+                                                                               enumerate(zip(self.load_lengths[:-1], self.global_tensor_dims[:-1],
+                                                                                             self.grid_loop_params[:-1] ))]
         formatted_for_loops_close_fitting_to_num_threads_is_0  = ["}" for _ in self.load_lengths[:-1]]
 
         n = len(self.load_lengths)
         formatted_for_loops_open_fitting_to_num_threads_is_geq_2 = [] if len(self.load_lengths) < 2 else \
-          [f"#pragma unroll\nfor (int i_d{i} = 0; i_d{i} < {load_len}; ++i_d{i}){{" for i, load_len in enumerate(self.load_lengths[:-2])] \
-          + [f"#pragma unroll\nfor (int i_d{n-2} = 0; i_d{n-2} < {self.load_lengths[n-2]}; i_d{n-2}+={lines_fitting_to_num_threads}){{"]
+          [f"#pragma unroll\nfor (int i_d{i} = 0; i_d{i} < Min({load_len}, {tensor_dim}-{iter_param}); ++i_d{i}){{" \
+                                                                               for i, (load_len, tensor_dim, iter_param) in \
+                                                                               enumerate(zip(self.load_lengths[:-2], self.global_tensor_dims[:-2],
+                                                                                             self.grid_loop_params[:-2] ))] \
+          + [f"#pragma unroll\nfor (int i_d{n-2} = 0; i_d{n-2} < Min({self.load_lengths[n-2]}, {self.global_tensor_dims[n-1]}-{self.grid_loop_params[n-2]}); i_d{n-2}+={lines_fitting_to_num_threads}){{"]
         formatted_for_loops_close_fitting_to_num_threads_is_geq_2  = ["}" for _ in self.load_lengths[:-1]]
 
         # To access an n dimensional tensor (contigously stored in 1d memory in row major fashion),
