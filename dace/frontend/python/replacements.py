@@ -4148,22 +4148,34 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
 
     desc = sdfg.arrays[arr]
 
-    # Change size of array based on the differences in bytes
-    bytemult = desc.dtype.bytes / dtype.bytes
-    bytediv = dtype.bytes / desc.dtype.bytes
+    orig_bytes = desc.dtype.bytes
+    view_bytes = dtype.bytes
+
+    if view_bytes < orig_bytes and orig_bytes % view_bytes != 0:
+        raise ValueError("When changing to a smaller dtype, its size must be a divisor of "
+                         "the size of original dtype")
+
     contigdim = next(i for i, s in enumerate(desc.strides) if s == 1)
 
     # For cases that can be recognized, if contiguous dimension is too small
     # raise an exception similar to numpy
-    if (not issymbolic(desc.shape[contigdim], sdfg.constants) and bytemult < 1
-            and desc.shape[contigdim] % bytediv != 0):
+    if (not issymbolic(desc.shape[contigdim], sdfg.constants) and orig_bytes < view_bytes
+            and desc.shape[contigdim] * orig_bytes % view_bytes != 0):
         raise ValueError('When changing to a larger dtype, its size must be a divisor of '
                          'the total size in bytes of the last axis of the array.')
 
     # Create new shape and strides for view
+    # NOTE: we change sizes by using `(old_size * orig_bytes) // view_bytes`
+    # Thus, the changed size will be an integer due to integer division.
+    # If the division created a fraction, the view wouldn't be valid in the first place.
+    # So, we assume the division will always yield an integer, and, hence,
+    # the integer division is correct.
+    # Also, keep in mind that `old_size * (orig_bytes // view_bytes)` is different.
+    # E.g., if `orig_bytes == 1 and view_bytes == 2`: `old_size * (1 // 2) == old_size * 0`.
     newshape = list(desc.shape)
-    newstrides = [s * bytemult if i != contigdim else s for i, s in enumerate(desc.strides)]
-    newshape[contigdim] *= bytemult
+    newstrides = [(s * orig_bytes) // view_bytes if i != contigdim else s for i, s in enumerate(desc.strides)]
+    # don't use `*=`, because it will break the bracket
+    newshape[contigdim] = (newshape[contigdim] * orig_bytes) // view_bytes
 
     newarr, _ = sdfg.add_view(arr,
                               newshape,
@@ -4171,7 +4183,7 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
                               storage=desc.storage,
                               strides=newstrides,
                               allow_conflicts=desc.allow_conflicts,
-                              total_size=desc.total_size * bytemult,
+                              total_size=(desc.total_size * orig_bytes) // view_bytes,
                               may_alias=desc.may_alias,
                               alignment=desc.alignment,
                               find_new_name=True)
