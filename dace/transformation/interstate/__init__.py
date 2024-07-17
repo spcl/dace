@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module initializes the inter-state transformations package."""
 
+from .conditional_elimination import ConditionalElimination
 from .if_extraction import IfExtraction
 from .if_raising import IfRaising
 from .state_replication import StateReplication

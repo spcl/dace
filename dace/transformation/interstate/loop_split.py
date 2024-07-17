@@ -15,7 +15,7 @@ from dace.sdfg import utils as sdutil
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from dace.transformation import transformation as xf
-
+from dace.transformation.interstate import ConditionalElimination
 
 @make_properties
 class LoopSplit(DetectLoop, xf.MultiStateTransformation):
@@ -24,15 +24,12 @@ class LoopSplit(DetectLoop, xf.MultiStateTransformation):
     Looks for a condition on the loop variable inside a loop and splits the loop in two
     """
 
-    begin = Property(
-        dtype=bool,
-        default=True,
-        desc='',
-    )
-
     @staticmethod
-    def _eliminate_branch(sdfg: sd.SDFG, initial_state: sd.SDFGState):
-        state_list = [initial_state]
+    def _eliminate_branch(sdfg: sd.SDFG, initial_edge: gr.Edge):
+        sdfg.remove_edge(initial_edge)
+        if sdfg.in_degree(initial_edge.dst) > 0:
+            return
+        state_list = [initial_edge.dst]
         while len(state_list) > 0:
             new_state_list = []
             for s in state_list:
@@ -177,7 +174,6 @@ class LoopSplit(DetectLoop, xf.MultiStateTransformation):
             if isinstance(cond, sp.Equality):
                 if cond.lhs.name == itervar:
                     if cond.rhs == rng[0]:
-                        print('found on range start:', cond)
                         init_edges = []
                         before_states = loop_struct[0]
                         for before_state in before_states:
@@ -210,15 +206,12 @@ class LoopSplit(DetectLoop, xf.MultiStateTransformation):
                                     sdfg.remove_edge(init_edge)
                                 sdfg.add_edge(append_state, guard, init_edges[0].data)
                         
-                        sdfg.remove_edge(e)
-                        if len(sdfg.in_edges(e.dst)) == 0:
-                            self._eliminate_branch(sdfg, e.dst)
+                        self._eliminate_branch(sdfg, e)
                         # remove conditional from else_edge
                         sdfg.remove_edge(else_edge)
                         sdfg.add_edge(else_edge.src, else_edge.dst, sd.InterstateEdge(assignments=else_edge.data.assignments))
                         break
                     elif cond.rhs == rng[1]:
-                        print('found on range end:', cond)
                         condition_edge.data.condition = CodeBlock(self._modify_cond(condition_edge.data.condition, itervar, rng[2]))
                         not_condition_edge.data.condition = CodeBlock(
                             self._modify_cond(not_condition_edge.data.condition, itervar, rng[2]))
@@ -245,10 +238,12 @@ class LoopSplit(DetectLoop, xf.MultiStateTransformation):
                             sdfg.remove_edge(not_condition_edge)
                             sdfg.add_edge(guard, prepend_state, not_condition_edge.data)
                             
-                        sdfg.remove_edge(e)
-                        if len(sdfg.in_edges(e.dst)) == 0:
-                            self._eliminate_branch(sdfg, e.dst)
+                        self._eliminate_branch(sdfg, e)
                         # remove condition from else_edge
                         sdfg.remove_edge(else_edge)
                         sdfg.add_edge(else_edge.src, else_edge.dst, sd.InterstateEdge(assignments=else_edge.data.assignments))
                         break
+        
+        xform = ConditionalElimination()
+        xform.conditional = sp.Ne(rng[0], rng[1])
+        xform.apply(None, sdfg)
