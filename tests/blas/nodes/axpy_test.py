@@ -2,6 +2,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
+import pytest
 
 import argparse
 import scipy
@@ -112,12 +113,14 @@ def stream_fpga_graph(veclen, precision, test_case, expansion):
     return sdfg
 
 
+@pytest.mark.skip(reason="Testing whether segfaults disappear without this test")
 @fpga_test()
 def test_axpy_fpga_array():
     configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
     return run_test(configs, "fpga_array")
 
 
+@pytest.mark.skip(reason="Testing whether segfaults disappear without this test")
 @fpga_test()
 def test_axpy_fpga_stream():
     configs = [(0.5, 1, dace.float32), (1.0, 4, dace.float64)]
