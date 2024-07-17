@@ -54,26 +54,29 @@ class LoopSplit(DetectLoop, xf.MultiStateTransformation):
         found = find_for_loop(sdfg, guard, begin)
         if found is None:
             return False
+        
+        itervar, rng, loop_struct = found
+        
+        loop_states = list(sdutil.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard))
 
-        return True
-        # Obtain iteration variable, range, and stride
-        # condition_edge = sdfg.edges_between(guard, begin)[0]
-        # not_condition_edge = sdfg.edges_between(guard, after_state)[0]
-        # itervar, rng, loop_struct = find_for_loop(sdfg, guard, begin)
+        for s in loop_states:
+            edges = sdfg.out_edges(s)
+            if len(edges) != 2:
+                continue
+            e, else_edge = edges
+            cond = e.data.condition_sympy()
+            else_cond = else_edge.data.condition_sympy()
+            # swap edges if necessary
+            if isinstance(else_cond, sp.Equality):
+                cond, else_cond = else_cond, cond
+                e, else_edge = else_edge, e
+            if isinstance(cond, sp.Equality):
+                if cond.lhs.name == itervar:
+                    if cond.rhs == rng[0] or cond.rhs == rng[1]:
+                        return True
 
-        # # TODO make sure that the iteration variable is not oddly written here (but should not really happen)
+        return False
 
-        # # Get loop states
-        # loop_states = list(sdutil.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard))
-        # # look for states with a conditional on the iteration variable
-        # for s in loop_states:
-        #     s.
-        # first_id = loop_states.index(begin)
-        # last_state = loop_struct[1]
-        # last_id = loop_states.index(last_state)
-        # loop_subgraph = gr.SubgraphView(sdfg, loop_states)
-
-        # return True
 
     def instantiate_loop(
         self,
@@ -160,87 +163,92 @@ class LoopSplit(DetectLoop, xf.MultiStateTransformation):
 
         ####################################################################
         # Transform
-        found = True
-        while found:
-            found = False
-            for s in loop_states:
-                edges = sdfg.out_edges(s)
-                if len(edges) != 2:
-                    continue
-                e, else_edge = edges
-                cond = e.data.condition_sympy()
-                else_cond = else_edge.data.condition_sympy()
-                # swap edges if necessary
-                if isinstance(else_cond, sp.Equality):
-                    cond, else_cond = else_cond, cond
-                    e, else_edge = else_edge, e
-                if isinstance(cond, sp.Equality):
-                    if cond.lhs.name == itervar:
-                        if cond.rhs == rng[0]:
-                            init_edges = []
-                            before_states = loop_struct[0]
-                            for before_state in before_states:
-                                init_edge = sdfg.edges_between(before_state, guard)[0]
-                                init_edge.data.assignments[itervar] = str(rng[0] + rng[2])
-                                init_edges.append(init_edge)
-                            append_states = before_states
+        for s in loop_states:
+            edges = sdfg.out_edges(s)
+            if len(edges) != 2:
+                continue
+            e, else_edge = edges
+            cond = e.data.condition_sympy()
+            else_cond = else_edge.data.condition_sympy()
+            # swap edges if necessary
+            if isinstance(else_cond, sp.Equality):
+                cond, else_cond = else_cond, cond
+                e, else_edge = else_edge, e
+            if isinstance(cond, sp.Equality):
+                if cond.lhs.name == itervar:
+                    if cond.rhs == rng[0]:
+                        print('found on range start:', cond)
+                        init_edges = []
+                        before_states = loop_struct[0]
+                        for before_state in before_states:
+                            init_edge = sdfg.edges_between(before_state, guard)[0]
+                            init_edge.data.assignments[itervar] = str(rng[0] + rng[2])
+                            init_edges.append(init_edge)
+                        append_states = before_states
 
-                            # Instantiate loop states with iterate value
-                            state_name: str = 'start_' + itervar
-                            state_name = state_name.replace('-', 'm').replace('+', 'p').replace('*', 'M').replace('/', 'D')
-                            new_states = self.instantiate_loop(
-                                sdfg,
-                                loop_states,
-                                loop_subgraph,
-                                itervar,
-                                rng[0],
-                                state_name,
-                            )
+                        # Instantiate loop states with iterate value
+                        state_name: str = 'start_' + itervar
+                        state_name = state_name.replace('-', 'm').replace('+', 'p').replace('*', 'M').replace('/', 'D')
+                        new_states = self.instantiate_loop(
+                            sdfg,
+                            loop_states,
+                            loop_subgraph,
+                            itervar,
+                            rng[0],
+                            state_name,
+                        )
 
-                            # Connect states to before the loop with unconditional edges
-                            for append_state in append_states:
-                                sdfg.add_edge(append_state, new_states[first_id], sd.InterstateEdge())
-                            append_states = [new_states[last_id]]
+                        # Connect states to before the loop with unconditional edges
+                        for append_state in append_states:
+                            sdfg.add_edge(append_state, new_states[first_id], sd.InterstateEdge())
+                        append_states = [new_states[last_id]]
 
-                            # Reconnect edge to guard state from last peeled iteration
-                            for append_state in append_states:
-                                if append_state not in before_states:
-                                    for init_edge in init_edges:
-                                        sdfg.remove_edge(init_edge)
-                                    sdfg.add_edge(append_state, guard, init_edges[0].data)
+                        # Reconnect edge to guard state from last peeled iteration
+                        for append_state in append_states:
+                            if append_state not in before_states:
+                                for init_edge in init_edges:
+                                    sdfg.remove_edge(init_edge)
+                                sdfg.add_edge(append_state, guard, init_edges[0].data)
+                        
+                        sdfg.remove_edge(e)
+                        if len(sdfg.in_edges(e.dst)) == 0:
+                            self._eliminate_branch(sdfg, e.dst)
+                        # remove conditional from else_edge
+                        sdfg.remove_edge(else_edge)
+                        sdfg.add_edge(else_edge.src, else_edge.dst, sd.InterstateEdge(assignments=else_edge.data.assignments))
+                        break
+                    elif cond.rhs == rng[1]:
+                        print('found on range end:', cond)
+                        condition_edge.data.condition = CodeBlock(self._modify_cond(condition_edge.data.condition, itervar, rng[2]))
+                        not_condition_edge.data.condition = CodeBlock(
+                            self._modify_cond(not_condition_edge.data.condition, itervar, rng[2]))
+                        prepend_state = after_state
+
+                        # Instantiate loop states with iterate value
+                        state_name: str = 'end_' + itervar
+                        state_name = state_name.replace('-', 'm').replace('+', 'p').replace('*', 'M').replace('/', 'D')
+                        new_states = self.instantiate_loop(
+                            sdfg,
+                            loop_states,
+                            loop_subgraph,
+                            itervar,
+                            rng[1],
+                            state_name,
+                        )
+
+                        # Connect states to before the loop with unconditional edges
+                        sdfg.add_edge(new_states[last_id], prepend_state, sd.InterstateEdge())
+                        prepend_state = new_states[first_id]
+
+                        # Reconnect edge to guard state from last peeled iteration
+                        if prepend_state != after_state:
+                            sdfg.remove_edge(not_condition_edge)
+                            sdfg.add_edge(guard, prepend_state, not_condition_edge.data)
                             
+                        sdfg.remove_edge(e)
+                        if len(sdfg.in_edges(e.dst)) == 0:
                             self._eliminate_branch(sdfg, e.dst)
-                            sdfg.remove_edge(else_edge)
-                            sdfg.add_edge(else_edge.src, else_edge.dst, sd.InterstateEdge(assignments=else_edge.data.assignments))
-                            return
-                        elif cond.rhs == rng[1]:
-                            itervar_sym = pystr_to_symbolic(itervar)
-                            condition_edge.data.condition = CodeBlock(self._modify_cond(condition_edge.data.condition, itervar, rng[2]))
-                            not_condition_edge.data.condition = CodeBlock(
-                                self._modify_cond(not_condition_edge.data.condition, itervar, rng[2]))
-                            prepend_state = after_state
-
-                            # Instantiate loop states with iterate value
-                            state_name: str = 'end_' + itervar
-                            state_name = state_name.replace('-', 'm').replace('+', 'p').replace('*', 'M').replace('/', 'D')
-                            new_states = self.instantiate_loop(
-                                sdfg,
-                                loop_states,
-                                loop_subgraph,
-                                itervar,
-                                rng[1],
-                                state_name,
-                            )
-
-                            # Connect states to before the loop with unconditional edges
-                            sdfg.add_edge(new_states[last_id], prepend_state, sd.InterstateEdge())
-                            prepend_state = new_states[first_id]
-
-                            # Reconnect edge to guard state from last peeled iteration
-                            if prepend_state != after_state:
-                                sdfg.remove_edge(not_condition_edge)
-                                sdfg.add_edge(guard, prepend_state, not_condition_edge.data)
-                            self._eliminate_branch(sdfg, e.dst)
-                            sdfg.remove_edge(else_edge)
-                            sdfg.add_edge(else_edge.src, else_edge.dst, sd.InterstateEdge(assignments=else_edge.data.assignments))
-                            return
+                        # remove condition from else_edge
+                        sdfg.remove_edge(else_edge)
+                        sdfg.add_edge(else_edge.src, else_edge.dst, sd.InterstateEdge(assignments=else_edge.data.assignments))
+                        break
