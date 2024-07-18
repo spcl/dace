@@ -98,10 +98,9 @@ class LoopSplit(DetectLoop, xf.MultiStateTransformation):
             src = new_states[loop_states.index(edge.src)]
             dst = new_states[loop_states.index(edge.dst)]
 
-            # Replace conditions in subgraph edges
+            # Replace conditions and assignments in subgraph edges
             data: sd.InterstateEdge = copy.deepcopy(edge.data)
-            if data.condition:
-                ASTFindReplace({itervar: str(value)}).visit(data.condition.code[0])
+            data.replace(itervar, str(value), False)
 
             sdfg.add_edge(src, dst, data)
 
