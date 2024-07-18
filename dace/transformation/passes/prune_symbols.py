@@ -51,6 +51,13 @@ class RemoveUnusedSymbols(ppl.Pass):
             if sym in sdfg.symbols:
                 sdfg.remove_symbol(sym)
                 result.add(sym)
+        
+        # cleanup interstate edges
+        all_symbols = set(sdfg.symbols.keys())
+        for e in sdfg.edges():
+            to_delete = [sym for sym in e.data.assignments.keys() if sym not in all_symbols]
+            for sym in to_delete:
+                del e.data.assignments[sym]
 
         if self.recursive:
             # Prune nested SDFGs recursively
