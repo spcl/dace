@@ -275,7 +275,9 @@ def _create_einsum_internal(sdfg: SDFG,
     if not is_conflicted and init_output is None:
         to_init = False
 
-    if einsum.is_reduce() and alpha == 1 and (beta == 0 or beta == 1):
+    if einsum.is_reduce() and symbolic.equal_valued(1, alpha) and (
+            symbolic.equal_valued(0, beta) or symbolic.equal_valued(1, beta)
+    ):
         from dace.libraries.standard.nodes.reduce import Reduce
         # Get reduce axes
         axes = tuple(i for i, s in enumerate(einsum.inputs[0]) if s not in einsum.output)
