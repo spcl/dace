@@ -239,13 +239,29 @@ class MapFusion(transformation.SingleStateTransformation):
                 symbolic.safe_replace(params_dict, lambda m: a.replace(m))
 
             a = input_accesses[0]
+            a_dep = [False] * len(a)
+            for i, r in enumerate(a):
+                for p in first_map_entry.map.params:
+                    if isinstance(r, tuple):
+                        a_dep[i] = any(p in t.free_symbols if symbolic.issymbolic(t) else False for t in r)
+                    else:
+                        a_dep[i] = p in r.free_symbols if symbolic.issymbolic(r) else False
             for b in oacc_permuted:
+                b_dep = [False] * len(b)
+                for i, r in enumerate(b):
+                    for p in second_map_entry.map.params:
+                        if isinstance(r, tuple):
+                            b_dep[i] = any(p in t.free_symbols if symbolic.issymbolic(t) else False for t in r)
+                        else:
+                            b_dep[i] = p in r.free_symbols if symbolic.issymbolic(r) else False
                 if isinstance(a, subsets.Indices):
                     c = subsets.Range.from_indices(a)
                     c.offset(b, negative=True)
                 else:
                     c = a.offset_new(b, negative=True)
-                for r in c:
+                for i, r in enumerate(c):
+                    if not (a_dep[i] or b_dep[i]):
+                        continue
                     if r != (0, 0, 1):
                         return False
 
