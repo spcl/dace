@@ -174,7 +174,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                     assert(sdfg.arrays[out_memlet.data].storage == dtypes.StorageType.Register or sdfg.arrays[out_memlet.data].storage == dtypes.StorageType.Default)
                     sdfg.remove_data(out_memlet.data, validate=False)
                     sdfg.add_array(name=out_memlet.data, shape=tile_sizes[-used_dimensions:], storage=dtypes.StorageType.Default,
-                                   dtype=data_type, transient=True)
+                                   dtype=data_type, transient=True, alignment=1, may_alias=False)
 
             # Now update remaining memlets, accessing temporary scalars
             data_to_check = set(updated_arr_names)
