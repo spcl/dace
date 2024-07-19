@@ -786,6 +786,9 @@ class Range(Subset):
     def intersects(self, other: 'Range'):
         type_error = False
         for i, (rng, orng) in enumerate(zip(self.ranges, other.ranges)):
+            # NOTE: Fix for symbols that are different objects but have the same name
+            rng = [symbolic.pystr_to_symbolic(str(token)) for token in rng]
+            orng = [symbolic.pystr_to_symbolic(str(token)) for token in orng]
             if (rng[2] != 1 or orng[2] != 1 or self.tile_sizes[i] != 1 or other.tile_sizes[i] != 1):
                 # TODO: This function does not consider strides or tiles
                 return None
