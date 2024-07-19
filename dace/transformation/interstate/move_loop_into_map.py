@@ -108,6 +108,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             for i, r in enumerate(subset):
                 if not isinstance(r, (list, tuple)):
                     r = [r]
+                r = [symbolic.pystr_to_symbolic(str(token)) for token in r]
                 fsymbols = set()
                 for token in r:
                     if symbolic.issymbolic(token):
