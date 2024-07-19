@@ -282,6 +282,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 # Loop over the accesses
                 for a in accesses:
                     subsets_intersect = False
+                    subsects_same = False
                     for e in graph.out_edges(a):
                         try:
                             subset, _ = _validate_subsets(e, sdfg.arrays, src_name=a.data)
@@ -294,6 +295,7 @@ class RedundantArray(pm.SingleStateTransformation):
                                 subsets_intersect = True
                                 break
                         if subsets_intersect:
+                            subsects_same = oset == subset
                             break
                     if not subsets_intersect:
                         continue
@@ -310,10 +312,10 @@ class RedundantArray(pm.SingleStateTransformation):
                     # races. Abort.
                     if not (has_bward_path or has_fward_path):
                         return False
-                    # If there is a backward path then the (true) in_array must
-                    # not be a direct successor of a.
+                    # If there is a backward path then the (true) in_array must not be a direct successor of a.
+                    # NOTE: Unless the subsets are the same, in which case we can remove the in_array.
                     try:
-                        if has_bward_path and true_in_array in G.successors(a):
+                        if not subsects_same and has_bward_path and true_in_array in G.successors(a):
                             return False
                     except NetworkXError:
                         # The exception occurs when access a is not in G.
@@ -794,6 +796,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                     # Loop over the accesses
                     for a in accesses:
                         subsets_intersect = False
+                        subsets_same = False
                         for e in graph.in_edges(a):
                             try:
                                 _, subset = _validate_subsets(e, sdfg.arrays, dst_name=a.data)
@@ -806,6 +809,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                                     subsets_intersect = True
                                     break
                             if subsets_intersect:
+                                subsets_same = iset == subset
                                 break
                         if not subsets_intersect:
                             continue
@@ -822,10 +826,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                         # possible to have data races. Abort.
                         if not (has_bward_path or has_fward_path):
                             return False
-                        # If there is a forward path then a must not be a direct
-                        # successor of the (true) out_array.
+                        # If there is a forward path then a must not be a direct successor of the (true) out_array.
+                        # NOTE: Unless the subsets are the same, in which case we can remove the out_array.
                         try:
-                            if has_fward_path and a in G.successors(true_out_array):
+                            if not subsets_same and has_fward_path and a in G.successors(true_out_array):
                                 return False
                         except NetworkXError:
                             return False
