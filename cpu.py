@@ -12,4 +12,6 @@ if __name__ == "__main__":
     print ("before dace(CPU) (a,b)", a, b)
     print("after dace(CPU)", cpu_getstarted(a, b))
     sdfg = cpu_getstarted.to_sdfg(a, b)
+
+    sdfg.save('save_cpu_sdfg.py', use_pickle=True)
     # sdfg.apply_gpu_transformations()
