@@ -626,9 +626,9 @@ def auto_optimize(sdfg: SDFG,
         set_fast_implementations(sdfg, device)
         return sdfg
 
-    # Tiled WCR and streams
-    for nsdfg in list(sdfg.all_sdfgs_recursive()):
-        tile_wcrs(nsdfg, validate_all)
+    # # Tiled WCR and streams
+    # for nsdfg in list(sdfg.all_sdfgs_recursive()):
+    #     tile_wcrs(nsdfg, validate_all)
 
     # Collapse maps
     sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
@@ -646,6 +646,38 @@ def auto_optimize(sdfg: SDFG,
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.expand_library_nodes()
+
+    applied_fusions = 1
+    applied_moves = 1
+    while applied_fusions > 0 or applied_moves > 0:
+        sdfg.simplify()
+        # fuse subgraphs greedily
+        applied_fusions = greedy_fuse(sdfg, device=device, validate_all=validate_all)
+        # fuse stencils greedily
+        if use_stencil_tiling:
+            applied_fusions += greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+        sdfg.simplify()
+        # Move Loops inside Maps when possible
+        applied_moves = sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+    sdfg.simplify()
+
+    # Tiled WCR and streams
+    for nsdfg in list(sdfg.all_sdfgs_recursive()):
+        tile_wcrs(nsdfg, validate_all)
+
+    applied_fusions = 1
+    applied_moves = 1
+    while applied_fusions > 0 or applied_moves > 0:
+        sdfg.simplify()
+        # fuse subgraphs greedily
+        applied_fusions = greedy_fuse(sdfg, device=device, validate_all=validate_all)
+        # fuse stencils greedily
+        if use_stencil_tiling:
+            applied_fusions += greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+        sdfg.simplify()
+        # Move Loops inside Maps when possible
+        applied_moves = sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+    sdfg.simplify()
 
     # TODO(later): Safe vectorization
 
