@@ -2009,8 +2009,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 arr = self._get_array_or_closure(memlet.data)
 
-                for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=False, defined_variables=set())
+                # NOTE: Quickfix for symbols dependent on other symbols
+                while True:
+                    current_memlet = copy.deepcopy(memlet)
+                    for s, r in symbols.items():
+                        memlet = propagate_subset([memlet], arr, [s], r, use_dst=False, defined_variables=set())
+                    if current_memlet == memlet:
+                        break
                 if _subset_has_indirection(memlet.subset, self):
                     read_node = entry_node
                     if entry_node is None:
@@ -2099,8 +2104,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 arr = self._get_array_or_closure(memlet.data)
 
-                for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=True, defined_variables=set())
+                # NOTE: Quickfix for symbols dependent on other symbols
+                while True:
+                    current_memlet = copy.deepcopy(memlet)
+                    for s, r in symbols.items():
+                        memlet = propagate_subset([memlet], arr, [s], r, use_dst=True, defined_variables=set())
+                    if current_memlet == memlet:
+                        break
                 if _subset_has_indirection(memlet.subset, self):
                     write_node = exit_node
                     if exit_node is None:
@@ -3239,7 +3249,11 @@ class ProgramVisitor(ExtNodeVisitor):
             return self.accesses[(name, rng, 'w')]
         elif name in self.variables:
             return (self.variables[name], rng)
-        elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
+        elif (name, rng, 'r') in self.accesses:
+            new_name, new_rng = self.accesses[(name, rng, 'r')]
+            self.outputs[new_name] = self.inputs[new_name]
+            return (new_name, new_rng)
+        elif name in self.scope_vars:
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
         else:
             raise NotImplementedError
