@@ -17,7 +17,7 @@ from dace.codegen.targets import cpp, cpu
 from dace.codegen.instrumentation import InstrumentationProvider
 from dace.sdfg.state import SDFGState
 
-
+# include/* files, containing the signature header code.
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
@@ -34,7 +34,7 @@ def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     proto += 'extern "C" void __program_%s(%sHandle_t handle%s);\n' % params
     return proto
 
-
+# sample/* files - contains the main() function.
 def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     """ Generates a C program calling this SDFG. Since we do not
         know the purpose/semantics of the program, we allocate
@@ -147,7 +147,10 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
     if sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
-
+# 3 step process
+# 1. Generate the code for the SDFG(.cpp file)(generate_code)
+# 2. Generate the header file for the SDFG(.h file)(generate_headers)
+# 3. Generate the main function to call the SDFG(.main file)(generate_dummy)
 def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
