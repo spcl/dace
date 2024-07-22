@@ -793,8 +793,15 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                     # remove in_array.
                     # First, we simplify the graph
                     G = helpers.simplify_state(graph, remove_views=True)
+                    destinations = [edge[1] for edge in G.out_edges(true_out_array)]
                     # Loop over the accesses
                     for a in accesses:
+
+                        # TODO: Describe the issue in more detail
+                        for dst in destinations:
+                            if not nx.has_path(G, dst, a):
+                                return False
+
                         subsets_intersect = False
                         subsets_same = False
                         for e in graph.in_edges(a):
