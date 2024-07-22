@@ -29,17 +29,6 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.map_entry)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-
-        map_entry = self.map_entry
-
-        # Applicable if the map is a GPU_Device scheduled map
-        # And there is no other maps inside the map schedule
-        for e in graph.out_edges(map_entry):
-            if isinstance(e.dst, nodes.MapEntry):
-                return False
-        for e in graph.in_edges(map_entry):
-            if isinstance(e.src, nodes.MapEntry):
-                return False
         if self.thread_block_size_x * self.thread_block_size_y * self.thread_block_size_z > 1024:
             return False
 
@@ -80,6 +69,16 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         # The dev map is a new map where the gpu_block_size param is not transferred over
         dev_entry = graph.entry_node(map_entry)
         dev_entry.map.gpu_block_size = gpu_block_dims_ordered
+
+        # Clear the copied-over edges that are not between any connectors (happens if such an edge exist to ensure
+        # proper allocation of a constnat in after the device map)
+        edges_to_remove = []
+        for edge in graph.out_edges(dev_entry):
+            u, u_conn, v, v_conn, memlet = edge
+            if u_conn == None and v_conn == None and memlet.data == None:
+                edges_to_remove.append(edge)
+        for edge in edges_to_remove:
+            graph.remove_edge(edge)
 
     @staticmethod
     def annotates_memlets():

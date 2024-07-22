@@ -173,8 +173,8 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                     data_type = sdfg.arrays[out_memlet.data].dtype
                     assert(sdfg.arrays[out_memlet.data].storage == dtypes.StorageType.Register or sdfg.arrays[out_memlet.data].storage == dtypes.StorageType.Default)
                     sdfg.remove_data(out_memlet.data, validate=False)
-                    sdfg.add_array(name=out_memlet.data, shape=tile_sizes[-used_dimensions:], storage=dtypes.StorageType.Default,
-                                   dtype=data_type, transient=True, alignment=1, may_alias=False)
+                    sdfg.add_array(name=out_memlet.data, shape=tile_sizes[-used_dimensions:], storage=dtypes.StorageType.Register,
+                                   dtype=data_type, transient=True, alignment=16)
 
             # Now update remaining memlets, accessing temporary scalars
             data_to_check = set(updated_arr_names)
@@ -188,6 +188,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                     state.add_edge(u, u_conn, v, v_conn, offseted_memlet)
                 if not (isinstance(v, nodes.MapExit) and v == state.exit_node(sequential_map_entry)):
                     edges_to_check = edges_to_check.union(state.out_edges(v))
+
 
 
     @staticmethod
