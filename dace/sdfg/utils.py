@@ -1885,3 +1885,58 @@ def get_global_memlet_path_dst(sdfg: SDFG, state: SDFGState, edge: MultiConnecto
             pedge = pedges[0]
             return get_global_memlet_path_dst(psdfg, pstate, pedge)
     return dst
+
+
+def remove_scalar_views(sdfg: SDFG):
+    """
+    Removes Views to Scalar data from the SDFG. This operation is done in place.
+
+    :param sdfg: The SDFG to remove scalar views from.
+    """
+
+    for sd in sdfg.all_sdfgs_recursive():
+        to_remove = set()
+        for state in sd.states():
+            for node in state.data_nodes():
+                if isinstance(node.desc(sd), dt.View):
+                    viewed_node = get_view_node(state, node)
+                    if isinstance(viewed_node, nd.AccessNode) and isinstance(viewed_node.desc(sd), dt.Scalar):
+                        to_remove.add(node.data)
+                        viewed_edge = get_view_edge(state, node)
+                        is_write = viewed_edge.dst == viewed_node
+                        if is_write:
+                            for e1 in state.in_edges(node):
+                                for e2 in state.memlet_path(e1):
+                                    if e2.data.data == node.data:
+                                        e2.data.data = viewed_node.data
+                            change_edge_dest(state, node, viewed_node)
+                        else:
+                            for e1 in state.out_edges(node):
+                                for e2 in state.memlet_path(e1):
+                                    if e2.data.data == node.data:
+                                        e2.data.data = viewed_node.data
+                            change_edge_src(state, node, viewed_node)
+                        state.remove_node(node)
+        # NOTE: Is this safe? It would only be unsafe if a View could be reused for different data and a View was used
+        # to view both a Scalar and a single Array element.
+        for name in to_remove:
+            del sd.arrays[name]
+
+
+def rename_dynamic_map_inputs(sdfg: SDFG):
+    """
+    Renames dynamic map inputs that have the same name as the data setting them. This operation is done in place.
+
+    :param sdfg: The SDFG to rename dynamic map inputs in.
+    """
+
+    for node, parent in sdfg.all_nodes_recursive():
+        if isinstance(node, nd.MapEntry):
+            sgraph = parent.scope_subgraph(node)
+            for e in dace.sdfg.dynamic_map_inputs(parent, node):
+                if e.src.data == e.dst_conn:
+                    new_name = parent.parent._find_new_name(e.dst_conn)
+                    node.remove_in_connector(e.dst_conn)
+                    node.add_in_connector(new_name)
+                    sgraph.replace(e.dst_conn, new_name)
+                    e.dst_conn = new_name
