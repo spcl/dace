@@ -1407,6 +1407,13 @@ def propagate_subset(memlets: List[Memlet],
                         src instead, depending on propagation direction.
         :return: Memlet with propagated subset and volume.
     """
+    # NOTE: Fix subsets
+    for m in memlets:
+        m.subset = subsets.Range.from_string(str(m.subset))
+        if m.other_subset is not None:
+            m.other_subset = subsets.Range.from_string(str(m.other_subset))
+    rng = subsets.Range.from_string(str(rng))
+
     # Argument handling
     if defined_variables is None:
         # Default defined variables is "everything but params"
