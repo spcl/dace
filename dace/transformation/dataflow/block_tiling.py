@@ -110,6 +110,50 @@ class BlockTiling(transformation.SingleStateTransformation):
 
         return None
 
+    def return_access_node(self, state: SDFGState, array_name: str):
+        for node in sdutil.dfs_topological_sort(state):
+            if isinstance(node, nodes.AccessNode):
+                if node.data == array_name:
+                    return node
+        # Create new
+        access_node = nodes.AccessNode(data=array_name)
+        state.add_node(access_node)
+        return access_node
+
+    def replace_connectors(self, state: SDFGState, map_node: nodes.MapEntry | nodes.MapExit, match_str : str, replace_str: str):
+        new_in_conns = []
+        new_out_conns = []
+
+        for in_conn in map_node.in_connectors:
+            if in_conn[3:] == match_str:
+                new_in_conns.append("IN_" + replace_str)
+                for in_edge in state.in_edges(map_node):
+                    u, u_conn, v, v_conn, memlet = in_edge
+                    if v_conn == in_conn:
+                        state.remove_edge(in_edge)
+                        state.add_edge(u, u_conn, v, "IN_" + replace_str, memlet)
+            else:
+                new_in_conns.append(in_conn)
+        for in_conn in copy.deepcopy(map_node.in_connectors):
+            map_node.remove_in_connector(in_conn)
+        for new_in_conn in new_in_conns:
+            map_node.add_in_connector(new_in_conn)
+
+        for out_conn in map_node.out_connectors:
+            if out_conn[4:] == match_str:
+                new_out_conns.append("OUT_" + replace_str)
+                for out_edge in state.out_edges(map_node):
+                    u, u_conn, v, v_conn, memlet = out_edge
+                    if u_conn == out_conn:
+                        state.remove_edge(out_edge)
+                        state.add_edge(u, "OUT_" + replace_str, v, v_conn, memlet)
+            else:
+                new_out_conns.append(out_conn)
+        for out_conn in copy.deepcopy(map_node.out_connectors):
+            map_node.remove_out_connector(out_conn)
+        for new_out_conn in new_out_conns:
+            map_node.add_out_connector(new_out_conn)
+
     def apply(self, state: SDFGState, sdfg: SDFG):
         work_map_entry : nodes.MapEntry = self.sequential_map_entry
         work_map : nodes.Map = work_map_entry.map
@@ -215,6 +259,8 @@ class BlockTiling(transformation.SingleStateTransformation):
         for e in edges_to_add:
             state.add_edge(*e)
 
+        # Prevent calling syncthreads in every iteration of the block tiled loop
+        thread_block_map_entry.map.gpu_syncthreads = False
 
         """
         # The map before tiling had memlets of form of beg:end:step,
@@ -229,14 +275,10 @@ class BlockTiling(transformation.SingleStateTransformation):
             new_beg = outer_work_map_param
             new_end = new_beg + new_step - 1
             self.replace_memlet_subsets(state, (old_beg, old_end, 1), (new_beg, new_end, 1), outer_work_map_entry, outer_work_map_exit)
-
-        # Prevent calling syncthreads in every iteration of the block tiled loop
-        thread_block_map_entry.map.gpu_syncthreads = False
         """
 
         # If there was an assignment after the previous K loop, then it will be assigned every iteration of the tiled tK loop.
         # This means many more assignments to global memory we need to fix that by remove any assignment node
-        """
         work_map_exit = state.exit_node(work_map_entry)
         nodes_to_check = [v for (u, u_conn, v, v_conn, memlet) in state.out_edges(work_map_exit)]
         while len(nodes_to_check) != 0:
@@ -250,41 +292,92 @@ class BlockTiling(transformation.SingleStateTransformation):
                         state.remove_edge(edge)
                         assert(len(state.out_edges(v)) == 1)
                         _, _, ov, ov_conn, omemlet = state.out_edges(v)[0]
-                        state.remove_node(state.out_edges(v)[0])
-                        state.remove_node(v)
-                        state.add_edge(u, u_conn, ov, ov_conn, memlet)
+                        assign_node = v
                         # We have made for example Access Node (tmp) -> Assignment -> Map to
                         # Access Node -> Map, where all the memlets after the assignment need to be updated.
-                        out_conn = ov_conn
-                        in_conn = "IN_" + ov_conn[4:]
+                        in_conn = ov_conn
+                        out_conn = "OUT_" + ov_conn[3:]
                         data_to_replace = memlet.data
+                        global_array = None
                         assert(isinstance(ov, nodes.MapExit))
                         next_map_exit = ov
+                        state.remove_node(assign_node)
+                        state.add_edge(u, u_conn, ov, ov_conn, Memlet(data=data_to_replace, subset=memlet.subset))
                         while next_map_exit != None and next_map_exit != outer_work_map_exit:
+                            print("C", next_map_exit)
                             # Assume maps are directly connected for now, and update the maps until the outer work map to
                             # Use the local variable
                             for out_edge in state.out_edges(next_map_exit):
                                 _u, _u_conn, _v, _v_conn, _memlet = out_edge
+                                print(_u_conn,out_conn,_v_conn, in_conn)
                                 if _u_conn == out_conn and _v_conn == in_conn:
                                     print(data_to_replace)
                                     print(sdfg.arrays[data_to_replace])
                                     subset_list = [(0, end-1, 1) for end in sdfg.arrays[data_to_replace].shape]
+                                    assert(global_array == None or global_array == _memlet.data)
+                                    global_array = _memlet.data
                                     m = Memlet(data=data_to_replace, subset=subsets.Range(subset_list))
                                     state.remove_edge(out_edge)
                                     state.add_edge(_u, _u_conn, _v, _v_conn, m)
                             next_map_exit = self.find_next_map_exit(state, next_map_exit)
                         # Here the edges use the global array but the Map -> gEdge needs to become Map -> localEdge -> gEdge
                         # While also using local offset and global offset
-                        for out_edge in state.out_edges(thread_block_map_exit):
+                        # Update any out connector of form OUT_C to OUT_tmp, where c is not accessed anymore
+                        thread_coarsened_map_entry = self.find_next_map_entry(state, outer_work_map_entry)
+                        thread_coarsened_map_exit = state.exit_node(thread_coarsened_map_entry)
+                        self.replace_connectors(state, outer_work_map_exit, global_array, data_to_replace)
+                        self.replace_connectors(state, thread_coarsened_map_exit, global_array, data_to_replace)
+                        for out_edge in state.out_edges(outer_work_map_exit):
                             _u, _u_conn, _v, _v_conn, _memlet = out_edge
-                            if _u_conn == out_conn and _v_conn == in_conn:
+                            print("EEEEEEEEEEEEEEEEE", _u_conn, out_conn, _v_conn, in_conn)
+                            print("OOOOOOOOOOO", _u_conn[4:], data_to_replace,_v_conn[3:],global_array)
+                            if _u_conn[4:] == data_to_replace  and _v_conn[3:] == global_array:
                                 subset_list = [(0, end-1, 1) for end in sdfg.arrays[data_to_replace].shape]
                                 m = Memlet(data=data_to_replace, subset=subsets.Range(subset_list))
-                                pass
+                                m2 = Memlet(data=data_to_replace, subset=subsets.Range(subset_list), other_subset=_memlet.subset)
+                                #access_node_tmp = self.return_access_node(state, data_to_replace)
+                                #access_node_glb = self.return_access_node(state, global_array)
+                                access_node_tmp = nodes.AccessNode(data=data_to_replace)
+                                access_node_glb = nodes.AccessNode(data=global_array)
+                                # Need to create a map with a tasklet
+                                assign_map_entry, assign_map_exit = state.add_map(name=f"assign_map_{data_to_replace}_{global_array}",
+                                                                                  ndrange=[(f"assign_map_{i}", v) for i, v in enumerate(subset_list)],
+                                                                                  schedule=dtypes.ScheduleType.Sequential,
+                                                                                  unroll=True)
+                                assign_map = assign_map_entry.map
 
-            if node != outer_work_map_exit:
+                                for in_conn, out_conn in zip(outer_work_map_exit.in_connectors, outer_work_map_exit.out_connectors):
+                                    assign_map_entry.add_in_connector(in_conn)
+                                    assign_map_entry.add_out_connector(out_conn)
+                                for in_conn, out_conn in zip(thread_block_map_exit.in_connectors, thread_block_map_exit.out_connectors):
+                                    assign_map_exit.add_in_connector(in_conn)
+                                    assign_map_exit.add_out_connector(out_conn)
+
+                                u_conn_tmp = f"OUT_{data_to_replace}"
+                                v_conn_tmp = f"IN_{data_to_replace}"
+                                u_conn_c = f"OUT_{global_array}"
+                                v_conn_c = f"IN_{global_array}"
+
+                                state.add_node(assign_node)
+                                state.remove_edge(out_edge)
+                                state.add_edge(_u, u_conn_tmp, assign_map_entry, v_conn_tmp, m)
+                                assign_expr_tmp = [(sympy.Symbol(param),sympy.Symbol(param),1) for param in assign_map.params]
+                                assign_expr_glb = [(sympy.Symbol(param) + sympy.Symbol(param2),sympy.Symbol(param) + sympy.Symbol(param2),1) 
+                                                   for param, param2 in zip(assign_map.params, thread_block_map.params)]
+                                m3 = Memlet(data=data_to_replace, subset=subsets.Range(assign_expr_tmp))
+                                m4 = Memlet(data=global_array, subset=subsets.Range(assign_expr_glb))
+                                assert(len(assign_node.in_connectors)==1)
+                                assert(len(assign_node.out_connectors)==1)
+                                assign_in_conn = next(iter(assign_node.in_connectors.items()))[0]
+                                assign_out_conn = next(iter(assign_node.out_connectors.items()))[0]
+                                state.add_edge(assign_map_entry, u_conn_tmp, assign_node, assign_in_conn, m3)
+                                state.add_edge(assign_node, assign_out_conn , assign_map_exit, v_conn_c, m4)
+                                state.add_edge(assign_map_exit, u_conn_c, thread_block_map_exit, v_conn_c, _memlet)
+
+
+            if node != thread_block_map_exit:
                 nodes_to_check += [v for (u, u_conn, v, v_conn, memlet) in state.out_edges(node)]
-        """
+
     @staticmethod
     def annotates_memlets():
         return True
