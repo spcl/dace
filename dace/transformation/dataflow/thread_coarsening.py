@@ -190,7 +190,6 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                     edges_to_check = edges_to_check.union(state.out_edges(v))
 
 
-
     @staticmethod
     def annotates_memlets():
         return True

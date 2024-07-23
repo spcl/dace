@@ -43,7 +43,7 @@ class BlockTiling(transformation.SingleStateTransformation):
     The transformation is designed in the set of "AMM-guided transformations". It assumes that BlockCoarsening, ThreadCoarsening
     and AddThreadBlockMap (or consequented ChangeThreadBlockMap) transformations have been applied, even if the tiling sizes are trivial (1,1,...).
     """
-    outer_map_entry = transformation.PatternNode(nodes.MapEntry)
+    thread_block_map_entry = transformation.PatternNode(nodes.MapEntry)
     sequential_map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
@@ -51,14 +51,14 @@ class BlockTiling(transformation.SingleStateTransformation):
 
     @classmethod
     def expressions(cls):
-        return [sdutil.node_path_graph(cls.outer_map_entry, cls.sequential_map_entry)]
+        return [sdutil.node_path_graph(cls.thread_block_map_entry, cls.sequential_map_entry)]
 
     def can_be_applied(self, state, expr_index, sdfg, permissive=False):
         if state.entry_node(self.sequential_map_entry) != self.thread_block_map_entry:
             return False
-        if state.entry_node(self.thread_block_map_entry) != self.outer_map_entry:
+        if state.entry_node(self.thread_block_map_entry) != self.thread_block_map_entry:
             return False
-        if self.outer_map_entry.schedule != dtypes.ScheduleType.Sequential or \
+        if self.thread_block_map_entry.schedule != dtypes.ScheduleType.GPU_ThreadBlock or \
             self.sequential_map_entry.schedule != dtypes.ScheduleType.Sequential:
             return False
 
@@ -71,9 +71,19 @@ class BlockTiling(transformation.SingleStateTransformation):
         nodes_to_check = [v for u, u_conn, v, v_conn, memlet in state.out_edges(node)]
         while (len(nodes_to_check) != 0):
             node_to_check = nodes_to_check.pop()
-            if isinstance(node_to_check, nodes.MapEntry) and state.entry_node(node_to_check) == node:
+            if isinstance(node_to_check, nodes.MapEntry):
                 return node_to_check
             if not isinstance(nodes_to_check, nodes.MapExit):
+                nodes_to_check += [v for u, u_conn, v, v_conn, memlet in state.out_edges(node_to_check)]
+        return None
+
+    def find_next_map_exit(self, state: SDFGState, node : nodes.MapExit):
+        nodes_to_check = [v for u, u_conn, v, v_conn, memlet in state.out_edges(node)]
+        while (len(nodes_to_check) != 0):
+            node_to_check = nodes_to_check.pop()
+            if isinstance(node_to_check, nodes.MapExit):
+                return node_to_check
+            if not isinstance(nodes_to_check, nodes.MapEntry):
                 nodes_to_check += [v for u, u_conn, v, v_conn, memlet in state.out_edges(node_to_check)]
         return None
 
@@ -103,9 +113,9 @@ class BlockTiling(transformation.SingleStateTransformation):
     def apply(self, state: SDFGState, sdfg: SDFG):
         work_map_entry : nodes.MapEntry = self.sequential_map_entry
         work_map : nodes.Map = work_map_entry.map
-        outer_map_entry : nodes.MapEntry = self.outer_map_entry
-        outer_map_exit : nodes.MapExit = state.exit_node(outer_map_entry)
-        outer_map : nodes.Map = outer_map_entry.map
+        thread_block_map_entry : nodes.MapEntry = self.thread_block_map_entry
+        thread_block_map_exit : nodes.MapExit = state.exit_node(thread_block_map_entry)
+        thread_block_map : nodes.Map = thread_block_map_entry.map
         tiling_params : tuple = self.block_tile_sizes
         print(work_map, work_map.range)
 
@@ -128,30 +138,29 @@ class BlockTiling(transformation.SingleStateTransformation):
         outer_work_map_exit = nodes.MapExit(outer_work_map)
         work_map.unroll = True
 
-        # Outer work map connects Device Map -> Outer Work Map -> Another Map 
-        # Another map can be the Work Map, Block Coarsened Map or Thread Block Schedules map, need to copy over the connectors
-        inner_map_entry : nodes.MapEntry = self.find_next_map_entry(state, outer_map_entry)
+        # Map structure: Device Map -> Block Coarsened Map -> Thread Block Map -> Outer Work Map(s) -> Thread Coarsened Map -> Inner Work Map(s)
+        inner_map_entry : nodes.MapEntry = self.find_next_map_entry(state, thread_block_map_entry)
         assert(inner_map_entry != None)
         inner_map_exit : nodes.MapExit = state.exit_node(inner_map_entry)
         assert(inner_map_exit != None)
-        for out_conn in outer_map_entry.out_connectors:
+        for out_conn in thread_block_map_entry.out_connectors:
             outer_work_map_entry.add_out_connector(out_conn)
-        for in_conn in inner_map_entry.in_connectors:
+        for in_conn in thread_block_map_entry.in_connectors:
             outer_work_map_entry.add_in_connector(in_conn)
-        for out_conn in inner_map_exit.out_connectors:
+        for out_conn in thread_block_map_exit.out_connectors:
             outer_work_map_exit.add_out_connector(out_conn)
-        for in_conn in outer_map_exit.in_connectors:
+        for in_conn in thread_block_map_exit.in_connectors:
             outer_work_map_exit.add_in_connector(in_conn)
         state.add_node(outer_work_map_entry)
         state.add_node(outer_work_map_exit)
 
         # Nove replicate the edges as they are
-        for out_edge in state.out_edges(outer_map_entry):
+        for out_edge in state.out_edges(thread_block_map_entry):
             u, u_conn, v, v_conn, memlet = out_edge
             state.add_edge(outer_work_map_entry, u_conn, v, v_conn, copy.deepcopy(memlet))
             state.add_edge(u, u_conn, outer_work_map_entry, v_conn, copy.deepcopy(memlet))
             state.remove_edge(out_edge)
-        for in_edge in state.in_edges(outer_map_exit):
+        for in_edge in state.in_edges(thread_block_map_exit):
             u, u_conn, v, v_conn, memlet = in_edge
             state.add_edge(outer_work_map_exit, u_conn, v, v_conn, copy.deepcopy(memlet))
             state.add_edge(u, u_conn, outer_work_map_exit, v_conn, copy.deepcopy(memlet))
@@ -166,41 +175,48 @@ class BlockTiling(transformation.SingleStateTransformation):
         work_map_range = subsets.Range(work_map_range_list)
         work_map.range = work_map_range
 
-        # Move temporary arrays after the thread block schedule above (the edges)
-        thread_block_map_entry = self.find_next_map_entry(state, outer_work_map_entry)
+        # Move temporary arrays after the outer tiled work map before the thread block schedule (the edges too)
+        outer_map_entry = state.entry_node(thread_block_map_entry)
+        print("AAAAAAAAAAAAAA", outer_map_entry)
         assert(thread_block_map_entry.schedule == dtypes.ScheduleType.GPU_ThreadBlock)
         edges_to_add = []
         access_nodes = []
-        for out_edge in state.out_edges(thread_block_map_entry):
+        for out_edge in state.out_edges(outer_work_map_entry):
             u, u_conn, v, v_conn, memlet = out_edge
             if isinstance(v, nodes.AccessNode):
                 access_nodes.append(v)
                 in_u, in_u_conn, in_v, in_v_conn, in_memlet = out_edge
                 assert(len(state.out_edges(v)) == 1)
                 out_u, out_u_conn, out_v, out_v_conn, out_memlet = state.out_edges(v)[0]
-                assert(v==out_u)
-                assert(v==in_v)
-                # Move above block tiled map
+                assert(v == out_u)
+                assert(v == in_v)
+                # Move above the thread block tiled map
                 old_in_u_conn = None
                 if in_u_conn == None: 
                     # It was created after tblock map
                     in_u_conn = "OUT_" + out_v_conn[3:]
                 else:
                     old_in_u_conn = in_u_conn
-                thread_block_map_entry.add_out_connector(in_u_conn)
                 outer_work_map_entry.add_out_connector(in_u_conn)
-                thread_block_map_entry.add_in_connector(out_v_conn)
+                thread_block_map_entry.add_out_connector(in_u_conn)
                 outer_work_map_entry.add_in_connector(out_v_conn)
+                thread_block_map_entry.add_in_connector(out_v_conn)
                 edges_to_add.append((outer_map_entry, old_in_u_conn, v, None, copy.deepcopy(in_memlet)))
-                edges_to_add.append((v, None, outer_work_map_entry, out_v_conn, copy.deepcopy(out_memlet)))
-                edges_to_add.append((thread_block_map_entry, in_u_conn, out_v, out_v_conn, copy.deepcopy(out_memlet)))
-                edges_to_add.append((outer_work_map_entry, in_u_conn, thread_block_map_entry, out_v_conn, copy.deepcopy(out_memlet)))
+                edges_to_add.append((v, None, thread_block_map_entry, out_v_conn, copy.deepcopy(out_memlet)))
+                edges_to_add.append((outer_work_map_entry, in_u_conn, out_v, out_v_conn, copy.deepcopy(out_memlet)))
+                edges_to_add.append((thread_block_map_entry, in_u_conn, outer_work_map_entry, out_v_conn, copy.deepcopy(out_memlet)))
+        for out_edge in state.out_edges(thread_block_map_entry):
+            u, u_conn, v, v_conn, memlet = out_edge
+            if u_conn == None and v_conn == None:
+                state.remove_edge(out_edge)
         for v in access_nodes:
             for e in state.in_edges(v) + state.out_edges(v):
                 state.remove_edge(e)
         for e in edges_to_add:
             state.add_edge(*e)
 
+
+        """
         # The map before tiling had memlets of form of beg:end:step,
         # After the tiling the map is basically beg:beg+tilesize*step:step
         # And therefore any memlet range that has the form of beg:end:step needs to be changed to beg:beg+tilesize*step:step
@@ -214,6 +230,61 @@ class BlockTiling(transformation.SingleStateTransformation):
             new_end = new_beg + new_step - 1
             self.replace_memlet_subsets(state, (old_beg, old_end, 1), (new_beg, new_end, 1), outer_work_map_entry, outer_work_map_exit)
 
+        # Prevent calling syncthreads in every iteration of the block tiled loop
+        thread_block_map_entry.map.gpu_syncthreads = False
+        """
+
+        # If there was an assignment after the previous K loop, then it will be assigned every iteration of the tiled tK loop.
+        # This means many more assignments to global memory we need to fix that by remove any assignment node
+        """
+        work_map_exit = state.exit_node(work_map_entry)
+        nodes_to_check = [v for (u, u_conn, v, v_conn, memlet) in state.out_edges(work_map_exit)]
+        while len(nodes_to_check) != 0:
+            node = nodes_to_check.pop()
+            if isinstance(node, nodes.AccessNode):
+                if len(state.out_edges(node)) == 1:
+                    # Assignment node, if the assignment to another array
+                    edge = state.out_edges(node)[0]
+                    u, u_conn, v, v_conn, memlet = edge
+                    if isinstance(v, nodes.Tasklet) and "assign" in v.label:
+                        state.remove_edge(edge)
+                        assert(len(state.out_edges(v)) == 1)
+                        _, _, ov, ov_conn, omemlet = state.out_edges(v)[0]
+                        state.remove_node(state.out_edges(v)[0])
+                        state.remove_node(v)
+                        state.add_edge(u, u_conn, ov, ov_conn, memlet)
+                        # We have made for example Access Node (tmp) -> Assignment -> Map to
+                        # Access Node -> Map, where all the memlets after the assignment need to be updated.
+                        out_conn = ov_conn
+                        in_conn = "IN_" + ov_conn[4:]
+                        data_to_replace = memlet.data
+                        assert(isinstance(ov, nodes.MapExit))
+                        next_map_exit = ov
+                        while next_map_exit != None and next_map_exit != outer_work_map_exit:
+                            # Assume maps are directly connected for now, and update the maps until the outer work map to
+                            # Use the local variable
+                            for out_edge in state.out_edges(next_map_exit):
+                                _u, _u_conn, _v, _v_conn, _memlet = out_edge
+                                if _u_conn == out_conn and _v_conn == in_conn:
+                                    print(data_to_replace)
+                                    print(sdfg.arrays[data_to_replace])
+                                    subset_list = [(0, end-1, 1) for end in sdfg.arrays[data_to_replace].shape]
+                                    m = Memlet(data=data_to_replace, subset=subsets.Range(subset_list))
+                                    state.remove_edge(out_edge)
+                                    state.add_edge(_u, _u_conn, _v, _v_conn, m)
+                            next_map_exit = self.find_next_map_exit(state, next_map_exit)
+                        # Here the edges use the global array but the Map -> gEdge needs to become Map -> localEdge -> gEdge
+                        # While also using local offset and global offset
+                        for out_edge in state.out_edges(thread_block_map_exit):
+                            _u, _u_conn, _v, _v_conn, _memlet = out_edge
+                            if _u_conn == out_conn and _v_conn == in_conn:
+                                subset_list = [(0, end-1, 1) for end in sdfg.arrays[data_to_replace].shape]
+                                m = Memlet(data=data_to_replace, subset=subsets.Range(subset_list))
+                                pass
+
+            if node != outer_work_map_exit:
+                nodes_to_check += [v for (u, u_conn, v, v_conn, memlet) in state.out_edges(node)]
+        """
     @staticmethod
     def annotates_memlets():
         return True
