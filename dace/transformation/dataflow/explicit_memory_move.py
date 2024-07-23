@@ -97,7 +97,7 @@ class MemoryMovementNode(CodeLibraryNode):
                                                                                 for i, (load_len, tensor_dim, iter_param) in \
                                                                                 enumerate(zip(self.load_lengths[:-2], self.global_tensor_dims[:-2],
                                                                                               self.grid_loop_params[:-2] ))] \
-            + [f"#pragma unroll {self.load_lengths[n-2]} \nfor (int i_d{n-2} = 0; i_d{n-2} < Min({self.load_lengths[n-2]}, {self.global_tensor_dims[n-1]} - {self.grid_loop_params[n-2]}; i_d{n-2}+={lines_fitting_to_num_threads}){{"]
+            + [f"#pragma unroll {self.load_lengths[n-2]} \nfor (int i_d{n-2} = 0; i_d{n-2} < Min({self.load_lengths[n-2]}, {self.global_tensor_dims[n-1]} - {self.grid_loop_params[n-2]}); i_d{n-2}+={lines_fitting_to_num_threads}){{"]
           formatted_for_loops_close_fitting_to_num_threads_is_geq_2  = ["}" for _ in self.load_lengths[:-1]]
         else:
           assert(self.variant == 2)
@@ -534,6 +534,8 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
           # The current state (and assumptions), the other edges connect outer map to the inner map,
           # With a volume and subset, this needs to go through a library node now that writes to an access node of the new type
           u, u_conn, v, v_conn, memlet = edge
+          if sdfg.arrays[memlet.data].storage != dtypes.StorageType.GPU_Global:
+            continue
 
           parsed_storage_type = f"{src_storage_type_of_memlet}".split(".")[-1]
           parsed_memory_location = f"{self.memory_location}".split(".")[-1]
