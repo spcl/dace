@@ -233,6 +233,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     # NOTE: THE SDFG IS ASSUMED TO BE FROZEN (not change) FROM THIS POINT ONWARDS
 
     # Generate frame code (and the rest of the code)
+    # (, generated_code/clean_code, ...))
     (global_code, frame_code, used_targets, used_environments) = frame.generate_code(sdfg, None)
     target_objects = [
         CodeObject(sdfg.name,

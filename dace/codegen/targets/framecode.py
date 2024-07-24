@@ -928,7 +928,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Generate actual program body
 
         states_generated = self.generate_states(sdfg, global_stream, callsite_stream)
-
+        # Loop over states_generated and print them
+        for state in states_generated:
+            print(state)
+            print("*" * 50)
         #######################################################################
 
         # Sanity check
@@ -969,16 +972,44 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             header_global_stream.write(global_stream.getvalue())
             header_global_stream.write(footer_global_stream.getvalue())
             generated_header = header_global_stream.getvalue()
+            # print("generated header:")
+            # print("#" * 50)
+            # print(generated_header)
+            # print("#" * 50)
+            # # print("Footer Stream:")
+            # # print("#" * 50)
+            # # print(footer_stream.getvalue())
+            # # print("#" * 50)
+            
 
+            
             all_code = CodeIOStream()
             all_code.write(function_signature)
             all_code.write(header_stream.getvalue())
             all_code.write(callsite_stream.getvalue())
             all_code.write(footer_stream.getvalue())
             generated_code = all_code.getvalue()
+            # print("#" * 50)
+            # print("Function Signature:")
+            # print("#" * 50)
+            # print(function_signature)
+            # print("#" * 50)
+            # print("Header Stream:")
+            # print("#" * 50)
+            # header_stream.write("This is internal header, int x=10;")
+            # print(header_stream.getvalue())
+            # print("#" * 50)
+            # print("callsite Code:")
+            # print("#" * 50)
+            # print(callsite_stream.getvalue())
+            # print("#" * 50)
+            # print("Footer Stream:")
+            # print("#" * 50)
+            # print(footer_stream.getvalue())
+            # print("#" * 50)
         else:
-            generated_header = global_stream.getvalue()
-            generated_code = callsite_stream.getvalue()
+            generated_header = global_stream.getvalue() # header
+            generated_code = callsite_stream.getvalue() # frame
 
         # Clean up generated code
         gotos = re.findall(r'goto (.*?);', generated_code)
