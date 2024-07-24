@@ -1,14 +1,17 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
+from dace.transformation.interstate import FPGATransformSDFG
 
 @dace.program
-def cpu_vector_add(A: dace.int32[20], B: dace.int32[20], C: dace.int32[20]):
+def fpga_vector_add(A: dace.int32[20], B: dace.int32[20], C: dace.int32[20]):
     for i in dace.map[0:20]:       # parallelization construct
        C[i] =  A[i] + B[i]
-
+        
 if __name__ == '__main__':
-    sdfg = cpu_vector_add.to_sdfg(simplify=False)   # compiled SDFG
+    sdfg = fpga_vector_add.to_sdfg(simplify=False)   # compiled SDFG
+    sdfg.apply_transformations(FPGATransformSDFG)
 
     # call with values
     A = np.ones((20), dtype=np.int32)   # 1,1,1,1,...
