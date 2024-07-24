@@ -258,7 +258,7 @@ class AccessNode(Node):
     @property
     def label(self):
         return self.data
-    
+
     @property
     def root_data(self):
         return self.data.split('.')[0]
@@ -270,7 +270,7 @@ class AccessNode(Node):
         if isinstance(sdfg, (dace.sdfg.SDFGState, dace.sdfg.ScopeSubgraphView)):
             sdfg = sdfg.parent
         return sdfg.arrays[self.data]
-    
+
     def root_desc(self, sdfg):
         from dace.sdfg import SDFGState, ScopeSubgraphView
         if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
@@ -723,7 +723,7 @@ class ExitNode(Node):
 @dace.serialize.serializable
 class MapEntry(EntryNode):
     """ Node that opens a Map scope.
-        
+
         :see: Map
     """
 
@@ -800,7 +800,7 @@ class MapEntry(EntryNode):
 @dace.serialize.serializable
 class MapExit(ExitNode):
     """ Node that closes a Map scope.
-        
+
         :see: Map
     """
 
@@ -871,6 +871,10 @@ class Map(object):
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
+    unroll_factor = Property(dtype=int, allow_none=True, default=None,
+                             getter=lambda self: self._unroll_factor if self.unroll else None,
+                             desc="How much iterations should be unrolled."
+                             " To prevent unrolling, set this value to 1.")
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
@@ -960,7 +964,7 @@ MapEntry = indirect_properties(Map, lambda obj: obj.map)(MapEntry)
 @dace.serialize.serializable
 class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
-        
+
         :see: Consume
     """
 
@@ -1041,7 +1045,7 @@ class ConsumeEntry(EntryNode):
 @dace.serialize.serializable
 class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
-        
+
         :see: Consume
     """
 
