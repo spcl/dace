@@ -5,17 +5,18 @@ import cupy as cp
 from dace.sdfg import utils as sdutil
 from dace.sdfg import nodes
 from dace.transformation.dataflow.tiling import MapTiling
-from dace.transformation.dataflow.change_thread_block_map import ChangeThreadBlockMap
-from dace.transformation.dataflow.block_coarsening import BlockCoarsening
-from dace.transformation.dataflow.add_thread_block_map import AddThreadBlockMap
-from dace.transformation.dataflow.thread_coarsening import ThreadCoarsening
+from dace.transformation.amm_guided.change_thread_block_map import ChangeThreadBlockMap
+from dace.transformation.amm_guided.block_coarsening import BlockCoarsening
+from dace.transformation.amm_guided.add_thread_block_map import AddThreadBlockMap
+from dace.transformation.amm_guided.thread_coarsening import ThreadCoarsening
 from dace.transformation.dataflow.explicit_memory_move import ExplicitMemoryMove
 from dace import dtypes
-from dace.transformation.dataflow.underapproximate_memlet_subset import UnderApprorixmateMemletSubsets
+from dace.transformation.amm_guided.underapproximate_memlet_subset import UnderApprorixmateMemletSubsets
 
 
 N = dace.symbol('N')
 M = dace.symbol('M')
+
 def _apply_add_thread_block_schedule(sdfg):
   for state in sdfg.states():
       outer = None
@@ -25,7 +26,6 @@ def _apply_add_thread_block_schedule(sdfg):
                   outer = node
           if outer != None:
               AddThreadBlockMap.apply_to(sdfg=sdfg, verify=False, map_entry=outer)
-              sdfg.save("added_thread_block_map.sdfg")
               outer = None
 
 def _apply_change_thread_block_schedule(sdfg):
@@ -51,11 +51,9 @@ def _apply_change_thread_block_schedule(sdfg):
             ChangeThreadBlockMap.apply_to(sdfg=sdfg, verify=False, device_scheduled_map_entry = outer, 
                                             thread_block_scheduled_map_entry = inner, 
                                             options={"dim_size_x":32,"dim_size_y":2,"dim_size_z":2})
-            sdfg.save(f"changed_thread_block_map.sdfg")
         for (outer, inner) in reversed(apply_list):
             UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=outer)
             UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=inner)
-            sdfg.save(f"changed_thread_block_map_and_underapproximate.sdfg")
 
 
 def _apply_thread_coarsening(sdfg):
@@ -75,12 +73,10 @@ def _apply_thread_coarsening(sdfg):
                 inner = None
         for (outer, inner) in reversed(apply_list):
             ThreadCoarsening.apply_to(sdfg=sdfg, verify=False, device_map_entry=outer, thread_block_map_entry=inner, options={"tile_size_x":4})
-            sdfg.save("thread_coarsened.sdfg")
         for (outer, inner) in reversed(apply_list):
             UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=state.entry_node(inner))
             UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=inner)
             UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=outer)
-            sdfg.save(f"thread_coarsened_and_underapproximated.sdfg")
 
 def _apply_block_coarsening(sdfg):
     for state in sdfg.states():
@@ -103,17 +99,13 @@ def _apply_block_coarsening(sdfg):
                 seq = None
         for (outer, inner, seq) in reversed(apply_list):
             BlockCoarsening.apply_to(sdfg=sdfg, verify=False, device_map_entry=outer, thread_block_map_entry=inner, sequential_map_entry=seq, options={"block_iter_x":4, "block_iter_y":2, "block_iter_z":2})
-            sdfg.save("block_coarsened.sdfg")
         for (outer, inner, seq) in reversed(apply_list):
             UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=seq)
             UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=inner)
             UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=outer)
-            #UnderApprorixmateMemletSubsets.apply_to(sdfg=sdfg, verify=False, map_entry=state.entry_node(outer))
-            sdfg.save(f"block_coarsened_and_underapproximated.sdfg")
 
 
 def _apply_mem_move(sdfg):
-    sdfg.save("base.sdfg")
     try:
         for state in sdfg.states():
             dev = None
@@ -135,10 +127,7 @@ def _apply_mem_move(sdfg):
                         dev = None
             for dev, outer, inner in apply_list:
                 ExplicitMemoryMove.apply_to(sdfg=sdfg, verify=False, device_map_entry=dev, grid_strided_map_entry=outer, thread_block_map_entry=inner, options={"memory_location":dtypes.StorageType.GPU_Shared})
-                sdfg.save("memory_moved.sdfg")
-
     except Exception as e:
-        sdfg.save("failed_transformed.sdfg")
         print(e)
         raise Exception(e)
 
@@ -235,52 +224,16 @@ def test_tensor_add_4d():
 
   _test_transformations(opt_sdfg, A, B, A2, B2, _N)
 
-def test_jacobi_2d():
-  def jacobi_kernel(TSTEPS, A, B):
-      for _ in range(0, TSTEPS):
-          B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] +
-                              A[2:, 1:-1] + A[:-2, 1:-1])
-          A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] +
-                              B[2:, 1:-1] + B[:-2, 1:-1])
-
-
+def test_mem_move_1d():
   @dace.program
-  def dace_jacobi_kernel(TSTEPS: dace.int32, 
-                  A: dace.float32[N, N] @ dtypes.StorageType.GPU_Global, 
-                  B: dace.float32[N, N] @ dtypes.StorageType.GPU_Global):
-      for _ in range(0, TSTEPS):
-          B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] +
-                              A[2:, 1:-1] + A[:-2, 1:-1])
-          A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] +
-                              B[2:, 1:-1] + B[:-2, 1:-1])
-
-  sdfg = dace_jacobi_kernel.to_sdfg()
-  opt_sdfg = aopt.auto_optimize(sdfg, dace.DeviceType.GPU)
-  _apply_add_thread_block_schedule(opt_sdfg)
-  _apply_change_thread_block_schedule(opt_sdfg)
-  _apply_thread_coarsening(opt_sdfg)
-  _apply_block_coarsening(opt_sdfg)
-  _N = 256
-  steps = 2
-  A = np.random.rand(_N, _N).astype(np.float32)
-  B = np.random.rand(_N, _N).astype(np.float32)
-  A2 = cp.asarray(A, cp.float32)
-  B2 = cp.asarray(B, cp.float32)
-  jacobi_kernel(TSTEPS=steps, A=A, B=B)
-  opt_sdfg(TSTEPS=steps, A=A2, B=B2, N=_N)
-  assert(np.allclose(A, A2.get()))
-  assert(np.allclose(B, B2.get()))
-
-def test_mem_move_1d_():
-  @dace.program
-  def dace_kernel_1d_(A: dace.float32[M] @ dtypes.StorageType.GPU_Global, 
-                            B: dace.float32[M] @ dtypes.StorageType.GPU_Global):
+  def dace_kernel_1d(A: dace.float32[M] @ dtypes.StorageType.GPU_Global, 
+                     B: dace.float32[M] @ dtypes.StorageType.GPU_Global):
     for i0 in dace.map[0:M:256] @ dtypes.ScheduleType.GPU_Device:
       for g0 in dace.map[i0:i0+256:128] @ dtypes.ScheduleType.Sequential:
         for j0 in dace.map[g0:g0+128:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
             A[j0] = A[j0] +  np.float32(0.5) * B[j0]
 
-  sdfg = dace_kernel_1d_.to_sdfg()
+  sdfg = dace_kernel_1d.to_sdfg()
   sdfg.validate()
   _explicit_gpu_block_size(sdfg, [256, 1, 1])
   _apply_mem_move(sdfg)
@@ -297,16 +250,16 @@ def test_mem_move_1d_():
   AH = A2.get()
   assert(np.allclose(A, AH))
 
-def test_mem_move_2d_():
+def test_mem_move_2d():
   @dace.program
-  def dace_kernel_2d_(A: dace.float32[M, M] @ dtypes.StorageType.GPU_Global,
-                            B: dace.float32[M, M] @ dtypes.StorageType.GPU_Global):
+  def dace_kernel_2d(A: dace.float32[M, M] @ dtypes.StorageType.GPU_Global,
+                     B: dace.float32[M, M] @ dtypes.StorageType.GPU_Global):
     for i0, i1 in dace.map[0:M:32, 0:M:32] @ dtypes.ScheduleType.GPU_Device:
       for g0, g1 in dace.map[i0:i0+32:16, i1:i1+32:16] @ dtypes.ScheduleType.Sequential:
         for j0, j1 in dace.map[g0:g0+16:1, g1:g1+16:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
             A[j0, j1] = A[j0, j1] +  np.float32(0.5) * B[j0, j1]
 
-  sdfg = dace_kernel_2d_.to_sdfg()
+  sdfg = dace_kernel_2d.to_sdfg()
   sdfg.validate()
   _explicit_gpu_block_size(sdfg, [16, 16, 1])
   _apply_mem_move(sdfg)
@@ -323,18 +276,18 @@ def test_mem_move_2d_():
   AH = A2.get()
   assert(np.allclose(A, AH))
 
-def test_mem_move_3d_():
+def test_mem_move_3d():
   @dace.program
-  def dace_kernel_3d_(A: dace.float32[M, N, N] @ dtypes.StorageType.GPU_Global, 
-                            B: dace.float32[M, N, N] @ dtypes.StorageType.GPU_Global):
+  def dace_kernel_3d(A: dace.float32[M, N, N] @ dtypes.StorageType.GPU_Global, 
+                     B: dace.float32[M, N, N] @ dtypes.StorageType.GPU_Global):
     for i0, i1, i2 in dace.map[0:M:32, 0:N:8, 0:N:8] @ dtypes.ScheduleType.GPU_Device:
       for g0, g1, g2 in dace.map[i0:i0+32:16, i1:i1+8:4, i2:i2+8:4] @ dtypes.ScheduleType.Sequential:
         for j0, j1, j2 in dace.map[g0:g0+16:1, g1:g1+4:1, g2:g2+4:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
             A[j0, j1, j2] = A[j0, j1, j2] +  np.float32(0.5) * B[j0, j1, j2]
 
-  sdfg = dace_kernel_3d_.to_sdfg()
+  sdfg = dace_kernel_3d.to_sdfg()
   sdfg.validate()
-  _explicit_gpu_block_size(sdfg, [16, 4, 4])
+  _explicit_gpu_block_size(sdfg, [4, 4, 16])
   _apply_mem_move(sdfg)
   sdfg.validate()
 
@@ -351,18 +304,18 @@ def test_mem_move_3d_():
   assert(np.allclose(A, AH))
 
 
-def test_mem_move_4d_():
+def test_mem_move_4d():
   @dace.program
-  def dace_kernel_4d_(A: dace.float32[M, N, N, N] @ dtypes.StorageType.GPU_Global, 
-                            B: dace.float32[M, N, N, N] @ dtypes.StorageType.GPU_Global):
+  def dace_kernel_4d(A: dace.float32[M, N, N, N] @ dtypes.StorageType.GPU_Global, 
+                     B: dace.float32[M, N, N, N] @ dtypes.StorageType.GPU_Global):
     for i0, i1, i2, i3 in dace.map[0:M:32, 0:N:8, 0:N:8, 0:N:1] @ dtypes.ScheduleType.GPU_Device:
       for g0, g1, g2, g3 in dace.map[i0:i0+32:16, i1:i1+8:4, i2:i2+8:4, i3:i3+1:1] @ dtypes.ScheduleType.Sequential:
         for j0, j1, j2, j3 in dace.map[g0:g0+16:1, g1:g1+4:1, g2:g2+4:1, g3:g3+1:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
             A[j0, j1, j2, j3] = A[j0, j1, j2, j3] +  np.float32(0.5) * B[j0, j1, j2, j3]
 
-  sdfg = dace_kernel_4d_.to_sdfg()
+  sdfg = dace_kernel_4d.to_sdfg()
   sdfg.validate()
-  _explicit_gpu_block_size(sdfg, [16, 4, 4])
+  _explicit_gpu_block_size(sdfg, [1, 4, 64])
   _apply_mem_move(sdfg)
   sdfg.validate()
 
@@ -378,20 +331,20 @@ def test_mem_move_4d_():
   AH = A2.get()
   assert(np.allclose(A, AH))
 
-def _tensor_add_kernel_transposed_1d(A, B, N):
-  for i in range(N):
-    A[i] += 0.5 * B[N - (i+1)]
-
-def test_mem_move_transposed_1d_():
+def test_mem_move_transposed_1d():
   @dace.program
-  def dace_kernel_1d_transposed_(A: dace.float32[M] @ dtypes.StorageType.GPU_Global, 
-                            B: dace.float32[M] @ dtypes.StorageType.GPU_Global):
+  def dace_kernel_1d_transposed(A: dace.float32[M] @ dtypes.StorageType.GPU_Global, 
+                                B: dace.float32[M] @ dtypes.StorageType.GPU_Global):
     for i0 in dace.map[0:M:256] @ dtypes.ScheduleType.GPU_Device:
       for g0 in dace.map[i0:i0+256:128] @ dtypes.ScheduleType.Sequential:
         for j0 in dace.map[g0:g0+128:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
             A[j0] = A[j0] +  np.float32(0.5) * B[M - (j0 + 1)]
 
-  sdfg = dace_kernel_1d_transposed_.to_sdfg()
+  def _tensor_add_kernel_transposed_1d(A, B, N):
+    for i in range(N):
+      A[i] += 0.5 * B[N - (i+1)]
+
+  sdfg = dace_kernel_1d_transposed.to_sdfg()
   sdfg.validate()
   _explicit_gpu_block_size(sdfg, [128, 1, 1])
   _apply_mem_move(sdfg)
@@ -413,16 +366,16 @@ def _tensor_add_kernel_transposed_2d(A, B, N):
     for j in range(N):
       A[i, j] += 0.5 * B[j, i]
 
-def test_mem_move_2d_transposed_():
+def test_mem_move_2d_transposed():
   @dace.program
-  def dace_kernel_2d_transposed_(A: dace.float32[M, M] @ dtypes.StorageType.GPU_Global,
-                                       B: dace.float32[M, M] @ dtypes.StorageType.GPU_Global):
+  def dace_kernel_2d_transposed(A: dace.float32[M, M] @ dtypes.StorageType.GPU_Global,
+                                B: dace.float32[M, M] @ dtypes.StorageType.GPU_Global):
     for i0, i1 in dace.map[0:M:32, 0:M:32] @ dtypes.ScheduleType.GPU_Device:
       for g0, g1 in dace.map[i0:i0+32:16, i1:i1+32:16] @ dtypes.ScheduleType.Sequential:
         for j0, j1 in dace.map[g0:g0+16:1, g1:g1+16:1] @ dtypes.ScheduleType.GPU_ThreadBlock:
             A[j0, j1] = A[j0, j1] +  np.float32(0.5) * B[j1, j0]
 
-  sdfg = dace_kernel_2d_transposed_.to_sdfg()
+  sdfg = dace_kernel_2d_transposed.to_sdfg()
   sdfg.validate()
   _explicit_gpu_block_size(sdfg, [16, 16, 1])
   _apply_mem_move(sdfg)
@@ -440,7 +393,54 @@ def test_mem_move_2d_transposed_():
   assert(np.allclose(A, AH))
 
 
+
+def test_jacobi_2d():
+  @dace.program
+  def dace_jacobi_kernel(TSTEPS: dace.int32, 
+                         A: dace.float32[N, N] @ dtypes.StorageType.GPU_Global, 
+                         B: dace.float32[N, N] @ dtypes.StorageType.GPU_Global):
+    for _ in range(0, TSTEPS):
+        B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] +
+                            A[2:, 1:-1] + A[:-2, 1:-1])
+        A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] +
+                            B[2:, 1:-1] + B[:-2, 1:-1])
+
+  def jacobi_kernel(TSTEPS, A, B):
+    for _ in range(0, TSTEPS):
+        B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] +
+                            A[2:, 1:-1] + A[:-2, 1:-1])
+        A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] +
+                            B[2:, 1:-1] + B[:-2, 1:-1])
+
+  sdfg = dace_jacobi_kernel.to_sdfg(simplify=False)
+  sdfg.simplify(validate=True)
+  opt_sdfg = aopt.auto_optimize(sdfg, dace.DeviceType.GPU)
+  _apply_add_thread_block_schedule(opt_sdfg)
+  _apply_change_thread_block_schedule(opt_sdfg)
+  _apply_thread_coarsening(opt_sdfg)
+  _apply_block_coarsening(opt_sdfg)
+  _N = 256
+  steps = 2
+  A = np.random.rand(_N, _N).astype(np.float32)
+  B = np.random.rand(_N, _N).astype(np.float32)
+  A2 = cp.asarray(A, cp.float32)
+  B2 = cp.asarray(B, cp.float32)
+  jacobi_kernel(TSTEPS=steps, A=A, B=B)
+  opt_sdfg(TSTEPS=steps, A=A2, B=B2, N=_N)
+  assert(np.allclose(A, A2.get()))
+  assert(np.allclose(B, B2.get()))
+
 def test_jacobi_2d_mem_move():
+  @dace.program
+  def dace_jacobi_kernel(TSTEPS: dace.int32, 
+                         A: dace.float32[N, N] @ dtypes.StorageType.GPU_Global, 
+                         B: dace.float32[N, N] @ dtypes.StorageType.GPU_Global):
+    for _ in range(0, TSTEPS):
+        B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] +
+                            A[2:, 1:-1] + A[:-2, 1:-1])
+        A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] +
+                            B[2:, 1:-1] + B[:-2, 1:-1])
+
   def jacobi_kernel(TSTEPS, A, B):
       for _ in range(0, TSTEPS):
           B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] +
@@ -448,18 +448,8 @@ def test_jacobi_2d_mem_move():
           A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] +
                               B[2:, 1:-1] + B[:-2, 1:-1])
 
-
-  @dace.program
-  def dace_jacobi_kernel(TSTEPS: dace.int32, 
-                  A: dace.float32[N, N] @ dtypes.StorageType.GPU_Global, 
-                  B: dace.float32[N, N] @ dtypes.StorageType.GPU_Global):
-      for _ in range(0, TSTEPS):
-          B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] +
-                              A[2:, 1:-1] + A[:-2, 1:-1])
-          A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] +
-                              B[2:, 1:-1] + B[:-2, 1:-1])
-
-  sdfg = dace_jacobi_kernel.to_sdfg()
+  sdfg = dace_jacobi_kernel.to_sdfg(simplify=None)
+  sdfg.simplify(validate=True)
   opt_sdfg = aopt.auto_optimize(sdfg, dace.DeviceType.GPU)
   _apply_add_thread_block_schedule(opt_sdfg)
   _apply_change_thread_block_schedule(opt_sdfg)
@@ -483,11 +473,11 @@ if __name__ == '__main__':
   test_tensor_add_2d()
   test_tensor_add_3d()
   test_tensor_add_4d()
-  test_mem_move_1d_()
-  test_mem_move_2d_()
-  test_mem_move_transposed_1d_()
-  test_mem_move_2d_transposed_()
-  test_mem_move_3d_()
-  test_mem_move_4d_()
+  test_mem_move_1d()
+  test_mem_move_2d()
+  test_mem_move_transposed_1d()
+  test_mem_move_2d_transposed()
+  test_mem_move_3d()
+  test_mem_move_4d()
   test_jacobi_2d()
   test_jacobi_2d_mem_move()

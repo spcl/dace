@@ -12,7 +12,7 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.transformation.dataflow.tiling import MapTiling
 from dace import dtypes
-from dace.transformation.dataflow.change_thread_block_map import ChangeThreadBlockMap
+from dace.transformation.amm_guided.change_thread_block_map import ChangeThreadBlockMap
 from dace import subsets
 from typing import List
 
