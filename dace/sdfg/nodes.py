@@ -871,8 +871,7 @@ class Map(object):
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    unroll_factor = Property(dtype=int, allow_none=True, default=None,
-                             getter=lambda self: self._unroll_factor if self.unroll else None,
+    unroll_factor = Property(dtype=int, allow_none=True, default=0,
                              desc="How much iterations should be unrolled."
                              " To prevent unrolling, set this value to 1.")
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
