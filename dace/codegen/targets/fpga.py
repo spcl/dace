@@ -302,7 +302,7 @@ def is_vendor_supported(fpga_vendor: str) -> bool:
     Returns wheter the given vendor is supported or not, by looking
     among the registered FPGA code-generators.
 
-    :param fpga_vendor: the fpga vendor 
+    :param fpga_vendor: the fpga vendor
     """
 
     registered_codegens = dace.codegen.targets.target.TargetCodeGenerator._registry_
@@ -416,8 +416,8 @@ class FPGACodeGen(TargetCodeGenerator):
         '''
         Finds a tasklet with SystemVerilog as its language, within the given subgraph, if it contains one.
 
-        :param subgraph: The subgraph to check. 
-        :return: The tasklet node if one exists, None otherwise. 
+        :param subgraph: The subgraph to check.
+        :return: The tasklet node if one exists, None otherwise.
         '''
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.NestedSDFG):
