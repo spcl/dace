@@ -148,9 +148,9 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 # 3 step process
-# 1. Generate the code for the SDFG(.cpp file)(generate_code)
-# 2. Generate the header file for the SDFG(.h file)(generate_headers)
-# 3. Generate the main function to call the SDFG(.main file)(generate_dummy)
+# 1. Generate the code for the SDFG(.cpp file)(generate_code)(sdfg.generate_code()[0])
+# 2. Generate the header file for the SDFG(.h file)(generate_headers)(sdfg.generate_code()[1])
+# 3. Generate the main function to call the SDFG(.main file)(generate_dummy)(sdfg.generate_code()[2])
 def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
