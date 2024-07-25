@@ -19,8 +19,10 @@ from dace.registry import extensible_enum, undefined_safe_enum
 class DeviceType(aenum.AutoNumberEnum):
     CPU = ()  #: Multi-core CPU
     GPU = ()  #: GPU (AMD or NVIDIA)
+    IPU = ()  #: IPU (Graphcore)
     FPGA = ()  #: FPGA (Intel or Xilinx)
     Snitch = ()  #: Compute Cluster (RISC-V)
+
 
 
 @undefined_safe_enum
