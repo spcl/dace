@@ -32,7 +32,7 @@ from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, LoopRegion, ControlFlowRegion, UserRegion
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion, LoopRegion, ControlFlowRegion, UserRegion
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
@@ -3866,7 +3866,6 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             raise DaceSyntaxError(self, node,
                                   'Unrecognized SDFG type "%s" in call to "%s"' % (type(func).__name__, funcname))
-
         # Avoid import loops
         from dace.frontend.python.parser import infer_symbols_from_datadescriptor
 
@@ -4171,8 +4170,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Return SDFG return values, if exist
         if len(rets) == 1:
-            return rets[0]
-        return rets
+            return rets[0], args
+        return rets, args
 
     def create_callback(self, node: ast.Call, create_graph=True):
         funcname = astutils.rname(node)
@@ -4490,7 +4489,20 @@ class ProgramVisitor(ExtNodeVisitor):
         # If the function exists as a global SDFG or @dace.program, use it
         if func is not None:
             try:
-                return self._parse_sdfg_call(funcname, func, node)
+                call_region = FunctionCallRegion(label=f"{node.qualname}_{node.lineno}", arguments=[])
+                self.cfg_target.add_node(call_region)
+                self._on_block_added(call_region)
+                previous_last_cfg_target = self.last_cfg_target
+                previous_target = self.cfg_target
+                prev_last_block = self.last_block
+                self.last_block = None
+                self.cfg_target = call_region
+                result, args = self._parse_sdfg_call(funcname, func, node)
+                call_region.arguments = args
+                self.last_cfg_target = previous_last_cfg_target
+                self.cfg_target = previous_target
+                self.last_block = prev_last_block
+                return result
             except SkipCall as ex:
                 # Re-parse call with non-parsed information, trying
                 # to create callbacks instead

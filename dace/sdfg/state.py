@@ -3181,3 +3181,10 @@ class UserRegion(ControlFlowRegion):
     def __init__(self, label: str, sdfg: Optional['SDFG']= None, debuginfo: dtypes.DebugInfo | None = None):
         super().__init__(label, sdfg)
         self.debuginfo = debuginfo
+
+@make_properties
+class FunctionCallRegion(ControlFlowRegion):
+    arguments = DictProperty(str, str)
+    def __init__(self, label: str, arguments: Dict[str, str], sdfg: 'SDFG' = None):
+        super().__init__(label, sdfg)
+        self.arguments = arguments
