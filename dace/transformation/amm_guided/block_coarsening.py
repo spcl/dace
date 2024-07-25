@@ -3,14 +3,15 @@
     transformation."""
 
 
+from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties, SymbolicProperty
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.transformation.dataflow.tiling import MapTiling
-from dace import dtypes
-from dace import subsets
+from dace import dtypes, subsets
+import copy
 
 @make_properties
 class BlockCoarsening(transformation.SingleStateTransformation):
@@ -33,7 +34,7 @@ class BlockCoarsening(transformation.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.thread_block_map_entry, cls.device_map_entry, cls.sequential_map_entry)]
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, state, expr_index, sdfg, permissive=False):
         dev_entry = self.device_map_entry
         thread_block_entry = self.thread_block_map_entry
         sequential_entry = self.sequential_map_entry
@@ -42,16 +43,16 @@ class BlockCoarsening(transformation.SingleStateTransformation):
         # A device -> thread block -> sequential (thread tiling, could be a loop of lenth 1) map hierarchy
         if thread_block_entry.map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
             return False
-        if graph.entry_node(thread_block_entry) != dev_entry or \
-            graph.entry_node(sequential_entry) != sequential_entry:
+        if state.entry_node(thread_block_entry) != dev_entry or \
+            state.entry_node(sequential_entry) != sequential_entry:
             return False
 
-        return MapTiling.can_be_applied(self, graph, expr_index=expr_index, sdfg=sdfg, permissive=permissive)
+        return MapTiling.can_be_applied(self, state, expr_index=expr_index, sdfg=sdfg, permissive=permissive)
 
     def update_names():
         pass
 
-    def apply(self, graph: SDFGState, sdfg: SDFG):
+    def apply(self, state: SDFGState, sdfg: SDFG):
         # When the ThreadBlock scheduled loop is tiled, then beg:end:1 becomes beg:end:tile_size
         # For GPU scheduling the thread block scheduled map needs to be scaled according to the tile_sizes
         # Furthermore the step of the device scheduled map needs to be increase too.
@@ -77,6 +78,9 @@ class BlockCoarsening(transformation.SingleStateTransformation):
         saved_dev_gpu_block_size = dev_entry.map.gpu_block_size
 
         block_iterations[-used_dimension_count:] = requested_block_iters[-used_dimension_count:]
+
+        #saved_out_edges = [copy.deepcopy(e) for e in state.out_edges(dev_entry)]
+        #saved_in_edges = [copy.deepcopy(e) for e in state.in_edges(state.exit_node(dev_entry))]
 
         # Save the current step sizes of the thread block as map tiling changes is incorrectly as we rely on different strides
         # Which is not implemented
@@ -107,12 +111,32 @@ class BlockCoarsening(transformation.SingleStateTransformation):
         grid_strided_entry.map.schedule = dtypes.ScheduleType.Sequential
         grid_strided_entry.map.unroll = False
 
-        dev_entry = graph.entry_node(dev_entry)
+        dev_entry = state.entry_node(dev_entry)
 
         for i in range(len(dev_entry.map.params), 0, -1):
             (dev_beg, dev_end, _) = dev_entry.map.range[-i]
             dev_entry.map.range[-i] = (dev_beg, dev_end, saved_dev_steps[-i] * block_iterations[-i])
-        dev_entry.map.gpu_block_size = saved_dev_gpu_block_size 
+        dev_entry.map.gpu_block_size = saved_dev_gpu_block_size
+
+        # Update memlet subsets coming out of or to the device map
+        # After the block coarsening transformation the subsets are hard to use by shared memory transformation
+        for e in state.out_edges(dev_entry) + state.in_edges(state.exit_node(dev_entry)):
+            u, u_conn, v, v_conn, memlet = e
+            new_range_list = []
+            for (beg, end, step) in memlet.subset:
+                assert(step == 1)
+                add = True
+                for i, param in enumerate(dev_entry.params):
+                    if str(param) == str(beg):
+                        _, _, dev_step = dev_entry.range[i]
+                        new_range_list.append((beg, beg + dev_step - 1, step))
+                        add = False
+                if add:
+                    new_range_list.append((beg, end, step))
+            assert(new_range_list != [])
+            new_memlet = Memlet(data=memlet.data, subset=subsets.Range(new_range_list))
+            state.remove_edge(e)
+            state.add_edge(u, u_conn, v, v_conn, new_memlet)
 
     @staticmethod
     def annotates_memlets():

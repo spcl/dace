@@ -394,8 +394,8 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
     def filter_map_params_from_subset_2(self, subset_range : subsets.Range, 
                                         params_to_remove : set,
                                         current_map : nodes.Map,
-                                        intermediate_map : nodes.Map | None,
-                                        outer_map : nodes.Map | None,
+                                        intermediate_map,
+                                        outer_map,
                                         src_arr_shape : tuple,
                                         dst_arr_shape : tuple,
                                         map_mode : int):
@@ -548,7 +548,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
           shape = [0] * len(memlet.subset)
           for i, (beg, end, step) in enumerate(memlet.subset):
             assert(step == 1)
-            assert(isinstance(sympy.simplify(end + 1- beg), sympy.Integer))
+            assert(isinstance(sympy.simplify(end + 1 - beg), sympy.Integer))
             offsets[i] = str(beg)
             load_lengths[i] = int(sympy.simplify(end + 1 - beg))
             shape[i] = int(sympy.simplify(end + 1 - beg))

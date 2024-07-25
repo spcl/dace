@@ -2,9 +2,7 @@
 """ This module contains classes and functions that implement the grid-strided map tiling
     transformation."""
 
-
 from typing import List
-from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, propagation
 from dace.properties import make_properties, SymbolicProperty
 from dace.sdfg import nodes
@@ -12,11 +10,7 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace import dtypes
 from dace import subsets
-from dace import symbolic
-import sympy
-import copy as cp
-import math
-from functools import reduce
+
 
 @make_properties
 class ChangeThreadBlockMap(transformation.SingleStateTransformation):

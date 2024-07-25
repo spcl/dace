@@ -3,40 +3,44 @@
     transformation."""
 
 
-from typing import List
 from dace.memlet import Memlet
-from dace.sdfg import SDFG, SDFGState, propagation
-from dace.properties import make_properties, SymbolicProperty
+from dace.sdfg import SDFG, SDFGState
+from dace.properties import make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.analysis.writeset_underapproximation import UnderapproximateWrites
 from dace.transformation import transformation
-from dace import dtypes
 from dace import subsets
 from dace import symbolic
 import sympy
-import copy as cp
-import math
 from functools import reduce
 
-class TreeNode:
-    def __init__(self, value):
-        self.value = value
-        self.children = []
+def filter_symbol(expressions, symbols):
+    found_expressions = set()
+    for expr in expressions:
+        free_symbols = expr.free_symbols
+        free_symbol_strings = [str(x) for x in free_symbols]
+        for symbol in symbols:
+            if expr.has(symbol) or str(symbol) in free_symbol_strings:
+                found_expressions.add(expr)
+    return found_expressions.pop()
 
-    def add_child(self, child):
-        self.children.append(child)
+def filter_int(expressions, int_sym):
+    found_expressions = set()
+    for expr in expressions:
+        if (not expr.has(int_sym)) and expr != int_sym:
+            found_expressions.add(expr)
+    return found_expressions.pop()
 
-    def __repr__(self, level=0):
-        ret = "  " * level + repr(self.value) + "\n"
-        for child in self.children:
-            ret += child.__repr__(level + 1)
-        return ret
+def contains_floor_or_min(expr):
+    for node in sympy.preorder_traversal(expr):
+        if isinstance(node, sympy.Min) or isinstance(node, symbolic.int_floor):
+            return True
+    return False
+
 
 @make_properties
 class UnderApprorixmateMemletSubsets(transformation.SingleStateTransformation):
     """
-    Changes the range and step size of a thread block scheduled map
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
@@ -51,23 +55,6 @@ class UnderApprorixmateMemletSubsets(transformation.SingleStateTransformation):
     def apply(self, graph: SDFGState, sdfg: SDFG):
         map_entry = self.map_entry
 
-        def filter_symbol(expressions, symbols):
-            found_expressions = set()
-            for expr in expressions:
-                free_symbols = expr.free_symbols
-                free_symbol_strings = [str(x) for x in free_symbols]
-                for symbol in symbols:
-                    if expr.has(symbol) or str(symbol) in free_symbol_strings:
-                        found_expressions.add(expr)
-            return found_expressions.pop()
-
-        def filter_int(expressions, int_sym):
-            found_expressions = set()
-            for expr in expressions:
-                if (not expr.has(int_sym)) and expr != int_sym:
-                    found_expressions.add(expr)
-            return found_expressions.pop()
-
         map_exit = graph.exit_node(map_entry)
 
         edges_to_remove = []
@@ -81,12 +68,7 @@ class UnderApprorixmateMemletSubsets(transformation.SingleStateTransformation):
                     # Consider the expression in the tree form, transform the tree following these 2 rules,
                     # Until there are no Mins or int_floors left
                     # If calling, one side needs to contain the map parameter and the other side needs to be a dimension check
-                    # Discard the Min node and 
-                    def contains_floor_or_min(expr):
-                        for node in sympy.preorder_traversal(expr):
-                            if isinstance(node, sympy.Min) or isinstance(node, symbolic.int_floor):
-                                return True
-                        return False
+                    # Discard the Min node and
 
                     if (len(beg.free_symbols) >= 1):
                         expr_to_approximate = sympy.expand(end)

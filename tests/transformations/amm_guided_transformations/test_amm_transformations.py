@@ -5,11 +5,14 @@ import cupy as cp
 from dace.sdfg import utils as sdutil
 from dace.sdfg import nodes
 from dace.transformation.dataflow.tiling import MapTiling
+
+
+
 from dace.transformation.amm_guided.change_thread_block_map import ChangeThreadBlockMap
 from dace.transformation.amm_guided.block_coarsening import BlockCoarsening
 from dace.transformation.amm_guided.add_thread_block_map import AddThreadBlockMap
 from dace.transformation.amm_guided.thread_coarsening import ThreadCoarsening
-from dace.transformation.dataflow.explicit_memory_move import ExplicitMemoryMove
+from dace.transformation.amm_guided.explicit_memory_move import ExplicitMemoryMove
 from dace import dtypes
 from dace.transformation.amm_guided.underapproximate_memlet_subset import UnderApprorixmateMemletSubsets
 
@@ -126,7 +129,7 @@ def _apply_mem_move(sdfg):
                         inner = None
                         dev = None
             for dev, outer, inner in apply_list:
-                ExplicitMemoryMove.apply_to(sdfg=sdfg, verify=False, device_map_entry=dev, grid_strided_map_entry=outer, thread_block_map_entry=inner, options={"memory_location":dtypes.StorageType.GPU_Shared})
+                ExplicitMemoryMove.apply_to(sdfg=sdfg, verify=False, device_map_entry=dev, thread_block_map_entry=inner, options={"memory_location":dtypes.StorageType.GPU_Shared})
     except Exception as e:
         print(e)
         raise Exception(e)
