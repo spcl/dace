@@ -132,7 +132,7 @@ class MemoryMovementNode(CodeLibraryNode):
 
         shared_access_offsets = [f"const int shr_at_d{i} = {shared_offsets[i]} * (i_d{i});" for i in range(len((self.offsets[:-1])))]
         ats = [f"shr_at_d{i}" for i in range(len(self.offsets[:-1]))]
-        local_access_offset = f"const int shr_access_offset = {' + '.join(ats) if len(ats) > 0 else "0"}"
+        local_access_offset = f"const int shr_access_offset = {' + '.join(ats) if len(ats) > 0 else '0'}"
 
         d1_shared_offset = "0" if len(shared_offsets) < 2 else f"{shared_offsets[-2]} * runtime_line_num"
         bound_check_dim_0 = f'runtime_line_offset + {self.grid_loop_params[-1]} < {self.global_tensor_dims[-1]}' \
