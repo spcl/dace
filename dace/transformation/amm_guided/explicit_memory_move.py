@@ -126,7 +126,7 @@ class MemoryMovementNode(CodeLibraryNode):
 
         global_access_offsets = [f"const int glb_at_d{i} = {global_offsets[i]} * (i_d{i});" for i in range(len((self.offsets[:-1])))]
         ats = [f"glb_at_d{i}" for i in range(len(self.offsets[:-1]))]
-        global_access_offset = f"const int glb_access_offset = {' + '.join(ats) if len(ats) > 0 else "0"}"
+        global_access_offset = f"const int glb_access_offset = {' + '.join(ats) if len(ats) > 0 else '0'}"
 
         d1_global_offset = f"{self.global_tensor_dims[-1]} * runtime_line_num"
 
