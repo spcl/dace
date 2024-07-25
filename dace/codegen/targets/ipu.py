@@ -39,7 +39,7 @@ class IPUCodeGen(TargetCodeGenerator):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
         self._dispatcher.register_node_dispatcher(self)
-        self._cpu_codegen: CPUCodeGen = self._dispatcher.get_generic_node_dispatcher()
+        #self._cpu_codegen: CPUCodeGen = self._dispatcher.get_generic_node_dispatcher()
         
         
 
@@ -71,12 +71,23 @@ class IPUCodeGen(TargetCodeGenerator):
         return self._codeobjects
 
     def generate_node(self, sdfg:SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node:nodes.Node, function_stream: CodeIOStream, callsite_stream:CodeIOStream):
-        callsite_stream.write(
-            f'''
-            something is printed this is for testing!
-        '''
-        , sdfg)
 
-        # do codegen using CPU technique.
-        # self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        if isinstance(node, nodes.Map):
+            callsite_stream.write(
+                f'''
+                Map!
+            '''
+            , sdfg)
+        elif isinstance(node, nodes.AccessNode):
+            callsite_stream.write(
+                f'''
+                AccessNode!
+            '''
+            , sdfg)
+        elif isinstance(node, nodes.CodeNode):
+            callsite_stream.write(
+                f'''
+                CodeNode!
+            '''
+            , sdfg)
         
