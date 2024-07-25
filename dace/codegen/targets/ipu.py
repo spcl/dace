@@ -75,19 +75,19 @@ class IPUCodeGen(TargetCodeGenerator):
         if isinstance(node, nodes.Map):
             callsite_stream.write(
                 f'''
-                Map!
+                Concurrency(Map/Consume)(omp loop)!
             '''
             , sdfg)
         elif isinstance(node, nodes.AccessNode):
             callsite_stream.write(
                 f'''
-                AccessNode!
+                AccessNode(container=array/stream)!
             '''
             , sdfg)
         elif isinstance(node, nodes.CodeNode):
             callsite_stream.write(
                 f'''
-                CodeNode!
+                CodeNode(Tasklet/nestedSDFG)!
             '''
             , sdfg)
         
