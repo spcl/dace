@@ -9,7 +9,7 @@ def ipu_vector_add(A: dace.int32[20], B: dace.int32[20], C: dace.int32[20]):
 
 if __name__ == '__main__':
     sdfg = ipu_vector_add.to_sdfg(simplify=False)   # compiled SDFG
-    sdfg.apply_transformations(IPUTransformSDFG)
+    #sdfg.apply_transformations(IPUTransformSDFG)
     # call with values
     A = np.ones((20), dtype=np.int32)   # 1,1,1,1,...
     B = np.ones((20), dtype=np.int32)   # 1,1,1,1,...
