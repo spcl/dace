@@ -26,11 +26,13 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.targets.cpu import CPUCodeGen
 
 
-@registry.autoregister_params(name='ipu')
-class IPUCodeGen(TargetCodeGenerator):
+# @registry.autoregister_params(name='ipu')
+# class IPUCodeGen(TargetCodeGenerator):
+@registry.autoregister_params(name='loopy')
+class MyCustomLoop(TargetCodeGenerator):
     """ IPU(Graphcore) code generator. """
-    target_name = 'ipu'
-    title = 'IPU'
+    target_name = 'loopy'
+    title = 'LOOPY'
     language = 'cpp'
 
     def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: SDFG):
@@ -38,8 +40,11 @@ class IPUCodeGen(TargetCodeGenerator):
         self._sdfg = sdfg
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
-        self._dispatcher.register_node_dispatcher(self)
-        self._cpu_codegen: CPUCodeGen = self._dispatcher.get_generic_node_dispatcher()
+        # self._dispatcher.register_node_dispatcher(self)
+        # self._dispatcher.register_state_dispatcher(self)
+        self._dispatcher.register_map_dispatcher(dtypes.ScheduleType.LoopyLoop, self)
+
+        # self._cpu_codegen: CPUCodeGen = self._dispatcher.get_generic_node_dispatcher()
         
         
 
@@ -69,14 +74,73 @@ class IPUCodeGen(TargetCodeGenerator):
     # We don't need this now as we are mostly concerned about a single file codegen as of now.
     def get_generated_codeobjects(self):
         return self._codeobjects
+    
+    # def generate_node(self, sdfg:SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int, node:nodes.Node, function_stream: CodeIOStream, callsite_stream:CodeIOStream):
+    #     callsite_stream.write(
+    #         f'''
+    #         Node!
+    #     '''
+    #     , sdfg)
+    
+    # def generate_state(self, sdfg: SDFG, state: SDFGState, function_stream: CodeIOStream, callsite_stream: CodeIOStream, generate_state_footer: bool) -> None:
+    #     callsite_stream.write(
+    #         f'''
+    #         State!
+    #     '''
+    #     , sdfg)
 
-    def generate_node(self, sdfg:SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node:nodes.Node, function_stream: CodeIOStream, callsite_stream:CodeIOStream):
-        callsite_stream.write(
-            f'''
-            something is printed this is for testing!
-        '''
-        , sdfg)
-
-        # do codegen using CPU technique.
-        # self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+  # A scope dispatcher will trigger a method called generate_scope whenever 
+    # an SDFG has a scope with that schedule
+    def generate_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: ScopeSubgraphView,
+                       state_id: int, function_stream: CodeIOStream,
+                       callsite_stream: CodeIOStream):
+        # The parameters here are:
+        # sdfg: The SDFG we are currently generating.
+        # scope: The subgraph of the state containing only the scope (map contents)
+        #        we want to generate the code for.
+        # state_id: The state in the SDFG the subgraph is taken from (i.e., 
+        #           `sdfg.node(state_id)` is the same as `scope.graph`)
+        # function_stream: A cursor to the global code (which can be used to define
+        #                  functions, hence the name).
+        # callsite_stream: A cursor to the current location in the code, most of
+        #                  the code is generated here.
         
+        # We can get the map entry node from the scope graph
+        entry_node = scope.source_nodes()[0]
+        
+        # First, generate an opening brace (for instrumentation and dynamic map ranges)
+        callsite_stream.write('{', sdfg, state_id, entry_node)
+        
+        ################################################################
+        # Generate specific code: We will generate a reversed loop with a 
+        # comment for each dimension of the map. For the sake of simplicity,
+        # dynamic map ranges are not supported.
+        
+        for param, rng in zip(entry_node.map.params, entry_node.map.range):
+            # We use the sym2cpp function from the cpp support functions
+            # to convert symbolic expressions to proper C++
+            begin, end, stride = (sym2cpp(r) for r in rng)
+            
+            # Every write is optionally (but recommended to be) tagged with
+            # 1-3 extra arguments, serving as line information to match
+            # SDFG, state, and graph nodes/edges to written code.
+            callsite_stream.write(f'''// Loopy-loop {param}
+            for (auto {param} = {end}; {param} >= {begin}; {param} -= {stride}) {{''',
+                                  sdfg, state_id, entry_node
+            )
+        
+            # NOTE: CodeIOStream will automatically take care of indentation for us.
+         
+        # Now that the loops have been defined, use the dispatcher to invoke any
+        # code generator (including this one) that is registered to deal with
+        # the internal nodes in the subgraph. We skip the MapEntry node.
+        self._dispatcher.dispatch_subgraph(sdfg, cfg, scope, state_id,
+                                          function_stream, callsite_stream,
+                                          skip_entry_node=True, skip_exit_node=True)
+        
+        # NOTE: Since skip_exit_node above is set to False, closing braces will
+        #       be automatically generated
+        # Change schedule
+        # for node, _ in sdfg.all_nodes_recursive():
+        #     if isinstance(node, dtypes.nodes.MapEntry):
+        #         node.schedule = dtypes.ScheduleType.LoopyLoop
