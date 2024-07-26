@@ -246,6 +246,9 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     ]
 
     # Create code objects for each target
+    print("Used targets:", used_targets)
+    print("Frame targets:", frame.targets)
+    print("Frame " + str(frame))
     for tgt in used_targets:
         target_objects.extend(tgt.get_generated_codeobjects())
 
