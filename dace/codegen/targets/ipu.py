@@ -91,3 +91,17 @@ class IPUCodeGen(TargetCodeGenerator):
             '''
             , sdfg)
         
+def generate_state(self, 
+                   sdfg:SDFG, 
+                   cfg: ControlFlowRegion, 
+                   state: SDFGState, 
+                   function_stream: CodeIOStream, 
+                   callsite_stream:CodeIOStream,
+                   generate_state_footer:bool = True):
+        
+        callsite_stream.write(
+            f'''
+            State(CFG/Loops/Conditionals(if else, for, ...))
+        '''
+        , sdfg)
+      
