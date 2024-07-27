@@ -52,6 +52,7 @@ class IPUCodeGen(TargetCodeGenerator):
         # self._dispatcher.register_map_dispatcher(dtypes.ScheduleType.MPI, self)
         # self._dispatcher.register_map_dispatcher(dtypes.ScheduleType.Sequential, self)
         self._dispatcher.register_node_dispatcher(self)
+        self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
         
     def state_dispatch_predicate(self, sdfg, state):
         return True
@@ -120,7 +121,6 @@ class SumVertex : public poplar::Vertex {
             language='cpp', 
             target=IPUCodeGen, 
             title='IPU',
-            target_type='ipu',
             linkable=False)
         
         # Fill in the list
@@ -147,19 +147,21 @@ class SumVertex : public poplar::Vertex {
             '''
             , sdfg)
         
-    # def generate_state(self, 
-            #         sdfg:SDFG, 
-            #         cfg: ControlFlowRegion, 
-            #         state: SDFGState, 
-            #         function_stream: CodeIOStream, 
-            #         callsite_stream:CodeIOStream,
-            #         generate_state_footer:bool = True):
+    def generate_state(self, 
+                    sdfg:SDFG, 
+                    cfg: ControlFlowRegion, 
+                    state: SDFGState, 
+                    function_stream: CodeIOStream, 
+                    callsite_stream:CodeIOStream,
+                    generate_state_footer:bool = True):
+            # print state.label
             
-            # callsite_stream.write(
-            #     f'''
-            #     State(CFG/Loops/Conditionals(if else, for, ...))
-            # '''
-            # , sdfg)
+            callsite_stream.write(
+                '''
+                State(CFG/Loops/Conditionals(if else, for, ...)){}
+            '''.format(state.label)
+            , sdfg)
+            self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
 
     # def generate_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: StateSubgraphView, state_id: int,
     #                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
