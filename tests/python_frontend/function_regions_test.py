@@ -15,8 +15,8 @@ def test_function_call():
     sdfg = prog.to_sdfg()
     call_region: FunctionCallRegion = sdfg.nodes()[1]
     assert call_region.arguments == {'A': 'I'}
-    assert sdfg([1], N=1) == 15
-    assert sdfg([-1], N=1) == 5
+    assert sdfg(np.array([+1], dtype=np.float64), N=1) == 15
+    assert sdfg(np.array([-1], dtype=np.float64), N=1) == 5
 
 def test_function_call_with_args():
     N = dace.symbol("N")
@@ -36,6 +36,22 @@ def test_function_call_with_args():
     assert call1.arguments == {'A': 'E', 'B': 'F', 'C': 'G'}
     assert call2.arguments == {'A': 'G', 'B': 'E', 'C': 'E'}
 
+def test_function_call_with_transients():
+    N = dace.symbol("N")
+    def func(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
+        return A * B + C
+    @dace.program
+    def prog():
+        func(A=np.array([1]), B=np.array([2]), C=np.array([3]))
+        func(A=np.array([3]), B=np.array([1]), C=np.array([1]))
+    prog.use_experimental_cfg_blocks = True
+    sdfg = prog.to_sdfg(N=1)
+    call1: FunctionCallRegion = sdfg.nodes()[1]
+    call2: FunctionCallRegion = sdfg.nodes()[2]
+    assert call1.arguments == {'A': '__tmp0', 'B': '__tmp1', 'C': '__tmp2'}
+    assert call2.arguments == {'A': '__tmp4', 'B': '__tmp5', 'C': '__tmp6'}
+
 if __name__ == "__main__":
     test_function_call()
     test_function_call_with_args()
+    test_function_call_with_transients()
