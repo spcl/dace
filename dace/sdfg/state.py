@@ -3178,7 +3178,7 @@ class LoopRegion(ControlFlowRegion):
 @make_properties
 class UserRegion(ControlFlowRegion):
     debuginfo = DebugInfoProperty()
-    def __init__(self, label: str, sdfg: Optional['SDFG']= None, debuginfo: dtypes.DebugInfo | None = None):
+    def __init__(self, label: str, sdfg: Optional['SDFG']=None, debuginfo: Optional[dtypes.DebugInfo]=None):
         super().__init__(label, sdfg)
         self.debuginfo = debuginfo
 

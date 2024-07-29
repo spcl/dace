@@ -360,7 +360,7 @@ def in_program() -> bool:
     return False
 
 class user_region:
-    def __init__(self, name: str | None=None):
+    def __init__(self, name: Optional[str]=None):
         self.name = name
     
     def __enter__(self):
