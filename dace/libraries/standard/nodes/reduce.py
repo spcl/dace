@@ -1150,6 +1150,8 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         input_data.transient = False
         input_data.shape = schedule.in_shape
         input_data.strides = schedule.in_strides
+        # NOTE: Quickfix for wrong number of dimensions in offset
+        input_data.offset = tuple(input_data.offset[0] for i in range(len(input_data.shape)))
         nsdfg.add_datadesc('_in', input_data)
 
         output_data = dcpy(raw_output_data)
