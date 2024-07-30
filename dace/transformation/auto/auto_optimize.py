@@ -548,6 +548,7 @@ def auto_optimize(sdfg: SDFG,
                   validate_all: bool = False,
                   symbols: Dict[str, int] = None,
                   use_stencil_tiling: bool = True,
+                  use_wcr_tiling: bool = True,
                   use_gpu_storage: bool = False) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
@@ -662,8 +663,9 @@ def auto_optimize(sdfg: SDFG,
     sdfg.simplify()
 
     # Tiled WCR and streams
-    for nsdfg in list(sdfg.all_sdfgs_recursive()):
-        tile_wcrs(nsdfg, validate_all)
+    if use_wcr_tiling:
+        for nsdfg in list(sdfg.all_sdfgs_recursive()):
+            tile_wcrs(nsdfg, validate_all)
 
     applied_fusions = 1
     applied_moves = 1
