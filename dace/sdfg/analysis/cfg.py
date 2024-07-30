@@ -25,8 +25,6 @@ def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[Contro
     if missing_blocks:
         warnings.warn(f'The following blocks are missing from the immediate dominator mapping: {missing_blocks}. '
                       f'This may mean that CFG {cfg} has an erroneous start block.')
-        for block in missing_blocks:
-            idom[block] = block
 
     dom_frontiers = {block: set() for block in cfg.nodes()}
     for u in idom:
