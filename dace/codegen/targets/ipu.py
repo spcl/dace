@@ -43,14 +43,17 @@ class IPUCodeGen(TargetCodeGenerator):
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
         self._global_sdfg = sdfg
+        self._generated_nodes = set()
+        self.calling_codegen = self
         
         # Register dispatchers
         # self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
         
         # Register additional dispatchers
         # self._dispatcher.register_map_dispatcher(dtypes.ScheduleType.Sequential, self)
-        # self._dispatcher.register_node_dispatcher(self)
-        # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
+        self._dispatcher.register_node_dispatcher(self)
+        self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
+        
         
     def state_dispatch_predicate(self, sdfg, state):
         return True
@@ -68,12 +71,9 @@ class IPUCodeGen(TargetCodeGenerator):
     @staticmethod
     def cmake_options():
         options = []
-
-        linker_flags = Config.get("compiler", "ipu", "libs")
-     
-        if linker_flags:
-            options.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{linker_flags}"')
-
+        
+        if Config.get("compiler", "ipu", "libs"):
+            options.append('-DCMAKE_SHARED_LINKER_FLAGS="{}"'.format(Config.get("compiler", "ipu", "libs")))
 
         return options
 
@@ -127,26 +127,22 @@ class SumVertex : public poplar::Vertex {
 ############################################################################################################
 #   IPU specific node/state generation
 ############################################################################################################
+    # from cpu.py
     def generate_node(self, sdfg:SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node:nodes.Node, function_stream: CodeIOStream, callsite_stream:CodeIOStream):
+        if isinstance(node, nodes.NestedSDFG):
+            # Dynamically obtain node generator according to class name
+            try:
+                gen = getattr(self, "_generate_" + type(node).__name__) 
+            except AttributeError:
+                if isinstance(node, nodes.LibraryNode):
+                    raise NodeNotExpandedError(sdfg, state_id, dfg.node_id(node))
+                raise
+            # _generate_Tasklet() example
 
-        if isinstance(node, nodes.Map):
-            callsite_stream.write(
-                f'''
-                Concurrency(Map/Consume)(omp loop)!
-            '''
-            , sdfg)
-        elif isinstance(node, nodes.AccessNode):
-            callsite_stream.write(
-                f'''
-                AccessNode(container=array/stream)!
-            '''
-            , sdfg)
-        elif isinstance(node, nodes.CodeNode):
-            callsite_stream.write(
-                f'''
-                CodeNode(Tasklet/nestedSDFG)!
-            '''
-            , sdfg)
+            gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+            # Mark node as "generated"
+            self._generated_nodes.add(node)
+            # self._locals.clear_scope(self._ldepth + 1)
         
     def generate_state(self, 
                     sdfg:SDFG, 
@@ -157,20 +153,86 @@ class SumVertex : public poplar::Vertex {
                     generate_state_footer:bool = True):
             # print state.label
             
-            callsite_stream.write(
-                '''
-                State(CFG/Loops/Conditionals(if else, for, ...)){}
-            '''.format(state.label)
-            , sdfg)
+            # callsite_stream.write(
+            #     '''
+            #     State(CFG/Loops/Conditionals(if else, for, ...)){}
+            # '''.format(state.label)
+            # , sdfg)            
             self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
+
+    def generate_scope(self,
+                       sdfg: SDFG,
+                       cfg: ControlFlowRegion,
+                       dfg_scope: ScopeSubgraphView,
+                       state_id: int,
+                       function_stream: CodeIOStream,
+                       callsite_stream: CodeIOStream) -> None:
+        # Get the first entry node of Map
+        entry_node = dfg_scope.source_nodes()[0]
+
+        # function_stream.write('extern int __dace_comm_size, __dace_comm_rank;', cfg, state_id, entry_node)
+        callsite_stream.write('{', cfg, state_id, entry_node)
+
+        # cpp.presynchronize_streams(sdfg, cfg, dfg_scope, state_id, entry_node, callsite_stream)   #TODO: add some other function of own.
+        # Should we ?
+        self.generate_node(sdfg, cfg, dfg_scope, state_id, entry_node, function_stream, callsite_stream)
+        # generated nested subgraphs
+        self._dispatcher.dispatch_subgraph(sdfg,
+                                           cfg,
+                                           dfg_scope,
+                                           state_id,
+                                           function_stream,
+                                           callsite_stream,
+                                           skip_entry_node=True)
+
+#### Helpers
+    def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label, state_struct=True):
+        # prepend = []
+        # if state_struct:
+        #     prepend = ['__state']
+        # fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        # args = ', '.join(prepend + [argval for _, _, argval in memlet_references] + [
+        #     cpp.sym2cpp(symval) for symname, symval in sorted(node.symbol_mapping.items())
+        #     if symname in fsyms and symname not in sdfg.constants
+        # ])
+        # return f'{sdfg_label}({args});'
+        args = ''
+        return f'{sdfg_label}({args});' #TODO: add args later
+    
+#### Node Generators(What node to generate) - callback from generate_node()
+    def _generate_NestedSDFG(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        dfg: ScopeSubgraphView,
+        state_id: int,
+        node: nodes.NestedSDFG,
+        function_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
+    ):
+        state_dfg = cfg.nodes()[state_id]
+         # Emit nested SDFG as a separate function
+        nested_stream = CodeIOStream()
+        nested_global_stream = CodeIOStream()
+
+        # unique name generation of function
+        sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.cfg_id, state_id, dfg.node_id(node))
+        
+                    # Generate function call
+        codegen = self.calling_codegen
+        memlet_references = None    # TODO: add memlet references later                    
+        callsite_stream.write(codegen.generate_nsdfg_call(sdfg, cfg, state_dfg, node, memlet_references,
+                                                            sdfg_label),
+                                  cfg, state_id, node)
+        # callsite_stream.write(sdfg_label, cfg, state_id, node)
+
+
 
     # def generate_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: StateSubgraphView, state_id: int,
     #                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-    #     # Take care of map header
-    #     assert len(dfg_scope.source_nodes()) == 1
-    #     map_header: nodes.MapEntry = dfg_scope.source_nodes()[0]
 
     #     function_stream.write('extern int __dace_comm_size, __dace_comm_rank;', cfg, state_id, map_header)
+
 
     #     # Add extra opening brace (dynamic map ranges, closed in MapExit
     #     # generator)
@@ -182,6 +244,8 @@ class SumVertex : public poplar::Vertex {
     #     state = cfg.state(state_id)
     #     symtypes = map_header.new_symbols(sdfg, state, state.symbols_defined_at(map_header))
 
+
+    #$$$$ First dace::copy()
     #     for var, r in zip(map_header.map.params, map_header.map.range):
     #         begin, end, skip = r
 
@@ -192,11 +256,5 @@ class SumVertex : public poplar::Vertex {
     #              cppunparse.pyexpr2cpp(symbolic.symstr(skip, cpp_mode=True))), cfg, state_id, map_header)
 
     #     self._frame.allocate_arrays_in_scope(sdfg, cfg, map_header, function_stream, callsite_stream)
+    # subgraphs_scope_call
 
-    #     self._dispatcher.dispatch_subgraph(sdfg,
-    #                                        cfg,
-    #                                        dfg_scope,
-    #                                        state_id,
-    #                                        function_stream,
-    #                                        callsite_stream,
-    #                                        skip_entry_node=True)

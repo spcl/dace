@@ -473,7 +473,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             opbar.next()
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
-        callsite_stream.write("START CORE", sdfg)
         if sdfg.root_sdfg.using_experimental_blocks:
             # Use control flow blocks embedded in the SDFG to generate control flow.
             cft = cflow.structured_control_flow_tree_with_regions(sdfg, dispatch_state)
@@ -496,7 +495,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                                     [], [], [], [], False)
 
         callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
-        callsite_stream.write("END CORE", sdfg)
 
         opbar.done()
 
