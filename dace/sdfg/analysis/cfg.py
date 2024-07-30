@@ -52,7 +52,6 @@ def all_dominators(
         idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
     """ Returns a mapping between each control flow block and all its dominators. """
     idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
-    missing_blocks = set(cfg.nodes()) - set(idom.keys())
     # Create a dictionary of all dominators of each node by using the transitive closure of the DAG induced by the idoms
     g = nx.DiGraph()
     for node, dom in idom.items():
