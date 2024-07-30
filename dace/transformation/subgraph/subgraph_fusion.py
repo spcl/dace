@@ -267,7 +267,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     container_dict[node.data].append(node)
 
             # Check for read/write dependencies between input and output nodes
-            outputs = set(n.data for n in out_nodes)
+            outputs = set(n.data for n in out_nodes if isinstance(n, nodes.AccessNode))
             from dace.transformation.interstate import StateFusion
             for node in in_nodes:
                 if isinstance(node, nodes.AccessNode) and node.data in outputs:
@@ -929,8 +929,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         if isinstance(union, subsets.Indices):
                             union = subsets.Range.from_indices(union)
                         inner_memlet = dcpy(edge.data)
+                        shape = dst.desc(sdfg).shape
                         for i, s in enumerate(edge.data.subset):
-                            if i in invariant_dimensions[dst.label]:
+                            if i in invariant_dimensions[dst.label] and shape[i] > 1:
                                 inner_memlet.subset[i] = union[i]
 
                         inner_memlet.other_subset = dcpy(inner_memlet.subset)
@@ -1149,7 +1150,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # NOTE: Currently limited to intermediate data that do not have a separate output node
 
         # Filter out outputs
-        output_data = set([n.data for n in out_nodes])
+        output_data = set([n.data for n in out_nodes if isinstance(n, nodes.AccessNode)])
         true_intermediate_nodes = set([n for n in intermediate_nodes if n.data not in output_data])
 
         # Sort intermediate nodes by data name
