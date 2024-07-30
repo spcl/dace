@@ -1012,19 +1012,20 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             generated_header = global_stream.getvalue() # header
             generated_code = callsite_stream.getvalue() # frame
 
-        # Clean up generated code
-        gotos = re.findall(r'goto (.*?);', generated_code)
-        clean_code = ''
-        for line in generated_code.split('\n'):
-            # Empty line with semicolon
-            if re.match(r'^\s*;\s*', line):
-                continue
-            # Label that might be unused
-            label = re.findall(r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$', line)
-            if len(label) > 0:
-                if label[0] not in gotos:
-                    continue
-            clean_code += line + '\n'
+        # # Clean up generated code
+        # gotos = re.findall(r'goto (.*?);', generated_code)
+        # clean_code = ''
+        # for line in generated_code.split('\n'):
+        #     # Empty line with semicolon
+        #     if re.match(r'^\s*;\s*', line):
+        #         continue
+        #     # Label that might be unused
+        #     label = re.findall(r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$', line)
+        #     if len(label) > 0:
+        #         if label[0] not in gotos:
+        #             continue
+        #     clean_code += line + '\n'
+        clean_code = generated_code
 
         # Return the generated global and local code strings
         return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)

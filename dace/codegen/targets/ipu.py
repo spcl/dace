@@ -48,11 +48,9 @@ class IPUCodeGen(TargetCodeGenerator):
         # self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
         
         # Register additional dispatchers
-        # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
-        # self._dispatcher.register_map_dispatcher(dtypes.ScheduleType.MPI, self)
         # self._dispatcher.register_map_dispatcher(dtypes.ScheduleType.Sequential, self)
-        self._dispatcher.register_node_dispatcher(self)
-        self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
+        # self._dispatcher.register_node_dispatcher(self)
+        # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
         
     def state_dispatch_predicate(self, sdfg, state):
         return True
@@ -126,6 +124,9 @@ class SumVertex : public poplar::Vertex {
         # Fill in the list
         return [codeobj]
 
+############################################################################################################
+#   IPU specific node/state generation
+############################################################################################################
     def generate_node(self, sdfg:SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node:nodes.Node, function_stream: CodeIOStream, callsite_stream:CodeIOStream):
 
         if isinstance(node, nodes.Map):
