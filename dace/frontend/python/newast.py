@@ -4495,8 +4495,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 previous_last_cfg_target = self.last_cfg_target
                 previous_target = self.cfg_target
                 prev_last_block = self.last_block
-                self.last_block = self._add_state("init", is_start=True)
                 self.cfg_target = call_region
+                self.last_block = self._add_state("init", is_start=True)
                 result, args = self._parse_sdfg_call(funcname, func, node)
                 call_region.arguments = args
                 self.last_cfg_target = previous_last_cfg_target
