@@ -113,7 +113,7 @@ class StencilTiling(transformation.SubgraphTransformation):
             if e.data.data not in exit_coverage:
                 exit_coverage[e.data.data] = rng
             else:
-                old_coverage = exit_coverage[e.data]
+                old_coverage = exit_coverage[e.data.data]
                 exit_coverage[e.data.data] = subsets.union(old_coverage, rng)
 
         # return both coverages as a tuple
@@ -462,8 +462,10 @@ class StencilTiling(transformation.SubgraphTransformation):
                                     - reference_range_current.max_element()[0])
 
                     try:
-                        min_diff = symbolic.evaluate(min_diff, {})
-                        max_diff = symbolic.evaluate(max_diff, {})
+                        min_free_symbols = min_diff.expr.free_symbols if isinstance(min_diff, symbolic.SymExpr) else min_diff.free_symbols
+                        min_diff = symbolic.evaluate(min_diff, {str(s): str(s) for s in min_free_symbols})
+                        max_free_symbols = max_diff.expr.free_symbols if isinstance(max_diff, symbolic.SymExpr) else max_diff.free_symbols
+                        max_diff = symbolic.evaluate(max_diff, {str(s): str(s) for s in max_free_symbols})
                     except TypeError:
                         raise RuntimeError("Symbolic evaluation of map "
                                            "ranges failed. Please check "
