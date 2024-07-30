@@ -294,6 +294,25 @@ class MapFusion(transformation.SingleStateTransformation):
         second_entry = self.second_map_entry
         second_exit = graph.exit_node(second_entry)
 
+        # Find parameter name collisions in the second subgraph's nested Maps
+        first_params = set(first_entry.map.params)
+        second_subgraph = graph.scope_subgraph(second_entry, include_entry=False, include_exit=False)
+        second_params = set()
+        for node in second_subgraph.nodes():
+            if isinstance(node, nodes.MapEntry):
+                second_params.update(node.map.params)
+        for param in second_params:
+            new_param = param
+            idx = 0
+            while new_param in first_params:
+                new_param = f"{param}_{idx}"
+                idx += 1
+            if new_param != param:
+                second_subgraph.replace(param, new_param)
+                for node in second_subgraph.nodes():
+                    if isinstance(node, nodes.MapEntry):
+                        node.map.params = tuple(new_param if p == param else p for p in node.map.params)
+
         intermediate_nodes = set()
         for _, _, dst, _, _ in graph.out_edges(first_exit):
             intermediate_nodes.add(dst)
@@ -479,7 +498,7 @@ class MapFusion(transformation.SingleStateTransformation):
 
             # If source of edge leads to multiple destinations, redirect all through an access node.
             out_edges = list(graph.out_edges_by_connector(edge.src, edge.src_conn))
-            if len(out_edges) > 1:
+            if len(out_edges) > 1 or isinstance(new_dst, nodes.EntryNode):
                 local_node = graph.add_access(local_name)
                 src_connector = None
 
@@ -487,10 +506,11 @@ class MapFusion(transformation.SingleStateTransformation):
                 graph.add_edge(edge.src, edge.src_conn, local_node, None, dcpy(edge.data))
 
                 for other_edge in out_edges:
-                    if other_edge is not edge:
-                        graph.remove_edge(other_edge)
-                        mem = Memlet(data=local_name, other_subset=other_edge.data.dst_subset)
-                        graph.add_edge(local_node, src_connector, other_edge.dst, other_edge.dst_conn, mem)
+                    for oe in graph.memlet_tree(other_edge):
+                        if oe is not edge:
+                            graph.remove_edge(oe)
+                            mem = Memlet(data=local_name, other_subset=oe.data.dst_subset)
+                            graph.add_edge(local_node, src_connector, oe.dst, oe.dst_conn, mem)
             else:
                 local_node = edge.src
                 src_connector = edge.src_conn
@@ -517,7 +537,11 @@ class MapFusion(transformation.SingleStateTransformation):
                     graph.add_edge(local_node_out, connector_out, e.dst, e.dst_conn, dcpy(edge.data))
             else:
                 # Add edge that leads to the second node
-                graph.add_edge(local_node, src_connector, new_dst, new_dst_conn, dcpy(edge.data))
+                dst_subset = edge.data.dst_subset or None
+                memlet = Memlet(data=local_name, subset="0", other_subset=dst_subset)
+                new_edge = graph.add_edge(local_node, src_connector, new_dst, new_dst_conn, dcpy(memlet))
+                for oe in graph.memlet_tree(new_edge):
+                    oe.data = dcpy(memlet)
 
         else:
             local_name, _ = sdfg.add_transient(local_name,
