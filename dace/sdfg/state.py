@@ -3185,6 +3185,6 @@ class UserRegion(ControlFlowRegion):
 @make_properties
 class FunctionCallRegion(ControlFlowRegion):
     arguments = DictProperty(str, str)
-    def __init__(self, label: str, arguments: Dict[str, str], sdfg: 'SDFG' = None):
+    def __init__(self, label: str, arguments: Dict[str, str] = {}, sdfg: 'SDFG' = None):
         super().__init__(label, sdfg)
         self.arguments = arguments
