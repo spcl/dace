@@ -1430,9 +1430,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     # be read if necessary
                     if is_pointer:
                         # If it's a pointer, the reference is unnecessary
-                        result += "const {} = {};".format(memlet_type.as_arg(local_name), expr)
+                        result += "{} = {};".format(memlet_type.as_arg(local_name), expr)
                     else:
-                        result += "const {} = {};".format(memlet_type.as_arg('&' + local_name), expr)
+                        result += "{} = {};".format(memlet_type.as_arg('&' + local_name), expr)
                 defined = (DefinedType.Scalar if is_scalar else DefinedType.Pointer)
         elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if not memlet.dynamic and memlet.num_accesses == 1:
