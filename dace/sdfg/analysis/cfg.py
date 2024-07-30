@@ -5,6 +5,7 @@ from dace.sdfg import SDFGState, InterstateEdge, graph as gr, utils as sdutil
 import networkx as nx
 import sympy as sp
 from typing import Dict, Iterator, List, Optional, Set
+import warnings
 
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 
@@ -20,6 +21,12 @@ def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[Contro
     :return: A dictionary keyed by control flow blocks, containing the dominance frontier for each control flow block.
     """
     idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    missing_blocks = set(cfg.nodes()) - set(idom.keys())
+    if missing_blocks:
+        warnings.warn(f'The following blocks are missing from the immediate dominator mapping: {missing_blocks}. '
+                      f'This may mean that CFG {cfg} has an erroneous start block.')
+        for block in missing_blocks:
+            idom[block] = block
 
     dom_frontiers = {block: set() for block in cfg.nodes()}
     for u in idom:
@@ -45,6 +52,7 @@ def all_dominators(
         idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
     """ Returns a mapping between each control flow block and all its dominators. """
     idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    missing_blocks = set(cfg.nodes()) - set(idom.keys())
     # Create a dictionary of all dominators of each node by using the transitive closure of the DAG induced by the idoms
     g = nx.DiGraph()
     for node, dom in idom.items():
@@ -55,6 +63,10 @@ def all_dominators(
     alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = {cfg.start_block: set()}
     for node in tc:
         alldoms[node] = set(dst for _, dst in tc.out_edges(node))
+    missing_blocks = set(cfg.nodes()) - set(alldoms.keys())
+    if missing_blocks:
+        warnings.warn(f'The following blocks are missing from the all dominators mapping: {missing_blocks}. '
+                      f'This may mean that CFG {cfg} has an erroneous start block.')
 
     return alldoms
 
@@ -84,6 +96,10 @@ def block_parent_tree(cfg: ControlFlowRegion,
     :return: A dictionary that maps each block to a parent block, or None if the root (start) block.
     """
     idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    missing_blocks = set(cfg.nodes()) - set(idom.keys())
+    if missing_blocks:
+        warnings.warn(f'The following blocks are missing from the immediate dominator mapping: {missing_blocks}. '
+                      f'This may mean that CFG {cfg} has an erroneous start block.')
     if with_loops:
         alldoms = all_dominators(cfg, idom)
         loopexits = loopexits if loopexits is not None else defaultdict(lambda: None)
