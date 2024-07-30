@@ -4489,7 +4489,13 @@ class ProgramVisitor(ExtNodeVisitor):
         # If the function exists as a global SDFG or @dace.program, use it
         if func is not None:
             try:
-                call_region = FunctionCallRegion(label=f"{func.name}_{node.lineno}", arguments=[])
+                if hasattr(func, "name"):
+                    name = func.name
+                elif hasattr(func, "__class__"):
+                    name = func.__class__.__name__
+                else:
+                    name = "call"
+                call_region = FunctionCallRegion(label=f"{name}_{node.lineno}", arguments=[])
                 self.cfg_target.add_node(call_region)
                 self._on_block_added(call_region)
                 previous_last_cfg_target = self.last_cfg_target
