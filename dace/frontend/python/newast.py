@@ -32,7 +32,7 @@ from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion, LoopRegion, ControlFlowRegion, UserRegion
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion, LoopRegion, ControlFlowRegion, NamedRegion
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
@@ -4736,16 +4736,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.inputs.update({k: (state, *v) for k, v in sdfg_inp.items()})
                 self.outputs.update({k: (state, *v) for k, v in sdfg_out.items()})
                 return
-            elif funcname == "dace.user_region":
+            elif funcname == "dace.named":
                 evald = astutils.evalnode(node.items[0].context_expr, self.globals)
                 if hasattr(evald, "name"):
-                    user_region_name: str = evald.name
+                    named_region_name: str = evald.name
                 else:            
-                    user_region_name = f"User Region {node.lineno}"
-                user_region = UserRegion(user_region_name, debuginfo=self.current_lineinfo)
-                self.cfg_target.add_node(user_region)
-                self._on_block_added(user_region)
-                self._recursive_visit(node.body, "", node.lineno, user_region, unconnected_last_block=False)
+                    named_region_name = f"Named Region {node.lineno}"
+                named_region = NamedRegion(named_region_name, debuginfo=self.current_lineinfo)
+                self.cfg_target.add_node(named_region)
+                self._on_block_added(named_region)
+                self._recursive_visit(node.body, "", node.lineno, named_region, unconnected_last_block=False)
                 return
 
         raise DaceSyntaxError(self, node, 'General "with" statements disallowed in DaCe programs')

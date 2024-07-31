@@ -359,7 +359,10 @@ def in_program() -> bool:
     """
     return False
 
-class user_region:
+class named:
+    """
+    Creates a `NamedRegion` with the given label.
+    """
     def __init__(self, name: Optional[str]=None):
         self.name = name
     
