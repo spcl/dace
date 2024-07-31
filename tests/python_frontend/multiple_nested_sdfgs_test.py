@@ -70,7 +70,7 @@ def test_call_multiple_sdfgs():
     state = None
     for node in sdfg.nodes():
         if re.fullmatch(r"out_tmp_div_sum_\d+_call.*", node.label):
-            assert state is None, "Two states which match the regex, cannot decide which one should be used"
+            assert state is None, "Two states match the regex, cannot decide which one should be used"
             state = node
     assert state is not None
     for n in state.nodes():
