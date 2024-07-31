@@ -35,9 +35,11 @@ class IfRaising(transformation.MultiStateTransformation):
         root_state: SDFGState = self.root_state
 
         out_edges = graph.out_edges(root_state)
-        in_edges = graph.in_edges(root_state)
 
         if len(out_edges) != 2:
+            return False
+        
+        if root_state.is_empty():
             return False
         
         # check if edges can be moved out (used symbols exist in the outer scope)

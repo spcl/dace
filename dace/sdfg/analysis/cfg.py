@@ -259,7 +259,7 @@ def _stateorder_topological_sort(sdfg: SDFG,
                 # Otherwise (e.g., with return/break statements), traverse through each branch,
                 # stopping at the end of the current tree level.
                 mergestate = next(e.dst for e in sdfg.out_edges(stop) if ptree[e.dst] != stop)
-            except StopIteration:
+            except:
                 # If that fails, simply traverse branches in arbitrary order
                 mergestate = stop
 

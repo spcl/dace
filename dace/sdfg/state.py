@@ -2757,6 +2757,8 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
     @property
     def cfg_list(self) -> List['ControlFlowRegion']:
+        if len(self._cfg_list) == 0:
+            self._cfg_list.append(self)
         return self._cfg_list
 
     @property

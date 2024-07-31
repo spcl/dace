@@ -166,13 +166,14 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         # Get access nodes from other states to isolate local loop variables
         other_access_nodes: Set[str] = set()
-        for state in sdfg.nodes():
-            if state in states:
-                continue
-            other_access_nodes |= set(n.data for n in state.data_nodes() if sdfg.arrays[n.data].transient)
+        # for state in sdfg.nodes():
+        #     if state in states:
+        #         continue
+        #     other_access_nodes |= set(n.data for n in state.data_nodes() if sdfg.arrays[n.data].transient)
         # Add non-transient nodes from loop state
         for state in states:
             other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
+            
 
         write_memlets: Dict[str, List[memlet.Memlet]] = defaultdict(list)
 
@@ -187,9 +188,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 # Take all writes that are not conflicted into consideration
                 if dn.data in write_set:
                     for e in state.in_edges(dn):
-                        if e.data.dynamic and e.data.wcr is None:
-                            # If pointers are involved, give up
-                            return False
+                        # if e.data.dynamic and e.data.wcr is None:
+                        #     # If pointers are involved, give up
+                        #     return False
                         # Ignore write views
                         if e.src_conn == "views" or e.dst_conn == "views":
                             continue

@@ -5,7 +5,7 @@ from typing import Dict, List, Set
 
 import networkx as nx
 
-from dace import data as dt, dtypes, registry, sdfg, subsets
+from dace import data as dt, dtypes, registry, sdfg as sd, subsets
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -40,8 +40,8 @@ class StateFusion(transformation.MultiStateTransformation):
         access hazards are created.
     """
 
-    first_state = transformation.PatternNode(sdfg.SDFGState)
-    second_state = transformation.PatternNode(sdfg.SDFGState)
+    first_state = transformation.PatternNode(SDFGState)
+    second_state = transformation.PatternNode(SDFGState)
 
     @staticmethod
     def annotates_memlets():
@@ -207,8 +207,8 @@ class StateFusion(transformation.MultiStateTransformation):
             # second edge
             symbols_used = set(out_edges[0].data.free_symbols)
             for e in in_edges:
-                if e.data.assignments.keys() & symbols_used:
-                    return False
+                # if e.data.assignments.keys() & symbols_used:
+                #     return False
                 # Also fail in the inverse; symbols assigned on the second edge are free symbols on the first edge
                 if new_assignments & set(e.data.free_symbols):
                     return False
@@ -454,12 +454,24 @@ class StateFusion(transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, _, sdfg):
+    def apply(self, sdfg: sd.SDFG, _):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
+        sdfg = first_state.sdfg
 
         # Remove interstate edge(s)
         edges = sdfg.edges_between(first_state, second_state)
+        
+        # if edges[0].data.assignments:
+        #     symbols_used = set(edges[0].data.free_symbols)
+        #     for e in sdfg.in_edges(first_state):
+        #         if e.data.assignments.keys() & symbols_used:
+        #         # add a buffer state
+        #             buffer = sdfg.add_state("buffer")
+        #             sdutil.change_edge_dest(sdfg, first_state, buffer)
+        #             sdfg.add_edge(buffer, first_state, sd.InterstateEdge())
+        #             break
+
         for edge in edges:
             if edge.data.assignments:
                 for src, dst, other_data in sdfg.in_edges(first_state):

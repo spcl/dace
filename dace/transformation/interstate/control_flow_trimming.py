@@ -7,6 +7,7 @@ import networkx as nx
 
 from dace import data as dt, dtypes, registry, sdfg as sd, subsets as sbs
 from dace.config import Config
+from dace.sdfg import graph as gr
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import SDFGState
@@ -93,18 +94,42 @@ class TrimControlFlow(transformation.SingleStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         map_entry = self.map_entry
         nested_sdfg = self.nested_sdfg
-        map_exit = self.map_exit
 
         # skip if hard to analyze assignment to the index variable
         for e in nested_sdfg.sdfg.edges():
-            if map_entry.map.params[0] in  e.data.assignments.keys():
+            if map_entry.map.params[0] in e.data.assignments.keys():
                 return False
+        
+        index = z3.Int(map_entry.map.params[0])
+        range_begin = map_entry.map.range.min_element()[0]
+        range_end = map_entry.map.range.max_element()[0]
+        begin_eq = index >= sympy_to_z3(range_begin)
+        end_eq = index <= sympy_to_z3(range_end)
+        # if I am inside the loop body then this always holds (for positive stride)
+        range_eq = sympy_to_z3(range_begin) < sympy_to_z3(range_end)
+        
+        for e in nested_sdfg.sdfg.edges():
+            if e.data.is_unconditional():
+                continue
+            cond = e.data.condition_sympy()
+            if isinstance(cond, sp.Rel):
+                z3_cond = sympy_to_z3(cond)
+                solver = z3.Solver()
+                solver.add(begin_eq)
+                solver.add(end_eq)
+                solver.add(z3_cond)
+                solver.add(range_eq)
+                if solver.check() == z3.unsat:
+                    return True
 
-        return True
+        return False
     
     @staticmethod
-    def _eliminate_branch(sdfg: sd.SDFG, initial_state: sd.SDFGState):
-        state_list = [initial_state]
+    def _eliminate_branch(sdfg: sd.SDFG, initial_edge: gr.Edge):
+        sdfg.remove_edge(initial_edge)
+        if sdfg.in_degree(initial_edge.dst) > 0:
+            return
+        state_list = [initial_edge.dst]
         while len(state_list) > 0:
             new_state_list = []
             for s in state_list:
@@ -142,7 +167,7 @@ class TrimControlFlow(transformation.SingleStateTransformation):
                     solver.add(z3_cond)
                     solver.add(range_eq)
                     if solver.check() == z3.unsat:
-                        TrimControlFlow._eliminate_branch(nested_sdfg.sdfg, e.dst)
+                        TrimControlFlow._eliminate_branch(nested_sdfg.sdfg, e)
                         if len(nested_sdfg.sdfg.out_edges(e.src)) == 1:
                             nested_sdfg.sdfg.out_edges(e.src)[0].data.condition = dace.properties.CodeBlock("1")
                         found = True
@@ -156,17 +181,25 @@ class MapSplit(transformation.SingleStateTransformation):
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
     map_exit = transformation.PatternNode(nodes.MapExit)
 
-    @staticmethod
-    def annotates_memlets():
-        return True
-
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry, cls.nested_sdfg, cls.map_exit)]
 
+    @classmethod
+    def _find_breakpoint(self, nested_sdfg, range_begin, range_end):
+        for n in nested_sdfg.sdfg.nodes():
+            for e in nested_sdfg.sdfg.out_edges(n):
+                if e.data.is_unconditional():
+                    continue
+                cond = e.data.condition_sympy()
+                if isinstance(cond, sp.Eq):
+                    if ((cond.rhs == range_begin) is True) or ((cond.rhs == range_end) is True):
+                        return cond.rhs
+        return None
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         map_entry = self.map_entry
+        nested_sdfg = self.nested_sdfg
 
         range_begin = map_entry.map.range.min_element()[0]
         range_end = map_entry.map.range.max_element()[0]
@@ -174,20 +207,11 @@ class MapSplit(transformation.SingleStateTransformation):
         # avoid degenerate map
         if range_begin == range_end:
             return False
+        
+        if MapSplit._find_breakpoint(nested_sdfg, range_begin, range_end) is not None:
+            return True
 
-        return True
-    
-    @staticmethod
-    def _eliminate_branch(sdfg: sd.SDFG, initial_state: sd.SDFGState):
-        state_list = [initial_state]
-        while len(state_list) > 0:
-            new_state_list = []
-            for s in state_list:
-                for e in sdfg.out_edges(s):
-                    if len(sdfg.in_edges(e.dst)) == 1:
-                        new_state_list.append(e.dst)
-                sdfg.remove_node(s)
-            state_list = new_state_list
+        return False
                         
     def apply(self, state: sd.SDFGState, sdfg: sd.SDFG):
         map_entry = self.map_entry
@@ -198,19 +222,8 @@ class MapSplit(transformation.SingleStateTransformation):
         range_begin = map_entry.map.range.min_element()[0]
         range_end = map_entry.map.range.max_element()[0]
 
-        breaking_point = None
-        for n in nested_sdfg.sdfg.nodes():
-            for e in nested_sdfg.sdfg.out_edges(n):
-                if e.data.is_unconditional():
-                    continue
-                cond = e.data.condition_sympy()
-                if isinstance(cond, sp.Eq):
-                    breaking_point = cond.rhs
-        
-        print(breaking_point)
-
-        if breaking_point is None:
-            return
+        breaking_point = MapSplit._find_breakpoint(nested_sdfg, range_begin, range_end)
+        assert breaking_point is not None
 
         # breaking_target = deepcopy(nested_sdfg)
         # breaking_target.label = dt.find_new_name(breaking_target.label, sdfg._labels)
@@ -223,13 +236,13 @@ class MapSplit(transformation.SingleStateTransformation):
         exit_degenerate = deepcopy(map_exit)
         state.add_nodes_from([entry_degenerate, nested_degenerate, exit_degenerate])
         for e in state.in_edges(map_entry):
-            state.add_edge(e.src, e.src_conn, entry_degenerate, e.dst_conn, e.data)
+            state.add_edge(e.src, e.src_conn, entry_degenerate, e.dst_conn, deepcopy(e.data))
         for e in state.out_edges(map_entry):
-            state.add_edge(entry_degenerate, e.src_conn, nested_degenerate, e.dst_conn, e.data)
+            state.add_edge(entry_degenerate, e.src_conn, nested_degenerate, e.dst_conn, deepcopy(e.data))
         for e in state.out_edges(nested_sdfg):
-            state.add_edge(nested_degenerate, e.src_conn, exit_degenerate, e.dst_conn, e.data)
+            state.add_edge(nested_degenerate, e.src_conn, exit_degenerate, e.dst_conn, deepcopy(e.data))
         for e in state.out_edges(map_exit):
-            state.add_edge(exit_degenerate, e.src_conn, e.dst, e.dst_conn, e.data)
+            state.add_edge(exit_degenerate, e.src_conn, e.dst, e.dst_conn, deepcopy(e.data))
 
         entry_degenerate.map.range = sbs.Range([(breaking_point, breaking_point, 1)])
         exit_degenerate.map.range = sbs.Range([(breaking_point, breaking_point, 1)])
@@ -251,29 +264,30 @@ class MapSplit(transformation.SingleStateTransformation):
             map_entry.map.range = sbs.Range([(range_begin, breaking_point-1, 1)])
             map_exit.map.range = sbs.Range([(range_begin, breaking_point-1, 1)])
         else:
-            entry_half = deepcopy(map_entry)
-            nested_half = deepcopy(nested_sdfg)
-            exit_half = deepcopy(map_exit)
-            state.add_nodes_from([entry_half, nested_half, exit_half])
-            for e in state.in_edges(map_entry):
-                state.add_edge(e.src, e.src_conn, entry_half, e.dst_conn, e.data)
-            for e in state.out_edges(map_entry):
-                state.add_edge(entry_half, e.src_conn, nested_half, e.dst_conn, e.data)
-            for e in state.out_edges(nested_sdfg):
-                state.add_edge(nested_half, e.src_conn, exit_half, e.dst_conn, e.data)
-            for e in state.out_edges(map_exit):
-                state.add_edge(exit_half, e.src_conn, e.dst, e.dst_conn, e.data)
+            pass # should never happen for now 
+            # entry_half = deepcopy(map_entry)
+            # nested_half = deepcopy(nested_sdfg)
+            # exit_half = deepcopy(map_exit)
+            # state.add_nodes_from([entry_half, nested_half, exit_half])
+            # for e in state.in_edges(map_entry):
+            #     state.add_edge(e.src, e.src_conn, entry_half, e.dst_conn, e.data)
+            # for e in state.out_edges(map_entry):
+            #     state.add_edge(entry_half, e.src_conn, nested_half, e.dst_conn, e.data)
+            # for e in state.out_edges(nested_sdfg):
+            #     state.add_edge(nested_half, e.src_conn, exit_half, e.dst_conn, e.data)
+            # for e in state.out_edges(map_exit):
+            #     state.add_edge(exit_half, e.src_conn, e.dst, e.dst_conn, e.data)
             
-            map_entry.map.range = sbs.Range([(range_begin, breaking_point-1, 1)])
-            map_exit.map.range = sbs.Range([(range_begin, breaking_point-1, 1)])
+            # map_entry.map.range = sbs.Range([(range_begin, breaking_point-1, 1)])
+            # map_exit.map.range = sbs.Range([(range_begin, breaking_point-1, 1)])
 
-            entry_half.map.range = sbs.Range([(breaking_point+1, range_end, 1)])
-            exit_half.map.range = sbs.Range([(breaking_point+1, range_end, 1)])
+            # entry_half.map.range = sbs.Range([(breaking_point+1, range_end, 1)])
+            # exit_half.map.range = sbs.Range([(breaking_point+1, range_end, 1)])
 
-            trim_flow.map_entry = entry_half
-            trim_flow.nested_sdfg = nested_half
-            trim_flow.map_exit = exit_half
-            trim_flow.apply(state, sdfg)
+            # trim_flow.map_entry = entry_half
+            # trim_flow.nested_sdfg = nested_half
+            # trim_flow.map_exit = exit_half
+            # trim_flow.apply(state, sdfg)
         
         trim_flow.map_entry = map_entry
         trim_flow.nested_sdfg = nested_sdfg
