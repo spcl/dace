@@ -148,6 +148,9 @@ class DaCeCodeGenerator(object):
                 if backend in headers:
                     global_stream.write("\n".join("#include \"" + h + "\"" for h in headers[backend]), sdfg)
 
+        # GRAPHCORE
+        global_stream.write('#include <popops/codelets.hpp>', sdfg)
+        global_stream.write('#include <popops/ElementWise.hpp>', sdfg)
         #########################################################
         # Custom types
         datatypes = set()
@@ -214,6 +217,13 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         # Write header required by environments
         for env in self.environments:
             self.statestruct.extend(env.state_fields)
+
+        # GRAPHCORE
+        self.statestruct.append('IPUModel ipuModel;')
+        self.statestruct.append('Device device = ipuModel.createDevice();')
+        self.statestruct.append('Target target = device.getTarget();')
+        self.statestruct.append('Graph graph(target);') 
+
 
         # Instrumentation preamble
         if len(self._dispatcher.instrumentation) > 2:

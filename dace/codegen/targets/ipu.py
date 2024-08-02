@@ -48,11 +48,15 @@ class IPUCodeGen(TargetCodeGenerator):
         
         # Register dispatchers
         # self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
-        
+        ipu_storage = [dtypes.StorageType.Register]
         # Register additional dispatchers
         # self._dispatcher.register_map_dispatcher(dtypes.ScheduleType.Sequential, self)
         self._dispatcher.register_node_dispatcher(self)
         self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
+        self._dispatcher.register_array_dispatcher(ipu_storage, self)
+        # Register IPU copies (all internal pairs)
+        for src_storage, dst_storage in itertools.product(ipu_storage, ipu_storage):
+            self._dispatcher.register_copy_dispatcher(src_storage, dst_storage, None, self)
         
         
     def state_dispatch_predicate(self, sdfg, state):
@@ -129,6 +133,9 @@ class SumVertex : public poplar::Vertex {
 ############################################################################################################
     # from cpu.py
     def generate_node(self, sdfg:SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node:nodes.Node, function_stream: CodeIOStream, callsite_stream:CodeIOStream):
+        
+        self._dispatcher.dispatch_allocate(sdfg, cfg, dfg, state_id, node, node.desc(sdfg), function_stream, callsite_stream)
+
         if isinstance(node, nodes.NestedSDFG):
             # Dynamically obtain node generator according to class name
             try:
@@ -143,7 +150,7 @@ class SumVertex : public poplar::Vertex {
             # Mark node as "generated"
             self._generated_nodes.add(node)
             # self._locals.clear_scope(self._ldepth + 1)
-        
+            
     def generate_state(self, 
                     sdfg:SDFG, 
                     cfg: ControlFlowRegion, 
@@ -151,14 +158,8 @@ class SumVertex : public poplar::Vertex {
                     function_stream: CodeIOStream, 
                     callsite_stream:CodeIOStream,
                     generate_state_footer:bool = True):
-            # print state.label
-            
-            # callsite_stream.write(
-            #     '''
-            #     State(CFG/Loops/Conditionals(if else, for, ...)){}
-            # '''.format(state.label)
-            # , sdfg)            
-            self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
+
+        self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
 
     def generate_scope(self,
                        sdfg: SDFG,
@@ -184,6 +185,51 @@ class SumVertex : public poplar::Vertex {
                                            function_stream,
                                            callsite_stream,
                                            skip_entry_node=True)
+
+    def declare_array(self,
+                      sdfg: SDFG,
+                      cfg: ControlFlowRegion,
+                      dfg: StateSubgraphView,
+                      state_id: int,
+                      node: nodes.Node,
+                      nodedesc: data.Data,
+                      function_stream: CodeIOStream,
+                      declaration_stream: CodeIOStream) -> None:
+        print("IN DECLARE_ARRAY")
+        fsymbols = self._frame.symbols_and_constants(sdfg)
+        # NOTE: `dfg` (state) will be None iff `nodedesc` is non-free symbol dependent
+        # (see `DaCeCodeGenerator.determine_allocation_lifetime` in `dace.codegen.targets.framecode`).
+        # We add the `dfg is not None` check because the `sdutils.is_nonfree_sym_dependent` check will fail if
+        # `nodedesc` is a View and `dfg` is None.
+        if dfg and not sdutils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
+            raise NotImplementedError("The declare_array method should only be used for variables "
+                                      "that must have their declaration and allocation separate.")
+
+        name = node.root_data
+        ptrname = cpp.ptr(name, nodedesc, sdfg, self._frame)
+
+        if nodedesc.transient is False:
+            return
+
+        # Check if array is already declared
+        if self._dispatcher.declared_arrays.has(ptrname):
+            return
+
+        # Compute array size
+        arrsize = nodedesc.total_size
+        if not isinstance(nodedesc.dtype, dtypes.opaque):
+            arrsize_bytes = arrsize * nodedesc.dtype.bytes
+
+        if (nodedesc.storage == dtypes.StorageType.Register):
+            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            declaration_stream.write(f'{nodedesc.dtype.ctype} *{name} = nullptr;\n', cfg, state_id, node)
+            #Tensor c1 = graph.addConstant<float>(FLOAT, {4}, {1.0, 1.5, 2.0, 2.5});
+            declaration_stream.write(f'{nodedesc.dtype.ctype} {name}_const = graph.addConstant<{nodedesc.dtype.ctype}>({nodedesc.dtype.ctype.capitalize}, {arrsize}, {nodedesc.ctype}({nodedesc.dtype.ctype}));\n', cfg, state_id, node)
+            self._dispatcher.declared_arrays.add(name, DefinedType.Pointer, ctypedef)
+            return
+        else:
+            raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
+
 
 #### Helpers
     def generate_nsdfg_call(self, sdfg, cfg, state, node, memlet_references, sdfg_label, state_struct=True):
