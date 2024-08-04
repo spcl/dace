@@ -1,5 +1,5 @@
 import dace
-from dace.sdfg.propagation import propagate_states
+import numpy as np
 
 # Handcrafted SDFG for scalar addition
 
@@ -69,7 +69,93 @@ def structure():
 
     sdfg()
     code = sdfg.generate_code()[0].clean_code
-   
+
+# Compute C = A+B
+# vector
+def vector_add():
+    sdfg = dace.SDFG('vector_add')
+    #########GLOBAL VARIABLES#########
+    # # data(vector add)
+    sdfg.add_array('A', [10], dace.float64)
+    sdfg.add_array('B', [10], dace.float64)  
+    sdfg.add_array('C', [10], dace.float64)
+    
+    ###########STATE, CFG, GLOBAL DATA################
+    # # add state
+    state = sdfg.add_state('sum', is_start_block=True)
+    a = state.add_read('A')
+    b = state.add_read('B')
+    c = state.add_write('C')
+
+    ###########DFG################
+    # Add nodes
+    # # map
+    add_entry, add_exit = state.add_map('add_map', dict(i='0:10'), schedule=dace.ScheduleType.Default)
+    # # tasklet
+    t1 = state.add_tasklet('add_scalar', {'_a', '_b'}, {'_c'}, '_c = _a + _b')
+
+    # Add add_edge_pair(map mostly)
+    state.add_edge_pair(add_entry, t1, a, dace.Memlet.simple(a, 'i'), internal_connector='_a')
+    state.add_edge_pair(add_entry, t1, b, dace.Memlet.simple(b, 'i'), internal_connector='_b')
+    state.add_edge_pair(add_exit, t1, c, dace.Memlet.simple(c, 'i'), internal_connector='_c')
+
+    ###########CODEGEN################
+
+    A = np.random.rand(10)
+    B = np.random.rand(10)
+    C = np.zeros(10)
+
+    print(A)
+    print(B)
+    print(C)
+    sdfg(A, B, C)
+    print(C)    
+
+# Compute C = A+B
+# scalar
+def scalar_add():
+    sdfg = dace.SDFG('scalar_add')
+    #########GLOBAL VARIABLES#########
+    # # data(vector add)
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)  
+    sdfg.add_array('C', [1], dace.float64)
+    
+    ###########STATE, CFG, GLOBAL DATA################
+    # # add state
+    state = sdfg.add_state('sum', is_start_block=True)
+    a = state.add_read('A')
+    b = state.add_read('B')
+    c = state.add_write('C')
+
+    ###########DFG################
+    # Add nodes
+    # # map
+    # add_entry, add_exit = state.add_map('add_map', dict(i='0:31'), schedule=dace.ScheduleType.Default)
+    # # tasklet
+    t1 = state.add_tasklet('add_scalar', {'_a', '_b'}, {'_c'}, '_c = _a + _b')
+
+    # Add add_edge_pair(map mostly)
+    # state.add_edge_pair(add_entry, t1, a, dace.Memlet.simple(a, 'i'))
+    # state.add_edge_pair(add_entry, t1, b, dace.Memlet.simple(b, 'i'))
+    # state.add_edge_pair(add_exit, t1, c, dace.Memlet.simple(c, 'i'))
+
+    # # Add memlet_path
+    # state.add_memlet_path(a, t1, dst_conn='_a', memlet=dace.Memlet(f"A[i]"))
+    # state.add_memlet_path(b, t1, dst_conn='_b', memlet=dace.Memlet(f"B[i]"))
+    # state.add_memlet_path(t1, c, src_conn='_c', memlet=dace.Memlet(f"C[i]"))
+
+    # just add_edge
+    state.add_edge(a, None, t1, '_a', dace.Memlet(f"A[0]"))
+    state.add_edge(b, None, t1, '_b', dace.Memlet(f"B[0]"))
+    state.add_edge(t1, '_c', c, None, dace.Memlet(f"C[0]"))
+
+    ###########CODEGEN################
+    sdfg()
+    code = sdfg.generate_code()[0].clean_code
+
 if __name__ == "__main__":
     # handcrafted_sdfg_scalar_add()
-    structure()
+    # structure()
+    # scalar_add()
+    vector_add()
