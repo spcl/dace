@@ -149,8 +149,21 @@ class DaCeCodeGenerator(object):
                     global_stream.write("\n".join("#include \"" + h + "\"" for h in headers[backend]), sdfg)
 
         # GRAPHCORE
-        global_stream.write('#include <popops/codelets.hpp>', sdfg)
-        global_stream.write('#include <popops/ElementWise.hpp>', sdfg)
+        if (backend == dace.DeviceType.IPU): 
+            global_stream.write('#include <poplar/Vertex.hpp>', sdfg)
+            global_stream.write('#include <poplar/Graph.hpp>', sdfg)
+            global_stream.write('#include <poplar/Engine.hpp>', sdfg)
+            global_stream.write('#include <poplar/IPUModel.hpp>', sdfg)
+            global_stream.write('#include <poplar/DeviceManager.hpp>', sdfg)
+            global_stream.write('#include <poplar/Target.hpp>', sdfg)
+            global_stream.write('#include <poplar/Program.hpp>', sdfg)
+            global_stream.write('#include <poplar/Type.hpp>', sdfg)
+            global_stream.write('#include <poplar/exceptions.hpp>', sdfg)
+            global_stream.write('#include <poplar/OptionFlags.hpp>', sdfg)
+            global_stream.write('#include <poplar/EngineConnection.hpp>', sdfg)
+            global_stream.write('#include <poplar/ControlFlow.hpp>', sdfg)
+            global_stream.write('#include <popops/codelets.hpp>', sdfg)
+            global_stream.write('#include <popops/ElementWise.hpp>', sdfg)
         #########################################################
         # Custom types
         datatypes = set()
