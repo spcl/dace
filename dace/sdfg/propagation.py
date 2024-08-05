@@ -1108,7 +1108,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 iedge.data = unsqueeze_memlet(
                     internal_memlet,
                     iedge.data,
-                    True,
+                    False,
                     internal_offset=int_desc.offset,
                     external_offset=ext_desc.offset
                 )
@@ -1138,7 +1138,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 oedge.data = unsqueeze_memlet(
                     internal_memlet,
                     oedge.data,
-                    True,
+                    False,
                     internal_offset=int_desc.offset,
                     external_offset=ext_desc.offset
                 )

@@ -853,7 +853,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         internal_offset = [internal_offset[idx] for idx in range(len(internal_offset)) if idx in remaining]
 
     external_subset = external_memlet.subset.offset_new(external_offset, False)
-    result.subset.offset(external_subset, False)
+    #result.subset.offset(external_subset, False)
     result.subset.offset(external_offset, True)
 
     if preserve_minima:
