@@ -3,6 +3,7 @@ import typing
 from dace.autodiff.backward_pass_generator import BackwardPassGenerator
 
 from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg.utils import inline_loop_blocks
 
 
 def add_backward_pass(sdfg: SDFG,
@@ -42,4 +43,8 @@ def add_backward_pass(sdfg: SDFG,
                                 zero_non_transients=False,
                                 overwrite_strategy=overwite_strategy)
     gen.backward()
+    sdfg.save("log_sdfgs/before_validate.sdfg")
+    sdfg.validate()
+    # inline_loop_blocks(sdfg=sdfg)
+    # sdfg.save("log_sdfgs/after_inline.sdfg")
     sdfg.validate()
