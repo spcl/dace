@@ -149,21 +149,23 @@ class DaCeCodeGenerator(object):
                     global_stream.write("\n".join("#include \"" + h + "\"" for h in headers[backend]), sdfg)
 
         # GRAPHCORE
-        if (backend == dace.DeviceType.IPU): 
-            global_stream.write('#include <poplar/Vertex.hpp>', sdfg)
-            global_stream.write('#include <poplar/Graph.hpp>', sdfg)
-            global_stream.write('#include <poplar/Engine.hpp>', sdfg)
-            global_stream.write('#include <poplar/IPUModel.hpp>', sdfg)
-            global_stream.write('#include <poplar/DeviceManager.hpp>', sdfg)
-            global_stream.write('#include <poplar/Target.hpp>', sdfg)
-            global_stream.write('#include <poplar/Program.hpp>', sdfg)
-            global_stream.write('#include <poplar/Type.hpp>', sdfg)
-            global_stream.write('#include <poplar/exceptions.hpp>', sdfg)
-            global_stream.write('#include <poplar/OptionFlags.hpp>', sdfg)
-            global_stream.write('#include <poplar/EngineConnection.hpp>', sdfg)
-            global_stream.write('#include <poplar/ControlFlow.hpp>', sdfg)
-            global_stream.write('#include <popops/codelets.hpp>', sdfg)
-            global_stream.write('#include <popops/ElementWise.hpp>', sdfg)
+        if backend == 'frame':  #on cpu.cpp file
+            for target in self.targets:
+                if target.target_name == 'ipu':
+                    global_stream.write('#include <poplar/Vertex.hpp>', sdfg)
+                    global_stream.write('#include <poplar/Graph.hpp>', sdfg)
+                    global_stream.write('#include <poplar/Engine.hpp>', sdfg)
+                    global_stream.write('#include <poplar/IPUModel.hpp>', sdfg)
+                    global_stream.write('#include <poplar/DeviceManager.hpp>', sdfg)
+                    global_stream.write('#include <poplar/Target.hpp>', sdfg)
+                    global_stream.write('#include <poplar/Program.hpp>', sdfg)
+                    global_stream.write('#include <poplar/Type.hpp>', sdfg)
+                    global_stream.write('#include <poplar/exceptions.hpp>', sdfg)
+                    global_stream.write('#include <poplar/OptionFlags.hpp>', sdfg)
+                    global_stream.write('#include <poplar/EngineConnection.hpp>', sdfg)
+                    global_stream.write('#include <poplar/ControlFlow.hpp>', sdfg)
+                    global_stream.write('#include <popops/codelets.hpp>', sdfg)
+                    global_stream.write('#include <popops/ElementWise.hpp>', sdfg)
         #########################################################
         # Custom types
         datatypes = set()
@@ -951,9 +953,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         states_generated = self.generate_states(sdfg, global_stream, callsite_stream)
         # Loop over states_generated and print them
-        for state in states_generated:
-            print(state)
-            print("*" * 50)
         #######################################################################
 
         # Sanity check
@@ -1033,19 +1032,19 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             generated_header = global_stream.getvalue() # header
             generated_code = callsite_stream.getvalue() # frame
 
-        # # Clean up generated code
-        # gotos = re.findall(r'goto (.*?);', generated_code)
-        # clean_code = ''
-        # for line in generated_code.split('\n'):
-        #     # Empty line with semicolon
-        #     if re.match(r'^\s*;\s*', line):
-        #         continue
-        #     # Label that might be unused
-        #     label = re.findall(r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$', line)
-        #     if len(label) > 0:
-        #         if label[0] not in gotos:
-        #             continue
-        #     clean_code += line + '\n'
+        # Clean up generated code
+        gotos = re.findall(r'goto (.*?);', generated_code)
+        clean_code = ''
+        for line in generated_code.split('\n'):
+            # Empty line with semicolon
+            if re.match(r'^\s*;\s*', line):
+                continue
+            # Label that might be unused
+            label = re.findall(r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$', line)
+            if len(label) > 0:
+                if label[0] not in gotos:
+                    continue
+            clean_code += line + '\n'
         clean_code = generated_code
 
         # Return the generated global and local code strings
