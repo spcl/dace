@@ -521,6 +521,9 @@ class CompiledSDFG(object):
                     # Otherwise, None values are passed as null pointers below
                 elif isinstance(arg, ctypes._Pointer):
                     pass
+                elif isinstance(arg, str):
+                    # Cast to bytes
+                    arglist[i] = ctypes.c_char_p(arg.encode('utf-8'))
                 else:
                     raise TypeError(f'Passing an object (type {type(arg).__name__}) to an array in argument "{a}"')
             elif is_array and not is_dtArray:
