@@ -1640,10 +1640,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
             def make_restrict(expr: str) -> str:
                 # Check whether "restrict" has already been added before and can be added
-                if expr.strip().endswith('*'):
-                    return '__restrict__'
-                else:
-                    return ''
+                # if expr.strip().endswith('*'):
+                #     return '__restrict__'
+                # else:
+                #     return ''
+                return ''
 
             if aname in node.sdfg.arrays and not node.sdfg.arrays[aname].may_alias:
                 restrict_args.append(make_restrict(atype))

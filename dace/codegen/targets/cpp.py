@@ -661,8 +661,8 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar, defined_type
             dst_expr = '(%s)(&%s)' % (src_dtype.ctype, dst_expr)
         elif defined_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
             dst_expr = '&' + dst_expr
-    elif not is_scalar:
-        dst_expr = '&' + dst_expr
+    # elif not is_scalar:
+    #     dst_expr = '&' + dst_expr
     return dst_expr
 
 

@@ -327,6 +327,10 @@ class InterstateEdge(object):
             alltypes = symbols
 
         inferred_lhs_symbols = {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
+        
+        # handle self dependencies in interstate edge assignments
+        alltypes.update({k: v for k, v in inferred_lhs_symbols.items() if v is not None})
+        inferred_lhs_symbols = {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
 
         # Symbols in assignment keys are candidate newly defined symbols
         lhs_symbols = set()
