@@ -1124,6 +1124,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'Mod': sympy.Mod,
         'Attr': Attr,
         'make_unsigned': lambda x: x,
+        'make_signed': lambda x: x,
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters

@@ -93,6 +93,12 @@ DACE_HDFI DACE_CONSTEXPR std::make_unsigned_t<T> make_unsigned(const T& value) {
     return static_cast<std::make_unsigned_t<T>>(value);
 }
 
+template <typename T>
+DACE_HDFI DACE_CONSTEXPR std::make_signed_t<T> make_signed(const T& value) {
+    return static_cast<std::make_signed_t<T>>(value);
+}
+
+
 template <typename T, typename T2>
 static DACE_CONSTEXPR DACE_HDFI T bitwise_and(const T& left_operand, const T2& right_operand) {
     return left_operand & right_operand;
