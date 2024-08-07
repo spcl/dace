@@ -608,6 +608,7 @@ class opaque(typeclass):
         self.ctype = typename
         self.dtype = self
         self.define = define
+        self.bytes = ctypes.sizeof(ctypes.c_void_p)  # Cannot make assumptions on opaque
 
     def emit_definition(self):
         if self.define:
