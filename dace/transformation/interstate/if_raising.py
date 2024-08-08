@@ -70,7 +70,7 @@ class IfRaising(transformation.MultiStateTransformation):
         if_guard = sdfg.add_state('raised_if_guard')
         sdutil.change_edge_dest(sdfg, root_state, if_guard)
         
-        root_replica = deepcopy(root_state)
+        root_replica = sd.SDFGState.from_json(root_state.to_json(), context={'sdfg': sdfg})
         all_block_names = set([s.label for s in sdfg.nodes()])
         root_replica.label = dt.find_new_name(root_replica.label, all_block_names)
         sdfg.add_node(root_replica)

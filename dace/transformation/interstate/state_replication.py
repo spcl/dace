@@ -68,13 +68,14 @@ class StateReplication(transformation.MultiStateTransformation):
         root_state: SDFGState = self.root_state
         sdfg = root_state.sdfg
 
-        all_block_names = set([s.label for s in sdfg.nodes()])
-
         if len(sdfg.out_edges(root_state)) == 0:
             sdfg.add_state_after(root_state)
 
+        all_block_names = set([s.label for s in sdfg.nodes()])
+
+        root_blueprint = root_state.to_json()
         for e in sdfg.in_edges(root_state)[1:]:
-            new_state = deepcopy(root_state)
+            new_state = sd.SDFGState.from_json(root_blueprint, context={'sdfg': sdfg})
             new_state.label = dt.find_new_name(new_state.label, all_block_names)
             all_block_names.add(new_state.label)
             sdfg.add_node(new_state)

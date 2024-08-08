@@ -651,7 +651,7 @@ class NestedSDFG(CodeNode):
         if self.sdfg.parent is not state:
             raise ValueError('Parent state not properly set for nested SDFG node')
         if self.sdfg.parent_sdfg is not sdfg:
-            print('fixing:', self.sdfg.parent_sdfg.label, '->', sdfg.label)
+            print('fixing', self, ':', self.sdfg.parent_sdfg, '->', sdfg)
             self.sdfg.parent_sdfg = sdfg
             # raise ValueError('Parent SDFG not properly set for nested SDFG node')
 

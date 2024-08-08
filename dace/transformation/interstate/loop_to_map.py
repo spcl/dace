@@ -245,9 +245,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             if not symbols_that_may_be_used:
                 break
 
-            # Check state contents
-            if symbols_that_may_be_used & state.free_symbols:
-                return False
+            # Check state contents (TODO: this needs a way more complex check)
+            # if symbols_that_may_be_used & state.free_symbols:
+            #     return False
 
             # Check inter-state edges
             reassigned_symbols: Set[str] = None

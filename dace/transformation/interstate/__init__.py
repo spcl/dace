@@ -2,6 +2,7 @@
 """ This module initializes the inter-state transformations package."""
 
 from .conditional_elimination import ConditionalElimination
+from .resolve_condition import ResolveCondition
 from .if_extraction import IfExtraction
 from .if_raising import IfRaising
 from .state_replication import StateReplication
