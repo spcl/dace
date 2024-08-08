@@ -31,6 +31,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
 
     # Nest states
     states = subgraph.nodes()
+    return_state = None
     if len(states) > 1:
 
         if start is not None:
@@ -107,7 +108,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                     # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
                     pass
 
-        new_state = sdfg.add_state('nested_sdfg_parent')
+        return_state = new_state = sdfg.add_state('nested_sdfg_parent')
         nsdfg = SDFG("nested_sdfg", constants=sdfg.constants_prop, parent=new_state)
         nsdfg.add_node(source_node, is_start_state=True)
         nsdfg.add_nodes_from([s for s in states if s is not source_node])
@@ -184,9 +185,9 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
             new_state = extra_state
 
     else:
-        new_state = states[0]
+        return_state = states[0]
 
-    return new_state
+    return return_state
 
 
 def _copy_state(sdfg: SDFG,
