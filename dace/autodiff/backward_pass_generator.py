@@ -225,9 +225,9 @@ class BackwardPassGenerator:
         overwrite_strategy: str = "store_all",
     ):
 
-        self.sdfg = sdfg
+        self.sdfg: SDFG = sdfg
         self.strategy = overwrite_strategy
-        self.backward_sdfg = backward_sdfg
+        self.backward_sdfg: SDFG = backward_sdfg
 
         given_gradients = [
             n if isinstance(n, nodes.AccessNode) else self._str_to_access(n, "outputs") for n in given_gradients
@@ -289,6 +289,9 @@ class BackwardPassGenerator:
         # Variable to check if backward has already been applied
         self._applied = False
         self.zero_non_transients = zero_non_transients
+
+        # Save a copy of the forward sdfg in case the backward pass will be added to the same object
+        self.original_forward_sdfg = copy.deepcopy(self.sdfg)
 
         # Sanity-check: the outputs need to be present in at least one of the states of the sdfg
         for outp in self.given_gradients:
@@ -2666,9 +2669,13 @@ class BackwardPassGenerator:
 
         raise AutoDiffException("Can't easily find path. Upgrade function.")
 
-    def _connect_forward_accessnode_not_overwritten(self, forward_state: SDFGState, backward_state: SDFGState,
-                                                    forward_node: nodes.AccessNode, target_node: nodes.Node,
-                                                    starting_edge: dgraph.MultiConnectorEdge):
+    def _connect_forward_accessnode_not_overwritten(self,
+                                                    forward_state: SDFGState,
+                                                    backward_state: SDFGState,
+                                                    forward_node: nodes.AccessNode,
+                                                    target_node: nodes.Node,
+                                                    starting_edge: dgraph.MultiConnectorEdge,
+                                                    replicated_node: nodes.AccessNode = None):
         """
         Replicate and connect the forward AccessNode to the requesting node in the backward pass.
         Because the AccessNode has not been overwritten, we just need to create the same connection
@@ -2676,21 +2683,23 @@ class BackwardPassGenerator:
         """
 
         # First, replicate the AccessNode and add it to the backward pass
-        replicated_node = copy.deepcopy(forward_node)
-        backward_state.add_node(replicated_node)
-        if self.separate_sdfgs:
-            # Need to copy over the descriptor from the forward pass
-            data_name = replicated_node.data
-            data_desc = copy.deepcopy(forward_node.desc(self.sdfg))
-            if data_name not in self.backward_sdfg.arrays:
-                self.backward_sdfg.add_datadesc(data_name, data_desc)
+        # If it has not already been replicated and passed as a parameter
+        if replicated_node is None:
+            replicated_node = copy.deepcopy(forward_node)
+            backward_state.add_node(replicated_node)
+            if self.separate_sdfgs:
+                # Need to copy over the descriptor from the forward pass
+                data_name = replicated_node.data
+                data_desc = copy.deepcopy(forward_node.desc(self.sdfg))
+                if data_name not in self.backward_sdfg.arrays:
+                    self.backward_sdfg.add_datadesc(data_name, data_desc)
 
-            # We also need to forward this array
-            if data_name not in self.backward_input_arrays:
-                # If the data is needed inside a NestedSDFG
-                # This will make sure the added array is correcyly forwarded
-                # and an in connector to the NestedSDFG is added
-                self.backward_input_arrays[data_name] = data_desc
+                # We also need to forward this array
+                if data_name not in self.backward_input_arrays:
+                    # If the data is needed inside a NestedSDFG
+                    # This will make sure the added array is correcyly forwarded
+                    # and an in connector to the NestedSDFG is added
+                    self.backward_input_arrays[data_name] = data_desc
 
         # We replicate the excat link between this forward access node and the target node
         # Get all the edges in the path
@@ -2742,6 +2751,9 @@ class BackwardPassGenerator:
                 bwd_dst = copy.deepcopy(dst)
                 backward_state.add_node(bwd_dst)
                 replicated_tmp_nodes[dst] = bwd_dst
+
+            # Modify the data in the memlet in case the array is replicated outside of the function
+            bwd_data.data = replicated_node.data
 
             # Add the edge to the backward state
             backward_state.add_edge(bwd_src, bwd_src_conn, bwd_dst, bwd_dst_conn, bwd_data)
@@ -2801,7 +2813,8 @@ class BackwardPassGenerator:
         print(f"Need to forward data {forward_node.data}: Overwritten")
         # The data has been overwritten
         # Choose what strategy to apply for this AN
-        strategy, recomputation_nsdfg = self._get_overwrite_resolution_strategy()
+        strategy, recomputation_nsdfg = self._get_overwrite_resolution_strategy(forward_state=forward_state,
+                                                                                target_an=forward_node)
 
         if strategy == "store":
             self._resolve_overwrite_with_store(forward_state=forward_state,
@@ -2810,27 +2823,219 @@ class BackwardPassGenerator:
                                                target_node=target_node,
                                                starting_edge=starting_edge)
         else:
-            self._resolve_overwrite_with_recomputation(recomputation_nsdfg=recomputation_nsdfg)
+            self._resolve_overwrite_with_recomputation(recomputation_nsdfg=recomputation_nsdfg,
+                                                       forward_state=forward_state,
+                                                       backward_state=backward_state,
+                                                       target_an=forward_node,
+                                                       target_node=target_node,
+                                                       starting_edge=starting_edge)
 
-        # Post-processing fixes
-
-    def _resolve_overwrite_with_recomputation(self, recomputation_nsdfg: nodes.NestedSDFG):
+    def _resolve_overwrite_with_recomputation(
+        self,
+        recomputation_nsdfg: nodes.NestedSDFG,
+        forward_state: SDFGState,
+        backward_state: SDFGState,
+        target_an: nodes.AccessNode,
+        target_node: nodes.Node,
+        starting_edge: dstate.MultiConnectorEdge,
+    ):
         """
         """
 
         # Add the nsdfg where it is required
-        self._connect_recomputation_nsdfg()
+        self._connect_recomputation_nsdfg(forward_state=forward_state,
+                                          backward_state=backward_state,
+                                          nsdfg=recomputation_nsdfg,
+                                          target_an=target_an,
+                                          target_node=target_node,
+                                          starting_edge=starting_edge)
 
-    def _get_recomputation_nsdfg(self):
+    def _prune_decendants_recomputation_nsdfg(self, forward_state: SDFGState, target_an: nodes.AccessNode,
+                                              nsdfg: nodes.NestedSDFG):
+        """
+        1: From this Nested-SDFG, we remove everything that will be executed after the target access node to be recomputed
+        2: Prune the unnecessary computation inside the forward state 
+            Note: this is even necessary sometimes since the output could be overwritten in the same state
+        """
+
+        # 1
+        # Get the states order for the nested_sdfg
+        states_order: List[SDFGState] = nsdfg.sdfg.states()
+        state_index = states_order.index(forward_state)
+        decendant_states: List[SDFGState] = states_order[state_index:]
+        assert decendant_states.pop(0) == forward_state
+
+        # Check if the target state is within a loop
+        target_within_loop, target_loop = self._state_within_loop(forward_state)
+
+        # We will save the states that are within the same loop because they require special treatement
+        same_loop_states: List[SDFGState] = []
+        for state in decendant_states:
+            # We want to avoid removing the decendant states that are inside the same loop region
+            if target_within_loop:
+                decendant_within_loop, decendant_loop = self._state_within_loop(state)
+                if decendant_within_loop and decendant_loop == target_loop:
+                    # If the state is within the same loop, we don't remove it
+                    same_loop_states.add(state)
+                    continue
+
+            # Remove the state from the nested_sdfg
+            parent = state.parent_graph
+            # TODO: hopefully this removed the edges to it
+            parent.remove_node(state)
+
+        # Cleanup empty LoopRegions if any
+        for node in nsdfg.sdfg.all_nodes_recursive():
+            if isinstance(node, LoopRegion) and len(node.nodes()) == 0:
+                parent = node.parent_graph
+                parent.remove_node(node)
+
+        # 2
+        # Within the same state
+        if target_within_loop:
+            # For now we keep all of the computation inside the loop
+            # TODO: if there is an overwrite to the same array in the decendnat computation
+            # We need to make a special case for the last iteration of the loop where the
+            # else branch of this if is executed and a spacial version of the loop is added
+            pass
+        else:
+            # If the target state is not within a loop
+            # We remove all the decendant computation from the graph
+
+            # Do a bfs to get all the decendant computation
+            decendant_nodes = forward_state.bfs_nodes(target_an)
+
+            for node in decendant_nodes:
+                if node is not target_an:
+                    forward_state.remove_node(node)
+
+    def _prune_acendant_recomputation_nsdfg(self, forward_state: SDFGState, target_an: nodes.AccessNode,
+                                            nsdfg: nodes.NestedSDFG):
+        """
+        Removes the unnecesary computation done before the main computation.
+        To do this we wil go through the graph in reverse bfs and only keep the computation that is contributing to this array
+        The pruning will be done on a state-per-state basis
+        """
+
+    def _prune_recomputation_sdfg(self, forward_state: SDFGState, target_an: nodes.AccessNode, nsdfg: nodes.NestedSDFG):
+        """
+        1: From this Nested-SDFG, we remove everything that will be executed after the target access node to be recomputed
+        2: Prune the unnecessary computation inside the forward state 
+            Note: this is even necessary sometimes since the output could be overwritten in the same state
+        3: From the target access node, we go backward in the graph and see what elements are required to get this array
+        """
+
+        # 1 and 2
+        self._prune_decendants_recomputation_nsdfg(forward_state=forward_state, target_an=target_an, nsdfg=nsdfg)
+
+        # 3
+        self._prune_acendant_recomputation_nsdfg(forward_state=forward_state, target_an=target_an, nsdfg=nsdfg)
+
+    def _get_recomputation_nsdfg(self, forward_state: SDFGState, target_an: nodes.AccessNode) -> nodes.NestedSDFG:
         """
         Given an AccessNode for data that needs to be forwarded from the forward pass to the backward pass,
         Return a nested SDFG that recomputes this data from input data.
         """
+        nsdfg_label = "recomputation_nsdfg_" + target_an.data
+        # Initially, we will replicate the whole SDFG into a Nested-SDFG and connect it
+        nsdfg = nodes.NestedSDFG(label=nsdfg_label,
+                                 sdfg=copy.deepcopy(self.original_forward_sdfg),
+                                 inputs=self.sdfg.arg_names,
+                                 outputs=[target_an.data])
 
-    def _connect_recomputation_nsdfg(self):
+        # We need to make sure the output inside the NestedSDFG is not a transient (anymore)
+        nsdfg.sdfg.arrays[target_an.data].transient = False
+
+        # Find the same target node and state in the nsdfg
+        nsdfg_forward_state: SDFGState = None
+        nb_occurances = 0
+        for state in nsdfg.sdfg.states():
+            if state.label == forward_state.label:
+                nsdfg_forward_state = state
+                nb_occurances += 1
+
+        # Sanity check
+        assert nb_occurances == 1
+        assert nsdfg_forward_state
+
+        # Find the target AccessNode within the state
+        nsdfg_target_node: nodes.AccessNode = None
+        nb_occurances = 0
+        for node in nsdfg_forward_state.nodes():
+            if isinstance(node, nodes.AccessNode) and node.data == target_an.data:
+                nsdfg_target_node = node
+                nb_occurances += 1
+
+        # Sanity check
+        assert nb_occurances == 1
+        assert nsdfg_target_node
+
+        self._prune_recomputation_sdfg(nsdfg=nsdfg, forward_state=nsdfg_forward_state, target_an=nsdfg_target_node)
+
+        return nsdfg
+
+    def _connect_recomputation_nsdfg(self, forward_state: SDFGState, backward_state: SDFGState,
+                                     target_an: nodes.AccessNode, target_node: nodes.Node, nsdfg: nodes.NestedSDFG,
+                                     starting_edge: dstate.MultiConnectorEdge):
         """
         
         """
+
+        # Connect all the SDFG inputs to the nested SDFG
+        # First, add the nested sdfg
+        for input in nsdfg.in_connectors.keys():
+            # For each argument
+            # Create the access Node for this argument
+            array = self.sdfg.arrays[input]
+            new_an = nodes.AccessNode(input)
+            backward_state.add_node(new_an)
+
+            # Create a memlet passing all the data to the nested-SDFG
+            memlet = self.sdfg.make_array_memlet(input)
+
+            # Add the connection to the nested SDFG
+            backward_state.add_edge(new_an, None, nsdfg, input, memlet)
+
+        # Write the data to a new access node in the backward state
+        # Add a new AccessNode and array to the forward pass
+        # First, check if a recomputated array with this name already exists
+        if "recomputed_" + target_an.data not in self.backward_sdfg.arrays:
+            new_recomp_node_name = "recomputed_" + target_an.data
+        else:
+            i = 0
+            while True:
+                if f"recomputed_{i}_" + target_an.data not in self.backward_sdfg.arrays:
+                    new_recomp_node_name = f"recomputed_{i}_" + target_an.data
+                    break
+                i += 1
+
+        # Get the new array shape
+        # This will be the shape of the current array
+        shape: List[int] = list(self.sdfg.arrays[target_an.data].shape)
+
+        # Add the array descriptor and AccessNode to the forward state
+        original_desc = target_an.desc(forward_state)
+        new_recomp_node = backward_state.add_array(
+            name=new_recomp_node_name,
+            shape=shape,
+            dtype=original_desc.dtype,
+            transient=True,
+        )
+        new_recomp_node.setzero = True
+
+        # Create a memlet passing all the data to the nested-SDFG
+        memlet = self.sdfg.make_array_memlet(new_recomp_node.data)
+
+        # Connect the output of the NestedSDFG
+        backward_state.add_edge(nsdfg, target_an.data, new_recomp_node, None, memlet)
+
+        # Connect the new AccessNode to the required computation
+        self._connect_forward_accessnode_not_overwritten(forward_state=forward_state,
+                                                         backward_state=backward_state,
+                                                         forward_node=target_an,
+                                                         target_node=target_node,
+                                                         starting_edge=starting_edge,
+                                                         replicated_node=new_recomp_node)
 
     def _resolve_overwrite_with_store(self, forward_state: SDFGState, backward_state: SDFGState,
                                       forward_node: nodes.AccessNode, target_node: nodes.Node,
@@ -2856,7 +3061,7 @@ class BackwardPassGenerator:
                                             memlets=memlets,
                                             target_node=target_node)
 
-    def _get_overwrite_resolution_strategy(self):
+    def _get_overwrite_resolution_strategy(self, forward_state: SDFGState, target_an: nodes.AccessNode):
         """
         Choose a strategy for resolving overwritten data that we need to forward to the backward passs.
         If the user wants a specific strategy, we use it.
@@ -2865,7 +3070,7 @@ class BackwardPassGenerator:
         if self.strategy == "store_all":
             return "store", None
         elif self.strategy == "recompute_all":
-            recomputation_nsdfg = self._get_recomputation_nsdfg()
+            recomputation_nsdfg = self._get_recomputation_nsdfg(forward_state=forward_state, target_an=target_an)
             return "recompute", recomputation_nsdfg
         elif self.strategy == "dynamic":
             return self._choose_overwrite_resolution_strategy()
@@ -3051,7 +3256,7 @@ class BackwardPassGenerator:
                                        target_node: nodes.Node, memlets: List[Memlet],
                                        starting_edge: dgraph.MultiConnectorEdge):
         """
-        Connect the source node to the sink node (both in the backawrd state) through a set of maps using the parameter memelets.
+        Connect the source node to the sink target node (both in the backawrd state) through a set of maps using the parameter memelets.
         We use the forward_sink_edge to track which maps to make this connection through.
         :param source_node: the source node of the new memlet path
         :param sink_node: the sink node of the new memlet path
