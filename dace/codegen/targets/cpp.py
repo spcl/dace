@@ -432,7 +432,11 @@ def emit_memlet_reference(dispatcher,
         if ref == '&' and offset_expr:
             ref = ''
             offset_expr = ''
-        expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
+        # NOTE: Structures are misunderstood as pointers to scalar in `make_ptr_vecor_cast`.
+        if isinstance(desc, data.Structure) and isinstance(conntype.base_type, dtypes.struct):
+            expr = datadef
+        else:
+            expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
         expr = expr.replace('.', '->')
 
     # Register defined variable
