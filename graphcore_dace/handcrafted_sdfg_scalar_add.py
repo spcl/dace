@@ -118,7 +118,7 @@ def scalar_add():
     # sdfg.add_array('A', [1], dace.float64)
     # sdfg.add_array('B', [1], dace.float64)
     # sdfg.add_array('C', [1], dace.float64)
-    sdfg.add_scalar("A_scalar", dace.float64, storage=dace.StorageType.IPU_Tile_Local, transient=False)
+    sdfg.add_scalar("A_scalar", dace.float64, storage=dace.StorageType.Default, transient=False)
     sdfg.add_scalar("B_scalar", dace.float64, storage=dace.StorageType.Default, transient=False)
     sdfg.add_scalar("C_scalar", dace.float64, storage=dace.StorageType.Default, transient=False)
     sdfg.add_constant('constant', 1)
