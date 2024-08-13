@@ -191,7 +191,9 @@ class IPUCodeGen(TargetCodeGenerator):
         inner_stream, codegen = self.declarations(cfg, state_id, node, function_stream)    
         self.dispatcher.defined_vars.enter_scope(node)
         ############################################################################################################
-        self.pre_tasklet(sdfg, cfg, state, state_id, node, function_stream, callsite_stream, inner_stream, codegen)
+        # self.pre_tasklet(sdfg, cfg, state, state_id, node, function_stream, callsite_stream, inner_stream, codegen)
+        for edge in state.in_edges(node):
+            self.generate_read(sdfg, state, edge, inner_stream)
         self.tasklet(sdfg, cfg, state, state_id, node, function_stream, inner_stream)
         after_memlets_stream = self.post_tasklet(sdfg, cfg, state, state_id, node, function_stream, inner_stream, codegen)
         ############################################################################################################
@@ -285,6 +287,69 @@ class IPUCodeGen(TargetCodeGenerator):
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.dst_conn, -1, self._ldepth + 1, ctype)
                 arrays.add(edge.dst_conn)
+
+    def generate_read(self, sdfg: SDFG, state: SDFGState, edge: graph.MultiConnectorEdge[mm.Memlet],
+                      code: CodeIOStream):
+        """
+            Responsible for generating code for reads into a Tasklet, given the ingoing edge.
+        """
+        if edge.dst_conn is None:
+            return
+        src_node = state.memlet_path(edge)[0].src
+        dst_type = edge.dst.in_connectors[edge.dst_conn]
+        dst_name = edge.dst_conn
+        if isinstance(src_node, nodes.Tasklet):
+            ##################
+            # Code->Code edges
+            src_type = edge.src.out_connectors[edge.src_conn]
+            if util.is_vector(src_type) and util.is_vector(dst_type):
+                # Directly read from shared vector register
+                code.write(f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = {edge.data.data};')
+            elif util.is_scalar(src_type) and util.is_scalar(dst_type):
+                # Directly read from shared scalar register
+                code.write(f'{dst_type} {dst_name} = {edge.data.data};')
+            elif util.is_scalar(src_type) and util.is_vector(dst_type):
+                # Scalar broadcast from shared scalar register
+                code.write(
+                    f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = svdup_{util.TYPE_TO_SVE_SUFFIX[dst_type.type]}({edge.data.data});'
+                )
+            else:
+                raise util.NotSupportedError('Unsupported Code->Code edge')
+        elif isinstance(src_node, nodes.AccessNode):
+            ##################
+            # Read from AccessNode
+            desc = src_node.desc(sdfg)
+            if isinstance(desc, data.Array):
+                # Copy from array
+                if util.is_pointer(dst_type):
+                    ##################
+                    # Pointer reference
+                    code.write(
+                        f'{dst_type} {dst_name} = {cpp.cpp_ptr_expr(sdfg, edge.data, None, codegen=self.frame)};')
+                elif util.is_vector(dst_type):
+                    raise util.NotSupportedError('Unsupported read from array which is vector type, util.is_vector()')
+                else:
+                    ##################
+                    # Scalar read from array
+                    code.write(f'{dst_type} {dst_name} = {cpp.cpp_array_expr(sdfg, edge.data, codegen=self.frame)};')
+            elif isinstance(desc, data.Scalar):
+                # Refer to shared variable
+                src_type = desc.dtype
+                if util.is_vector(src_type) and util.is_vector(dst_type):
+                    # Directly read from shared vector register
+                    code.write(f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = {edge.data.data};')
+                elif util.is_scalar(src_type) and util.is_scalar(dst_type):
+                    # Directly read from shared scalar register
+                    code.write(f'{dst_type} {dst_name} = {edge.data.data};')
+                elif util.is_scalar(src_type) and util.is_vector(dst_type):
+                    # Scalar broadcast from shared scalar register
+                    code.write(
+                        f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = svdup_{util.TYPE_TO_SVE_SUFFIX[dst_type.type]}({edge.data.data});'
+                    )
+                else:
+                    raise util.NotSupportedError('Unsupported Scalar->Code edge')
+        else:
+            raise util.NotSupportedError('Only copy from Tasklets and AccessNodes is supported')
                       
     # def generate_state(self, 
     #                 sdfg:SDFG, 
