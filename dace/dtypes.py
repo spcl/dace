@@ -19,7 +19,7 @@ from dace.registry import extensible_enum, undefined_safe_enum
 class DeviceType(aenum.AutoNumberEnum):
     CPU = ()  #: Multi-core CPU
     GPU = ()  #: GPU (AMD or NVIDIA)
-    IPU = ()  #: IPU (Graphcore)
+    # IPU = ()  #: IPU (Graphcore)
     FPGA = ()  #: FPGA (Intel or Xilinx)
     Snitch = ()  #: Compute Cluster (RISC-V)
 
@@ -45,6 +45,7 @@ class StorageType(aenum.AutoNumberEnum):
     Snitch_TCDM = ()  #: Cluster-private memory
     Snitch_L2 = ()  #: External memory
     Snitch_SSR = ()  #: Memory accessed by SSR streamer
+    # IPU_Tile_Local = ()  #: IPU Tile-local memory
 
 
 @undefined_safe_enum
@@ -79,6 +80,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     Snitch = ()
     Snitch_Multicore = ()
     FPGA_Multi_Pumped = ()  #: Used for double pumping
+    # IPU_Map = ()  #: IPU (Graphcore)
 
 
 # A subset of GPU schedule types
@@ -200,7 +202,8 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
-    ScheduleType.Snitch: StorageType.Snitch_TCDM
+    ScheduleType.Snitch: StorageType.Snitch_TCDM,
+    # ScheduleType.IPU_Map: StorageType.IPU_Tile_Local,
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -221,7 +224,8 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.FPGA_Multi_Pumped: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
-    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
+    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
+    # ScheduleType.IPU_Map: ScheduleType.IPU_Map
 }
 
 # Maps from StorageType to a preferred ScheduleType for helping determine schedules.
@@ -234,6 +238,7 @@ STORAGEDEFAULT_SCHEDULE = {
     StorageType.GPU_Shared: ScheduleType.GPU_ThreadBlock,
     StorageType.FPGA_Global: ScheduleType.FPGA_Device,
     StorageType.SVE_Register: ScheduleType.SVE_Map,
+    # StorageType.IPU_Tile_Local: ScheduleType.IPU_Map
 }
 
 # Translation of types to C types

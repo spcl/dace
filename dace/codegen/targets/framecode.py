@@ -148,24 +148,6 @@ class DaCeCodeGenerator(object):
                 if backend in headers:
                     global_stream.write("\n".join("#include \"" + h + "\"" for h in headers[backend]), sdfg)
 
-        # GRAPHCORE
-        if backend == 'frame':  #on cpu.cpp file
-            for target in self.targets:
-                if target.target_name == 'ipu':
-                    global_stream.write('#include <poplar/Vertex.hpp>', sdfg)
-                    global_stream.write('#include <poplar/Graph.hpp>', sdfg)
-                    global_stream.write('#include <poplar/Engine.hpp>', sdfg)
-                    global_stream.write('#include <poplar/IPUModel.hpp>', sdfg)
-                    global_stream.write('#include <poplar/DeviceManager.hpp>', sdfg)
-                    global_stream.write('#include <poplar/Target.hpp>', sdfg)
-                    global_stream.write('#include <poplar/Program.hpp>', sdfg)
-                    global_stream.write('#include <poplar/Type.hpp>', sdfg)
-                    global_stream.write('#include <poplar/exceptions.hpp>', sdfg)
-                    global_stream.write('#include <poplar/OptionFlags.hpp>', sdfg)
-                    global_stream.write('#include <poplar/EngineConnection.hpp>', sdfg)
-                    global_stream.write('#include <poplar/ControlFlow.hpp>', sdfg)
-                    global_stream.write('#include <popops/codelets.hpp>', sdfg)
-                    global_stream.write('#include <popops/ElementWise.hpp>', sdfg)
         #########################################################
         # Custom types
         datatypes = set()
