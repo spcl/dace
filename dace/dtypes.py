@@ -19,7 +19,7 @@ from dace.registry import extensible_enum, undefined_safe_enum
 class DeviceType(aenum.AutoNumberEnum):
     CPU = ()  #: Multi-core CPU
     GPU = ()  #: GPU (AMD or NVIDIA)
-    IPU = ()  #: IPU (Graphcore)
+    # IPU = ()  #: IPU (Graphcore)
     FPGA = ()  #: FPGA (Intel or Xilinx)
     Snitch = ()  #: Compute Cluster (RISC-V)
 
@@ -45,7 +45,7 @@ class StorageType(aenum.AutoNumberEnum):
     Snitch_TCDM = ()  #: Cluster-private memory
     Snitch_L2 = ()  #: External memory
     Snitch_SSR = ()  #: Memory accessed by SSR streamer
-    IPU_Tile_Local = ()  #: IPU Tile-local memory
+    # IPU_Tile_Local = ()  #: IPU Tile-local memory
 
 
 @undefined_safe_enum
@@ -80,7 +80,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     Snitch = ()
     Snitch_Multicore = ()
     FPGA_Multi_Pumped = ()  #: Used for double pumping
-    IPU_Map = ()  #: IPU (Graphcore)
+    # IPU_Map = ()  #: IPU (Graphcore)
 
 
 # A subset of GPU schedule types
