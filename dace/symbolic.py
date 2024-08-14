@@ -10,7 +10,6 @@ import numpy
 import sympy.abc
 import sympy.printing.str
 
-# FIXME(ben): do we need to add `packaging` as a dependency to DaCe?
 import packaging.version as packaging_version
 
 from dace import dtypes
