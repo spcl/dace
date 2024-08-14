@@ -848,6 +848,8 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return out_edges[0]
     if len(out_edges) == len(in_edges) and len(out_edges) != 1:
         return None
+    if not in_edges or not out_edges:
+        return None
 
     in_edge = in_edges[0]
     out_edge = out_edges[0]
