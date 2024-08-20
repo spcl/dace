@@ -253,7 +253,7 @@ def parse_dace_program(name: str,
 
         # Make safe replacements
         def repl_callback(repldict):
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 for name, new_name in repldict.items():
                     state.replace(name, new_name)
             for name, new_name in repldict.items():
@@ -1615,7 +1615,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Inject to internal tasklet
         if not dec.endswith('scope'):
             injected_node_count = 0
-            for s in sdfg.nodes():
+            for s in sdfg.states():
                 for n in s.nodes():
                     if isinstance(n, nodes.Tasklet):
                         n.add_in_connector(stream_elem)
@@ -3678,7 +3678,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _is_inputnode(self, sdfg: SDFG, name: str):
         visited_data = set()
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             visited_state_data = set()
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data == name:
@@ -3688,7 +3688,7 @@ class ProgramVisitor(ExtNodeVisitor):
             visited_data = visited_data.union(visited_state_data)
 
     def _is_outputnode(self, sdfg: SDFG, name: str):
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode) and node.data == name:
                     if state.in_degree(node) > 0:
