@@ -1,7 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from dace import dtypes, memlet as mm, properties, data as dt
-from dace.symbolic import symstr, equal
+from dace.symbolic import symstr, equal, equal_valued
 import dace.library
 from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
@@ -81,12 +81,12 @@ class ExpandGemmPure(ExpandTransformation):
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
         _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
 
-        if node.alpha == 1.0:
+        if equal_valued(1, node.alpha):
             mul_program = "__out = __a * __b"
         else:
             mul_program = "__out = {} * __a * __b".format(_cast_to_dtype_str(node.alpha, dtype_a))
 
-        if node.beta == 1:
+        if equal_valued(1, node.beta):
             state = sdfg.add_state(node.label + "_state")
         else:
             init_state = sdfg.add_state(node.label + "_initstate")
@@ -99,13 +99,13 @@ class ExpandGemmPure(ExpandTransformation):
         output_nodes = None
 
         # Initialization / beta map
-        if node.beta == 0:
+        if equal_valued(0, node.beta):
             init_state.add_mapped_tasklet(
                 'gemm_init', {'_o%d' % i: '0:%s' % symstr(d)
                               for i, d in enumerate(shape_c)}, {},
                 'out = 0', {'out': dace.Memlet.simple(mul_out, ','.join(['_o%d' % i for i in range(len(shape_c))]))},
                 external_edges=True)
-        elif node.beta == 1:
+        elif equal_valued(1, node.beta):
             # Do nothing for initialization, only update the values
             pass
         else:
