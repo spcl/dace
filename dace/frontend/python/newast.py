@@ -4745,7 +4745,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 named_region = NamedRegion(named_region_name, debuginfo=self.current_lineinfo)
                 self.cfg_target.add_node(named_region)
                 self._on_block_added(named_region)
-                self._recursive_visit(node.body, "", node.lineno, named_region, unconnected_last_block=False)
+                self._recursive_visit(node.body, "init_named", node.lineno, named_region, unconnected_last_block=False)
                 return
 
         raise DaceSyntaxError(self, node, 'General "with" statements disallowed in DaCe programs')
