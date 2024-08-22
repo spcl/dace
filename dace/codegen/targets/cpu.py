@@ -857,19 +857,28 @@ class CPUCodeGen(TargetCodeGenerator):
             if memlet.wcr is not None:
                 nc = not cpp.is_write_conflicted(dfg, edge, sdfg_schedule=self._toplevel_schedule)
             if nc:
-                stream.write(
-                    """
-                    dace::CopyND{copy_tmpl}::{shape_tmpl}::{copy_func}(
-                        {copy_args});""".format(
-                        copy_tmpl=copy_tmpl,
-                        shape_tmpl=shape_tmpl,
-                        copy_func="Copy" if memlet.wcr is None else "Accumulate",
-                        copy_args=", ".join(copy_args),
-                    ),
-                    cfg,
-                    state_id,
-                    [src_node, dst_node],
-                )
+                if copy_shape == [1]:
+                    memlet.try_initialize(sdfg, state_dfg, edge)
+                    src_offset = cpp.cpp_offset_expr(src_nodedesc, memlet.src_subset) if memlet.src_subset is not None else '0'
+                    dst_offset = cpp.cpp_offset_expr(dst_nodedesc, memlet.dst_subset) if memlet.dst_subset is not None else '0'
+                    src_expr = src_expr.split('+')[0].strip()
+                    dst_expr = dst_expr.split('+')[0].strip()
+                    stream.write(f"{dst_expr}[{dst_offset}] = {src_expr}[{src_offset}];", cfg, state_id, [src_node, dst_node])
+                    dst_expr = self.memlet_view_ctor(sdfg, memlet, dst_nodedesc.dtype, True)
+                else:
+                    stream.write(
+                        """
+                        dace::CopyND{copy_tmpl}::{shape_tmpl}::{copy_func}(
+                            {copy_args});""".format(
+                            copy_tmpl=copy_tmpl,
+                            shape_tmpl=shape_tmpl,
+                            copy_func="Copy" if memlet.wcr is None else "Accumulate",
+                            copy_args=", ".join(copy_args),
+                        ),
+                        cfg,
+                        state_id,
+                        [src_node, dst_node],
+                    )
             else:  # Conflicted WCR
                 if dynshape == 1:
                     warnings.warn('Performance warning: Emitting dynamically-'
