@@ -318,9 +318,9 @@
     },
     "Property": {
       "metatype": "Property",
-      "desc": "",
+      "desc": "A scalar which will be multiplied with A @ B before adding C",
       "category": "General",
-      "default": null
+      "default": 1
     },
     "Number": {
       "metatype": "Number",
@@ -338,6 +338,12 @@
         "CeilRange",
         "NumberOfTiles"
       ]
+    },
+    "List": {
+      "metatype": "List",
+      "desc": "Describes how many times this array is split in each dimension, where the k-th number describes how many times dimension k is split. If the k-th number is 1 this means that the array is not split in the k-th dimension at all. If None, then the transform will split the first dimension exactly shape[0] times.",
+      "category": "General",
+      "default": null
     },
     "type": {
       "metatype": "type",
@@ -411,9 +417,6 @@
     }
   },
   "__libs__": {
-    "CodeLibraryNode": "dace.libraries.standard.nodes.code.CodeLibraryNode",
-    "Gearbox": "dace.libraries.standard.nodes.gearbox.Gearbox",
-    "Reduce": "dace.libraries.standard.nodes.reduce.Reduce",
     "MatMul": "dace.libraries.blas.nodes.matmul.MatMul",
     "Dot": "dace.libraries.blas.nodes.dot.Dot",
     "Gemv": "dace.libraries.blas.nodes.gemv.Gemv",
@@ -422,19 +425,25 @@
     "BatchedMatMul": "dace.libraries.blas.nodes.batched_matmul.BatchedMatMul",
     "Axpy": "dace.libraries.blas.nodes.axpy.Axpy",
     "Einsum": "dace.libraries.blas.nodes.einsum.Einsum",
+    "CodeLibraryNode": "dace.libraries.standard.nodes.code.CodeLibraryNode",
+    "Gearbox": "dace.libraries.standard.nodes.gearbox.Gearbox",
+    "Reduce": "dace.libraries.standard.nodes.reduce.Reduce",
     "Transpose": "dace.libraries.standard.nodes.transpose.Transpose",
     "TensorTranspose": "dace.libraries.standard.nodes.ttranspose.TensorTranspose"
   },
   "__data_container_types__": {
     "Structure": "Structure",
     "Tensor": "Tensor",
-    "StructureView": "StructureView",
     "Scalar": "Scalar",
     "Array": "Array",
     "Stream": "Stream",
-    "StructArray": "StructArray",
-    "View": "View",
-    "Reference": "Reference"
+    "ContainerArray": "ContainerArray",
+    "ArrayView": "ArrayView",
+    "StructureView": "StructureView",
+    "ContainerView": "ContainerView",
+    "ArrayReference": "ArrayReference",
+    "StructureReference": "StructureReference",
+    "ContainerArrayReference": "ContainerArrayReference"
   },
   "Data": {
     "dtype": {
@@ -938,169 +947,6 @@
       "category": "General",
       "default": 0
     },
-    "members": {
-      "metatype": "OrderedDictProperty",
-      "desc": "Dictionary of structure members",
-      "category": "General",
-      "default": []
-    },
-    "name": {
-      "metatype": "str",
-      "desc": "Structure type name",
-      "category": "General",
-      "default": ""
-    },
-    "dtype": {
-      "metatype": "typeclass",
-      "desc": "",
-      "category": "General",
-      "default": "int32",
-      "base_types": [
-        "bool",
-        "bool_",
-        "int8",
-        "int16",
-        "int32",
-        "int64",
-        "uint8",
-        "uint16",
-        "uint32",
-        "uint64",
-        "float16",
-        "float32",
-        "float64",
-        "complex64",
-        "complex128"
-      ],
-      "compound_types": {
-        "vector": {
-          "elements": {
-            "type": "str",
-            "default": "0"
-          },
-          "dtype": {
-            "type": "typeclass",
-            "default": "bool"
-          }
-        },
-        "pointer": {
-          "dtype": {
-            "type": "typeclass",
-            "default": "bool"
-          }
-        },
-        "opaque": {
-          "ctype": {
-            "type": "str",
-            "default": ""
-          }
-        },
-        "struct": {
-          "name": {
-            "type": "str",
-            "default": ""
-          },
-          "data": {
-            "type": "dict",
-            "default": {},
-            "value_type": "typeclass"
-          },
-          "length": {
-            "type": "dict",
-            "default": {},
-            "value_type": "int"
-          },
-          "bytes": {
-            "type": "int",
-            "default": 0
-          }
-        },
-        "callback": {
-          "arguments": {
-            "type": "list",
-            "element_type": "typeclass",
-            "default": []
-          },
-          "returntypes": {
-            "type": "list",
-            "element_type": "typeclass",
-            "default": []
-          }
-        }
-      }
-    },
-    "shape": {
-      "metatype": "tuple",
-      "desc": "",
-      "category": "General",
-      "default": []
-    },
-    "transient": {
-      "metatype": "bool",
-      "desc": "",
-      "category": "General",
-      "default": false
-    },
-    "storage": {
-      "metatype": "StorageType",
-      "desc": "Storage location",
-      "category": "General",
-      "default": "Default",
-      "choices": [
-        "Default",
-        "Register",
-        "CPU_Pinned",
-        "CPU_Heap",
-        "CPU_ThreadLocal",
-        "GPU_Global",
-        "GPU_Shared",
-        "FPGA_Global",
-        "FPGA_Local",
-        "FPGA_Registers",
-        "FPGA_ShiftRegister",
-        "SVE_Register",
-        "Snitch_TCDM",
-        "Snitch_L2",
-        "Snitch_SSR"
-      ]
-    },
-    "lifetime": {
-      "metatype": "AllocationLifetime",
-      "desc": "Data allocation span",
-      "category": "General",
-      "default": "Scope",
-      "choices": [
-        "Scope",
-        "State",
-        "SDFG",
-        "Global",
-        "Persistent",
-        "External"
-      ]
-    },
-    "location": {
-      "metatype": "dict",
-      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "str"
-    },
-    "debuginfo": {
-      "metatype": "DebugInfo",
-      "desc": "",
-      "category": "General",
-      "default": {
-        "type": "DebugInfo",
-        "start_line": 0,
-        "end_line": 0,
-        "start_column": 0,
-        "end_column": 0,
-        "filename": null
-      }
-    }
-  },
-  "StructureView": {
     "members": {
       "metatype": "OrderedDictProperty",
       "desc": "Dictionary of structure members",
@@ -1789,7 +1635,7 @@
       }
     }
   },
-  "StructArray": {
+  "ContainerArray": {
     "stype": {
       "metatype": "Data",
       "desc": "",
@@ -2000,7 +1846,7 @@
       }
     }
   },
-  "View": {
+  "ArrayView": {
     "allow_conflicts": {
       "metatype": "bool",
       "desc": "If enabled, allows more than one memlet to write to the same memory location without conflict resolution.",
@@ -2205,7 +2051,755 @@
       }
     }
   },
-  "Reference": {
+  "StructureView": {
+    "members": {
+      "metatype": "OrderedDictProperty",
+      "desc": "Dictionary of structure members",
+      "category": "General",
+      "default": []
+    },
+    "name": {
+      "metatype": "str",
+      "desc": "Structure type name",
+      "category": "General",
+      "default": ""
+    },
+    "dtype": {
+      "metatype": "typeclass",
+      "desc": "",
+      "category": "General",
+      "default": "int32",
+      "base_types": [
+        "bool",
+        "bool_",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float16",
+        "float32",
+        "float64",
+        "complex64",
+        "complex128"
+      ],
+      "compound_types": {
+        "vector": {
+          "elements": {
+            "type": "str",
+            "default": "0"
+          },
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "pointer": {
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "opaque": {
+          "ctype": {
+            "type": "str",
+            "default": ""
+          }
+        },
+        "struct": {
+          "name": {
+            "type": "str",
+            "default": ""
+          },
+          "data": {
+            "type": "dict",
+            "default": {},
+            "value_type": "typeclass"
+          },
+          "length": {
+            "type": "dict",
+            "default": {},
+            "value_type": "int"
+          },
+          "bytes": {
+            "type": "int",
+            "default": 0
+          }
+        },
+        "callback": {
+          "arguments": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          },
+          "returntypes": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          }
+        }
+      }
+    },
+    "shape": {
+      "metatype": "tuple",
+      "desc": "",
+      "category": "General",
+      "default": []
+    },
+    "transient": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "storage": {
+      "metatype": "StorageType",
+      "desc": "Storage location",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Register",
+        "CPU_Pinned",
+        "CPU_Heap",
+        "CPU_ThreadLocal",
+        "GPU_Global",
+        "GPU_Shared",
+        "FPGA_Global",
+        "FPGA_Local",
+        "FPGA_Registers",
+        "FPGA_ShiftRegister",
+        "SVE_Register",
+        "Snitch_TCDM",
+        "Snitch_L2",
+        "Snitch_SSR"
+      ]
+    },
+    "lifetime": {
+      "metatype": "AllocationLifetime",
+      "desc": "Data allocation span",
+      "category": "General",
+      "default": "Scope",
+      "choices": [
+        "Scope",
+        "State",
+        "SDFG",
+        "Global",
+        "Persistent",
+        "External"
+      ]
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "str"
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    }
+  },
+  "ContainerView": {
+    "stype": {
+      "metatype": "Data",
+      "desc": "",
+      "category": "General",
+      "default": null
+    },
+    "allow_conflicts": {
+      "metatype": "bool",
+      "desc": "If enabled, allows more than one memlet to write to the same memory location without conflict resolution.",
+      "category": "General",
+      "default": false
+    },
+    "strides": {
+      "metatype": "tuple",
+      "desc": "For each dimension, the number of elements to skip in order to obtain the next element in that dimension.",
+      "category": "General",
+      "default": []
+    },
+    "total_size": {
+      "metatype": "SymbolicProperty",
+      "desc": "The total allocated size of the array. Can be used for padding.",
+      "category": "General",
+      "default": 0
+    },
+    "offset": {
+      "metatype": "tuple",
+      "desc": "Initial offset to translate all indices by.",
+      "category": "General",
+      "default": []
+    },
+    "may_alias": {
+      "metatype": "bool",
+      "desc": "This pointer may alias with other pointers in the same function",
+      "category": "General",
+      "default": false
+    },
+    "alignment": {
+      "metatype": "int",
+      "desc": "Allocation alignment in bytes (0 uses compiler-default)",
+      "category": "General",
+      "default": 0
+    },
+    "start_offset": {
+      "metatype": "int",
+      "desc": "Allocation offset elements for manual alignment (pre-padding)",
+      "category": "General",
+      "default": 0
+    },
+    "optional": {
+      "metatype": "bool",
+      "desc": "Specifies whether this array may have a value of None. If False, the array must not be None. If option is not set, it is inferred by other properties and the OptionalArrayInference pass.",
+      "category": "General",
+      "default": null
+    },
+    "pool": {
+      "metatype": "bool",
+      "desc": "Hint to the allocator that using a memory pool is preferred",
+      "category": "General",
+      "default": false
+    },
+    "dtype": {
+      "metatype": "typeclass",
+      "desc": "",
+      "category": "General",
+      "default": "int32",
+      "base_types": [
+        "bool",
+        "bool_",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float16",
+        "float32",
+        "float64",
+        "complex64",
+        "complex128"
+      ],
+      "compound_types": {
+        "vector": {
+          "elements": {
+            "type": "str",
+            "default": "0"
+          },
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "pointer": {
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "opaque": {
+          "ctype": {
+            "type": "str",
+            "default": ""
+          }
+        },
+        "struct": {
+          "name": {
+            "type": "str",
+            "default": ""
+          },
+          "data": {
+            "type": "dict",
+            "default": {},
+            "value_type": "typeclass"
+          },
+          "length": {
+            "type": "dict",
+            "default": {},
+            "value_type": "int"
+          },
+          "bytes": {
+            "type": "int",
+            "default": 0
+          }
+        },
+        "callback": {
+          "arguments": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          },
+          "returntypes": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          }
+        }
+      }
+    },
+    "shape": {
+      "metatype": "tuple",
+      "desc": "",
+      "category": "General",
+      "default": []
+    },
+    "transient": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "storage": {
+      "metatype": "StorageType",
+      "desc": "Storage location",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Register",
+        "CPU_Pinned",
+        "CPU_Heap",
+        "CPU_ThreadLocal",
+        "GPU_Global",
+        "GPU_Shared",
+        "FPGA_Global",
+        "FPGA_Local",
+        "FPGA_Registers",
+        "FPGA_ShiftRegister",
+        "SVE_Register",
+        "Snitch_TCDM",
+        "Snitch_L2",
+        "Snitch_SSR"
+      ]
+    },
+    "lifetime": {
+      "metatype": "AllocationLifetime",
+      "desc": "Data allocation span",
+      "category": "General",
+      "default": "Scope",
+      "choices": [
+        "Scope",
+        "State",
+        "SDFG",
+        "Global",
+        "Persistent",
+        "External"
+      ]
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "str"
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    }
+  },
+  "ArrayReference": {
+    "allow_conflicts": {
+      "metatype": "bool",
+      "desc": "If enabled, allows more than one memlet to write to the same memory location without conflict resolution.",
+      "category": "General",
+      "default": false
+    },
+    "strides": {
+      "metatype": "tuple",
+      "desc": "For each dimension, the number of elements to skip in order to obtain the next element in that dimension.",
+      "category": "General",
+      "default": []
+    },
+    "total_size": {
+      "metatype": "SymbolicProperty",
+      "desc": "The total allocated size of the array. Can be used for padding.",
+      "category": "General",
+      "default": 0
+    },
+    "offset": {
+      "metatype": "tuple",
+      "desc": "Initial offset to translate all indices by.",
+      "category": "General",
+      "default": []
+    },
+    "may_alias": {
+      "metatype": "bool",
+      "desc": "This pointer may alias with other pointers in the same function",
+      "category": "General",
+      "default": false
+    },
+    "alignment": {
+      "metatype": "int",
+      "desc": "Allocation alignment in bytes (0 uses compiler-default)",
+      "category": "General",
+      "default": 0
+    },
+    "start_offset": {
+      "metatype": "int",
+      "desc": "Allocation offset elements for manual alignment (pre-padding)",
+      "category": "General",
+      "default": 0
+    },
+    "optional": {
+      "metatype": "bool",
+      "desc": "Specifies whether this array may have a value of None. If False, the array must not be None. If option is not set, it is inferred by other properties and the OptionalArrayInference pass.",
+      "category": "General",
+      "default": null
+    },
+    "pool": {
+      "metatype": "bool",
+      "desc": "Hint to the allocator that using a memory pool is preferred",
+      "category": "General",
+      "default": false
+    },
+    "dtype": {
+      "metatype": "typeclass",
+      "desc": "",
+      "category": "General",
+      "default": "int32",
+      "base_types": [
+        "bool",
+        "bool_",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float16",
+        "float32",
+        "float64",
+        "complex64",
+        "complex128"
+      ],
+      "compound_types": {
+        "vector": {
+          "elements": {
+            "type": "str",
+            "default": "0"
+          },
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "pointer": {
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "opaque": {
+          "ctype": {
+            "type": "str",
+            "default": ""
+          }
+        },
+        "struct": {
+          "name": {
+            "type": "str",
+            "default": ""
+          },
+          "data": {
+            "type": "dict",
+            "default": {},
+            "value_type": "typeclass"
+          },
+          "length": {
+            "type": "dict",
+            "default": {},
+            "value_type": "int"
+          },
+          "bytes": {
+            "type": "int",
+            "default": 0
+          }
+        },
+        "callback": {
+          "arguments": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          },
+          "returntypes": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          }
+        }
+      }
+    },
+    "shape": {
+      "metatype": "tuple",
+      "desc": "",
+      "category": "General",
+      "default": []
+    },
+    "transient": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "storage": {
+      "metatype": "StorageType",
+      "desc": "Storage location",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Register",
+        "CPU_Pinned",
+        "CPU_Heap",
+        "CPU_ThreadLocal",
+        "GPU_Global",
+        "GPU_Shared",
+        "FPGA_Global",
+        "FPGA_Local",
+        "FPGA_Registers",
+        "FPGA_ShiftRegister",
+        "SVE_Register",
+        "Snitch_TCDM",
+        "Snitch_L2",
+        "Snitch_SSR"
+      ]
+    },
+    "lifetime": {
+      "metatype": "AllocationLifetime",
+      "desc": "Data allocation span",
+      "category": "General",
+      "default": "Scope",
+      "choices": [
+        "Scope",
+        "State",
+        "SDFG",
+        "Global",
+        "Persistent",
+        "External"
+      ]
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "str"
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    }
+  },
+  "StructureReference": {
+    "members": {
+      "metatype": "OrderedDictProperty",
+      "desc": "Dictionary of structure members",
+      "category": "General",
+      "default": []
+    },
+    "name": {
+      "metatype": "str",
+      "desc": "Structure type name",
+      "category": "General",
+      "default": ""
+    },
+    "dtype": {
+      "metatype": "typeclass",
+      "desc": "",
+      "category": "General",
+      "default": "int32",
+      "base_types": [
+        "bool",
+        "bool_",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float16",
+        "float32",
+        "float64",
+        "complex64",
+        "complex128"
+      ],
+      "compound_types": {
+        "vector": {
+          "elements": {
+            "type": "str",
+            "default": "0"
+          },
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "pointer": {
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "opaque": {
+          "ctype": {
+            "type": "str",
+            "default": ""
+          }
+        },
+        "struct": {
+          "name": {
+            "type": "str",
+            "default": ""
+          },
+          "data": {
+            "type": "dict",
+            "default": {},
+            "value_type": "typeclass"
+          },
+          "length": {
+            "type": "dict",
+            "default": {},
+            "value_type": "int"
+          },
+          "bytes": {
+            "type": "int",
+            "default": 0
+          }
+        },
+        "callback": {
+          "arguments": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          },
+          "returntypes": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          }
+        }
+      }
+    },
+    "shape": {
+      "metatype": "tuple",
+      "desc": "",
+      "category": "General",
+      "default": []
+    },
+    "transient": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "storage": {
+      "metatype": "StorageType",
+      "desc": "Storage location",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Register",
+        "CPU_Pinned",
+        "CPU_Heap",
+        "CPU_ThreadLocal",
+        "GPU_Global",
+        "GPU_Shared",
+        "FPGA_Global",
+        "FPGA_Local",
+        "FPGA_Registers",
+        "FPGA_ShiftRegister",
+        "SVE_Register",
+        "Snitch_TCDM",
+        "Snitch_L2",
+        "Snitch_SSR"
+      ]
+    },
+    "lifetime": {
+      "metatype": "AllocationLifetime",
+      "desc": "Data allocation span",
+      "category": "General",
+      "default": "Scope",
+      "choices": [
+        "Scope",
+        "State",
+        "SDFG",
+        "Global",
+        "Persistent",
+        "External"
+      ]
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "str"
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    }
+  },
+  "ContainerArrayReference": {
+    "stype": {
+      "metatype": "Data",
+      "desc": "",
+      "category": "General",
+      "default": null
+    },
     "allow_conflicts": {
       "metatype": "bool",
       "desc": "If enabled, allows more than one memlet to write to the same memory location without conflict resolution.",
@@ -3022,6 +3616,13 @@
       "default": false,
       "indirected": true
     },
+    "unroll_factor": {
+      "metatype": "int",
+      "desc": "How much iterations should be unrolled. To prevent unrolling, set this value to 1.",
+      "category": "General",
+      "default": 0,
+      "indirected": true
+    },
     "collapse": {
       "metatype": "int",
       "desc": "How many dimensions to collapse into the parallel range",
@@ -3195,6 +3796,12 @@
       "desc": "Map unrolling",
       "category": "General",
       "default": false
+    },
+    "unroll_factor": {
+      "metatype": "int",
+      "desc": "How much iterations should be unrolled. To prevent unrolling, set this value to 1.",
+      "category": "General",
+      "default": 0
     },
     "collapse": {
       "metatype": "int",
@@ -3590,6 +4197,13 @@
       "default": false,
       "indirected": true
     },
+    "unroll_factor": {
+      "metatype": "int",
+      "desc": "How much iterations should be unrolled. To prevent unrolling, set this value to 1.",
+      "category": "General",
+      "default": 0,
+      "indirected": true
+    },
     "collapse": {
       "metatype": "int",
       "desc": "How many dimensions to collapse into the parallel range",
@@ -3794,6 +4408,12 @@
       "category": "General",
       "default": false
     },
+    "unroll_factor": {
+      "metatype": "int",
+      "desc": "How much iterations should be unrolled. To prevent unrolling, set this value to 1.",
+      "category": "General",
+      "default": 0
+    },
     "collapse": {
       "metatype": "int",
       "desc": "How many dimensions to collapse into the parallel range",
@@ -3967,6 +4587,30 @@
       "desc": "Show this block as collapsed",
       "category": "General",
       "default": false
+    },
+    "pre_conditions": {
+      "metatype": "dict",
+      "desc": "Pre-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "post_conditions": {
+      "metatype": "dict",
+      "desc": "Post-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "invariant_conditions": {
+      "metatype": "dict",
+      "desc": "Invariant conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
     }
   },
   "SDFGState": {
@@ -4044,6 +4688,126 @@
       "desc": "Show this block as collapsed",
       "category": "General",
       "default": false
+    },
+    "pre_conditions": {
+      "metatype": "dict",
+      "desc": "Pre-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "post_conditions": {
+      "metatype": "dict",
+      "desc": "Post-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "invariant_conditions": {
+      "metatype": "dict",
+      "desc": "Invariant conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    }
+  },
+  "ContinueBlock": {
+    "is_collapsed": {
+      "metatype": "bool",
+      "desc": "Show this block as collapsed",
+      "category": "General",
+      "default": false
+    },
+    "pre_conditions": {
+      "metatype": "dict",
+      "desc": "Pre-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "post_conditions": {
+      "metatype": "dict",
+      "desc": "Post-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "invariant_conditions": {
+      "metatype": "dict",
+      "desc": "Invariant conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    }
+  },
+  "BreakBlock": {
+    "is_collapsed": {
+      "metatype": "bool",
+      "desc": "Show this block as collapsed",
+      "category": "General",
+      "default": false
+    },
+    "pre_conditions": {
+      "metatype": "dict",
+      "desc": "Pre-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "post_conditions": {
+      "metatype": "dict",
+      "desc": "Post-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "invariant_conditions": {
+      "metatype": "dict",
+      "desc": "Invariant conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    }
+  },
+  "ReturnBlock": {
+    "is_collapsed": {
+      "metatype": "bool",
+      "desc": "Show this block as collapsed",
+      "category": "General",
+      "default": false
+    },
+    "pre_conditions": {
+      "metatype": "dict",
+      "desc": "Pre-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "post_conditions": {
+      "metatype": "dict",
+      "desc": "Post-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "invariant_conditions": {
+      "metatype": "dict",
+      "desc": "Invariant conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
     }
   },
   "ControlFlowRegion": {
@@ -4052,6 +4816,30 @@
       "desc": "Show this block as collapsed",
       "category": "General",
       "default": false
+    },
+    "pre_conditions": {
+      "metatype": "dict",
+      "desc": "Pre-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "post_conditions": {
+      "metatype": "dict",
+      "desc": "Post-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "invariant_conditions": {
+      "metatype": "dict",
+      "desc": "Invariant conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
     }
   },
   "LoopRegion": {
@@ -4085,23 +4873,35 @@
       "category": "General",
       "default": ""
     },
-    "break_states": {
-      "metatype": "set",
-      "desc": "States that when reached break out of the loop",
-      "category": "General",
-      "default": []
-    },
-    "continue_states": {
-      "metatype": "set",
-      "desc": "States that when reached directly execute the next iteration",
-      "category": "General",
-      "default": []
-    },
     "is_collapsed": {
       "metatype": "bool",
       "desc": "Show this block as collapsed",
       "category": "General",
       "default": false
+    },
+    "pre_conditions": {
+      "metatype": "dict",
+      "desc": "Pre-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "post_conditions": {
+      "metatype": "dict",
+      "desc": "Post-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "invariant_conditions": {
+      "metatype": "dict",
+      "desc": "Invariant conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
     }
   },
   "ProcessGrid": {
@@ -4469,11 +5269,41 @@
       "key_type": "str",
       "value_type": "str"
     },
+    "using_experimental_blocks": {
+      "metatype": "bool",
+      "desc": "Whether the SDFG contains experimental control flow blocks",
+      "category": "General",
+      "default": false
+    },
     "is_collapsed": {
       "metatype": "bool",
       "desc": "Show this block as collapsed",
       "category": "General",
       "default": false
+    },
+    "pre_conditions": {
+      "metatype": "dict",
+      "desc": "Pre-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "post_conditions": {
+      "metatype": "dict",
+      "desc": "Post-conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
+    },
+    "invariant_conditions": {
+      "metatype": "dict",
+      "desc": "Invariant conditions for this block",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "list"
     }
   },
   "Pass": {},
@@ -4499,7 +5329,7 @@
     }
   },
   "PatternTransformation": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -4527,7 +5357,7 @@
     }
   },
   "SingleStateTransformation": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -4555,7 +5385,7 @@
     }
   },
   "MultiStateTransformation": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -4583,7 +5413,7 @@
     }
   },
   "ExpandTransformation": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -4611,9 +5441,9 @@
     }
   },
   "SubgraphTransformation": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
-      "desc": "ID of SDFG to transform",
+      "desc": "ID of CFG to transform",
       "category": "General",
       "default": 0
     },
@@ -4630,639 +5460,8 @@
       "default": []
     }
   },
-  "StateReachability": {},
-  "SymbolAccessSets": {},
-  "AccessSets": {},
-  "FindAccessStates": {},
-  "FindAccessNodes": {},
-  "SymbolWriteScopes": {},
-  "ScalarWriteShadowScopes": {},
-  "MapCollapse": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "dace.libraries.standard.nodes.code.CodeLibraryNode": {
-    "inputdict": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "General",
-      "default": {}
-    },
-    "outputdict": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "General",
-      "default": {}
-    },
-    "name": {
-      "metatype": "str",
-      "desc": "Name of node",
-      "category": "General",
-      "default": ""
-    },
-    "implementation": {
-      "metatype": "LibraryImplementationProperty",
-      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
-      "category": "General",
-      "default": null,
-      "choices": [
-        "default"
-      ]
-    },
-    "schedule": {
-      "metatype": "ScheduleType",
-      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
-      "category": "General",
-      "default": "Default",
-      "choices": [
-        "Default",
-        "Sequential",
-        "MPI",
-        "CPU_Multicore",
-        "CPU_Persistent",
-        "Unrolled",
-        "SVE_Map",
-        "GPU_Default",
-        "GPU_Device",
-        "GPU_ThreadBlock",
-        "GPU_ThreadBlock_Dynamic",
-        "GPU_Persistent",
-        "FPGA_Device",
-        "Snitch",
-        "Snitch_Multicore",
-        "FPGA_Multi_Pumped"
-      ]
-    },
-    "debuginfo": {
-      "metatype": "DebugInfo",
-      "desc": "",
-      "category": "General",
-      "default": {
-        "type": "DebugInfo",
-        "start_line": 0,
-        "end_line": 0,
-        "start_column": 0,
-        "end_column": 0,
-        "filename": null
-      }
-    },
-    "label": {
-      "metatype": "str",
-      "desc": "Name of the CodeNode",
-      "category": "General",
-      "default": ""
-    },
-    "location": {
-      "metatype": "dict",
-      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "pystr_to_symbolic"
-    },
-    "environments": {
-      "metatype": "set",
-      "desc": "Environments required by CMake to build and run this code node.",
-      "category": "General",
-      "default": []
-    },
-    "in_connectors": {
-      "metatype": "dict",
-      "desc": "A set of input connectors for this node.",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "typeclass"
-    },
-    "out_connectors": {
-      "metatype": "dict",
-      "desc": "A set of output connectors for this node.",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "typeclass"
-    }
-  },
-  "Expansion": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandGearbox": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "dace.libraries.standard.nodes.gearbox.Gearbox": {
-    "size": {
-      "metatype": "SymbolicProperty",
-      "desc": "Number of wide vectors to convert to/from narrow vectors.",
-      "category": "General",
-      "default": 0
-    },
-    "name": {
-      "metatype": "str",
-      "desc": "Name of node",
-      "category": "General",
-      "default": ""
-    },
-    "implementation": {
-      "metatype": "LibraryImplementationProperty",
-      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
-      "category": "General",
-      "default": null,
-      "choices": [
-        "pure"
-      ]
-    },
-    "schedule": {
-      "metatype": "ScheduleType",
-      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
-      "category": "General",
-      "default": "Default",
-      "choices": [
-        "Default",
-        "Sequential",
-        "MPI",
-        "CPU_Multicore",
-        "CPU_Persistent",
-        "Unrolled",
-        "SVE_Map",
-        "GPU_Default",
-        "GPU_Device",
-        "GPU_ThreadBlock",
-        "GPU_ThreadBlock_Dynamic",
-        "GPU_Persistent",
-        "FPGA_Device",
-        "Snitch",
-        "Snitch_Multicore",
-        "FPGA_Multi_Pumped"
-      ]
-    },
-    "debuginfo": {
-      "metatype": "DebugInfo",
-      "desc": "",
-      "category": "General",
-      "default": {
-        "type": "DebugInfo",
-        "start_line": 0,
-        "end_line": 0,
-        "start_column": 0,
-        "end_column": 0,
-        "filename": null
-      }
-    },
-    "label": {
-      "metatype": "str",
-      "desc": "Name of the CodeNode",
-      "category": "General",
-      "default": ""
-    },
-    "location": {
-      "metatype": "dict",
-      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "pystr_to_symbolic"
-    },
-    "environments": {
-      "metatype": "set",
-      "desc": "Environments required by CMake to build and run this code node.",
-      "category": "General",
-      "default": []
-    },
-    "in_connectors": {
-      "metatype": "dict",
-      "desc": "A set of input connectors for this node.",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "typeclass"
-    },
-    "out_connectors": {
-      "metatype": "dict",
-      "desc": "A set of output connectors for this node.",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "typeclass"
-    }
-  },
-  "CUDA": {},
-  "HPTT": {},
-  "ExpandReducePure": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandReducePureSequentialDim": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandReduceOpenMP": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandReduceCUDADevice": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandReduceCUDABlock": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandReduceCUDABlockAll": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandReduceFPGAPartialReduction": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandReduceGPUAuto": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "dace.libraries.standard.nodes.reduce.Reduce": {
-    "axes": {
-      "metatype": "list",
-      "desc": "",
-      "category": "General",
-      "default": null,
-      "element_type": "int"
-    },
-    "wcr": {
-      "metatype": "LambdaProperty",
-      "desc": "",
-      "category": "General",
-      "default": "(lambda a, b: a)"
-    },
-    "identity": {
-      "metatype": "Property",
-      "desc": "",
-      "category": "General",
-      "default": null
-    },
-    "name": {
-      "metatype": "str",
-      "desc": "Name of node",
-      "category": "General",
-      "default": ""
-    },
-    "implementation": {
-      "metatype": "LibraryImplementationProperty",
-      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
-      "category": "General",
-      "default": null,
-      "choices": [
-        "pure",
-        "pure-seq",
-        "OpenMP",
-        "CUDA (device)",
-        "CUDA (block)",
-        "CUDA (block allreduce)",
-        "FPGAPartialReduction",
-        "GPUAuto"
-      ]
-    },
-    "schedule": {
-      "metatype": "ScheduleType",
-      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
-      "category": "General",
-      "default": "Default",
-      "choices": [
-        "Default",
-        "Sequential",
-        "MPI",
-        "CPU_Multicore",
-        "CPU_Persistent",
-        "Unrolled",
-        "SVE_Map",
-        "GPU_Default",
-        "GPU_Device",
-        "GPU_ThreadBlock",
-        "GPU_ThreadBlock_Dynamic",
-        "GPU_Persistent",
-        "FPGA_Device",
-        "Snitch",
-        "Snitch_Multicore",
-        "FPGA_Multi_Pumped"
-      ]
-    },
-    "debuginfo": {
-      "metatype": "DebugInfo",
-      "desc": "",
-      "category": "General",
-      "default": {
-        "type": "DebugInfo",
-        "start_line": 0,
-        "end_line": 0,
-        "start_column": 0,
-        "end_column": 0,
-        "filename": null
-      }
-    },
-    "label": {
-      "metatype": "str",
-      "desc": "Name of the CodeNode",
-      "category": "General",
-      "default": ""
-    },
-    "location": {
-      "metatype": "dict",
-      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "pystr_to_symbolic"
-    },
-    "environments": {
-      "metatype": "set",
-      "desc": "Environments required by CMake to build and run this code node.",
-      "category": "General",
-      "default": []
-    },
-    "in_connectors": {
-      "metatype": "dict",
-      "desc": "A set of input connectors for this node.",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "typeclass"
-    },
-    "out_connectors": {
-      "metatype": "dict",
-      "desc": "A set of output connectors for this node.",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "typeclass"
-    }
-  },
   "SpecializeMatMul": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5397,7 +5596,7 @@
   "cuBLAS": {},
   "rocBLAS": {},
   "ExpandDotPure": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5425,7 +5624,7 @@
     }
   },
   "ExpandDotOpenBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5453,7 +5652,7 @@
     }
   },
   "ExpandDotMKL": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5481,7 +5680,7 @@
     }
   },
   "ExpandDotCuBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5509,7 +5708,7 @@
     }
   },
   "ExpandDotFpgaPartialSums": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5537,7 +5736,7 @@
     }
   },
   "ExpandDotFpgaAccumulate": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5745,7 +5944,7 @@
     }
   },
   "ExpandGemvPure": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5773,7 +5972,7 @@
     }
   },
   "ExpandGemvFpgaAccumulate": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5801,7 +6000,7 @@
     }
   },
   "ExpandGemvFpgaTilesByColumn": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5829,7 +6028,7 @@
     }
   },
   "ExpandGemvCuBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5857,7 +6056,7 @@
     }
   },
   "ExpandGemvOpenBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5885,7 +6084,7 @@
     }
   },
   "ExpandGemvMKL": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -5913,7 +6112,7 @@
     }
   },
   "ExpandGemvPBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6067,7 +6266,7 @@
     }
   },
   "ExpandGemmPure": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6095,7 +6294,7 @@
     }
   },
   "ExpandGemmOpenBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6123,7 +6322,7 @@
     }
   },
   "ExpandGemmMKL": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6151,7 +6350,7 @@
     }
   },
   "ExpandGemmGPUBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6179,7 +6378,7 @@
     }
   },
   "ExpandGemmCuBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6207,7 +6406,7 @@
     }
   },
   "ExpandGemmRocBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6235,7 +6434,7 @@
     }
   },
   "ExpandGemmPBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6480,7 +6679,7 @@
     }
   },
   "ExpandGerPure": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6508,7 +6707,7 @@
     }
   },
   "ExpandGerFpga": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6657,7 +6856,7 @@
     }
   },
   "ExpandBatchedMatMulPure": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6685,7 +6884,7 @@
     }
   },
   "ExpandBatchedMatMulMKL": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6713,7 +6912,7 @@
     }
   },
   "ExpandBatchedMatMulOpenBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6741,7 +6940,7 @@
     }
   },
   "ExpandBatchedMatMulCuBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -6977,7 +7176,7 @@
     }
   },
   "ExpandAxpyVectorized": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7005,7 +7204,7 @@
     }
   },
   "ExpandAxpyFpga": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7244,7 +7443,7 @@
     }
   },
   "SpecializeEinsum": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7271,8 +7470,604 @@
       "default": 0
     }
   },
+  "dace.libraries.standard.nodes.code.CodeLibraryNode": {
+    "inputdict": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "General",
+      "default": {}
+    },
+    "outputdict": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "General",
+      "default": {}
+    },
+    "name": {
+      "metatype": "str",
+      "desc": "Name of node",
+      "category": "General",
+      "default": ""
+    },
+    "implementation": {
+      "metatype": "LibraryImplementationProperty",
+      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
+      "category": "General",
+      "default": null,
+      "choices": [
+        "default"
+      ]
+    },
+    "schedule": {
+      "metatype": "ScheduleType",
+      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Sequential",
+        "MPI",
+        "CPU_Multicore",
+        "CPU_Persistent",
+        "Unrolled",
+        "SVE_Map",
+        "GPU_Default",
+        "GPU_Device",
+        "GPU_ThreadBlock",
+        "GPU_ThreadBlock_Dynamic",
+        "GPU_Persistent",
+        "FPGA_Device",
+        "Snitch",
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
+      ]
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    },
+    "label": {
+      "metatype": "str",
+      "desc": "Name of the CodeNode",
+      "category": "General",
+      "default": ""
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "pystr_to_symbolic"
+    },
+    "environments": {
+      "metatype": "set",
+      "desc": "Environments required by CMake to build and run this code node.",
+      "category": "General",
+      "default": []
+    },
+    "in_connectors": {
+      "metatype": "dict",
+      "desc": "A set of input connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    },
+    "out_connectors": {
+      "metatype": "dict",
+      "desc": "A set of output connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    }
+  },
+  "Expansion": {
+    "cfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandGearbox": {
+    "cfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "dace.libraries.standard.nodes.gearbox.Gearbox": {
+    "size": {
+      "metatype": "SymbolicProperty",
+      "desc": "Number of wide vectors to convert to/from narrow vectors.",
+      "category": "General",
+      "default": 0
+    },
+    "name": {
+      "metatype": "str",
+      "desc": "Name of node",
+      "category": "General",
+      "default": ""
+    },
+    "implementation": {
+      "metatype": "LibraryImplementationProperty",
+      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
+      "category": "General",
+      "default": null,
+      "choices": [
+        "pure"
+      ]
+    },
+    "schedule": {
+      "metatype": "ScheduleType",
+      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Sequential",
+        "MPI",
+        "CPU_Multicore",
+        "CPU_Persistent",
+        "Unrolled",
+        "SVE_Map",
+        "GPU_Default",
+        "GPU_Device",
+        "GPU_ThreadBlock",
+        "GPU_ThreadBlock_Dynamic",
+        "GPU_Persistent",
+        "FPGA_Device",
+        "Snitch",
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
+      ]
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    },
+    "label": {
+      "metatype": "str",
+      "desc": "Name of the CodeNode",
+      "category": "General",
+      "default": ""
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "pystr_to_symbolic"
+    },
+    "environments": {
+      "metatype": "set",
+      "desc": "Environments required by CMake to build and run this code node.",
+      "category": "General",
+      "default": []
+    },
+    "in_connectors": {
+      "metatype": "dict",
+      "desc": "A set of input connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    },
+    "out_connectors": {
+      "metatype": "dict",
+      "desc": "A set of output connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    }
+  },
+  "CUDA": {},
+  "HPTT": {},
+  "ExpandReducePure": {
+    "cfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReducePureSequentialDim": {
+    "cfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReduceOpenMP": {
+    "cfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReduceCUDADevice": {
+    "cfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReduceCUDABlock": {
+    "cfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReduceCUDABlockAll": {
+    "cfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReduceFPGAPartialReduction": {
+    "cfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReduceGPUAuto": {
+    "cfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "dace.libraries.standard.nodes.reduce.Reduce": {
+    "axes": {
+      "metatype": "list",
+      "desc": "",
+      "category": "General",
+      "default": null,
+      "element_type": "int"
+    },
+    "wcr": {
+      "metatype": "LambdaProperty",
+      "desc": "",
+      "category": "General",
+      "default": "(lambda a, b: a)"
+    },
+    "identity": {
+      "metatype": "Property",
+      "desc": "",
+      "category": "General",
+      "default": null
+    },
+    "name": {
+      "metatype": "str",
+      "desc": "Name of node",
+      "category": "General",
+      "default": ""
+    },
+    "implementation": {
+      "metatype": "LibraryImplementationProperty",
+      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
+      "category": "General",
+      "default": null,
+      "choices": [
+        "pure",
+        "pure-seq",
+        "OpenMP",
+        "CUDA (device)",
+        "CUDA (block)",
+        "CUDA (block allreduce)",
+        "FPGAPartialReduction",
+        "GPUAuto"
+      ]
+    },
+    "schedule": {
+      "metatype": "ScheduleType",
+      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Sequential",
+        "MPI",
+        "CPU_Multicore",
+        "CPU_Persistent",
+        "Unrolled",
+        "SVE_Map",
+        "GPU_Default",
+        "GPU_Device",
+        "GPU_ThreadBlock",
+        "GPU_ThreadBlock_Dynamic",
+        "GPU_Persistent",
+        "FPGA_Device",
+        "Snitch",
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
+      ]
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    },
+    "label": {
+      "metatype": "str",
+      "desc": "Name of the CodeNode",
+      "category": "General",
+      "default": ""
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "pystr_to_symbolic"
+    },
+    "environments": {
+      "metatype": "set",
+      "desc": "Environments required by CMake to build and run this code node.",
+      "category": "General",
+      "default": []
+    },
+    "in_connectors": {
+      "metatype": "dict",
+      "desc": "A set of input connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    },
+    "out_connectors": {
+      "metatype": "dict",
+      "desc": "A set of output connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    }
+  },
   "ExpandTransposePure": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7300,7 +8095,7 @@
     }
   },
   "ExpandTransposeMKL": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7328,7 +8123,7 @@
     }
   },
   "ExpandTransposeOpenBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7356,7 +8151,7 @@
     }
   },
   "ExpandTransposeCuBLAS": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7483,7 +8278,7 @@
     }
   },
   "ExpandPure": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7511,7 +8306,7 @@
     }
   },
   "ExpandHPTT": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7648,6 +8443,51 @@
       "value_type": "typeclass"
     }
   },
+  "StateReachability": {},
+  "SymbolAccessSets": {},
+  "AccessSets": {},
+  "FindAccessStates": {},
+  "FindAccessNodes": {},
+  "SymbolWriteScopes": {},
+  "ScalarWriteShadowScopes": {},
+  "AccessRanges": {},
+  "FindReferenceSources": {},
+  "DeriveSDFGConstraints": {
+    "assume_max_data_size": {
+      "metatype": "int",
+      "desc": "Assume that all data containers have no dimension larger than this value. If None, no assumption is made.",
+      "category": "General",
+      "default": null
+    }
+  },
+  "MapCollapse": {
+    "cfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
   "MapReduceFusion": {
     "no_init": {
       "metatype": "bool",
@@ -7655,7 +8495,7 @@
       "category": "General",
       "default": false
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7707,7 +8547,13 @@
         "FPGA_Multi_Pumped"
       ]
     },
-    "sdfg_id": {
+    "expansion_limit": {
+      "metatype": "int",
+      "desc": "How many unidimensional maps will be creaed, known as k. If None, the default no limit is in place.",
+      "category": "General",
+      "default": null
+    },
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7742,7 +8588,7 @@
       "default": [],
       "element_type": "str"
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7770,7 +8616,7 @@
     }
   },
   "TrivialMapElimination": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7798,7 +8644,7 @@
     }
   },
   "TrivialMapRangeElimination": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7832,7 +8678,7 @@
       "category": "General",
       "default": true
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7872,7 +8718,7 @@
       "category": "General",
       "default": null
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7918,7 +8764,7 @@
       "category": "General",
       "default": true
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -7964,7 +8810,7 @@
       "category": "General",
       "default": true
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8010,7 +8856,7 @@
       "category": "General",
       "default": true
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8044,7 +8890,7 @@
       "category": "General",
       "default": null
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8131,7 +8977,7 @@
       "category": "General",
       "default": false
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8199,7 +9045,7 @@
       "category": "General",
       "default": false
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8279,7 +9125,7 @@
       "category": "General",
       "default": false
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8317,7 +9163,7 @@
         "128"
       ]
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8375,7 +9221,7 @@
       "category": "General",
       "default": null
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8421,7 +9267,7 @@
       "category": "General",
       "default": 128
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8490,7 +9336,7 @@
       "category": "General",
       "default": 64
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8547,7 +9393,7 @@
         "Snitch_SSR"
       ]
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8599,7 +9445,7 @@
       "category": "General",
       "default": null
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8633,7 +9479,7 @@
       "category": "General",
       "default": false
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8661,7 +9507,7 @@
     }
   },
   "TrivialTaskletElimination": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8712,7 +9558,7 @@
         "Snitch_SSR"
       ]
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8764,7 +9610,7 @@
       "category": "General",
       "default": false
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8804,7 +9650,7 @@
       "category": "General",
       "default": true
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8832,7 +9678,7 @@
     }
   },
   "MPITransformMap": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8872,7 +9718,7 @@
       "category": "General",
       "default": true
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -8901,7 +9747,7 @@
   },
   "BankSplit": {
     "split_array_info": {
-      "metatype": "Property",
+      "metatype": "List",
       "desc": "Describes how many times this array is split in each dimension, where the k-th number describes how many times dimension k is split. If the k-th number is 1 this means that the array is not split in the k-th dimension at all. If None, then the transform will split the first dimension exactly shape[0] times.",
       "category": "General",
       "default": null
@@ -8912,7 +9758,7 @@
       "category": "General",
       "default": "CPU_Heap"
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9016,7 +9862,7 @@
       "category": "General",
       "default": true
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9044,7 +9890,7 @@
     }
   },
   "MatrixProductTranspose": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9090,9 +9936,9 @@
       "category": "General",
       "default": ""
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
-      "desc": "ID of SDFG to transform",
+      "desc": "ID of CFG to transform",
       "category": "General",
       "default": 0
     },
@@ -9140,9 +9986,9 @@
       "category": "General",
       "default": true
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
-      "desc": "ID of SDFG to transform",
+      "desc": "ID of CFG to transform",
       "category": "General",
       "default": 0
     },
@@ -9220,9 +10066,9 @@
       "default": [],
       "element_type": "str"
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
-      "desc": "ID of SDFG to transform",
+      "desc": "ID of CFG to transform",
       "category": "General",
       "default": 0
     },
@@ -9246,7 +10092,7 @@
       "category": "General",
       "default": true
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9322,7 +10168,7 @@
       "category": "General",
       "default": ""
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9350,7 +10196,7 @@
     }
   },
   "InlineSDFG": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9378,7 +10224,7 @@
     }
   },
   "InlineTransients": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9406,7 +10252,7 @@
     }
   },
   "RefineNestedAccess": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9440,7 +10286,7 @@
       "category": "General",
       "default": false
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9474,7 +10320,7 @@
       "category": "General",
       "default": 0
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9514,7 +10360,7 @@
       "category": "General",
       "default": 0
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9548,7 +10394,7 @@
       "category": "General",
       "default": null
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9576,7 +10422,7 @@
     }
   },
   "InlineMultistateSDFG": {
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
       "desc": "",
       "category": "(Debug)",
@@ -9636,9 +10482,9 @@
       "category": "General",
       "default": false
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
-      "desc": "ID of SDFG to transform",
+      "desc": "ID of CFG to transform",
       "category": "General",
       "default": 0
     },
@@ -9668,9 +10514,9 @@
       "category": "General",
       "default": 2
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
-      "desc": "ID of SDFG to transform",
+      "desc": "ID of CFG to transform",
       "category": "General",
       "default": 0
     },
@@ -9755,9 +10601,9 @@
       "category": "General",
       "default": true
     },
-    "sdfg_id": {
+    "cfg_id": {
       "metatype": "int",
-      "desc": "ID of SDFG to transform",
+      "desc": "ID of CFG to transform",
       "category": "General",
       "default": 0
     },
@@ -10025,6 +10871,7 @@
       "default": true
     }
   },
+  "ReferenceToView": {},
   "SimplifyPass": {
     "validate": {
       "metatype": "bool",
@@ -10058,5 +10905,12 @@
       "element_type": "Pass"
     }
   },
-  "TransientReuse": {}
+  "TransientReuse": {
+    "verbose": {
+      "metatype": "bool",
+      "desc": "Print information about the memory reduction.",
+      "category": "General",
+      "default": false
+    }
+  }
 }
