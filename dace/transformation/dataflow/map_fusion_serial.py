@@ -402,6 +402,7 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
                         consumer_edge = consumer_tree.edge
                         assert consumer_edge.data.data == inter_name
                         consumer_edge.data.data = new_inter_name
+                        consumer_edge.data.replace(memlet_repl)
                         if is_scalar:
                             consumer_edge.data.src_subset = "0"
                         elif consumer_edge.data.subset is not None:
