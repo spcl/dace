@@ -256,7 +256,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         return True
 
     @staticmethod
-    def find_perameter_remapping(
+    def find_parameter_remapping(
         first_map: nodes.Map,
         second_map: nodes.Map
     ) -> Union[Dict[str, str], None]:
@@ -289,8 +289,8 @@ class MapFusionHelper(transformation.SingleStateTransformation):
 
         # The ranges, however, we apply some post processing to them.
         simp = lambda e: symbolic.simplify_ext(symbolic.simplify(e))
-        first_rngs: List[Tuple[Any, Any, Any]] = [ (simp(rng[0]), simp(rng[1]), simp(rng[2])) for rng in first_map.range]
-        second_rngs: List[Tuple[Any, Any, Any]] = [ (simp(rng[0]), simp(rng[1]), simp(rng[2])) for rng in second_map.range]
+        first_rngs: List[Tuple[Any, Any, Any]] = [tuple(simp(r) for r in rng) for rng in first_map.range]
+        second_rngs: List[Tuple[Any, Any, Any]] = [tuple(simp(r) for r in rng) for rng in second_map.range]
 
         # These are the parameters of the second map that have not yet associated to
         #  a parameter of the second map.
@@ -533,9 +533,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             # TODO(phimuell): Handle this case properly.
             #   The main reason why we forbid this is because it becomes a bit tricky
             #   to figuring out the size of the intermediate.
-            inner_collector_edges = list(
-                state.in_edges_by_connector(intermediate_node, "IN_" + out_edge.src_conn[3:])
-            )
+            inner_collector_edges = list(state.in_edges_by_connector(intermediate_node, "IN_" + out_edge.src_conn[3:]))
             if len(inner_collector_edges) > 1:
                 return None
 
@@ -582,7 +580,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                     assert self.map_parameter_compatible(map_exit_1.map, map_entry_2.map, state, sdfg)
                     # Tests if consumer consume less or equal the amount we generate.
                     if not producer_subset.covers(consumer_edge.data.src_subset):
-                        print(f"NOT COVER | {producer_subset} | {consumer_edge.data.src_subset}")
                         return None
                     if consumer_node is map_entry_2:  # Dynamic map range.
                         return None
@@ -627,9 +624,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                                 return None
                     else:
                         # Ensure that there is no path that leads to the second map.
-                        after_intermdiate_node = all_nodes_between(
-                            graph=state, begin=edge.dst, end=map_entry_2
-                        )
+                        after_intermdiate_node = all_nodes_between(graph=state, begin=edge.dst, end=map_entry_2)
                         if after_intermdiate_node is not None:
                             return None
                 # If we are here, then we know that the node is a shared output
@@ -637,9 +632,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                 continue
 
         assert exclusive_outputs or shared_outputs or pure_outputs
-        assert len(processed_inter_nodes) == sum(
-            len(x) for x in [pure_outputs, exclusive_outputs, shared_outputs]
-        )
+        assert len(processed_inter_nodes) == sum(len(x) for x in [pure_outputs, exclusive_outputs, shared_outputs])
         return (pure_outputs, exclusive_outputs, shared_outputs)
 
 
