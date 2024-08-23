@@ -4,7 +4,8 @@
 
 import functools
 import itertools
-from typing import Any, Dict, Iterable, List, Optional, Set, Sequence, Tuple, Union
+import re
+from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Sequence, Tuple, Union, overload
 
 import dace
 from dace import data, properties, subsets, transformation
@@ -380,6 +381,11 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         exclusive_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
         shared_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
 
+        # These are the iteration parameters of the two maps.
+        #  They are not yet modified, that they match each other.
+        map_params_1: Sequence[str] = map_exit_1.map.params
+        map_params_2: Sequence[str] = map_entry_2.map.params
+
         # Set of intermediate nodes that we have already processed.
         processed_inter_nodes: Set[nodes.Node] = set()
 
@@ -390,6 +396,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             # We already processed the node, this should indicate that we should
             #  run simplify again, or we should start implementing this case.
             if intermediate_node in processed_inter_nodes:
+                print(f"399")
                 return None
             processed_inter_nodes.add(intermediate_node)
 
@@ -413,55 +420,69 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             #  cases, as handling them is essentially rerouting an edge, whereas
             #  handling intermediate nodes is much more complicated.
 
+            # For us an intermediate node must always be an access node, because
+            #  everything else we do not know how to handle. It is important that
+            #  we do not test for non transient data here, because they can be
+            #  handled has shared intermediates.
+            if not isinstance(intermediate_node, nodes.AccessNode):
+                print(f"428")
+                return None
+            intermediate_desc: data.Data = intermediate_node.desc(sdfg)
+            if isinstance(intermediate_desc, data.View):
+                print(f"432")
+                return None
+
             # Empty Memlets are only allowed if they are in `\mathbb{P}`, which
             #  is also the only place they really make sense (for a map exit).
             #  Thus if we now found an empty Memlet we reject it.
             if out_edge.data.is_empty():
+                print(f"out_endge empty.")
                 return None
 
-            # In case the intermediate has more than one entry, all must come from the
-            #  first map, otherwise we can not fuse them. Currently we restrict this
-            #  even further by saying that it has only one incoming Memlet.
+            # The intermediate now can only have a single source. It might be possible
+            #  to extend this to many inputs as long as they come from the top map.
+            # NOTE: The output degree is checked implicitly further down, the
+            #   general rule is, that multiple outputs are only allowed if only
+            #   one enters the second Map, the other output must go to different
+            #   consumers, in which case the node is a shared intermediate.
             if state.in_degree(intermediate_node) != 1:
+                print(f"449")
                 return None
 
             # It can happen that multiple edges converges at the `IN_` connector
             #  of the first map exit, but there is only one edge leaving the exit.
             #  It is complicate to handle this, so for now we ignore it.
             # TODO(phimuell): Handle this case properly.
+            #   The main reason why we forbid this is because it becomes a bit tricky
+            #   to figuring out the size of the intermediate.
             inner_collector_edges = list(
                 state.in_edges_by_connector(intermediate_node, "IN_" + out_edge.src_conn[3:])
             )
             if len(inner_collector_edges) > 1:
+                print(f"469")
                 return None
 
-            # For us an intermediate node must always be an access node, because
-            #  everything else we do not know how to handle. It is important that
-            #  we do not test for non transient data here, because they can be
-            #  handled has shared intermediates.
-            if not isinstance(intermediate_node, nodes.AccessNode):
-                return None
-            intermediate_desc: data.Data = intermediate_node.desc(sdfg)
-            if isinstance(intermediate_desc, data.View):
-                return None
+            # An important assumption we made for fusion is that the data is "point
+            #  wise interchangeable/compatible", for a more involved definition see
+            #  `is_pointwise_subset()`. We will now check this for the "producer side"
+            #  (the consumer side is handled later). There is an important point here,
+            #  in case the new intermediate is only a scalar, then this is completely
+            #  safe. Due to the fact how a Map is defined in SDFG. If the new
+            #  intermediate is not a scalar, such as `A[i, j, :]` in `Map[i=..., j=...]`
+            #  then it is a bit of a gamble and to be fully sure we would need to look
+            #  at the consumer subset, however, these should be edge cases.
+            # TODO(phimuell): Use the `param_association` to evaluate which dimensions
+            #   are actually used and store this here, below use this to check if the
+            #   same dimensions are accessed by the consumer.
+            for inner_collector_edge in inner_collector_edges:
+                if not is_pointwise_subset(inner_collector_edge.data.dst_subset, map_params_1):
+                    print(f"479")
+                    return None
 
-            # There are some restrictions we have on intermediate nodes. The first one
-            #  is that we do not allow WCR, this is because they need special handling
-            #  which is currently not implement (the DaCe transformation has this
-            #  restriction as well). The second one is that we can reduce the
-            #  intermediate node and only feed a part into the second map, consider
-            #  the case `b = a + 1; return b + 2`, where we have arrays. In this
-            #  example only a single element must be available to the second map.
-            #  However, this is hard to check so we will make a simplification.
-            #  First, we will not check it at the producer, but at the consumer point.
-            #  There we assume if the consumer does _not consume the whole_
-            #  intermediate array, then we can decompose the intermediate, by setting
-            #  the map iteration index to zero and recover the shape, see
-            #  implementation in the actual fusion routine.
-            #  This is an assumption that is in most cases correct, but not always.
-            #  However, doing it correctly is extremely complex.
+            # Another restriction we impose is that we do not allow WCR.
             for _, produce_edge in map_fusion_helper.find_upstream_producers(state, out_edge):
                 if produce_edge.data.wcr is not None:
+                    print(f"485")
                     return None
 
             if len(downstream_nodes) == 0:
@@ -469,29 +490,30 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                 #  second map, thus the edge belongs either in `\mathbb{S}` or
                 #  `\mathbb{E}`.
 
-                # This is a very special situation, i.e. the access node has many
-                #  different connections to the second map entry, this is a special
-                #  case that we do not handle.
+                # If the intermediate access node as more than one outgoing edge
+                #  it means (because of `downstream_nodes`) that it has multiple
+                #  connections to the second map. We do not allow this.
                 # TODO(phimuell): Handle this case.
                 if state.out_degree(intermediate_node) != 1:
+                    print(f"489")
                     return None
 
-                # Certain nodes need more than one element as input. As explained
-                #  above, in this situation we assume that we can naturally decompose
-                #  them iff the node does not consume that whole intermediate.
-                #  Furthermore, it can not be a dynamic map range or a library node.
-                intermediate_size = functools.reduce(lambda a, b: a * b, intermediate_desc.shape)
+                # We now look at the consumers, as above we assume that the consumption.
+                #  is point wise, however, we allow multiple consumer. As written
+                #  above is safe if the new intermediate is a scalar, in case of an
+                #  array it is pretty safe (see todo above).
+                # Furthermore, we disallow certain type of consumer.
                 consumers = map_fusion_helper.find_downstream_consumers(state=state, begin=intermediate_node)
                 for consumer_node, feed_edge in consumers:
-                    # TODO(phimuell): Improve this approximation.
-                    if (
-                        intermediate_size != 1
-                    ) and feed_edge.data.num_elements() == intermediate_size:
+                    if not is_pointwise_subset(feed_edge.data.src_subset, map_params_2):
+                        print(f"399// {feed_edge.data.src_subset} | {map_params_2}")
                         return None
                     if consumer_node is map_entry_2:  # Dynamic map range.
+                        print(f"399_")
                         return None
                     if isinstance(consumer_node, nodes.LibraryNode):
                         # TODO(phimuell): Allow some library nodes.
+                        print(f"399__")
                         return None
 
                 # Note that "remove" has a special meaning here, regardless of the
@@ -544,6 +566,111 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             len(x) for x in [pure_outputs, exclusive_outputs, shared_outputs]
         )
         return (pure_outputs, exclusive_outputs, shared_outputs)
+
+
+@overload
+def is_pointwise_subset(
+    subset: subsets.Range,
+    map_params: List[str],
+    param_association: Literal[False],
+) -> bool:
+    ...
+
+
+@overload
+def is_pointwise_subset(
+        subset: subsets.Range,
+        map_params: List[str],
+        param_association: Literal[True],
+) -> Optional[List[int]]:
+    ...
+
+
+def is_pointwise_subset(
+        subset: subsets.Range,
+        map_params: List[str],
+        param_association: bool = False,
+) -> bool:
+    """Tests if `subset` is "point wise" with respect to map parameters `map_params`.
+
+    Essentially a subset is point wise, with respect to map parameters, if it access
+    the data in a `A[i, j]` manner. An example for a not point wise access would be
+    `A[i + 1, j]`. However, there are some special cases:
+    - All map parameters must be used, For example the expression `A[i, :]`, inside
+        the map `Map[i=0:N, j=0:M]` is not point wise, because `j` is not used.
+    - On the other hand if `A` is a 3D array then expressions such as `A[i, :, j]`
+        or `A[i, 3, j]` would be point wise. Although they are not a scalar.
+    - Furthermore, all parameters must appear exactly once, i.e. accesses such as
+        `A[i, i]`, even inside `Map[i=0:N]` is not point wise.
+
+    It is important to realize that point wise is a very powerful property, since
+    it essentially releases us from the check of the order of the parameter.
+    However, there are some cases were it might fail.
+
+    If the `param_association` argument is set to `True` the function will return the
+    parameter association, This is a list of integer, that indicates which parameter
+    was found in which dimension of the subset.
+    If the subset is point wise the function will return `None`.
+
+    Args:
+        subset:     The subset to inspect.
+        map_params: The list of parameters to inspect.
+        param_association: Return the parameter association.
+    """
+    map_patterns = [re.compile(f"\\b{str(map_param)}\\b") for map_param in map_params]
+    subset_sizes = subset.size_exact()
+    unused_params = set(map_params)
+    parameter_to_dim_map: Dict[str, int] = dict()
+
+    # Now go through each dimension of the subset and inspect them.
+    for dim in range(subset.dims()):
+        if(subset_sizes[dim] == 1):
+            # Only a single element is consumed, thus we must test if the access
+            #  is done through a yet unused map parameter only.
+            ss_idx = str(subset[dim][0])
+            for map_param, map_pattern in zip(map_params, map_patterns):
+                if(ss_idx == map_param):
+                    # The map parameter is used alone without any additions.
+                    if(map_param not in unused_params):
+                        # The map parameter was already used, so we have something
+                        #  like `A[i, i]`. Thus it is not point wise!
+                        return None if param_association else False
+
+                    # The parameter is used alone, so this is point wise.
+                    unused_params.discard(map_param)
+                    parameter_to_dim_map[map_param] = dim
+                    break
+
+                elif(map_pattern.match(ss_idx)):
+                    # The parameter matches partially, e.g. `A[i + 1]`, and is not point wise
+                    return None if param_association else False
+
+            # If we here then `ss_idx` did not depend in any way on the map parameters.
+            #  This is the case if it is a literal or an other symbol, but we know that
+            #  it is constant (because of how symbols work). If it is really point wise
+            #  depends on if all symbols are consumed.
+
+        elif(subset_sizes[dim] == 0):
+            # This is a strange case that we ignore but it does not violate point wise.
+            pass
+
+        else:
+            # There are multiple elements that are consumed. An example would be
+            #  expressions such as `A[i, :, j]` again for a 2D Map. For now we allow
+            #  them, but it is a bit dangerous to do this because it only works if
+            #  the other map also processed that that with that expression.
+            #  This is a fair assumption.
+            for ss_element in map(str, subset[dim]):
+                if any(map_pattern.match(ss) for ss in ss_element):
+                    return None if param_association else False
+
+    # Not all parameters were used, so it is not point wise
+    if(len(unused_params) != 0):
+        return None if param_association else False
+
+    if(param_association):
+        return [parameter_to_dim_map[map_param] for map_param in map_params]
+    return True
 
 
 def is_nested_sdfg(
