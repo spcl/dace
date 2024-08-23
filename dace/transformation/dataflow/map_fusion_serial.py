@@ -3,22 +3,16 @@
 """Implements the serial map fusing transformation."""
 
 import copy
-from typing import Any, Union
+from typing import Any, Dict, List, Set, Union
 
 import dace
-from dace import (
-    dtypes as dace_dtypes,
-    properties as dace_properties,
-    subsets as dace_subsets,
-    symbolic as dace_symbolic,
-    transformation as dace_transformation,
-)
-from dace.sdfg import SDFG, SDFGState, graph as dace_graph, nodes as dace_nodes
+from dace import dtypes, properties, subsets, symbolic, transformation
+from dace.sdfg import SDFG, SDFGState, graph, nodes
 
 from dace.transformation.dataflow import map_fusion_helper
 
 
-@dace_properties.make_properties
+@properties.make_properties
 class SerialMapFusion(map_fusion_helper.MapFusionHelper):
     """Specialized replacement for the map fusion transformation that is provided by DaCe.
 
@@ -48,9 +42,9 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
         - This transformation modifies more nodes than it matches!
     """
 
-    map_exit1 = dace_transformation.transformation.PatternNode(dace_nodes.MapExit)
-    access_node = dace_transformation.transformation.PatternNode(dace_nodes.AccessNode)
-    map_entry2 = dace_transformation.transformation.PatternNode(dace_nodes.MapEntry)
+    map_exit1 = transformation.transformation.PatternNode(nodes.MapExit)
+    access_node = transformation.transformation.PatternNode(nodes.AccessNode)
+    map_entry2 = transformation.transformation.PatternNode(nodes.MapEntry)
 
     def __init__(
         self,
@@ -84,10 +78,10 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
         - The decomposition exists and at least one of the intermediate sets
             is not empty.
         """
-        assert isinstance(self.map_exit1, dace_nodes.MapExit)
-        assert isinstance(self.map_entry2, dace_nodes.MapEntry)
-        map_entry_1: dace_nodes.MapEntry = graph.entry_node(self.map_exit1)
-        map_entry_2: dace_nodes.MapEntry = self.map_entry2
+        assert isinstance(self.map_exit1, nodes.MapExit)
+        assert isinstance(self.map_entry2, nodes.MapEntry)
+        map_entry_1: nodes.MapEntry = graph.entry_node(self.map_exit1)
+        map_entry_2: nodes.MapEntry = self.map_entry2
 
         # This essentially test the structural properties of the two Maps.
         if not self.can_be_fused(
@@ -128,14 +122,14 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
         #  once we start adding and removing nodes it seems that their ID changes.
         #  Thus we have to save them here, this is a known behaviour in DaCe.
         assert isinstance(graph, dace.SDFGState)
-        assert isinstance(self.map_exit1, dace_nodes.MapExit)
-        assert isinstance(self.map_entry2, dace_nodes.MapEntry)
+        assert isinstance(self.map_exit1, nodes.MapExit)
+        assert isinstance(self.map_entry2, nodes.MapEntry)
         assert self.map_parameter_compatible(self.map_exit1.map, self.map_entry2.map, graph, sdfg)
 
-        map_exit_1: dace_nodes.MapExit = self.map_exit1
-        map_entry_2: dace_nodes.MapEntry = self.map_entry2
-        map_exit_2: dace_nodes.MapExit = graph.exit_node(self.map_entry2)
-        map_entry_1: dace_nodes.MapEntry = graph.entry_node(self.map_exit1)
+        map_exit_1: nodes.MapExit = self.map_exit1
+        map_entry_2: nodes.MapEntry = self.map_entry2
+        map_exit_2: nodes.MapExit = graph.exit_node(self.map_entry2)
+        map_entry_1: nodes.MapEntry = graph.entry_node(self.map_exit1)
 
         output_partition = self.partition_first_outputs(
             state=graph,
@@ -194,12 +188,12 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
 
     @staticmethod
     def handle_intermediate_set(
-        intermediate_outputs: set[dace_graph.MultiConnectorEdge[dace.Memlet]],
+        intermediate_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]],
         state: SDFGState,
         sdfg: SDFG,
-        map_exit_1: dace_nodes.MapExit,
-        map_entry_2: dace_nodes.MapEntry,
-        map_exit_2: dace_nodes.MapExit,
+        map_exit_1: nodes.MapExit,
+        map_entry_2: nodes.MapEntry,
+        map_exit_2: nodes.MapExit,
         is_exclusive_set: bool,
     ) -> None:
         """This function handles the intermediate sets.
@@ -233,14 +227,14 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
         #  To fix that we will create this replacement dict that will replace all
         #  occurrences of the iteration variables of the second map with zero.
         #  Note that this is still not enough as the dimensionality might be different.
-        memlet_repl: dict[str, int] = {str(param): 0 for param in map_entry_2.map.params}
+        memlet_repl: Dict[str, int] = {str(param): 0 for param in map_entry_2.map.params}
 
         # Now we will iterate over all intermediate edges and process them.
         #  If not stated otherwise the comments assume that we run in exclusive mode.
         for out_edge in intermediate_outputs:
             # This is the intermediate node that, that we want to get rid of.
             #  In shared mode we want to recreate it after the second map.
-            inter_node: dace_nodes.AccessNode = out_edge.dst
+            inter_node: nodes.AccessNode = out_edge.dst
             inter_name = inter_node.data
             inter_desc = inter_node.desc(sdfg)
             inter_shape = inter_desc.shape
@@ -253,12 +247,12 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
             if len(pre_exit_edges) != 1:
                 raise NotImplementedError()
             pre_exit_edge = pre_exit_edges[0]
-            new_inter_shape_raw = dace_symbolic.overapproximate(pre_exit_edge.data.subset.size())
+            new_inter_shape_raw = symbolic.overapproximate(pre_exit_edge.data.subset.size())
 
             # Over approximation will leave us with some unneeded size one dimensions.
             #  That are known to cause some troubles, so we will now remove them.
-            squeezed_dims: list[int] = []  # These are the dimensions we removed.
-            new_inter_shape: list[int] = []  # This is the final shape of the new intermediate.
+            squeezed_dims: List[int] = []  # These are the dimensions we removed.
+            new_inter_shape: List[int] = []  # This is the final shape of the new intermediate.
             for dim, (proposed_dim_size, full_dim_size) in enumerate(
                 zip(new_inter_shape_raw, inter_shape)
             ):
@@ -284,7 +278,7 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
                     new_inter_name,
                     dtype=inter_desc.dtype,
                     transient=True,
-                    storage=dace_dtypes.StorageType.Register,
+                    storage=dtypes.StorageType.Register,
                     find_new_name=True,
                 )
 
@@ -299,7 +293,7 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
                     dtype=inter_desc.dtype,
                     find_new_name=True,
                 )
-            new_inter_node: dace_nodes.AccessNode = state.add_access(new_inter_name)
+            new_inter_node: nodes.AccessNode = state.add_access(new_inter_name)
 
             # New we will reroute the output Memlet, thus it will no longer pass
             #  through the Map exit but through the newly created intermediate.
@@ -357,7 +351,7 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
             #  the input connectors on the map entry, such that we know where we
             #  have to reroute inside the Map.
             # NOTE: Assumes that map (if connected is the direct neighbour).
-            conn_names: set[str] = set()
+            conn_names: Set[str] = set()
             for inter_node_out_edge in state.out_edges(inter_node):
                 if inter_node_out_edge.dst == map_entry_2:
                     assert inter_node_out_edge.dst_conn.startswith("IN_")
@@ -446,7 +440,7 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
                 assert new_exit_memlet.data == inter_name
                 new_exit_memlet.subset = pre_exit_edge.data.dst_subset
                 new_exit_memlet.other_subset = (
-                    "0" if is_scalar else dace_subsets.Range.from_array(inter_desc)
+                    "0" if is_scalar else subsets.Range.from_array(inter_desc)
                 )
 
                 new_pre_exit_conn = map_exit_2.next_connector()

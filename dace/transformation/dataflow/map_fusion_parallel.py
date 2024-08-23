@@ -2,15 +2,15 @@
 
 """Implements the parallel map fusing transformation."""
 
-from typing import Any, Optional, Union
+from typing import Any, Optional, Set, Union
 
 import dace
-from dace import properties as dace_properties, transformation as dace_transformation
-from dace.sdfg import SDFG, SDFGState, graph as dace_graph, nodes as dace_nodes
+from dace import properties, transformation
+from dace.sdfg import SDFG, SDFGState, graph, nodes
 
 from dace.transformation.dataflow import map_fusion_helper
 
-@dace_properties.make_properties
+@properties.make_properties
 class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
     """The `ParallelMapFusion` transformation allows to merge two parallel maps together.
 
@@ -29,10 +29,10 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         modify the exit nodes of the Map.
     """
 
-    map_entry1 = dace_transformation.transformation.PatternNode(dace_nodes.MapEntry)
-    map_entry2 = dace_transformation.transformation.PatternNode(dace_nodes.MapEntry)
+    map_entry1 = transformation.transformation.PatternNode(nodes.MapEntry)
+    map_entry2 = transformation.transformation.PatternNode(nodes.MapEntry)
 
-    only_if_common_ancestor = dace_properties.Property(
+    only_if_common_ancestor = properties.Property(
         dtype=bool,
         default=False,
         allow_none=False,
@@ -51,7 +51,7 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
     @classmethod
     def expressions(cls) -> Any:
         # This just matches _any_ two Maps inside a state.
-        state = dace_graph.OrderedMultiDiConnectorGraph()
+        state = graph.OrderedMultiDiConnectorGraph()
         state.add_nodes_from([cls.map_entry1, cls.map_entry2])
         return [state]
 
@@ -63,8 +63,8 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         permissive: bool = False,
     ) -> bool:
         """The transformation is applicable."""
-        map_entry_1: dace_nodes.MapEntry = self.map_entry1
-        map_entry_2: dace_nodes.MapEntry = self.map_entry2
+        map_entry_1: nodes.MapEntry = self.map_entry1
+        map_entry_2: nodes.MapEntry = self.map_entry2
 
         # Check the structural properties of the maps, this will also ensure that
         #  the two maps are in the same scope.
@@ -86,7 +86,7 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         # Test if they have they share a node as direct ancestor.
         if self.only_if_common_ancestor:
             # This assumes that there is only one access node per data container in the state.
-            ancestors_1: set[dace_nodes.Node] = {e1.src for e1 in graph.in_edges(map_entry_1)}
+            ancestors_1: Set[nodes.Node] = {e1.src for e1 in graph.in_edges(map_entry_1)}
             if not any(e2.src in ancestors_1 for e2 in graph.in_edges(map_entry_2)):
                 return False
 
@@ -101,10 +101,10 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         """
         assert self.map_parameter_compatible(self.map_entry1.map, self.map_entry2.map, graph, sdfg)
 
-        map_entry_1: dace_nodes.MapEntry = self.map_entry1
-        map_exit_1: dace_nodes.MapExit = graph.exit_node(map_entry_1)
-        map_entry_2: dace_nodes.MapEntry = self.map_entry2
-        map_exit_2: dace_nodes.MapExit = graph.exit_node(map_entry_2)
+        map_entry_1: nodes.MapEntry = self.map_entry1
+        map_exit_1: nodes.MapExit = graph.exit_node(map_entry_1)
+        map_entry_2: nodes.MapEntry = self.map_entry2
+        map_exit_2: nodes.MapExit = graph.exit_node(map_entry_2)
 
         for to_node, from_node in zip((map_entry_1, map_exit_1), (map_entry_2, map_exit_2)):
             self.relocate_nodes(

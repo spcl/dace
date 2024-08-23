@@ -4,27 +4,16 @@
 
 import functools
 import itertools
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Sequence, Tuple, Union
 
 import dace
-from dace import (
-    data as dace_data,
-    properties as dace_properties,
-    subsets as dace_subsets,
-    transformation as dace_transformation,
-)
-from dace.sdfg import (
-    SDFG,
-    SDFGState,
-    graph as dace_graph,
-    nodes as dace_nodes,
-    validation as dace_validation,
-)
-from dace.transformation import helpers as dace_helpers
+from dace import data, properties, subsets, transformation
+from dace.sdfg import SDFG, SDFGState, graph, nodes, validation
+from dace.transformation import helpers
 from dace.transformation.dataflow import map_fusion_helper
 
-@dace_properties.make_properties
-class MapFusionHelper(dace_transformation.SingleStateTransformation):
+@properties.make_properties
+class MapFusionHelper(transformation.SingleStateTransformation):
     """Contains common part of the fusion for parallel and serial Map fusion.
 
     The transformation assumes that the SDFG obeys the principals outlined [here](https://hackmd.io/klvzLnzMR6GZBWtRU8HbDg#Requirements-on-SDFG).
@@ -39,21 +28,21 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
         only_toplevel_maps: Only consider Maps that are at the top.
     """
 
-    only_toplevel_maps = dace_properties.Property(
+    only_toplevel_maps = properties.Property(
         dtype=bool,
         default=False,
         allow_none=False,
         desc="Only perform fusing if the Maps are in the top level.",
     )
-    only_inner_maps = dace_properties.Property(
+    only_inner_maps = properties.Property(
         dtype=bool,
         default=False,
         allow_none=False,
         desc="Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.",
     )
-    shared_transients = dace_properties.DictProperty(
+    shared_transients = properties.DictProperty(
         key_type=SDFG,
-        value_type=set[str],
+        value_type=set, #[str]
         default=None,
         allow_none=True,
         desc="Maps SDFGs to the set of array transients that can not be removed. "
@@ -79,8 +68,8 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
 
     def can_be_fused(
         self,
-        map_entry_1: dace_nodes.MapEntry,
-        map_entry_2: dace_nodes.MapEntry,
+        map_entry_1: nodes.MapEntry,
+        map_entry_2: nodes.MapEntry,
         graph: Union[dace.SDFGState, dace.SDFG],
         sdfg: dace.SDFG,
         permissive: bool = False,
@@ -134,8 +123,8 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
 
     @staticmethod
     def relocate_nodes(
-        from_node: Union[dace_nodes.MapExit, dace_nodes.MapEntry],
-        to_node: Union[dace_nodes.MapExit, dace_nodes.MapEntry],
+        from_node: Union[nodes.MapExit, nodes.MapEntry],
+        to_node: Union[nodes.MapExit, nodes.MapEntry],
         state: SDFGState,
         sdfg: SDFG,
     ) -> None:
@@ -156,13 +145,13 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
 
         # Now we relocate empty Memlets, from the `from_node` to the `to_node`
         for empty_edge in list(filter(lambda e: e.data.is_empty(), state.out_edges(from_node))):
-            dace_helpers.redirect_edge(state, empty_edge, new_src=to_node)
+            helpers.redirect_edge(state, empty_edge, new_src=to_node)
         for empty_edge in list(filter(lambda e: e.data.is_empty(), state.in_edges(from_node))):
-            dace_helpers.redirect_edge(state, empty_edge, new_dst=to_node)
+            helpers.redirect_edge(state, empty_edge, new_dst=to_node)
 
         # We now ensure that there is only one empty Memlet from the `to_node` to any other node.
         #  Although it is allowed, we try to prevent it.
-        empty_targets: set[dace_nodes.Node] = set()
+        empty_targets: Set[nodes.Node] = set()
         for empty_edge in list(filter(lambda e: e.data.is_empty(), state.all_edges(to_node))):
             if empty_edge.dst in empty_targets:
                 state.remove_edge(empty_edge)
@@ -190,7 +179,7 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
                     raise RuntimeError(  # Might fail because of out connectors.
                         f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'."
                     )
-                dace_helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
+                helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
                 from_node.remove_in_connector(dmr_symbol)
 
                 # There is no other edge that we have to consider, so we just end here
@@ -202,10 +191,10 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
 
             to_node.add_in_connector("IN_" + new_conn)
             for e in list(state.in_edges_by_connector(from_node, "IN_" + old_conn)):
-                dace_helpers.redirect_edge(state, e, new_dst=to_node, new_dst_conn="IN_" + new_conn)
+                helpers.redirect_edge(state, e, new_dst=to_node, new_dst_conn="IN_" + new_conn)
             to_node.add_out_connector("OUT_" + new_conn)
             for e in list(state.out_edges_by_connector(from_node, "OUT_" + old_conn)):
-                dace_helpers.redirect_edge(
+                helpers.redirect_edge(
                     state, e, new_src=to_node, new_src_conn="OUT_" + new_conn
                 )
             from_node.remove_in_connector("IN_" + old_conn)
@@ -213,13 +202,13 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
 
         # Check if we succeeded.
         if state.out_degree(from_node) != 0:
-            raise dace_validation.InvalidSDFGError(
+            raise validation.InvalidSDFGError(
                 f"Failed to relocate the outgoing edges from `{from_node}`, there are still `{state.out_edges(from_node)}`",
                 sdfg,
                 sdfg.node_id(state),
             )
         if state.in_degree(from_node) != 0:
-            raise dace_validation.InvalidSDFGError(
+            raise validation.InvalidSDFGError(
                 f"Failed to relocate the incoming edges from `{from_node}`, there are still `{state.in_edges(from_node)}`",
                 sdfg,
                 sdfg.node_id(state),
@@ -229,8 +218,8 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
 
     @staticmethod
     def map_parameter_compatible(
-        map_1: dace_nodes.Map,
-        map_2: dace_nodes.Map,
+        map_1: nodes.Map,
+        map_2: nodes.Map,
         state: Union[SDFGState, SDFG],
         sdfg: SDFG,
     ) -> bool:
@@ -241,9 +230,9 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
             is performed.
         - The ranges must be the same.
         """
-        range_1: dace_subsets.Range = map_1.range
+        range_1: subsets.Range = map_1.range
         params_1: Sequence[str] = map_1.params
-        range_2: dace_subsets.Range = map_2.range
+        range_2: subsets.Range = map_2.range
         params_2: Sequence[str] = map_2.params
 
         # The maps are only fuseable if we have an exact match in the parameter names
@@ -253,8 +242,8 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
             return False
 
         # Maps the name of a parameter to the dimension index
-        param_dim_map_1: dict[str, int] = {pname: i for i, pname in enumerate(params_1)}
-        param_dim_map_2: dict[str, int] = {pname: i for i, pname in enumerate(params_2)}
+        param_dim_map_1: Dict[str, int] = {pname: i for i, pname in enumerate(params_1)}
+        param_dim_map_2: Dict[str, int] = {pname: i for i, pname in enumerate(params_2)}
 
         # To fuse the two maps the ranges must have the same ranges
         for pname in params_1:
@@ -268,7 +257,7 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
 
     def is_interstate_transient(
         self,
-        transient: Union[str, dace_nodes.AccessNode],
+        transient: Union[str, nodes.AccessNode],
         sdfg: dace.SDFG,
         state: dace.SDFGState,
     ) -> bool:
@@ -294,14 +283,14 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
         """
 
         # According to [rule 6](https://hackmd.io/klvzLnzMR6GZBWtRU8HbDg#Requirements-on-SDFG)
-        #  the set of such transients is partially given by all source access dace_nodes.
+        #  the set of such transients is partially given by all source access nodes.
         #  Because of rule 3 we also include all scalars in this set, as an over
         #  approximation. Furthermore, because simplify might violate rule 3,
-        #  we also include the sink dace_nodes.
+        #  we also include the sink nodes.
 
         # See if we have already computed the set
         if sdfg in self.shared_transients:
-            shared_sdfg_transients: set[str] = self.shared_transients[sdfg]
+            shared_sdfg_transients: Set[str] = self.shared_transients[sdfg]
         else:
             # SDFG is not known so we have to compute the set.
             shared_sdfg_transients = set()
@@ -313,7 +302,7 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
                         for node in itertools.chain(
                             state_to_scan.source_nodes(), state_to_scan.sink_nodes()
                         )
-                        if isinstance(node, dace_nodes.AccessNode)
+                        if isinstance(node, nodes.AccessNode)
                         and sdfg.arrays[node.data].transient
                     ]
                 )
@@ -326,13 +315,13 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
             assert len(matching_access_nodes) == 1
             transient = matching_access_nodes[0]
         else:
-            assert isinstance(transient, dace_nodes.AccessNode)
+            assert isinstance(transient, nodes.AccessNode)
             name = transient.data
 
-        desc: dace_data.Data = sdfg.arrays[name]
+        desc: data.Data = sdfg.arrays[name]
         if not desc.transient:
             return True
-        if isinstance(desc, dace_data.Scalar):
+        if isinstance(desc, data.Scalar):
             return True  # Scalars can not be removed by fusion anyway.
 
         # Rule 8: If degree larger than one then it is used within the state.
@@ -346,13 +335,13 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
         self,
         state: SDFGState,
         sdfg: SDFG,
-        map_exit_1: dace_nodes.MapExit,
-        map_entry_2: dace_nodes.MapEntry,
+        map_exit_1: nodes.MapExit,
+        map_entry_2: nodes.MapEntry,
     ) -> Union[
-        tuple[
-            set[dace_graph.MultiConnectorEdge[dace.Memlet]],
-            set[dace_graph.MultiConnectorEdge[dace.Memlet]],
-            set[dace_graph.MultiConnectorEdge[dace.Memlet]],
+        Tuple[
+            Set[graph.MultiConnectorEdge[dace.Memlet]],
+            Set[graph.MultiConnectorEdge[dace.Memlet]],
+            Set[graph.MultiConnectorEdge[dace.Memlet]],
         ],
         None,
     ]:
@@ -387,16 +376,16 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
             map_entry_2: The entry node of the second map.
         """
         # The three outputs set.
-        pure_outputs: set[dace_graph.MultiConnectorEdge[dace.Memlet]] = set()
-        exclusive_outputs: set[dace_graph.MultiConnectorEdge[dace.Memlet]] = set()
-        shared_outputs: set[dace_graph.MultiConnectorEdge[dace.Memlet]] = set()
+        pure_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
+        exclusive_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
+        shared_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
 
         # Set of intermediate nodes that we have already processed.
-        processed_inter_nodes: set[dace_nodes.Node] = set()
+        processed_inter_nodes: Set[nodes.Node] = set()
 
         # Now scan all output edges of the first exit and classify them
         for out_edge in state.out_edges(map_exit_1):
-            intermediate_node: dace_nodes.Node = out_edge.dst
+            intermediate_node: nodes.Node = out_edge.dst
 
             # We already processed the node, this should indicate that we should
             #  run simplify again, or we should start implementing this case.
@@ -450,13 +439,13 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
             #  everything else we do not know how to handle. It is important that
             #  we do not test for non transient data here, because they can be
             #  handled has shared intermediates.
-            if not isinstance(intermediate_node, dace_nodes.AccessNode):
+            if not isinstance(intermediate_node, nodes.AccessNode):
                 return None
-            intermediate_desc: dace_data.Data = intermediate_node.desc(sdfg)
-            if isinstance(intermediate_desc, dace_data.View):
+            intermediate_desc: data.Data = intermediate_node.desc(sdfg)
+            if isinstance(intermediate_desc, data.View):
                 return None
 
-            # There are some restrictions we have on intermediate dace_nodes. The first one
+            # There are some restrictions we have on intermediate nodes. The first one
             #  is that we do not allow WCR, this is because they need special handling
             #  which is currently not implement (the DaCe transformation has this
             #  restriction as well). The second one is that we can reduce the
@@ -501,8 +490,8 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
                         return None
                     if consumer_node is map_entry_2:  # Dynamic map range.
                         return None
-                    if isinstance(consumer_node, dace_nodes.LibraryNode):
-                        # TODO(phimuell): Allow some library dace_nodes.
+                    if isinstance(consumer_node, nodes.LibraryNode):
+                        # TODO(phimuell): Allow some library nodes.
                         return None
 
                 # Note that "remove" has a special meaning here, regardless of the
@@ -536,8 +525,8 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
                                 return None
                             if consumer_node is map_entry_2:  # Dynamic map range
                                 return None
-                            if isinstance(consumer_node, dace_nodes.LibraryNode):
-                                # TODO(phimuell): Allow some library dace_nodes.
+                            if isinstance(consumer_node, nodes.LibraryNode):
+                                # TODO(phimuell): Allow some library nodes.
                                 return None
                     else:
                         # Ensure that there is no path that leads to the second map.
@@ -558,12 +547,12 @@ class MapFusionHelper(dace_transformation.SingleStateTransformation):
 
 
 def is_nested_sdfg(
-    sdfg: Union[dace.SDFG, dace.SDFGState, dace_nodes.NestedSDFG],
+    sdfg: Union[dace.SDFG, dace.SDFGState, nodes.NestedSDFG],
 ) -> bool:
     """Tests if `sdfg` is a NestedSDFG."""
     if isinstance(sdfg, dace.SDFGState):
         sdfg = sdfg.parent
-    if isinstance(sdfg, dace_nodes.NestedSDFG):
+    if isinstance(sdfg, nodes.NestedSDFG):
         return True
     elif isinstance(sdfg, dace.SDFG):
         if sdfg.parent_nsdfg_node is not None:
@@ -574,11 +563,11 @@ def is_nested_sdfg(
 
 
 def all_nodes_between(
-    graph: dace.SDFG | dace.SDFGState,
-    begin: dace_nodes.Node,
-    end: dace_nodes.Node,
+    graph: Union[dace.SDFG, dace.SDFGState],
+    begin: nodes.Node,
+    end: nodes.Node,
     reverse: bool = False,
-) -> set[dace_nodes.Node] | None:
+) -> Union[Set[nodes.Node], None]:
     """Find all nodes that are reachable from `begin` but bound by `end`.
 
     Essentially the function starts a DFS at `begin`. If an edge is found that lead
@@ -601,7 +590,7 @@ def all_nodes_between(
             `begin` and ends at a node that is not `end`.
     """
 
-    def next_nodes(node: dace_nodes.Node) -> Iterable[dace_nodes.Node]:
+    def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
         if reverse:
             return (edge.src for edge in graph.in_edges(node))
         return (edge.dst for edge in graph.out_edges(node))
@@ -609,12 +598,12 @@ def all_nodes_between(
     if reverse:
         begin, end = end, begin
 
-    to_visit: list[dace_nodes.Node] = [begin]
-    seen: set[dace_nodes.Node] = set()
+    to_visit: List[nodes.Node] = [begin]
+    seen: Set[nodes.Node] = set()
     found_end: bool = False
 
     while len(to_visit) > 0:
-        n: dace_nodes.Node = to_visit.pop()
+        n: nodes.Node = to_visit.pop()
         if n == end:
             found_end = True
             continue
@@ -631,9 +620,9 @@ def all_nodes_between(
 
 
 def is_parallel(
-    graph: dace.SDFG | dace.SDFGState,
-    node1: dace_nodes.Node,
-    node2: dace_nodes.Node,
+    graph: Union[dace.SDFG, dace.SDFGState],
+    node1: nodes.Node,
+    node2: nodes.Node,
 ) -> bool:
     """Tests if `node1` and `node2` are parallel.
 
@@ -657,10 +646,10 @@ def is_parallel(
 
 def find_downstream_consumers(
     state: dace.SDFGState,
-    begin: dace_nodes.Node | dace_graph.MultiConnectorEdge[dace.Memlet],
+    begin: Union[nodes.Node, graph.MultiConnectorEdge[dace.Memlet]],
     only_tasklets: bool = False,
     reverse: bool = False,
-) -> set[tuple[dace_nodes.Node, dace_graph.MultiConnectorEdge[dace.Memlet]]]:
+) -> Set[Tuple[nodes.Node, graph.MultiConnectorEdge[dace.Memlet]]]:
     """Find all downstream connectors of `begin`.
 
     A consumer, in for this function, is any node that is neither an entry nor
@@ -679,24 +668,24 @@ def find_downstream_consumers(
         only_tasklets: Return only Tasklets.
         reverse: Follow the reverse direction.
     """
-    if isinstance(begin, dace_graph.MultiConnectorEdge):
-        to_visit: list[dace_graph.MultiConnectorEdge[dace.Memlet]] = [begin]
+    if isinstance(begin, graph.MultiConnectorEdge):
+        to_visit: List[graph.MultiConnectorEdge[dace.Memlet]] = [begin]
     elif reverse:
         to_visit = list(state.in_edges(begin))
     else:
         to_visit = list(state.out_edges(begin))
-    seen: set[dace_graph.MultiConnectorEdge[dace.Memlet]] = set()
-    found: set[tuple[dace_nodes.Node, dace_graph.MultiConnectorEdge[dace.Memlet]]] = set()
+    seen: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
+    found: Set[Tuple[nodes.Node, graph.MultiConnectorEdge[dace.Memlet]]] = set()
 
     while len(to_visit) != 0:
-        curr_edge: dace_graph.MultiConnectorEdge[dace.Memlet] = to_visit.pop()
-        next_node: dace_nodes.Node = curr_edge.src if reverse else curr_edge.dst
+        curr_edge: graph.MultiConnectorEdge[dace.Memlet] = to_visit.pop()
+        next_node: nodes.Node = curr_edge.src if reverse else curr_edge.dst
 
         if curr_edge in seen:
             continue
         seen.add(curr_edge)
 
-        if isinstance(next_node, (dace_nodes.MapEntry, dace_nodes.MapExit)):
+        if isinstance(next_node, (nodes.MapEntry, nodes.MapExit)):
             if reverse:
                 target_conn = curr_edge.src_conn[4:]
                 new_edges = state.in_edges_by_connector(curr_edge.src, "IN_" + target_conn)
@@ -704,7 +693,7 @@ def find_downstream_consumers(
                 # In forward mode a Map entry could also mean the definition of a
                 #  dynamic map range.
                 if (not curr_edge.dst_conn.startswith("IN_")) and isinstance(
-                    next_node, dace_nodes.MapEntry
+                    next_node, nodes.MapEntry
                 ):
                     # This edge defines a dynamic map range, which is a consumer
                     if not only_tasklets:
@@ -715,7 +704,7 @@ def find_downstream_consumers(
             to_visit.extend(new_edges)
             del new_edges
         else:
-            if only_tasklets and (not isinstance(next_node, dace_nodes.Tasklet)):
+            if only_tasklets and (not isinstance(next_node, nodes.Tasklet)):
                 continue
             found.add((next_node, curr_edge))
 
@@ -724,9 +713,9 @@ def find_downstream_consumers(
 
 def find_upstream_producers(
     state: dace.SDFGState,
-    begin: dace_nodes.Node | dace_graph.MultiConnectorEdge[dace.Memlet],
+    begin: Union[nodes.Node, graph.MultiConnectorEdge[dace.Memlet]],
     only_tasklets: bool = False,
-) -> set[tuple[dace_nodes.Node, dace_graph.MultiConnectorEdge[dace.Memlet]]]:
+) -> Set[Tuple[nodes.Node, graph.MultiConnectorEdge[dace.Memlet]]]:
     """Same as `find_downstream_consumers()` but with `reverse` set to `True`."""
     return find_downstream_consumers(
         state=state,
