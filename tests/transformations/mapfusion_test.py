@@ -1,12 +1,81 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Any, Union
+
 import numpy as np
 import os
 import dace
-from dace.transformation.dataflow import MapFusion
+
+from dace import SDFG, SDFGState
+from dace.sdfg import nodes
+from dace.transformation.dataflow import MapFusion, MapFusionOriginal
+
+
+def count_node(sdfg: SDFG, node_type):
+    nb_nodes = 0
+    for rsdfg in sdfg.all_sdfgs_recursive():
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, node_type):
+                    nb_nodes += 1
+    return nb_nodes
+
+def apply_fusion(
+        sdfg: SDFG,
+        removed_maps: Union[int, None] = None,
+        final_maps: Union[int, None] = None,
+) -> SDFG:
+    """Applies the Map fusion transformation.
+
+    The function checks that the number of maps has been reduced, it is also possible
+    to specify the number of removed maps. It is also possible to specify the final
+    number of maps.
+    """
+    num_maps_before = count_node(sdfg, nodes.MapEntry)
+    sdfg.apply_transformations_repeated(MapFusion, validate=True, validate_all=True)
+    num_maps_after = count_node(sdfg, nodes.MapEntry)
+
+    has_processed = False
+    if removed_maps is not None:
+        has_processed = True
+        rm = num_maps_before - num_maps_after
+        assert rm == removed_maps, f"Expected to remove {removed_maps} but removed {rm}"
+    if final_maps is not None:
+        has_processed = True
+        assert final_maps == num_maps_after, f"Expected that only {final_maps} maps remain, but there are sill {num_maps_after}."
+    if not has_processed:
+        assert num_maps_after < num_maps_before, f"Maps after: {num_maps_after}; Maps before: {num_maps_before}"
+    return sdfg
 
 
 @dace.program
-def fusion(A: dace.float32[10, 20], B: dace.float32[10, 20], out: dace.float32[1]):
+def fusion_simple(A: dace.float32[10, 20], B: dace.float32[10, 20], out: dace.float32[1]):
+    tmp = dace.define_local([10, 20], dtype=A.dtype)
+    tmp_2 = dace.define_local([10, 20], dtype=A.dtype)
+    for i, j in dace.map[0:10, 0:20]:
+        with dace.tasklet:
+            a << A[i, j]
+            b >> tmp[i, j]
+
+            b = a * a
+
+    for i, j in dace.map[0:10, 0:20]:
+        with dace.tasklet:
+            a << tmp[i, j]
+            b << B[i, j]
+            c >> tmp_2[i, j]
+
+            c = a + b
+
+    for i, j in dace.map[0:10, 0:20]:
+        with dace.tasklet:
+            a << tmp_2[i, j]
+            b >> out(1, lambda a, b: a + b)[0]
+
+            b = a
+
+
+@dace.program
+def fusion_rename(A: dace.float32[10, 20], B: dace.float32[10, 20], out: dace.float32[1]):
     tmp = dace.define_local([10, 20], dtype=A.dtype)
     tmp_2 = dace.define_local([10, 20], dtype=A.dtype)
     for i, j in dace.map[0:10, 0:20]:
@@ -65,13 +134,22 @@ def fusion_chain(A: dace.float32[10, 20], B: dace.float32[10, 20]):
     tmp2 = tmp1 * 4
     B[:] = tmp2 + 5
 
-
 def test_fusion_simple():
-    sdfg = fusion.to_sdfg()
-    sdfg.save(os.path.join('_dacegraphs', 'before1.sdfg'))
-    sdfg.simplify()
-    sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.save(os.path.join('_dacegraphs', 'after1.sdfg'))
+    sdfg = fusion_simple.to_sdfg()
+    sdfg = apply_fusion(sdfg, final_maps=1)
+
+    A = np.random.rand(10, 20).astype(np.float32)
+    B = np.random.rand(10, 20).astype(np.float32)
+    out = np.zeros(shape=1, dtype=np.float32)
+    sdfg(A=A, B=B, out=out)
+
+    diff = abs(np.sum(A * A + B) - out)
+    print('Difference:', diff)
+    assert diff <= 1e-3
+
+def test_fusion_rename():
+    sdfg = fusion_rename.to_sdfg()
+    sdfg = apply_fusion(sdfg, final_maps=1)
 
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.random.rand(10, 20).astype(np.float32)
@@ -85,18 +163,10 @@ def test_fusion_simple():
 
 def test_multiple_fusions():
     sdfg = multiple_fusions.to_sdfg()
-    num_nodes_before = len([node for state in sdfg.nodes() for node in state.nodes()])
 
     sdfg.save(os.path.join('_dacegraphs', 'before2.sdfg'))
     sdfg.simplify()
-    sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.save(os.path.join('_dacegraphs', 'after2.sdfg'))
-
-    num_nodes_after = len([node for state in sdfg.nodes() for node in state.nodes()])
-    # Ensure that the number of nodes was reduced after transformation
-    if num_nodes_after >= num_nodes_before:
-        raise RuntimeError('SDFG was not properly transformed '
-                           '(nodes before: %d, after: %d)' % (num_nodes_before, num_nodes_after))
+    sdfg = apply_fusion(sdfg)
 
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.zeros_like(A)
@@ -114,19 +184,8 @@ def test_multiple_fusions():
 
 def test_fusion_chain():
     sdfg = fusion_chain.to_sdfg()
-    sdfg.save(os.path.join('_dacegraphs', 'before3.sdfg'))
     sdfg.simplify()
-    sdfg.apply_transformations(MapFusion)
-    num_nodes_before = len([node for state in sdfg.nodes() for node in state.nodes()])
-    sdfg.apply_transformations(MapFusion)
-    sdfg.apply_transformations(MapFusion)
-    sdfg.save(os.path.join('_dacegraphs', 'after3.sdfg'))
-
-    num_nodes_after = len([node for state in sdfg.nodes() for node in state.nodes()])
-    # Ensure that the number of nodes was reduced after transformation
-    if num_nodes_after >= num_nodes_before:
-        raise RuntimeError('SDFG was not properly transformed '
-                           '(nodes before: %d, after: %d)' % (num_nodes_before, num_nodes_after))
+    sdfg = apply_fusion(sdfg, final_maps=1)
 
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.zeros_like(A)
@@ -158,7 +217,8 @@ def test_fusion_with_transient():
     expected = A * A * 2
     sdfg = fusion_with_transient.to_sdfg()
     sdfg.simplify()
-    sdfg.apply_transformations(MapFusion)
+    sdfg = apply_fusion(sdfg, removed_maps=2)
+
     sdfg(A=A)
     assert np.allclose(A, expected)
 
@@ -191,7 +251,7 @@ def test_fusion_with_transient_scalar():
         return sdfg
     
     sdfg = build_sdfg()
-    sdfg.apply_transformations(MapFusion)
+    sdfg = apply_fusion(sdfg)
 
     A = np.random.rand(N, K)
     B = np.repeat(np.nan, N)
@@ -217,10 +277,12 @@ def test_fusion_with_inverted_indices():
     sdfg(A=val0)
     assert np.array_equal(val0, ref)
 
-    sdfg.apply_transformations(MapFusion)
+    # This can not be fused
+    apply_fusion(sdfg, removed_maps=0)
+
     val1 = np.ndarray((10,), dtype=np.int32)
     sdfg(A=val1)
-    assert np.array_equal(val1, ref)
+    assert np.array_equal(val1, ref), f"REF: {ref}; VAL: {val1}"
 
 
 def test_fusion_with_empty_memlet():
@@ -240,8 +302,7 @@ def test_fusion_with_empty_memlet():
             out[0] += lsum
     
     sdfg = inner_product.to_sdfg(simplify=True)
-    count = sdfg.apply_transformations_repeated(MapFusion)
-    assert count == 2
+    apply_fusion(sdfg, removed_maps=2)
 
     A = np.arange(1024, dtype=np.float32)
     B = np.arange(1024, dtype=np.float32)
@@ -265,7 +326,7 @@ def test_fusion_with_nested_sdfg_0():
             A[i] = tmp[i] * 2
     
     sdfg = fusion_with_nested_sdfg_0.to_sdfg(simplify=True)
-    sdfg.apply_transformations(MapFusion)
+    apply_fusion(sdfg)
 
     for sd in sdfg.all_sdfgs_recursive():
         if sd is not sdfg:
@@ -295,7 +356,7 @@ def test_fusion_with_nested_sdfg_1():
                 B[i] = tmp[i] * 2
     
     sdfg = fusion_with_nested_sdfg_1.to_sdfg(simplify=True)
-    sdfg.apply_transformations(MapFusion)
+    apply_fusion(sdfg)
 
     if len(sdfg.states()) != 1:
         return
@@ -315,6 +376,7 @@ if __name__ == '__main__':
     test_multiple_fusions()
     test_fusion_chain()
     test_fusion_with_transient()
+    test_fusion_rename()
     test_fusion_with_transient_scalar()
     test_fusion_with_inverted_indices()
     test_fusion_with_empty_memlet()
