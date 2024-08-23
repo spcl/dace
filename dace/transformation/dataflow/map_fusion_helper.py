@@ -266,10 +266,10 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         names of the first map (values). Because of how the replace function works
         the `dict` describes how to replace the parameters of the second map
         with parameters of the first map.
-
-        If the remapping does not exists, the function will return `None`.
-        Parameters, that already have the correct names, will not be included in the
-        final mapping.
+        Parameters that already have the correct name and compatible range, are not
+        included in the return value, thus the keys and values are always different.
+        If no renaming at all is _needed_ then the function returns an empty `dict`.
+        If no remapping exists, then the function will return `None`.
 
         Args:
             first_map:  The first map (these parameters will be replaced).
@@ -282,6 +282,8 @@ class MapFusionHelper(transformation.SingleStateTransformation):
 
         if len(first_params) != len(second_params):
             return None
+        if len(first_params) == 0:  # Trivial maps
+            return {}
 
         # Allows to map a name to the corresponding index
         first_pmap: Dict[str, int] = {map_param: i for i, map_param in enumerate(first_params)}
@@ -338,6 +340,49 @@ class MapFusionHelper(transformation.SingleStateTransformation):
 
         assert len(unused_first_params) == 0
         return final_mapping
+
+    def rename_map_parameters(
+        self,
+        first_map: nodes.Map,
+        second_map: nodes.Map,
+    ) -> None:
+        """Replaces the map parameters of the second map with names from the first.
+
+        The replacement is done in a safe way, thus `{'i': 'j', 'j': 'i'}` is
+        handled correct. The function assumes that a proper replacement exists.
+        The replacement is computed by calling `self.find_parameter_remapping()`.
+
+        Args:
+            first_map:  The first map (these parameters will be replaced).
+            second_map: The second map, these parameters acts as source.
+        """
+
+        # Compute the replacement dict.
+        repl: Dict[str, str] = self.find_parameter_remapping(first_map=first_map, second_map=second_map)
+
+        if repl is None:
+            raise RuntimeError("The replacement does not exist")
+        if len(repl) == 0:
+            return
+
+        # Why is this thing is symbolic and not in replace?
+        symbolic.safe_replace(
+                mapping=repl,
+                replace_callback=
+
+
+        # Parameters are not replaced in the map even they are included
+
+
+
+
+
+
+
+
+
+
+
 
     def is_interstate_transient(
         self,
