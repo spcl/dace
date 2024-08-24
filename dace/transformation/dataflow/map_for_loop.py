@@ -111,6 +111,7 @@ class MapToForLoopRegion(transformation.SingleStateTransformation):
         self.nsdfg = nsdfg
 
         sdfg.reset_cfg_list()
+        # Ensure the SDFG is marked as containing CFG regions
         sdfg.root_sdfg.using_experimental_blocks = True
 
         return node, nstate
