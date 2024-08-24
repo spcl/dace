@@ -45,7 +45,7 @@ class StorageType(aenum.AutoNumberEnum):
     Snitch_TCDM = ()  #: Cluster-private memory
     Snitch_L2 = ()  #: External memory
     Snitch_SSR = ()  #: Memory accessed by SSR streamer
-    # IPU_Tile_Local = ()  #: IPU Tile-local memory
+    IPU_Memory = ()  #: IPU Tile-local memory
 
 
 @undefined_safe_enum
