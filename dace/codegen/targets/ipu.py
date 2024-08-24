@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union
 from copy import deepcopy
 from dace import (data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config)
 from dace import dtypes, memlet as mm
+from dace import Memlet
 from dace.codegen import cppunparse, exceptions as cgx
 
 from dace.codegen.prettycode import CodeIOStream
@@ -54,25 +55,25 @@ class IPUCodeGen(TargetCodeGenerator):
 
         # self.dispatcher.register_array_dispatcher(dtypes.StorageType.IPU_Tile_Local, self)
             
-        # # Storage
-        # cpu_storage = [
-        #     dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.Register,
-        #     dtypes.StorageType.IPU_Tile_Local
-        # ]
+        # Storage
+        # ipu_storage = [dtypes.StorageType.IPU_Memory]        
+        gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.IPU_Memory]
+       
+        self.dispatcher.register_array_dispatcher(gpu_storage, self)   # allocate_array/deallocate_array
+        for storage in gpu_storage:
+            for other_storage in gpu_storage:
+                self.dispatcher.register_copy_dispatcher(storage, other_storage, None, self)
+                self.dispatcher.register_copy_dispatcher(other_storage, storage, None, self)
+        
+                
         # # Dispatchers
         # self.dispatcher.register_map_dispatcher(dace.ScheduleType.IPU_Map, self)
         # self.dispatcher.register_node_dispatcher(self, self.is_ipu_map_scope)
-        self.dispatcher.register_node_dispatcher(self, self.is_node_tasklet)
-        
+        # self.dispatcher.register_node_dispatcher(self, self.is_node_tasklet)
         # self.dispatcher.register_copy_dispatcher(dtypes.StorageType.Register, dtypes.StorageType.IPU_Tile_Local, None, func=self)
-
-        
-
-        # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
-        # self._dispatcher.register_array_dispatcher(ipu_storage, self)   # allocate_array/deallocate_array
-        # for src_storage, dst_storage in itertools.product(ipu_storage, ipu_storage):
-        #     self._dispatcher.register_copy_dispatcher(src_storage, dst_storage, None, self)
         # self._dispatcher.register_map_dispatcher(dace.ScheduleType.IPU, self)
+        # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
+
 
     def get_generated_codeobjects(self):
         res = super().get_generated_codeobjects()
@@ -179,6 +180,119 @@ class IPUCodeGen(TargetCodeGenerator):
         # self.cpu_codegen.allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
         #                                  allocation_stream)   
     
+    def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                       node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
+                       declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
+        self.add_header(function_stream)
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
+
+        try:
+            self.dispatcher.defined_vars.get(dataname)
+            return
+        except KeyError:
+            pass  # The variable was not defined, we can continue
+
+        # Check if array is already declared
+        declared = False
+        try:
+            self.dispatcher.declared_arrays.get(dataname)
+            declared = True  # Array was already declared in this or upper scopes
+        except KeyError:  # Array not declared yet
+            pass
+
+        if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+            nodedesc = update_persistent_desc(nodedesc, sdfg)
+
+        result_decl = StringIO()
+        result_alloc = StringIO()
+        arrsize = nodedesc.total_size
+        is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
+        arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
+        ctypedef = '%s *' % nodedesc.dtype.ctype
+
+        # Different types of GPU arrays
+        if nodedesc.storage == dtypes.StorageType.GPU_Global:
+            if not declared:
+                result_decl.write('%s %s;\n' % (ctypedef, dataname))
+            self.dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
+
+            if nodedesc.pool:
+                cudastream = getattr(node, '_cuda_stream', 'nullptr')
+                if cudastream != 'nullptr':
+                    cudastream = f'__state->gpu_context->streams[{cudastream}]'
+                result_alloc.write(
+                    f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n'
+                )
+                self._emit_sync(result_alloc)
+            else:
+                # Strides are left to the user's discretion
+                result_alloc.write("malloc calls")
+                # result_alloc.write('DACE_GPU_CHECK(%sMalloc((void**)&%s, %s));\n' %
+                #                    (self.backend, dataname, arrsize_malloc))
+
+            if node.setzero:
+                result_alloc.write('DACE_GPU_CHECK(%sMemset(%s, 0, %s));\n' % (self.backend, dataname, arrsize_malloc))
+            if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
+                result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
+        elif nodedesc.storage == dtypes.StorageType.Register:
+            if is_dynamically_sized:
+                raise ValueError('Dynamic allocation of registers not allowed')
+            if nodedesc.start_offset != 0:
+                raise NotImplementedError('Start offset unsupported for registers')
+            szstr = ' = {0}' if node.setzero else ''
+            result_decl.write("%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize), szstr))
+            self.dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
+        elif nodedesc.storage == dtypes.StorageType.IPU_Memory:
+             result_decl.write("#         #Tensor c1 = graph.addConstant<float>(FLOAT, {4}, {1.0, 1.5, 2.0, 2.5});")   # decl
+             result_alloc.write(" graph.setTileMapping(v1[i][j], i * 2 + j);")  # Mapping on 
+        else:
+            raise NotImplementedError("CUDA: Unimplemented storage type " + str(nodedesc.storage))
+
+        declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
+        allocation_stream.write(result_alloc.getvalue(), cfg, state_id, node)
+
+    def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                         node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
+                         callsite_stream: CodeIOStream) -> None:
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
+        self.backend = 'cuda'   # temporary hack
+        if nodedesc.storage == dtypes.StorageType.GPU_Global:
+            if not nodedesc.pool:  # If pooled, will be freed somewhere else
+                callsite_stream.write('DACE_GPU_CHECK(%sFree(%s));\n' % (self.backend, dataname), cfg, state_id, node)
+        elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
+            callsite_stream.write('DACE_GPU_CHECK(%sFreeHost(%s));\n' % (self.backend, dataname), cfg, state_id, node)
+        elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
+             nodedesc.storage == dtypes.StorageType.Register:
+            pass  # Do nothing
+        elif nodedesc.storage == dtypes.StorageType.IPU_Memory:
+            callsite_stream.write(" poplar::deallocate array")
+        else:
+            raise NotImplementedError
+        
+    def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                    src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
+                    memlet: Memlet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        state = cfg.state(state_id)
+        if isinstance(src_node, nodes.Tasklet):
+            src_storage = dtypes.StorageType.Register
+            src_parent = state.entry_node(src_node)
+            dst_schedule = None if src_parent is None else src_parent.map.schedule
+        else:
+            src_storage = src_node.desc(sdfg).storage
+
+        if isinstance(dst_node, nodes.Tasklet):
+            dst_storage = dtypes.StorageType.Register
+        else:
+            dst_storage = dst_node.desc(sdfg).storage
+
+        dst_parent = state.entry_node(dst_node)
+        dst_schedule = None if dst_parent is None else dst_parent.map.schedule
+        
+        callsite_stream.write("poplar::copy calls")
+        # # Emit actual copy
+        # self._emit_copy(state_id, src_node, src_storage, dst_node, dst_storage, dst_schedule, memlet, sdfg, cfg, dfg,
+        #                 callsite_stream)
+
     def generate_node(self, sdfg: SDFG, cfg: state.ControlFlowRegion, state: SDFGState, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """(TASKLET only)
@@ -263,13 +377,13 @@ class IPUCodeGen(TargetCodeGenerator):
                                                                       state.node_id(node), edge.src_conn)
 
                     # Read variable from shared storage
-                    defined_type, _ = self._dispatcher.defined_vars.get(shared_data_name)
+                    defined_type, _ = self.dispatcher.defined_vars.get(shared_data_name)
                     if defined_type in (DefinedType.Scalar, DefinedType.Pointer):
                         assign_str = (f"const {ctype} {edge.dst_conn} = {shared_data_name};")
                     else:
                         assign_str = (f"const {ctype} &{edge.dst_conn} = {shared_data_name};")
                     inner_stream.write(assign_str, cfg, state_id, [edge.src, edge.dst])
-                    self._dispatcher.defined_vars.add(edge.dst_conn, defined_type, f"const {ctype}")
+                    self.dispatcher.defined_vars.add(edge.dst_conn, defined_type, f"const {ctype}")
 
                 else:
                     self.dispatcher.dispatch_copy(
