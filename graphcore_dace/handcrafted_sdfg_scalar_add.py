@@ -113,30 +113,30 @@ def vector_add():
 def gpu_scalar_add():
     sdfg = dace.SDFG('gpu_scalar_add')
     #########GLOBAL VARIABLES#########
-    # # data(vector add)
-
-    # sdfg.add_array('A', [1], dace.float64)
-    # sdfg.add_array('B', [1], dace.float64)
-    # sdfg.add_array('C', [1], dace.float64)
-    sdfg.add_scalar("A_scalar", dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
-    sdfg.add_scalar("B_scalar", dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
-    sdfg.add_scalar("C_scalar", dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
-    sdfg.add_constant('constant', 1)
+ 
+    sdfg.add_scalar("A_scalar_cpu", dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
+    sdfg.add_scalar("A_scalar_gpu", dace.float64, storage=dace.StorageType.GPU_Global, transient=True)
+    # sdfg.add_scalar("B_scalar", dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
+    # sdfg.add_scalar("C_scalar", dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
+    # sdfg.add_constant('constant', 1)
 
     
-    ###########STATE, CFG, GLOBAL DATA################
-    # # add state
+    # ###########STATE, CFG, GLOBAL DATA################
+    # # # add state
     state = sdfg.add_state('sum', is_start_block=True)
-    a = state.add_read('A_scalar')
-    b = state.add_read('B_scalar')
-    c = state.add_write('C_scalar')
+    a_cpu = state.add_read('A_scalar_cpu')
+    a_gpu = state.add_write('A_scalar_gpu')
+    
+    # b = state.add_read('B_scalar')
+    # c = state.add_write('C_scalar')
+    state.add_edge(a_cpu, None, a_gpu, None, dace.Memlet(f"A_scalar_cpu"))
 
-    ###########DFG################
-    # Add nodes
-    # # map
-    # add_entry, add_exit = state.add_map('add_map', dict(i='0:31'), schedule=dace.ScheduleType.Default)
-    # # tasklet
-    t1 = state.add_tasklet('add_scalar', {'_a', '_b'}, {'_c'}, '_c = _a + _b')
+    # ###########DFG################
+    # # Add nodes
+    # # # map
+    # # add_entry, add_exit = state.add_map('add_map', dict(i='0:31'), schedule=dace.ScheduleType.Default)
+    # # # tasklet
+    # t1 = state.add_tasklet('add_scalar', {'_a', '_b'}, {'_c'}, '_c = _a + _b')
 
     # Add add_edge_pair(map mostly)
     # state.add_edge_pair(add_entry, t1, a, dace.Memlet.simple(a, 'i'))
@@ -148,10 +148,10 @@ def gpu_scalar_add():
     # state.add_memlet_path(b, t1, dst_conn='_b', memlet=dace.Memlet(f"B[i]"))
     # state.add_memlet_path(t1, c, src_conn='_c', memlet=dace.Memlet(f"C[i]"))
 
-    # just add_edge
-    state.add_edge(a, None, t1, '_a', dace.Memlet(f"A_scalar"))
-    state.add_edge(b, None, t1, '_b', dace.Memlet(f"B_scalar"))
-    state.add_edge(t1, '_c', c, None, dace.Memlet(f"C_scalar"))
+    # # just add_edge
+    # state.add_edge(a, None, t1, '_a', dace.Memlet(f"A_scalar"))
+    # state.add_edge(b, None, t1, '_b', dace.Memlet(f"B_scalar"))
+    # state.add_edge(t1, '_c', c, None, dace.Memlet(f"C_scalar"))
 
     
     # state.add_edge(a, None, t1, '_a', dace.Memlet(f"A[0]"))
@@ -165,7 +165,7 @@ def gpu_scalar_add():
     print(A)
     print(B)
     print("Before", C)
-    sdfg = sdfg(A, B, C)
+    sdfg = sdfg(A)
     sdfg.apply_transformations(GPUTransformSDFG)
     print("After", C)    
 
