@@ -114,8 +114,10 @@ def gpu_scalar_add():
     sdfg = dace.SDFG('gpu_scalar_add')
     #########GLOBAL VARIABLES#########
  
-    sdfg.add_scalar("A_scalar_cpu", dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
-    sdfg.add_scalar("A_scalar_gpu", dace.float64, storage=dace.StorageType.GPU_Global, transient=True)
+    sdfg.add_scalar("scalarNode", dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
+    sdfg.add_array("arrayNode", [10], dace.float64, storage=dace.StorageType.IPU_Memory, transient=False)
+    sdfg.add_stream("StreamNode", dace.float64, storage=dace.StorageType.IPU_Memory, transient=False)
+    sdfg.add_scalar("write_to_scalar", dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
     # sdfg.add_scalar("B_scalar", dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
     # sdfg.add_scalar("C_scalar", dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
     # sdfg.add_constant('constant', 1)
@@ -124,12 +126,21 @@ def gpu_scalar_add():
     # ###########STATE, CFG, GLOBAL DATA################
     # # # add state
     state = sdfg.add_state('sum', is_start_block=True)
-    a_cpu = state.add_read('A_scalar_cpu')
-    a_gpu = state.add_write('A_scalar_gpu')
+    
+    scalar_read = state.add_read('scalarNode')
+    scalar_write = state.add_write('write_to_scalar')
+    array_ = state.add_read('arrayNode')
+    stream_ = state.add_read('StreamNode')
+    
+    
+
     
     # b = state.add_read('B_scalar')
     # c = state.add_write('C_scalar')
-    state.add_edge(a_cpu, None, a_gpu, None, dace.Memlet(f"A_scalar_cpu"))
+    state.add_edge(scalar_read, None, scalar_write, None, dace.Memlet(f"scalarNode[0]"))
+    state.add_edge(array_, None, scalar_write, None, dace.Memlet(f"arrayNode[0]"))
+    state.add_edge(stream_, None, scalar_write, None, dace.Memlet(f"StreamNode[0]"))
+    
 
     # ###########DFG################
     # # Add nodes

@@ -179,6 +179,71 @@ class IPUCodeGen(TargetCodeGenerator):
         # self._dispatcher.defined_vars.add(name, DefinedType.Object, ctype)
         # self.cpu_codegen.allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
         #                                  allocation_stream)   
+#     def allocate_ipu_stream(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+#                         node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
+#                         declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
+#         dataname = node.data
+#         allocname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
+#         if nodedesc.storage == dtypes.StorageType.GPU_Global:
+#             fmtargs = {
+#                 'name': allocname,  # TODO: Handle persistent streams
+#                 'allocname': allocname,
+#                 'type': nodedesc.dtype.ctype,
+#                 'is_pow2': sym2cpp(sympy.log(nodedesc.buffer_size, 2).is_Integer),
+#                 'location': '%s_%s_%s' % (cfg.cfg_id, state_id, dfg.node_id(node))
+#             }
+
+#             ctypedef = 'dace::GPUStream<{type}, {is_pow2}>'.format(**fmtargs)
+#             self._dispatcher.defined_vars.add(allocname, DefinedType.Stream, ctypedef)
+
+#             if is_array_stream_view(sdfg, dfg, node):
+#                 edges = dfg.out_edges(node)
+#                 if len(edges) > 1:
+#                     raise NotImplementedError("Cannot handle streams writing to multiple arrays.")
+
+#                 fmtargs['ptr'] = nodedesc.sink + ' + ' + cpp_array_expr(
+#                     sdfg, edges[0].data, with_brackets=False, codegen=self._frame)
+
+#                 # Assuming 1D subset of sink/src
+#                 # sym2cpp(edges[0].data.subset[-1])
+#                 fmtargs['size'] = sym2cpp(nodedesc.buffer_size)
+
+#                 # (important) Ensure GPU array is allocated before the stream
+#                 datanode = dfg.out_edges(node)[0].dst
+#                 sinkdesc = sdfg.arrays[datanode.data]
+#                 self._dispatcher.dispatch_allocate(sdfg, cfg, dfg, state_id, datanode, sinkdesc, function_stream,
+#                                                    allocation_stream)
+
+#                 function_stream.write(
+#                     'DACE_EXPORTED void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);'
+#                     .format(**fmtargs), cfg, state_id, node)
+#                 self._globalcode.write(
+#                     """
+# DACE_EXPORTED void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);
+# void __dace_alloc_{location}({type} *ptr, uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result) {{
+#     result = dace::AllocGPUArrayStreamView<{type}, {is_pow2}>(ptr, size);
+# }}""".format(**fmtargs), cfg, state_id, node)
+#                 declaration_stream.write('dace::GPUStream<{type}, {is_pow2}> {name};'.format(**fmtargs), cfg, state_id,
+#                                          node)
+#                 allocation_stream.write('__dace_alloc_{location}({ptr}, {size}, {allocname});'.format(**fmtargs), cfg,
+#                                         state_id, node)
+#             else:
+#                 fmtargs['size'] = sym2cpp(nodedesc.buffer_size)
+
+#                 function_stream.write(
+#                     'DACE_EXPORTED void __dace_alloc_{location}(uint32_t size, dace::GPUStream<{type}, {is_pow2}>& result);'
+#                     .format(**fmtargs), cfg, state_id, node)
+#                 self._globalcode.write(
+#                     """
+# DACE_EXPORTED void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>& result);
+# void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>& result) {{
+#     result = dace::AllocGPUStream<{type}, {is_pow2}>({size});
+# }}""".format(**fmtargs), cfg, state_id, node)
+#                 declaration_stream.write('dace::GPUStream<{type}, {is_pow2}> {name};'.format(**fmtargs), cfg, state_id,
+#                                          node)
+#                 allocation_stream.write('__dace_alloc_{location}({size}, {allocname});'.format(**fmtargs), cfg,
+#                                         state_id, node)
+
     
     def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                        node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
@@ -200,6 +265,21 @@ class IPUCodeGen(TargetCodeGenerator):
         except KeyError:  # Array not declared yet
             pass
 
+
+        # if isinstance(nodedesc, dace.data.Stream):
+        #     return self.allocate_ipu_stream(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
+        #                                 allocation_stream)
+            
+       
+        #print nodedesc type
+        
+            #return self.allocate_poplar_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
+                                                # allocation_stream)
+        # elif isinstance(nodedesc, dace.data.Scalar):
+        #     return self.allocate_scalar(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
+        #                                            allocation_stream)
+        
+            
         if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             nodedesc = update_persistent_desc(nodedesc, sdfg)
 
@@ -208,32 +288,15 @@ class IPUCodeGen(TargetCodeGenerator):
         arrsize = nodedesc.total_size
         is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
         arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
-        ctypedef = '%s *' % nodedesc.dtype.ctype
+        ctypedef = nodedesc.dtype.ctype
+        shape = nodedesc.shape
+        
 
         # Different types of GPU arrays
-        if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            if not declared:
-                result_decl.write('%s %s;\n' % (ctypedef, dataname))
-            self.dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
-
-            if nodedesc.pool:
-                cudastream = getattr(node, '_cuda_stream', 'nullptr')
-                if cudastream != 'nullptr':
-                    cudastream = f'__state->gpu_context->streams[{cudastream}]'
-                result_alloc.write(
-                    f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n'
-                )
-                self._emit_sync(result_alloc)
-            else:
-                # Strides are left to the user's discretion
-                result_alloc.write("malloc calls")
-                # result_alloc.write('DACE_GPU_CHECK(%sMalloc((void**)&%s, %s));\n' %
-                #                    (self.backend, dataname, arrsize_malloc))
-
-            if node.setzero:
-                result_alloc.write('DACE_GPU_CHECK(%sMemset(%s, 0, %s));\n' % (self.backend, dataname, arrsize_malloc))
-            if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
-                result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
+        if nodedesc.storage == dtypes.StorageType.IPU_Memory:
+            # Tensor c1 = graph.addConstant<float>(FLOAT, {4}, {1.0, 1.5, 2.0, 2.5});
+            result_alloc.write("Tensor %s = _state->graph.addVariable(%s, {%s});\n" % (dataname, nodedesc.dtype.ctype.capitalize(), sym2cpp(arrsize)))
+            self.dispatcher.defined_vars.add(dataname, DefinedType.ArrayInterface, ctypedef)            
         elif nodedesc.storage == dtypes.StorageType.Register:
             if is_dynamically_sized:
                 raise ValueError('Dynamic allocation of registers not allowed')
@@ -242,11 +305,8 @@ class IPUCodeGen(TargetCodeGenerator):
             szstr = ' = {0}' if node.setzero else ''
             result_decl.write("%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize), szstr))
             self.dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
-        elif nodedesc.storage == dtypes.StorageType.IPU_Memory:
-             result_decl.write("#         #Tensor c1 = graph.addConstant<float>(FLOAT, {4}, {1.0, 1.5, 2.0, 2.5});")   # decl
-             result_alloc.write(" graph.setTileMapping(v1[i][j], i * 2 + j);")  # Mapping on 
         else:
-            raise NotImplementedError("CUDA: Unimplemented storage type " + str(nodedesc.storage))
+            raise NotImplementedError("IPU: Unimplemented storage type " + str(nodedesc.storage))
 
         declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
         allocation_stream.write(result_alloc.getvalue(), cfg, state_id, node)
@@ -254,18 +314,9 @@ class IPUCodeGen(TargetCodeGenerator):
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                          node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream) -> None:
-        dataname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
-        self.backend = 'cuda'   # temporary hack
-        if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            if not nodedesc.pool:  # If pooled, will be freed somewhere else
-                callsite_stream.write('DACE_GPU_CHECK(%sFree(%s));\n' % (self.backend, dataname), cfg, state_id, node)
-        elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            callsite_stream.write('DACE_GPU_CHECK(%sFreeHost(%s));\n' % (self.backend, dataname), cfg, state_id, node)
-        elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
-             nodedesc.storage == dtypes.StorageType.Register:
-            pass  # Do nothing
-        elif nodedesc.storage == dtypes.StorageType.IPU_Memory:
-            callsite_stream.write(" poplar::deallocate array")
+        if nodedesc.storage == dtypes.StorageType.IPU_Memory or \
+            nodedesc.storage == dtypes.StorageType.Register:
+            pass    # IPU variables are C++ objects and are automatically deallocated
         else:
             raise NotImplementedError
         
