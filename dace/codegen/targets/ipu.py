@@ -1,6 +1,7 @@
 # import
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from io import StringIO
+import sympy
 from typing import TYPE_CHECKING, Optional, Tuple, Union
 from copy import deepcopy
 from dace import (data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config)
@@ -41,7 +42,6 @@ class IPUCodeGen(TargetCodeGenerator):
     language = 'cpp'
 
     def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: dace.SDFG):
-        print("in IPUCodeGen")
         self.has_generated_header = False
         self.frame = frame_codegen
         self.dispatcher = frame_codegen._dispatcher
@@ -182,8 +182,9 @@ class IPUCodeGen(TargetCodeGenerator):
 #     def allocate_ipu_stream(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
 #                         node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
 #                         declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
+#         allocation_stream.write("// IPU Stream Allocation")
 #         dataname = node.data
-#         allocname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
+#         allocname = cpp.ptr(dataname, nodedesc, sdfg, self.frame)
 #         if nodedesc.storage == dtypes.StorageType.GPU_Global:
 #             fmtargs = {
 #                 'name': allocname,  # TODO: Handle persistent streams
@@ -249,6 +250,7 @@ class IPUCodeGen(TargetCodeGenerator):
                        node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                        declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
         self.add_header(function_stream)
+        
         dataname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
 
         try:
@@ -269,16 +271,12 @@ class IPUCodeGen(TargetCodeGenerator):
         # if isinstance(nodedesc, dace.data.Stream):
         #     return self.allocate_ipu_stream(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
         #                                 allocation_stream)
-            
-       
-        #print nodedesc type
-        
-            #return self.allocate_poplar_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
-                                                # allocation_stream)
-        # elif isinstance(nodedesc, dace.data.Scalar):
-        #     return self.allocate_scalar(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
-        #                                            allocation_stream)
-        
+        if isinstance(nodedesc, dace.data.View):
+            return self._cpu_codegen.allocate_view(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
+                                                   allocation_stream)
+        elif isinstance(nodedesc, dace.data.Reference):
+            return self._cpu_codegen.allocate_reference(sdfg, cfg, dfg, state_id, node, function_stream,
+                                                        declaration_stream, allocation_stream)
             
         if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             nodedesc = update_persistent_desc(nodedesc, sdfg)
@@ -287,17 +285,23 @@ class IPUCodeGen(TargetCodeGenerator):
         result_alloc = StringIO()
         arrsize = nodedesc.total_size
         is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
-        arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
-        ctypedef = nodedesc.dtype.ctype
+        #arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
+        ctypedef = 'Tensor *'
         shape = nodedesc.shape
-        print("Available keys in TYPE_TO_IPU:", ipu_utils.TYPE_TO_IPU.keys())
-        print("Type of nodedesc.dtype.ctype:", nodedesc.dtype.ctype)
 
-        # Different types of GPU arrays
+        # Different types of memories
         if nodedesc.storage == dtypes.StorageType.IPU_Memory:
-            # Tensor c1 = graph.addConstant<float>(DOUBLE, {4});
-            result_alloc.write("Tensor %s = _state->graph.addVariable(%s, {%s});\n" % (dataname, ipu_utils.TYPE_TO_IPU[nodedesc.dtype], sym2cpp(arrsize)))
-            self.dispatcher.defined_vars.add(dataname, DefinedType.ArrayInterface, ctypedef)            
+            if not declared:
+                result_decl.write('%s %s;\n' % (ctypedef, dataname))    # Tensor *p;
+            self.dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
+            
+            if nodedesc.pool:
+                raise NotImplementedError("Pool not implemented yet " + str(nodedesc.storage))
+            else:
+                shape_poplar_format = ', '.join([str(sh) for sh in shape])
+                result_alloc.write("%s = _state->graph.addVariable(%s, {%s});\n" % (dataname, ipu_utils.TYPE_TO_IPU[nodedesc.dtype], shape_poplar_format))           
+            
+            
         elif nodedesc.storage == dtypes.StorageType.Register:
             if is_dynamically_sized:
                 raise ValueError('Dynamic allocation of registers not allowed')
@@ -308,7 +312,7 @@ class IPUCodeGen(TargetCodeGenerator):
             self.dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
         else:
             raise NotImplementedError("IPU: Unimplemented storage type " + str(nodedesc.storage))
-
+        
         declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
         allocation_stream.write(result_alloc.getvalue(), cfg, state_id, node)
 
