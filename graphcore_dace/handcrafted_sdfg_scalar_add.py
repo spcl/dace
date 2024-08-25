@@ -110,6 +110,79 @@ def vector_add():
     sdfg(A, B, C)
     print(C)    
 
+def gpu_accessnode_test():
+    sdfg = dace.SDFG('gpu_accessnode_test')
+    #########GLOBAL VARIABLES#########
+ 
+    # sdfg.add_scalar("scalarNode",  dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
+    # sdfg.add_scalar("scalarNode1", dace.bool, storage=dace.StorageType.IPU_Memory, transient=True)
+    # sdfg.add_scalar("scalarNode2", dace.int32, storage=dace.StorageType.IPU_Memory, transient=True)
+    # sdfg.add_scalar("scalarNode3", dace.int64, storage=dace.StorageType.IPU_Memory, transient=True)
+    # sdfg.add_scalar("scalarNode4", dace.uint8, storage=dace.StorageType.IPU_Memory, transient=True)
+    # sdfg.add_scalar("scalarNode5", dace.uint64, storage=dace.StorageType.IPU_Memory, transient=True)
+    # sdfg.add_scalar("scalarNode6", dace.float16, storage=dace.StorageType.IPU_Memory, transient=True)
+    # sdfg.add_scalar("scalarNode7", dace.float32, storage=dace.StorageType.IPU_Memory, transient=True)
+    # sdfg.add_scalar("scalarNode8", dace.string, storage=dace.StorageType.IPU_Memory, transient=True)
+    # sdfg.add_scalar("scalarNode9", dace.int8, storage=dace.StorageType.IPU_Memory, transient=True)
+    sdfg.add_scalar("write_to_scalar", dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
+    
+    sdfg.add_array("arrayNode", [10], dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
+    # sdfg.add_stream("StreamNode", dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
+    
+    # sdfg.add_scalar("B_scalar", dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
+    # sdfg.add_scalar("C_scalar", dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
+    # sdfg.add_constant('constant', 1)
+
+    
+    # ###########STATE, CFG, GLOBAL DATA################
+    # # # add state
+    state = sdfg.add_state('sum', is_start_block=True)
+    
+    # scalar_read = state.add_read('scalarNode')
+    # scalar_read1 = state.add_read('scalarNode1')
+    # scalar_read2 = state.add_read('scalarNode2')
+    # scalar_read3 = state.add_read('scalarNode3')
+    # scalar_read4 = state.add_read('scalarNode4')
+    # scalar_read5 = state.add_read('scalarNode5')
+    # scalar_read6 = state.add_read('scalarNode6')
+    # scalar_read7 = state.add_read('scalarNode7')
+    # scalar_read8 = state.add_read('scalarNode8')
+    # scalar_read9 = state.add_read('scalarNode9')
+    scalar_write = state.add_write('write_to_scalar')
+    array_ = state.add_read('arrayNode')
+    # stream_ = state.add_read('StreamNode')
+    
+    
+
+    
+    # b = state.add_read('B_scalar')
+    # c = state.add_write('C_scalar')
+    # state.add_edge(scalar_read, None, scalar_write, None, dace.Memlet(f"scalarNode[0]"))
+    # state.add_edge(scalar_read1, None, scalar_write, None, dace.Memlet(f"scalarNode1[0]"))
+    # state.add_edge(scalar_read2, None, scalar_write, None, dace.Memlet(f"scalarNode2[0]"))
+    # state.add_edge(scalar_read3, None, scalar_write, None, dace.Memlet(f"scalarNode3[0]"))
+    # state.add_edge(scalar_read4, None, scalar_write, None, dace.Memlet(f"scalarNode4[0]"))
+    # state.add_edge(scalar_read5, None, scalar_write, None, dace.Memlet(f"scalarNode5[0]"))
+    # state.add_edge(scalar_read6, None, scalar_write, None, dace.Memlet(f"scalarNode6[0]"))
+    # state.add_edge(scalar_read7, None, scalar_write, None, dace.Memlet(f"scalarNode7[0]"))
+    # state.add_edge(scalar_read8, None, scalar_write, None, dace.Memlet(f"scalarNode8[0]"))
+    # state.add_edge(scalar_read9, None, scalar_write, None, dace.Memlet(f"scalarNode9[0]"))
+    state.add_edge(array_, None, scalar_write, None, dace.Memlet(f"arrayNode[0]"))
+    # state.add_edge(stream_, None, scalar_write, None, dace.Memlet(f"StreamNode[0]"))
+
+
+    ###########CODEGEN################
+    A = np.random.rand(1)
+    B = np.random.rand(1)
+    C = np.zeros(1)
+    print(A)
+    print(B)
+    print("Before", C)
+    sdfg = sdfg(A)
+    sdfg.apply_transformations(GPUTransformSDFG)
+    print("After", C)    
+
+
 def gpu_scalar_add():
     sdfg = dace.SDFG('gpu_scalar_add')
     #########GLOBAL VARIABLES#########
@@ -126,7 +199,7 @@ def gpu_scalar_add():
     sdfg.add_scalar("scalarNode9", dace.int8, storage=dace.StorageType.IPU_Memory, transient=True)
     sdfg.add_scalar("write_to_scalar", dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
     
-    sdfg.add_array("arrayNode", [10, 10], dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
+    sdfg.add_array("arrayNode", [10], dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
     sdfg.add_stream("StreamNode", dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
     
     # sdfg.add_scalar("B_scalar", dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
@@ -167,7 +240,7 @@ def gpu_scalar_add():
     state.add_edge(scalar_read7, None, scalar_write, None, dace.Memlet(f"scalarNode7[0]"))
     state.add_edge(scalar_read8, None, scalar_write, None, dace.Memlet(f"scalarNode8[0]"))
     state.add_edge(scalar_read9, None, scalar_write, None, dace.Memlet(f"scalarNode9[0]"))
-    state.add_edge(array_, None, scalar_write, None, dace.Memlet(f"arrayNode[0, 0]"))
+    state.add_edge(array_, None, scalar_write, None, dace.Memlet(f"arrayNode[0]"))
     state.add_edge(stream_, None, scalar_write, None, dace.Memlet(f"StreamNode[0]"))
     
 
@@ -315,3 +388,4 @@ if __name__ == "__main__":
     # print (C)
     # vector_add()
     gpu_scalar_add()
+    gpu_accessnode_test()

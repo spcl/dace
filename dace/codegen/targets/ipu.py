@@ -309,7 +309,92 @@ class IPUCodeGen(TargetCodeGenerator):
 #                 allocation_stream.write('__dace_alloc_{location}({size}, {allocname});'.format(**fmtargs), cfg,
 #                                         state_id, node)
 
-    
+    def decidemapping(self, dataname, nodedesc, sdfg):
+
+        # Get the shape of the data descriptor
+        shape = nodedesc.shape
+        # Get the total size of the data descriptor
+        size = nodedesc.total_size
+
+        # CREATE a dictionary to store the mapping of the data to the tile
+        dataToTileMap = {}
+        # Get the number of tiles
+        numTiles = 10
+        # Get the number of elements in the data descriptor
+        numElements = size
+        
+        if (numElements < numTiles):    # special case
+            numTiles = numElements
+
+        # Get the number of elements per tile
+        numElementsPerTile = numElements // numTiles
+        # Get the number of elements in the last tile
+        numElementsLastTile = numElements % numTiles
+
+        # Loop over the number of tiles
+        for i in range(numTiles):
+            # Get the start index of the tile
+            start = i * numElementsPerTile
+            # Get the end index of the tile
+            end = start + numElementsPerTile
+            if (end - start > 1):
+                # Get the data of the tile with slicing
+                data = dataname + ".slice(" + "[" + str(start) + ":" + str(end) + "]" + ")"
+            else:
+                data = dataname + "[" + str(start) + "]"
+                
+            # Add the data to the tile mapping
+            dataToTileMap[data] = i
+        
+        # # Get the start index of the last tile
+        # start = numTiles * numElementsPerTile
+        # # Get the end index of the last tile
+        # end = start + numElementsLastTile
+        # # Get the data of the last tile
+        # data = dataname + "[" + str(start) + ":" + str(end) + "]"
+        # # Add the data to the tile mapping
+        # dataToTileMap[data] = numTiles - 1
+        
+        return dataToTileMap
+
+    # TODO:Similar mapVertexOntile            
+    def mapdataontile(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                    node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
+                    declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
+        if isinstance(nodedesc, dace.data.Array):
+            self.mapArrayOnTile(sdfg, cfg, state_id, node, nodedesc, allocation_stream)
+        elif isinstance(nodedesc, dace.data.Scalar):
+            self.mapScalarOnTile(sdfg, cfg, state_id, node, nodedesc, allocation_stream)
+        else:
+            raise NotImplementedError("Unimplemented mapping for this AccessNode: {}".format(type(nodedesc)))
+
+    def mapArrayOnTile(self, sdfg, cfg, state_id, node, nodedesc, allocation_stream):
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
+            # Map array intelligently
+        spreadOverTiles = True
+        if spreadOverTiles:
+            dataToTileMap = self.decidemapping(dataname, nodedesc, sdfg)
+                # Map array over multiple tiles
+                # loop over the dataToTileMap and set the mapping
+                # import pprint
+                # pprint.pprint(dataToTileMap)
+                
+            for data, tilenumber in dataToTileMap.items():
+                setTileMappingCall = f"_state->graph.setTileMapping({data}, {tilenumber});"
+                allocation_stream.write(setTileMappingCall, cfg, state_id, node)
+        else:
+                # Map array, given only 1 element maps on one tile
+            tilenumber = 0
+            setTileMappingCall = f"_state->graph.setTileMapping({dataname}, {tilenumber});"
+            allocation_stream.write(setTileMappingCall, cfg, state_id, node)
+
+    def mapScalarOnTile(self, sdfg, cfg, state_id, node, nodedesc, allocation_stream):
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
+            # Map scalar, given only 1 element maps on one tile
+        tilenumber = 0
+        setTileMappingCall = f"_state->graph.setTileMapping({dataname}, {tilenumber});"
+        allocation_stream.write(setTileMappingCall, cfg, state_id, node)
+        
     def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                        node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                        declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
@@ -327,18 +412,24 @@ class IPUCodeGen(TargetCodeGenerator):
             pass  # The variable was not defined, we can continue
 
         if isinstance(nodedesc, dace.data.Stream):
-            return self.allocate_ipu_stream(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
+            self.allocate_ipu_stream(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                                         allocation_stream)
-        if isinstance(nodedesc, dace.data.View):
-            return self._cpu_codegen.allocate_view(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
+        elif isinstance(nodedesc, dace.data.View):
+            self._cpu_codegen.allocate_view(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
                                                    allocation_stream)
         elif isinstance(nodedesc, dace.data.Reference):
-            return self._cpu_codegen.allocate_reference(sdfg, cfg, dfg, state_id, node, function_stream,
+            self._cpu_codegen.allocate_reference(sdfg, cfg, dfg, state_id, node, function_stream,
                                                         declaration_stream, allocation_stream)
         elif isinstance(nodedesc, dace.data.Array):
-            return self.allocate_ipu_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream, allocation_stream)
+            self.allocate_ipu_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream, allocation_stream)
+            self.mapdataontile(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream, allocation_stream)
         elif isinstance(nodedesc, dace.data.Scalar):
-            return self.allocate_ipu_scalar(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream, allocation_stream)
+            self.allocate_ipu_scalar(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream, allocation_stream)
+            self.mapdataontile(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream, allocation_stream)
+        else:
+            raise NotImplementedError("Unimplemented type: {}".format(type(nodedesc)))
+        
+        # Mapping on tiles
         
 
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
