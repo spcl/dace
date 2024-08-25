@@ -26,7 +26,7 @@ from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from dace.sdfg.validation import validate_memlet_data
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.codegen.targets.sve import util as util
+from dace.codegen.targets.ipu_files import ipu_utils as ipu_utils
 import copy
 import functools
 import itertools
@@ -290,12 +290,13 @@ class IPUCodeGen(TargetCodeGenerator):
         arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
         ctypedef = nodedesc.dtype.ctype
         shape = nodedesc.shape
-        
+        print("Available keys in TYPE_TO_IPU:", ipu_utils.TYPE_TO_IPU.keys())
+        print("Type of nodedesc.dtype.ctype:", nodedesc.dtype.ctype)
 
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.IPU_Memory:
-            # Tensor c1 = graph.addConstant<float>(FLOAT, {4}, {1.0, 1.5, 2.0, 2.5});
-            result_alloc.write("Tensor %s = _state->graph.addVariable(%s, {%s});\n" % (dataname, nodedesc.dtype.ctype.capitalize(), sym2cpp(arrsize)))
+            # Tensor c1 = graph.addConstant<float>(DOUBLE, {4});
+            result_alloc.write("Tensor %s = _state->graph.addVariable(%s, {%s});\n" % (dataname, ipu_utils.TYPE_TO_IPU[nodedesc.dtype], sym2cpp(arrsize)))
             self.dispatcher.defined_vars.add(dataname, DefinedType.ArrayInterface, ctypedef)            
         elif nodedesc.storage == dtypes.StorageType.Register:
             if is_dynamically_sized:
