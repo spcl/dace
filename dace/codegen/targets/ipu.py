@@ -179,10 +179,74 @@ class IPUCodeGen(TargetCodeGenerator):
         # self._dispatcher.defined_vars.add(name, DefinedType.Object, ctype)
         # self.cpu_codegen.allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
         #                                  allocation_stream)   
-#     def allocate_ipu_stream(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-#                         node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
-#                         declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
-#         allocation_stream.write("// IPU Stream Allocation")
+    def allocate_ipu_scalar(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                        node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
+                        declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
+            
+        result_decl = StringIO()
+        result_alloc = StringIO()
+        arrsize = nodedesc.total_size
+        is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
+        #arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
+        ctypedef = 'Tensor *'
+        shape = nodedesc.shape
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
+        
+        # Check if array is already declared
+        declared = self.dispatcher.declared_arrays.has(dataname)
+        # Different types of memories
+        if nodedesc.storage == dtypes.StorageType.IPU_Memory:
+            if not declared:
+                result_decl.write('%s %s;\n' % (ctypedef, dataname))    # Tensor *p;
+            self.dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
+            
+            if nodedesc.pool:
+                raise NotImplementedError("Pool not implemented yet " + str(nodedesc.storage))
+            else:
+                shape_poplar_format = ', '.join([str(sh) for sh in shape])
+                result_alloc.write("%s = _state->graph.addVariable(%s, {%s});\n" % (dataname, ipu_utils.TYPE_TO_IPU[nodedesc.dtype], shape_poplar_format))           
+        else:
+            raise NotImplementedError("IPU: Unimplemented StorageType " + str(nodedesc.storage))
+        
+        declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
+        allocation_stream.write(result_alloc.getvalue(), cfg, state_id, node)
+          
+    def allocate_ipu_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                        node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
+                        declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
+        
+        result_decl = StringIO()
+        result_alloc = StringIO()
+        arrsize = nodedesc.total_size
+        is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
+        #arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
+        ctypedef = 'Tensor *'
+        shape = nodedesc.shape
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
+        
+        # Check if array is already declared
+        declared = self.dispatcher.declared_arrays.has(dataname)
+        # Different types of memories
+        if nodedesc.storage == dtypes.StorageType.IPU_Memory:
+            if not declared:
+                result_decl.write('%s %s;\n' % (ctypedef, dataname))    # Tensor *p;
+            self.dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
+            
+            if nodedesc.pool:
+                raise NotImplementedError("Pool not implemented yet " + str(nodedesc.storage))
+            else:
+                shape_poplar_format = ', '.join([str(sh) for sh in shape])
+                result_alloc.write("%s = _state->graph.addVariable(%s, {%s});\n" % (dataname, ipu_utils.TYPE_TO_IPU[nodedesc.dtype], shape_poplar_format))           
+        else:
+            raise NotImplementedError("IPU: Unimplemented StorageType " + str(nodedesc.storage))
+        
+        declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
+        allocation_stream.write(result_alloc.getvalue(), cfg, state_id, node)
+            
+    def allocate_ipu_stream(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                        node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
+                        declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
+        return NotImplementedError("IPU Stream not implemented yet")
 #         dataname = node.data
 #         allocname = cpp.ptr(dataname, nodedesc, sdfg, self.frame)
 #         if nodedesc.storage == dtypes.StorageType.GPU_Global:
@@ -251,6 +315,9 @@ class IPUCodeGen(TargetCodeGenerator):
                        declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
         self.add_header(function_stream)
         
+        if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+            nodedesc = update_persistent_desc(nodedesc, sdfg)        
+        
         dataname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
 
         try:
@@ -259,62 +326,20 @@ class IPUCodeGen(TargetCodeGenerator):
         except KeyError:
             pass  # The variable was not defined, we can continue
 
-        # Check if array is already declared
-        declared = False
-        try:
-            self.dispatcher.declared_arrays.get(dataname)
-            declared = True  # Array was already declared in this or upper scopes
-        except KeyError:  # Array not declared yet
-            pass
-
-
-        # if isinstance(nodedesc, dace.data.Stream):
-        #     return self.allocate_ipu_stream(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
-        #                                 allocation_stream)
+        if isinstance(nodedesc, dace.data.Stream):
+            return self.allocate_ipu_stream(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
+                                        allocation_stream)
         if isinstance(nodedesc, dace.data.View):
             return self._cpu_codegen.allocate_view(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
                                                    allocation_stream)
         elif isinstance(nodedesc, dace.data.Reference):
             return self._cpu_codegen.allocate_reference(sdfg, cfg, dfg, state_id, node, function_stream,
                                                         declaration_stream, allocation_stream)
-            
-        if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
-            nodedesc = update_persistent_desc(nodedesc, sdfg)
-
-        result_decl = StringIO()
-        result_alloc = StringIO()
-        arrsize = nodedesc.total_size
-        is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
-        #arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
-        ctypedef = 'Tensor *'
-        shape = nodedesc.shape
-
-        # Different types of memories
-        if nodedesc.storage == dtypes.StorageType.IPU_Memory:
-            if not declared:
-                result_decl.write('%s %s;\n' % (ctypedef, dataname))    # Tensor *p;
-            self.dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
-            
-            if nodedesc.pool:
-                raise NotImplementedError("Pool not implemented yet " + str(nodedesc.storage))
-            else:
-                shape_poplar_format = ', '.join([str(sh) for sh in shape])
-                result_alloc.write("%s = _state->graph.addVariable(%s, {%s});\n" % (dataname, ipu_utils.TYPE_TO_IPU[nodedesc.dtype], shape_poplar_format))           
-            
-            
-        elif nodedesc.storage == dtypes.StorageType.Register:
-            if is_dynamically_sized:
-                raise ValueError('Dynamic allocation of registers not allowed')
-            if nodedesc.start_offset != 0:
-                raise NotImplementedError('Start offset unsupported for registers')
-            szstr = ' = {0}' if node.setzero else ''
-            result_decl.write("%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize), szstr))
-            self.dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
-        else:
-            raise NotImplementedError("IPU: Unimplemented storage type " + str(nodedesc.storage))
+        elif isinstance(nodedesc, dace.data.Array):
+            return self.allocate_ipu_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream, allocation_stream)
+        elif isinstance(nodedesc, dace.data.Scalar):
+            return self.allocate_ipu_scalar(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream, allocation_stream)
         
-        declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
-        allocation_stream.write(result_alloc.getvalue(), cfg, state_id, node)
 
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                          node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,

@@ -124,11 +124,11 @@ def gpu_scalar_add():
     sdfg.add_scalar("scalarNode7", dace.float32, storage=dace.StorageType.IPU_Memory, transient=True)
     sdfg.add_scalar("scalarNode8", dace.string, storage=dace.StorageType.IPU_Memory, transient=True)
     sdfg.add_scalar("scalarNode9", dace.int8, storage=dace.StorageType.IPU_Memory, transient=True)
-    
+    sdfg.add_scalar("write_to_scalar", dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
     
     sdfg.add_array("arrayNode", [10, 10], dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
     sdfg.add_stream("StreamNode", dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
-    sdfg.add_scalar("write_to_scalar", dace.float64, storage=dace.StorageType.IPU_Memory, transient=True)
+    
     # sdfg.add_scalar("B_scalar", dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
     # sdfg.add_scalar("C_scalar", dace.float64, storage=dace.StorageType.GPU_Global, transient=False)
     # sdfg.add_constant('constant', 1)
