@@ -19,7 +19,7 @@ from dace import memlet as mm
 from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
-from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
+from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
                              CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
@@ -3174,3 +3174,17 @@ class LoopRegion(ControlFlowRegion):
             if isinstance(node, ReturnBlock):
                 return True
         return False
+
+@make_properties
+class NamedRegion(ControlFlowRegion):
+    debuginfo = DebugInfoProperty()
+    def __init__(self, label: str, sdfg: Optional['SDFG']=None, debuginfo: Optional[dtypes.DebugInfo]=None):
+        super().__init__(label, sdfg)
+        self.debuginfo = debuginfo
+
+@make_properties
+class FunctionCallRegion(ControlFlowRegion):
+    arguments = DictProperty(str, str)
+    def __init__(self, label: str, arguments: Dict[str, str] = {}, sdfg: 'SDFG' = None):
+        super().__init__(label, sdfg)
+        self.arguments = arguments
