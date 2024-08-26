@@ -5,6 +5,7 @@
 import ast
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
+import uuid
 import dace
 import itertools
 import dace.serialize
@@ -35,6 +36,7 @@ class Node(object):
     out_connectors = DictProperty(key_type=str,
                                   value_type=dtypes.typeclass,
                                   desc="A set of output connectors for this node.")
+    id = Property(dtype=str, allow_none=False)
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -45,6 +47,8 @@ class Node(object):
 
         self.in_connectors = in_connectors or {}
         self.out_connectors = out_connectors or {}
+
+        self.id = str(uuid.uuid4())
 
     def __str__(self):
         if hasattr(self, 'label'):

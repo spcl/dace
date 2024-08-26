@@ -7,6 +7,7 @@ import collections
 import copy
 import inspect
 import itertools
+import uuid
 import warnings
 from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
                     overload)
@@ -1099,6 +1100,8 @@ class ControlGraphView(BlockGraphView, abc.ABC):
 @make_properties
 class ControlFlowBlock(BlockGraphView, abc.ABC):
 
+    id = Property(dtype=str, allow_none=False)
+
     is_collapsed = Property(dtype=bool, desc='Show this block as collapsed', default=False)
 
     pre_conditions = DictProperty(key_type=str, value_type=list, desc='Pre-conditions for this block')
@@ -1121,6 +1124,8 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.pre_conditions = {}
         self.post_conditions = {}
         self.invariant_conditions = {}
+
+        self.id = str(uuid.uuid4())
 
     def nodes(self):
         return []

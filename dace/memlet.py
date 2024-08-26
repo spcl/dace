@@ -4,6 +4,7 @@ from copy import deepcopy as dcpy, copy
 from functools import reduce
 import operator
 from typing import TYPE_CHECKING, List, Optional, Set, Union
+import uuid
 import warnings
 
 import dace
@@ -54,6 +55,8 @@ class Memlet(object):
                              '(non-atomic) writes in resulting code')
     allow_oob = Property(dtype=bool, default=False, desc='Bypass out-of-bounds validation')
 
+    id = Property(dtype=str, allow_none=False)
+
     def __init__(self,
                  expr: Optional[str] = None,
                  data: Optional[str] = None,
@@ -100,6 +103,7 @@ class Memlet(object):
         :param allow_oob: If True, bypasses the checks in SDFG validation for
                           out-of-bounds accesses in memlet subsets.
         """
+        self.id = str(uuid.uuid4())
 
         # Will be set once memlet is added into an SDFG (in try_initialize)
         self._sdfg = None

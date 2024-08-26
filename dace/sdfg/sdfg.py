@@ -12,6 +12,7 @@ import random
 import shutil
 import sys
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
+import uuid
 import warnings
 
 import dace
@@ -173,6 +174,7 @@ class InterstateEdge(object):
     assignments = Property(dtype=dict,
                            desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
+    id = Property(dtype=str, allow_none=False)
 
     def __init__(self,
                  condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None,
@@ -194,6 +196,8 @@ class InterstateEdge(object):
         self.assignments = {k: InterstateEdge._convert_assignment(v) for k, v in assignments.items()}
         self._cond_sympy = None
         self._uncond = None
+
+        self.id = str(uuid.uuid4())
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name == 'condition' or name == '_condition':
