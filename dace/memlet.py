@@ -4,10 +4,10 @@ from copy import deepcopy as dcpy, copy
 from functools import reduce
 import operator
 from typing import TYPE_CHECKING, List, Optional, Set, Union
-import uuid
 import warnings
 
 import dace
+from dace.sdfg.graph import generate_element_id
 import dace.serialize
 from dace import subsets, dtypes, symbolic
 from dace.frontend.operations import detect_reduction_type
@@ -103,7 +103,6 @@ class Memlet(object):
         :param allow_oob: If True, bypasses the checks in SDFG validation for
                           out-of-bounds accesses in memlet subsets.
         """
-        self.id = str(uuid.uuid4())
 
         # Will be set once memlet is added into an SDFG (in try_initialize)
         self._sdfg = None
@@ -140,6 +139,9 @@ class Memlet(object):
         self.wcr_nonatomic = wcr_nonatomic
         self.debuginfo = debuginfo
         self.allow_oob = allow_oob
+
+        self.id = generate_element_id(self)
+
 
     @staticmethod
     def from_memlet(memlet: 'Memlet') -> 'Memlet':
@@ -199,6 +201,7 @@ class Memlet(object):
         node = object.__new__(Memlet)
 
         # Set properties
+        node._id = self._id
         node._volume = dcpy(self._volume, memo=memo)
         node._dynamic = self._dynamic
         node._subset = dcpy(self._subset, memo=memo)

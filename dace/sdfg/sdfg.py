@@ -12,10 +12,10 @@ import random
 import shutil
 import sys
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
-import uuid
 import warnings
 
 import dace
+from dace.sdfg.graph import generate_element_id
 import dace.serialize
 from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic)
 from dace.sdfg.replace import replace_properties_dict
@@ -197,7 +197,7 @@ class InterstateEdge(object):
         self._cond_sympy = None
         self._uncond = None
 
-        self.id = str(uuid.uuid4())
+        self.id = generate_element_id(self)
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name == 'condition' or name == '_condition':

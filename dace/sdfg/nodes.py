@@ -5,7 +5,6 @@
 import ast
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
-import uuid
 import dace
 import itertools
 import dace.serialize
@@ -48,7 +47,7 @@ class Node(object):
         self.in_connectors = in_connectors or {}
         self.out_connectors = out_connectors or {}
 
-        self.id = str(uuid.uuid4())
+        self.id = graph.generate_element_id(self)
 
     def __str__(self):
         if hasattr(self, 'label'):
@@ -250,6 +249,7 @@ class AccessNode(Node):
 
     def __deepcopy__(self, memo):
         node = object.__new__(AccessNode)
+        node._id = self._id
         node._data = self._data
         node._setzero = self._setzero
         node._instrument = self._instrument

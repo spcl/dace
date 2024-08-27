@@ -7,7 +7,6 @@ import collections
 import copy
 import inspect
 import itertools
-import uuid
 import warnings
 from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
                     overload)
@@ -23,7 +22,8 @@ from dace import symbolic
 from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
                              CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
+from dace.sdfg.graph import (MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge,
+                             generate_element_id)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
@@ -1125,7 +1125,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.post_conditions = {}
         self.invariant_conditions = {}
 
-        self.id = str(uuid.uuid4())
+        self.id = generate_element_id(self)
 
     def nodes(self):
         return []
