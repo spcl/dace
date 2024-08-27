@@ -4073,7 +4073,8 @@ class ProgramVisitor(ExtNodeVisitor):
                     if not isinput:
                         del self.accesses[access_key]
                     access_value = self._add_write_access(name, rng, node, new_name=vname)
-                    memlet.data = vname
+                    # memlet.data = vname
+                    memlet.data = access_value[0]
                 # Delete the old read descriptor
                 if not isinput:
                     conn_used = False
