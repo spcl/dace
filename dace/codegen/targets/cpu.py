@@ -861,10 +861,17 @@ class CPUCodeGen(TargetCodeGenerator):
                     memlet.try_initialize(sdfg, state_dfg, edge)
                     src_offset = cpp.cpp_offset_expr(src_nodedesc, memlet.src_subset) if memlet.src_subset is not None else '0'
                     dst_offset = cpp.cpp_offset_expr(dst_nodedesc, memlet.dst_subset) if memlet.dst_subset is not None else '0'
-                    src_expr = src_expr.split('+')[0].strip()
-                    dst_expr = dst_expr.split('+')[0].strip()
-                    stream.write(f"{dst_expr}[{dst_offset}] = {src_expr}[{src_offset}];", cfg, state_id, [src_node, dst_node])
-                    dst_expr = self.memlet_view_ctor(sdfg, memlet, dst_nodedesc.dtype, True)
+                    if isinstance(src_nodedesc, data.Scalar):
+                        src_expr = src_expr[1:] if src_expr.startswith('&') else src_expr
+                    else:
+                        src_expr = src_expr.split('+')[0].strip()
+                        src_expr = f"{src_expr}[{src_offset}]"
+                    if isinstance(dst_nodedesc, data.Scalar):
+                        dst_expr = dst_expr[1:] if dst_expr.startswith('&') else dst_expr
+                    else:
+                        dst_expr = dst_expr.split('+')[0].strip()
+                        dst_expr = f"{dst_expr}[{dst_offset}]"
+                    stream.write(f"{dst_expr} = {src_expr};", cfg, state_id, [src_node, dst_node])
                 else:
                     stream.write(
                         """
