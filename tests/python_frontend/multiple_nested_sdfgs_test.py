@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import re
 import numpy as np
 import dace
 
@@ -66,7 +67,12 @@ def test_call_multiple_sdfgs():
         out_tmp_div_sum(out_tmp=out_tmp, tmp_sum=tmp_sum, output=output)
 
     sdfg = multiple_nested_sdfgs.to_sdfg(simplify=False)
-    state = sdfg.nodes()[-1]
+    state = None
+    for node in sdfg.nodes():
+        if re.fullmatch(r"out_tmp_div_sum_\d+_call.*", node.label):
+            assert state is None, "Two states match the regex, cannot decide which one should be used"
+            state = node
+    assert state is not None
     for n in state.nodes():
         if isinstance(n, dace.sdfg.nodes.AccessNode):
             assert (n.data in {'out_tmp', 'tmp_sum', 'output'})
