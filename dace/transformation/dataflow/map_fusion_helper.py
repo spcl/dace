@@ -700,6 +700,12 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                 #  - The intermediate has a single connection to the second map, that
                 #       fulfills the restriction outlined above.
                 #  - All other connections have no connection to the second map.
+
+                # We can fuse the maps only if the producer, i.e. the top map,
+                #  represented by `producer_edge`, is gives us enough information.
+                producer_subset: subsets.Range = producer_edge.data.dst_subset
+                consumers = find_downstream_consumers(state=state, begin=intermediate_node)
+
                 found_second_entry = False
                 for edge in state.out_edges(intermediate_node):
                     if edge.dst is map_entry_2:
@@ -707,7 +713,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                             return None
                         found_second_entry = True
                         consumers = find_downstream_consumers(state=state, begin=edge)
-                        for consumer_node, feed_edge in consumers:
+                        for consumer_node, consumer_edge in consumers:
                             if consumer_node is map_entry_2:  # Dynamic map range.
                                 return None
                             if isinstance(consumer_node, nodes.LibraryNode):
