@@ -5,12 +5,15 @@
 import functools
 import itertools
 import re
-from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Sequence, Tuple, Union, overload
+import copy
+from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Sequence, Tuple, Union, overload, TypeVar
 
 import dace
 from dace import data, properties, subsets, transformation, symbolic
-from dace.sdfg import SDFG, SDFGState, graph, nodes, validation
+from dace.sdfg import SDFG, SDFGState, graph, nodes, validation, replace
 from dace.transformation import helpers
+
+_T = TypeVar("_T")
 
 @properties.make_properties
 class MapFusionHelper(transformation.SingleStateTransformation):
@@ -19,7 +22,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
     The transformation assumes that the SDFG obeys the principals outlined [here](https://hackmd.io/klvzLnzMR6GZBWtRU8HbDg#Requirements-on-SDFG).
     The main advantage of this structure is, that it is rather easy to determine
     if a transient is used anywhere else. This check, performed by
-    `is_interstate_transient()`. It is further speeded up by cashing some computation,
+    `is_shared_data()`. It is further speeded up by cashing some computation,
     thus such an object should not be used after interstate optimizations were applied
     to the SDFG.
 
@@ -40,13 +43,13 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         allow_none=False,
         desc="Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.",
     )
-    shared_transients = properties.DictProperty(
+    shared_data = properties.DictProperty(
         key_type=SDFG,
         value_type=set, #[str]
         default=None,
         allow_none=True,
-        desc="Maps SDFGs to the set of array transients that can not be removed. "
-        "The variable acts as a cache, and is managed by 'is_interstate_transient()'.",
+        desc="Maps SDFGs to the set of data that can not be removed. "
+        "The variable acts as a cache, and is managed by 'is_shared_data()'.",
     )
 
     def __init__(
@@ -60,11 +63,13 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             self.only_toplevel_maps = bool(only_toplevel_maps)
         if only_inner_maps is not None:
             self.only_inner_maps = bool(only_inner_maps)
-        self.shared_transients = {}
+        self.shared_data = {}
+
 
     @classmethod
     def expressions(cls) -> bool:
         raise RuntimeError("The `_MapFusionHelper` is not a transformation on its own.")
+
 
     def can_be_fused(
         self,
@@ -113,13 +118,12 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             elif is_nested_sdfg(sdfg):
                 return False
 
-        # We will now check if there exists a "remapping" that we can use.
-        if not self.map_parameter_compatible(
-            map_1=map_entry_1.map, map_2=map_entry_2.map, state=graph, sdfg=sdfg
-        ):
+        # We will now check if there exists a remapping that of the map parameter
+        if self.find_parameter_remapping(first_map=map_entry_1.map, second_map=map_entry_2.map) is None:
             return False
 
         return True
+
 
     @staticmethod
     def relocate_nodes(
@@ -216,44 +220,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         assert len(from_node.in_connectors) == 0
         assert len(from_node.out_connectors) == 0
 
-    @staticmethod
-    def map_parameter_compatible(
-        map_1: nodes.Map,
-        map_2: nodes.Map,
-        state: Union[SDFGState, SDFG],
-        sdfg: SDFG,
-    ) -> bool:
-        """Checks if the parameters of `map_1` are compatible with `map_2`.
-
-        The check follows the following rules:
-        - The names of the map variables must be the same, i.e. no renaming
-            is performed.
-        - The ranges must be the same.
-        """
-        range_1: subsets.Range = map_1.range
-        params_1: Sequence[str] = map_1.params
-        range_2: subsets.Range = map_2.range
-        params_2: Sequence[str] = map_2.params
-
-        # The maps are only fuseable if we have an exact match in the parameter names
-        #  this is because we do not do any renaming. This is in accordance with the
-        #  rules.
-        if set(params_1) != set(params_2):
-            return False
-
-        # Maps the name of a parameter to the dimension index
-        param_dim_map_1: Dict[str, int] = {pname: i for i, pname in enumerate(params_1)}
-        param_dim_map_2: Dict[str, int] = {pname: i for i, pname in enumerate(params_2)}
-
-        # To fuse the two maps the ranges must have the same ranges
-        for pname in params_1:
-            idx_1 = param_dim_map_1[pname]
-            idx_2 = param_dim_map_2[pname]
-            # TODO(phimuell): do we need to call simplify?
-            if range_1[idx_1] != range_2[idx_2]:
-                return False
-
-        return True
 
     @staticmethod
     def find_parameter_remapping(
@@ -268,7 +234,8 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         with parameters of the first map.
         Parameters that already have the correct name and compatible range, are not
         included in the return value, thus the keys and values are always different.
-        If no renaming at all is _needed_ then the function returns an empty `dict`.
+        If no renaming at is _needed_, i.e. all parameter have the same name and range,
+        then the function returns an empty `dict`.
         If no remapping exists, then the function will return `None`.
 
         Args:
@@ -282,20 +249,20 @@ class MapFusionHelper(transformation.SingleStateTransformation):
 
         if len(first_params) != len(second_params):
             return None
-        if len(first_params) == 0:  # Trivial maps
-            return {}
-
-        # Allows to map a name to the corresponding index
-        first_pmap: Dict[str, int] = {map_param: i for i, map_param in enumerate(first_params)}
-        second_pmap: Dict[str, int] = {map_param: i for i, map_param in enumerate(second_map)}
 
         # The ranges, however, we apply some post processing to them.
         simp = lambda e: symbolic.simplify_ext(symbolic.simplify(e))
-        first_rngs: List[Tuple[Any, Any, Any]] = [tuple(simp(r) for r in rng) for rng in first_map.range]
-        second_rngs: List[Tuple[Any, Any, Any]] = [tuple(simp(r) for r in rng) for rng in second_map.range]
+        first_rngs: Dict[str, Tuple[Any, Any, Any]] = {
+                param: tuple(simp(r) for r in rng)
+                for param, rng in zip(first_params, first_map.range)
+        }
+        second_rngs: Dict[Tuple[Any, Any, Any]] = {
+                param: tuple(simp(r) for r in rng)
+                for param, rng in zip(second_params, second_map.range)
+        }
 
-        # These are the parameters of the second map that have not yet associated to
-        #  a parameter of the second map.
+        # Parameters of the second map that have not yet been matched to a parameter
+        #  of the first map and vice versa.
         unmapped_second_params: Set[str] = set(second_params)
         unused_first_params: Set[str] = set(first_params)
 
@@ -303,18 +270,17 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         #  is needed then the parameter is not present in the mapping.
         final_mapping: Dict[str, str] = {}
 
-        # First we check if a remapping is needed at all, for this we look at the
-        #  parameter that are the same in both maps.
+        # First we identify the parameters that already have the correct name.
         for param in set(first_params).intersection(second_params):
-            first_rng = first_rngs[first_pmap[param]]
-            second_rng = second_rngs[second_pmap[param]]
+            first_rng = first_rngs[param]
+            second_rng = second_rngs[param]
 
             if first_rng == second_rng:
                 # They have the same name and the same range, this is already a match.
                 #  Because the names are already the same, we do not have to enter them
                 #  in the `final_mapping`
-                unmapped_second_params.pop(param)
-                unused_first_params.pop(param)
+                unmapped_second_params.discard(param)
+                unused_first_params.discard(param)
 
         # Check if no remapping is needed.
         if len(unmapped_second_params) == 0:
@@ -323,28 +289,31 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         # Now we go through all the parameters that we have not mapped yet.
         #  All of them will result in a remapping.
         for unmapped_second_param in unmapped_second_params:
-            second_rng = second_rngs[second_pmap[unmapped_second_param]]
+            second_rng = second_rngs[unmapped_second_param]
             assert unmapped_second_param not in final_mapping
 
             # Now look in all not yet used parameters of the first map which to use.
             for candidate_param in unused_first_params:
-                candidate_rng = first_rngs[first_pmap[candidate_param]]
+                candidate_rng = first_rngs[candidate_param]
                 if candidate_rng == second_rng:
                     final_mapping[unmapped_second_param] = candidate_param
+                    unused_first_params.discard(candidate_param)
                     break
             else:
                 # We did not find a candidate, so the remapping does not exist
                 return None
 
-            unused_first_params.pop(final_mapping[unmapped_second_param])
-
         assert len(unused_first_params) == 0
+        assert len(final_mapping) == len(first_params)
         return final_mapping
+
 
     def rename_map_parameters(
         self,
         first_map: nodes.Map,
         second_map: nodes.Map,
+        second_map_entry: nodes.MapEntry,
+        state: SDFGState,
     ) -> None:
         """Replaces the map parameters of the second map with names from the first.
 
@@ -353,112 +322,118 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         The replacement is computed by calling `self.find_parameter_remapping()`.
 
         Args:
-            first_map:  The first map (these parameters will be replaced).
-            second_map: The second map, these parameters acts as source.
+            first_map:  The first map (these are the final parameter).
+            second_map: The second map, this map will be replaced.
+            second_map_entry: The entry node of the second map.
+            state: The SDFGState on which we operate.
         """
-
         # Compute the replacement dict.
-        repl: Dict[str, str] = self.find_parameter_remapping(first_map=first_map, second_map=second_map)
+        repl_dict: Dict[str, str] = self.find_parameter_remapping(first_map=first_map, second_map=second_map)
 
-        if repl is None:
+        if repl_dict is None:
             raise RuntimeError("The replacement does not exist")
-        if len(repl) == 0:
+        if len(repl_dict) == 0:
             return
 
+        second_map_scope = state.scope_subgraph(entry_node=second_map_entry)
         # Why is this thing is symbolic and not in replace?
         symbolic.safe_replace(
-                mapping=repl,
-                replace_callback=
+                mapping=repl_dict,
+                replace_callback=second_map_scope.replace_dict,
+        )
+
+        # For some odd reason the replace function does not modify the range and
+        #  parameter of the map, so we will do it the hard way.
+        second_map.params = copy.deepcopy(first_map.params)
+        second_map.range = copy.deepcopy(first_map.range)
 
 
-        # Parameters are not replaced in the map even they are included
-
-
-
-
-
-
-
-
-
-
-
-
-    def is_interstate_transient(
+    def is_shared_data(
         self,
-        transient: Union[str, nodes.AccessNode],
+        data: nodes.AccessNode,
         sdfg: dace.SDFG,
-        state: dace.SDFGState,
     ) -> bool:
-        """Tests if `transient` is an interstate transient, an can not be removed.
+        """Tests if `data` is interstate data, an can not be removed.
 
-        Essentially this function checks if a transient might be needed in a
-        different state in the SDFG, because it transmit information from
-        one state to the other.
-        If only the name of the data container is passed the function will
-        first look for an corresponding access node.
+        Interstate data is used to transmit data between multiple state or
+        by extension within the state, and thus can not be removed by the
+        serial map fusion.
 
-        The set of these "interstate transients" is computed once per SDFG.
-        The result is then cached internally for later reuse.
+        The function determine this properties, according to the following rules:
+        - The access node must be in the top scope.
+        - The underlying data is global.
+        - The `data` descriptor is used multiple times with the same state.
+        - `data` has an out or in degree of zero.
+        - The underlying data is referred to in another state.
+
+        The function computes this information and then caches it for later use.
 
         Args:
             transient: The transient that should be checked.
             sdfg: The SDFG containing the array.
-            state: If given the state the node is located in.
 
         Note:
-            This function build upon the structure of the SDFG that is outlined
-            in the HackMD document.
+            - This function does not inspect the interstate edges, instead the
+                set of data that is accessed in interstate edges is approximated
+                with the set of sink nodes.
+            - This function works best if the SDFG uses SSA style.
         """
+        if sdfg not in self.shared_data:
+            self._compute_shared_data(sdfg)
+        return data.data in self.shared_data[sdfg]
 
-        # According to [rule 6](https://hackmd.io/klvzLnzMR6GZBWtRU8HbDg#Requirements-on-SDFG)
-        #  the set of such transients is partially given by all source access nodes.
-        #  Because of rule 3 we also include all scalars in this set, as an over
-        #  approximation. Furthermore, because simplify might violate rule 3,
-        #  we also include the sink nodes.
 
-        # See if we have already computed the set
-        if sdfg in self.shared_transients:
-            shared_sdfg_transients: Set[str] = self.shared_transients[sdfg]
-        else:
-            # SDFG is not known so we have to compute the set.
-            shared_sdfg_transients = set()
-            for state_to_scan in sdfg.all_states():
-                # TODO(phimuell): Use `all_nodes_recursive()` once it is available.
-                shared_sdfg_transients.update(
-                    [
-                        node.data
-                        for node in itertools.chain(
-                            state_to_scan.source_nodes(), state_to_scan.sink_nodes()
-                        )
-                        if isinstance(node, nodes.AccessNode)
-                        and sdfg.arrays[node.data].transient
-                    ]
-                )
-            self.shared_transients[sdfg] = shared_sdfg_transients
+    def _compute_shared_data(
+        self,
+        sdfg: dace.SDFG,
+    ) -> None:
+        """This function computes the set of shared data for SDFG `sdfg`.
 
-        if isinstance(transient, str):
-            name = transient
-            matching_access_nodes = [node for node in state.data_nodes() if node.data == name]
-            # Rule 8: There is only one access node per state for data.
-            assert len(matching_access_nodes) == 1
-            transient = matching_access_nodes[0]
-        else:
-            assert isinstance(transient, nodes.AccessNode)
-            name = transient.data
+        See the documentation for `self.is_shared_data()` for a description.
 
-        desc: data.Data = sdfg.arrays[name]
-        if not desc.transient:
-            return True
-        if isinstance(desc, data.Scalar):
-            return True  # Scalars can not be removed by fusion anyway.
+        Args:
+            sdfg: The SDFG for which the set of shared data should be computed.
+        """
+        # Shared data of this SDFG.
+        shared_data: Set[str] = set()
 
-        # Rule 8: If degree larger than one then it is used within the state.
-        if state.out_degree(transient) > 1:
-            return True
+        # Add all global data.
+        for data_name, data_desc in sdfg.arrays.items():
+            if not data_desc.transient:
+                shared_data.add(data_name)
 
-        # Now we check if it is used in a different state.
-        return name in shared_sdfg_transients
+        # We go through all states and classify the nodes, according to the rules.
+        prevously_seen_data: Set[str] = set()
+        for state in sdfg.nodes():
+            scope_dict = state.scope_dict()
+            for access_node in state.data_nodes():
+                if scope_dict[access_node] is not None:
+                    # We are only interested in global data.
+                    pass
+                elif access_node.data in shared_data:
+                    # The data was already determined to be shared data
+                    pass
+                elif access_node.data in prevously_seen_data:
+                    # We have seen this data before, either in this state or in
+                    #  a previous one, but we did not classifies it as shared,
+                    #  let's do this now. Note that we do not remove the data
+                    #  also from `previously_seen_data`.
+                    shared_data.add(access_node.data)
+                elif state.out_degree(access_node) == 0:
+                    # Sink and source nodes also have to be kept.
+                    shared_data.add(access_node.data)
+                elif state.in_degree(access_node) == 0:
+                    shared_data.add(access_node.data)
+                else:
+                    # The node was not classified as shared data, so we record that
+                    #  we saw it. Note that a node that was immediately classified
+                    #  as shared node will never be added to this set, but a data
+                    #  that was found twice will be inside this list.
+                    prevously_seen_data.add(access_node.data)
+
+        # Update the internal cache
+        self.shared_data[sdfg] = shared_data
+
 
     def partition_first_outputs(
         self,
@@ -513,6 +488,13 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         #  They are not yet modified, that they match each other.
         map_params_1: Sequence[str] = map_exit_1.map.params
         map_params_2: Sequence[str] = map_entry_2.map.params
+
+        # Compute the renaming that for translating the parameter of the _second_
+        #  map to the ones used by the first map.
+        repl_dict: Dict[str, str] = self.find_parameter_remapping(
+                first_map=map_exit_1.map,
+                second_map=map_entry_2.map,
+        )
 
         # Set of intermediate nodes that we have already processed.
         processed_inter_nodes: Set[nodes.Node] = set()
@@ -603,8 +585,9 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             if producer_edge.data.wcr is not None:
                 return None
 
-
             if len(downstream_nodes) == 0:
+                # TODO(phimuell): Refactor this if such that the loop is only there once.
+
                 # There is nothing between intermediate node and the entry of the
                 #  second map, thus the edge belongs either in `\mathbb{S}` or
                 #  `\mathbb{E}`.
@@ -622,21 +605,28 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                 consumers = find_downstream_consumers(state=state, begin=intermediate_node)
 
                 for consumer_node, consumer_edge in consumers:
-                    assert self.map_parameter_compatible(map_exit_1.map, map_entry_2.map, state, sdfg)
-                    # Tests if consumer consume less or equal the amount we generate.
-                    if not producer_subset.covers(consumer_edge.data.src_subset):
-                        return None
                     if consumer_node is map_entry_2:  # Dynamic map range.
                         return None
                     if isinstance(consumer_node, nodes.LibraryNode):
                         # TODO(phimuell): Allow some library nodes.
                         return None
 
+                    # Tests if consumer consume less or equal the amount we generate.
+                    #  If the source of the consumer is not set, we can not check what it reads.
+                    if consumer_edge.data.src_subset is None:
+                        return None
+                    #  For that we have to perform a replace operation of the consumer .
+                    mod_consumer_subset = copy.deepcopy(consumer_edge.data.src_subset)
+                    symbolic.safe_replace(mapping=repl_dict, replace_callback=mod_consumer_subset.replace)
+
+                    if not producer_subset.covers(mod_consumer_subset):
+                        return None
+
                 # Note that "remove" has a special meaning here, regardless of the
                 #  output of the check function, from within the second map we remove
                 #  the intermediate, it has more the meaning of "do we need to
                 #  reconstruct it after the second map again?"
-                if self.is_interstate_transient(intermediate_node, sdfg, state):
+                if self.is_shared_data(intermediate_node, sdfg):
                     shared_outputs.add(out_edge)
                 else:
                     exclusive_outputs.add(out_edge)
@@ -658,14 +648,20 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                         found_second_entry = True
                         consumers = find_downstream_consumers(state=state, begin=edge)
                         for consumer_node, feed_edge in consumers:
-                            assert self.map_parameter_compatible(map_exit_1.map, map_entry_2.map, state, sdfg)
-                            # Tests if consumer consume less or equal the amount we generate.
-                            if not producer_subset.covers(consumer_edge.data.src_subset):
-                                return None
                             if consumer_node is map_entry_2:  # Dynamic map range.
                                 return None
                             if isinstance(consumer_node, nodes.LibraryNode):
                                 # TODO(phimuell): Allow some library nodes.
+                                return None
+
+                            # Tests if consumer consume less or equal the amount we generate.
+                            #  If the source of the consumer is not set, we can not check what it reads.
+                            if consumer_edge.data.src_subset is None:
+                                return None
+                            #  For that we have to perform a replace operation of the consumer .
+                            mod_consumer_subset = copy.deepcopy(consumer_edge.data.src_subset)
+                            symbolic.safe_replace(mapping=repl_dict, replace_callback=mod_consumer_subset.replace)
+                            if not producer_subset.covers(mod_consumer_subset):
                                 return None
                     else:
                         # Ensure that there is no path that leads to the second map.
@@ -858,7 +854,3 @@ def find_upstream_producers(
         only_tasklets=only_tasklets,
         reverse=True,
     )
-
-
-
-

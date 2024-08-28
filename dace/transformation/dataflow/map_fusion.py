@@ -3,7 +3,6 @@
 
 from .map_fusion_serial import SerialMapFusion
 from .map_fusion_parallel import ParallelMapFusion
-from .map_fusion_original import MapFusionOriginal
 
 # Compatibility with previous versions of DaCe and clients.
 MapFusion = SerialMapFusion

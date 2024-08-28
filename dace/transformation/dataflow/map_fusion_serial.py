@@ -40,6 +40,7 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
 
     Notes:
         - This transformation modifies more nodes than it matches!
+        - Run simplify to get ri of excess keep alive nodes
     """
 
     map_exit1 = transformation.transformation.PatternNode(nodes.MapExit)
@@ -52,6 +53,7 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
     ) -> None:
         super().__init__(**kwargs)
 
+
     @classmethod
     def expressions(cls) -> Any:
         """Get the match expression.
@@ -63,6 +65,7 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
         from the first Map or an outgoing connection to the second Map entry.
         """
         return [dace.sdfg.utils.node_path_graph(cls.map_exit1, cls.access_node, cls.map_entry2)]
+
 
     def can_be_applied(
         self,
@@ -105,6 +108,7 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
             return False
         return True
 
+
     def apply(self, graph: Union[dace.SDFGState, dace.SDFG], sdfg: dace.SDFG) -> None:
         """Performs the serial Map fusing.
 
@@ -124,12 +128,19 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
         assert isinstance(graph, dace.SDFGState)
         assert isinstance(self.map_exit1, nodes.MapExit)
         assert isinstance(self.map_entry2, nodes.MapEntry)
-        assert self.map_parameter_compatible(self.map_exit1.map, self.map_entry2.map, graph, sdfg)
 
         map_exit_1: nodes.MapExit = self.map_exit1
         map_entry_2: nodes.MapEntry = self.map_entry2
         map_exit_2: nodes.MapExit = graph.exit_node(self.map_entry2)
         map_entry_1: nodes.MapEntry = graph.entry_node(self.map_exit1)
+
+        # Before we do anything we perform the renaming.
+        self.rename_map_parameters(
+                first_map=map_exit_1.map,
+                second_map=map_entry_2.map,
+                second_map_entry=map_entry_2,
+                state=graph,
+        )
 
         output_partition = self.partition_first_outputs(
             state=graph,
@@ -186,6 +197,7 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
         # Now turn the second output node into the output node of the first Map.
         map_exit_2.map = map_entry_1.map
 
+
     @staticmethod
     def handle_intermediate_set(
         intermediate_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]],
@@ -215,9 +227,6 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
         Notes:
             Before the transformation the `state` does not have to be valid and
             after this function has run the state is (most likely) invalid.
-
-        Todo:
-            Rewrite using `MemletTree`.
         """
 
         # Essentially this function removes the AccessNode between the two maps.

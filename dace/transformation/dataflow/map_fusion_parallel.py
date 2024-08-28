@@ -39,6 +39,7 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         desc="Only perform fusing if the Maps share a node as parent.",
     )
 
+
     def __init__(
         self,
         only_if_common_ancestor: Optional[bool] = None,
@@ -48,12 +49,14 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
             self.only_if_common_ancestor = only_if_common_ancestor
         super().__init__(**kwargs)
 
+
     @classmethod
     def expressions(cls) -> Any:
         # This just matches _any_ two Maps inside a state.
         state = graph.OrderedMultiDiConnectorGraph()
         state.add_nodes_from([cls.map_entry1, cls.map_entry2])
         return [state]
+
 
     def can_be_applied(
         self,
@@ -67,7 +70,7 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         map_entry_2: nodes.MapEntry = self.map_entry2
 
         # Check the structural properties of the maps, this will also ensure that
-        #  the two maps are in the same scope.
+        #  the two maps are in the same scope and the parameters can be renamed
         if not self.can_be_fused(
             map_entry_1=map_entry_1,
             map_entry_2=map_entry_2,
@@ -92,6 +95,7 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
 
         return True
 
+
     def apply(self, graph: Union[SDFGState, SDFG], sdfg: SDFG) -> None:
         """Performs the Map fusing.
 
@@ -105,6 +109,14 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         map_exit_1: nodes.MapExit = graph.exit_node(map_entry_1)
         map_entry_2: nodes.MapEntry = self.map_entry2
         map_exit_2: nodes.MapExit = graph.exit_node(map_entry_2)
+
+        # Before we do anything we perform the renaming.
+        self.rename_map_parameters(
+                first_map=map_entry_1.map,
+                second_map=map_entry_2.map,
+                second_map_entry=map_entry_2,
+                state=graph,
+        )
 
         for to_node, from_node in zip((map_entry_1, map_exit_1), (map_entry_2, map_exit_2)):
             self.relocate_nodes(
