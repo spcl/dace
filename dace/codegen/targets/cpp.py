@@ -239,6 +239,7 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
         root = name.split('.')[0]
         if root in sdfg.arrays and isinstance(sdfg.arrays[root], data.Structure):
             name = name.replace('.', '->')
+            name = name.replace('->->->', '...')  # Special case
 
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
@@ -395,6 +396,7 @@ def emit_memlet_reference(dispatcher,
     # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
     # TODO: if not byval
     expr = expr.replace('.', '->')
+    expr = expr.replace('->->->', '...')  # Special case
 
     return (typedef, ref + pointer_name, expr)
 
@@ -1275,7 +1277,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
     def visit_Call(self, node: ast.Call):
         funcname = rname(node.func)
-        if (funcname in self.sdfg.callback_mapping or (funcname in self.sdfg.symbols and isinstance(self.sdfg.symbols[funcname], dtypes.callback))):
+        if (funcname in self.sdfg.callback_mapping
+                or (funcname in self.sdfg.symbols and isinstance(self.sdfg.symbols[funcname], dtypes.callback))):
             # Visit arguments without changing their types
             self.allow_casts = False
             result = self.generic_visit(node)

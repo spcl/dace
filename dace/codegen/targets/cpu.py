@@ -60,7 +60,7 @@ class CPUCodeGen(TargetCodeGenerator):
             for k, v in struct.members.items():
                 if isinstance(v, data.Structure):
                     _visit_structure(v, args, f'{prefix}->{k}')
-                elif isinstance(v, data.ContainerArray):
+                elif isinstance(v, data.ContainerArray) and isinstance(v.stype, data.Structure):
                     _visit_structure(v.stype, args, f'{prefix}->{k}')
                 elif isinstance(v, data.Data):
                     args[f'{prefix}->{k}'] = v
