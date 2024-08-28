@@ -549,7 +549,8 @@ def auto_optimize(sdfg: SDFG,
                   symbols: Dict[str, int] = None,
                   use_stencil_tiling: bool = True,
                   use_wcr_tiling: bool = True,
-                  use_gpu_storage: bool = False) -> SDFG:
+                  use_gpu_storage: bool = False,
+                  move_loop_into_map: bool = True) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -613,7 +614,10 @@ def auto_optimize(sdfg: SDFG,
             applied_fusions += greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
         sdfg.simplify()
         # Move Loops inside Maps when possible
-        applied_moves = sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+        if move_loop_into_map:
+            applied_moves = sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+        else:
+            applied_moves = 0
     sdfg.simplify()
 
 
@@ -659,7 +663,10 @@ def auto_optimize(sdfg: SDFG,
             applied_fusions += greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
         sdfg.simplify()
         # Move Loops inside Maps when possible
-        applied_moves = sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+        if move_loop_into_map:
+            applied_moves = sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+        else:
+            applied_moves = 0
     sdfg.simplify()
 
     # Tiled WCR and streams
@@ -678,7 +685,10 @@ def auto_optimize(sdfg: SDFG,
             applied_fusions += greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
         sdfg.simplify()
         # Move Loops inside Maps when possible
-        applied_moves = sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+        if move_loop_into_map:
+            applied_moves = sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+        else:
+            applied_moves = 0
     sdfg.simplify()
 
     # TODO(later): Safe vectorization
