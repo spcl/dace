@@ -516,9 +516,9 @@ class SDFG(ControlFlowRegion):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            # Skip derivative attributes
+            # Skip derivative attributes and ID
             if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
-                     '_cfg_list', '_transformation_hist'):
+                     '_cfg_list', '_transformation_hist', 'id'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes

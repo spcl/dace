@@ -201,7 +201,6 @@ class Memlet(object):
         node = object.__new__(Memlet)
 
         # Set properties
-        node._id = self._id
         node._volume = dcpy(self._volume, memo=memo)
         node._dynamic = self._dynamic
         node._subset = dcpy(self._subset, memo=memo)
@@ -213,6 +212,8 @@ class Memlet(object):
         node._wcr_nonatomic = self._wcr_nonatomic
         node._allow_oob = self._allow_oob
         node._is_data_src = self._is_data_src
+
+        node._id = generate_element_id(node)
 
         # Nullify graph references
         node._sdfg = None

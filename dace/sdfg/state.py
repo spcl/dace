@@ -1174,7 +1174,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k in ('_parent_graph', '_sdfg'):  # Skip derivative attributes
+            if k in ('_parent_graph', '_sdfg', 'id'):  # Skip derivative attributes and ID
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
 

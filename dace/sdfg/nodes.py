@@ -249,7 +249,6 @@ class AccessNode(Node):
 
     def __deepcopy__(self, memo):
         node = object.__new__(AccessNode)
-        node._id = self._id
         node._data = self._data
         node._setzero = self._setzero
         node._instrument = self._instrument
@@ -257,6 +256,9 @@ class AccessNode(Node):
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
+
+        node._id = graph.generate_element_id(node)
+
         return node
 
     @property
@@ -578,6 +580,9 @@ class NestedSDFG(CodeNode):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
+            # Skip ID.
+            if k in ('id'):
+                continue
             setattr(result, k, dcpy(v, memo))
         if result._sdfg is not None:
             result._sdfg.parent_nsdfg_node = result
