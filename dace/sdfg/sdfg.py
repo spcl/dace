@@ -642,7 +642,7 @@ class SDFG(ControlFlowRegion):
                 for key, value in json_obj.items():
                     if (isinstance(key, str)
                             and (key.startswith('_meta_')
-                                 or key in ['name', 'hash', 'orig_sdfg', 'transformation_hist', 'instrument'])):
+                                 or key in ['name', 'hash', 'orig_sdfg', 'transformation_hist', 'instrument', 'id'])):
                         keys_to_delete.append(key)
                     else:
                         kv_to_recurse.append((key, value))
