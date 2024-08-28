@@ -1454,7 +1454,7 @@ DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_strea
                 continue
 
             # If a view, get the relevant access node
-            dstnode = edge.dst
+            dstnode = dfg.memlet_path(edge)[-1].dst
             while isinstance(sdfg.arrays[dstnode.data], data.View):
                 dstnode = dfg.out_edges(dstnode)[0].dst
 
