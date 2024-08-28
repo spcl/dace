@@ -260,6 +260,16 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     return name
 
 
+def get_abs_base_type_and_ptr_count(dtype: dtypes.typeclass) -> Tuple[dtypes.typeclass, int]:
+    base_type = dtype
+    ptr_count = 0
+    while isinstance(base_type, (dace.pointer, dace.fixedlenarray)):
+        ptr_count += 1
+        base_type = base_type.base_type
+
+    return base_type, ptr_count
+
+
 def emit_memlet_reference(dispatcher,
                           sdfg: SDFG,
                           memlet: mmlt.Memlet,
@@ -387,7 +397,7 @@ def emit_memlet_reference(dispatcher,
         ref = '&'
     else:
         # Cast as necessary
-        expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
+        expr = make_ptr_vector_cast(datadef + offset_expr, defined_ctype, conntype, is_scalar, defined_type)
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
@@ -596,11 +606,16 @@ def cpp_array_expr(sdfg,
         return offset_cppstr
 
 
-def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar, defined_type):
+def make_ptr_vector_cast(dst_expr: str, dst_dtype: dtypes.typeclass, src_dtype: dtypes.typeclass, is_scalar: bool,
+                         defined_type: DefinedType):
     """
     If there is a type mismatch, cast pointer type. Used mostly in vector types.
     """
-    if src_dtype != dst_dtype:
+    src_base, src_ptrs = get_abs_base_type_and_ptr_count(src_dtype)
+    dst_base, dst_ptrs = get_abs_base_type_and_ptr_count(dst_dtype)
+    dst_ptrs -= dst_expr.count('[')  # Count dereferences
+
+    if src_base != dst_base:
         if is_scalar:
             dst_expr = '*(%s)(&%s)' % (dtypes.pointer(src_dtype).as_arg(''), dst_expr)
         elif src_dtype.base_type != dst_dtype:
@@ -610,8 +625,15 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar, defined_type
                 dst_expr = dst_expr[:-3]
             else:
                 dst_expr = '&' + dst_expr
-    elif not is_scalar:
-        dst_expr = '&' + dst_expr
+    elif src_ptrs < dst_ptrs:
+        dst_expr = '*' * (dst_ptrs - src_ptrs) + dst_expr
+    elif dst_ptrs < src_ptrs:
+        if dst_expr.endswith('[0]'):  # Skip expressions of the kind "&x[0]"
+            dst_expr = dst_expr[:-3]
+            dst_ptrs += 1
+
+        dst_expr = '&' * (src_ptrs - dst_ptrs) + dst_expr
+
     return dst_expr
 
 

@@ -256,8 +256,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         value = f'({atype.as_arg("")}){value}'
 
         if not declared:
-            ctypedef = dtypes.pointer(nodedesc.dtype)
-            self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
+            self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, atype)
             if isinstance(nodedesc, data.StructureView):
                 for k, v in nodedesc.members.items():
                     if isinstance(v, data.Data):
@@ -1132,9 +1131,9 @@ class CPUCodeGen(TargetCodeGenerator):
                                                       dtypes.AllocationLifetime.Persistent,
                                                       dtypes.AllocationLifetime.External)
                         try:
-                            defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
+                            defined_type, defined_ctype = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
                         except KeyError:
-                            defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                            defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
 
                         if defined_type == DefinedType.Scalar:
                             mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
@@ -1171,7 +1170,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         else:
                             desc_dtype = desc.dtype
                             expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
-                            write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
+                            write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, defined_ctype)
 
                     # Write out
                     result.write(write_expr, sdfg, state_id, node)
@@ -1393,9 +1392,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # If there is a type mismatch, cast pointer
         expr = codegen.make_ptr_vector_cast(expr, ctypedef, conntype, is_scalar, var_type)
-
-        if var_type == DefinedType.Scalar:
-            expr = self._make_pointer_difference(conntype, ctypedef) + expr
 
         defined = None
 

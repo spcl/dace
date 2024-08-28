@@ -39,11 +39,11 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
 
     # If nested SDFG, try to use internal array type
     if isinstance(node, nodes.NestedSDFG):
-        scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
+        scalar = (isinstance(node.sdfg.arrays[cname], (data.Scalar, data.Structure)) and allocated_as_scalar)
         dtype = node.sdfg.arrays[cname].dtype
         ctype = (dtype if scalar else dtypes.pointer(dtype))
     elif e.data.data is not None:  # Obtain type from memlet
-        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
+        scalar |= isinstance(sdfg.arrays[e.data.data], (data.Scalar, data.Structure))
         if isinstance(node, nodes.LibraryNode):
             scalar &= allocated_as_scalar
         dtype = sdfg.arrays[e.data.data].dtype
@@ -79,11 +79,11 @@ def infer_connector_types(sdfg: SDFG):
                     if isinstance(node, nodes.NestedSDFG):
                         # NOTE: Scalars allocated on the host can be read by GPU kernels. Therefore, we do not need
                         # to use the `allocated_as_scalar` check here.
-                        scalar = isinstance(node.sdfg.arrays[cname], data.Scalar)
+                        scalar = isinstance(node.sdfg.arrays[cname], (data.Scalar, data.Structure))
                         dtype = node.sdfg.arrays[cname].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
-                        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
+                        scalar |= isinstance(sdfg.arrays[e.data.data], (data.Scalar, data.Structure))
                         if isinstance(node, nodes.LibraryNode):
                             scalar &= allocated_as_scalar
                         dtype = sdfg.arrays[e.data.data].dtype
