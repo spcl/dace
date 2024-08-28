@@ -55,7 +55,7 @@ class Memlet(object):
                              '(non-atomic) writes in resulting code')
     allow_oob = Property(dtype=bool, default=False, desc='Bypass out-of-bounds validation')
 
-    id = Property(dtype=str, allow_none=False)
+    guid = Property(dtype=str, allow_none=False)
 
     def __init__(self,
                  expr: Optional[str] = None,
@@ -140,7 +140,7 @@ class Memlet(object):
         self.debuginfo = debuginfo
         self.allow_oob = allow_oob
 
-        self.id = generate_element_id(self)
+        self.guid = generate_element_id(self)
 
 
     @staticmethod
@@ -213,7 +213,7 @@ class Memlet(object):
         node._allow_oob = self._allow_oob
         node._is_data_src = self._is_data_src
 
-        node._id = generate_element_id(node)
+        node._guid = generate_element_id(node)
 
         # Nullify graph references
         node._sdfg = None

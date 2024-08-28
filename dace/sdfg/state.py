@@ -1100,7 +1100,7 @@ class ControlGraphView(BlockGraphView, abc.ABC):
 @make_properties
 class ControlFlowBlock(BlockGraphView, abc.ABC):
 
-    id = Property(dtype=str, allow_none=False)
+    guid = Property(dtype=str, allow_none=False)
 
     is_collapsed = Property(dtype=bool, desc='Show this block as collapsed', default=False)
 
@@ -1125,7 +1125,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.post_conditions = {}
         self.invariant_conditions = {}
 
-        self.id = generate_element_id(self)
+        self.guid = generate_element_id(self)
 
     def nodes(self):
         return []
@@ -1174,7 +1174,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k in ('_parent_graph', '_sdfg', 'id'):  # Skip derivative attributes and ID
+            if k in ('_parent_graph', '_sdfg', 'guid'):  # Skip derivative attributes and GUID
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
 
