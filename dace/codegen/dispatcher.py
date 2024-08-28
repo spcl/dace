@@ -20,9 +20,9 @@ class DefinedType(aenum.AutoNumberEnum):
         :see: DefinedMemlets
     """
     Pointer = ()  # Pointer
-    Scalar = ()   # A copyable scalar moved by value (e.g., POD)
-    Object = ()   # An object moved by reference
-    Stream = ()   # A stream object moved by reference and accessed via a push/pop API
+    Scalar = ()  # A copyable scalar moved by value (e.g., POD)
+    Object = ()  # An object moved by reference
+    Stream = ()  # A stream object moved by reference and accessed via a push/pop API
     StreamArray = ()  # An array of Streams
     FPGA_ShiftRegister = ()  # A shift-register object used in FPGA code generation
     ArrayInterface = ()  # An object representing an interface to an array, used mostly in FPGA
@@ -83,7 +83,12 @@ class DefinedMemlets:
 
         raise KeyError("Variable {} has not been defined".format(name))
 
-    def add(self, name: str, dtype: DefinedType, ctype: dtypes.typeclass, ancestor: int = 0, allow_shadowing: bool = False):
+    def add(self,
+            name: str,
+            dtype: DefinedType,
+            ctype: dtypes.typeclass,
+            ancestor: int = 0,
+            allow_shadowing: bool = False):
         if not isinstance(ctype, dtypes.typeclass):
             raise NotImplementedError('No longer supported')
         if not isinstance(name, str):
@@ -596,6 +601,9 @@ class TargetDispatcher(object):
         """
         state = sdfg.node(state_id)
         target = self.get_copy_dispatcher(src_node, dst_node, edge, sdfg, state)
+        if target is None:
+            raise ValueError(
+                f'Could not dispatch copy code generator for {src_node} -> {dst_node} in state {state.label}')
 
         # Dispatch
         self._used_targets.add(target)
