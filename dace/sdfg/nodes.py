@@ -257,7 +257,7 @@ class AccessNode(Node):
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
 
-        node._id = graph.generate_element_id(node)
+        node._guid = graph.generate_element_id(node)
 
         return node
 
