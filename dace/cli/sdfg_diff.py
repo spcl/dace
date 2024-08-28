@@ -2,16 +2,20 @@
 """ SDFG diff tool. """
 
 import argparse
+from hashlib import sha256
+import json
 import os
 from typing import Dict, Union
 import dace
 from dace import memlet as mlt
 from dace.sdfg import nodes as nd
+from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowBlock
+import dace.serialize
 
 
-DiffableT = Union[ControlFlowBlock, nd.Node, mlt.Memlet, InterstateEdge]
+DiffableT = Union[ControlFlowBlock, nd.Node, MultiConnectorEdge[mlt.Memlet], Edge[InterstateEdge]]
 
 
 def _sdfg_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG):
@@ -35,9 +39,52 @@ def _sdfg_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG):
 
     added_keys = b_keys - a_keys
     removed_keys = a_keys - b_keys
+    changed_keys = set()
 
-    print(added_keys)
-    print(removed_keys)
+    remaining_keys = a_keys - removed_keys
+    if remaining_keys != b_keys - added_keys:
+        raise RuntimeError(
+            'The sets of remaining keys between graphs A and B after accounting for added and removed keys do not match'
+        )
+    for k in remaining_keys:
+        el_a = all_id_elements_A[k]
+        el_b = all_id_elements_B[k]
+
+        try:
+            if isinstance(el_a, Edge):
+                attr_a = dace.serialize.all_properties_to_json(el_a.data)
+            else:
+                attr_a = dace.serialize.all_properties_to_json(el_a)
+            hash_a = sha256(json.dumps(attr_a).encode('utf-8')).hexdigest()
+        except KeyError:
+            hash_a = None
+        try:
+            if isinstance(el_b, Edge):
+                attr_b = dace.serialize.all_properties_to_json(el_b.data)
+            else:
+                attr_b = dace.serialize.all_properties_to_json(el_b)
+            hash_b = sha256(json.dumps(attr_b).encode('utf-8')).hexdigest()
+        except KeyError:
+            hash_b = None
+
+        if hash_a != hash_b:
+            changed_keys.add(k)
+
+    print('Removed Elements:')
+    for k in removed_keys:
+        print(all_id_elements_A[k])
+
+    print('')
+
+    print('Added Elements:')
+    for k in added_keys:
+        print(all_id_elements_B[k])
+
+    print('')
+
+    print('Changed Elements:')
+    for k in changed_keys:
+        print(all_id_elements_B[k])
 
 
 def main():
