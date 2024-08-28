@@ -581,7 +581,7 @@ class NestedSDFG(CodeNode):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             # Skip GUID.
-            if k in ('guid'):
+            if k in ('guid',):
                 continue
             setattr(result, k, dcpy(v, memo))
         if result._sdfg is not None:
