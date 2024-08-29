@@ -388,3 +388,4 @@ if __name__ == '__main__':
     test_fusion_with_empty_memlet()
     test_fusion_with_nested_sdfg_0()
     test_fusion_with_nested_sdfg_1()
+    print("SUCCESS")

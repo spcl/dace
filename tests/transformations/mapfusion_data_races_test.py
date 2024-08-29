@@ -87,6 +87,7 @@ def test_rw_data_race_3_mf():
 
 def test_rw_data_race_4_mf():
     # It is technically possible to fuse it, because there is only a point wise dependency.
+    #  However, it is very hard to detect and handle correct.
     sdfg = rw_data_race_4.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(MapFusion)
     map_entry_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
@@ -95,8 +96,9 @@ def test_rw_data_race_4_mf():
 
 if __name__ == "__main__":
     test_rw_data_race()
-    test_rw_data_race_2_mf()
     test_rw_data_race_2_sgf()
+    test_rw_data_race_2_mf()
     test_rw_data_race_3_sgf()
     test_rw_data_race_3_mf()
     test_rw_data_race_4_mf()
+    print("SUCCESS")
