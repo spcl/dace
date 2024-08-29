@@ -7,7 +7,7 @@ import dace
 
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
-from dace.transformation.dataflow import MapFusion, MapFusionOriginal
+from dace.transformation.dataflow import MapFusion
 
 
 def count_node(sdfg: SDFG, node_type):

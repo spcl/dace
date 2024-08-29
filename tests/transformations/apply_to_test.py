@@ -2,7 +2,6 @@
 """ Tests the `apply_to` transformation API. """
 import dace
 from dace.sdfg import utils as sdutil
-#from dace.transformation.dataflow import MapFusionOriginal as  MapFusion
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.subgraph import SubgraphFusion
 from dace.transformation.passes.pattern_matching import enumerate_matches
