@@ -406,6 +406,10 @@ class SerialMapFusion(mfh.MapFusionHelper):
     ) -> List[subsets.Subset]:
         """Finds all subsets involving node `node`.
 
+        The function will not start a search for all consumer/producers.
+        Instead it will locate the edges which is immediately inside the
+        map scope.
+
         Args:
             node: The access node that should be examined.
             scope_node: We are only interested in data that flows through this node.
@@ -423,7 +427,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
         else:
             used_for_reading = False
             edges_to_inspect = state.out_edges(scope_node)
-            test_edge = lambda e: e.dst == node
+            test_edge = lambda e: (e.dst == node)
             get_subset = lambda e: e.data.dst_subset
 
         found_subsets: List[subsets.Subset] = []
@@ -431,10 +435,10 @@ class SerialMapFusion(mfh.MapFusionHelper):
             if not test_edge(edge):
                 continue
             if used_for_reading:
-                consumer_or_producer = mfh.find_downstream_consumers(state, begin=edge)
+                inner_edges = state.out_edges_by_connector(scope_node, "OUT_" + edge.dst_conn[3:])
             else:
-                consumer_or_producer = mfh.find_upstream_producers(state, begin=edge)
-            found_subsets.extend(get_subset(e) for _, e in consumer_or_producer)
+                inner_edges = state.in_edges_by_connector(scope_node, "IN_" + edge.src_conn[4:])
+            found_subsets.extend(get_subset(e) for e in inner_edges)
         assert len(found_subsets) > 0, f"Could not find any subsets."
         assert not any(subset is None for subset in found_subsets)
 
