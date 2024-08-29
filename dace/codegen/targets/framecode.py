@@ -216,10 +216,10 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             self.statestruct.extend(env.state_fields)
 
         # GRAPHCORE
-        self.statestruct.append('IPUModel ipuModel;')
-        self.statestruct.append('Device device = ipuModel.createDevice();')
-        self.statestruct.append('Target target = device.getTarget();')
-        self.statestruct.append('Graph graph(target);') 
+        # self.statestruct.append('IPUModel ipuModel;')
+        # self.statestruct.append('Device device = ipuModel.createDevice();')
+        # self.statestruct.append('Target target = device.getTarget();')
+        # self.statestruct.append('Graph graph(target);') 
 
 
         # Instrumentation preamble

@@ -24,9 +24,9 @@ class ExpandMMPopLib(ExpandTransformation):
 
         init = f""" 
             // Add variables to the graph
-            Tensor m1 = __state->graph.addVariable(FLOAT, {900, 600}, "m1");
-            Tensor m2 = __state->graph.addVariable(FLOAT, {600, 300}, "m2");
-            Tensor m3 = __state->graph.addVariable(FLOAT, {300, 200}, "m3");
+            Tensor m1 = __state->graph.addVariable(FLOAT, '{'900, 600'}', "m1");
+            Tensor m2 = __state->graph.addVariable(FLOAT, '{'600, 300'}', "m2");
+            Tensor m3 = __state->graph.addVariable(FLOAT, '{'300, 200'}', "m3");
             poputil::mapTensorLinearly(__state->graph, m1);
             poputil::mapTensorLinearly(__state->graph, m2);
             poputil::mapTensorLinearly(__state->graph, m3);
