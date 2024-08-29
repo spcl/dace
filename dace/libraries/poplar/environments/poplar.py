@@ -19,11 +19,11 @@ class IPU:
     headers = [ "../include/poplar_dace_interface.h"]
     state_fields = [
             "// IPUModel APIs",
-            "IPUModel ipuModel",
-            "Device device",
-            "Target target",
-            "Graph graph",
-            "Sequence prog",
+            "IPUModel ipuModel;",
+            "Device device;",
+            "Target target;",
+            "Graph graph;",
+            "Sequence prog;",
     ]
     init_code = """
         __state->device = __state->ipuModel.createDevice();
