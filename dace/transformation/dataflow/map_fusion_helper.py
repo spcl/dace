@@ -6,14 +6,13 @@ import functools
 import itertools
 import re
 import copy
-from typing import Any, Dict, Iterable, List, Optional, Set, Sequence, TypeVar, Tuple, Union, overload
+from typing import Any, Dict, Iterable, List, Optional, Set, Sequence, Tuple, Union, overload
 
 import dace
 from dace import data, properties, subsets, transformation, symbolic
 from dace.sdfg import SDFG, SDFGState, graph, nodes, validation, replace
 from dace.transformation import helpers
 
-_T = TypeVar("_T")
 
 @properties.make_properties
 class MapFusionHelper(transformation.SingleStateTransformation):
@@ -120,16 +119,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
 
         # We will now check if there exists a remapping that of the map parameter
         if self.find_parameter_remapping(first_map=map_entry_1.map, second_map=map_entry_2.map) is None:
-            return False
-
-        # Test for read-write conflicts
-        if self.has_read_write_dependency(
-                map_entry_1=
-                map_entry_1,
-                map_exit_2=graph.exit_node(map_entry_2),
-                state=graph,
-                sdfg=sdfg,
-        ):
             return False
 
         return True
@@ -443,56 +432,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
 
         # Update the internal cache
         self.shared_data[sdfg] = shared_data
-
-
-    def has_read_write_dependency(
-        self,
-        map_entry_1: nodes.MapEntry,
-        map_exit_2: nodes.MapExit,
-        state: SDFGState,
-        sdfg: SDFG,
-    ) -> bool:
-        """Test if there is a read write dependency between the two maps.
-
-        The function checks if the first map does not read anything from
-        a data descriptor, the second map writes into.
-
-        Returns:
-            `True` if there is a conflict between input and outputs, `False`
-            if there is no conflict.
-
-        Args:
-            map_entry_1: The entry node of the first map.
-            map_entry_2: The exit node of the second map.
-            state: The state on which we operate.
-
-        Note:
-            The current implementation just computes the set of data that is
-            used as input and for output. If there is an intersection then
-            the function considers this as a read write conflict.
-        """
-
-        # Determine the set of data that is used as input and as output
-        inputs_data: Set[str] = set()
-        outputs_data: Set[str] = set()
-        for input_edge in state.in_edges(map_entry_1):
-            input_node: nodes.Node = input_edge.src
-            if not isinstance(input_node, nodes.AccessNode):
-                continue
-            input_desc: data.Data = input_node.desc(sdfg)
-            inputs_data.add(track_view(input_node, state, sdfg).data if isinstance(input_desc, data.View) else input_node.data)
-        for output_edge in state.out_edges(map_exit_2):
-            output_node: nodes.Node = output_edge.dst
-            if not isinstance(output_node, nodes.AccessNode):
-                continue
-            output_desc: data.Data = output_node.desc(sdfg)
-            outputs_data.add(track_view(output_node, state, sdfg).data if isinstance(output_desc, data.View) else output_node.data)
-
-        # There is no intersection, thus they read and write to distinct data.
-        if not outputs_data.intersection(inputs_data):
-            return False
-
-        return True
 
 
     def partition_first_outputs(
@@ -922,6 +861,46 @@ def find_upstream_producers(
     )
 
 
+def get_access_set(
+        scope_node: Union[nodes.MapEntry, nodes.MapExit],
+        state: SDFGState,
+) -> Set[nodes.AccessNode]:
+    """Computes the access set of a "scope node".
+
+    If `scope_node` is a `MapEntry` node it will operate on the set of incoming
+    edges and if it is an `MapExit` node on the set of outgoing edges. The
+    function will then determine all access nodes that have a connection through
+    these edges to the scope nodes (edges that does not lead to access nodes are
+    ignored).
+    The function returns a set that contains all access nodes that were found.
+    It is important that this set will also contain views.
+
+    Args:
+        scope_node: The scope node that should be evaluated.
+        state: The state in which we operate.
+    """
+    if isinstance(scope_node, nodes.MapEntry):
+        get_edges = lambda node: state.in_edges(node)
+        other_node = lambda e: e.src
+    else:
+        get_edges = lambda node: state.out_edges(node)
+        other_node = lambda e: e.dst
+    return {
+            node
+            for node in map(other_node, get_edges(scope_node))
+            if isinstance(node, nodes.AccessNode)
+    }
+
+
+def is_view(
+        node: nodes.AccessNode,
+        sdfg: SDFG,
+) -> bool:
+    """Tests if `node` points to a view or not."""
+    node_desc: data.Data = node.desc(sdfg)
+    return isinstance(node_desc, data.View)
+
+
 def track_view(
         view: nodes.AccessNode,
         state: SDFGState,
@@ -931,16 +910,21 @@ def track_view(
 
     Given the View `view`, the function will trace the view back to the
     original access node.
+    For convenience, if `view` is not a `View` but a normal data descriptor,
+    then the function will return the argument unmodified.
 
     Args:
         view: The view that should be traced.
         state: The state in which we operate.
         sdfg: The SDFG on which we operate.
     """
-    # First determine if the view is used for reading or writing.
-    assert isinstance(view.desc(sdfg), data.View)
-    curr_edge = dace.sdfg.utils.get_view_edge(state, view)
 
+    # Test if it is a view at all, if not return the passed node as source.
+    if not is_view(view, sdfg):
+        return view
+
+    # First determine if the view is used for reading or writing.
+    curr_edge = dace.sdfg.utils.get_view_edge(state, view)
     if curr_edge is None:
         raise RuntimeError(f"Failed to determine the direction of the view '{view}'.")
     if curr_edge.dst_conn == "view":
@@ -955,7 +939,7 @@ def track_view(
     # Now trace the view back.
     org_view = view
     view = next_node(curr_edge)
-    while isinstance(view.desc(sdfg), data.View):
+    while is_view(view, sdfg):
         curr_edge = dace.sdfg.utils.get_view_edge(state, view)
         if curr_edge is None:
             raise RuntimeError(f"View tracing of '{org_view}' failed at note '{view}'.")

@@ -9,11 +9,11 @@ import dace
 from dace import dtypes, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes
 
-from dace.transformation.dataflow import map_fusion_helper
+from dace.transformation.dataflow import map_fusion_helper as mfh
 
 
 @properties.make_properties
-class SerialMapFusion(map_fusion_helper.MapFusionHelper):
+class SerialMapFusion(mfh.MapFusionHelper):
     """Specialized replacement for the map fusion transformation that is provided by DaCe.
 
     As its name is indicating this transformation is only able to handle Maps that
@@ -92,6 +92,15 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
         ):
             return False
 
+        # Test for read-write conflicts
+        if self.has_read_write_dependency(
+                map_entry_1=map_entry_1,
+                map_entry_2=map_entry_2,
+                state=graph,
+                sdfg=sdfg,
+        ):
+            return False
+
         # Two maps can be serially fused if the node decomposition exists and
         #  at least one of the intermediate output sets is not empty. The state
         #  of the pure outputs is irrelevant for serial map fusion.
@@ -107,6 +116,102 @@ class SerialMapFusion(map_fusion_helper.MapFusionHelper):
         if not (exclusive_outputs or shared_outputs):
             return False
         return True
+
+
+    def has_read_write_dependency(
+        self,
+        map_entry_1: nodes.MapEntry,
+        map_entry_2: nodes.MapEntry,
+        state: SDFGState,
+        sdfg: SDFG,
+    ) -> bool:
+        """Test if there is a read write dependency between the two maps.
+
+        The function checks if the first map does not read anything from
+        a data descriptor, the second map writes into.
+
+        Returns:
+            `True` if there is a conflict between input and outputs, `False`
+            if there is no conflict.
+
+        Args:
+            map_entry_1: The entry node of the first map.
+            map_entry_2: The entry node of the second map.
+            state: The state on which we operate.
+
+        Note:
+            The current implementation just computes the set of data that is
+            used as input and for output. If there is an intersection then
+            the function considers this as a read write conflict.
+        """
+        map_exit_1: nodes.MapExit = state.exit_node(map_entry_1)
+        map_exit_2: nodes.MapExit = state.exit_node(map_entry_2)
+
+        # Get the read and write sets of the different maps, note that Views
+        #  are not resolved yet.
+        access_sets: List[Dict[str, nodes.AccessNode]] = []
+        for scope_node in [map_entry_1, map_exit_1, map_entry_2, map_exit_2]:
+            access_sets.append({
+                node.data: node
+                for node in mfh.get_access_set(scope_node, state)
+            })
+        read_map_1, write_map_1, read_map_2, write_map_2 = access_sets
+
+        # It might be possible that there are views, so we have to resolve these sets.
+        #  We also already get the name of the data container.
+        resolved_sets: List[Set[str]] = []
+        for unresolved_set in [read_map_1, write_map_1, read_map_2, write_map_2]:
+            resolved_sets.append({
+                mfh.track_view(node).data if mfh.is_view(node, sdfg) else node.data
+                for node in unresolved_set.values()
+            })
+        real_read_map_1, real_write_map_1, real_read_map_2, real_write_map_2 = resolved_sets
+
+        # We now test for "structural problems", i.e. problems where the resulting
+        #  SDFG would be invalid, all of these cases are characterized by the fact
+        #  that both maps write to the same data. This is hard or impossible to
+        #  handle, so we forbid all these cases.
+        if not real_write_map_1.isdisjoint(real_write_map_2):
+            return True
+
+        # We will now test if there are no conflicts, for this we require that all
+        #  input is distinct from the all the output.
+        #  Must be done after the test above!
+        if (real_read_map_1 | real_read_map_2).isdisjoint(real_write_map_1 | real_write_map_2):
+            return False
+
+        # This is the set of nodes that is used to exchange data between the two maps.
+        #  This works, because in the partition function we ensure that such nodes are
+        #  directly connected.
+        read_map_2_nodes: Set[node.AccessNode] = set(read_map_2.values())
+        exchange_set: Dict[str, nodes.AccessNode] = {
+                name: node
+                for name, node in write_map_1.items()
+                if node in read_map_2_nodes
+        }
+
+        # For simplicity we assume that the nodes used to exchange information can
+        #  not be a View. This is a simplification.
+        if any(mfh.is_view(exchange_node, sdfg) for exchange_node in exchange_set.values()):
+            return True
+
+        # This is the names of the node that are used as input of the first map and
+        #  as output of the second map. We can not use the resolved here, because
+        #  we forbid that these nodes are Views.
+        fused_inout_data_names: Set[str] = set(read_map_1.keys()).intersection(write_map_2.keys())
+
+        # Because it is hard, we do not allow Views here, because we can not resolve
+        #  access sets (at least I can not).
+        if any(mfh.is_view(read_map_1[name], sdfg) for name in fused_inout_data_names):
+            return True
+
+        # This is a case that can not be handled, the above code should filter this
+        #  out, so if you are here, then the above code might have problems.
+        assert fused_inout_data_names.isdisjoint(exchange_set.keys()), "Constraint violation."
+
+        # TODO: POINTWISE TEST!!!
+
+        return False
 
 
     def apply(self, graph: Union[dace.SDFGState, dace.SDFG], sdfg: dace.SDFG) -> None:
