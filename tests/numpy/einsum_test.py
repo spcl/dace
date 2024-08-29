@@ -296,7 +296,7 @@ def test_lift_einsum_alpha_beta(symbolic):
         if isinstance(node, Einsum):
             assert node.einsum_str == 'ij,jk->ik'
             assert node.alpha == alph
-            assert node.beta == 1.0
+            assert symbolic.equal_valued(1, node.beta)
 
     if not symbolic:
         C = 1 + 2 * A @ B
