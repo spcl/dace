@@ -15,33 +15,31 @@ class IPU:
     cmake_includes = []
     cmake_libraries = []
     cmake_compile_flags = ["-std=c++11"]
-    cmake_link_flags = ["-lpoplar", "-lpoputil", "-lpoplin"]
-    headers = ["poplar/Engine.hpp", "poplar/Graph.hpp", "poplar/IPUModel.hpp", "poplin/MatMul.hpp", "poplin/codelets.hpp", "popops/codelets.hpp", "poputil/TileMapping.hpp"]
+    cmake_link_flags = ["-L -lpoplar -lpopops -lpoplin -lpoputil"]
+    headers = [ "../include/poplar_dace_interface.h"]
     state_fields = [
-        "// IPUModel APIs",
-        "IPUModel ipuModel;",
-        "Device device = ipuModel.createDevice();",
-        "Target target = device.getTarget();",
-        "// Create the Graph object",
-        "Graph graph(target);",
-        "popops::addCodelets(graph);",
-        "poplin::addCodelets(graph);",
-        "// Create a control program that is a sequence of steps",
-        "Sequence prog;"
-        
+            "// IPUModel APIs",
+            "IPUModel ipuModel",
+            "Device device",
+            "Target target",
+            "Graph graph",
+            "Sequence prog",
     ]
     init_code = """
-        // IPUINIT.
-        // Nothing for now.
+        __state->device = __state->ipuModel.createDevice();
+        __state->target = __state->device.getTarget();
+        __state->graph = Graph(__state->target);
+        popops::addCodelets(__state->graph);
+        poplin::addCodelets(__state->graph);
     """
     finalize_code = """
         auto engine = Engine{__state->graph, __state->prog, {{"debug.retainDebugInformation", "true"}}};
-        engine.load(__state->device);        
+        engine.load(__state->device);
         // Run the control program
-        std::cout << "Running program\n";
+        std::cout << "Running program";
         engine.run(0);
-        std::cout << "Program complete\n";
-        engine.printProfileSummary(std::cout, {{"showExecutionSteps", "true"}});
+        std::cout << "Program complete";
+        // engine.printProfileSummary(std::cout, {{"showExecutionSteps", "true"}});
         return 0;
     """
     dependencies = []

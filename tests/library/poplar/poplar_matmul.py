@@ -41,7 +41,7 @@ def make_sdfg(dtype):
 
 @pytest.mark.poplar
 def test_poplar():
-    sdfg = make_sdfg(np.float64)
+    sdfg = make_sdfg(np.float32)
     sdfg.compile()
     print("Success!")
 
