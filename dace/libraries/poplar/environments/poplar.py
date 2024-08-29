@@ -16,7 +16,7 @@ class IPU:
     cmake_libraries = []
     cmake_compile_flags = ["-std=c++11"]
     cmake_link_flags = ["-L -lpoplar -lpopops -lpoplin -lpoputil"]
-    headers = [ "../include/poplar_dace_interface.h"]
+    headers = [ "../../include/poplar_dace_interface.h"]
     state_fields = [
             "// IPUModel APIs",
             "IPUModel ipuModel;",
