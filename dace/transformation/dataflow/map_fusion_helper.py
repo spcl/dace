@@ -6,7 +6,7 @@ import functools
 import itertools
 import re
 import copy
-from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Sequence, Tuple, Union, overload, TypeVar
+from typing import Any, Dict, Iterable, List, Optional, Set, Sequence, TypeVar, Tuple, Union, overload
 
 import dace
 from dace import data, properties, subsets, transformation, symbolic
