@@ -3,7 +3,7 @@
 """Implements the serial map fusing transformation."""
 
 import copy
-from typing import Any, Dict, List, Set, Union
+from typing import Any, Dict, List, Set, Union, Optional
 
 import dace
 from dace import dtypes, properties, subsets, symbolic, transformation
@@ -159,6 +159,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
 
         # It might be possible that there are views, so we have to resolve these sets.
         #  We also already get the name of the data container.
+        #  Note that `len(real_read_map_1) <= len(read_map_1)` holds because of Views.
         resolved_sets: List[Set[str]] = []
         for unresolved_set in [read_map_1, write_map_1, read_map_2, write_map_2]:
             resolved_sets.append({
@@ -184,7 +185,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
         #  This works, because in the partition function we ensure that such nodes are
         #  directly connected.
         read_map_2_nodes: Set[node.AccessNode] = set(read_map_2.values())
-        exchange_set: Dict[str, nodes.AccessNode] = {
+        exchange_nodes: Dict[str, nodes.AccessNode] = {
                 name: node
                 for name, node in write_map_1.items()
                 if node in read_map_2_nodes
@@ -192,7 +193,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
 
         # For simplicity we assume that the nodes used to exchange information can
         #  not be a View. This is a simplification.
-        if any(mfh.is_view(exchange_node, sdfg) for exchange_node in exchange_set.values()):
+        if any(mfh.is_view(exchange_node, sdfg) for exchange_node in exchange_nodes.values()):
             return True
 
         # This is the names of the node that are used as input of the first map and
@@ -206,12 +207,245 @@ class SerialMapFusion(mfh.MapFusionHelper):
             return True
 
         # This is a case that can not be handled, the above code should filter this
-        #  out, so if you are here, then the above code might have problems.
-        assert fused_inout_data_names.isdisjoint(exchange_set.keys()), "Constraint violation."
+        #  out, so if you are here, then the above code might have problems,
+        #  furthermore the code below assumes it.
+        assert fused_inout_data_names.isdisjoint(exchange_nodes.keys()), "Constraint violation."
+        assert (len(fused_inout_data_names) > 0) or (len(exchange_nodes) > 0)
 
-        # TODO: POINTWISE TEST!!!
+        # We will now inspect the subsets.
+        repl_dict = self.find_parameter_remapping(map_entry_1.map, map_entry_2.map)
 
+        # First we handle the rw dependency that is given by the whole fused map.
+        if not self._check_read_write_dependency_fused_map(
+                map_entry_1=map_entry_1,
+                map_exit_2=map_exit_2,
+                inout_data_names=fused_inout_data_names,
+                read_map_1=read_map_1,
+                write_map_2=write_map_2,
+                repl_dict=repl_dict,
+                state=state,
+                sdfg=sdfg):
+            return True  # There are rw dependencies.
+
+        # Now we check the exchange nodes, i.e. the common nodes between the maps,
+        #  are point wise.
+        if not self._check_read_write_dependency_exchange_nodes(
+                map_exit_1=map_exit_1,
+                map_entry_2=map_entry_2,
+                exchange_nodes=exchange_nodes,
+                repl_dict=repl_dict,
+                state=state,
+                sdfg=sdfg,
+        ):
+            return True  # There are rw dependencies.
+
+        # No read write dependency was found.
         return False
+
+
+    def _check_read_write_dependency_exchange_nodes(
+            self,
+            map_exit_1: nodes.MapExit,
+            map_entry_2: nodes.MapEntry,
+            exchange_nodes: Dict[str, nodes.AccessNode],
+            repl_dict: Union[Dict[str, str], None],
+            state: SDFGState,
+            sdfg: SDFG,
+    ) -> bool:
+        """Checks if there are any rw dependencies in the exchange set.
+
+        Args:
+            map_exit_1: Exit node of the first (top) map; defines writes.
+            map_entry_2: Entry node of the second (bottom) map; defines reads. 
+            exchange_nodes: Exchange nodes, i.e. written and read by the maps.
+            repl_dict: Replacement dict, for renaming the subsets of the second map.
+            state: The state in which we operate.
+            sdfg: The containing SDFG.
+        """
+
+        for exchange_node in exchange_nodes.values():
+            all_subsets: List[subsets.Subset] = []
+
+            # The reading subsets are defined by the entry of the second map,
+            #  thus we also have to perform some replacing of the parameters.
+            all_subsets.extend(
+                    self._find_subsets(
+                        node=exchange_node,
+                        scope_node=map_entry_2,
+                        state=state,
+                        sdfg=sdfg,
+                        repl_dict=repl_dict,
+                    )
+            )
+
+            # The writing subset is given by the exit of the first map. No replacing
+            #  is needed, but the node is the same.
+            all_subsets.extend(
+                    self._find_subsets(
+                        node=exchange_node,
+                        scope_node=map_exit_1,
+                        state=state,
+                        sdfg=sdfg,
+                        repl_dict=None,
+                    )
+            )
+
+            if not self._test_if_subsets_are_point_wise(all_subsets):
+                return False
+
+        # All subsets are point wise
+        return True
+
+
+    def _check_read_write_dependency_fused_map(
+            self,
+            map_entry_1: nodes.MapEntry,
+            map_exit_2: nodes.MapExit,
+            inout_data_names: Set[str],
+            read_map_1: Dict[str, nodes.AccessNode],
+            write_map_2: Dict[str, nodes.AccessNode],
+            repl_dict: Union[Dict[str, str], None],
+            state: SDFGState,
+            sdfg: SDFG,
+    ) -> bool:
+        """Checks the read write dependency that are given by the fused map.
+
+        Args:
+            map_entry_1: The map entry node of the first (top) map.
+            map_exit_2: The map exit node of the second (bottom) map.
+            inout_data_names: Names of all data containers that are conflicting.
+            read_map_1: All access nodes from which the first map reads (`node.data -> node`).
+            write_map_2: All access nodes to which the second map writes (`node.data -> node`).
+            repl_dict: Replacement dict for renaming the second maps iteration parameters.
+            state: The state in which we operate.
+            sdfg: The containing SDFG.
+        """
+        for inout_data_name in inout_data_names:
+            all_subsets: List[subsets.Subset] = []
+
+            # The subsets that define reading are given by the first map's entry node
+            all_subsets.extend(
+                self._find_subsets(
+                    node=read_map_1[inout_data_name],
+                    scope_node=map_entry_1,
+                    state=state,
+                    sdfg=sdfg,
+                    repl_dict=None,
+                )
+            )
+
+            #  While the subsets defining writing are given by the second map's exit
+            #  node, there we also have to apply renaming.
+            all_subsets.extend(
+                self._find_subsets(
+                    node=write_map_2[inout_data_name],
+                    scope_node=map_exit_2,
+                    state=state,
+                    sdfg=sdfg,
+                    repl_dict=repl_dict,
+                )
+            )
+
+            # Now we can test if these subsets are point wise
+            if not self._test_if_subsets_are_point_wise(all_subsets):
+                return False
+
+        # All subsets are point wise
+        return True
+
+
+
+    def _test_if_subsets_are_point_wise(
+            self,
+            subsets_to_check: List[subsets.Subset]
+    ) -> bool:
+        """Point wise means that they are all the same.
+
+        If a series of subsets are point wise it means that all Memlets, access
+        the same data. This is an important property because the whole map fusion
+        is build upon this.
+
+        Args:
+            subsets_to_check: The list of subsets that should be checked.
+        """
+        assert len(subsets_to_check) > 1
+
+        # We will check everything against the master subset.
+        master_subset = subsets_to_check[0]
+        for ssidx in range(1, len(subsets_to_check)):
+            subset = subsets_to_check[ssidx]
+            if isinstance(subset, subsets.Indices):
+                subset = subsets.Range.from_indices(subset)
+                # Do we also need the reverse? See below why.
+                if any(r != (0, 0, 1) for r in test in subset.offset_new(master_subset,negative=True)):
+                    return False
+            else:
+                # The original code used `Range.offset` here, but that one had trouble
+                #  for `r1 = 'j, 0:10'` and `r2 = 'j, 0`. The solution would be to test
+                #  symmetrically, i.e. `r1 - r2` and `r2 - r1`. However, if we would
+                #  have `r2_1 = 'j, 0:10'` it consider it as failing, which is not
+                #  what we want. Thus we will use symmetric cover.
+                if not master_subset.covers(subset):
+                    return False
+                if not subset.covers(master_subset):
+                    return False
+
+        # All subsets are equal to the master subset, thus they are equal to each other.
+        #  This means that the data accesses, described by this transformation is
+        #  point wise
+        return True
+
+
+    def _find_subsets(
+            self,
+            node: nodes.AccessNode,
+            scope_node: Union[nodes.MapExit, nodes.MapEntry],
+            state: SDFGState,
+            sdfg: SDFG,
+            repl_dict: Optional[Dict[str, str]],
+    ) -> List[subsets.Subset]:
+        """Finds all subsets involving node `node`.
+
+        Args:
+            node: The access node that should be examined.
+            scope_node: We are only interested in data that flows through this node.
+            state: The state in which we operate.
+            sdfg: The SDFG object.
+        """
+
+        # Is the node used for reading or for writing.
+        #  This influences how we have to proceed.
+        if isinstance(scope_node, nodes.MapEntry):
+            used_for_reading = True
+            edges_to_inspect = state.in_edges(scope_node)
+            test_edge = lambda e: (e.src == node)
+            get_subset = lambda e: e.data.src_subset
+        else:
+            used_for_reading = False
+            edges_to_inspect = state.out_edges(scope_node)
+            test_edge = lambda e: e.dst == node
+            get_subset = lambda e: e.data.dst_subset
+
+        found_subsets: List[subsets.Subset] = []
+        for edge in edges_to_inspect:
+            if not test_edge(edge):
+                continue
+            if used_for_reading:
+                consumer_or_producer = mfh.find_downstream_consumers(state, begin=edge)
+            else:
+                consumer_or_producer = mfh.find_upstream_producers(state, begin=edge)
+            found_subsets.extend(get_subset(e) for _, e in consumer_or_producer)
+        assert len(found_subsets) > 0, f"Could not find any subsets."
+        assert not any(subset is None for subset in found_subsets)
+
+        # The deepcopy is needed if we would do renaming.
+        found_subsets = copy.deepcopy(found_subsets)
+        if repl_dict:
+            for subset in found_subsets:
+                # Replace happens in place
+                symbolic.safe_replace(repl_dict, subset.replace)
+
+        return found_subsets 
 
 
     def apply(self, graph: Union[dace.SDFGState, dace.SDFG], sdfg: dace.SDFG) -> None:

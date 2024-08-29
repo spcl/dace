@@ -885,11 +885,14 @@ def get_access_set(
     else:
         get_edges = lambda node: state.out_edges(node)
         other_node = lambda e: e.dst
-    return {
+    access_set: Set[nodes.AccessNode] = {
             node
             for node in map(other_node, get_edges(scope_node))
             if isinstance(node, nodes.AccessNode)
     }
+    # As far as I know in a valid SDFG this should not happen.
+    assert len(access_set) == len({node.data for node in access_set})
+    return access_set
 
 
 def is_view(
