@@ -142,6 +142,14 @@ def fusion_chain(A: dace.float32[10, 20], B: dace.float32[10, 20]):
     tmp2 = tmp1 * 4
     B[:] = tmp2 + 5
 
+
+@dace.program
+def fusion_shared_output(A: dace.float32[10, 20], B: dace.float32[10, 20], C: dace.float32[10, 20]):
+    tmp = A + 3
+    B[:] = tmp * 4
+    C[:] = tmp / 6
+
+
 def test_fusion_simple():
     sdfg = fusion_simple.to_sdfg()
     sdfg = apply_fusion(sdfg, final_maps=1)
@@ -155,6 +163,7 @@ def test_fusion_simple():
     print('Difference:', diff)
     assert diff <= 1e-3
 
+
 def test_fusion_rename():
     sdfg = fusion_rename.to_sdfg()
     sdfg = apply_fusion(sdfg, final_maps=1)
@@ -167,6 +176,22 @@ def test_fusion_rename():
     diff = abs(np.sum(A * A + B) - out)
     print('Difference:', diff)
     assert diff <= 1e-3
+
+
+def test_fusion_shared():
+    sdfg = fusion_shared_output.to_sdfg()
+    sdfg = apply_fusion(sdfg)
+
+    A = np.random.rand(10, 20).astype(np.float32)
+    B = np.random.rand(10, 20).astype(np.float32)
+    C = np.random.rand(10, 20).astype(np.float32)
+
+    B_res = (A + 3) * 4
+    C_res = (A + 3) / 6
+    sdfg(A=A, B=B, C=C)
+
+    assert np.allclose(B_res, B)
+    assert np.allclose(C_res, C)
 
 
 def test_multiple_fusions():
@@ -380,6 +405,7 @@ def test_fusion_with_nested_sdfg_1():
 
 
 if __name__ == '__main__':
+    test_fusion_shared()
     test_fusion_with_transient()
     test_fusion_rename()
     test_fusion_simple()
