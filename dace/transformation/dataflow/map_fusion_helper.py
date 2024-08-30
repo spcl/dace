@@ -604,20 +604,28 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             #  and the second map entry.
             found_second_map = False
             consumer_subsets: List[subsets.Subset] = []
-            for intermediate_node_out_edges in state.out_edges(intermediate_node):
-                # Check if we have not reached the second map entry.
-                #  This happens if the intermediate node is a shared node.
-                # However, we are only allowed to find the second map once.
-                if intermediate_node_out_edges.dst is not map_entry_2:
-                    continue
+            for intermediate_node_out_edge in state.out_edges(intermediate_node):
+                # If we do not reach the second map immediately, we must make sure
+                #  that we will never reach it otherwise we will create cycles.
+                if intermediate_node_out_edge.dst is not map_entry_2:
+                    if all_nodes_between(
+                        graph=state,
+                        begin=intermediate_node_out_edge.dst,
+                        end=map_entry_2,
+                    ) is None:
+                        continue
+                    return None
+
+                # The second map can only be reached once, because we only handle
+                #  this case.
                 if found_second_map:
                     # TODO(phimuell): Lift this restriction.
                     return None
                 found_second_map = True
-                assert intermediate_node_out_edges.dst_conn.startswith("IN_")
+                assert intermediate_node_out_edge.dst_conn.startswith("IN_")
                 consumer_subsets.extend(
                         e.data.src_subset
-                        for e in state.out_edges_by_connector(map_entry_2, "OUT_" + intermediate_node_out_edges.dst_conn[3:])
+                        for e in state.out_edges_by_connector(map_entry_2, "OUT_" + intermediate_node_out_edge.dst_conn[3:])
                 )
             # The subsets are not set correctly, so we give up.
             if any(consumer_subset is None for consumer_subset in consumer_subsets):
