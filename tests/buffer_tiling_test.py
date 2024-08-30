@@ -78,6 +78,7 @@ def _semantic_eq(tile_sizes, program):
 
     count = sdfg.apply_transformations(BufferTiling, options={'tile_sizes': tile_sizes})
     assert count > 0
+    sdfg.validate()
     sdfg(w3=w3, w5=w5, A=A, B=B2, I=A.shape[0], J=A.shape[1])
 
     assert np.allclose(B1, B2)
