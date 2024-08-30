@@ -572,15 +572,6 @@ class SerialMapFusion(mfh.MapFusionHelper):
             after this function has run the state is (most likely) invalid.
         """
 
-        # Essentially this function removes the AccessNode between the two maps.
-        #  However, we still need some temporary memory that we can use, which is
-        #  just much smaller, i.e. a scalar. But all Memlets inside the second map
-        #  assumes that the intermediate memory has the bigger shape.
-        #  To fix that we will create this replacement dict that will replace all
-        #  occurrences of the iteration variables of the second map with zero.
-        #  Note that this is still not enough as the dimensionality might be different.
-        memlet_repl: Dict[str, int] = {str(param): 0 for param in map_entry_2.map.params}
-
         # Now we will iterate over all intermediate edges and process them.
         #  If not stated otherwise the comments assume that we run in exclusive mode.
         for out_edge in intermediate_outputs:
@@ -649,52 +640,43 @@ class SerialMapFusion(mfh.MapFusionHelper):
 
             # New we will reroute the output Memlet, thus it will no longer pass
             #  through the Map exit but through the newly created intermediate.
-            #  we will delete the previous edge later.
-            pre_exit_memlet: dace.Memlet = pre_exit_edge.data
-            new_pre_exit_memlet = copy.deepcopy(pre_exit_memlet)
-
-            # We might operate on a different array, but the check below, ensures
-            #  that we do not change the direction of the Memlet.
-            assert pre_exit_memlet.data == inter_name
-            new_pre_exit_memlet.data = new_inter_name
-
-            # Now we have to modify the subset of the Memlet.
-            #  Before the subset of the Memlet was dependent on the Map variables,
-            #  however, this is no longer the case, as we removed them. This change
-            #  has to be reflected in the Memlet.
-            #  NOTE: Assert above ensures that the below is correct.
-            new_pre_exit_memlet.replace(memlet_repl)
-            if is_scalar:
-                new_pre_exit_memlet.subset = "0"
-                new_pre_exit_memlet.other_subset = None
-            else:
-                new_pre_exit_memlet.subset.pop(squeezed_dims)
-
-            # Now we create the new edge between the producer and the new output
-            #  (the new intermediate node). We will remove the old edge further down.
+            #  NOTE: We will delete the previous edge later.
             new_pre_exit_edge = state.add_edge(
                 pre_exit_edge.src,
                 pre_exit_edge.src_conn,
                 new_inter_node,
                 None,
-                new_pre_exit_memlet,
+                sdfg.make_array_memlet(new_inter_name),
             )
 
-            # We just have handled the last Memlet, but we must actually handle the
-            #  whole producer side, i.e. the scope of the top Map.
-            for producer_tree in state.memlet_tree(new_pre_exit_edge).traverse_children():
+            # Get the subset that defined into which part of the old intermediate
+            #  the old output edge wrote to. We need that to adjust the producer
+            #  Memlets, since they now write into the new (smaller) intermediate.
+            assert pre_exit_edge.data.data == inter_name
+            assert pre_exit_edge.data.dst_subset is not None
+            old_pre_exit_edge_subset = pre_exit_edge.data.dst_subset
+
+            # We now handle the MemletTree defined by this edge.
+            #  The newly created edge, only handled the last collection step.
+            for producer_tree in state.memlet_tree(new_pre_exit_edge).traverse_children(include_self=True):
                 producer_edge = producer_tree.edge
 
-                # Ensure the correctness of the rerouting below.
+                # Exclude the edge we just have created.
+                if producer_edge is new_pre_exit_edge:
+                    continue
+
+                # Associate the (already existing) Memlet with the new data.
                 # TODO(phimuell): Improve the code below to remove the check.
                 assert producer_edge.data.data == inter_name
-
-                # Will not change the direction, because of test above!
                 producer_edge.data.data = new_inter_name
-                producer_edge.data.replace(memlet_repl)
+
                 if is_scalar:
                     producer_edge.data.dst_subset = "0"
                 elif producer_edge.data.dst_subset is not None:
+                    # Since we now write into a smaller memory patch, we must
+                    #  compensate for that. We do this by substracting where the write
+                    #  originally had begun.
+                    producer_edge.data.dst_subset.offset(old_pre_exit_edge_subset, negative=True)
                     producer_edge.data.dst_subset.pop(squeezed_dims)
 
             # Now after we have handled the input of the new intermediate node,
@@ -723,17 +705,18 @@ class SerialMapFusion(mfh.MapFusionHelper):
                 for inner_edge in state.out_edges_by_connector(map_entry_2, out_conn_name):
                     assert inner_edge.data.data == inter_name  # DIRECTION!!
 
-                    # The create the first Memlet to transmit information, within
-                    #  the second map, we do this again by copying and modifying
-                    #  the original Memlet.
-                    # NOTE: Test above is important to ensure the direction of the
-                    #       Memlet and the correctness of the code below.
-                    new_inner_memlet = copy.deepcopy(inner_edge.data)
-                    new_inner_memlet.replace(memlet_repl)
-                    new_inner_memlet.data = new_inter_name  # Because of the assert above, this will not change the direction.
+                    # As for the producer side, we now read from a smaller array,
+                    #  So we must offset them, we use the original edge for this.
+                    assert inner_edge.data.src_subset is not None, f"{inner_edge} | {inner_edge.data} | {inner_edge.data.src_subset} | {inner_edge.data.dst_subset} "
+                    inner_edge_correction_offset = inner_edge.data.src_subset
 
-                    # Now remove the old edge, that started the second map entry.
-                    #  Also add the new edge that started at the new intermediate.
+                    # Now we create a new connection that instead reads from the new
+                    #  intermediate, instead of the old one. For this we use the
+                    #  old Memlet as template. However it is not fully initialized.
+                    new_inner_memlet = copy.deepcopy(inner_edge.data)
+                    new_inner_memlet.data = new_inter_name
+
+                    # Now we replace the edge from the SDFG.
                     state.remove_edge(inner_edge)
                     new_inner_edge = state.add_edge(
                         new_inter_node,
@@ -743,22 +726,27 @@ class SerialMapFusion(mfh.MapFusionHelper):
                         new_inner_memlet,
                     )
 
-                    # Now we do subset modification to ensure that nothing failed.
+                    # Now modifying the Memlet, we do it after the insertion to make
+                    #  sure that the Memlet was properly initialized.
                     if is_scalar:
-                        new_inner_memlet.src_subset = "0"
+                        new_inner_memlet.subset = "0"
                     elif new_inner_memlet.src_subset is not None:
+                        new_inner_memlet.src_subset.offset(inner_edge_correction_offset, negative=True)
                         new_inner_memlet.src_subset.pop(squeezed_dims)
 
-                    # Now clean the Memlets of that tree to use the new intermediate node.
-                    for consumer_tree in state.memlet_tree(new_inner_edge).traverse_children():
+                    # Now we have to make sure that all consumers are properly updated.
+                    for consumer_tree in state.memlet_tree(new_inner_edge).traverse_children(include_self=True):
+                        if consumer_tree.edge is new_inner_edge:
+                            continue
+                        assert consumer_tree.edge.data.data == inter_name
+
                         consumer_edge = consumer_tree.edge
-                        assert consumer_edge.data.data == inter_name
                         consumer_edge.data.data = new_inter_name
-                        consumer_edge.data.replace(memlet_repl)
                         if is_scalar:
                             consumer_edge.data.src_subset = "0"
                         elif consumer_edge.data.subset is not None:
-                            consumer_edge.data.subset.pop(squeezed_dims)
+                            consumer_edge.data.src_subset.offset(inner_edge_correction_offset, negative=True)
+                            consumer_edge.data.src_subset.pop(squeezed_dims)
 
                 # The edge that leaves the second map entry was already deleted.
                 #  We will now delete the edges that brought the data.
