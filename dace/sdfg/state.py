@@ -19,10 +19,11 @@ from dace import memlet as mm
 from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
-from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
+from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
                              CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
+from dace.sdfg.graph import (MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge,
+                             generate_element_id)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
@@ -1099,6 +1100,8 @@ class ControlGraphView(BlockGraphView, abc.ABC):
 @make_properties
 class ControlFlowBlock(BlockGraphView, abc.ABC):
 
+    guid = Property(dtype=str, allow_none=False)
+
     is_collapsed = Property(dtype=bool, desc='Show this block as collapsed', default=False)
 
     pre_conditions = DictProperty(key_type=str, value_type=list, desc='Pre-conditions for this block')
@@ -1121,6 +1124,8 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.pre_conditions = {}
         self.post_conditions = {}
         self.invariant_conditions = {}
+
+        self.guid = generate_element_id(self)
 
     def nodes(self):
         return []
@@ -1169,7 +1174,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k in ('_parent_graph', '_sdfg'):  # Skip derivative attributes
+            if k in ('_parent_graph', '_sdfg', 'guid'):  # Skip derivative attributes and GUID
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
 
@@ -3174,3 +3179,17 @@ class LoopRegion(ControlFlowRegion):
             if isinstance(node, ReturnBlock):
                 return True
         return False
+
+@make_properties
+class NamedRegion(ControlFlowRegion):
+    debuginfo = DebugInfoProperty()
+    def __init__(self, label: str, sdfg: Optional['SDFG']=None, debuginfo: Optional[dtypes.DebugInfo]=None):
+        super().__init__(label, sdfg)
+        self.debuginfo = debuginfo
+
+@make_properties
+class FunctionCallRegion(ControlFlowRegion):
+    arguments = DictProperty(str, str)
+    def __init__(self, label: str, arguments: Dict[str, str] = {}, sdfg: 'SDFG' = None):
+        super().__init__(label, sdfg)
+        self.arguments = arguments

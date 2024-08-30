@@ -372,7 +372,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Check if array is already allocated
         if self._dispatcher.defined_vars.has(name):
             return
-        
+
         if len(tokens) > 1:
             for i in range(len(tokens) - 1):
                 tmp_name = '.'.join(tokens[:i + 1])
@@ -1119,7 +1119,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Write source to destination, where the source is a scalar, and the
         destination is a pointer.
-        
+
         :return: String of C++ performing the write.
         """
         codegen = codegen or self
@@ -1928,7 +1928,10 @@ class CPUCodeGen(TargetCodeGenerator):
                 begin, end, skip = r
 
                 if node.map.unroll:
-                    result.write("#pragma unroll", cfg, state_id, node)
+                    unroll_pragma = "#pragma unroll"
+                    if node.map.unroll_factor:
+                        unroll_pragma += f" {node.map.unroll_factor}"
+                    result.write(unroll_pragma, cfg, state_id, node)
 
                 result.write(
                     "for (auto %s = %s; %s < %s; %s += %s) {\n" %

@@ -35,6 +35,7 @@ class Node(object):
     out_connectors = DictProperty(key_type=str,
                                   value_type=dtypes.typeclass,
                                   desc="A set of output connectors for this node.")
+    guid = Property(dtype=str, allow_none=False)
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -45,6 +46,8 @@ class Node(object):
 
         self.in_connectors = in_connectors or {}
         self.out_connectors = out_connectors or {}
+
+        self.guid = graph.generate_element_id(self)
 
     def __str__(self):
         if hasattr(self, 'label'):
@@ -253,12 +256,15 @@ class AccessNode(Node):
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
+
+        node._guid = graph.generate_element_id(node)
+
         return node
 
     @property
     def label(self):
         return self.data
-    
+
     @property
     def root_data(self):
         return self.data.split('.')[0]
@@ -270,7 +276,7 @@ class AccessNode(Node):
         if isinstance(sdfg, (dace.sdfg.SDFGState, dace.sdfg.ScopeSubgraphView)):
             sdfg = sdfg.parent
         return sdfg.arrays[self.data]
-    
+
     def root_desc(self, sdfg):
         from dace.sdfg import SDFGState, ScopeSubgraphView
         if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
@@ -574,6 +580,9 @@ class NestedSDFG(CodeNode):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
+            # Skip GUID.
+            if k in ('guid',):
+                continue
             setattr(result, k, dcpy(v, memo))
         if result._sdfg is not None:
             result._sdfg.parent_nsdfg_node = result
@@ -723,7 +732,7 @@ class ExitNode(Node):
 @dace.serialize.serializable
 class MapEntry(EntryNode):
     """ Node that opens a Map scope.
-        
+
         :see: Map
     """
 
@@ -800,7 +809,7 @@ class MapEntry(EntryNode):
 @dace.serialize.serializable
 class MapExit(ExitNode):
     """ Node that closes a Map scope.
-        
+
         :see: Map
     """
 
@@ -871,6 +880,9 @@ class Map(object):
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
+    unroll_factor = Property(dtype=int, allow_none=True, default=0,
+                             desc="How much iterations should be unrolled."
+                             " To prevent unrolling, set this value to 1.")
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
@@ -963,7 +975,7 @@ MapEntry = indirect_properties(Map, lambda obj: obj.map)(MapEntry)
 @dace.serialize.serializable
 class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
-        
+
         :see: Consume
     """
 
@@ -1044,7 +1056,7 @@ class ConsumeEntry(EntryNode):
 @dace.serialize.serializable
 class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
-        
+
         :see: Consume
     """
 
