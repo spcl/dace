@@ -216,8 +216,9 @@ class MapWCRFusion(pm.SingleStateTransformation):
         map_entry, _ = map_collapse.apply(graph, sdfg)
 
         map_fusion = MapFusion()
+        # What is with the array?
         map_fusion.setup_match(sdfg, self.cfg_id, self.state_id, {
-            MapFusion.first_map_exit: graph.node_id(self.tmap_exit),
-            MapFusion.second_map_entry: graph.node_id(map_entry),
+            MapFusion.map_exit1: graph.node_id(self.tmap_exit),
+            MapFusion.map_entry2: graph.node_id(map_entry),
         }, 0)
         map_fusion.apply(graph, sdfg)

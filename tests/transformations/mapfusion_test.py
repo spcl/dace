@@ -4,6 +4,7 @@ from typing import Any, Union
 import numpy as np
 import os
 import dace
+import copy
 
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
@@ -31,6 +32,7 @@ def apply_fusion(
     number of maps.
     """
     num_maps_before = count_node(sdfg, nodes.MapEntry)
+    org_sdfg = copy.deepcopy(sdfg)
     sdfg.apply_transformations_repeated(MapFusion, validate=True, validate_all=True)
     num_maps_after = count_node(sdfg, nodes.MapEntry)
 
@@ -378,11 +380,11 @@ def test_fusion_with_nested_sdfg_1():
 
 
 if __name__ == '__main__':
+    test_fusion_with_transient()
     test_fusion_rename()
     test_fusion_simple()
     test_multiple_fusions()
     test_fusion_chain()
-    test_fusion_with_transient()
     test_fusion_with_transient_scalar()
     test_fusion_with_inverted_indices()
     test_fusion_with_empty_memlet()
