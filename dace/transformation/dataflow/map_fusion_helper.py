@@ -47,6 +47,8 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         value_type=set, #[str]
         default=None,
         allow_none=True,
+        optional=True, # Do not serialize.
+        optional_condition=lambda _: False,
         desc="Maps SDFGs to the set of data that can not be removed. "
         "The variable acts as a cache, and is managed by 'is_shared_data()'.",
     )
