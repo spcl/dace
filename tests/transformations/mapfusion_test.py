@@ -144,10 +144,33 @@ def fusion_chain(A: dace.float32[10, 20], B: dace.float32[10, 20]):
 
 
 @dace.program
+def fusion_with_transient(A: dace.float64[2, 20]):
+    res = np.ndarray([2, 20], dace.float64)
+    for i in dace.map[0:20]:
+        for j in dace.map[0:2]:
+            with dace.tasklet:
+                a << A[j, i]
+                t >> res[j, i]
+                t = a * a
+    for i in dace.map[0:20]:
+        for j in dace.map[0:2]:
+            with dace.tasklet:
+                t << res[j, i]
+                o >> A[j, i]
+                o = t * 2
+
+
+@dace.program
 def fusion_shared_output(A: dace.float32[10, 20], B: dace.float32[10, 20], C: dace.float32[10, 20]):
     tmp = A + 3
     B[:] = tmp * 4
     C[:] = tmp / 6
+
+
+@dace.program
+def fusion_indirect_access(A: dace.float32[100], B: dace.float32[100], idx: dace.int32[30], out: dace.float32[30]):
+    tmp = (A + B * 2) + 3
+    out[:] = tmp[idx]
 
 
 def test_fusion_simple():
@@ -194,6 +217,21 @@ def test_fusion_shared():
     assert np.allclose(C_res, C)
 
 
+def test_indirect_accesses():
+    sdfg = fusion_indirect_access.to_sdfg()
+    sdfg = apply_fusion(sdfg, final_maps=2)
+
+    A = np.random.rand(100).astype(np.float32)
+    B = np.random.rand(100).astype(np.float32)
+    idx = ((np.random.rand(30) * 100) % 100).astype(np.int32)
+    out = np.zeros(shape=30, dtype=np.float32)
+
+    res = ((A + B * 2) + 3)[idx]
+    sdfg(A=A, B=B, idx=idx, out=out)
+
+    assert np.allclose(res, out)
+
+
 def test_multiple_fusions():
     sdfg = multiple_fusions.to_sdfg()
 
@@ -227,22 +265,6 @@ def test_fusion_chain():
     print('Difference:', diff)
     assert diff <= 1e-4
 
-
-@dace.program
-def fusion_with_transient(A: dace.float64[2, 20]):
-    res = np.ndarray([2, 20], dace.float64)
-    for i in dace.map[0:20]:
-        for j in dace.map[0:2]:
-            with dace.tasklet:
-                a << A[j, i]
-                t >> res[j, i]
-                t = a * a
-    for i in dace.map[0:20]:
-        for j in dace.map[0:2]:
-            with dace.tasklet:
-                t << res[j, i]
-                o >> A[j, i]
-                o = t * 2
 
 
 def test_fusion_with_transient():
@@ -405,6 +427,7 @@ def test_fusion_with_nested_sdfg_1():
 
 
 if __name__ == '__main__':
+    test_indirect_accesses()
     test_fusion_shared()
     test_fusion_with_transient()
     test_fusion_rename()
@@ -417,3 +440,4 @@ if __name__ == '__main__':
     test_fusion_with_nested_sdfg_0()
     test_fusion_with_nested_sdfg_1()
     print("SUCCESS")
+
