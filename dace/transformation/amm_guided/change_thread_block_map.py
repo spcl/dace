@@ -90,12 +90,12 @@ class ChangeThreadBlockMap(transformation.SingleStateTransformation):
                 (_, dev_end, dev_step) = dev_range
                 (block_beg, _, block_step) = block_range
                 block_steps.append(block_step)
-                new_thread_block_map_range_str += f"{block_beg}:Min({dev_end}, {block_beg}+{dev_step}-1)+1:{block_step}, "
+                new_thread_block_map_range_str += f"{block_beg}:{dev_step}:{block_step}, "
             block_map.range = subsets.Range.from_string(new_thread_block_map_range_str[:-2])
 
         # Step 3. Propagate memlets
         # Overapproximate the memory moved such that the terms do not involve any min:
-        propagation.propagate_memlets_state(sdfg=sdfg, state=graph)
+        # propagation.propagate_memlets_state(sdfg=sdfg, state=graph)
 
         # Apparently gpu_block_size only necessary if there is no gpu_thread_block schedule
         # Therefore the code-gen now choose the values in gpu_block_size if it conflicts with the
@@ -105,4 +105,4 @@ class ChangeThreadBlockMap(transformation.SingleStateTransformation):
 
     @staticmethod
     def annotates_memlets():
-        return True
+        return False

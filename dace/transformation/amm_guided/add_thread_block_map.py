@@ -37,7 +37,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
     def update_names():
         pass
 
-    def apply(self, graph: SDFGState, sdfg: SDFG):
+    def apply(self, state: SDFGState, sdfg: SDFG):
         map_entry = self.map_entry
 
         tx = self.thread_block_size_x
@@ -56,29 +56,33 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         applied_gpu_block_dims[-used_dimensions:] = block_dims[-used_dimensions:]
         gpu_block_dims_ordered = list(reversed(applied_gpu_block_dims))
 
+                                        
         # Tile trivial simplifies come checks for the BlockCoarsening and ThreadCoarsening transformations
         MapTiling.apply_to(sdfg=sdfg, 
                            options=dict(prefix="b", 
-                                        tile_sizes=tile_sizes, 
-                                        tile_trivial=True),
+                                        #tile_offset=map_begins,
+                                        tile_sizes=tile_sizes,
+                                        divides_evenly=True,
+                                        tile_trivial=True,
+                                        skew=True),
                             map_entry=map_entry)
 
         map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
         map_entry.map.gpu_block_size = gpu_block_dims_ordered
 
         # The dev map is a new map where the gpu_block_size param is not transferred over
-        dev_entry = graph.entry_node(map_entry)
+        dev_entry = state.entry_node(map_entry)
         dev_entry.map.gpu_block_size = gpu_block_dims_ordered
 
         # Clear the copied-over edges that are not between any connectors (happens if such an edge exist to ensure
         # proper allocation of a constnat in after the device map)
         edges_to_remove = []
-        for edge in graph.out_edges(dev_entry):
+        for edge in state.out_edges(dev_entry):
             u, u_conn, v, v_conn, memlet = edge
             if u_conn == None and v_conn == None and memlet.data == None:
                 edges_to_remove.append(edge)
         for edge in edges_to_remove:
-            graph.remove_edge(edge)
+            state.remove_edge(edge)
 
     @staticmethod
     def annotates_memlets():

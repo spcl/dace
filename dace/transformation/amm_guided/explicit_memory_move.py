@@ -238,7 +238,6 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
     The src location is inferred and the memory is moved explicitly using a library not the given memory location
     """
     device_map_entry = transformation.PatternNode(nodes.MapEntry)
-    grid_strided_map_entry = transformation.PatternNode(nodes.MapEntry)
     thread_block_map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
@@ -248,7 +247,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
 
     @classmethod
     def expressions(cls):
-        return [sdutil.node_path_graph(cls.device_map_entry, cls.grid_strided_map_entry, cls.thread_block_map_entry)]
+        return [sdutil.node_path_graph(cls.device_map_entry, cls.thread_block_map_entry)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         return True
@@ -528,7 +527,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
         # Of mode is 0, then it means all maps start from range 0, and the subset calcualtions need to consider
         # every type of access, then, subset computations need to adapt differently
 
-        for edge in graph.out_edges(self.grid_strided_map_entry):
+        for edge in graph.out_edges(self.thread_block_map_entry):
           src_arr_name, src_storage_type_of_memlet = self.infer_source(graph=graph, sdfg=sdfg, edge=edge)
           dst_arr_name = self.location_to_prefix.get(self.memory_location, "") + f"{src_arr_name}"
           # The current state (and assumptions), the other edges connect outer map to the inner map,
@@ -542,8 +541,8 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
           # Build the offsets, load_lengths, num_threads 
           # DaCe maps of form i0, i1, i2, i3 are mapped to the GPU block dimensions
           # (i0 x i1) -> z, i2 -> y, i3 -> x, therefore we iterate from back up to three
-          offsets = ["0"] * len(self.grid_strided_map_entry.map.range)
-          load_lengths = [0] * len(self.grid_strided_map_entry.map.range)
+          offsets = ["0"] * len(self.thread_block_map_entry.map.range)
+          load_lengths = [0] * len(self.thread_block_map_entry.map.range)
           num_threads = [int(t) for t in self.device_map_entry.map.gpu_block_size]
           shape = [0] * len(memlet.subset)
           for i, (beg, end, step) in enumerate(memlet.subset):
@@ -567,7 +566,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                                         global_tensor_dims=list(reversed([str(d) if isinstance(d, sympy.Symbol) else int(d) for d in sdfg.arrays[src_arr_name].shape])),
                                         in_arr=src_arr_name,
                                         out_arr=dst_arr_name,
-                                        grid_loop_params=self.grid_strided_map_entry.map.params,
+                                        grid_loop_params=self.thread_block_map_entry.map.params,
                                         tiles_evenly=self.tiles_evenly,
                                         variant=self.variant)
 
@@ -580,7 +579,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
           memlet_to_lib_node : Memlet = memlet
           exprs = self.filter_map_params_from_subset_2(subset_range=memlet_to_lib_node.subset, 
                                                      params_to_remove=set.union(set(self.device_map_entry.map.params),
-                                                     set(self.grid_strided_map_entry.map.params)),
+                                                     set(self.thread_block_map_entry.map.params)),
                                                      current_map=self.thread_block_map_entry.map,
                                                      intermediate_map=None,
                                                      outer_map=None,
@@ -633,7 +632,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                                                                 params_to_remove=set(),
                                                                 current_map=innermost_map,
                                                                 intermediate_map=self.thread_block_map_entry.map,
-                                                                outer_map=self.grid_strided_map_entry.map,
+                                                                outer_map=self.thread_block_map_entry.map,
                                                                 src_arr_shape=src_arr.shape,
                                                                 dst_arr_shape=shape,
                                                                 map_mode=1)

@@ -51,8 +51,8 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         # Furthermore the step of the device scheduled map needs to be increase too.
         # This can be handled by changing the range and the step of the thread block scheduled loop and increasing the step size of the parent
 
-        dev_entry = self.device_map_entry
-        thread_block_entry = self.thread_block_map_entry
+        dev_entry : nodes.MapEntry = self.device_map_entry
+        thread_block_entry : nodes.MapEntry = self.thread_block_map_entry
 
         # If there are transient access nodes leading to the first inner sequential map the sizes of the arrays and the
         # subsets / volumes of the corresponding memlets need to be adapted
@@ -72,7 +72,13 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         # Depending on the sizes of the params use: (tz,ty,tx), (ty,tx) or (tx)
         tile_sizes[-used_dimensions:] = possible_tile_sizes[-used_dimensions:]
 
-        MapTiling.apply_to(sdfg=sdfg, options=dict(prefix="d", tile_sizes=tile_sizes, tile_trivial=True),  map_entry=thread_block_entry)
+        MapTiling.apply_to(sdfg=sdfg, 
+                           options=dict(prefix="d",
+                                        skew=True,
+                                        tile_sizes=tile_sizes,
+                                        divides_evenly=True,
+                                        tile_trivial=True),
+                           map_entry=thread_block_entry)
 
         sequential_map_entry = thread_block_entry
         sequential_map_entry.map.schedule = dtypes.ScheduleType.Sequential
@@ -85,6 +91,17 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         # Update the range if the inner sequential map
         sequential_map : nodes.Map = sequential_map_entry.map
 
+        # Rm unnecessary copy-over edges
+        edges_to_remove = []
+        for edge in state.out_edges(thread_block_entry):
+            u, u_conn, v, v_conn, memlet = edge
+            if u_conn == None and v_conn == None and memlet.data == None:
+                edges_to_remove.append(edge)
+        for edge in edges_to_remove:
+            state.remove_edge(edge)
+
+
+        """
         # Create the new dimension sizes for the ThreadBlock Map.
         # The dimensions of the thread block map to the step sizes of the device scheduled map.
         # They need to be scaled according to the tilesize, and the order of how they are mapped
@@ -119,6 +136,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                 edges_to_remove.append(edge)
         for edge in edges_to_remove:
             state.remove_edge(edge)
+        """
 
         # Move the access above the outer sequential map and update memlets for the map entry
         if inner_sequential_map_entry != None:
@@ -189,7 +207,13 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                 if not (isinstance(v, nodes.MapExit) and v == state.exit_node(sequential_map_entry)):
                     edges_to_check = edges_to_check.union(state.out_edges(v))
 
+        # Map Tiling does not update the range as we need them
+        # Update the threadblock and device ranges
+        dev_updated_range_list = [(beg,end,step*tstep) for (beg,end,step), (_,_,tstep) in zip(dev_entry.map.range, thread_block_entry.map.range)]
+        dev_entry.map.range = subsets.Range(dev_updated_range_list)
+        thread_block_updated_range_list = [(beg,(end+1)*step-1,step) for (beg,end,step) in thread_block_entry.map.range]
+        thread_block_entry.map.range = subsets.Range(thread_block_updated_range_list)
 
     @staticmethod
     def annotates_memlets():
-        return True
+        return False
