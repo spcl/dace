@@ -8,7 +8,7 @@ import copy
 
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
-from dace.transformation.dataflow import MapFusion
+from dace.transformation.dataflow import SerialMapFusion, ParallelMapFusion
 
 
 def count_node(sdfg: SDFG, node_type):
@@ -33,7 +33,7 @@ def apply_fusion(
     """
     num_maps_before = count_node(sdfg, nodes.MapEntry)
     org_sdfg = copy.deepcopy(sdfg)
-    sdfg.apply_transformations_repeated(MapFusion, validate=True, validate_all=True)
+    sdfg.apply_transformations_repeated(SerialMapFusion, validate=True, validate_all=True)
     num_maps_after = count_node(sdfg, nodes.MapEntry)
 
     has_processed = False
@@ -426,6 +426,79 @@ def test_fusion_with_nested_sdfg_1():
                 assert isinstance(src, dace.nodes.AccessNode)
 
 
+def test_parallel_fusion_simple():
+    N1, N2 = 10, 20
+
+    def _make_sdfg():
+        sdfg = dace.SDFG("simple_parallel_map")
+        state = sdfg.add_state("state", is_start_block=True)
+        for name in ("A", "B", "out1", "out2"):
+            sdfg.add_array(name, shape=(N1, N2), transient=False, dtype=dace.float64)
+        sdfg.add_scalar("dmr", dtype=dace.float64, transient=False)
+        A, B, dmr, out1, out2 = (state.add_access(name) for name in ("A", "B", "dmr", "out1", "out2"))
+
+        _, map1_entry, _ = state.add_mapped_tasklet(
+                "map_with_dynamic_range",
+                map_ranges={"__i0": f"0:{N1}", "__i1": f"0:{N2}"},
+                inputs={"__in0": dace.Memlet("A[__i0, __i1]")},
+                code="__out = __in0 + dynamic_range_value",
+                outputs={"__out": dace.Memlet("out1[__i0, __i1]")},
+                input_nodes={"A": A},
+                output_nodes={"out1": out1},
+                external_edges=True,
+        )
+        state.add_edge(
+                dmr,
+                None,
+                map1_entry,
+                "dynamic_range_value",
+                dace.Memlet("dmr[0]"),
+        )
+        map1_entry.add_in_connector("dynamic_range_value")
+
+        _, map2_entry, _ = state.add_mapped_tasklet(
+                "map_without_dynamic_range",
+                map_ranges={"__i2": f"0:{N1}", "__i3": f"0:{N2}"},
+                inputs={
+                    "__in0": dace.Memlet("A[__i2, __i3]"),
+                    "__in1": dace.Memlet("B[__i2, __i3]")
+                },
+                code="__out = __in0 + __in1",
+                outputs={"__out": dace.Memlet("out2[__i2, __i3]")},
+                input_nodes={"A": A, "B": B},
+                output_nodes={"out2": out2},
+                external_edges=True,
+        )
+        sdfg.validate()
+        return sdfg, map1_entry, map2_entry
+
+    for mode in range(2):
+        A = np.random.rand(N1, N2)
+        B = np.random.rand(N1, N2)
+        dmr = 3.1415
+        out1 = np.zeros_like(A)
+        out2 = np.zeros_like(B)
+        res1 = A + dmr
+        res2 = A + B
+
+        sdfg, map1_entry, map2_entry = _make_sdfg()
+
+        if mode:
+            map1_entry, map2_entry = map2_entry, map1_entry
+
+        ParallelMapFusion.apply_to(
+                sdfg,
+                map_entry1=map1_entry,
+                map_entry2=map2_entry,
+                verify=True,
+        )
+        assert count_node(sdfg, dace.sdfg.nodes.MapEntry) == 1
+
+        sdfg(A=A, B=B, dmr=dmr, out1=out1, out2=out2)
+        assert np.allclose(out1, res1)
+        assert np.allclose(out2, res2)
+
+
 if __name__ == '__main__':
     test_indirect_accesses()
     test_fusion_shared()
@@ -439,5 +512,6 @@ if __name__ == '__main__':
     test_fusion_with_empty_memlet()
     test_fusion_with_nested_sdfg_0()
     test_fusion_with_nested_sdfg_1()
+    test_parallel_fusion_simple()
     print("SUCCESS")
 
