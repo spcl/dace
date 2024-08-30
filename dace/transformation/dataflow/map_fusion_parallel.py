@@ -103,7 +103,6 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         Map to the corresponding nodes of the first Map. Afterwards the nodes of the
         second Map are removed.
         """
-        assert self.map_parameter_compatible(self.map_entry1.map, self.map_entry2.map, graph, sdfg)
 
         map_entry_1: nodes.MapEntry = self.map_entry1
         map_exit_1: nodes.MapExit = graph.exit_node(map_entry_1)
