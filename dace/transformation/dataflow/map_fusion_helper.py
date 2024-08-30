@@ -494,6 +494,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                 first_map=map_exit_1.map,
                 second_map=map_entry_2.map,
         )
+        assert repl_dict is not None
 
         # Set of intermediate nodes that we have already processed.
         processed_inter_nodes: Set[nodes.Node] = set()
@@ -508,8 +509,15 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                 return None
             processed_inter_nodes.add(intermediate_node)
 
+            # The intermediate can only have one incoming degree. It might be possible
+            #  to handle multiple incoming edges, if they all come from the top map.
+            #  However, the resulting SDFG might be invalid.
+            if state.in_degree(intermediate_node) != 1:
+                return None
+
             # Now let's look at all nodes that are downstream of the intermediate node.
             #  This, among other things, will tell us, how we have to handle this node.
+            #  NOTE: The traversal will stop at the second map.
             downstream_nodes = all_nodes_between(
                 graph=state,
                 begin=intermediate_node,
@@ -527,6 +535,12 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             #  output node, because this allows us to handle more exotic pure node
             #  cases, as handling them is essentially rerouting an edge, whereas
             #  handling intermediate nodes is much more complicated.
+
+            # If `downstream_nodes` is empty, this means that the second map entry
+            #  was found immediately, we only allow the case that there is one
+            #  connecting Memlet.
+            if (len(downstream_nodes) == 0) and state.out_degree(intermediate_node) != 1:
+                return None
 
             # For us an intermediate node must always be an access node, because
             #  everything else we do not know how to handle. It is important that
@@ -557,125 +571,88 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             #  of the first map exit, but there is only one edge leaving the exit.
             #  It is complicate to handle this, so for now we ignore it.
             # TODO(phimuell): Handle this case properly.
-            #   The main reason why we forbid this is because it becomes a bit tricky
-            #   to figuring out the size of the intermediate.
-            inner_collector_edges = list(state.in_edges_by_connector(intermediate_node, "IN_" + out_edge.src_conn[3:]))
-            if len(inner_collector_edges) > 1:
+            #   To handle this we need to associate a consumer edge (the outgoing edges
+            #   of the second map) with exactly one producer.
+            producer_edges: List[graph.MultiConnectorEdge[dace.Memlet]] = list(state.in_edges_by_connector(map_exit_1, "IN_" + out_edge.src_conn[4:]))
+            if len(producer_edges) > 1:
                 return None
 
-            # We now look for all producers inside the top map. We need this information
-            #  later to determine if the point wise output of the top map is enough
-            #  to serve as (point wise) input for the second map.
-            # In addition we will check if there is a WCR edge is present, which we
-            #  can not handle.
-            producers = find_upstream_producers(state, out_edge)
+            # Now check the constraints we have on the producers.
+            #   - The source of the producer can not be a view (we do not handle this)
+            #   - The edge shall also not be a reduction edge.
+            #   - Defined location to where they write.
+            #  Furthermore, we will also extract the subsets, i.e. the location they
+            #  modify inside the intermediate array.
+            producer_subsets: List[subsets.Subset] = []
+            for producer_edge in producer_edges:
+                if isinstance(producer_edge.src, nodes.AccessNode) and is_view(producer_edge.src, sdfg):
+                    return None
+                if producer_edge.data.wcr is not None:
+                    return None
+                if producer_edge.data.dst_subset is None:
+                    return None
+                producer_subsets.append(producer_edge.data.dst_subset)
 
-            # More than one producer is not supported.
-            if len(producers) != 1:
+            # Now we determine the consumer of nodes. For this we are using the edges
+            #  leaves the second map entry. We could find the final consumers (e.g.
+            #  Tasklets), however, this might make problems as they depend also on
+            #  symbols defined by nested maps. However, we are not interested in edges,
+            #  but actually what they read, i.e. their source subset.
+            #  In any case there can be at most one connection between the intermediate
+            #  and the second map entry.
+            found_second_map = False
+            consumer_subsets: List[subsets.Subset] = []
+            for intermediate_node_out_edges in state.out_edges(intermediate_node):
+                # Check if we have not reached the second map entry.
+                #  This happens if the intermediate node is a shared node.
+                # However, we are only allowed to find the second map once.
+                if intermediate_node_out_edges.dst is not map_entry_2:
+                    continue
+                if found_second_map:
+                    # TODO(phimuell): Lift this restriction.
+                    return None
+                found_second_map = True
+                assert intermediate_node_out_edges.dst_conn.startswith("IN_")
+                consumer_subsets.extend(
+                        e.data.src_subset
+                        for e in state.out_edges_by_connector(map_entry_2, "OUT_" + intermediate_node_out_edges.dst_conn[3:])
+                )
+            # The subsets are not set correctly, so we give up.
+            if any(consumer_subset is None for consumer_subset in consumer_subsets):
                 return None
-            producer_node, producer_edge = next(iter(producers))
+            assert len(consumer_subsets) != 0
 
-            # If the producer is a view, then we give up. It is possible to handle,
-            #  but also very complicated.
-            if isinstance(producer_node, nodes.AccessNode) and isinstance(producer_node.desc(sdfg), data.View):
-                return None
+            # Furthermore, the consumer still uses the original symbols of the
+            #  second map, so we must rename them.
+            if repl_dict:
+                consumer_subsets = copy.deepcopy(consumer_subsets)
+                for consumer_subset in consumer_subsets:
+                    symbolic.safe_replace(mapping=repl_dict, replace_callback=consumer_subset.replace)
 
-            # We do not allow that the edge has WCR.
-            if producer_edge.data.wcr is not None:
-                return None
-
-            if len(downstream_nodes) == 0:
-                # TODO(phimuell): Refactor this if such that the loop is only there once.
-
-                # There is nothing between intermediate node and the entry of the
-                #  second map, thus the edge belongs either in `\mathbb{S}` or
-                #  `\mathbb{E}`.
-
-                # If the intermediate access node as more than one outgoing edge
-                #  it means (because of `downstream_nodes`) that it has multiple
-                #  connections to the second map. We do not allow this.
-                # TODO(phimuell): Handle this case.
-                if state.out_degree(intermediate_node) != 1:
+            # Now we are checking if a single iteration of the first (top) map
+            #  can satisfy all data requirements of the second (bottom) map.
+            #  For this we look if the producer covers the consumer. A consumer must
+            #  be covered by exactly one producer.
+            for consumer_subset in consumer_subsets:
+                nb_coverings = sum(producer_subset.covers(consumer_subset) for producer_subset in producer_subsets)
+                if nb_coverings != 1:
                     return None
 
-                # We can fuse the maps only if the producer, i.e. the top map,
-                #  represented by `producer_edge`, is gives us enough information.
-                producer_subset: subsets.Range = producer_edge.data.dst_subset
-                consumers = find_downstream_consumers(state=state, begin=intermediate_node)
-
-                for consumer_node, consumer_edge in consumers:
-                    if consumer_node is map_entry_2:  # Dynamic map range.
-                        return None
-                    if isinstance(consumer_node, nodes.LibraryNode):
-                        # TODO(phimuell): Allow some library nodes.
-                        return None
-
-                    # Tests if consumer consume less or equal the amount we generate.
-                    #  If the source of the consumer is not set, we can not check what it reads.
-                    if consumer_edge.data.src_subset is None:
-                        return None
-                    #  For that we have to perform a replace operation of the consumer .
-                    mod_consumer_subset = copy.deepcopy(consumer_edge.data.src_subset)
-                    symbolic.safe_replace(mapping=repl_dict, replace_callback=mod_consumer_subset.replace)
-
-                    if not producer_subset.covers(mod_consumer_subset):
-                        return None
-
-                # Note that "remove" has a special meaning here, regardless of the
-                #  output of the check function, from within the second map we remove
-                #  the intermediate, it has more the meaning of "do we need to
-                #  reconstruct it after the second map again?"
-                if self.is_shared_data(intermediate_node, sdfg):
-                    shared_outputs.add(out_edge)
-                else:
-                    exclusive_outputs.add(out_edge)
-                continue
-
-            else:
-                # There is not only a single connection from the intermediate node to
-                #  the second map, but the intermediate has more connections, thus
-                #  the node might belong to the shared output. Of the many different
-                #  possibilities, we only consider a single case:
-                #  - The intermediate has a single connection to the second map, that
-                #       fulfills the restriction outlined above.
-                #  - All other connections have no connection to the second map.
-
-                # We can fuse the maps only if the producer, i.e. the top map,
-                #  represented by `producer_edge`, is gives us enough information.
-                producer_subset: subsets.Range = producer_edge.data.dst_subset
-                consumers = find_downstream_consumers(state=state, begin=intermediate_node)
-
-                found_second_entry = False
-                for edge in state.out_edges(intermediate_node):
-                    if edge.dst is map_entry_2:
-                        if found_second_entry:  # The second map was found again.
-                            return None
-                        found_second_entry = True
-                        consumers = find_downstream_consumers(state=state, begin=edge)
-                        for consumer_node, consumer_edge in consumers:
-                            if consumer_node is map_entry_2:  # Dynamic map range.
-                                return None
-                            if isinstance(consumer_node, nodes.LibraryNode):
-                                # TODO(phimuell): Allow some library nodes.
-                                return None
-
-                            # Tests if consumer consume less or equal the amount we generate.
-                            #  If the source of the consumer is not set, we can not check what it reads.
-                            if consumer_edge.data.src_subset is None:
-                                return None
-                            #  For that we have to perform a replace operation of the consumer .
-                            mod_consumer_subset = copy.deepcopy(consumer_edge.data.src_subset)
-                            symbolic.safe_replace(mapping=repl_dict, replace_callback=mod_consumer_subset.replace)
-                            if not producer_subset.covers(mod_consumer_subset):
-                                return None
-                    else:
-                        # Ensure that there is no path that leads to the second map.
-                        after_intermdiate_node = all_nodes_between(graph=state, begin=edge.dst, end=map_entry_2)
-                        if after_intermdiate_node is not None:
-                            return None
-                # If we are here, then we know that the node is a shared output
+            # After we have ensured coverage, we have to decide if the intermediate
+            #  node can be removed (`\mathbb{E}`) or has to be restored (`\mathbb{S}`).
+            #  Note that "removed" here means that it is reconstructed by a new
+            #  output of the second map.
+            if len(downstream_nodes) != 0:
+                # The intermediate node is connected to more node inside this state,
+                #  that are not inside the map, so we must keep it alive.
                 shared_outputs.add(out_edge)
-                continue
+            elif self.is_shared_data(intermediate_node, sdfg):
+                # The intermediate data is refered to somewhere else.
+                #  So it must be passed.
+                shared_outputs.add(out_edge)
+            else:
+                # The intermediate can be removed, as it is not used anywhere else.
+                exclusive_outputs.add(out_edge)
 
         assert exclusive_outputs or shared_outputs or pure_outputs
         assert len(processed_inter_nodes) == sum(len(x) for x in [pure_outputs, exclusive_outputs, shared_outputs])
