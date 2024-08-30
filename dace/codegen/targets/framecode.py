@@ -492,7 +492,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_topological = list(sdfg.bfs_nodes(sdfg.start_state))
             last = states_topological[-1]
             cft = cflow.GeneralBlock(dispatch_state, None,
-                                    [cflow.BasicCFBlock(dispatch_state, s, s is last) for s in states_topological],
+                                    [cflow.BasicCFBlock(dispatch_state, None, s is last, s) for s in states_topological],
                                     [], [], [], [], False)
 
         callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)

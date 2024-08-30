@@ -35,6 +35,7 @@ class Node(object):
     out_connectors = DictProperty(key_type=str,
                                   value_type=dtypes.typeclass,
                                   desc="A set of output connectors for this node.")
+    guid = Property(dtype=str, allow_none=False)
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -45,6 +46,8 @@ class Node(object):
 
         self.in_connectors = in_connectors or {}
         self.out_connectors = out_connectors or {}
+
+        self.guid = graph.generate_element_id(self)
 
     def __str__(self):
         if hasattr(self, 'label'):
@@ -253,6 +256,9 @@ class AccessNode(Node):
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
+
+        node._guid = graph.generate_element_id(node)
+
         return node
 
     @property
@@ -574,6 +580,9 @@ class NestedSDFG(CodeNode):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
+            # Skip GUID.
+            if k in ('guid',):
+                continue
             setattr(result, k, dcpy(v, memo))
         if result._sdfg is not None:
             result._sdfg.parent_nsdfg_node = result
