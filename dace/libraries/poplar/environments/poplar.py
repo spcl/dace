@@ -9,14 +9,14 @@ from typing import Union
 class IPU:
 
     cmake_minimum_version = None
-    cmake_packages = ["IPU"]
+    cmake_packages = ["poplar"] # Find = POPLARConfig.cmake | poplar-config.cmake
     cmake_files = []
     cmake_variables = {}
     cmake_includes = []
     cmake_libraries = []
-    cmake_compile_flags = ["-std=c++11"]
-    cmake_link_flags = ["-L -lpoplar -lpopops -lpoplin -lpoputil"]
-    headers = [ "../../include/poplar_dace_interface.h"]
+    cmake_compile_flags = []
+    cmake_link_flags = ["-lpoplar -lpopops -lpoplin -lpoputil"] #-L/software/graphcore/poplar_sdk/3.3.0/poplar-ubuntu_20_04-3.3.0+7857-b67b751185/lib
+    headers = [ "../include/poplar_dace_interface.h"]
     state_fields = [
             "// IPUModel APIs",
             "IPUModel ipuModel;",
