@@ -1852,7 +1852,7 @@ class ContainerArray(Array):
 
         self.stype = stype
         if stype:
-            if isinstance(stype, Structure):
+            if isinstance(stype, (Structure, Scalar)):
                 dtype = stype.dtype
             else:
                 dtype = dtypes.pointer(stype.dtype)

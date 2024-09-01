@@ -503,6 +503,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # Register container arrays use their stype with the array size
             if isinstance(nodedesc, data.ContainerArray):
                 defdesc = nodedesc.stype
+            else:
+                defdesc = data.Scalar(nodedesc.dtype)
 
             # Register arrays can be allocated as a container array of the descriptor
             defdesc = data.ContainerArray(defdesc, [arrsize], byval=True)
