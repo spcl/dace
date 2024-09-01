@@ -23,6 +23,11 @@ class ExpandMMPopLib(ExpandTransformation):
         
 
         init = f""" 
+            {{
+                {A_poplar_type} A = {node.A_scalar_param};
+                Tensor B = {node.B_scalar_param};
+                Tensor C = {node.C_scalar_param};
+            }}
             // Add variables to the graph
             Tensor m1 = __state->graph.addVariable(FLOAT, {{900, 600}}, "m1");
             Tensor m2 = __state->graph.addVariable(FLOAT, {{600, 300}}, "m2");
@@ -54,9 +59,16 @@ class IPUMatMul(dace.sdfg.nodes.LibraryNode):
         "MM": ExpandMMPopLib,
     }
     default_implementation = None
-
-    def __init__(self, name):
+    
+    A_scalar_param = dace.properties.Property(allow_none=False, default=0, desc="A scalar")
+    B_scalar_param = dace.properties.Property(allow_none=False, default=0, desc="B scalar")
+    C_scalar_param = dace.properties.Property(allow_none=False, default=0, desc="C scalar")
+    
+    def __init__(self, name, A_scalar_param, B_scalar_param, C_scalar_param):
         super().__init__(name, inputs={"_inbufferA", "_inbufferB"}, outputs={"_outbufferC"})
+        self.A_scalar_param = A_scalar_param
+        self.B_scalar_param = B_scalar_param
+        self.C_scalar_param = C_scalar_param    
 
     def validate(self, sdfg, state):
         """
