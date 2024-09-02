@@ -638,6 +638,21 @@ class SerialMapFusion(mfh.MapFusionHelper):
                 )
             new_inter_node: nodes.AccessNode = state.add_access(new_inter_name)
 
+            # Get the subset that defined into which part of the old intermediate
+            #  the old output edge wrote to. We need that to adjust the producer
+            #  Memlets, since they now write into the new (smaller) intermediate.
+            assert pre_exit_edge.data.data == inter_name
+            assert pre_exit_edge.data.dst_subset is not None
+            old_pre_exit_edge_subset = pre_exit_edge.data.dst_subset
+
+            # Memlets have a lot of additional informations, such as dynamic.
+            #  To ensure that we get all of them, we will now copy them and modify
+            #  the one that was originally there. We also hope that propagate will
+            #  set the rest for us correctly.
+            new_pre_exit_memlet = copy.deepcopy(pre_exit_edge.data)
+            new_pre_exit_memlet.data = new_inter_name
+            new_pre_exit_memlet.dst_subset = subsets.Range.from_array(new_inter_desc)
+
             # New we will reroute the output Memlet, thus it will no longer pass
             #  through the Map exit but through the newly created intermediate.
             #  NOTE: We will delete the previous edge later.
@@ -646,15 +661,8 @@ class SerialMapFusion(mfh.MapFusionHelper):
                 pre_exit_edge.src_conn,
                 new_inter_node,
                 None,
-                sdfg.make_array_memlet(new_inter_name),
+                new_pre_exit_memlet,
             )
-
-            # Get the subset that defined into which part of the old intermediate
-            #  the old output edge wrote to. We need that to adjust the producer
-            #  Memlets, since they now write into the new (smaller) intermediate.
-            assert pre_exit_edge.data.data == inter_name
-            assert pre_exit_edge.data.dst_subset is not None
-            old_pre_exit_edge_subset = pre_exit_edge.data.dst_subset
 
             # We now handle the MemletTree defined by this edge.
             #  The newly created edge, only handled the last collection step.
@@ -707,7 +715,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
 
                     # As for the producer side, we now read from a smaller array,
                     #  So we must offset them, we use the original edge for this.
-                    assert inner_edge.data.src_subset is not None, f"{inner_edge} | {inner_edge.data} | {inner_edge.data.src_subset} | {inner_edge.data.dst_subset} "
+                    assert inner_edge.data.src_subset is not None
                     inner_edge_correction_offset = inner_edge.data.src_subset
 
                     # Now we create a new connection that instead reads from the new
