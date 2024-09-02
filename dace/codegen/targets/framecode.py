@@ -983,7 +983,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Clean up generated code
         gotos = re.findall(r'goto (.*?);', generated_code)
         clean_code = ''
+        last_line = ''
         for line in generated_code.split('\n'):
+            # Empty line
+            if not line.strip():
+                continue
             # Empty line with semicolon
             if re.match(r'^\s*;\s*', line):
                 continue
@@ -991,8 +995,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             label = re.findall(r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$', line)
             if len(label) > 0:
                 if label[0] not in gotos:
+                    last_line = ''
+                    continue
+                if f'goto {label[0]};' in last_line:  # goto followed by label
+                    clean_code = clean_code[:-len(last_line)-1]
+                    last_line = ''
                     continue
             clean_code += line + '\n'
+            last_line = line
 
         # Return the generated global and local code strings
         return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)
