@@ -125,24 +125,22 @@ class SerialMapFusion(mfh.MapFusionHelper):
         state: SDFGState,
         sdfg: SDFG,
     ) -> bool:
-        """Test if there is a read write dependency between the two maps.
+        """Test if there is a read write dependency between the two maps to be fused.
 
-        The function checks if the first map does not read anything from
-        a data descriptor, the second map writes into.
+        The function first looks at the set of data that is read/written by the
+        two maps. If the function detects a possible conflict, the function will
+        evaluate the subsets of the read and write to determine if the conflict
+        can be resolved or not.
 
         Returns:
-            `True` if there is a conflict between input and outputs, `False`
-            if there is no conflict.
+            `True` if there is a conflict between the maps that can not be handled.
+            If there is no conflict or if the conflict can be handled then `False`
+            is returned.
 
         Args:
             map_entry_1: The entry node of the first map.
             map_entry_2: The entry node of the second map.
             state: The state on which we operate.
-
-        Note:
-            The current implementation just computes the set of data that is
-            used as input and for output. If there is an intersection then
-            the function considers this as a read write conflict.
         """
         map_exit_1: nodes.MapExit = state.exit_node(map_entry_1)
         map_exit_2: nodes.MapExit = state.exit_node(map_entry_2)
@@ -168,15 +166,19 @@ class SerialMapFusion(mfh.MapFusionHelper):
             })
         real_read_map_1, real_write_map_1, real_read_map_2, real_write_map_2 = resolved_sets
 
-        # We now test for "structural problems", i.e. problems where the resulting
-        #  SDFG would be invalid, all of these cases are characterized by the fact
-        #  that both maps write to the same data. This is hard or impossible to
-        #  handle, so we forbid all these cases.
+        # If the resolved and the unresolved set of input/output have different lengths,
+        #  it means that there were two different views that ultimately referred to the
+        #  same data.
+        for unresolved_access, resolved_access in zip(access_sets, resolved_sets):
+            if len(unresolved_access) != len(resolved_access):
+                return True
+
+        # We do not allow that the first and second map each write to the same data.
+        #  The reason is because it is very hard to handle correctly.
         if not real_write_map_1.isdisjoint(real_write_map_2):
             return True
 
-        # We will now test if there are no conflicts, for this we require that all
-        #  input is distinct from the all the output.
+        # The inputs and outputs are different, so there can not be any conflicts.
         #  Must be done after the test above!
         if (real_read_map_1 | real_read_map_2).isdisjoint(real_write_map_1 | real_write_map_2):
             return False
@@ -364,6 +366,8 @@ class SerialMapFusion(mfh.MapFusionHelper):
         If a series of subsets are point wise it means that all Memlets, access
         the same data. This is an important property because the whole map fusion
         is build upon this.
+        If the subsets originates from different maps, then they must have been
+        renamed.
 
         Args:
             subsets_to_check: The list of subsets that should be checked.
