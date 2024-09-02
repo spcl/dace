@@ -342,11 +342,11 @@ class ConstantPropagation(ppl.Pass):
             if parent is None:
                 continue
 
-            # Get connecting edge (reversed)
-            edge = sdfg.edges_between(node, parent)[0]
+            # Explore all edges leading to the (reversed) parent node
+            for edge in sdfg.in_edges(parent):
+                self._propagate(result, self._data_independent_assignments(edge.data, arrays), True)
 
-            # If node already has propagated constants, update dictionary and stop traversal
-            self._propagate(result, self._data_independent_assignments(edge.data, arrays), True)
+            # If node already has propagated constants, update dictionary
             if node in existing_constants:
                 self._propagate(result, existing_constants[node], True)
 
