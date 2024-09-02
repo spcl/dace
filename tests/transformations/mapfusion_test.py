@@ -381,6 +381,12 @@ def test_fusion_with_nested_sdfg_0():
             A[i] = tmp[i] * 2
     
     sdfg = fusion_with_nested_sdfg_0.to_sdfg(simplify=True)
+
+    # Because the transformation refuses to fuse dynamic edges.
+    #  We have to eliminate them.
+    for state in sdfg.states():
+        for edge in state.edges():
+            edge.data.dynamic = False
     apply_fusion(sdfg)
 
     for sd in sdfg.all_sdfgs_recursive():
@@ -411,6 +417,12 @@ def test_fusion_with_nested_sdfg_1():
                 B[i] = tmp[i] * 2
     
     sdfg = fusion_with_nested_sdfg_1.to_sdfg(simplify=True)
+
+    # Because the transformation refuses to fuse dynamic edges.
+    #  We have to eliminate them.
+    for state in sdfg.states():
+        for edge in state.edges():
+            edge.data.dynamic = False
     apply_fusion(sdfg)
 
     if len(sdfg.states()) != 1:
