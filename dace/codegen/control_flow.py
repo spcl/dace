@@ -183,7 +183,7 @@ class BasicCFBlock(ControlFlow):
             expr += self.dispatch_state(self.state)
 
         # If any state has no children, it should jump to the end of the SDFG
-        if not self.last_block and cfg.out_degree(self.state) == 0:
+        if cfg.out_degree(self.state) == 0:
             expr += 'goto __state_exit_{};\n'.format(cfg.cfg_id)
         return expr
 
