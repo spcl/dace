@@ -435,9 +435,10 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                     # (Transient) sink nodes are used in other states, or simplify
                     #  will get rid of them.
                     shared_data.add(access_node.data)
-                elif state.out_degree(access_node) != 0: # state.out_degree() == 0 or state.out_degree() > 1
-                    # The node is either a source node (it is shared in another state).
-                    #  Output degree of more than one, means it is used in another state.
+                elif state.out_degree(access_node) != 1: # state.out_degree() == 0 or state.out_degree() > 1
+                    # The access node is either a source node (it is shared in another
+                    #  state) or the node has a degree larger than one, so it is used
+                    #  in this state somewhere else.
                     shared_data.add(access_node.data)
                 else:
                     # The node was not classified as shared data, so we record that
