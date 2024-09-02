@@ -174,7 +174,7 @@ def fusion_indirect_access(A: dace.float32[100], B: dace.float32[100], idx: dace
 
 
 def test_fusion_simple():
-    sdfg = fusion_simple.to_sdfg()
+    sdfg = fusion_simple.to_sdfg(simplify=True)
     sdfg = apply_fusion(sdfg, final_maps=1)
 
     A = np.random.rand(10, 20).astype(np.float32)
@@ -188,7 +188,7 @@ def test_fusion_simple():
 
 
 def test_fusion_rename():
-    sdfg = fusion_rename.to_sdfg()
+    sdfg = fusion_rename.to_sdfg(simplify=True)
     sdfg = apply_fusion(sdfg, final_maps=1)
 
     A = np.random.rand(10, 20).astype(np.float32)
@@ -202,7 +202,7 @@ def test_fusion_rename():
 
 
 def test_fusion_shared():
-    sdfg = fusion_shared_output.to_sdfg()
+    sdfg = fusion_shared_output.to_sdfg(simplify=True)
     sdfg = apply_fusion(sdfg)
 
     A = np.random.rand(10, 20).astype(np.float32)
@@ -218,7 +218,7 @@ def test_fusion_shared():
 
 
 def test_indirect_accesses():
-    sdfg = fusion_indirect_access.to_sdfg()
+    sdfg = fusion_indirect_access.to_sdfg(simplify=True)
     sdfg = apply_fusion(sdfg, final_maps=2)
 
     A = np.random.rand(100).astype(np.float32)
@@ -233,7 +233,7 @@ def test_indirect_accesses():
 
 
 def test_multiple_fusions():
-    sdfg = multiple_fusions.to_sdfg()
+    sdfg = multiple_fusions.to_sdfg(simplify=True)
 
     sdfg.save(os.path.join('_dacegraphs', 'before2.sdfg'))
     sdfg.simplify()
@@ -254,7 +254,7 @@ def test_multiple_fusions():
 
 
 def test_fusion_chain():
-    sdfg = fusion_chain.to_sdfg()
+    sdfg = fusion_chain.to_sdfg(simplify=True)
     sdfg.simplify()
     sdfg = apply_fusion(sdfg, final_maps=1)
 
@@ -270,7 +270,7 @@ def test_fusion_chain():
 def test_fusion_with_transient():
     A = np.random.rand(2, 20)
     expected = A * A * 2
-    sdfg = fusion_with_transient.to_sdfg()
+    sdfg = fusion_with_transient.to_sdfg(simplify=True)
     sdfg.simplify()
     sdfg = apply_fusion(sdfg, removed_maps=2)
 
