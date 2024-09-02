@@ -14,6 +14,7 @@ from dace import dtypes
 from dace import symbolic
 import dace
 import copy
+from dace.subsets import Range
 
 @make_properties
 class RemainderLoop(transformation.SingleStateTransformation):
@@ -36,28 +37,6 @@ class RemainderLoop(transformation.SingleStateTransformation):
             return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
-        """
-        other_tiled_maps = []
-        cur_map_entry = state.entry_node(self.map_entry)
-        dev_map_entry = None
-        thread_block_map_entry = None
-        while cur_map_entry:
-            if cur_map_entry.map.schedule != dtypes.ScheduleType.GPU_ThreadBlock and \
-                any([step != 1 for (_,_,step) in cur_map_entry.map.range]):
-                other_tiled_maps.append(cur_map_entry)
-            if cur_map_entry.map.schedule == dtypes.ScheduleType.GPU_Device:
-                dev_map_entry = cur_map_entry
-            if cur_map_entry.map.schedule == dtypes.ScheduleTyoe.GPU_ThreadBlock:
-                thread_block_map_entry = cur_map_entry
-            cur_map_entry = state.entry_node(cur_map_entry)
-
-        s = ""
-        for map_entry in other_tiled_maps:
-            for (beg,end,step) in map_entry.map.range:
-                if step != 1:
-                    
-        pass
-        """
         # Workflow:
         # 1. Save all unique data accesses inside the micro kernel
         # e.g. A[b_i+d_i,t+tK], B[t+tK,b_j+d_j], tmp[i,j]
@@ -92,7 +71,6 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 assert(not param in param_and_ranges.keys())
                 param_and_ranges[param] = (beg,end,step)
             cur_map_entry = state.entry_node(cur_map_entry)
-        print(param_and_ranges)
 
         # 3.
         # Let us look at B[k + tk, b_j + d_j + j] 
@@ -111,18 +89,6 @@ class RemainderLoop(transformation.SingleStateTransformation):
                         symbols_to_ensure_in_scope.add(str(symbol))
                 if not (data,subset) in can_out_of_bound.keys():
                     can_out_of_bound[(data,subset)] = False
-                print(free_symbols)
-        print(can_out_of_bound)
-        print(symbols_to_ensure_in_scope)
-        
-        # 4. Set up the condition
-        added_conditions = set()
-        for (data, range), b in set(can_out_of_bound.items()):
-            if b:
-                for i, (beg,end,step) in enumerate(range):
-                    added_conditions.add(f"({beg} < {sdfg.arrays[data].shape[i]})")
-        condition = "(" + " and ".join(added_conditions) + ")"
-        print(condition)
 
         # 5. Go up until all the variables are defined
         map_before_split = None
@@ -133,7 +99,54 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 break
             cur_map_entry = state.entry_node(cur_map_entry)
         map_after_split = state.exit_node(map_before_split)
-        print(map_before_split)
+
+        ncheck = [v for (u,uc,v,vc,m) in state.out_edges(map_before_split)]
+        inner_loop_vars_and_ranges = dict()
+        while ncheck:
+            n = ncheck.pop()
+            if isinstance(n, nodes.MapEntry):
+                for param, range in zip(n.map.params, n.map.range):
+                    beg,end,step = range
+                    map_len = ((end+1)-beg) / step
+                    if not(map_len.is_integer):
+                        raise Exception("For RemainderLoop transformation to work inner maps need to have static ranges")
+                    inner_loop_vars_and_ranges[param] = map_len
+            if n != map_after_split:
+                ncheck += [v for (u,uc,v,vc,m) in state.out_edges(n)]
+
+
+        # 4. Set up the condition
+        added_conditions = set()
+        conditions_and_ranges = dict()
+        for (data, range), b in set(can_out_of_bound.items()):
+            if b:
+                for i, (beg,end,step) in enumerate(range):
+                    ns = []
+                    ns_sym = []
+                    var = None
+                    lim = None
+                    for sym in beg.free_symbols:
+                        if str(sym) in inner_loop_vars_and_ranges:
+                            ns.append(str(inner_loop_vars_and_ranges[str(sym)]))
+                            #ns_sym.append(inner_loop_vars_and_ranges[str(sym)])
+                            lim = inner_loop_vars_and_ranges[str(sym)]
+                            var = sym
+                        else:
+                            ns.append(str(sym))
+                            ns_sym.append(sym)
+                    #conditions_and_ranges[sym] = (ns, sdfg.arrays[data].shape[i])
+                    added_conditions.add(f"({" + ".join(ns)} < {sdfg.arrays[data].shape[i]})")
+                    conditions_and_ranges[var] = (ns_sym, sdfg.arrays[data].shape[i], lim)
+        condition = "(" + " and ".join(added_conditions) + ")"
+
+        # For example range for k is 0:K:16,
+        # In this last iteration the inner tk goes from 0:16
+        # In the remainder loop it should go from 0:16 to 0:Min(K-(Sum all previous var),16)
+        new_ranges = dict()
+        for var, (loop_vars, shape, lim) in conditions_and_ranges.items():
+            new_ranges[str(var)] = \
+                ( (0,symbolic.SymExpr(f"Min({shape} - ({'+'.join([str(s) for s in loop_vars])}), {lim})-1"),1),
+                  (0,lim-1,1) )
 
         # 6. Create if condition
         inner_kernel_entry : nodes.MapEntry = map_before_split
@@ -157,21 +170,16 @@ class RemainderLoop(transformation.SingleStateTransformation):
             _,_,_,_,memlet = out_edge
             outs.add(memlet.data)
 
-        for (prefix, _sdfg) in [
-            ("", sub_sdfg),
-            ("", inner_loop_kernel_sdfg),
-            ("", remainder_loop_kernel_sdfg)
+        for ( _sdfg) in [
+            (sub_sdfg),
+            (inner_loop_kernel_sdfg),
+            (remainder_loop_kernel_sdfg)
         ]:
             for in_arr in set.union(ins, outs):
-                _sdfg.add_array(name=prefix + in_arr, 
+                _sdfg.add_array(name=in_arr, 
                                 shape=sdfg.arrays[in_arr].shape,
-                                transient=False,#sdfg.arrays[in_arr].transient, 
+                                transient=False, 
                                 dtype=sdfg.arrays[in_arr].dtype)
-            #for in_arr in set.difference(set(sdfg.arrays.keys()), set.union(ins, outs)):
-            #    _sdfg.add_array(name=prefix + in_arr, 
-            #                    shape=sdfg.arrays[in_arr].shape,
-            #                    transient=sdfg.arrays[in_arr].transient, 
-            #                    dtype=sdfg.arrays[in_arr].dtype)
 
         # Create nested states
 
@@ -194,22 +202,19 @@ class RemainderLoop(transformation.SingleStateTransformation):
         sub_sdfg.add_edge(state1, state3, dace.InterstateEdge())
         sub_sdfg.add_edge(state2, state3, dace.InterstateEdge())
 
-        sym_map = dict()
-        for sym in sdfg.free_symbols:
-            sym_map[sym] = sym
-
-        lnsdfg : nodes.NestedSDFG = state1.add_nested_sdfg(inner_loop_kernel_sdfg, sub_sdfg, ins, outs)
-        rnsdfg : nodes.NestedSDFG = state2.add_nested_sdfg(remainder_loop_kernel_sdfg, sub_sdfg, ins, outs)
-        nsdfg  : nodes.NestedSDFG = state.add_nested_sdfg(sub_sdfg, sdfg,  ins, outs)
-
         lkernel : SDFGState = inner_loop_kernel_sdfg.add_state('kernel')
         rkernel : SDFGState = remainder_loop_kernel_sdfg.add_state('kernel')
 
+        nsdfg  : nodes.NestedSDFG = state.add_nested_sdfg(sub_sdfg, sdfg, ins, outs)
+
+        lnsdfg : nodes.NestedSDFG = state1.add_nested_sdfg(inner_loop_kernel_sdfg, sub_sdfg, ins, outs, copy.deepcopy(nsdfg.symbol_mapping))
+        rnsdfg : nodes.NestedSDFG = state2.add_nested_sdfg(remainder_loop_kernel_sdfg, sub_sdfg, ins, outs, copy.deepcopy(nsdfg.symbol_mapping))
+
         # Add necessary input and output access nodes
         for in_arr in ins:
-            for (prefix, _state, _sdfg, node) in [
-                ("", state1, inner_loop_kernel_sdfg, lnsdfg),
-                ("", state2, remainder_loop_kernel_sdfg, rnsdfg)
+            for (_state, _sdfg, node) in [
+                (state1, inner_loop_kernel_sdfg, lnsdfg),
+                (state2, remainder_loop_kernel_sdfg, rnsdfg)
             ]:
                 an = nodes.AccessNode(data=in_arr)
                 # Extract the same edge as of the element
@@ -219,11 +224,11 @@ class RemainderLoop(transformation.SingleStateTransformation):
                             None)
                 _state.add_node(an)
                 u,u_conn,v, v_conn,memlet = edge
-                _state.add_edge(an, None, node, prefix + in_arr, Memlet(data=in_arr,subset=memlet.subset))
+                _state.add_edge(an, None, node, in_arr, Memlet(data=in_arr,subset=Range([(0,m-1,1) for m in sdfg.arrays[in_arr].shape]),volume=memlet.volume))
         for out_arr in outs:
-            for (prefix, _state, _sdfg, node) in [
-                ("", state1, inner_loop_kernel_sdfg, lnsdfg),
-                ("", state2, remainder_loop_kernel_sdfg, rnsdfg)
+            for (_state, _sdfg, node) in [
+                (state1, inner_loop_kernel_sdfg, lnsdfg),
+                (state2, remainder_loop_kernel_sdfg, rnsdfg)
             ]:
                 an = nodes.AccessNode(data=out_arr)
                 # Extract the same edge as of the element
@@ -233,21 +238,16 @@ class RemainderLoop(transformation.SingleStateTransformation):
                             None)
                 _state.add_node(an)
                 u,u_conn,v, v_conn,memlet = edge
-                _state.add_edge(node, prefix + out_arr, an, None, Memlet(data=out_arr,subset=memlet.subset))
+                _state.add_edge(node, out_arr, an, None, Memlet(data=out_arr,subset=Range([(0,m-1,1) for m in sdfg.arrays[out_arr].shape]),volume=memlet.volume))
 
-
+        # Edges that go to and come out nested sdfg
         for out_edge in state.out_edges(map_before_split):
             u,u_conn,v,v_conn,memlet = out_edge
-            state.add_edge(u, u_conn, nsdfg, memlet.data, copy.deepcopy(memlet))
+            state.add_edge(u, u_conn, nsdfg, memlet.data, Memlet(data=memlet.data,subset=Range([(0,m-1,1) for m in sdfg.arrays[memlet.data].shape]),volume=memlet.volume))
 
         for in_edge in state.in_edges(map_after_split):
             u,u_conn,v,v_conn,memlet = in_edge
-            state.add_edge(nsdfg, memlet.data, v, v_conn, copy.deepcopy(memlet))
-
-        #for n in nodes_to_copyover:
-        #    lkernel.add_node(copy.deepcopy(node))
-        #for e in edges_to_copyover:
-        #    lkernel.add_edge(*copy.deepcopy(e))
+            state.add_edge(nsdfg, memlet.data, v, v_conn, Memlet(data=memlet.data,subset=Range([(0,m-1,1) for m in sdfg.arrays[memlet.data].shape]),volume=memlet.volume))
 
         nodes_to_copyover = set()
         edges_to_copyover = set()
@@ -260,16 +260,12 @@ class RemainderLoop(transformation.SingleStateTransformation):
             if n != nsdfg and n != map_after_split:
                 if n != map_before_split:
                     nodes_to_copyover.add(n)
-                ncheck += [v for (u,uc,v,vc,m) in state.out_edges(n)]
-                edges_to_copyover = edges_to_copyover.union(set([e # Unpacking causes problems in removing
+
+                    edges_to_copyover = edges_to_copyover.union(set([e # Unpacking causes problems in removing
                                                                  for e,(u,uc,v,vc,m) in 
                                                                  zip(state.out_edges(n), state.out_edges(n))
-                                                                 if v != nsdfg and v != nsdfg]))
-
-        print("\n".join([str(s) for s in nodes_to_copyover]))
-        print("----------------------")
-        print("\n".join([str(s) for s in edges_to_copyover]))
-
+                                                                 if v != nsdfg and v != nsdfg and v != map_after_split]))
+                ncheck += [v for (u,uc,v,vc,m) in state.out_edges(n)]
 
         for e in edges_to_copyover:
             state.remove_edge(e)
@@ -278,19 +274,17 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
         for kernel, kernel_sdfg in [(lkernel, inner_loop_kernel_sdfg), (rkernel, remainder_loop_kernel_sdfg)]:
             added_labels = dict()
-            # Update this to use uuids
+
             for n in nodes_to_copyover:
-                nn = copy.deepcopy(n)
+                nn : nodes.Node = copy.deepcopy(n)
                 kernel.add_node(nn)
-                added_labels[n.__str__()] = nn
-            print(added_labels)
+                added_labels[n.guid] = nn
             for e in edges_to_copyover:
                 u,uc,v,vc,memlet = e
-                uu = added_labels[u.__str__()]
-                vv = added_labels[v.__str__()]
+                uu = added_labels[u.guid]
+                vv = added_labels[v.guid]
                 kernel.add_edge(uu,uc,vv,vc,copy.deepcopy(memlet))
-            sdfg.save("uwu.sdfg")
-            
+
             first_node = next(dace.sdfg.utils.dfs_topological_sort(kernel))
             if not isinstance(first_node, nodes.MapEntry):
                 raise Exception(f"First node in the map currently needs to be a MapEntry it is: {type(first_node)}")
@@ -298,13 +292,13 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
             for e in special_in_edges:
                 u,uc,v,vc,memlet = e
-                new_memlet = Memlet(data=memlet.data, subset=memlet.subset)
+                new_memlet = Memlet(data=memlet.data, subset=Range([(0,m-1,1) for m in sdfg.arrays[memlet.data].shape]),volume=memlet.volume)
                 an = nodes.AccessNode(data=memlet.data)
                 kernel.add_node(an)
                 kernel.add_edge(an,None,first_node,vc,new_memlet)
             for e in special_out_edges:
                 u,uc,v,vc,memlet = e
-                new_memlet = Memlet(data=memlet.data, subset=memlet.subset)
+                new_memlet = Memlet(data=memlet.data, subset=Range([(0,m-1,1) for m in sdfg.arrays[memlet.data].shape]),volume=memlet.volume)
                 an = nodes.AccessNode(data=memlet.data)
                 kernel.add_node(an)
                 kernel.add_edge(last_node,uc,an,None,new_memlet)
@@ -334,17 +328,147 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                 lifetime=arr.lifetime
                             )
 
-        print(sdfg.used_symbols(all_symbols=True))
-        print(sdfg.free_symbols)
-        print(lkernel.free_symbols)
-        print(sdfg.symbols)
+        # Now we have to valid SDFGS
+        # 6.2 Arrange ranges of the remainder Loop
+        for n in dace.sdfg.utils.dfs_topological_sort(rkernel):
+            if isinstance(n, nodes.MapEntry) or isinstance(n, nodes.MapExit):
+                nr = []
+                for i, (p, r) in enumerate(zip(n.map.params, n.map.range)):
+                    if p in new_ranges.keys():
+                        new_range, old_range = new_ranges[p]
+                        rb,re,rs = r
+                        orb,ore,ors = old_range
+                        if (rb != orb or re != ore or rs != ors):
+                            raise Exception(f"For the transformation to work any map range needs to have the format 0:N:1, had: {r} and {old_range}")
+                        nr.append(new_range)
+                    else:
+                        nr.append(r)
+                n.map.range = Range(nr)
+                print(n.map.range)
 
-        # Remove any free symbol that is only used in the sub-kernel
-        symbols_to_remove = set.difference(set(sdfg.free_symbols), set(lkernel.free_symbols))
-        #for symbol in symbols_to_remove:
-        #    sdfg.remove_symbol(symbol)
-        #sdfg.free_symbols = sdfg.free_symbols.difference(symbols_to_remove)
+        # Now need to apply it also on any assignments
+        counter = 0
+        for n in state.nodes():
+            if isinstance(n, nodes.AccessNode):
+                can_out_of_bound = False
+                i_memlet = None
+                o_memlet = None
+                if (len(state.in_edges(n)) > 1 or len(state.out_edges(n)) > 1):
+                    raise Exception("Transformation can be applied if all assignment edges have at max in and out degree 1 each")
+                if (len(state.in_edges(n)) == 0 or len(state.out_edges(n)) == 0):
+                    continue
+                for ie, oe in zip(state.in_edges(n), state.out_edges(n)):
+                    _,_,_,_,i_memlet = ie
+                    _,_,_,_,o_memlet = oe
+                    print(i_memlet, o_memlet)
+                    if i_memlet.data == None or o_memlet.data == None:
+                        continue
+                    for ((i_beg,i_end,i_step), (o_beg,o_end,o_step), i_dim, o_dim) in zip(i_memlet.subset, o_memlet.subset, sdfg.arrays[i_memlet.data].shape, sdfg.arrays[o_memlet.data].shape):
+                        il = (i_end+1-i_beg)/i_step
+                        ol = (o_end+1-o_beg)/o_step
+                        print(self.has_remainder(i_dim, il), self.has_remainder(o_dim, ol))
+                        print(sdfg.arrays[i_memlet.data].transient, sdfg.arrays[o_memlet.data].transient)
+                        if (self.has_remainder(i_dim, il) or self.has_remainder(o_dim, ol)) and \
+                            sdfg.arrays[i_memlet.data].transient and not sdfg.arrays[o_memlet.data].transient:
+                            can_out_of_bound = True
+                            break
+                if can_out_of_bound:
+                    counter += 1
+                    assign_sub_sdfg : SDFG = dace.SDFG(f'nestedAssignment{counter}', parent=sdfg)
+                    assign_inner_sdfg : SDFG = dace.SDFG(f'innerAssignment{counter}', parent=sub_sdfg)
+                    assign_remainder_sdfg : SDFG  = dace.SDFG(f'remainderAssignment{counter}', parent=sub_sdfg)
+
+                    # To split
+                    # Inputs for NestedSDFG
+                    ins = set([i_memlet.data])
+                    # Outputs for NestedSDFG
+                    outs = set([o_memlet.data])
+
+                    for ( _sdfg) in [
+                        (assign_sub_sdfg),
+                        (assign_inner_sdfg),
+                        (assign_remainder_sdfg)
+                    ]:
+                        for in_arr in set.union(ins, outs):
+                            _sdfg.add_array(name=in_arr, 
+                                            shape=sdfg.arrays[in_arr].shape,
+                                            transient=False, 
+                                            dtype=sdfg.arrays[in_arr].dtype)
+
+                    # Create nested states
+
+                    # Save the in and out edges of the map scope encompassing the inner kernels
+                    # This is necessary to creaet edges from and to access nodes within the sub kernel
+                    special_in_edges  = [ie]
+                    special_out_edges = [oe]
+
+                    state0 = assign_sub_sdfg.add_state('if_guard')
+                    state1 = assign_sub_sdfg.add_state('innerAssignment')
+                    state2 = assign_sub_sdfg.add_state('remainderAssignment')
+                    state3 = assign_sub_sdfg.add_state('complete')
+
+                    conditions = []
+                    for (beg,end,step), dim in zip(o_memlet.subset, sdfg.arrays[o_memlet.data].shape):
+                        ol = (o_end+1-o_beg)/o_step
+                        cond = f"{str(beg)} + {str(ol)} < {dim}"
+                        conditions.append(cond)
+                    condition = "(" + " and ".join(conditions) + ")"
+
+                    assign_sub_sdfg.add_edge(state0, state1, dace.InterstateEdge(condition=f"{condition}"))
+                    assign_sub_sdfg.add_edge(state0, state2, dace.InterstateEdge(condition=f"not {condition}"))
+                    assign_sub_sdfg.add_edge(state1, state3, dace.InterstateEdge())
+                    assign_sub_sdfg.add_edge(state2, state3, dace.InterstateEdge())
+
+                    lassign : SDFGState = assign_inner_sdfg.add_state('assignment')
+                    rassign : SDFGState = assign_remainder_sdfg.add_state('assignment')
+
+                    assign_nsdfg  : nodes.NestedSDFG = state.add_nested_sdfg(assign_sub_sdfg, sdfg, ins, outs)
+
+                    lnsdfg : nodes.NestedSDFG = state1.add_nested_sdfg(assign_inner_sdfg, assign_sub_sdfg, ins, outs, copy.deepcopy(assign_nsdfg.symbol_mapping))
+                    rnsdfg : nodes.NestedSDFG = state2.add_nested_sdfg(assign_remainder_sdfg, assign_sub_sdfg, ins, outs, copy.deepcopy(assign_nsdfg.symbol_mapping))
+
+                    i_u,i_uc,i_v,i_vc,imemlet = ie
+                    o_u,o_uc,o_v,o_vc,omemlet = oe
+                    state.remove_node(i_v)
+                    #state.remove_edge(ie) # Remove node removes these edges?
+                    #state.remove_edge(oe)
+                    iarr_name = imemlet.data
+                    iarr = sdfg.arrays[imemlet.data]
+                    state.add_edge(i_u,i_uc,assign_nsdfg,imemlet.data,Memlet(subset=Range([(0,end-1,1) for end in iarr.shape]), data=imemlet.data))
+                    oarr_name = omemlet.data
+                    oarr = sdfg.arrays[omemlet.data]
+                    state.add_edge(assign_nsdfg,omemlet.data,o_v,o_vc,Memlet(subset=Range([(0,end-1,1) for end in oarr.shape]), data=omemlet.data))
+
+                    for s, sub_s in [(state1,lnsdfg), (state2,rnsdfg)]:
+                        an_in = nodes.AccessNode(data=iarr_name)
+                        an_out = nodes.AccessNode(data=oarr_name)
+                        s.add_node(an_in)
+                        s.add_node(an_out)
+                        s.add_edge(an_in,None,sub_s,iarr_name,Memlet(subset=Range([(0,end-1,1) for end in iarr.shape]), data=iarr_name))
+                        s.add_edge(sub_s,oarr_name,an_out,None,Memlet(subset=Range([(0,end-1,1) for end in oarr.shape]), data=oarr_name))
+
+                    for sub_s in [lassign, rassign]:
+                        an_in = nodes.AccessNode(data=iarr_name)
+                        an_out = nodes.AccessNode(data=oarr_name)
+                        sub_s.add_node(an_out)
+                        sub_s.add_edge(an_in,None,an_out,None,
+                                       Memlet(subset=omemlet.subset, data=oarr_name))
+
+                    # Update ranges in the rassign
+                    if len(rassign.edges()) != 1:
+                        raise Exception("Assignment sub sdfg should have 1 edges")
+                    e0 = rassign.edges()[0]
+                    u,uc,v,vc,memlet = e0
+                    if memlet.data == oarr_name:
+                        new_ranges = []
+                        for (beg,end,step), dim in zip(memlet.subset, sdfg.arrays[memlet.data].shape):
+                            ol = (o_end+1-o_beg)/o_step
+                            new_range = (beg,beg+symbolic.SymExpr(f"Min({dim} - ({str(beg)}), {ol})-1"),1)
+                            new_ranges.append(new_range)
+                        new_memlet = Memlet(subset=Range(new_ranges), data=memlet.data)
+                        rassign.remove_edge(e0)
+                        rassign.add_edge(u,uc,v,vc,new_memlet)
 
     @staticmethod
     def annotates_memlets():
-        return False
+        return True

@@ -340,67 +340,36 @@ class BlockTiling(transformation.SingleStateTransformation):
 
         # Create the assign map after the work loop
         # 3.1 Anything removed needs to be added the thread block map
+
+        # Replace any C[A,B] with tmp[D,E] C is the out edge from assign map, tmp is input edge from assign map
         for (access_node_in_edge, access_node, access_node_out_edge, tasklet, tasklet_out_edge) in assignments_removed:
-            # Form is out_conn -> None, Access Node, None -> in_conn, Tasklet, out_conn -> in_conn
-            # Copy the out_conn of first edge and in_conn of last edge and then reuse the tasklet node to assign the variables in a map
-            outer_work_map_exit
-            _,_,_,_,local_src_memlet = access_node_out_edge
-            local_src = local_src_memlet.data
-            _,_,_,_,glb_dst_memlet = tasklet_out_edge
-            glb_dst = glb_dst_memlet.data
-            subset_list = [(0, end-1, 1) for end in sdfg.arrays[local_src].shape]
-            assign_map_entry, assign_map_exit = state.add_map(name=f"assign_map_{local_src}_{glb_dst}",
-                                                                ndrange=[(i, v) for i, v in zip(thread_coarsened_map_entry.map.params, subset_list)],
-                                                                schedule=dtypes.ScheduleType.Sequential,
-                                                                unroll=True)
             _, _, _, in_conn, m1 = access_node_in_edge
             _, out_conn, _, _, m2 = tasklet_out_edge
-
-            self.replace_subsets_from_data(state, work_map_exit, outer_work_map_exit, glb_dst, local_src, subsets.Range(subset_list))
-            state.add_node(access_node)
-            access_node.setzero = True
-            state.add_node(tasklet)
-            assign_map_entry.add_out_connector("OUT_" + m1.data)
-            state.add_edge(assign_map_entry, "OUT_" + m1.data, access_node, in_conn, m1)
-            state.add_edge(*access_node_out_edge)
-            assign_map_exit.add_in_connector("IN_" + m2.data)
-            state.add_edge(tasklet, out_conn, assign_map_exit, "IN_" + m2.data, m2)
-
-            complete_tmp_memlet = Memlet(subset=subsets.Range([(0,end-1,1) for end in sdfg.arrays[m1.data].shape]), data=m1.data)
-
-            edges_to_remove = set()
-            exchange_pair = []
-            for out_edge in state.out_edges(outer_work_map_exit):
-                u, u_conn, v, v_conn, memlet = out_edge
-                complete_assign_memlet = copy.deepcopy(memlet)
+            print(m2)
+            for out_edge in state.out_edges(work_map_exit):
+                u,uc,v,vc,memlet = out_edge
+                _,_,_,_,mm = tasklet_out_edge
                 if memlet.data == m2.data:
-                    edges_to_remove.add(out_edge)
-                    assign_map_entry.add_in_connector("IN_" + m1.data)
-                    an = nodes.AccessNode(data=m1.data)
-                    state.add_node(an)
-                    state.add_edge(u, u_conn, an, None, copy.deepcopy(complete_tmp_memlet))
-                    state.add_edge(an, None, assign_map_entry, "IN_" + m1.data, copy.deepcopy(complete_tmp_memlet))
-                    assign_map_exit.add_out_connector(u_conn)
-                    state.add_edge(assign_map_exit, u_conn, v, v_conn, copy.deepcopy(complete_assign_memlet))
-                    exchange_pair.append(((complete_tmp_memlet.subset, m1.data), (complete_assign_memlet.subset, complete_assign_memlet.data)))
-            for edge in edges_to_remove:
-                state.remove_edge(edge)
-            edges_to_remove.clear()
+                    ss = None
+                    for oe in state.out_edges(thread_coarsened_map_entry):
+                        _,_,_,_,_m = oe
+                        if _m.data == m1.data:
+                            ss = _m.subset
+                    tmp_memlet = Memlet(subset=ss, data=m1.data)
+                    state.remove_edge(out_edge)
+                    state.add_edge(u,uc,v,vc,tmp_memlet)
+            for out_edge in state.out_edges(state.exit_node(thread_coarsened_map_entry)):
+                u,uc,v,vc,memlet = out_edge
+                _,_,_,_,mm = tasklet_out_edge
+                if memlet.data == m2.data:
+                    lens = [(0,end-1,1) for end in sdfg.arrays[m1.data].shape]
+                    tmp_memlet = Memlet(subset=subsets.Range(lens), data=m1.data)
+                    state.remove_edge(out_edge)
+                    state.add_edge(u,uc,v,vc,tmp_memlet)
 
-            # Replace any C[A,B] with tmp[D,E] C is the out edge from assign map, tmp is input edge from assign map
-            for ((new_subset, new_data), (old_subset, old_data)) in exchange_pair:
-                edges_to_check = state.out_edges(work_map_exit)
-                while edges_to_check:
-                    edge = edges_to_check.pop()
-                    u, u_conn, v, v_conn, memlet = edge
-                    if memlet.subset == old_subset and memlet.data == old_data:
-                        nm = Memlet(data=new_data, subset=new_subset)
-                        state.remove_edge(edge)
-                        state.add_edge(u, u_conn, v, v_conn, nm)
-                    if v != assign_map_exit:
-                        edges_to_check += state.out_edges(v)
-
-            # Move tmp allocation before the outer work Map
+        # Move tmp allocation before the outer work Map
+        for (access_node_in_edge, access_node, access_node_out_edge, tasklet, tasklet_out_edge) in assignments_removed:
+            _, _, _, in_conn, m1 = access_node_in_edge
             for out_edge in state.out_edges(outer_work_map_entry):
                 u, u_conn, v, v_conn, memlet = out_edge
                 if isinstance(v, nodes.AccessNode) and v.data == m1.data:
@@ -427,10 +396,26 @@ class BlockTiling(transformation.SingleStateTransformation):
                     outer_work_map_entry.add_in_connector(ov_conn)
                     state.add_edge(ou, ou_conn, outer_work_map_entry, ov_conn, copy.deepcopy(omemlet))
 
+        # The edge after outer work map is M1 -> C -> M2, should be M1 -> tmp -> C -> M2
+        for (access_node_in_edge, access_node, access_node_out_edge, tasklet, tasklet_out_edge) in assignments_removed:
+            _, _, _, in_conn, m1 = access_node_in_edge
+            _, out_conn, _, _, m2 = tasklet_out_edge
+            assert(access_node.data == m1.data)
+            an = nodes.AccessNode(data=access_node.data)
+            subset = subsets.Range([(0,end-1,1) for end in sdfg.arrays[access_node.data].shape])
+            for out_edge in state.out_edges(outer_work_map_exit):
+                u,uc,v,vc,memlet = out_edge
+                if memlet.data == m2.data:
+                    state.add_node(an)
+                    state.add_edge(u,uc,an,None,Memlet(subset=subset,data=access_node.data))
+                    state.remove_edge(out_edge)
+                    state.add_edge(an,None,v,vc,memlet)
+
         for out_edge in state.out_edges(thread_block_map_entry):
             u, u_conn, v, v_conn, memlet = out_edge
             if  v == outer_work_map_entry and u_conn == None and v_conn == None:
                 state.remove_edge(out_edge)
+        sdfg.save("owo.sdfg")
 
     @staticmethod
     def annotates_memlets():
