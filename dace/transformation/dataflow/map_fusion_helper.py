@@ -28,18 +28,17 @@ class MapFusionHelper(transformation.SingleStateTransformation):
     Args:
         only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
         only_toplevel_maps: Only consider Maps that are at the top.
+        ssa_sdfg: If `True` assumes that the SDFG is in SSA style, this will skip some checks.
     """
 
     only_toplevel_maps = properties.Property(
         dtype=bool,
         default=False,
-        allow_none=False,
         desc="Only perform fusing if the Maps are in the top level.",
     )
     only_inner_maps = properties.Property(
         dtype=bool,
         default=False,
-        allow_none=False,
         desc="Only perform fusing if the Maps are inner Maps, i.e. does not have top level scope.",
     )
     shared_data = properties.DictProperty(
@@ -49,14 +48,22 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         allow_none=True,
         optional=True, # Do not serialize.
         optional_condition=lambda _: False,
-        desc="Maps SDFGs to the set of data that can not be removed. "
-        "The variable acts as a cache, and is managed by 'is_shared_data()'.",
+        desc="Maps SDFGs to the set of data that can not be removed,"
+        " because they transmit data _between states_, such data will be made 'shared'."
+        " This variable acts as a cache, and is managed by 'is_shared_data()'.",
     )
+    ssa_sdfg = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` then the transformation assumes the SDFG uses SSA style assignments",
+    )
+
 
     def __init__(
         self,
         only_inner_maps: Optional[bool] = None,
         only_toplevel_maps: Optional[bool] = None,
+        ssa_sdfg: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -64,6 +71,8 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             self.only_toplevel_maps = bool(only_toplevel_maps)
         if only_inner_maps is not None:
             self.only_inner_maps = bool(only_inner_maps)
+        if ssa_sdfg is not None:
+            self.ssa_sdfg = bool(ssa_sdfg)
         self.shared_data = {}
 
 
@@ -436,6 +445,45 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         self.shared_data[sdfg] = shared_data
 
 
+    def _compute_multi_write_data(
+        self,
+        state: SDFGState,
+        sdfg: SDFG,
+    ) -> Set[str]:
+        """Computes data inside a _single_ state, that is written multiple times.
+
+        Essentially this function computes the set of data that does not follow
+        the single static assignment idiom. The function also resolves views.
+        If an access node that refers to a view, the function will add not only
+        the view itself, but also the data it refers to.
+
+        Args:
+            state: The state that should be examined.
+            sdfg: The SDFG object.
+
+        Note:
+            This information is used by the partition function, if it is legal to turn
+            a intermediate node into shared output or if the partition does not exists
+            at all. The current implementation is rather simple as it only checks if
+            a data is written to multiple times in the same state.
+            Actually everything could be turned into a shared output, however, some
+            DaCe transformation fail to proper examine the graph and detect these cases.
+        """
+        data_written_to: Set[str] = set()
+        multi_write_data: Set[str] = set()
+
+        for access_node in state.data_nodes():
+            if state.in_degree(access_node) == 0:
+                continue
+            if is_view(access_node, sdfg):
+                # This is an over approximation.
+                multi_write_data.update([access_node.data, track_view(access_node, state, sdfg).data])
+            elif access_node.data in data_written_to:
+                multi_write_data.add(access_node.data)
+            data_written_to.add(access_node.data)
+        return multi_write_data
+
+
     def partition_first_outputs(
         self,
         state: SDFGState,
@@ -501,6 +549,19 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         # Set of intermediate nodes that we have already processed.
         processed_inter_nodes: Set[nodes.Node] = set()
 
+        # These are the data that is written to multiple times in this state.
+        #  If a data is written to multiple time in a state, it could be
+        #  classified as shared. A problem could be if, this shared node happens to
+        #  then have zero out degree, thus dependencies are given by the edges that
+        #  leave the second exit node and not by the output nodes of the intermediate
+        #  node. Because some other DaCe transformation (auto optimizer) fail to
+        #  take this into account properly they do transformations that are invalid.
+        #  Thus we will never modify such intermediate nodes.
+        if not self.ssa_sdfg:
+            multi_write_data: Set[str] = self._compute_multi_write_data(state, sdfg)
+        else:
+            multi_write_data = set()
+
         # Now scan all output edges of the first exit and classify them
         for out_edge in state.out_edges(map_exit_1):
             intermediate_node: nodes.Node = out_edge.dst
@@ -514,6 +575,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             # The intermediate can only have one incoming degree. It might be possible
             #  to handle multiple incoming edges, if they all come from the top map.
             #  However, the resulting SDFG might be invalid.
+            # NOTE: If needed the output degree is changed further down.
             if state.in_degree(intermediate_node) != 1:
                 return None
 
@@ -538,6 +600,16 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             #  cases, as handling them is essentially rerouting an edge, whereas
             #  handling intermediate nodes is much more complicated.
 
+            # Checks if the intermediate node refers to data that is accessed by
+            #  _other_ access nodes in _this_ state. If this is the case then never
+            #  touch this intermediate node.
+            #  TODO(phimuell): Technically it would be enough to turn the node into
+            #   a shared output node, because this will still fulfil the dependencies.
+            #   However, some DaCe transformation can not handle this properly, so we
+            #   are _forced_ to reject this node.
+            if intermediate_node.data in multi_write_data:
+                return None
+
             # If `downstream_nodes` is empty, this means that the second map entry
             #  was found immediately, we only allow the case that there is one
             #  connecting Memlet.
@@ -558,15 +630,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             #  is also the only place they really make sense (for a map exit).
             #  Thus if we now found an empty Memlet we reject it.
             if out_edge.data.is_empty():
-                return None
-
-            # The intermediate now can only have a single source. It might be possible
-            #  to extend this to many inputs as long as they come from the top map.
-            # NOTE: The output degree is checked implicitly further down, the
-            #   general rule is, that multiple outputs are only allowed if only
-            #   one enters the second Map, the other output must go to different
-            #   consumers, in which case the node is a shared intermediate.
-            if state.in_degree(intermediate_node) != 1:
                 return None
 
             # It can happen that multiple edges converges at the `IN_` connector
@@ -631,6 +694,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                     if inner_consumer_edge.data.src_subset is None:
                         return None
                     if inner_consumer_edge.data.dynamic:
+                        # TODO(phimuell): Is this restriction necessary, I am not sure.
                         return None
                     consumer_subsets.append(inner_consumer_edge.data.src_subset)
             assert len(consumer_subsets) != 0
