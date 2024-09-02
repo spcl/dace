@@ -28,7 +28,15 @@ class MapFusionHelper(transformation.SingleStateTransformation):
     Args:
         only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
         only_toplevel_maps: Only consider Maps that are at the top.
-        ssa_sdfg: If `True` assumes that the SDFG is in SSA style, this will skip some checks.
+        strict_dataflow: If `True`, the default, the transformation ensures strict
+            data flow.
+
+    Note:
+        `strict_dataflow` only has an influence if there is a downstream connection
+        from one access node to another that both _write_ to the same data.
+        Technically it is possible to turn the upstream access node into a shared output,
+        see `partition_first_outputs()`, data dependency is still guaranteed by the
+        maps. However, some other DaCe transformation cannot properly handle this case.
     """
 
     only_toplevel_maps = properties.Property(
@@ -52,10 +60,10 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         " because they transmit data _between states_, such data will be made 'shared'."
         " This variable acts as a cache, and is managed by 'is_shared_data()'.",
     )
-    ssa_sdfg = properties.Property(
+    strict_dataflow = properties.Property(
         dtype=bool,
-        default=False,
-        desc="If `True` then the transformation assumes the SDFG uses SSA style assignments",
+        default=True,
+        desc="If `False` then the transformation will not preserve strict data flow.",
     )
 
 
@@ -63,7 +71,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         self,
         only_inner_maps: Optional[bool] = None,
         only_toplevel_maps: Optional[bool] = None,
-        ssa_sdfg: Optional[bool] = None,
+        strict_dataflow: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -71,8 +79,8 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             self.only_toplevel_maps = bool(only_toplevel_maps)
         if only_inner_maps is not None:
             self.only_inner_maps = bool(only_inner_maps)
-        if ssa_sdfg is not None:
-            self.ssa_sdfg = bool(ssa_sdfg)
+        if strict_dataflow is not None:
+            self.strict_dataflow = bool(strict_dataflow)
         self.shared_data = {}
 
 
@@ -465,9 +473,12 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             This information is used by the partition function, if it is legal to turn
             a intermediate node into shared output or if the partition does not exists
             at all. The current implementation is rather simple as it only checks if
-            a data is written to multiple times in the same state.
+            a data is written to multiple times in the same state. A more refined
+            (but still simple) implementation would take the location of the access
+            node into consideration.
             Actually everything could be turned into a shared output, however, some
-            DaCe transformation fail to proper examine the graph and detect these cases.
+            DaCe transformation fail to proper examine the graph in this case and
+            perform modifications that lead to wrong behaviour.
         """
         data_written_to: Set[str] = set()
         multi_write_data: Set[str] = set()
@@ -557,7 +568,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         #  node. Because some other DaCe transformation (auto optimizer) fail to
         #  take this into account properly they do transformations that are invalid.
         #  Thus we will never modify such intermediate nodes.
-        if not self.ssa_sdfg:
+        if self.strict_dataflow:
             multi_write_data: Set[str] = self._compute_multi_write_data(state, sdfg)
         else:
             multi_write_data = set()
