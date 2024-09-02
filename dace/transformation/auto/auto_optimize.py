@@ -58,7 +58,12 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             # If we have an SDFG, recurse into graphs
             graph_or_subgraph.simplify(validate_all=validate_all)
             # MapFusion for trivial cases
-            graph_or_subgraph.apply_transformations_repeated(MapFusion, validate_all=validate_all)
+            #  We have to use `strict_dataflow` because it is known that `CompositeFusion`
+            #  has problems otherwise.
+            graph_or_subgraph.apply_transformations_repeated(
+                    MapFusion(strict_dataflow=True),
+                    validate_all=validate_all,
+            )
 
         # recurse into graphs
         for graph in graph_or_subgraph.nodes():
@@ -76,7 +81,10 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         sdfg, graph, subgraph = None, None, None
         if isinstance(graph_or_subgraph, SDFGState):
             sdfg = graph_or_subgraph.parent
-            sdfg.apply_transformations_repeated(MapFusion, validate_all=validate_all)
+            sdfg.apply_transformations_repeated(
+                    MapFusion(strict_dataflow=True),
+                    validate_all=validate_all,
+            )
             graph = graph_or_subgraph
             subgraph = SubgraphView(graph, graph.nodes())
         else:
