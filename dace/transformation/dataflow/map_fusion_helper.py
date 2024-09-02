@@ -378,7 +378,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         serial map fusion.
 
         The function determine this properties, according to the following rules:
-        - The access node must be in the top scope.
         - The underlying data is global.
         - The `data` descriptor is used multiple times with the same state.
         - `data` has an out or in degree of zero.
@@ -423,24 +422,22 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         # We go through all states and classify the nodes, according to the rules.
         prevously_seen_data: Set[str] = set()
         for state in sdfg.nodes():
-            scope_dict = state.scope_dict()
             for access_node in state.data_nodes():
-                if scope_dict[access_node] is not None:
-                    # We are only interested in global data.
-                    pass
-                elif access_node.data in shared_data:
-                    # The data was already determined to be shared data
+                if access_node.data in shared_data:
+                    # The data was already classified to be shared data
                     pass
                 elif access_node.data in prevously_seen_data:
                     # We have seen this data before, either in this state or in
-                    #  a previous one, but we did not classifies it as shared,
-                    #  let's do this now. Note that we do not remove the data
-                    #  also from `previously_seen_data`.
+                    #  a previous one, but we did not classifies it as shared back then
+                    #  Note that we do not remove the data also from `previously_seen_data`.
                     shared_data.add(access_node.data)
-                elif state.out_degree(access_node) == 0:
-                    # Sink and source nodes also have to be kept.
+                if state.in_degree(access_node) == 0:
+                    # (Transient) sink nodes are used in other states, or simplify
+                    #  will get rid of them.
                     shared_data.add(access_node.data)
-                elif state.in_degree(access_node) == 0:
+                elif state.out_degree(access_node) != 0: # state.out_degree() == 0 or state.out_degree() > 1
+                    # The node is either a source node (it is shared in another state).
+                    #  Output degree of more than one, means it is used in another state.
                     shared_data.add(access_node.data)
                 else:
                     # The node was not classified as shared data, so we record that
