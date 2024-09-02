@@ -583,11 +583,14 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             #   - The source of the producer can not be a view (we do not handle this)
             #   - The edge shall also not be a reduction edge.
             #   - Defined location to where they write.
+            #   - No dynamic Melets.
             #  Furthermore, we will also extract the subsets, i.e. the location they
             #  modify inside the intermediate array.
             producer_subsets: List[subsets.Subset] = []
             for producer_edge in producer_edges:
                 if isinstance(producer_edge.src, nodes.AccessNode) and is_view(producer_edge.src, sdfg):
+                    return None
+                if producer_edge.data.dynamic:
                     return None
                 if producer_edge.data.wcr is not None:
                     return None
@@ -596,17 +599,15 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                 producer_subsets.append(producer_edge.data.dst_subset)
 
             # Now we determine the consumer of nodes. For this we are using the edges
-            #  leaves the second map entry. We could find the final consumers (e.g.
-            #  Tasklets), however, this might make problems as they depend also on
-            #  symbols defined by nested maps. However, we are not interested in edges,
-            #  but actually what they read, i.e. their source subset.
-            #  In any case there can be at most one connection between the intermediate
-            #  and the second map entry.
+            #  leaves the second map entry. It is not necessary to find the actual
+            #  consumer nodes, as they might depend on symbols of nested Maps.
+            #  For the covering test we only need their subsets, but we will perform
+            #  some scan and filtering on them.
             found_second_map = False
             consumer_subsets: List[subsets.Subset] = []
             for intermediate_node_out_edge in state.out_edges(intermediate_node):
-                # If we do not reach the second map immediately, we must make sure
-                #  that we will never reach it otherwise we will create cycles.
+
+                # Ensure that there is no multihop connection to the second map entry.
                 if intermediate_node_out_edge.dst is not map_entry_2:
                     if all_nodes_between(
                         graph=state,
@@ -616,24 +617,25 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                         continue
                     return None
 
-                # The second map can only be reached once, because we only handle
-                #  this case.
+                # Ensure that the second map is found exactly once.
                 if found_second_map:
                     # TODO(phimuell): Lift this restriction.
                     return None
                 found_second_map = True
+
+                # Now we look at all edges that leave the second map entry, as they
+                #  define what is read inside the map.
+                #  NOTE: The subset still uses the old iteration variables.
                 assert intermediate_node_out_edge.dst_conn.startswith("IN_")
-                consumer_subsets.extend(
-                        e.data.src_subset
-                        for e in state.out_edges_by_connector(map_entry_2, "OUT_" + intermediate_node_out_edge.dst_conn[3:])
-                )
-            # The subsets are not set correctly, so we give up.
-            if any(consumer_subset is None for consumer_subset in consumer_subsets):
-                return None
+                for inner_consumer_edge in state.out_edges_by_connector(map_entry_2, "OUT_" + intermediate_node_out_edge.dst_conn[3:]):
+                    if inner_consumer_edge.data.src_subset is None:
+                        return None
+                    if inner_consumer_edge.data.dynamic:
+                        return None
+                    consumer_subsets.append(inner_consumer_edge.data.src_subset)
             assert len(consumer_subsets) != 0
 
-            # Furthermore, the consumer still uses the original symbols of the
-            #  second map, so we must rename them.
+            # The consumer still uses the original symbols of the second map, so we must rename them.
             if repl_dict:
                 consumer_subsets = copy.deepcopy(consumer_subsets)
                 for consumer_subset in consumer_subsets:
