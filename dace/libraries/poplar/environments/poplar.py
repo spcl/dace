@@ -13,9 +13,9 @@ class IPU:
     cmake_files = []
     cmake_variables = {}
     cmake_includes = []
-    cmake_libraries = []
+    cmake_libraries = ["poplar", "popops", "poplin", "poputil"]
     cmake_compile_flags = []
-    cmake_link_flags = ["-lpoplar -lpopops -lpoplin -lpoputil"] #-L/software/graphcore/poplar_sdk/3.3.0/poplar-ubuntu_20_04-3.3.0+7857-b67b751185/lib
+    cmake_link_flags = [] #-L/software/graphcore/poplar_sdk/3.3.0/poplar-ubuntu_20_04-3.3.0+7857-b67b751185/lib
     headers = [ "../include/poplar_dace_interface.h"]
     state_fields = [
             "// IPUModel APIs",
