@@ -155,13 +155,18 @@ class DaCeCodeGenerator(object):
         #########################################################
         # Custom types
         datatypes = set()
+        skip_types = set()
         # Types of this SDFG
-        for sd, arrname, arr in sdfg.arrays_recursive():
+        for sd in sdfg.all_sdfgs_recursive():
             datatypes.update(sd.extra_dtypes)
+            skip_types.update(sd.defs_to_skip)
+        for sd, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 datatypes.add(arr.dtype)
 
         emitted_definitions = set()
+        declared_definitions = set()
+        deferred_definitions: Set[dtypes.struct] = set()
 
         def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
             if dtype in emitted_definitions:
@@ -171,29 +176,52 @@ class DaCeCodeGenerator(object):
                 # Opaque pointer type needs to be forward-declared
                 if isinstance(dtype.base_type, dtypes.opaque):
                     dtype.base_type.define = True
+                elif isinstance(dtype.base_type, dtypes.struct) and not dtype.base_type.opaque:
+                    deferred_definitions.add(dtype.base_type)
+                    dtype.base_type.opaque = True  # struct pointers
                 wrote_something = _emit_definitions(dtype.base_type, wrote_something)
             elif isinstance(dtype, dtypes.struct):
-                for field in dtype.fields.values():
-                    wrote_something = _emit_definitions(field, wrote_something)
+                if dtype.name in skip_types:
+                    emitted_definitions.add(dtype)
+                    return False
+                if not dtype.opaque:
+                    for field in dtype.fields.values():
+                        wrote_something = _emit_definitions(field, wrote_something)
+                    if dtype in deferred_definitions:
+                        deferred_definitions.remove(dtype)
             elif isinstance(dtype, dtypes.callback):
                 for inp in dtype.input_types:
                     wrote_something = _emit_definitions(inp, wrote_something)
                 for ret in dtype.return_types:
                     wrote_something = _emit_definitions(ret, wrote_something)
+            elif isinstance(dtype, dtypes.opaque):
+                if dtype.ctype in skip_types:
+                    emitted_definitions.add(dtype)
+                    return False
 
             if hasattr(dtype, 'emit_definition'):
                 if not wrote_something:
                     global_stream.write("", sdfg)
                 global_stream.write(dtype.emit_definition(), sdfg)
 
-            emitted_definitions.add(dtype)
+            if isinstance(dtype, dtypes.opaque) or (isinstance(dtype, dtypes.struct) and dtype.opaque):
+                declared_definitions.add(dtype)
+            else:
+                emitted_definitions.add(dtype)
 
             return wrote_something
 
         # Emit unique definitions
         wrote_something = False
-        for typ in datatypes:
+        for typ in sorted(datatypes, key=str):
             wrote_something = _emit_definitions(typ, wrote_something)
+        while deferred_definitions:
+            defs = list(deferred_definitions - emitted_definitions)
+            declared_definitions -= deferred_definitions
+            deferred_definitions.clear()
+            for typ in sorted(defs, key=str):
+                typ.opaque = False
+                wrote_something = _emit_definitions(typ, wrote_something)
         if wrote_something:
             global_stream.write("", sdfg)
 
