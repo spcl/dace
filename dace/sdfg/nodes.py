@@ -925,6 +925,8 @@ class Map(object):
                                  optional=True,
                                  optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
+    gpu_force_syncthreads = Property(dtype=bool, desc="Force a syncthreads for the map", default=False)
+
     def __init__(self,
                  label,
                  params,
