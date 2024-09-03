@@ -278,7 +278,7 @@ class BlockTiling(transformation.SingleStateTransformation):
                 edges_to_check.union(set(state.out_edges(v)))
 
         # Prevent calling syncthreads in every iteration of the block tiled loop
-        # thread_block_map_entry.map.gpu_syncthreads = False
+        thread_block_map_entry.map.gpu_syncthreads = False
 
         # If there was an assignment after the previous K loop, then it will be assigned every iteration of the tiled tK loop.
         # This means many more assignments to global memory we need to fix that by remove any assignment node
