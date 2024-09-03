@@ -925,9 +925,7 @@ class Map(object):
                                  optional=True,
                                  optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
-    gpu_syncthreads = Property(dtype=bool, desc="Add syncthreads if it is a ThreadBlock schedules map", default=True)
-    gpu_force_syncthreads = Property(dtype=bool, desc="Add syncthreads after the map no matter what", default=False)
-
+    gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
 
     def __init__(self,
                  label,

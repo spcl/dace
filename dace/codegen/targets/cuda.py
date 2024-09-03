@@ -1929,6 +1929,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 if kernelmap_entry.map.gpu_block_size is not None:
                     block_size = kernelmap_entry.map.gpu_block_size
 
+                    warnings.warn('Both the `gpu_block_size` property and internal thread-block '
+                                   'maps were defined with conflicting sizes for kernel '
+                                   f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
+                                   'The block size in the and gpu_block_size will be preferred.'
+                                   'Use `gpu_block_size` only if you do not need access to individual '
+                                   'thread-block threads, or explicit block-level synchronization (e.g., '
+                                   '`__syncthreads`). Otherwise, use internal maps with the `GPU_Threadblock` or '
+                                   '`GPU_ThreadBlock_Dynamic` schedules. For more information, see '
+                                   'https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
+
                 if kernelmap_entry.map.gpu_block_size is None:
                     warnings.warn('Multiple thread-block maps with different sizes detected for '
                                   f'kernel "{kernelmap_entry.map.label}": {detected_block_sizes}. '
@@ -2612,9 +2622,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
     def _generate_MapExit(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.MapExit, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-        if isinstance(node, nodes.MapExit):
-            if node.map.gpu_force_syncthreads:
-                callsite_stream.write('__syncthreads();', cfg, state_id)
+        if isinstance(node, nodes.MapExit) and node.map.gpu_force_syncthreads:
+            callsite_stream.write('__syncthreads();', cfg, state_id)
 
         if node.map.schedule == dtypes.ScheduleType.GPU_Device:
             # Remove grid invocation conditions
