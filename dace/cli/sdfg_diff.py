@@ -22,17 +22,17 @@ def _sdfg_diff(sdfg_A: dace.SDFG, sdfg_B: dace.SDFG):
     all_id_elements_A: Dict[str, DiffableT] = dict()
     all_id_elements_B: Dict[str, DiffableT] = dict()
 
-    all_id_elements_A[sdfg_A.id] = sdfg_A
+    all_id_elements_A[sdfg_A.guid] = sdfg_A
     for n, _ in sdfg_A.all_nodes_recursive():
-        all_id_elements_A[n.id] = n
+        all_id_elements_A[n.guid] = n
     for e, _ in sdfg_A.all_edges_recursive():
-        all_id_elements_A[e.data.id] = e
+        all_id_elements_A[e.data.guid] = e
 
-    all_id_elements_B[sdfg_B.id] = sdfg_B
+    all_id_elements_B[sdfg_B.guid] = sdfg_B
     for n, _ in sdfg_B.all_nodes_recursive():
-        all_id_elements_B[n.id] = n
+        all_id_elements_B[n.guid] = n
     for e, _ in sdfg_B.all_edges_recursive():
-        all_id_elements_B[e.data.id] = e
+        all_id_elements_B[e.data.guid] = e
 
     a_keys = set(all_id_elements_A.keys())
     b_keys = set(all_id_elements_B.keys())
