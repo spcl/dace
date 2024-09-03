@@ -2533,7 +2533,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
         if (len(next_scopes) > 0 or parent_scope.schedule == dtypes.ScheduleType.Sequential):
             # Thread-block synchronization
-            if scope_entry.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock and scope_entry.map.gpu_syncthreads:
+            if scope_entry.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                 callsite_stream.write('__syncthreads();', cfg, state_id, scope_entry)
             # Grid synchronization (kernel fusion)
             elif scope_entry.map.schedule == dtypes.ScheduleType.GPU_Device \
@@ -2569,6 +2569,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             return  # skip
 
         self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+
 
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label):
         return 'DACE_DFI ' + self._cpu_codegen.generate_nsdfg_header(
@@ -2628,6 +2629,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # Close block invocation
             callsite_stream.write('}', cfg, state_id, node)
             return
+
+        if isinstance(node, nodes.MapExit):
+            if node.map.gpu_force_syncthreads:
+                callsite_stream.write('__syncthreads();', cfg, state_id)
 
         self._cpu_codegen._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
