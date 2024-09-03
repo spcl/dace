@@ -239,18 +239,18 @@ class BlockTiling(transformation.SingleStateTransformation):
 
         # Update the ranges of the inner map
         work_map_range_list = []
+        inner_work_map_range_list = []
         old_work_map_ranges = []
-        underapproximated_work_map_range_list = []
         for tiling_param, (beg, end, step), outer_work_map_param in zip(matching_tiling_params, work_map.range, outer_work_map.params):
             old_work_map_ranges.append((beg, end, step))
-            work_map_range_list.append((0, step*tiling_param-1, step))
-            underapproximated_work_map_range_list.append((0, step*tiling_param-1, step))
-        work_map_range = subsets.Range(work_map_range_list)
+            sym_outer_work_map_param = symbol(outer_work_map_param)
+            work_map_range_list.append((sym_outer_work_map_param, sym_outer_work_map_param + step*tiling_param-1, step))
+            inner_work_map_range_list.append((0, step*tiling_param-1,step))
+        work_map_range = subsets.Range(inner_work_map_range_list)
         work_map.range = work_map_range
 
         # Update any memlet outgoing from the inner map that has the form 0:K to tk:tk+tiling_param
-        for old_range, new_range in zip(old_work_map_ranges, underapproximated_work_map_range_list):
-            print(old_range, "->", new_range)
+        for old_range, new_range in zip(old_work_map_ranges, work_map_range_list):
             self.replace_subsets(state, outer_work_map_entry, old_range, new_range)
 
         # Outer Work Loop is K=0, K<?, K+=STEP

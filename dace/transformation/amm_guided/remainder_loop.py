@@ -158,7 +158,8 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
         # Declare arrays for nested SDFG (the names can differ from the top-level SDFG)
         # In this case, we read only one element out of the full arrays
-        
+
+
         # Inputs for NestedSDFG
         ins = set()
         for in_edge in state.out_edges(map_before_split):
@@ -181,6 +182,9 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                 transient=False, 
                                 dtype=sdfg.arrays[in_arr].dtype)
 
+        # S1. We need to calculate the offsets we need to substract from all data containers passed to sub graphs, we can do it through going through in and out arrays
+        offsets = self.create_offsets(state.out_edges(map_before_split) + state.in_edges(map_after_split))
+
         # Create nested states
 
         # Save the in and out edges of the map scope encompassing the inner kernels
@@ -194,7 +198,9 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
         state0 = sub_sdfg.add_state('if_guard')
         state1 = sub_sdfg.add_state('innerLoopKernel')
+        lkernel_parent_state = state1
         state2 = sub_sdfg.add_state('remainderLoopKernel')
+        rkernel_parent_state = state2
         state3 = sub_sdfg.add_state('complete')
 
         sub_sdfg.add_edge(state0, state1, dace.InterstateEdge(condition=f"{condition}"))
@@ -224,7 +230,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                             None)
                 _state.add_node(an)
                 u,u_conn,v, v_conn,memlet = edge
-                _state.add_edge(an, None, node, in_arr, Memlet(data=in_arr,subset=Range([(0,m-1,1) for m in sdfg.arrays[in_arr].shape]),volume=memlet.volume))
+                _state.add_edge(an, None, node, in_arr, Memlet(data=in_arr,subset=Range(memlet.subset)))
         for out_arr in outs:
             for (_state, _sdfg, node) in [
                 (state1, inner_loop_kernel_sdfg, lnsdfg),
@@ -238,16 +244,16 @@ class RemainderLoop(transformation.SingleStateTransformation):
                             None)
                 _state.add_node(an)
                 u,u_conn,v, v_conn,memlet = edge
-                _state.add_edge(node, out_arr, an, None, Memlet(data=out_arr,subset=Range([(0,m-1,1) for m in sdfg.arrays[out_arr].shape]),volume=memlet.volume))
+                _state.add_edge(node, out_arr, an, None, Memlet(data=out_arr,subset=Range(memlet.subset)))
 
         # Edges that go to and come out nested sdfg
         for out_edge in state.out_edges(map_before_split):
             u,u_conn,v,v_conn,memlet = out_edge
-            state.add_edge(u, u_conn, nsdfg, memlet.data, Memlet(data=memlet.data,subset=Range([(0,m-1,1) for m in sdfg.arrays[memlet.data].shape]),volume=memlet.volume))
+            state.add_edge(u, u_conn, nsdfg, memlet.data, Memlet(data=memlet.data,subset=Range(memlet.subset)))
 
         for in_edge in state.in_edges(map_after_split):
             u,u_conn,v,v_conn,memlet = in_edge
-            state.add_edge(nsdfg, memlet.data, v, v_conn, Memlet(data=memlet.data,subset=Range([(0,m-1,1) for m in sdfg.arrays[memlet.data].shape]),volume=memlet.volume))
+            state.add_edge(nsdfg, memlet.data, v, v_conn, Memlet(data=memlet.data,subset=Range(memlet.subset)))
 
         nodes_to_copyover = set()
         edges_to_copyover = set()
@@ -292,13 +298,13 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
             for e in special_in_edges:
                 u,uc,v,vc,memlet = e
-                new_memlet = Memlet(data=memlet.data, subset=Range([(0,m-1,1) for m in sdfg.arrays[memlet.data].shape]),volume=memlet.volume)
+                new_memlet = Memlet(data=memlet.data, subset=Range(memlet.subset))
                 an = nodes.AccessNode(data=memlet.data)
                 kernel.add_node(an)
                 kernel.add_edge(an,None,first_node,vc,new_memlet)
             for e in special_out_edges:
                 u,uc,v,vc,memlet = e
-                new_memlet = Memlet(data=memlet.data, subset=Range([(0,m-1,1) for m in sdfg.arrays[memlet.data].shape]),volume=memlet.volume)
+                new_memlet = Memlet(data=memlet.data, subset=Range(memlet.subset))
                 an = nodes.AccessNode(data=memlet.data)
                 kernel.add_node(an)
                 kernel.add_edge(last_node,uc,an,None,new_memlet)
@@ -402,9 +408,13 @@ class RemainderLoop(transformation.SingleStateTransformation):
                     special_in_edges  = [ie]
                     special_out_edges = [oe]
 
+                    assign_offsets = self.create_offsets([ie,oe])
+
                     state0 = assign_sub_sdfg.add_state('if_guard')
                     state1 = assign_sub_sdfg.add_state('innerAssignment')
+                    lassign_parent_state = state1
                     state2 = assign_sub_sdfg.add_state('remainderAssignment')
+                    rassign_parent_state = state2
                     state3 = assign_sub_sdfg.add_state('complete')
 
                     conditions = []
@@ -434,18 +444,18 @@ class RemainderLoop(transformation.SingleStateTransformation):
                     #state.remove_edge(oe)
                     iarr_name = imemlet.data
                     iarr = sdfg.arrays[imemlet.data]
-                    state.add_edge(i_u,i_uc,assign_nsdfg,imemlet.data,Memlet(subset=Range([(0,end-1,1) for end in iarr.shape]), data=imemlet.data))
+                    state.add_edge(i_u,i_uc,assign_nsdfg,imemlet.data,Memlet(subset=imemlet.subset, data=imemlet.data))
                     oarr_name = omemlet.data
                     oarr = sdfg.arrays[omemlet.data]
-                    state.add_edge(assign_nsdfg,omemlet.data,o_v,o_vc,Memlet(subset=Range([(0,end-1,1) for end in oarr.shape]), data=omemlet.data))
+                    state.add_edge(assign_nsdfg,omemlet.data,o_v,o_vc,Memlet(subset=omemlet.subset, data=omemlet.data))
 
                     for s, sub_s in [(state1,lnsdfg), (state2,rnsdfg)]:
                         an_in = nodes.AccessNode(data=iarr_name)
                         an_out = nodes.AccessNode(data=oarr_name)
                         s.add_node(an_in)
                         s.add_node(an_out)
-                        s.add_edge(an_in,None,sub_s,iarr_name,Memlet(subset=Range([(0,end-1,1) for end in iarr.shape]), data=iarr_name))
-                        s.add_edge(sub_s,oarr_name,an_out,None,Memlet(subset=Range([(0,end-1,1) for end in oarr.shape]), data=oarr_name))
+                        s.add_edge(an_in,None,sub_s,iarr_name,Memlet(subset=imemlet.subset, data=iarr_name))
+                        s.add_edge(sub_s,oarr_name,an_out,None,Memlet(subset=omemlet.subset, data=oarr_name))
 
                     for sub_s in [lassign, rassign]:
                         an_in = nodes.AccessNode(data=iarr_name)
@@ -468,6 +478,43 @@ class RemainderLoop(transformation.SingleStateTransformation):
                         new_memlet = Memlet(subset=Range(new_ranges), data=memlet.data)
                         rassign.remove_edge(e0)
                         rassign.add_edge(u,uc,v,vc,new_memlet)
+
+        # S1.2 Update memlet subsets
+        for kernel_parent, kernel, used_offsets in [(lkernel_parent_state, lkernel, offsets), (rkernel_parent_state, rkernel, offsets),
+                                                    (lassign_parent_state, lassign, assign_offsets), (rassign_parent_state, rassign, assign_offsets)]:
+            self.substract_offsets(kernel_parent, used_offsets)
+            kernel_parent_offsets = self.create_offsets(kernel_parent.edges())
+            self.substract_offsets(kernel, used_offsets)
+            self.substract_offsets(kernel, kernel_parent_offsets)
+        # We need to recursively update offets, the structure is as follows.
+        # We have Main SDFG -> innerLoopKernel -> kernel
+        #         Main SDFG -> remainderLoopKernel -> kernel
+        # At ever edge one needs to calculate and upate the offsets
+
+    def create_offsets(self, edges):
+        offsets = dict()
+        for edge in edges:
+            _,_,_,_,memlet = edge
+            data_offsets = [beg for (beg,end,step) in memlet.subset]
+            if not memlet.data in offsets:
+                offsets[memlet.data] = data_offsets
+            else:
+                if offsets[memlet.data] != data_offsets:
+                    raise Exception("The transformations supports 1 offset per data container")
+        return offsets
+
+    def substract_offsets(self, state, offsets):
+        edges_to_check = set()
+        for n in dace.sdfg.utils.dfs_topological_sort(state):
+            edges_to_check = edges_to_check.union(state.out_edges(n))
+        for edge in edges_to_check:
+            u,uc,v,vc,memlet = edge
+            if memlet.data in offsets.keys():
+                data_offsets = offsets[memlet.data]
+                new_range = [(beg-data_offset,end-data_offset,step) for data_offset, (beg,end,step) in zip(data_offsets, memlet.subset)]
+                new_memlet = Memlet(subset=Range(new_range), data=memlet.data)
+                state.remove_edge(edge)
+                state.add_edge(u,uc,v,vc,new_memlet)
 
     @staticmethod
     def annotates_memlets():
