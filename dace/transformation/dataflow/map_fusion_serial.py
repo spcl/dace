@@ -796,12 +796,9 @@ class SerialMapFusion(mfh.MapFusionHelper):
                 #  temporary node to the Map output. This will essentially restore
                 #  or preserve the output for the intermediate node. It is important
                 #  that we use the data that `preExitEdge` was used.
-                new_exit_memlet = copy.deepcopy(pre_exit_edge.data)
-                assert new_exit_memlet.data == inter_name
-                new_exit_memlet.subset = pre_exit_edge.data.dst_subset
-                new_exit_memlet.other_subset = (
-                    "0" if is_scalar else subsets.Range.from_array(inter_desc)
-                )
+                final_pre_exit_memlet = copy.deepcopy(pre_exit_edge.data)
+                assert pre_exit_edge.data.data == inter_name
+                final_pre_exit_memlet.other_subset = subsets.Range.from_array(new_inter_desc)
 
                 new_pre_exit_conn = map_exit_2.next_connector()
                 state.add_edge(
@@ -809,7 +806,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
                     None,
                     map_exit_2,
                     "IN_" + new_pre_exit_conn,
-                    new_exit_memlet,
+                    final_pre_exit_memlet,
                 )
                 state.add_edge(
                     map_exit_2,
