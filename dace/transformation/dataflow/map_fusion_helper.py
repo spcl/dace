@@ -16,27 +16,21 @@ from dace.transformation import helpers
 
 @properties.make_properties
 class MapFusionHelper(transformation.SingleStateTransformation):
-    """Contains common part of the fusion for parallel and serial Map fusion.
-
-    The transformation assumes that the SDFG obeys the principals outlined [here](https://hackmd.io/klvzLnzMR6GZBWtRU8HbDg#Requirements-on-SDFG).
-    The main advantage of this structure is, that it is rather easy to determine
-    if a transient is used anywhere else. This check, performed by
-    `is_shared_data()`. It is further speeded up by cashing some computation,
-    thus such an object should not be used after interstate optimizations were applied
-    to the SDFG.
+    """Common parts of the parallel and serial map fusion transformation.
 
     Args:
         only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
         only_toplevel_maps: Only consider Maps that are at the top.
-        strict_dataflow: If `True`, the default, the transformation ensures strict
-            data flow.
+        strict_dataflow: If `True`, the default, the transformation ensures a more
+            stricter version of the data flow.
 
     Note:
-        `strict_dataflow` only has an influence if there is a downstream connection
-        from one access node to another that both _write_ to the same data.
-        Technically it is possible to turn the upstream access node into a shared output,
-        see `partition_first_outputs()`, data dependency is still guaranteed by the
-        maps. However, some other DaCe transformation cannot properly handle this case.
+        If `strict_dataflow` mode is enabled then the transformation will not remove
+        _direct_ data flow dependency from the graph. Furthermore, the transformation
+        will not remove size 1 dimensions of intermediate it crates.
+        This is a compatibility mode, that will limit the applicability of the
+        transformation, but might help transformations that does not fully analyse
+        the graph.
     """
 
     only_toplevel_maps = properties.Property(
@@ -63,7 +57,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
     strict_dataflow = properties.Property(
         dtype=bool,
         default=True,
-        desc="If `False` then the transformation will not preserve strict data flow.",
+        desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
 
 
@@ -140,8 +134,8 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         return True
 
 
-    @staticmethod
     def relocate_nodes(
+        self,
         from_node: Union[nodes.MapExit, nodes.MapEntry],
         to_node: Union[nodes.MapExit, nodes.MapEntry],
         state: SDFGState,
@@ -236,8 +230,8 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         assert len(from_node.out_connectors) == 0
 
 
-    @staticmethod
     def find_parameter_remapping(
+        self,
         first_map: nodes.Map,
         second_map: nodes.Map
     ) -> Union[Dict[str, str], None]:
@@ -370,27 +364,17 @@ class MapFusionHelper(transformation.SingleStateTransformation):
     ) -> bool:
         """Tests if `data` is interstate data, an can not be removed.
 
-        Interstate data is used to transmit data between multiple state or
-        by extension within the state, and thus can not be removed by the
-        serial map fusion.
-
-        The function determine this properties, according to the following rules:
-        - The underlying data is global.
-        - The `data` descriptor is used multiple times with the same state.
-        - `data` has an out or in degree of zero.
-        - The underlying data is referred to in another state.
-
-        The function computes this information and then caches it for later use.
+        Interstate data is used to transmit data between multiple state or by
+        extension within the state. Thus it must be classified as a shared output.
+        This function will go through the SDFG to and collect the names of all data
+        container that should be classified as shared.
 
         Args:
             transient: The transient that should be checked.
             sdfg: The SDFG containing the array.
 
         Note:
-            - This function does not inspect the interstate edges, instead the
-                set of data that is accessed in interstate edges is approximated
-                with the set of sink nodes.
-            - This function works best if the SDFG uses SSA style.
+            The function computes the this set once for every SDFG and then caches it.
         """
         if sdfg not in self.shared_data:
             self._compute_shared_data(sdfg)
@@ -401,7 +385,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         self,
         sdfg: dace.SDFG,
     ) -> None:
-        """This function computes the set of shared data for SDFG `sdfg`.
+        """Updates the internal set of shared data/interstate data of `self` for `sdfg`.
 
         See the documentation for `self.is_shared_data()` for a description.
 
@@ -411,38 +395,63 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         # Shared data of this SDFG.
         shared_data: Set[str] = set()
 
-        # Add all global data.
+        # All global data can not be removed, so it must always be shared.
         for data_name, data_desc in sdfg.arrays.items():
             if not data_desc.transient:
                 shared_data.add(data_name)
+            elif isinstance(data_desc, dace.data.Scalar):
+                shared_data.add(data_name)
 
-        # We go through all states and classify the nodes, according to the rules.
+        # We go through all states and classify the nodes/data:
+        #   - Data is referred to in different states.
+        #   - The access node is a view (both have to survive).
+        #   - Transient sink or source node.
+        #   - The access node has output degree larger than 1 (input degrees larger
+        #       than one, will always be partitioned as shared anyway).
         prevously_seen_data: Set[str] = set()
         for state in sdfg.nodes():
             for access_node in state.data_nodes():
+
                 if access_node.data in shared_data:
                     # The data was already classified to be shared data
                     pass
+
                 elif access_node.data in prevously_seen_data:
                     # We have seen this data before, either in this state or in
                     #  a previous one, but we did not classifies it as shared back then
-                    #  Note that we do not remove the data also from `previously_seen_data`.
                     shared_data.add(access_node.data)
+
                 if state.in_degree(access_node) == 0:
                     # (Transient) sink nodes are used in other states, or simplify
                     #  will get rid of them.
                     shared_data.add(access_node.data)
+
                 elif state.out_degree(access_node) != 1: # state.out_degree() == 0 or state.out_degree() > 1
                     # The access node is either a source node (it is shared in another
                     #  state) or the node has a degree larger than one, so it is used
                     #  in this state somewhere else.
                     shared_data.add(access_node.data)
+
+                elif self.is_view(node=access_node, sdfg=sdfg):
+                    # To ensure that the write to the view happens, both have to be shared.
+                    viewed_data: str = self.track_view(view=access_node, state=state, sdfg=sdfg).data
+                    shared_data.update([access_node.data, viewed_data])
+                    prevously_seen_data.update([access_node.data, viewed_data])
+
                 else:
                     # The node was not classified as shared data, so we record that
                     #  we saw it. Note that a node that was immediately classified
                     #  as shared node will never be added to this set, but a data
                     #  that was found twice will be inside this list.
                     prevously_seen_data.add(access_node.data)
+
+        # Now we are collecting all symbols that interstate edges read from.
+        interstate_read_symbols: Set[str] = set()
+        for edge in sdfg.edges():
+            interstate_read_symbols.update(edge.read_symbols())
+
+        # We also have to keep everything the edges referrers to and is an array.
+        shared_data.update(interstate_read_symbols.intersection(prevously_seen_data))
 
         # Update the internal cache
         self.shared_data[sdfg] = shared_data
@@ -465,15 +474,13 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             sdfg: The SDFG object.
 
         Note:
-            This information is used by the partition function, if it is legal to turn
-            a intermediate node into shared output or if the partition does not exists
-            at all. The current implementation is rather simple as it only checks if
-            a data is written to multiple times in the same state. A more refined
-            (but still simple) implementation would take the location of the access
-            node into consideration.
-            Actually everything could be turned into a shared output, however, some
-            DaCe transformation fail to proper examine the graph in this case and
-            perform modifications that lead to wrong behaviour.
+            This information is used by the partition function (in case strict data
+            flow mode is enabled), if it is legal to turn a intermediate node into
+            shared output or if the partition does not exists at all. The current
+            implementation is rather simple as it only checks if a data is written
+            to multiple times in the same state. A more refined (but still simple)
+            implementation would take the location of the access node into
+            consideration.
         """
         data_written_to: Set[str] = set()
         multi_write_data: Set[str] = set()
@@ -481,7 +488,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         for access_node in state.data_nodes():
             if state.in_degree(access_node) == 0:
                 continue
-            if is_view(access_node, sdfg):
+            if self.is_view(access_node, sdfg):
                 # This is an over approximation.
                 multi_write_data.update([access_node.data, track_view(access_node, state, sdfg).data])
             elif access_node.data in data_written_to:
@@ -555,13 +562,11 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         # Set of intermediate nodes that we have already processed.
         processed_inter_nodes: Set[nodes.Node] = set()
 
-        # These are the data that is written to multiple times in this state.
+        # These are the data that is written to multiple times in _this_ state.
         #  If a data is written to multiple time in a state, it could be
-        #  classified as shared. A problem could be if, this shared node happens to
-        #  then have zero out degree, thus dependencies are given by the edges that
-        #  leave the second exit node and not by the output nodes of the intermediate
-        #  node. Because some other DaCe transformation (auto optimizer) fail to
-        #  take this into account properly they do transformations that are invalid.
+        #  classified as shared. However, it might happen that the node has zero
+        #  degree. This is not a problem as the maps also induced a before-after
+        #  relationship. But some DaCe transformations do not catch this.
         #  Thus we will never modify such intermediate nodes.
         if self.strict_dataflow:
             multi_write_data: Set[str] = self._compute_multi_write_data(state, sdfg)
@@ -574,6 +579,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
 
             # We already processed the node, this should indicate that we should
             #  run simplify again, or we should start implementing this case.
+            # TODO(phimuell): Handle this case, it is partially implemented.
             if intermediate_node in processed_inter_nodes:
                 return None
             processed_inter_nodes.add(intermediate_node)
@@ -581,14 +587,15 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             # The intermediate can only have one incoming degree. It might be possible
             #  to handle multiple incoming edges, if they all come from the top map.
             #  However, the resulting SDFG might be invalid.
-            # NOTE: If needed the output degree is changed further down.
+            # NOTE: Allow this to happen (under certain cases) if the only producer
+            #   is the top map.
             if state.in_degree(intermediate_node) != 1:
                 return None
 
             # Now let's look at all nodes that are downstream of the intermediate node.
             #  This, among other things, will tell us, how we have to handle this node.
             #  NOTE: The traversal will stop at the second map.
-            downstream_nodes = all_nodes_between(
+            downstream_nodes = self.all_nodes_between(
                 graph=state,
                 begin=intermediate_node,
                 end=map_entry_2,
@@ -614,12 +621,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             #   However, some DaCe transformation can not handle this properly, so we
             #   are _forced_ to reject this node.
             if intermediate_node.data in multi_write_data:
-                return None
-
-            # If `downstream_nodes` is empty, this means that the second map entry
-            #  was found immediately, we only allow the case that there is one
-            #  connecting Memlet.
-            if (len(downstream_nodes) == 0) and state.out_degree(intermediate_node) != 1:
                 return None
 
             # For us an intermediate node must always be an access node, because
@@ -655,9 +656,10 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             #   - No dynamic Melets.
             #  Furthermore, we will also extract the subsets, i.e. the location they
             #  modify inside the intermediate array.
+            #  Since we do not allow for WCR, we do not check if the producer subsets intersects.
             producer_subsets: List[subsets.Subset] = []
             for producer_edge in producer_edges:
-                if isinstance(producer_edge.src, nodes.AccessNode) and is_view(producer_edge.src, sdfg):
+                if isinstance(producer_edge.src, nodes.AccessNode) and self.is_view(producer_edge.src, sdfg):
                     return None
                 if producer_edge.data.dynamic:
                     return None
@@ -678,7 +680,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
 
                 # Ensure that there is no multihop connection to the second map entry.
                 if intermediate_node_out_edge.dst is not map_entry_2:
-                    if all_nodes_between(
+                    if self.all_nodes_between(
                         graph=state,
                         begin=intermediate_node_out_edge.dst,
                         end=map_entry_2,
@@ -703,6 +705,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                         # TODO(phimuell): Is this restriction necessary, I am not sure.
                         return None
                     consumer_subsets.append(inner_consumer_edge.data.src_subset)
+            assert found_second_map, f"Found '{intermediate_node}' which looked like a pure node, but is not one."
             assert len(consumer_subsets) != 0
 
             # The consumer still uses the original symbols of the second map, so we must rename them.
@@ -725,12 +728,10 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             #  Note that "removed" here means that it is reconstructed by a new
             #  output of the second map.
             if len(downstream_nodes) != 0:
-                # The intermediate node is connected to more node inside this state,
-                #  that are not inside the map, so we must keep it alive.
+                # The intermediate node is connected to more node inside _this_ state.
                 shared_outputs.add(out_edge)
             elif self.is_shared_data(intermediate_node, sdfg):
-                # The intermediate data is refered to somewhere else.
-                #  So it must be passed.
+                # The intermediate data is used somewhere else, either in this or another state.
                 shared_outputs.add(out_edge)
             else:
                 # The intermediate can be removed, as it is not used anywhere else.
@@ -741,253 +742,146 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         return (pure_outputs, exclusive_outputs, shared_outputs)
 
 
-def all_nodes_between(
-    graph: Union[dace.SDFG, dace.SDFGState],
-    begin: nodes.Node,
-    end: nodes.Node,
-    reverse: bool = False,
-) -> Union[Set[nodes.Node], None]:
-    """Find all nodes that are reachable from `begin` but bound by `end`.
+    def all_nodes_between(
+        self,
+        graph: Union[dace.SDFG, dace.SDFGState],
+        begin: nodes.Node,
+        end: nodes.Node,
+        reverse: bool = False,
+    ) -> Union[Set[nodes.Node], None]:
+        """Find all nodes that are reachable from `begin` but bound by `end`.
 
-    Essentially the function starts a DFS at `begin`. If an edge is found that lead
-    to `end`, this edge is ignored. It will thus found any node that is reachable
-    from `begin` by a path that does not involve `end`. The returned set will
-    never contain `end` nor `begin`. In case `end` is never found the function
-    will return `None`.
+        Essentially the function starts a DFS at `begin`. If an edge is found that lead
+        to `end`, this edge is ignored. It will thus found any node that is reachable
+        from `begin` by a path that does not involve `end`. The returned set will
+        never contain `end` nor `begin`. In case `end` is never found the function
+        will return `None`.
 
-    If `reverse` is set to `True` the function will start exploring at `end` and
-    follows the outgoing edges, i.e. the meaning of `end` and `begin` are swapped.
+        If `reverse` is set to `True` the function will start exploring at `end` and
+        follows the outgoing edges, i.e. the meaning of `end` and `begin` are swapped.
 
-    Args:
-        graph: The graph to operate on.
-        begin: The start of the DFS.
-        end: The terminator node of the DFS.
-        reverse: Perform a backward DFS.
+        Args:
+            graph: The graph to operate on.
+            begin: The start of the DFS.
+            end: The terminator node of the DFS.
+            reverse: Perform a backward DFS.
 
-    Notes:
-        - The returned set will also contain the nodes of path that starts at
-            `begin` and ends at a node that is not `end`.
-    """
+        Notes:
+            - The returned set will also contain the nodes of path that starts at
+                `begin` and ends at a node that is not `end`.
+        """
 
-    def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
         if reverse:
-            return (edge.src for edge in graph.in_edges(node))
-        return (edge.dst for edge in graph.out_edges(node))
-
-    if reverse:
-        begin, end = end, begin
-
-    to_visit: List[nodes.Node] = [begin]
-    seen: Set[nodes.Node] = set()
-    found_end: bool = False
-
-    while len(to_visit) > 0:
-        n: nodes.Node = to_visit.pop()
-        if n == end:
-            found_end = True
-            continue
-        elif n in seen:
-            continue
-        seen.add(n)
-        to_visit.extend(next_nodes(n))
-
-    if not found_end:
-        return None
-
-    seen.discard(begin)
-    return seen
-
-
-def is_parallel(
-    graph: Union[dace.SDFG, dace.SDFGState],
-    node1: nodes.Node,
-    node2: nodes.Node,
-) -> bool:
-    """Tests if `node1` and `node2` are parallel.
-
-    The nodes are parallel if `node2` can not be reached from `node1` and vice versa.
-
-    Args:
-        graph:      The graph to traverse.
-        node1:      The first node to check.
-        node2:      The second node to check.
-    """
-
-    # The `all_nodes_between()` function traverse the graph and returns `None` if
-    #  `end` was not found. We have to call it twice, because we do not know
-    #  which node is upstream if they are not parallel.
-    if all_nodes_between(graph=graph, begin=node1, end=node2) is not None:
-        return False
-    elif all_nodes_between(graph=graph, begin=node2, end=node1) is not None:
-        return False
-    return True
-
-
-def find_downstream_consumers(
-    state: dace.SDFGState,
-    begin: Union[nodes.Node, graph.MultiConnectorEdge[dace.Memlet]],
-    only_tasklets: bool = False,
-    reverse: bool = False,
-) -> Set[Tuple[nodes.Node, graph.MultiConnectorEdge[dace.Memlet]]]:
-    """Find all downstream connectors of `begin`.
-
-    A consumer, in for this function, is any node that is neither an entry nor
-    an exit node. The function returns a set of pairs, the first element is the
-    node that acts as consumer and the second is the edge that leads to it.
-    By setting `only_tasklets` the nodes the function finds are only Tasklets.
-
-    To find this set the function starts a search at `begin`, however, it is also
-    possible to pass an edge as `begin`.
-    If `reverse` is `True` the function essentially finds the producers that are
-    upstream.
-
-    Args:
-        state: The state in which to look for the consumers.
-        begin: The initial node that from which the search starts.
-        only_tasklets: Return only Tasklets.
-        reverse: Follow the reverse direction.
-    """
-    if isinstance(begin, graph.MultiConnectorEdge):
-        to_visit: List[graph.MultiConnectorEdge[dace.Memlet]] = [begin]
-    elif reverse:
-        to_visit = list(state.in_edges(begin))
-    else:
-        to_visit = list(state.out_edges(begin))
-    seen: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
-    found: Set[Tuple[nodes.Node, graph.MultiConnectorEdge[dace.Memlet]]] = set()
-
-    while len(to_visit) != 0:
-        curr_edge: graph.MultiConnectorEdge[dace.Memlet] = to_visit.pop()
-        next_node: nodes.Node = curr_edge.src if reverse else curr_edge.dst
-
-        if curr_edge in seen:
-            continue
-        seen.add(curr_edge)
-
-        if isinstance(next_node, (nodes.MapEntry, nodes.MapExit)):
-            if reverse:
-                target_conn = curr_edge.src_conn[4:]
-                new_edges = state.in_edges_by_connector(curr_edge.src, "IN_" + target_conn)
-            else:
-                # In forward mode a Map entry could also mean the definition of a
-                #  dynamic map range.
-                if (not curr_edge.dst_conn.startswith("IN_")) and isinstance(
-                    next_node, nodes.MapEntry
-                ):
-                    # This edge defines a dynamic map range, which is a consumer
-                    if not only_tasklets:
-                        found.add((next_node, curr_edge))
-                    continue
-                target_conn = curr_edge.dst_conn[3:]
-                new_edges = state.out_edges_by_connector(curr_edge.dst, "OUT_" + target_conn)
-            to_visit.extend(new_edges)
-            del new_edges
+            def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
+                return (edge.src for edge in graph.in_edges(node))
+            begin, end = end, begin
         else:
-            if only_tasklets and (not isinstance(next_node, nodes.Tasklet)):
-                continue
-            found.add((next_node, curr_edge))
+            def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
+                return (edge.dst for edge in graph.out_edges(node))
 
-    return found
+        to_visit: List[dace_nodes.Node] = [begin]
+        seen: Set[dace_nodes.Node] = set()
 
+        while len(to_visit) > 0:
+            node: dace_nodes.Node = to_visit.pop()
+            if node != end and node not in seen:
+                to_visit.extend(next_nodes(node))
+            seen.add(node)
 
-def find_upstream_producers(
-    state: dace.SDFGState,
-    begin: Union[nodes.Node, graph.MultiConnectorEdge[dace.Memlet]],
-    only_tasklets: bool = False,
-) -> Set[Tuple[nodes.Node, graph.MultiConnectorEdge[dace.Memlet]]]:
-    """Same as `find_downstream_consumers()` but with `reverse` set to `True`."""
-    return find_downstream_consumers(
-        state=state,
-        begin=begin,
-        only_tasklets=only_tasklets,
-        reverse=True,
-    )
+        # If `end` was not found we have to return `None` to indicate this.
+        #  `begin` and `end` are not included in the output set.
+        if end not in seen:
+            return None
+        return seen - {begin, end}
 
 
-def get_access_set(
-        scope_node: Union[nodes.MapEntry, nodes.MapExit],
-        state: SDFGState,
-) -> Set[nodes.AccessNode]:
-    """Computes the access set of a "scope node".
+    def get_access_set(
+            self,
+            scope_node: Union[nodes.MapEntry, nodes.MapExit],
+            state: SDFGState,
+    ) -> Set[nodes.AccessNode]:
+        """Computes the access set of a "scope node".
 
-    If `scope_node` is a `MapEntry` node it will operate on the set of incoming
-    edges and if it is an `MapExit` node on the set of outgoing edges. The
-    function will then determine all access nodes that have a connection through
-    these edges to the scope nodes (edges that does not lead to access nodes are
-    ignored).
-    The function returns a set that contains all access nodes that were found.
-    It is important that this set will also contain views.
+        If `scope_node` is a `MapEntry` node it will operate on the set of incoming
+        edges and if it is an `MapExit` node on the set of outgoing edges. The
+        function will then determine all access nodes that have a connection through
+        these edges to the scope nodes (edges that does not lead to access nodes are
+        ignored).
+        The function returns a set that contains all access nodes that were found.
+        It is important that this set will also contain views.
 
-    Args:
-        scope_node: The scope node that should be evaluated.
-        state: The state in which we operate.
-    """
-    if isinstance(scope_node, nodes.MapEntry):
-        get_edges = lambda node: state.in_edges(node)
-        other_node = lambda e: e.src
-    else:
-        get_edges = lambda node: state.out_edges(node)
-        other_node = lambda e: e.dst
-    access_set: Set[nodes.AccessNode] = {
-            node
-            for node in map(other_node, get_edges(scope_node))
-            if isinstance(node, nodes.AccessNode)
-    }
-    # As far as I know in a valid SDFG this should not happen.
-    assert len(access_set) == len({node.data for node in access_set})
-    return access_set
-
-
-def is_view(
-        node: nodes.AccessNode,
-        sdfg: SDFG,
-) -> bool:
-    """Tests if `node` points to a view or not."""
-    node_desc: data.Data = node.desc(sdfg)
-    return isinstance(node_desc, data.View)
+        Args:
+            scope_node: The scope node that should be evaluated.
+            state: The state in which we operate.
+        """
+        if isinstance(scope_node, nodes.MapEntry):
+            get_edges = lambda node: state.in_edges(node)
+            other_node = lambda e: e.src
+        else:
+            get_edges = lambda node: state.out_edges(node)
+            other_node = lambda e: e.dst
+        access_set: Set[nodes.AccessNode] = {
+                node
+                for node in map(other_node, get_edges(scope_node))
+                if isinstance(node, nodes.AccessNode)
+        }
+        # As far as I know in a valid SDFG this should not happen.
+        assert len(access_set) == len({node.data for node in access_set})
+        return access_set
 
 
-def track_view(
-        view: nodes.AccessNode,
-        state: SDFGState,
-        sdfg: SDFG,
-) -> nodes.AccessNode:
-    """Find the original data of a View.
+    def is_view(
+            self,
+            node: nodes.AccessNode,
+            sdfg: SDFG,
+    ) -> bool:
+        """Tests if `node` points to a view or not."""
+        node_desc: data.Data = node.desc(sdfg)
+        return isinstance(node_desc, data.View)
 
-    Given the View `view`, the function will trace the view back to the
-    original access node.
-    For convenience, if `view` is not a `View` but a normal data descriptor,
-    then the function will return the argument unmodified.
 
-    Args:
-        view: The view that should be traced.
-        state: The state in which we operate.
-        sdfg: The SDFG on which we operate.
-    """
+    def track_view(
+            self,
+            view: nodes.AccessNode,
+            state: SDFGState,
+            sdfg: SDFG,
+    ) -> nodes.AccessNode:
+        """Find the original data of a View.
 
-    # Test if it is a view at all, if not return the passed node as source.
-    if not is_view(view, sdfg):
-        return view
+        Given the View `view`, the function will trace the view back to the
+        original access node.
+        For convenience, if `view` is not a `View` but a normal data descriptor,
+        then the function will return the argument unmodified.
 
-    # First determine if the view is used for reading or writing.
-    curr_edge = dace.sdfg.utils.get_view_edge(state, view)
-    if curr_edge is None:
-        raise RuntimeError(f"Failed to determine the direction of the view '{view}'.")
-    if curr_edge.dst_conn == "view":
-        # The view is used for reading.
-        next_node = lambda curr_edge: curr_edge.src
-    elif curr_edge.src_conn == "view":
-        # The view is used for writing.
-        next_node = lambda curr_edge: curr_edge.dst
-    else:
-        raise RuntimeError("Failed to determine the direction of the view '{view}'.")
+        Args:
+            view: The view that should be traced.
+            state: The state in which we operate.
+            sdfg: The SDFG on which we operate.
+        """
 
-    # Now trace the view back.
-    org_view = view
-    view = next_node(curr_edge)
-    while is_view(view, sdfg):
+        # Test if it is a view at all, if not return the passed node as source.
+        if not is_view(view, sdfg):
+            return view
+
+        # First determine if the view is used for reading or writing.
         curr_edge = dace.sdfg.utils.get_view_edge(state, view)
         if curr_edge is None:
-            raise RuntimeError(f"View tracing of '{org_view}' failed at note '{view}'.")
+            raise RuntimeError(f"Failed to determine the direction of the view '{view}'.")
+        if curr_edge.dst_conn == "view":
+            # The view is used for reading.
+            next_node = lambda curr_edge: curr_edge.src
+        elif curr_edge.src_conn == "view":
+            # The view is used for writing.
+            next_node = lambda curr_edge: curr_edge.dst
+        else:
+            raise RuntimeError("Failed to determine the direction of the view '{view}'.")
+
+        # Now trace the view back.
+        org_view = view
         view = next_node(curr_edge)
-    return view
+        while is_view(view, sdfg):
+            curr_edge = dace.sdfg.utils.get_view_edge(state, view)
+            if curr_edge is None:
+                raise RuntimeError(f"View tracing of '{org_view}' failed at note '{view}'.")
+            view = next_node(curr_edge)
+        return view

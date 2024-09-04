@@ -151,7 +151,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
         for scope_node in [map_entry_1, map_exit_1, map_entry_2, map_exit_2]:
             access_sets.append({
                 node.data: node
-                for node in mfh.get_access_set(scope_node, state)
+                for node in self.get_access_set(scope_node, state)
             })
         read_map_1, write_map_1, read_map_2, write_map_2 = access_sets
 
@@ -161,7 +161,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
         resolved_sets: List[Set[str]] = []
         for unresolved_set in [read_map_1, write_map_1, read_map_2, write_map_2]:
             resolved_sets.append({
-                mfh.track_view(node).data if mfh.is_view(node, sdfg) else node.data
+                self.track_view(node).data if self.is_view(node, sdfg) else node.data
                 for node in unresolved_set.values()
             })
         real_read_map_1, real_write_map_1, real_read_map_2, real_write_map_2 = resolved_sets
@@ -195,7 +195,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
 
         # For simplicity we assume that the nodes used to exchange information can
         #  not be a View. This is a simplification.
-        if any(mfh.is_view(exchange_node, sdfg) for exchange_node in exchange_nodes.values()):
+        if any(self.is_view(exchange_node, sdfg) for exchange_node in exchange_nodes.values()):
             return True
 
         # This is the names of the node that are used as input of the first map and
@@ -205,7 +205,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
 
         # Because it is hard, we do not allow Views here, because we can not resolve
         #  access sets (at least I can not).
-        if any(mfh.is_view(read_map_1[name], sdfg) for name in fused_inout_data_names):
+        if any(self.is_view(read_map_1[name], sdfg) for name in fused_inout_data_names):
             return True
 
         # This is a case that can not be handled, the above code should filter this
@@ -254,7 +254,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
             state: SDFGState,
             sdfg: SDFG,
     ) -> bool:
-        """Checks if there are any rw dependencies in the exchange set.
+        """Checks if there are any read after write dependencies in the exchange set.
 
         Args:
             map_exit_1: Exit node of the first (top) map; defines writes.

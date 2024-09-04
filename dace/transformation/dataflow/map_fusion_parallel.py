@@ -12,11 +12,11 @@ from dace.transformation.dataflow import map_fusion_helper
 
 @properties.make_properties
 class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
-    """The `ParallelMapFusion` transformation allows to merge two parallel maps together.
+    """The `ParallelMapFusion` transformation allows to merge two parallel maps.
 
-    The `SerialMapFusion` transformation is only able to handle maps that are sequential,
-    however, this transformation is able to fuse _any_ maps that are not sequential
-    and are in the same scope.
+    While the `SerialMapFusion` transformation fuses maps that are sequentially
+    connected by an intermediate node, this transformation is able to fuse any
+    two maps that are not sequential and in the same scope.
 
     Args:
         only_if_common_ancestor: Only perform fusion if both Maps share at least one
@@ -26,7 +26,7 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
 
     Note:
         This transformation only matches the entry nodes of the Map, but will also
-        modify the exit nodes of the Map.
+        modify the exit nodes of the Maps.
     """
 
     map_entry1 = transformation.transformation.PatternNode(nodes.MapEntry)
@@ -65,7 +65,6 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         sdfg: dace.SDFG,
         permissive: bool = False,
     ) -> bool:
-        """The transformation is applicable."""
         map_entry_1: nodes.MapEntry = self.map_entry1
         map_entry_2: nodes.MapEntry = self.map_entry2
 
@@ -83,7 +82,7 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         # Since the match expression matches any twp Maps, we have to ensure that
         #  the maps are parallel. The `can_be_fused()` function already verified
         #  if they are in the same scope.
-        if not map_fusion_helper.is_parallel(graph=graph, node1=map_entry_1, node2=map_entry_2):
+        if not self._is_parallel(graph=graph, node1=map_entry_1, node2=map_entry_2):
             return False
 
         # Test if they have they share a node as direct ancestor.
@@ -96,12 +95,42 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         return True
 
 
+    def _is_parallel(
+        self,
+        graph: SDFGState,
+        node1: nodes.Node,
+        node2: nodes.Node,
+    ) -> bool:
+        """Tests if `node1` and `node2` are parallel.
+
+        The nodes are parallel if `node2` can not be reached from `node1` and vice versa.
+
+        Args:
+            graph:      The graph to traverse.
+            node1:      The first node to check.
+            node2:      The second node to check.
+        """
+
+        # In order to be parallel they must be in the same scope.
+        scope = graph.scope_dict()
+        if scope[node1] != scope[node2]:
+            return False
+
+        # The `all_nodes_between()` function traverse the graph and returns `None` if
+        #  `end` was not found. We have to call it twice, because we do not know
+        #  which node is upstream if they are not parallel.
+        if self.all_nodes_between(graph=graph, begin=node1, end=node2) is not None:
+            return False
+        elif self.all_nodes_between(graph=graph, begin=node2, end=node1) is not None:
+            return False
+        return True
+
+
     def apply(self, graph: Union[SDFGState, SDFG], sdfg: SDFG) -> None:
         """Performs the Map fusing.
 
-        Essentially, the function relocate all edges from the nodes forming the second
-        Map to the corresponding nodes of the first Map. Afterwards the nodes of the
-        second Map are removed.
+        Essentially, the function relocate all edges from the scope nodes (`MapEntry`
+        and `MapExit`) of the second map to the scope nodes of the first map.
         """
 
         map_entry_1: nodes.MapEntry = self.map_entry1
