@@ -132,9 +132,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         elif self.only_toplevel_maps:
             if scope[map_entry_1] is not None:
                 return False
-            # TODO(phimuell): Figuring out why this is here.
-            elif is_nested_sdfg(sdfg):
-                return False
 
         # We will now check if there exists a remapping that of the map parameter
         if self.find_parameter_remapping(first_map=map_entry_1.map, second_map=map_entry_2.map) is None:
@@ -742,22 +739,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         assert exclusive_outputs or shared_outputs or pure_outputs
         assert len(processed_inter_nodes) == sum(len(x) for x in [pure_outputs, exclusive_outputs, shared_outputs])
         return (pure_outputs, exclusive_outputs, shared_outputs)
-
-
-def is_nested_sdfg(
-    sdfg: Union[dace.SDFG, dace.SDFGState, nodes.NestedSDFG],
-) -> bool:
-    """Tests if `sdfg` is a NestedSDFG."""
-    if isinstance(sdfg, dace.SDFGState):
-        sdfg = sdfg.parent
-    if isinstance(sdfg, nodes.NestedSDFG):
-        return True
-    elif isinstance(sdfg, dace.SDFG):
-        if sdfg.parent_nsdfg_node is not None:
-            return True
-        return False
-    else:
-        raise TypeError(f"Does not know how to handle '{type(sdfg).__name__}'.")
 
 
 def all_nodes_between(
