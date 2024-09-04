@@ -596,20 +596,27 @@ class SerialMapFusion(mfh.MapFusionHelper):
             pre_exit_edge = pre_exit_edges[0]
             new_inter_shape_raw = symbolic.overapproximate(pre_exit_edge.data.subset.size())
 
-            # Over approximation will leave us with some unneeded size one dimensions.
-            #  That are known to cause some troubles, so we will now remove them.
-            squeezed_dims: List[int] = []  # These are the dimensions we removed.
-            new_inter_shape: List[int] = []  # This is the final shape of the new intermediate.
-            for dim, (proposed_dim_size, full_dim_size) in enumerate(
-                zip(new_inter_shape_raw, inter_shape)
-            ):
-                # Order of checks is important!
-                if full_dim_size == 1:  # Must be kept!
-                    new_inter_shape.append(proposed_dim_size)
-                elif proposed_dim_size == 1:  # This dimension was reduced, so we can remove it.
-                    squeezed_dims.append(dim)
-                else:
-                    new_inter_shape.append(proposed_dim_size)
+            if not self.strict_dataflow:
+                # Over approximation will leave us with some unneeded size one dimensions.
+                #  If they are removed some dace transformations (especially auto optimization)
+                #  will have problems.
+                squeezed_dims: List[int] = []  # These are the dimensions we removed.
+                new_inter_shape: List[int] = []  # This is the final shape of the new intermediate.
+                for dim, (proposed_dim_size, full_dim_size) in enumerate(
+                    zip(new_inter_shape_raw, inter_shape)
+                ):
+                    # Order of checks is important!
+                    if full_dim_size == 1:  # Must be kept!
+                        new_inter_shape.append(proposed_dim_size)
+                    elif proposed_dim_size == 1:  # This dimension was reduced, so we can remove it.
+                        squeezed_dims.append(dim)
+                    else:
+                        new_inter_shape.append(proposed_dim_size)
+            else:
+                squeezed_dims = []
+                new_inter_shape = list(new_inter_shape_raw)
+
+
 
             # This is the name of the new "intermediate" node that we will create.
             #  It will only have the shape `new_inter_shape` which is basically its
