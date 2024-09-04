@@ -545,8 +545,8 @@ class SerialMapFusion(mfh.MapFusionHelper):
         map_exit_2.map = map_entry_1.map
 
 
-    @staticmethod
     def handle_intermediate_set(
+        self,
         intermediate_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]],
         state: SDFGState,
         sdfg: SDFG,
@@ -777,6 +777,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
 
             if is_exclusive_set:
                 # In exclusive mode the old intermediate node is no longer needed.
+                #  This will also remove `out_edge` from the SDFG.
                 assert state.degree(inter_node) == 1
                 state.remove_edge_and_connectors(out_edge)
                 state.remove_node(inter_node)
