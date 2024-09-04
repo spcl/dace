@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import helpers as xfh
+from dace.sdfg import nodes
 from dace.memlet import Memlet
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import StateSubgraphView, MultiConnectorEdge
@@ -42,7 +43,13 @@ class SeparateRefsets(ppl.Pass):
                     edge = next(iter(state.in_edges_by_connector(anode, 'set')))
 
                     # Move reference set and all ancestors to a prior state
-                    substate = StateSubgraphView(state, nx.ancestors(state._nx, edge.src) | {edge.src, edge.dst})
+                    nodes_to_move_back = set(nx.ancestors(state._nx, edge.src)) | {edge.src, edge.dst}
+                    if isinstance(edge.src, nodes.CodeNode):  # Also move other descendants until access nodes
+                        for d in state.successors(edge.src):
+                            assert isinstance(d, nodes.AccessNode)
+                            nodes_to_move_back.add(d)
+
+                    substate = StateSubgraphView(state, nodes_to_move_back)
                     sets_moved_back.add(edge)
                     newstate = xfh.state_fission(sdfg, substate)
 
