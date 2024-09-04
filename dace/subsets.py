@@ -33,7 +33,7 @@ def bounding_box_cover_exact(subset_a, subset_b) -> bool:
     return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
                 and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
                 for rb, re, orb, ore in zip(min_elements_a, max_elements_a,
-                                            min_elements_b(), max_elements_b)])
+                                            min_elements_b, max_elements_b)])
 
 def bounding_box_symbolic_positive(subset_a, subset_b, approximation = False)-> bool:
     min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
