@@ -763,7 +763,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     for out_edge in list(out_edges):
                         for in_edge in list(in_edges):
                             if (in_edge.data.data == out_edge.data.data
-                                    and in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
+                                    and (in_edge.data.dst_subset is not None and in_edge.data.dst_subset.covers(out_edge.data.src_subset))):
                                 out_edges.remove(out_edge)
                                 break
 
