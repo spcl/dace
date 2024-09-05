@@ -205,7 +205,8 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
         mem_loc_b = parsed_memory_location
         lib_node_name = f"move_{memlet.data}_from_{mem_loc_a}_to_{mem_loc_b}"
         dst_arr_shape = shape
-        num_threads = self.device_map_entry.map.gpu_block_size
+        num_threads = [int((e+1-b)/s) for b,e,s in self.thread_block_map_entry.map.range]
+        
 
         dst_arr_name = self.location_to_prefix[self.memory_location] + src_arr_name
         (dst_arr_name, dst_arr) = sdfg.add_array(name=dst_arr_name, 

@@ -68,11 +68,11 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                             map_entry=map_entry)
 
         map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
-        map_entry.map.gpu_block_size = gpu_block_dims_ordered
+        #map_entry.map.gpu_block_size = gpu_block_dims_ordered
 
         # The dev map is a new map where the gpu_block_size param is not transferred over
         dev_entry = state.entry_node(map_entry)
-        dev_entry.map.gpu_block_size = gpu_block_dims_ordered
+        #dev_entry.map.gpu_block_size = gpu_block_dims_ordered
 
         # Clear the copied-over edges that are not between any connectors (happens if such an edge exist to ensure
         # proper allocation of a constnat in after the device map)
