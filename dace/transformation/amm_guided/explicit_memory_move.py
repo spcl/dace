@@ -125,41 +125,6 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
         return True
 
     def infer_source(self, state: SDFGState, sdfg: SDFG, edge : MultiConnectorEdge[Memlet]):
-        # Recurse back up to the first access node memlet comes from the derive the storage type
-        # If a map, then find the corresponding in connector to the out connector and continue
-        # If an access node, return the storage type of it
-        # Other continue upwards, assert the number of in and out edges are one (for the other case
-        # might need to find a fix)
-        """
-        u, u_conn, _, _, _ = edge
-        while(True):
-          if isinstance(u, nodes.AccessNode):
-              return (u.data, sdfg.arrays[u.data].storage)
-          elif isinstance(u, nodes.MapEntry):
-              in_conn_name = "IN" + u_conn[3:]
-              # Check the in_conn exists
-              found = False
-              for in_conn in u.in_connectors:
-                  if in_conn_name == in_conn:
-                      found = True
-                      break
-              if not found:
-                  raise Exception("In connector not found, check implementation of explicit memory move")
-              found = False
-              for in_edge in state.in_edges(u):
-                  iu, iu_conn, iv, iv_conn, imemlet = in_edge
-                  if iv_conn == in_conn_name:
-                    u, u_conn, _, _, _ = iu, iu_conn, iv, iv_conn, imemlet
-                    found = True
-                    break
-              assert(found)
-          elif state.in_degree(u) == 0: # Final node
-              # Could be const memory or something like that, return None
-              return (None, None)
-          else:
-              assert(state.in_degree(u) == 1 and state.out_degree(u) == 1)
-              u, u_conn, _, _, _ = state.in_edges(u)[0]
-        """
         u,uc,v,vc,memlet = edge
         return (memlet.data, sdfg.arrays[memlet.data].storage)
 
@@ -167,23 +132,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
         dtypes.StorageType.GPU_Global: "glb",
         dtypes.StorageType.GPU_Shared: "shr",
     }
-    def filter_constants(self,expr):
-        # Base case: if the expression is an atom (single variable or number)
-        if expr.is_Atom:
-            # Keep the expression only if it is not a number
-            if not expr.is_number:
-                return expr
-            else:
-                return 0
-        
-        # Recursive case: apply the function to each argument of the expression
-        filtered_expr = 0
-        for term in expr.args:
-            filtered_term = self.filter_constants(term)
-            if filtered_term != 0:
-                filtered_expr += filtered_term
-        
-        return filtered_expr
+
     def filter_terms(self, expr, vars):
         if isinstance(expr, int):
             return expr

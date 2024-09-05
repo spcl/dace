@@ -38,8 +38,10 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
     def apply(self, state: SDFGState, sdfg: SDFG):
         # Workflow:
-        # 1. Save all unique data accesses inside the micro kernel
-        # e.g. A[b_i+d_i,t+tK], B[t+tK,b_j+d_j], tmp[i,j]
+        # 1. Save all unique global data accesses
+        # e.g. A[b_i+d_i,tk+k], B[tk+k,b_j+d_j], tmp[i,j]
+        # but if the kernel has been moves from glb to for example shared then keep track of it
+        # (0.) as  shrA -> A
         # 2. Find the ranges of these parameters
         # e.g. tK = 0:16:1, k = 0:K:16, i = 0:4
         # 3. Check if any variable can go out of bound (if end-beg % step != 0)
@@ -51,17 +53,51 @@ class RemainderLoop(transformation.SingleStateTransformation):
         # e.g, Meaning not at last iteration of k, not last iteration of b_i, b_j
         #    6.1 Yes -> statically unrolled loops (same)
         #    6.2 No -> Copy code change end condition with min(end, var+step)
+        #
+        # S2. one special case if memory is moved from global to shared memory
+        #     then we need preserve the mapping of shrA -> glbA when checking any entry
+        #     this can be done by going through library nodes whr data was moved from glb to shr
         inner_work_map_entry = self.inner_work_map_entry
+        map_entry = self.inner_work_map_entry
+        dev_entry = None
+        while map_entry:
+            dev_entry = map_entry
+            map_entry = state.entry_node(map_entry)
+        assert(dev_entry.map.schedule == dtypes.ScheduleType.GPU_Device)
+
+        # 0. Sort memory-moved array into groups
+        access_groups = list()
+        for n in dace.sdfg.utils.dfs_topological_sort(state):
+            if isinstance(n, nodes.LibraryNode):
+                ies = state.in_edges(n)
+                oes = state.out_edges(n)
+                if len(ies) == 1 and len(oes) == 1:
+                    ie = ies[0]
+                    oe = oes[0]
+                    iu,iuc,iv,ivc,imemlet = ie
+                    ou,ouc,ov,ovc,omemlet = oe
+                    if sdfg.arrays[imemlet.data].storage != sdfg.arrays[omemlet.data].storage:
+                        added = False
+                        for i, group in enumerate(access_groups):
+                            if imemlet.data in group or omemlet.data in group:
+                                added = True
+                                updated_group = group.union([(imemlet.data, imemlet.subset), (omemlet.data, omemlet.subset)])
+                                access_groups[i] = updated_group
+                        if not added:
+                            access_groups.append(set([(imemlet.data, imemlet.subset), (omemlet.data, omemlet.subset)]))
+        print("ACCESS GROUPS", access_groups)
 
         # 1.
-        edges_to_check = state.out_edges(inner_work_map_entry)
+        edges_to_check = state.out_edges(dev_entry)
         data_accesses = set()
         while edges_to_check:
             u, u_conn, v, v_conn, memlet = edges_to_check.pop()
-            if not (memlet.data, memlet.subset) in data_accesses:
+            # When smth is allocated memlet data and memlet subset can be none
+            if memlet.data != None and memlet.subset != None and (not (memlet.data, memlet.subset) in data_accesses):
                 data_accesses.add((memlet.data, memlet.subset))
             if v != state.exit_node(inner_work_map_entry):
                 edges_to_check += state.out_edges(v)
+        print("DATA ACCESSES", data_accesses)
 
         # 2.
         param_and_ranges = dict()
@@ -71,7 +107,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 assert(not param in param_and_ranges.keys())
                 param_and_ranges[param] = (beg,end,step)
             cur_map_entry = state.entry_node(cur_map_entry)
-
+        print("PARAM AND RANGES", param_and_ranges)
         # 3.
         # Let us look at B[k + tk, b_j + d_j + j] 
         # k=0:K:16, tk=0:16:1, b_j=0:N:64, d_j=0:64:4, j=0:4:1
@@ -82,71 +118,152 @@ class RemainderLoop(transformation.SingleStateTransformation):
         for (data, subset) in data_accesses:
             for (beg,end,step) in subset:
                 free_symbols = set.union(beg.free_symbols, end.free_symbols, step.free_symbols)
+                print("free symbols", free_symbols)
                 for symbol in free_symbols:
-                    (beg,end,step) = param_and_ranges[str(symbol)]
-                    if self.has_remainder(end+1-beg, step):
-                        can_out_of_bound[(data,subset)] = True
-                        symbols_to_ensure_in_scope.add(str(symbol))
+                    if str(symbol) in param_and_ranges.keys():
+                        (beg,end,step) = param_and_ranges[str(symbol)]
+                        if self.has_remainder(end+1-beg, step):
+                            can_out_of_bound[(data,subset)] = True
+                            symbols_to_ensure_in_scope.add(str(symbol))
                 if not (data,subset) in can_out_of_bound.keys():
                     can_out_of_bound[(data,subset)] = False
+        # If one element in a access group can out of bound then all such elements need to be set to true
+        for (data,subset), bool in can_out_of_bound.items():
+            for group in access_groups:
+                group_can_out_of_bound = True
+                for (_d, _s) in group:
+                    if (_d,_s) in can_out_of_bound.keys() and can_out_of_bound[(_d,_s)]:
+                        group_can_out_of_bound = True
+                        break
 
+                if group_can_out_of_bound:
+                    for (_d,_s) in group:
+                        if (data,subset) == (_d,_s):
+                            can_out_of_bound[(data,subset)] = True
+
+        print("CAN OUT OF BOUND", can_out_of_bound)
+        print("SYMS TO ENSURE IN SCOPE", symbols_to_ensure_in_scope)
         # 5. Go up until all the variables are defined
         map_before_split = None
+        print("INNER WORK MAP ENTRY AND SYMYS TO ENSURE", self.inner_work_map_entry, symbols_to_ensure_in_scope)
         cur_map_entry = self.inner_work_map_entry
         while cur_map_entry:
             if any([param in cur_map_entry.map.params for param in symbols_to_ensure_in_scope]):
                 map_before_split = cur_map_entry
                 break
             cur_map_entry = state.entry_node(cur_map_entry)
+        sdfg.save("aaaa.sdfg")
+        print("MAP BEFORE SPLIT", map_before_split)
+
+
         map_after_split = state.exit_node(map_before_split)
 
-        ncheck = [v for (u,uc,v,vc,m) in state.out_edges(map_before_split)]
-        inner_loop_vars_and_ranges = dict()
+
+        ncheck = [v for (u,uc,v,vc,m) in state.out_edges(dev_entry)]
+        loop_vars_and_ranges = dict()
         while ncheck:
             n = ncheck.pop()
             if isinstance(n, nodes.MapEntry):
                 for param, range in zip(n.map.params, n.map.range):
                     beg,end,step = range
-                    map_len = ((end+1)-beg) / step
-                    if not(map_len.is_integer):
-                        raise Exception("For RemainderLoop transformation to work inner maps need to have static ranges")
-                    inner_loop_vars_and_ranges[param] = map_len
-            if n != map_after_split:
+                    if n == map_before_split:
+                        map_len = step
+                    elif n.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+                        map_len = step
+                    else:
+                        map_len = ((end+1)-beg)
+                    if (map_len.is_integer):
+                        #raise Exception("For RemainderLoop transformation to work inner maps need to have static ranges")
+                        loop_vars_and_ranges[param] = map_len
+            if n != state.exit_node(dev_entry):
                 ncheck += [v for (u,uc,v,vc,m) in state.out_edges(n)]
 
-
+        print("INLP2", loop_vars_and_ranges)
         # 4. Set up the condition
         added_conditions = set()
         conditions_and_ranges = dict()
         for (data, range), b in set(can_out_of_bound.items()):
-            if b:
+            if b and sdfg.arrays[data].storage == dtypes.StorageType.GPU_Shared:
+                # Find the corresponding globala array
+                glb_arr_name = None
+                glb_arr = None
+                accumulated_beg = [0] * len(range)
+                
+                for group in access_groups:
+                    if (data, range) in group:
+                        for _d, _r in group:
+                            if sdfg.arrays[_d].storage == dtypes.StorageType.GPU_Global:
+                                glb_arr_name = _d
+                                glb_arr = sdfg.arrays[_d]
+                                for i,(_b,_,_) in enumerate(_r):
+                                    accumulated_beg[i] += _b
+
+                for i, (beg,end,step) in enumerate(range):
+                    ns = []
+                    lim = 0
+                    print("A1", data, range, beg.free_symbols)
+                    for sym in beg.free_symbols:
+                        if str(sym) in loop_vars_and_ranges.keys():
+                            print("A2", loop_vars_and_ranges[str(sym)])
+                            ns.append(str(accumulated_beg[i]))
+                            lim = loop_vars_and_ranges[str(sym)]
+                            conditions_and_ranges[str(sym)] = (ns, glb_arr.shape[i], lim)
+                        elif str(sym) in map_before_split.map.params:
+                            raise Exception("TODO")
+                    # It is a an access to the part that was shortened using BlockTiling (of a work map)
+                    if not beg.free_symbols:
+                        # In this the "beg" in the global array should be always a symbol
+                        ns.append(str(accumulated_beg[i]))
+                        lim = loop_vars_and_ranges[str(accumulated_beg[i])]
+                        param_id = -1
+                        for j, param in enumerate(map_before_split.map.params):
+                            if param == str(accumulated_beg[j]):
+                                param_id = j
+                                break
+                        conditions_and_ranges[self.inner_work_map_entry.map.params[param_id]] = (ns, glb_arr.shape[i], lim)
+                    added_conditions.add(f"({" + ".join(ns + [str(lim)])} <= {glb_arr.shape[i]})")
+        """
+        conditions_and_ranges = dict()
+        for (data, range), b in set(can_out_of_bound.items()):
+            print("d", data, range)
+            if b and sdfg.arrays[data].storage == dtypes.StorageType.GPU_Global:
+                # Special case, we need to combine all offsets of
                 for i, (beg,end,step) in enumerate(range):
                     ns = []
                     ns_sym = []
                     var = None
                     lim = None
+                    print("d2", data, ", ", range)
                     for sym in beg.free_symbols:
-                        if str(sym) in inner_loop_vars_and_ranges:
+                        print("d3", sym, ", ", beg.free_symbols)
+                        print("d33", str(sym), ", ", inner_loop_vars_and_ranges.keys())
+                        if str(sym) in inner_loop_vars_and_ranges.keys():
                             ns.append(str(inner_loop_vars_and_ranges[str(sym)]))
                             #ns_sym.append(inner_loop_vars_and_ranges[str(sym)])
                             lim = inner_loop_vars_and_ranges[str(sym)]
                             var = sym
+                        elif str(sym) in map_before_split.map.params:
+                            for par, range in zip(map_before_split.map.params, map_before_split.map.range):
+                                if par == str(sym):
+                                    b,e,s = range
+                                    ns.append(str(e+1-b))
+                                    #ns_sym.append(inner_loop_vars_and_ranges[str(sym)])
+                                    lim = e+1-b
+                                    var = sym
                         else:
                             ns.append(str(sym))
                             ns_sym.append(sym)
                     #conditions_and_ranges[sym] = (ns, sdfg.arrays[data].shape[i])
                     added_conditions.add(f"({" + ".join(ns)} < {sdfg.arrays[data].shape[i]})")
                     conditions_and_ranges[var] = (ns_sym, sdfg.arrays[data].shape[i], lim)
+        """
+        print("Added conditions", added_conditions)
         condition = "(" + " and ".join(added_conditions) + ")"
 
         # For example range for k is 0:K:16,
         # In this last iteration the inner tk goes from 0:16
         # In the remainder loop it should go from 0:16 to 0:Min(K-(Sum all previous var),16)
-        new_ranges = dict()
-        for var, (loop_vars, shape, lim) in conditions_and_ranges.items():
-            new_ranges[str(var)] = \
-                ( (0,symbolic.SymExpr(f"Min({shape} - ({'+'.join([str(s) for s in loop_vars])}), {lim})-1"),1),
-                  (0,lim-1,1) )
+        print("Conditions and ranges", conditions_and_ranges)
 
         # 6. Create if condition
         inner_kernel_entry : nodes.MapEntry = map_before_split
@@ -161,13 +278,41 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
 
         # Inputs for NestedSDFG
+        # Create nested states
+        first_node_in_microkernel = None
+        for e in state.out_edges(map_before_split):
+            u,uc,v,vc,m = e
+            if isinstance(v, nodes.MapEntry):
+                first_node_in_microkernel = v
+                break
+        if not first_node_in_microkernel:
+            raise Exception("At least on edge needs to directly connect the map to be split before and the next map")
+        last_node_in_microkernel = state.exit_node(first_node_in_microkernel)
+
+        # I think this part is super fragile
+        # It basically maps an shrA[d_i + i,...] access to the limits of the varaible d_i, as we cant catch the limits of i from the implementation
+        # TODO find a mapping where the range limit for d_i also holds for i.
+        # Since my transformations uses d_ as the thread coarsened prefix I can just apply that
+        adders = []
+        for (var, (loop_vars, shape, lim)) in conditions_and_ranges.items():
+            if var.startswith("d_"):
+               adders.append((var[2:], (loop_vars, shape, lim)))
+        for k,v in adders:
+            conditions_and_ranges[k] = v
+
+        new_ranges = dict()
+        for (var, (loop_vars, shape, lim)) in conditions_and_ranges.items():
+            new_ranges[var] = \
+                ( (0,symbolic.SymExpr(f"Min({shape} - ({'+'.join([str(s) for s in loop_vars])}), {lim})-1"),1),
+                  (0,lim-1,1) )
+
         ins = set()
-        for in_edge in state.out_edges(map_before_split):
+        for in_edge in state.in_edges(first_node_in_microkernel):
             _,_,_,_,memlet = in_edge
             ins.add(memlet.data)
         # Outputs for NestedSDFG
         outs = set()
-        for out_edge in state.in_edges(map_after_split):
+        for out_edge in state.out_edges(last_node_in_microkernel):
             _,_,_,_,memlet = out_edge
             outs.add(memlet.data)
 
@@ -183,17 +328,15 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                 dtype=sdfg.arrays[in_arr].dtype)
 
         # S1. We need to calculate the offsets we need to substract from all data containers passed to sub graphs, we can do it through going through in and out arrays
-        offsets = self.create_offsets(state.out_edges(map_before_split) + state.in_edges(map_after_split))
-
-        # Create nested states
+        offsets = self.create_offsets(state.in_edges(first_node_in_microkernel) + state.out_edges(last_node_in_microkernel))
 
         # Save the in and out edges of the map scope encompassing the inner kernels
         # This is necessary to creaet edges from and to access nodes within the sub kernel
         special_in_edges  = []
         special_out_edges = []
-        for out_edge in state.out_edges(map_before_split):
-            special_in_edges.append(out_edge)
-        for out_edge in state.in_edges(map_after_split):
+        for in_edge in state.in_edges(first_node_in_microkernel):
+            special_in_edges.append(in_edge)
+        for out_edge in state.out_edges(last_node_in_microkernel):
             special_out_edges.append(out_edge)
 
         state0 = sub_sdfg.add_state('if_guard')
@@ -226,7 +369,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 # Extract the same edge as of the element
                 edge = next(((u, u_conn, v, v_conn, memlet) 
                              for (u, u_conn, v, v_conn, memlet) in 
-                             state.out_edges(map_before_split) if memlet.data == in_arr), 
+                             state.in_edges(first_node_in_microkernel) if memlet.data == in_arr), 
                             None)
                 _state.add_node(an)
                 u,u_conn,v, v_conn,memlet = edge
@@ -240,19 +383,19 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 # Extract the same edge as of the element
                 edge = next(((u, u_conn, v, v_conn, memlet) 
                              for (u, u_conn, v, v_conn, memlet) in 
-                             state.in_edges(map_after_split) if memlet.data == out_arr), 
+                             state.out_edges(last_node_in_microkernel) if memlet.data == out_arr), 
                             None)
                 _state.add_node(an)
                 u,u_conn,v, v_conn,memlet = edge
                 _state.add_edge(node, out_arr, an, None, Memlet(data=out_arr,subset=Range(memlet.subset)))
 
         # Edges that go to and come out nested sdfg
-        for out_edge in state.out_edges(map_before_split):
-            u,u_conn,v,v_conn,memlet = out_edge
+        for in_edge in state.in_edges(first_node_in_microkernel):
+            u,u_conn,v,v_conn,memlet = in_edge
             state.add_edge(u, u_conn, nsdfg, memlet.data, Memlet(data=memlet.data,subset=Range(memlet.subset)))
 
-        for in_edge in state.in_edges(map_after_split):
-            u,u_conn,v,v_conn,memlet = in_edge
+        for out_edge in state.out_edges(last_node_in_microkernel):
+            u,u_conn,v,v_conn,memlet = out_edge
             state.add_edge(nsdfg, memlet.data, v, v_conn, Memlet(data=memlet.data,subset=Range(memlet.subset)))
 
         nodes_to_copyover = set()
@@ -260,18 +403,19 @@ class RemainderLoop(transformation.SingleStateTransformation):
         
         # Go through access nodes, add needed transient arrays
         # Save all nodes and edges between the maps, remove them and copy them into the state
-        ncheck = [map_before_split]
+        ncheck = [first_node_in_microkernel]
         while ncheck:
             n = ncheck.pop()
-            if n != nsdfg and n != map_after_split:
-                if n != map_before_split:
+            if n != nsdfg:
+                if n != map_before_split and n != map_after_split:
                     nodes_to_copyover.add(n)
 
                     edges_to_copyover = edges_to_copyover.union(set([e # Unpacking causes problems in removing
                                                                  for e,(u,uc,v,vc,m) in 
                                                                  zip(state.out_edges(n), state.out_edges(n))
-                                                                 if v != nsdfg and v != nsdfg and v != map_after_split]))
-                ncheck += [v for (u,uc,v,vc,m) in state.out_edges(n)]
+                                                                 if v != nsdfg and u != last_node_in_microkernel]))
+                if n != last_node_in_microkernel:
+                    ncheck += [v for (u,uc,v,vc,m) in state.out_edges(n)]
 
         for e in edges_to_copyover:
             state.remove_edge(e)
@@ -293,6 +437,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
             first_node = next(dace.sdfg.utils.dfs_topological_sort(kernel))
             if not isinstance(first_node, nodes.MapEntry):
+                sdfg.save("uwuowo.sdfg")
                 raise Exception(f"First node in the map currently needs to be a MapEntry it is: {type(first_node)}")
             last_node = kernel.exit_node(first_node)
 
@@ -334,12 +479,13 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                 lifetime=arr.lifetime
                             )
 
-        # Now we have to valid SDFGS
+        # Now we have two valid SDFGS
         # 6.2 Arrange ranges of the remainder Loop
         for n in dace.sdfg.utils.dfs_topological_sort(rkernel):
             if isinstance(n, nodes.MapEntry) or isinstance(n, nodes.MapExit):
                 nr = []
                 for i, (p, r) in enumerate(zip(n.map.params, n.map.range)):
+                    print("PP", p, r, new_ranges, p in new_ranges.keys())
                     if p in new_ranges.keys():
                         new_range, old_range = new_ranges[p]
                         rb,re,rs = r
@@ -349,8 +495,9 @@ class RemainderLoop(transformation.SingleStateTransformation):
                         nr.append(new_range)
                     else:
                         nr.append(r)
+                print("NR", nr)
                 n.map.range = Range(nr)
-                print(n.map.range)
+                print("MR", n.map.range)
 
         # Now need to apply it also on any assignments
         counter = 0
@@ -420,7 +567,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                     conditions = []
                     for (beg,end,step), dim in zip(o_memlet.subset, sdfg.arrays[o_memlet.data].shape):
                         ol = (o_end+1-o_beg)/o_step
-                        cond = f"{str(beg)} + {str(ol)} < {dim}"
+                        cond = f"{str(beg)} + {str(ol)} <= {dim}"
                         conditions.append(cond)
                     condition = "(" + " and ".join(conditions) + ")"
 
@@ -470,12 +617,12 @@ class RemainderLoop(transformation.SingleStateTransformation):
                     e0 = rassign.edges()[0]
                     u,uc,v,vc,memlet = e0
                     if memlet.data == oarr_name:
-                        new_ranges = []
+                        new_assign_ranges = []
                         for (beg,end,step), dim in zip(memlet.subset, sdfg.arrays[memlet.data].shape):
                             ol = (o_end+1-o_beg)/o_step
                             new_range = (beg,beg+symbolic.SymExpr(f"Min({dim} - ({str(beg)}), {ol})-1"),1)
-                            new_ranges.append(new_range)
-                        new_memlet = Memlet(subset=Range(new_ranges), data=memlet.data)
+                            new_assign_ranges.append(new_range)
+                        new_memlet = Memlet(subset=Range(new_assign_ranges), data=memlet.data)
                         rassign.remove_edge(e0)
                         rassign.add_edge(u,uc,v,vc,new_memlet)
 

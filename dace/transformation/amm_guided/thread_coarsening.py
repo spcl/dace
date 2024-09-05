@@ -37,7 +37,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
 
     def can_be_applied(self, state, expr_index, sdfg, permissive=False):
         # Applicable if the map is a GPU_ThreadBlock Scheduled Map
-        if self.thread_block_entry.map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
+        if self.thread_block_map_entry.map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
             return False
 
         return MapTiling.can_be_applied(self, state, expr_index=expr_index, sdfg=sdfg, permissive=permissive)
@@ -99,44 +99,6 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                 edges_to_remove.append(edge)
         for edge in edges_to_remove:
             state.remove_edge(edge)
-
-
-        """
-        # Create the new dimension sizes for the ThreadBlock Map.
-        # The dimensions of the thread block map to the step sizes of the device scheduled map.
-        # They need to be scaled according to the tilesize, and the order of how they are mapped
-        params = {"dim_size_z":1, "dim_size_y":1, "dim_size_x":1}
-        dimension_names = ["dim_size_z", "dim_size_y", "dim_size_x"]
-        for i in range(min(3, len(thread_block_entry.map.params)), 0, -1):
-            params[dimension_names[-i]] = dev_entry.map.range[-i][2]
-
-        # Last param of inner map is always the last iteration variable the map above
-        range_str = ""
-        # Thread block map is i0,i1,i2,i3
-        # Which maps to           z, y, x
-        # If more the 3 parameters they are linearized
-        for i in range(len(sequential_map.params), 0, -1):
-            (beg, _, step) = sequential_map.range[-i]
-            (_, _, block_step) = thread_block_entry.map.range[-i]
-            (dev_beg, dev_end, dev_step) = dev_entry.map.range[-i]
-            dev_entry.map.range[-i] = (dev_beg, dev_end, dev_step * step)
-            range_str += f"{beg}:Min({dev_end}, {beg}+{block_step}-1)+1:{step}, "
-        sequential_map.range = subsets.Range.from_string(range_str[:-2])
-
-        ChangeThreadBlockMap.apply_to(sdfg=sdfg, verify=False, device_scheduled_map_entry = dev_entry, 
-                                           thread_block_scheduled_map_entry = thread_block_entry, 
-                                           options=params)
-
-        # Clear the copied-over edges that are not between any connectors (happens if such an edge exist to ensure
-        # proper allocation of a constnat in after the device map)
-        edges_to_remove = []
-        for edge in state.out_edges(thread_block_entry):
-            _, u_conn, _, v_conn, memlet = edge
-            if u_conn == None and v_conn == None and memlet.data == None:
-                edges_to_remove.append(edge)
-        for edge in edges_to_remove:
-            state.remove_edge(edge)
-        """
 
         # Move the access above the outer sequential map and update memlets for the map entry
         if inner_sequential_map_entry != None:
