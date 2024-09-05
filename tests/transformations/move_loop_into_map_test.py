@@ -181,9 +181,7 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         unopt_data = copy.deepcopy(org_data)
         sdfg(**unopt_data)
 
-        sdfg.view()
         count = sdfg.apply_transformations(MoveLoopIntoMap)
-        sdfg.view()
         opt_data = copy.deepcopy(org_data)
         sdfg(**opt_data)
 
