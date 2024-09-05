@@ -21,7 +21,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
     Args:
         only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
         only_toplevel_maps: Only consider Maps that are at the top.
-        strict_dataflow: If `True`, the default, the transformation ensures a more
+        strict_dataflow: If `True`, the transformation ensures a more
             stricter version of the data flow.
 
     Note:
@@ -56,7 +56,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
     )
     strict_dataflow = properties.Property(
         dtype=bool,
-        default=True,
+        default=False,
         desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
 
