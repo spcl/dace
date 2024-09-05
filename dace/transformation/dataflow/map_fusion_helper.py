@@ -409,6 +409,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         #   - The access node has output degree larger than 1 (input degrees larger
         #       than one, will always be partitioned as shared anyway).
         prevously_seen_data: Set[str] = set()
+        interstate_read_symbols: Set[str] = set()
         for state in sdfg.nodes():
             for access_node in state.data_nodes():
 
@@ -446,9 +447,8 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                     prevously_seen_data.add(access_node.data)
 
         # Now we are collecting all symbols that interstate edges read from.
-        interstate_read_symbols: Set[str] = set()
         for edge in sdfg.edges():
-            interstate_read_symbols.update(edge.read_symbols())
+            interstate_read_symbols.update(edge.data.read_symbols())
 
         # We also have to keep everything the edges referrers to and is an array.
         shared_data.update(interstate_read_symbols.intersection(prevously_seen_data))
