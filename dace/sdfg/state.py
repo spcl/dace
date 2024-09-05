@@ -788,8 +788,10 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                         if in_subsets[in_edge].covers(out_subsets[out_edge]):
                             out_edges.remove(out_edge)
                             break
+
                 ws[n.data].extend(in_subsets.values())
-                rs[n.data].extend(out_subsets[out_edge] for out_edge in out_edges)
+                if out_edges:
+                    rs[n.data].extend(out_subsets[out_edge] for out_edge in out_edges)
 
             # Union all subgraphs, so an array that was excluded from the read
             # set because it was written first is still included if it is read
