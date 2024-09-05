@@ -867,19 +867,19 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         curr_edge = dace.sdfg.utils.get_view_edge(state, view)
         if curr_edge is None:
             raise RuntimeError(f"Failed to determine the direction of the view '{view}'.")
-        if curr_edge.dst_conn == "view":
+        if curr_edge.dst_conn == "views":
             # The view is used for reading.
             next_node = lambda curr_edge: curr_edge.src
-        elif curr_edge.src_conn == "view":
+        elif curr_edge.src_conn == "views":
             # The view is used for writing.
             next_node = lambda curr_edge: curr_edge.dst
         else:
-            raise RuntimeError(f"Failed to determine the direction of the view '{view}'.")
+            raise RuntimeError(f"Failed to determine the direction of the view '{view}' | {curr_edge}.")
 
         # Now trace the view back.
         org_view = view
         view = next_node(curr_edge)
-        while is_view(view, sdfg):
+        while self.is_view(view, sdfg):
             curr_edge = dace.sdfg.utils.get_view_edge(state, view)
             if curr_edge is None:
                 raise RuntimeError(f"View tracing of '{org_view}' failed at note '{view}'.")
