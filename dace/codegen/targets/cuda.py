@@ -1898,11 +1898,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             detected_block_sizes = [block_size] if block_size is not None else []
             for tbmap, sym_map in tb_maps_sym_map:
                 tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]
+                tbstepsize = [t[-1] for t in tbmap.range[::-1]]
 
                 # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
                 # The partial trailing thread-block is emitted as an if-condition
                 # that returns on some of the participating threads
-                tbsize = [symbolic.overapproximate(s) for s in tbsize]
+                # If ther kernel is a tiled one and the thread block map has a step size, the overapproximated
+                # threadblock size needs to be divided as each thread computes more than one
+                tbsize = [symbolic.overapproximate(symbolic.overapproximate(s)/step) for s, step in zip(tbsize, tbstepsize)]
 
                 # Linearize (flatten) rest of dimensions to third
                 if len(tbsize) > 3:
@@ -1927,17 +1930,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             if len(detected_block_sizes) > 1:
                 # Error when both gpu_block_size and thread-block maps were defined and conflict
                 if kernelmap_entry.map.gpu_block_size is not None:
-                    block_size = kernelmap_entry.map.gpu_block_size
-
-                    warnings.warn('Both the `gpu_block_size` property and internal thread-block '
-                                   'maps were defined with conflicting sizes for kernel '
-                                   f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
-                                   'The block size in the and gpu_block_size will be preferred.'
-                                   'Use `gpu_block_size` only if you do not need access to individual '
-                                   'thread-block threads, or explicit block-level synchronization (e.g., '
-                                   '`__syncthreads`). Otherwise, use internal maps with the `GPU_Threadblock` or '
-                                   '`GPU_ThreadBlock_Dynamic` schedules. For more information, see '
-                                   'https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
+                    raise ValueError('Both the `gpu_block_size` property and internal thread-block '
+                                     'maps were defined with conflicting sizes for kernel '
+                                     f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
+                                     'Use `gpu_block_size` only if you do not need access to individual '
+                                     'thread-block threads, or explicit block-level synchronization (e.g., '
+                                     '`__syncthreads`). Otherwise, use internal maps with the `GPU_Threadblock` or '
+                                     '`GPU_ThreadBlock_Dynamic` schedules. For more information, see '
+                                     'https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
 
                 if kernelmap_entry.map.gpu_block_size is None:
                     warnings.warn('Multiple thread-block maps with different sizes detected for '
@@ -2622,9 +2622,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
     def _generate_MapExit(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.MapExit, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-        if isinstance(node, nodes.MapExit) and node.map.gpu_force_syncthreads:
-            callsite_stream.write('__syncthreads();', cfg, state_id)
-
         if node.map.schedule == dtypes.ScheduleType.GPU_Device:
             # Remove grid invocation conditions
             for i in range(len(node.map.params)):
