@@ -1898,14 +1898,11 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             detected_block_sizes = [block_size] if block_size is not None else []
             for tbmap, sym_map in tb_maps_sym_map:
                 tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]
-                tbstepsize = [t[-1] for t in tbmap.range[::-1]]
 
                 # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
                 # The partial trailing thread-block is emitted as an if-condition
                 # that returns on some of the participating threads
-                # If ther kernel is a tiled one and the thread block map has a step size, the overapproximated
-                # threadblock size needs to be divided as each thread computes more than one
-                tbsize = [symbolic.overapproximate(symbolic.overapproximate(s)/step) for s, step in zip(tbsize, tbstepsize)]
+                tbsize = [symbolic.overapproximate(s) for s, step in tbsize]
 
                 # Linearize (flatten) rest of dimensions to third
                 if len(tbsize) > 3:
