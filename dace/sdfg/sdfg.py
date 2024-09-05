@@ -1368,7 +1368,7 @@ class SDFG(ControlFlowRegion):
         #TODO LATER investiagte why all_symbols=False leads to bug
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
         free_symbols = set(filter(lambda x: not str(x).startswith('__f2dace_STRUCTARRAY'), free_symbols))
-        scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
+        scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace') and k in self.symbols})
 
         # Fill up ordered dictionary
         result = collections.OrderedDict()
@@ -1387,7 +1387,7 @@ class SDFG(ControlFlowRegion):
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
         return ", ".join(
             dt.Scalar(self.symbols[k]).as_arg(name=k, with_types=not for_call, for_call=for_call)
-            for k in sorted(free_symbols) if not k.startswith('__dace'))
+            for k in sorted(free_symbols) if not k.startswith('__dace') and k in self.symbols)
 
     def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
         """ Returns a list of arguments necessary to call this SDFG,

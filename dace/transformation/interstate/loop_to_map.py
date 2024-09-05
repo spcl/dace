@@ -148,6 +148,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 # Collect read-before-assigned symbols (this works because the states are always in order,
                 # see above call to `stateorder_topological_sort`)
                 read_symbols = e.data.read_symbols()
+                read_symbols -= e.data.assignments.keys() # TODO: improve, this is the case where I define and use
                 read_symbols -= symbols_that_may_be_used
                 used_before_assignment |= read_symbols
                 # If symbol was read before it is assigned, the loop cannot be parallel

@@ -22,6 +22,7 @@ from dace import symbolic
 import re
 from dace.frontend.python.astutils import unparse
 import ast
+from dace.transformation.pass_pipeline import Pipeline
 
 
 @make_properties
@@ -37,7 +38,7 @@ class ResolveCondition(xf.MultiStateTransformation):
         And(Eq(lvert_nest, True), Eq(lextra_diffu, False), Eq(lvn_only, True), Eq(istep, 2), Eq(l_vert_nested, True))
     """
     
-    condition = Property(dtype=str, default="lvert_nest and lextra_diffu and lvn_only and istep == 2 and l_vert_nested", desc="Condition that always holds")
+    condition = Property(dtype=str, default="lvert_nest and lextra_diffu and lvn_only and istep == 2 and l_vert_nested and ptr_patch.nshift > 0", desc="Condition that always holds")
 
     @classmethod
     def expressions(cls):
@@ -56,6 +57,7 @@ class ResolveCondition(xf.MultiStateTransformation):
                 for e in sdfg.out_edges(s):
                     if len(sdfg.in_edges(e.dst)) == 1:
                         new_state_list.append(e.dst)
+                        sdfg.remove_edge(e)
                 sdfg.remove_node(s)
             state_list = new_state_list
 
@@ -66,20 +68,34 @@ class ResolveCondition(xf.MultiStateTransformation):
         ####################################################################
         # Obtain loop information
         parsed_condition = parse_expr(unparse(symbolic.PythonOpToSympyConverter().visit(ast.parse(self.condition).body[0]))).simplify()
-        print('condition:', parsed_condition, type(parsed_condition))
         found = True
+        seen = set()
         while found:
             found = False
             for e in sdfg.edges():
-                if e.data.is_unconditional():
+                if e.data.is_unconditional() or e in seen:
                     continue
+                seen.add(e)
                 try:
                     cond = unparse(symbolic.PythonOpToSympyConverter().visit(ast.parse(e.data.condition.as_string).body[0]))
                     cur_parsed_condition = parse_expr(cond)
                     if sy.And(cur_parsed_condition, parsed_condition).simplify() == False:
-                        print('removing:', cur_parsed_condition)
                         found = True
                         self._eliminate_branch(sdfg, e)
                         break
                 except:
-                    continue
+                    if e.data.condition.as_string == '(p_diag.ddt_vn_adv_is_associated or p_diag.ddt_vn_cor_is_associated)':
+                        found = True
+                        self._eliminate_branch(sdfg, e)
+                        break
+        
+        from dace.transformation.passes import DeadStateElimination
+        
+        pipeline = Pipeline([DeadStateElimination()])
+        pipeline.apply_pass(sdfg, {})
+        
+        # make all lone edges unconditional
+        for n in sdfg.nodes():
+            out_edges = sdfg.out_edges(n)
+            if len(out_edges) == 1 and not out_edges[0].data.is_unconditional():
+                out_edges[0].data.condition = CodeBlock("1")

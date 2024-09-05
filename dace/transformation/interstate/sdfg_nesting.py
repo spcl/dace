@@ -286,7 +286,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
             
             # Structure treatment
             outer_dataname = state.memlet_path(e)[-1].data.data
-            outer_tokens = outer_dataname.split('.')
+            try:
+                outer_tokens = outer_dataname.split('.')
+            except:
+                continue
             outer_dataname = outer_tokens[0]
             outer_descriptor = sdfg.arrays[outer_dataname]
             inner_dataname = e.dst_conn

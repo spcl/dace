@@ -1,4 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+from .map_symbol_definition import MapSymbolDefinition
+
 """ This module initializes the dataflow transformations package. """
 from .mapreduce import MapReduceFusion, MapWCRFusion
 from .map_expansion import MapExpansion
