@@ -860,7 +860,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         """
 
         # Test if it is a view at all, if not return the passed node as source.
-        if not is_view(view, sdfg):
+        if not self.is_view(view, sdfg):
             return view
 
         # First determine if the view is used for reading or writing.
@@ -874,7 +874,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             # The view is used for writing.
             next_node = lambda curr_edge: curr_edge.dst
         else:
-            raise RuntimeError("Failed to determine the direction of the view '{view}'.")
+            raise RuntimeError(f"Failed to determine the direction of the view '{view}'.")
 
         # Now trace the view back.
         org_view = view
