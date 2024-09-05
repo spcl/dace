@@ -638,6 +638,14 @@ class RemainderLoop(transformation.SingleStateTransformation):
         #         Main SDFG -> remainderLoopKernel -> kernel
         # At ever edge one needs to calculate and upate the offsets
 
+        # 7
+        # Get all loop params, any loop param inside a nested SDFG becomes an int and not long long
+        params = set()
+        for n in dace.sdfg.utils.dfs_topological_sort(state):
+            if isinstance(n, nodes.MapEntry):
+                params = params.union(n.map.params)
+
+
     def create_offsets(self, edges):
         offsets = dict()
         for edge in edges:

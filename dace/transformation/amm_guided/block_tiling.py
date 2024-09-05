@@ -417,6 +417,16 @@ class BlockTiling(transformation.SingleStateTransformation):
                 state.remove_edge(out_edge)
         sdfg.save("owo.sdfg")
 
+        d = dict()
+        for param in work_map_entry.map.params:
+            d[param] = "int"
+        work_map_entry.map.param_types = d
+
+        d = dict()
+        for param in outer_work_map_entry.map.params:
+            d[param] = "int"
+        work_map_entry.map.param_types = d
+
     @staticmethod
     def annotates_memlets():
         return True

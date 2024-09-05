@@ -69,6 +69,23 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
         map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
         #map_entry.map.gpu_block_size = gpu_block_dims_ordered
+        
+        d = dict()
+        for param in map_entry.map.params:
+            d[param] = "intc"
+        map_entry.map.param_types = d
+        
+        print(map_entry.__dict__)
+        print(map_entry.map.__dict__)
+        b = map_entry.new_symbols(sdfg, state, sdfg.symbols)
+        print(map_entry.new_symbols(sdfg, state, sdfg.symbols))
+        for b1,b2 in b.items():
+            print(b1,b2,type(b1),type(b2))
+
+        for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=False):
+            pass
+        #    print(state,node,defined_syms)
+        raise Exception("a")
 
         # The dev map is a new map where the gpu_block_size param is not transferred over
         dev_entry = state.entry_node(map_entry)

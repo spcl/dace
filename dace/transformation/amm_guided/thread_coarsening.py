@@ -176,6 +176,11 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         thread_block_updated_range_list = [(beg,(end+1)*step-1,step) for (beg,end,step) in thread_block_entry.map.range]
         thread_block_entry.map.range = subsets.Range(thread_block_updated_range_list)
 
+        d = dict()
+        for param in sequential_map_entry.map.params:
+            d[param] = "int"
+        sequential_map_entry.map.param_types = d
+
     @staticmethod
     def annotates_memlets():
         return False
