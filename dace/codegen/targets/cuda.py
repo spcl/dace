@@ -1902,7 +1902,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
                 # The partial trailing thread-block is emitted as an if-condition
                 # that returns on some of the participating threads
-                tbsize = [symbolic.overapproximate(s) for s, step in tbsize]
+                tbsize = [symbolic.overapproximate(s) for s in tbsize]
 
                 # Linearize (flatten) rest of dimensions to third
                 if len(tbsize) > 3:
