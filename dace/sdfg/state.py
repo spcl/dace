@@ -760,29 +760,36 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 if not isinstance(n, nd.AccessNode):
                     continue
                 ac_desc = n.desc(self.sdfg)
+                ac_size = ac_desc.total_size
                 in_edges = [in_edge for in_edge in sg.in_edges(n) if not in_edge.data.is_empty()]
                 out_edges = [out_edge for out_edge in sg.out_edges(n) if not out_edge.data.is_empty()]
 
-                # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
-                for out_edge in list(out_edges):
-                    assert (out_edge.data.src_subset is not None) or (isinstance(ac_desc, dt.Scalar) or ac_desc.total_size == 1)
-                    src_subset = (
-                        sbs.Range.from_array(ac_desc)
-                        if out_edge.data.src_subset is None
-                        else out_edge.data.src_subset
-                    )
-                    for in_edge in in_edges:
-                        assert in_edge.data.dst_subset is not None or (isinstance(ac_desc, dt.Scalar) or ac_desc.total_size == 1)
-                        dst_subset = (
+                # In some conditions subsets can be `None`, we will now clean them.
+                in_subsets = dict()
+                for in_edge in in_edges:
+                    assert in_edge.data.dst_subset is not None or (isinstance(ac_desc, dt.Scalar) or ac_size == 1)
+                    in_subsets[in_edge] = (
                             sbs.Range.from_array(ac_desc)
                             if in_edge.data.dst_subset is None
                             else in_edge.data.dst_subset
                         )
-                        if dst_subset.covers(src_subset):
+                out_subsets = dict()
+                for out_edge in list(out_edges):
+                    assert (out_edge.data.src_subset is not None) or (isinstance(ac_desc, dt.Scalar) or ac_size == 1)
+                    out_subsets[out_edge] = (
+                        sbs.Range.from_array(ac_desc)
+                        if out_edge.data.src_subset is None
+                        else out_edge.data.src_subset
+                    )
+
+                # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
+                for out_edge in list(out_edges):
+                    for in_edge in in_edges:
+                        if in_subsets[in_edge].covers(out_subsets[out_edge]):
                             out_edges.remove(out_edge)
                             break
-                ws[n.data].extend(sbs.Range.from_array(ac_desc) if e.data.dst_subset is None else e.data.dst_subset for e in in_edges)
-                rs[n.data].extend(sbs.Range.from_array(ac_desc) if e.data.src_subset is None else e.data.src_subset for e in out_edges)
+                ws[n.data].extend(in_subsets.values())
+                rs[n.data].extend(out_subsets[out_edge] for out_edge in out_edges)
 
             # Union all subgraphs, so an array that was excluded from the read
             # set because it was written first is still included if it is read
