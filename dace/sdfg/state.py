@@ -795,7 +795,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                             out_edges.remove(out_edge)
                             break
 
-                ws[n.data].extend(in_subsets.values())
+                if in_edges:
+                    ws[n.data].extend(in_subsets.values())
                 if out_edges:
                     rs[n.data].extend(out_subsets[out_edge] for out_edge in out_edges)
 
