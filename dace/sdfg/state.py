@@ -762,10 +762,15 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
                     for out_edge in list(out_edges):
                         for in_edge in list(in_edges):
-                            if (in_edge.data.data == out_edge.data.data
-                                    and (in_edge.data.dst_subset is not None and in_edge.data.dst_subset.covers(out_edge.data.src_subset))):
-                                out_edges.remove(out_edge)
-                                break
+                            if in_edge.data.data == out_edge.data.data:
+                                if in_edge.data.dst_subset is None:
+                                    assert isinstance(n.desc(self.sdfg), dt.Scalar) or n.desc(self.sdfg).total_size == 1
+                                    dst_subset = sbs.Range.from_array(n.desc(self.sdfg))
+                                else:
+                                    dst_subset = in_edge.data.dst_subset
+                                if dst_subset.covers(out_edge.data.src_subset):
+                                    out_edges.remove(out_edge)
+                                    break
 
                     for e in in_edges:
                         # skip empty memlets
