@@ -384,7 +384,7 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
                                  subgraph: Dict[int, int], sdfg: SDFG,
                                  xform: Union[xf.PatternTransformation, Type[xf.PatternTransformation]],
                                  expr_idx: int, nxpattern: nx.DiGraph, state_id: int, permissive: bool,
-                                 options: Dict[str, Any]) -> Optional[xf.PatternTransformation]:
+                                 options: Dict[str, Any]) -> Tuple[bool, xf.PatternTransformation]:
     """ 
     Helper function that tries to instantiate a pattern match into a 
     transformation object. 
@@ -434,12 +434,12 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
             xft = xform
         print('WARNING: {p}::can_be_applied triggered a {c} exception:'
               ' {e}'.format(p=xft.__name__, c=e.__class__.__name__, e=e))
-        return None
+        return False, match or None
 
     if match_found:
-        return match
+        return True, match
 
-    return None
+    return False, match
 
 
 TransformationData = List[Tuple[Type[xf.PatternTransformation], int, nx.DiGraph, Callable, Dict[str, Any]]]
@@ -528,7 +528,8 @@ def match_patterns(sdfg: SDFG,
                    permissive: bool = False,
                    metadata: Optional[PatternMetadataType] = None,
                    states: Optional[List[SDFGState]] = None,
-                   options: Optional[List[Dict[str, Any]]] = None):
+                   options: Optional[List[Dict[str, Any]]] = None,
+                   missed_opportunities: Optional[Set[xf.PatternTransformation]] = None):
     """ Returns a generator of Transformations that match the input SDFG. 
         Ordered by SDFG ID.
 
@@ -571,10 +572,12 @@ def match_patterns(sdfg: SDFG,
 
         for xform, expr_idx, nxpattern, matcher, opts in interstate_transformations:
             for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
-                match = _try_to_match_transformation(cfr, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern, -1,
-                                                     permissive, opts)
-                if match is not None:
+                matched, match = _try_to_match_transformation(cfr, digraph, subgraph, cfr.sdfg, xform, expr_idx,
+                                                              nxpattern, -1, permissive, opts)
+                if matched:
                     yield match
+                elif missed_opportunities is not None and match:
+                    missed_opportunities.add(match)
 
         ####################################
         # Match single-state transformations
@@ -589,10 +592,12 @@ def match_patterns(sdfg: SDFG,
 
             for xform, expr_idx, nxpattern, matcher, opts in singlestate_transformations:
                 for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
-                    match = _try_to_match_transformation(state, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern,
-                                                         state_id, permissive, opts)
-                    if match is not None:
+                    matched, match = _try_to_match_transformation(state, digraph, subgraph, cfr.sdfg, xform, expr_idx,
+                                                                  nxpattern, state_id, permissive, opts)
+                    if matched:
                         yield match
+                    elif missed_opportunities is not None:
+                        missed_opportunities.add(match)
 
 
 def enumerate_matches(sdfg: SDFG,

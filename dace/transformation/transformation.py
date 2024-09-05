@@ -75,6 +75,8 @@ class PatternTransformation(TransformationBase):
     _subgraph = DictProperty(key_type=int, value_type=int, category="(Debug)")
     expr_index = Property(dtype=int, category="(Debug)")
 
+    _cba_failure_reason = Property(dtype=str, default=None, allow_none=True, desc="Failure reason")
+
     @classmethod
     def subclasses_recursive(cls, all_subclasses: bool = False) -> Set[Type['PatternTransformation']]:
         """
@@ -692,6 +694,8 @@ class SubgraphTransformation(TransformationBase):
     cfg_id = Property(dtype=int, desc='ID of CFG to transform')
     state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the SDFG')
     subgraph = SetProperty(element_type=int, desc='Subgraph in transformation instance')
+
+    _cba_failure_reason = Property(dtype=str, default=None, allow_none=True, desc="Failure reason")
 
     def setup_match(self, subgraph: Union[Set[int], gr.SubgraphView], cfg_id: int = None, state_id: int = None):
         """

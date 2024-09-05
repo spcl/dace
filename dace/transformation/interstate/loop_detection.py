@@ -45,10 +45,12 @@ class DetectLoop(transformation.PatternTransformation):
         # A for-loop guard only has two incoming edges (init and increment)
         guard_inedges = graph.in_edges(guard)
         if len(guard_inedges) < 2:
+            self._cba_failure_reason = 'Too many incoming edges to loop guard candidate.'
             return False
         # A for-loop guard only has two outgoing edges (loop and exit-loop)
         guard_outedges = graph.out_edges(guard)
         if len(guard_outedges) != 2:
+            self._cba_failure_reason = 'Too many outgoing edges from loop guard candidate.'
             return False
 
         # All incoming edges to the guard must set the same variable
@@ -59,10 +61,13 @@ class DetectLoop(transformation.PatternTransformation):
             else:
                 itvar &= iedge.data.assignments.keys()
         if itvar is None:
+            self._cba_failure_reason = 'No iteration variable candidate detected.'
             return False
 
         # Outgoing edges must be a negation of each other
         if guard_outedges[0].data.condition_sympy() != (sp.Not(guard_outedges[1].data.condition_sympy())):
+            self._cba_failure_reason = 'The conditions on edges exiting ' + str(
+                guard) + ' are not negations of each other.'
             return False
 
         # All nodes inside loop must be dominated by loop guard
@@ -84,16 +89,20 @@ class DetectLoop(transformation.PatternTransformation):
                     break
                 dom = dominators[dom]
             else:
+                self._cba_failure_reason = 'Not all nodes inside the loop are dominated by ' + str(guard) + '.'
                 return False
 
         if backedge is None:
+            self._cba_failure_reason = 'No clear backedge detected.'
             return False
 
         # The backedge must assignment the iteration variable
         itvar &= backedge.data.assignments.keys()
-        if len(itvar) != 1:
-            # Either no consistent iteration variable found, or too many
-            # consistent iteration variables found
+        if len(itvar) < 1:
+            self._cba_failure_reason = 'No clear iteration variable detected.'
+            return False
+        elif len(itvar) > 1:
+            self._cba_failure_reason = 'Too many possible iteration variables (' + str(itvar) + ').'
             return False
 
         return True
@@ -123,7 +132,7 @@ def find_for_loop(
     # Extract state transition edge information
     guard_inedges = graph.in_edges(guard)
     condition_edge = graph.edges_between(guard, entry)[0]
-    
+
     # All incoming edges to the guard must set the same variable
     if itervar is None:
         itervars = None
@@ -137,7 +146,7 @@ def find_for_loop(
         else:
             # Ambiguous or no iteration variable
             return None
-    
+
     condition = condition_edge.data.condition_sympy()
 
     # Find the stride edge. All in-edges to the guard except for the stride edge
