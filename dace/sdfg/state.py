@@ -755,34 +755,35 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             ws = collections.defaultdict(list)
             # Traverse in topological order, so data that is written before it
             # is read is not counted in the read set
+            # TODO: This only works if every data descriptor is only once in a path.
             for n in utils.dfs_topological_sort(sg, sources=sg.source_nodes()):
-                if isinstance(n, nd.AccessNode):
-                    in_edges = sg.in_edges(n)
-                    out_edges = sg.out_edges(n)
-                    # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
-                    for out_edge in list(out_edges):
-                        for in_edge in list(in_edges):
-                            if in_edge.data.data == out_edge.data.data:
-                                if in_edge.data.dst_subset is None:
-                                    assert isinstance(n.desc(self.sdfg), dt.Scalar) or n.desc(self.sdfg).total_size == 1
-                                    dst_subset = sbs.Range.from_array(n.desc(self.sdfg))
-                                else:
-                                    dst_subset = in_edge.data.dst_subset
-                                if dst_subset.covers(out_edge.data.src_subset):
-                                    out_edges.remove(out_edge)
-                                    break
+                if not isinstance(n, nd.AccessNode):
+                    continue
+                ac_desc = n.desc(self.sdfg)
+                in_edges = [in_edge for in_edge in sg.in_edges(n) if not in_edge.data.is_empty()]
+                out_edges = [out_edge for out_edge in sg.out_edges(n) if not out_edge.data.is_empty()]
 
-                    for e in in_edges:
-                        # skip empty memlets
-                        if e.data.is_empty():
-                            continue
-                        # Store all subsets that have been written
-                        ws[n.data].append(e.data.subset)
-                    for e in out_edges:
-                        # skip empty memlets
-                        if e.data.is_empty():
-                            continue
-                        rs[n.data].append(e.data.subset)
+                # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
+                for out_edge in list(out_edges):
+                    assert (out_edge.data.src_subset is not None) or (isinstance(ac_desc, dt.Scalar) or ac_desc.total_size == 1)
+                    src_subset = (
+                        sbs.Range.from_array(ac_desc)
+                        if out_edge.data.src_subset is None
+                        else out_edge.data.src_subset
+                    )
+                    for in_edge in in_edges:
+                        assert in_edge.data.dst_subset is not None or (isinstance(ac_desc, dt.Scalar) or ac_desc.total_size == 1)
+                        dst_subset = (
+                            sbs.Range.from_array(ac_desc)
+                            if in_edge.data.dst_subset is None
+                            else in_edge.data.dst_subset
+                        )
+                        if dst_subset.covers(src_subset):
+                            out_edges.remove(out_edge)
+                            break
+                ws[n.data].extend(sbs.Range.from_array(ac_desc) if e.data.dst_subset is None else e.data.dst_subset for e in in_edges)
+                rs[n.data].extend(sbs.Range.from_array(ac_desc) if e.data.src_subset is None else e.data.src_subset for e in out_edges)
+
             # Union all subgraphs, so an array that was excluded from the read
             # set because it was written first is still included if it is read
             # in another subgraph
@@ -790,7 +791,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 read_set[data] += accesses
             for data, accesses in ws.items():
                 write_set[data] += accesses
-        return read_set, write_set
+        return copy.deepcopy((read_set, write_set))
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
