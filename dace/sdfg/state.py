@@ -746,6 +746,12 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         Determines what data is read and written in this subgraph, returning
         dictionaries from data containers to all subsets that are read/written.
         """
+
+        # Ensures that the `{src,dst}_subset` are properly set.
+        #  TODO: find where the problems are
+        for edge in self.edges():
+            edge.data.try_initialize(self.sdfg, self, edge)
+
         read_set = collections.defaultdict(list)
         write_set = collections.defaultdict(list)
         from dace.sdfg import utils  # Avoid cyclic import
