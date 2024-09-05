@@ -173,6 +173,52 @@ def fusion_indirect_access(A: dace.float32[100], B: dace.float32[100], idx: dace
     out[:] = tmp[idx]
 
 
+def make_interstate_transient_fusion_sdfg():
+    sdfg = dace.SDFG("interstate_transient_fusion")
+    state1 = sdfg.add_state("state1", is_start_block=True)
+    state2 = sdfg.add_state_after(state1, "state2")
+
+    for name in ["A", "B", "C", "D"]:
+        sdfg.add_array(name, shape=(20, 20), dtype=dace.float64, transient=False)
+    sdfg.arrays["B"].transient = True
+
+    A1, B1, C1 = (state1.add_access(name) for name in ["A", "B", "C"])
+    state1.add_mapped_tasklet(
+            "map_1_1",
+            map_ranges={"__i0": "0:20", "__i1": "0:20"},
+            inputs={"__in1": dace.Memlet("A[__i0, __i1]")},
+            code="__out = __in1 + 20",
+            outputs={"__out": dace.Memlet("B[__i0, __i1]")},
+            input_nodes={"A": A1},
+            output_nodes={"B": B1},
+            external_edges=True,
+    )
+    state1.add_mapped_tasklet(
+            "map_2_1",
+            map_ranges={"__i0": "0:20", "__i1": "0:20"},
+            inputs={"__in1": dace.Memlet("B[__i0, __i1]")},
+            code="__out = __in1 + 10",
+            outputs={"__out": dace.Memlet("C[__i0, __i1]")},
+            input_nodes={"B": B1},
+            output_nodes={"C": C1},
+            external_edges=True,
+    )
+
+    B2, D2 = (state2.add_access(name) for name in ["B", "D"])
+    state2.add_mapped_tasklet(
+            "map_1_2",
+            map_ranges={"__i0": "0:20", "__i1": "0:20"},
+            inputs={"__in1": dace.Memlet("B[__i0, __i1]")},
+            code="__out = __in1 + 6",
+            outputs={"__out": dace.Memlet("D[__i0, __i1]")},
+            input_nodes={"B": B2},
+            output_nodes={"D": D2},
+            external_edges=True,
+    )
+
+    return sdfg, state1, state2
+
+
 def test_fusion_simple():
     sdfg = fusion_simple.to_sdfg(simplify=True)
     sdfg = apply_fusion(sdfg, final_maps=1)
@@ -438,6 +484,28 @@ def test_fusion_with_nested_sdfg_1():
                 assert isinstance(src, dace.nodes.AccessNode)
 
 
+def test_interstate_fusion():
+    """Transient between two maps is used in another state and must become shared.
+    """
+    sdfg, state1, state2 = make_interstate_transient_fusion_sdfg()
+
+    A = np.random.rand(20, 20)
+    C = np.random.rand(20, 20)
+    D = np.random.rand(20, 20)
+
+    ref_C = A + 30
+    ref_D = A + 26
+
+    assert sdfg.apply_transformations_repeated(SerialMapFusion, validate=True, validate_all=True) == 1
+    assert sdfg.number_of_nodes() == 2
+    assert len([node for node in state1.data_nodes() if node.data == "B"]) == 1
+
+    sdfg(A=A, C=C, D=D)
+
+    assert np.allclose(C, ref_C)
+    assert np.allclose(D, ref_D)
+
+
 def test_parallel_fusion_simple():
     N1, N2 = 10, 20
 
@@ -523,6 +591,7 @@ if __name__ == '__main__':
     test_fusion_with_inverted_indices()
     test_fusion_with_empty_memlet()
     test_fusion_with_nested_sdfg_0()
+    test_interstate_fusion()
     test_fusion_with_nested_sdfg_1()
     test_parallel_fusion_simple()
     print("SUCCESS")
