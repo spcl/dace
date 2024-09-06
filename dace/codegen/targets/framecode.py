@@ -982,6 +982,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Clean up generated code
         gotos = re.findall(r'goto (.*?);', generated_code)
+        goto_ctr = collections.Counter(gotos)
         clean_code = ''
         last_line = ''
         for line in generated_code.split('\n'):
@@ -997,7 +998,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if label[0] not in gotos:
                     last_line = ''
                     continue
-                if f'goto {label[0]};' in last_line:  # goto followed by label
+                if f'goto {label[0]};' in last_line and goto_ctr[label[0]] == 1:  # goto followed by label
                     clean_code = clean_code[:-len(last_line)-1]
                     last_line = ''
                     continue
