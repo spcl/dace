@@ -773,15 +773,15 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 # In some conditions subsets can be `None`, we will now clean them.
                 in_subsets = dict()
                 for in_edge in in_edges:
-                    assert in_edge.data.dst_subset is not None or (in_edge.data.dynamic or in_edge.data.volume <= 0 or in_edge.data.num_elements() == ac_size)
+                    assert in_edge.data.dst_subset is not None or (in_edge.data.num_elements() == ac_size)
                     in_subsets[in_edge] = (
                             sbs.Range.from_array(ac_desc)
                             if in_edge.data.dst_subset is None
                             else in_edge.data.dst_subset
                         )
                 out_subsets = dict()
-                for out_edge in list(out_edges):
-                    assert (out_edge.data.src_subset is not None) or (out_edge.data.dynamic or out_edge.data.volume <= 0 or out_edge.data.num_elements() == ac_size)
+                for out_edge in out_edges:
+                    assert (out_edge.data.src_subset is not None) or (out_edge.data.num_elements() == ac_size)
                     out_subsets[out_edge] = (
                         sbs.Range.from_array(ac_desc)
                         if out_edge.data.src_subset is None
