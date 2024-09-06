@@ -284,7 +284,7 @@ class GeneralBlock(ControlFlow):
                                 successor = self.elements[i + 1].first_block
                             elif i == len(self.elements) - 1:
                                 # If last edge leads to first state in next block
-                                next_block = _find_next_block(self)
+                                next_block = find_next_block(self)
                                 if next_block is not None:
                                     successor = next_block.first_block
 
@@ -752,7 +752,7 @@ def _child_of(node: SDFGState, parent: SDFGState, ptree: Dict[SDFGState, SDFGSta
     return False
 
 
-def _find_next_block(block: ControlFlow) -> Optional[ControlFlow]:
+def find_next_block(block: ControlFlow) -> Optional[ControlFlow]:
     """
     Returns the immediate successor control flow block.
     """
@@ -764,7 +764,7 @@ def _find_next_block(block: ControlFlow) -> Optional[ControlFlow]:
     if ind == len(parent.children) - 1 or isinstance(parent, (IfScope, IfElseChain, SwitchCaseScope)):
         # If last block, or other children are not reachable from current node (branches),
         # recursively continue upwards
-        return _find_next_block(parent)
+        return find_next_block(parent)
     return parent.children[ind + 1]
 
 
@@ -971,6 +971,7 @@ def _structured_control_flow_traversal_with_regions(cfg: ControlFlowRegion,
                                                     visited: Optional[Set[ControlFlowBlock]] = None):
     if branch_merges is None:
         branch_merges = cfg_analysis.branch_merges(cfg)
+
 
     if ptree is None:
         ptree = cfg_analysis.block_parent_tree(cfg, with_loops=False)
