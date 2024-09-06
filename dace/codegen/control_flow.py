@@ -970,30 +970,7 @@ def _structured_control_flow_traversal_with_regions(cfg: ControlFlowRegion,
                                                     ptree: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
                                                     visited: Optional[Set[ControlFlowBlock]] = None):
     if branch_merges is None:
-        # Avoid import loops
-        from dace.sdfg import utils as sdutil
-
-        # Annotate branches
-        branch_merges: Dict[ControlFlowBlock, ControlFlowBlock] = {}
-        adf = cfg_analysis.acyclic_dominance_frontier(cfg)
-        ipostdom = sdutil.postdominators(cfg)
-
-        for block in cfg.nodes():
-            oedges = cfg.out_edges(block)
-            # Skip if not branch
-            if len(oedges) <= 1:
-                continue
-            # Try to obtain the common dominance frontier to find merge state.
-            common_frontier = set()
-            for oedge in oedges:
-                frontier = adf[oedge.dst]
-                if not frontier:
-                    frontier = {oedge.dst}
-                common_frontier |= frontier
-            if len(common_frontier) == 1:
-                branch_merges[block] = next(iter(common_frontier))
-            elif len(common_frontier) > 1 and ipostdom and ipostdom[block] in common_frontier:
-                branch_merges[block] = ipostdom[block]
+        branch_merges = cfg_analysis.branch_merges(cfg)
 
     if ptree is None:
         ptree = cfg_analysis.block_parent_tree(cfg, with_loops=False)
@@ -1161,37 +1138,8 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
     back_edges = cfg.back_edges(sdfg)
 
     # Annotate branches
-    branch_merges: Dict[SDFGState, SDFGState] = {}
-    adf = cfg.acyclic_dominance_frontier(sdfg)
-    for state in sdfg.nodes():
-        oedges = sdfg.out_edges(state)
-        # Skip if not branch
-        if len(oedges) <= 1:
-            continue
-        # Skip if natural loop
-        if len(oedges) == 2 and ((ptree[oedges[0].dst] == state and ptree[oedges[1].dst] != state) or
-                                 (ptree[oedges[1].dst] == state and ptree[oedges[0].dst] != state)):
-            continue
-
-        # If branch without else (adf of one successor is equal to the other)
-        if len(oedges) == 2:
-            if {oedges[0].dst} & adf[oedges[1].dst]:
-                branch_merges[state] = oedges[0].dst
-                continue
-            elif {oedges[1].dst} & adf[oedges[0].dst]:
-                branch_merges[state] = oedges[1].dst
-                continue
-
-        # Try to obtain common DF to find merge state
-        common_frontier = set()
-        for oedge in oedges:
-            frontier = adf[oedge.dst]
-            if not frontier:
-                frontier = {oedge.dst}
-            common_frontier |= frontier
-        if len(common_frontier) == 1:
-            branch_merges[state] = next(iter(common_frontier))
-
+    branch_merges: Dict[SDFGState, SDFGState] = cfg.branch_merges(sdfg)
+   
     root_block = GeneralBlock(dispatch_state=dispatch_state,
                               parent=None,
                               last_block=False,

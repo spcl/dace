@@ -67,6 +67,41 @@ def back_edges(cfg: ControlFlowRegion,
     return [e for e in cfg.edges() if e.dst in alldoms[e.src]]
 
 
+def branch_merges(cfg: ControlFlowRegion) -> Dict[ControlFlowBlock, ControlFlowBlock]:
+    # Annotate branches
+    result: Dict[SDFGState, SDFGState] = {}
+    adf = acyclic_dominance_frontier(cfg)
+    # ipostdom = sdutil.postdominators(cfg)
+    for block in cfg.nodes():
+        oedges = cfg.out_edges(block)
+        # Skip if not branch
+        if len(oedges) <= 1:
+            continue
+
+        # If branch without else (adf of one successor is equal to the other)
+        if len(oedges) == 2:
+            if {oedges[0].dst} & adf[oedges[1].dst]:
+                result[block] = oedges[0].dst
+                continue
+            elif {oedges[1].dst} & adf[oedges[0].dst]:
+                result[block] = oedges[1].dst
+                continue
+
+        # Try to obtain common DF to find merge state
+        common_frontier = set()
+        for oedge in oedges:
+            frontier = adf[oedge.dst]
+            if not frontier:
+                frontier = {oedge.dst}
+            common_frontier |= frontier
+        if len(common_frontier) == 1:
+            result[block] = next(iter(common_frontier))
+        # elif len(common_frontier) > 1 and ipostdom and ipostdom[block] in common_frontier:
+        #     result[block] = ipostdom[block]
+
+    return result
+
+
 def block_parent_tree(cfg: ControlFlowRegion,
                       loopexits: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
                       idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
@@ -83,6 +118,7 @@ def block_parent_tree(cfg: ControlFlowRegion,
                        if the block occurs after a loop. Defaults to true.
     :return: A dictionary that maps each block to a parent block, or None if the root (start) block.
     """
+    merges = branch_merges(cfg)
     idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
     if with_loops:
         alldoms = all_dominators(cfg, idom)
@@ -93,6 +129,8 @@ def block_parent_tree(cfg: ControlFlowRegion,
             guard = be.dst
             laststate = be.src
             if loopexits[guard] is not None:
+                continue
+            if guard in merges:
                 continue
 
             # Natural loops = one edge leads back to loop, another leads out
@@ -316,31 +354,9 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
     ptree = block_parent_tree(cfg, loopexits)
 
     # Annotate branches
-    branch_merges: Dict[ControlFlowBlock, ControlFlowBlock] = {}
-    adf = acyclic_dominance_frontier(cfg)
-    ipostdom = sdutil.postdominators(cfg)
-    for state in cfg.nodes():
-        oedges = cfg.out_edges(state)
-        # Skip if not branch
-        if len(oedges) <= 1:
-            continue
-        # Skip if natural loop
-        if len(oedges) == 2 and ((ptree[oedges[0].dst] == state and ptree[oedges[1].dst] != state) or
-                                 (ptree[oedges[1].dst] == state and ptree[oedges[0].dst] != state)):
-            continue
+    merges = branch_merges(cfg)
 
-        common_frontier = set()
-        for oedge in oedges:
-            frontier = adf[oedge.dst]
-            if not frontier:
-                frontier = {oedge.dst}
-            common_frontier |= frontier
-        if len(common_frontier) == 1:
-            branch_merges[state] = next(iter(common_frontier))
-        elif len(common_frontier) > 1 and ipostdom and ipostdom[state] in common_frontier:
-            branch_merges[state] = ipostdom[state]
-
-    for block in _blockorder_topological_sort(cfg, cfg.start_block, ptree, branch_merges, loopexits=loopexits):
+    for block in _blockorder_topological_sort(cfg, cfg.start_block, ptree, merges, loopexits=loopexits):
         if isinstance(block, ControlFlowRegion):
             if not ignore_nonstate_blocks:
                 yield block
