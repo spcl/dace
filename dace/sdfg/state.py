@@ -791,6 +791,15 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
                 for out_edge in list(out_edges):
                     for in_edge in in_edges:
+                        if out_edge.data.data != in_edge.data.data:
+                            # NOTE: This check does not make any sense, and is in my view wrong.
+                            #   If we consider a memlet between two access nodes, to which access
+                            #   node the `data` attribute of the memlet refers to is arbitrary and
+                            #   does not matter. However, the test will filter _some_ out but not
+                            #   all.
+                            #   This check is is retained for  compatibility with `RefineNestedAccess`,
+                            #   see `tests/numpy/ufunc_support_test.py::test_ufunc_add_accumulate_simple`.
+                            continue
                         if in_subsets[in_edge].covers(out_subsets[out_edge]):
                             out_edges.remove(out_edge)
                             break

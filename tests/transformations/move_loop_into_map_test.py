@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import copy
 from dace.transformation.interstate import MoveLoopIntoMap
 import unittest
 import numpy as np
@@ -171,24 +170,8 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         body.add_nedge(aread, oread, dace.Memlet.from_array('A', aarr))
         body.add_nedge(twrite, owrite, dace.Memlet.from_array('out', oarr))
         sdfg.add_loop(None, body, None, '_', '0', '_ < 10', '_ + 1')
-
-        org_data = {
-                "A": np.random.rand(3, 3),
-                "B": np.random.rand(3, 3),
-                "out": np.random.rand(3, 3),
-        }
-
-        unopt_data = copy.deepcopy(org_data)
-        sdfg(**unopt_data)
-
         count = sdfg.apply_transformations(MoveLoopIntoMap)
-        opt_data = copy.deepcopy(org_data)
-        sdfg(**opt_data)
-
-        for name in org_data.keys():
-            self.assertTrue(np.allclose(opt_data[name], unopt_data[name]))
-        self.assertTrue(count > 0)
-
+        self.assertFalse(count > 0)
 
     def test_more_than_a_map_1(self):
         """
