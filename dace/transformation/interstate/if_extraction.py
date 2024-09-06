@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ If extraction transformation """
 
-from dace import data as dt, sdfg as sd
+from dace import data as dt, sdfg as sd, symbolic
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
@@ -58,9 +58,24 @@ class IfExtraction(transformation.MultiStateTransformation):
         if not sdfg.parent:
             return False
 
+        nested_sdfg: sd.nodes.NestedSDFG = sdfg.parent_nsdfg_node
+        parent_sdfg: sd.SDFG = sdfg.parent.sdfg
+
+        # collect outer symbols used in the interstate edges outgoing the if guard
+        if_symbols = set(str(nested) for e in out_edges for s in e.data.free_symbols
+                            for nested in symbolic.pystr_to_symbolic(nested_sdfg.symbol_mapping[s]).free_symbols)
+
+        # collect symbols available to state containing the nested sdfg
+        available_symbols = parent_sdfg.symbols.keys() | parent_sdfg.arglist().keys()
+        for desc in parent_sdfg.arrays.values():
+            available_symbols |= {str(s) for s in desc.free_symbols}
+
+        start_state = sdfg.start_state
+        for e in sdfg.predecessor_state_transitions(start_state):
+            available_symbols |= e.data.new_symbols(sdfg, available_symbols).keys()
+
         # check if edges can be moved out (used symbols can be computed in the outer scope)
-        if_symbols = set(s for e in out_edges for s in e.data.free_symbols)
-        if not if_symbols.issubset(sdfg.parent_nsdfg_node.symbol_mapping.keys()):
+        if not if_symbols.issubset(available_symbols):
             return False
 
         return True
