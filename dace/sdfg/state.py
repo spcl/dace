@@ -796,7 +796,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                             #   If we consider a memlet between two access nodes, to which access
                             #   node the `data` attribute of the memlet refers to is arbitrary and
                             #   does not matter. However, the test will filter _some_ out but not
-                            #   all.
+                            #   all. See also the tests inside `tests/sdfg/state_test.py` for the
+                            #   wrong behaviour this check induces.
                             #   This check is is retained for  compatibility with `RefineNestedAccess`,
                             #   see `tests/numpy/ufunc_support_test.py::test_ufunc_add_accumulate_simple`.
                             continue
