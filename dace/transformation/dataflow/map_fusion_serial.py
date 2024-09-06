@@ -13,7 +13,7 @@ from dace.transformation.dataflow import map_fusion_helper as mfh
 
 
 @properties.make_properties
-class SerialMapFusion(mfh.MapFusionHelper):
+class MapFusionSerial(mfh.MapFusionHelper):
     """Fuse two serial maps together.
 
     The transformation combines two maps into one that are connected through some
@@ -36,7 +36,7 @@ class SerialMapFusion(mfh.MapFusionHelper):
         - This transformation modifies more nodes than it matches.
         - After the transformation has been applied simplify should be run to remove
             some dead data flow, that was introduced to ensure validity.
-        - A `SerialMapFusion` obejct can be initialized and be reused. However,
+        - A `MapFusionSerial` obejct can be initialized and be reused. However,
             after new access nodes are added to any state, it is no longer valid
             to use the object.
 

@@ -8,7 +8,7 @@ import copy
 
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
-from dace.transformation.dataflow import SerialMapFusion, ParallelMapFusion
+from dace.transformation.dataflow import MapFusionSerial, MapFusionParallel
 
 
 def count_node(sdfg: SDFG, node_type):
@@ -33,7 +33,7 @@ def apply_fusion(
     """
     num_maps_before = count_node(sdfg, nodes.MapEntry)
     org_sdfg = copy.deepcopy(sdfg)
-    sdfg.apply_transformations_repeated(SerialMapFusion, validate=True, validate_all=True)
+    sdfg.apply_transformations_repeated(MapFusionSerial, validate=True, validate_all=True)
     num_maps_after = count_node(sdfg, nodes.MapEntry)
 
     has_processed = False
@@ -496,7 +496,7 @@ def test_interstate_fusion():
     ref_C = A + 30
     ref_D = A + 26
 
-    assert sdfg.apply_transformations_repeated(SerialMapFusion, validate=True, validate_all=True) == 1
+    assert sdfg.apply_transformations_repeated(MapFusionSerial, validate=True, validate_all=True) == 1
     assert sdfg.number_of_nodes() == 2
     assert len([node for node in state1.data_nodes() if node.data == "B"]) == 1
 
@@ -566,7 +566,7 @@ def test_parallel_fusion_simple():
         if mode:
             map1_entry, map2_entry = map2_entry, map1_entry
 
-        ParallelMapFusion.apply_to(
+        MapFusionParallel.apply_to(
                 sdfg,
                 map_entry_1=map1_entry,
                 map_entry_2=map2_entry,

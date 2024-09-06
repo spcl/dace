@@ -11,10 +11,10 @@ from dace.sdfg import SDFG, SDFGState, graph, nodes
 from dace.transformation.dataflow import map_fusion_helper
 
 @properties.make_properties
-class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
-    """The `ParallelMapFusion` transformation allows to merge two parallel maps.
+class MapFusionParallel(map_fusion_helper.MapFusionHelper):
+    """The `MapFusionParallel` transformation allows to merge two parallel maps.
 
-    While the `SerialMapFusion` transformation fuses maps that are sequentially
+    While the `MapFusionSerial` transformation fuses maps that are sequentially
     connected through an intermediate node, this transformation is able to fuse any
     two maps that are not sequential and in the same scope.
 
