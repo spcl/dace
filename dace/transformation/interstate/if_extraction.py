@@ -74,8 +74,13 @@ class IfExtraction(transformation.MultiStateTransformation):
         for e in sdfg.predecessor_state_transitions(start_state):
             available_symbols |= e.data.new_symbols(sdfg, available_symbols).keys()
 
-        # check if edges can be moved out (used symbols can be computed in the outer scope)
+        # check if used symbols can be computed in the outer scope
         if not if_symbols.issubset(available_symbols):
+            return False
+
+        # check if symbols are not written in the state containing the nested sdfg
+        _, wset = sdfg.parent.read_and_write_sets()
+        if len(if_symbols.intersection(wset)) != 0:
             return False
 
         return True
