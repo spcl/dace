@@ -31,7 +31,7 @@ def test_applyto_pattern():
     transient = next(aname for aname, desc in sdfg.arrays.items() if desc.transient)
     access_node = next(n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == transient)
 
-    MapFusion.apply_to(sdfg, map_exit1=mult_exit, access_node=access_node, map_entry2=add_entry)
+    MapFusion.apply_to(sdfg, map_exit_1=mult_exit, intermediate_access_node=access_node, map_entry_2=add_entry)
 
 
 def test_applyto_enumerate():
@@ -42,9 +42,9 @@ def test_applyto_enumerate():
     pattern = sdutil.node_path_graph(dace.nodes.MapExit, dace.nodes.AccessNode, dace.nodes.MapEntry)
     for subgraph in enumerate_matches(sdfg, pattern):
         MapFusion.apply_to(sdfg,
-                           map_exit1=subgraph.source_nodes()[0],
-                           access_node=next(n for n in subgraph.nodes() if isinstance(n, dace.nodes.AccessNode)),
-                           map_entry2=subgraph.sink_nodes()[0])
+                           map_exit_1=subgraph.source_nodes()[0],
+                           intermediate_access_node=next(n for n in subgraph.nodes() if isinstance(n, dace.nodes.AccessNode)),
+                           map_entry_2=subgraph.sink_nodes()[0])
 
 
 def test_applyto_subgraph():

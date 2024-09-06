@@ -568,8 +568,8 @@ def test_parallel_fusion_simple():
 
         ParallelMapFusion.apply_to(
                 sdfg,
-                map_entry1=map1_entry,
-                map_entry2=map2_entry,
+                map_entry_1=map1_entry,
+                map_entry_2=map2_entry,
                 verify=True,
         )
         assert count_node(sdfg, dace.sdfg.nodes.MapEntry) == 1

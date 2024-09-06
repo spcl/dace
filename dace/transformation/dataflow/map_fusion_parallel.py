@@ -15,7 +15,7 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
     """The `ParallelMapFusion` transformation allows to merge two parallel maps.
 
     While the `SerialMapFusion` transformation fuses maps that are sequentially
-    connected by an intermediate node, this transformation is able to fuse any
+    connected through an intermediate node, this transformation is able to fuse any
     two maps that are not sequential and in the same scope.
 
     Args:
@@ -29,8 +29,8 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         modify the exit nodes of the Maps.
     """
 
-    map_entry1 = transformation.transformation.PatternNode(nodes.MapEntry)
-    map_entry2 = transformation.transformation.PatternNode(nodes.MapEntry)
+    map_entry_1 = transformation.transformation.PatternNode(nodes.MapEntry)
+    map_entry_2 = transformation.transformation.PatternNode(nodes.MapEntry)
 
     only_if_common_ancestor = properties.Property(
         dtype=bool,
@@ -54,7 +54,7 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
     def expressions(cls) -> Any:
         # This just matches _any_ two Maps inside a state.
         state = graph.OrderedMultiDiConnectorGraph()
-        state.add_nodes_from([cls.map_entry1, cls.map_entry2])
+        state.add_nodes_from([cls.map_entry_1, cls.map_entry_2])
         return [state]
 
 
@@ -65,8 +65,12 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         sdfg: dace.SDFG,
         permissive: bool = False,
     ) -> bool:
-        map_entry_1: nodes.MapEntry = self.map_entry1
-        map_entry_2: nodes.MapEntry = self.map_entry2
+        """Checks if the fusion can be done.
+
+        The function checks the general fusing conditions and if the maps are parallel.
+        """
+        map_entry_1: nodes.MapEntry = self.map_entry_1
+        map_entry_2: nodes.MapEntry = self.map_entry_2
 
         # Check the structural properties of the maps, this will also ensure that
         #  the two maps are in the same scope and the parameters can be renamed
@@ -82,7 +86,7 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         # Since the match expression matches any twp Maps, we have to ensure that
         #  the maps are parallel. The `can_be_fused()` function already verified
         #  if they are in the same scope.
-        if not self._is_parallel(graph=graph, node1=map_entry_1, node2=map_entry_2):
+        if not self.is_parallel(graph=graph, node1=map_entry_1, node2=map_entry_2):
             return False
 
         # Test if they have they share a node as direct ancestor.
@@ -95,7 +99,7 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         return True
 
 
-    def _is_parallel(
+    def is_parallel(
         self,
         graph: SDFGState,
         node1: nodes.Node,
@@ -119,9 +123,9 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         # The `all_nodes_between()` function traverse the graph and returns `None` if
         #  `end` was not found. We have to call it twice, because we do not know
         #  which node is upstream if they are not parallel.
-        if self.all_nodes_between(graph=graph, begin=node1, end=node2) is not None:
+        if self.is_node_reachable_from(graph=graph, begin=node1, end=node2):
             return False
-        elif self.all_nodes_between(graph=graph, begin=node2, end=node1) is not None:
+        elif self.is_node_reachable_from(graph=graph, begin=node2, end=node1):
             return False
         return True
 
@@ -133,9 +137,9 @@ class ParallelMapFusion(map_fusion_helper.MapFusionHelper):
         and `MapExit`) of the second map to the scope nodes of the first map.
         """
 
-        map_entry_1: nodes.MapEntry = self.map_entry1
+        map_entry_1: nodes.MapEntry = self.map_entry_1
         map_exit_1: nodes.MapExit = graph.exit_node(map_entry_1)
-        map_entry_2: nodes.MapEntry = self.map_entry2
+        map_entry_2: nodes.MapEntry = self.map_entry_2
         map_exit_2: nodes.MapExit = graph.exit_node(map_entry_2)
 
         # Before we do anything we perform the renaming.
