@@ -1942,7 +1942,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
 
                 result.write(
-                    "for (%s %s = %s; %s < %s; %s += %s) {\n" % # it is like this before
+                    "for (%s %s = %s; %s < %s; %s += %s) {\n" %
                     (var_type, var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
                     cfg,
                     state_id,
