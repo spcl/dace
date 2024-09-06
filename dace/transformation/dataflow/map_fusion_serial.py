@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-
 """Implements the serial map fusing transformation."""
 
 import copy
@@ -57,7 +56,6 @@ class MapFusionSerial(mfh.MapFusionHelper):
     ) -> None:
         super().__init__(**kwargs)
 
-
     @classmethod
     def expressions(cls) -> Any:
         """Get the match expression.
@@ -69,7 +67,6 @@ class MapFusionSerial(mfh.MapFusionHelper):
         from the first Map or an outgoing connection to the second Map entry.
         """
         return [dace.sdfg.utils.node_path_graph(cls.map_exit_1, cls.intermediate_access_node, cls.map_entry_2)]
-
 
     def can_be_applied(
         self,
@@ -90,9 +87,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
         map_entry_2: nodes.MapEntry = self.map_entry_2
 
         # This essentially test the structural properties of the two Maps.
-        if not self.can_be_fused(
-            map_entry_1=map_entry_1, map_entry_2=map_entry_2, graph=graph, sdfg=sdfg
-        ):
+        if not self.can_be_fused(map_entry_1=map_entry_1, map_entry_2=map_entry_2, graph=graph, sdfg=sdfg):
             return False
 
         # Test for read-write conflicts
@@ -119,7 +114,6 @@ class MapFusionSerial(mfh.MapFusionHelper):
         if not (exclusive_outputs or shared_outputs):
             return False
         return True
-
 
     def has_read_write_dependency(
         self,
@@ -158,10 +152,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
         access_sets: List[Dict[str, nodes.AccessNode]] = []
         for scope_node in [map_entry_1, map_exit_1, map_entry_2, map_exit_2]:
             access_set: Set[nodes.AccessNode] = self.get_access_set(scope_node, state)
-            access_sets.append({
-                node.data: node
-                for node in access_set
-            })
+            access_sets.append({node.data: node for node in access_set})
             # If two different access nodes of the same scoping node refers to the
             #  same data, then we consider this as a dependency we can not handle.
             #  It is only a problem for the intermediate nodes and might be possible
@@ -241,8 +232,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
                     state=state,
                     sdfg=sdfg,
                     repl_dict=None,
-                )
-            )
+                ))
             #  While the subsets defining writing are given by the second map's exit
             #  node, there we also have to apply renaming.
             all_subsets.extend(
@@ -252,8 +242,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
                     state=state,
                     sdfg=sdfg,
                     repl_dict=repl_dict,
-                )
-            )
+                ))
             # Now we can test if these subsets are point wise
             if not self.test_if_subsets_are_point_wise(all_subsets):
                 return True
@@ -261,11 +250,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
         # No read write dependency was found.
         return False
 
-
-    def test_if_subsets_are_point_wise(
-            self,
-            subsets_to_check: List[subsets.Subset]
-    ) -> bool:
+    def test_if_subsets_are_point_wise(self, subsets_to_check: List[subsets.Subset]) -> bool:
         """Point wise means that they are all the same.
 
         If a series of subsets are point wise it means that all Memlets, access
@@ -286,7 +271,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
             if isinstance(subset, subsets.Indices):
                 subset = subsets.Range.from_indices(subset)
                 # Do we also need the reverse? See below why.
-                if any(r != (0, 0, 1) for r in test in subset.offset_new(master_subset,negative=True)):
+                if any(r != (0, 0, 1) for r in test in subset.offset_new(master_subset, negative=True)):
                     return False
             else:
                 # The original code used `Range.offset` here, but that one had trouble
@@ -304,7 +289,6 @@ class MapFusionSerial(mfh.MapFusionHelper):
         #  point wise
         return True
 
-
     def partition_first_outputs(
         self,
         state: SDFGState,
@@ -312,12 +296,12 @@ class MapFusionSerial(mfh.MapFusionHelper):
         map_exit_1: nodes.MapExit,
         map_entry_2: nodes.MapEntry,
     ) -> Union[
-        Tuple[
-            Set[graph.MultiConnectorEdge[dace.Memlet]],
-            Set[graph.MultiConnectorEdge[dace.Memlet]],
-            Set[graph.MultiConnectorEdge[dace.Memlet]],
-        ],
-        None,
+            Tuple[
+                Set[graph.MultiConnectorEdge[dace.Memlet]],
+                Set[graph.MultiConnectorEdge[dace.Memlet]],
+                Set[graph.MultiConnectorEdge[dace.Memlet]],
+            ],
+            None,
     ]:
         """Partition the output edges of `map_exit_1` for serial map fusion.
 
@@ -365,8 +349,8 @@ class MapFusionSerial(mfh.MapFusionHelper):
         # Compute the renaming that for translating the parameter of the _second_
         #  map to the ones used by the first map.
         repl_dict: Dict[str, str] = self.find_parameter_remapping(
-                first_map=map_exit_1.map,
-                second_map=map_entry_2.map,
+            first_map=map_exit_1.map,
+            second_map=map_entry_2.map,
         )
         assert repl_dict is not None
 
@@ -406,9 +390,9 @@ class MapFusionSerial(mfh.MapFusionHelper):
             # If the second map is not reachable from the intermediate node, then
             #  the output is pure and we can end here.
             if not self.is_node_reachable_from(
-                graph=state,
-                begin=intermediate_node,
-                end=map_entry_2,
+                    graph=state,
+                    begin=intermediate_node,
+                    end=map_entry_2,
             ):
                 pure_outputs.add(out_edge)
                 continue
@@ -450,7 +434,8 @@ class MapFusionSerial(mfh.MapFusionHelper):
             # TODO(phimuell): Handle this case properly.
             #   To handle this we need to associate a consumer edge (the outgoing edges
             #   of the second map) with exactly one producer.
-            producer_edges: List[graph.MultiConnectorEdge[dace.Memlet]] = list(state.in_edges_by_connector(map_exit_1, "IN_" + out_edge.src_conn[4:]))
+            producer_edges: List[graph.MultiConnectorEdge[dace.Memlet]] = list(
+                state.in_edges_by_connector(map_exit_1, "IN_" + out_edge.src_conn[4:]))
             if len(producer_edges) > 1:
                 return None
 
@@ -519,7 +504,8 @@ class MapFusionSerial(mfh.MapFusionHelper):
                 #  edges that feeds the consumer and define what is read inside the map.
                 #  We do not check them, but collect them and inspect them.
                 #  NOTE: The subset still uses the old iteration variables.
-                for inner_consumer_edge in state.out_edges_by_connector(map_entry_2, "OUT_" + intermediate_node_out_edge.dst_conn[3:]):
+                for inner_consumer_edge in state.out_edges_by_connector(
+                        map_entry_2, "OUT_" + intermediate_node_out_edge.dst_conn[3:]):
                     if inner_consumer_edge.data.src_subset is None:
                         return None
                     if inner_consumer_edge.data.dynamic:
@@ -558,7 +544,6 @@ class MapFusionSerial(mfh.MapFusionHelper):
         assert len(processed_inter_nodes) == sum(len(x) for x in [pure_outputs, exclusive_outputs, shared_outputs])
         return (pure_outputs, exclusive_outputs, shared_outputs)
 
-
     def apply(self, graph: Union[dace.SDFGState, dace.SDFG], sdfg: dace.SDFG) -> None:
         """Performs the serial Map fusing.
 
@@ -586,10 +571,10 @@ class MapFusionSerial(mfh.MapFusionHelper):
 
         # Before we do anything we perform the renaming.
         self.rename_map_parameters(
-                first_map=map_exit_1.map,
-                second_map=map_entry_2.map,
-                second_map_entry=map_entry_2,
-                state=graph,
+            first_map=map_exit_1.map,
+            second_map=map_entry_2.map,
+            second_map_entry=map_entry_2,
+            state=graph,
         )
 
         output_partition = self.partition_first_outputs(
@@ -647,7 +632,6 @@ class MapFusionSerial(mfh.MapFusionHelper):
         # Now turn the second output node into the output node of the first Map.
         map_exit_2.map = map_entry_1.map
 
-
     def handle_intermediate_set(
         self,
         intermediate_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]],
@@ -691,9 +675,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
 
             # Now we will determine the shape of the new intermediate. This size of
             #  this temporary is given by the Memlet that goes into the first map exit.
-            pre_exit_edges = list(
-                state.in_edges_by_connector(map_exit_1, "IN_" + out_edge.src_conn[4:])
-            )
+            pre_exit_edges = list(state.in_edges_by_connector(map_exit_1, "IN_" + out_edge.src_conn[4:]))
             if len(pre_exit_edges) != 1:
                 raise NotImplementedError()
             pre_exit_edge = pre_exit_edges[0]
@@ -705,9 +687,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
             if not self.strict_dataflow:
                 squeezed_dims: List[int] = []  # These are the dimensions we removed.
                 new_inter_shape: List[int] = []  # This is the final shape of the new intermediate.
-                for dim, (proposed_dim_size, full_dim_size) in enumerate(
-                    zip(new_inter_shape_raw, inter_shape)
-                ):
+                for dim, (proposed_dim_size, full_dim_size) in enumerate(zip(new_inter_shape_raw, inter_shape)):
                     if full_dim_size == 1:  # Must be kept!
                         new_inter_shape.append(proposed_dim_size)
                     elif proposed_dim_size == 1:  # This dimension was reduced, so we can remove it.
@@ -737,9 +717,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
                 )
 
             else:
-                assert (pre_exit_edge.data.subset.num_elements() > 1) or all(
-                    x == 1 for x in new_inter_shape
-                )
+                assert (pre_exit_edge.data.subset.num_elements() > 1) or all(x == 1 for x in new_inter_shape)
                 is_scalar = False
                 new_inter_name, new_inter_desc = sdfg.add_transient(
                     new_inter_name,

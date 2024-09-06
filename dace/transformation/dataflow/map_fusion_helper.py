@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-
 """Implements Helper functionaliyies for map fusion"""
 
 import functools
@@ -50,16 +49,15 @@ class MapFusionHelper(transformation.SingleStateTransformation):
     )
     shared_data = properties.DictProperty(
         key_type=SDFG,
-        value_type=set, #[str]
+        value_type=set,  #[str]
         default=None,
         allow_none=True,
-        optional=True, # Do not serialize.
+        optional=True,  # Do not serialize.
         optional_condition=lambda _: False,
         desc="Maps SDFGs to the set of data that can not be removed,"
         " because they transmit data _between states_, such data will be made 'shared'."
         " This variable acts as a cache, and is managed by 'is_shared_data()'.",
     )
-
 
     def __init__(
         self,
@@ -77,11 +75,9 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             self.strict_dataflow = bool(strict_dataflow)
         self.shared_data = {}
 
-
     @classmethod
     def expressions(cls) -> bool:
         raise RuntimeError("The `MapFusionHelper` is not a transformation on its own.")
-
 
     def can_be_fused(
         self,
@@ -129,7 +125,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             return False
 
         return True
-
 
     def relocate_nodes(
         self,
@@ -181,15 +176,12 @@ class MapFusionHelper(transformation.SingleStateTransformation):
 
                 # TODO(phimuell): Check if the symbol is really unused in the target scope.
                 if dmr_symbol in to_node.in_connectors:
-                    raise NotImplementedError(
-                        f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
-                        f" to '{to_node}', but the symbol is already known there, but the"
-                        " renaming is not implemented."
-                    )
+                    raise NotImplementedError(f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
+                                              f" to '{to_node}', but the symbol is already known there, but the"
+                                              " renaming is not implemented.")
                 if not to_node.add_in_connector(dmr_symbol, force=False):
                     raise RuntimeError(  # Might fail because of out connectors.
-                        f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'."
-                    )
+                        f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'.")
                 helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
                 from_node.remove_in_connector(dmr_symbol)
 
@@ -203,9 +195,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                     helpers.redirect_edge(state, e, new_dst=to_node, new_dst_conn="IN_" + new_conn)
                 to_node.add_out_connector("OUT_" + new_conn)
                 for e in list(state.out_edges_by_connector(from_node, "OUT_" + old_conn)):
-                    helpers.redirect_edge(
-                        state, e, new_src=to_node, new_src_conn="OUT_" + new_conn
-                    )
+                    helpers.redirect_edge(state, e, new_src=to_node, new_src_conn="OUT_" + new_conn)
                 from_node.remove_in_connector("IN_" + old_conn)
                 from_node.remove_out_connector("OUT_" + old_conn)
 
@@ -225,12 +215,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         assert len(from_node.in_connectors) == 0
         assert len(from_node.out_connectors) == 0
 
-
-    def find_parameter_remapping(
-        self,
-        first_map: nodes.Map,
-        second_map: nodes.Map
-    ) -> Union[Dict[str, str], None]:
+    def find_parameter_remapping(self, first_map: nodes.Map, second_map: nodes.Map) -> Union[Dict[str, str], None]:
         """Computes the parameter remapping for the parameters of the _second_ map.
 
         The returned `dict` maps the parameters of the second map (keys) to parameter
@@ -258,12 +243,12 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         # The ranges, however, we apply some post processing to them.
         simp = lambda e: symbolic.simplify_ext(symbolic.simplify(e))
         first_rngs: Dict[str, Tuple[Any, Any, Any]] = {
-                param: tuple(simp(r) for r in rng)
-                for param, rng in zip(first_params, first_map.range)
+            param: tuple(simp(r) for r in rng)
+            for param, rng in zip(first_params, first_map.range)
         }
         second_rngs: Dict[Tuple[Any, Any, Any]] = {
-                param: tuple(simp(r) for r in rng)
-                for param, rng in zip(second_params, second_map.range)
+            param: tuple(simp(r) for r in rng)
+            for param, rng in zip(second_params, second_map.range)
         }
 
         # Parameters of the second map that have not yet been matched to a parameter
@@ -312,7 +297,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         assert len(final_mapping) == len(unmapped_second_params)
         return final_mapping
 
-
     def rename_map_parameters(
         self,
         first_map: nodes.Map,
@@ -343,15 +327,14 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         second_map_scope = state.scope_subgraph(entry_node=second_map_entry)
         # Why is this thing is symbolic and not in replace?
         symbolic.safe_replace(
-                mapping=repl_dict,
-                replace_callback=second_map_scope.replace_dict,
+            mapping=repl_dict,
+            replace_callback=second_map_scope.replace_dict,
         )
 
         # For some odd reason the replace function does not modify the range and
         #  parameter of the map, so we will do it the hard way.
         second_map.params = copy.deepcopy(first_map.params)
         second_map.range = copy.deepcopy(first_map.range)
-
 
     def is_shared_data(
         self,
@@ -379,7 +362,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         if sdfg not in self.shared_data:
             self._compute_shared_data(sdfg)
         return data.data in self.shared_data[sdfg]
-
 
     def _compute_shared_data(
         self,
@@ -427,7 +409,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                     #  will get rid of them.
                     shared_data.add(access_node.data)
 
-                elif state.out_degree(access_node) != 1: # state.out_degree() == 0 or state.out_degree() > 1
+                elif state.out_degree(access_node) != 1:  # state.out_degree() == 0 or state.out_degree() > 1
                     # The access node is either a source node (it is shared in another
                     #  state) or the node has a degree larger than one, so it is used
                     #  in this state somewhere else.
@@ -455,7 +437,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
 
         # Update the internal cache
         self.shared_data[sdfg] = shared_data
-
 
     def _compute_multi_write_data(
         self,
@@ -493,7 +474,6 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             data_written_to.add(access_node.data)
         return multi_write_data
 
-
     def is_node_reachable_from(
         self,
         graph: Union[dace.SDFG, dace.SDFGState],
@@ -511,6 +491,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             begin: The start of the DFS.
             end: The node that should be located.
         """
+
         def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
             return (edge.dst for edge in graph.out_edges(node))
 
@@ -528,11 +509,10 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         # We never found `end`
         return False
 
-
     def get_access_set(
-            self,
-            scope_node: Union[nodes.MapEntry, nodes.MapExit],
-            state: SDFGState,
+        self,
+        scope_node: Union[nodes.MapEntry, nodes.MapExit],
+        state: SDFGState,
     ) -> Set[nodes.AccessNode]:
         """Computes the access set of a "scope node".
 
@@ -554,22 +534,19 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             get_edges = lambda node: state.out_edges(node)
             other_node = lambda e: e.dst
         access_set: Set[nodes.AccessNode] = {
-                node
-                for node in map(other_node, get_edges(scope_node))
-                if isinstance(node, nodes.AccessNode)
+            node
+            for node in map(other_node, get_edges(scope_node)) if isinstance(node, nodes.AccessNode)
         }
-
 
         return access_set
 
-
     def find_subsets(
-            self,
-            node: nodes.AccessNode,
-            scope_node: Union[nodes.MapExit, nodes.MapEntry],
-            state: SDFGState,
-            sdfg: SDFG,
-            repl_dict: Optional[Dict[str, str]],
+        self,
+        node: nodes.AccessNode,
+        scope_node: Union[nodes.MapExit, nodes.MapEntry],
+        state: SDFGState,
+        sdfg: SDFG,
+        repl_dict: Optional[Dict[str, str]],
     ) -> List[subsets.Subset]:
         """Finds all subsets that access `node` within `scope_node`.
 
@@ -607,24 +584,22 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                 # Replace happens in place
                 symbolic.safe_replace(repl_dict, subset.replace)
 
-        return found_subsets 
-
+        return found_subsets
 
     def is_view(
-            self,
-            node: nodes.AccessNode,
-            sdfg: SDFG,
+        self,
+        node: nodes.AccessNode,
+        sdfg: SDFG,
     ) -> bool:
         """Tests if `node` points to a view or not."""
         node_desc: data.Data = node.desc(sdfg)
         return isinstance(node_desc, data.View)
 
-
     def track_view(
-            self,
-            view: nodes.AccessNode,
-            state: SDFGState,
-            sdfg: SDFG,
+        self,
+        view: nodes.AccessNode,
+        state: SDFGState,
+        sdfg: SDFG,
     ) -> nodes.AccessNode:
         """Find the original data of a View.
 
