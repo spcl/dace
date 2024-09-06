@@ -11,5 +11,6 @@ from .prune_symbols import RemoveUnusedSymbols
 from .scalar_to_symbol import ScalarToSymbolPromotion
 from .simplify import SimplifyPass
 from .transient_reuse import TransientReuse
+from .resolve_condition import ResolveCondition
 
 from .util import available_passes
