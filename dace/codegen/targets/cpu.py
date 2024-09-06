@@ -1930,7 +1930,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 if var in map_param_types.keys():
                     var_type = map_param_types[var]
                 else:
-                    var_type = dtypes.result_type_of(infer_expr_type(r[0], sdfg.symbols), infer_expr_type(r[1], sdfg.symbols))
+                    var_type = dtypes.result_type_of(infer_expr_type(r[0], state_dfg.symbols_defined_at(node)), 
+                                                     infer_expr_type(r[1], state_dfg.symbols_defined_at(node)))
 
                 begin, end, skip = r
 
