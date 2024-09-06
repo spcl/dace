@@ -793,7 +793,7 @@ class MapEntry(EntryNode):
         result = {}
         # Add map params
         for p, rng in zip(self._map.params, self._map.range):
-            if p in self.map.param_types.keys():
+            if p in self.map.param_types:
                 result[p] = dtypes.typeclass(self.map.param_types[p])
             else:
                 result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
