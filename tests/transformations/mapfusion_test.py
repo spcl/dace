@@ -579,6 +579,55 @@ def test_parallel_fusion_simple():
         assert np.allclose(out2, res2)
 
 
+def test_fuse_indirect_accesses():
+
+    @dace.program(auto_optimize=False)
+    def inner_product(
+            A: dace.float32[20],
+            B: dace.float32[20],
+            idx: dace.int32[20],
+            out: dace.float32[20],
+    ):
+        tmp1 = np.empty_like(A)
+        tmp2 = np.empty_like(A)
+        for i in dace.map[0:20]:
+            tmp1[i] = A[i] * B[i]
+        for i in dace.map[0:20]:
+            tmp2[i] = tmp1[i] + A[i]
+        for i in dace.map[0:20]:
+            with dace.tasklet:
+                __arr << tmp2(1)[:]
+                __idx << idx[i]
+                __out >> out[i]
+                __out = __arr[__idx]
+
+    sdfg = inner_product.to_sdfg(simplify=True)
+    assert sdfg.number_of_nodes() == 1
+    assert count_node(sdfg, nodes.MapEntry) == 3
+
+    apply_fusion(sdfg, final_maps=2)
+
+    # The last map, with the indirect access, can not be fused, so check that.
+    state = next(iter(sdfg.nodes()))
+    assert len(list(state.sink_nodes())) == 1
+    out_node = next(iter(state.sink_nodes()))
+    assert out_node.data == "out"
+    assert state.in_degree(out_node) == 1
+
+    # Now find the last map and the indirect access Tasklet
+    last_map_exit = next(iter(state.in_edges(out_node))).src
+    last_map_entry = state.entry_node(last_map_exit)
+    assert isinstance(last_map_exit, nodes.MapExit)
+    assert state.in_degree(last_map_exit) == 1
+
+    indirect_access_tasklet = next(iter(state.in_edges(last_map_exit))).src
+    assert isinstance(indirect_access_tasklet, nodes.Tasklet)
+    assert indirect_access_tasklet.code == "__out = __arr[__idx]"  # TODO: Regex with connectors
+
+    # The tasklet can only be connected to a map entry.
+    assert all(in_edge.src is last_map_entry for in_edge in state.in_edges(indirect_access_tasklet))
+
+
 if __name__ == '__main__':
     test_indirect_accesses()
     test_fusion_shared()
@@ -594,5 +643,6 @@ if __name__ == '__main__':
     test_interstate_fusion()
     test_fusion_with_nested_sdfg_1()
     test_parallel_fusion_simple()
+    test_fuse_indirect_accesses()
     print("SUCCESS")
 
