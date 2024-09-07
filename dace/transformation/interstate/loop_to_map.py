@@ -352,6 +352,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         # Obtain loop information
         itervar, (start, end, step), (_, body_end) = self.loop_information(itervar=self.itervar)
         states = self.loop_body()
+        body: sd.SDFGState = self.loop_begin
 
         nsdfg = None
 
