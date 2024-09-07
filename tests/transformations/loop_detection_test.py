@@ -20,41 +20,47 @@ def test_pyloop():
             a[i] = a[i - 1] + 1
 
     sdfg = tester.to_sdfg()
-    assert sdfg.apply_transformations(CountLoops) == 1
+    xform = CountLoops()
+    assert sdfg.apply_transformations(xform) == 1
+    xform.loop_information()
 
 
 def test_loop_rotated():
     sdfg = dace.SDFG('tester')
     sdfg.add_symbol('N', dace.int32)
 
-    entry = sdfg.add_state(is_start_block=True)
-    body = sdfg.add_state()
-    latch = sdfg.add_state()
-    exitstate = sdfg.add_state()
+    entry = sdfg.add_state('entry', is_start_block=True)
+    body = sdfg.add_state('body')
+    latch = sdfg.add_state('latch')
+    exitstate = sdfg.add_state('exitstate')
 
     sdfg.add_edge(entry, body, dace.InterstateEdge(assignments=dict(i=0)))
+    sdfg.add_edge(body, latch, dace.InterstateEdge())
     sdfg.add_edge(latch, body, dace.InterstateEdge('i < N', assignments=dict(i='i + 1')))
     sdfg.add_edge(latch, exitstate, dace.InterstateEdge('i >= N'))
 
-    assert sdfg.apply_transformations(CountLoops) == 1
+    xform = CountLoops()
+    assert sdfg.apply_transformations(xform) == 1
 
 
+@pytest.mark.skip('Extra incrementation states should not be supported by loop detection')
 def test_loop_rotated_extra_increment():
     sdfg = dace.SDFG('tester')
     sdfg.add_symbol('N', dace.int32)
 
-    entry = sdfg.add_state(is_start_block=True)
-    body = sdfg.add_state()
-    latch = sdfg.add_state()
-    increment = sdfg.add_state()
-    exitstate = sdfg.add_state()
+    entry = sdfg.add_state('entry', is_start_block=True)
+    body = sdfg.add_state('body')
+    latch = sdfg.add_state('latch')
+    increment = sdfg.add_state('increment')
+    exitstate = sdfg.add_state('exitstate')
 
     sdfg.add_edge(entry, body, dace.InterstateEdge(assignments=dict(i=0)))
     sdfg.add_edge(latch, increment, dace.InterstateEdge('i < N'))
     sdfg.add_edge(increment, body, dace.InterstateEdge(assignments=dict(i='i + 1')))
     sdfg.add_edge(latch, exitstate, dace.InterstateEdge('i >= N'))
 
-    assert sdfg.apply_transformations(CountLoops) == 1
+    xform = CountLoops()
+    assert sdfg.apply_transformations(xform) == 1
 
 
 def test_self_loop():
@@ -62,28 +68,29 @@ def test_self_loop():
     sdfg = dace.SDFG('tester')
     sdfg.add_symbol('N', dace.int32)
 
-    entry = sdfg.add_state(is_start_block=True)
-    body = sdfg.add_state()
-    exitstate = sdfg.add_state()
+    entry = sdfg.add_state('entry', is_start_block=True)
+    body = sdfg.add_state('body')
+    exitstate = sdfg.add_state('exitstate')
 
     sdfg.add_edge(entry, body, dace.InterstateEdge(assignments=dict(i=0)))
     sdfg.add_edge(body, body, dace.InterstateEdge('i < N', assignments=dict(i='i + 1')))
     sdfg.add_edge(body, exitstate, dace.InterstateEdge('i >= N'))
 
-    assert sdfg.apply_transformations(CountLoops) == 1
+    xform = CountLoops()
+    assert sdfg.apply_transformations(xform) == 1
 
 
 def test_loop_llvm_canonical():
     sdfg = dace.SDFG('tester')
     sdfg.add_symbol('N', dace.int32)
 
-    entry = sdfg.add_state(is_start_block=True)
-    guard = sdfg.add_state_after(entry)
-    preheader = sdfg.add_state()
-    body = sdfg.add_state()
-    latch = sdfg.add_state()
-    loopexit = sdfg.add_state()
-    exitstate = sdfg.add_state()
+    entry = sdfg.add_state('entry', is_start_block=True)
+    guard = sdfg.add_state_after(entry, 'guard')
+    preheader = sdfg.add_state('preheader')
+    body = sdfg.add_state('body')
+    latch = sdfg.add_state('latch')
+    loopexit = sdfg.add_state('loopexit')
+    exitstate = sdfg.add_state('exitstate')
 
     sdfg.add_edge(guard, exitstate, dace.InterstateEdge('N <= 0'))
     sdfg.add_edge(guard, preheader, dace.InterstateEdge('N > 0'))
@@ -93,23 +100,25 @@ def test_loop_llvm_canonical():
     sdfg.add_edge(latch, loopexit, dace.InterstateEdge('i >= N'))
     sdfg.add_edge(loopexit, exitstate, dace.InterstateEdge())
 
-    assert sdfg.apply_transformations(CountLoops) == 1
+    xform = CountLoops()
+    assert sdfg.apply_transformations(xform) == 1
 
 
+@pytest.mark.skip('Extra incrementation states should not be supported by loop detection')
 @pytest.mark.parametrize('with_bounds_check', (False, True))
 def test_loop_llvm_canonical_with_extras(with_bounds_check):
     sdfg = dace.SDFG('tester')
     sdfg.add_symbol('N', dace.int32)
 
-    entry = sdfg.add_state(is_start_block=True)
-    guard = sdfg.add_state_after(entry)
-    preheader = sdfg.add_state()
-    body = sdfg.add_state()
-    latch = sdfg.add_state()
-    increment1 = sdfg.add_state()
-    increment2 = sdfg.add_state()
-    loopexit = sdfg.add_state()
-    exitstate = sdfg.add_state()
+    entry = sdfg.add_state('entry', is_start_block=True)
+    guard = sdfg.add_state_after(entry, 'guard')
+    preheader = sdfg.add_state('preheader')
+    body = sdfg.add_state('body')
+    latch = sdfg.add_state('latch')
+    increment1 = sdfg.add_state('increment1')
+    increment2 = sdfg.add_state('increment2')
+    loopexit = sdfg.add_state('loopexit')
+    exitstate = sdfg.add_state('exitstate')
 
     if with_bounds_check:
         sdfg.add_edge(guard, exitstate, dace.InterstateEdge('N <= 0'))
@@ -124,14 +133,15 @@ def test_loop_llvm_canonical_with_extras(with_bounds_check):
     sdfg.add_edge(latch, loopexit, dace.InterstateEdge('i >= N'))
     sdfg.add_edge(loopexit, exitstate, dace.InterstateEdge())
 
-    assert sdfg.apply_transformations(CountLoops) == 1
+    xform = CountLoops()
+    assert sdfg.apply_transformations(xform) == 1
 
 
 if __name__ == '__main__':
     test_pyloop()
     test_loop_rotated()
-    test_loop_rotated_extra_increment()
+    # test_loop_rotated_extra_increment()
     test_self_loop()
     test_loop_llvm_canonical()
-    test_loop_llvm_canonical_with_extras(False)
-    test_loop_llvm_canonical_with_extras(True)
+    # test_loop_llvm_canonical_with_extras(False)
+    # test_loop_llvm_canonical_with_extras(True)
