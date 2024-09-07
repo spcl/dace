@@ -702,8 +702,12 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                         else:
                             next_block = cf.find_next_block(node)
                             # Next state in block or first state in next CF block
-                            if next_block is not None and next_block.first_block is e.dst:
-                                expected_transition = True
+                            if next_block is not None:
+                                if isinstance(next_block, cf.GeneralLoopScope):  # Special case for control flow regions
+                                    if e.dst is next_block.loop:
+                                        expected_transition = True
+                                elif next_block.first_block is e.dst:
+                                    expected_transition = True
 
                         if not expected_transition and e not in parent.gotos_to_ignore:
                             edge_body.append(tn.GotoNode(target=e.dst.label))
