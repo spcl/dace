@@ -314,14 +314,28 @@ class DetectLoop(transformation.PatternTransformation):
             latch = self.loop_latch
             return find_rotated_for_loop(latch.parent_graph, latch, entry, itervar)
         elif self.expr_index == 4:
-            raise NotImplementedError('Loop information not implemented for self-loops')
             return find_rotated_for_loop(entry.parent_graph, entry, entry, itervar)
 
         raise ValueError(f'Invalid expression index {self.expr_index}')
 
     def loop_body(self) -> List[ControlFlowBlock]:
-        # TODO
-        raise NotImplementedError
+        """
+        Returns a list of all control flow blocks (or states) contained in the loop.
+        """
+        begin = self.loop_begin
+        graph = begin.parent_graph
+        if self.expr_index in (0, 1):
+            guard = self.loop_guard
+            return list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != guard))
+        elif self.expr_index in (2, 3):
+            latch = self.loop_latch
+            loop_nodes = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != latch))
+            loop_nodes += [latch]
+            return loop_nodes
+        elif self.expr_index == 4:
+            return [begin]
+
+        return []
 
     def loop_meta_states(self) -> List[ControlFlowBlock]:
         """
@@ -334,26 +348,76 @@ class DetectLoop(transformation.PatternTransformation):
         return []
 
     def loop_init_edge(self) -> gr.Edge[InterstateEdge]:
-        # TODO
-        raise NotImplementedError
+        """
+        Returns the initialization edge of the loop (assignment to the beginning of the loop range).
+        """
+        begin = self.loop_begin
+        graph = begin.parent_graph
+        if self.expr_index in (0, 1):
+            guard = self.loop_guard
+            body = self.loop_body()
+            return next(e for e in graph.in_edges(guard) if e.src not in body)
+        elif self.expr_index in (2, 3):
+            latch = self.loop_latch
+            return next(e for e in graph.in_edges(begin) if e.src is not latch)
+        elif self.expr_index == 4:
+            return next(e for e in graph.in_edges(begin) if e.src is not begin)
 
-    def loop_entry_edge(self) -> gr.Edge[InterstateEdge]:
-        # TODO
-        raise NotImplementedError
+        raise ValueError(f'Invalid expression index {self.expr_index}')
 
     def loop_exit_edge(self) -> gr.Edge[InterstateEdge]:
-        # TODO
-        raise NotImplementedError
+        """
+        Returns the negative condition edge that exits the loop.
+        """
+        exitstate = self.exit_state
+        graph = exitstate.parent_graph
+        if self.expr_index in (0, 1):
+            guard = self.loop_guard
+            return graph.edges_between(guard, exitstate)[0]
+        elif self.expr_index in (2, 3):
+            latch = self.loop_latch
+            return graph.edges_between(latch, exitstate)[0]
+        elif self.expr_index == 4:
+            begin = self.loop_begin
+            return graph.edges_between(begin, exitstate)[0]
+
+        raise ValueError(f'Invalid expression index {self.expr_index}')
 
     def loop_condition_edge(self) -> gr.Edge[InterstateEdge]:
-        # TODO
-        raise NotImplementedError
+        """
+        Returns the positive condition edge that (re-)enters the loop after the bound check.
+        """
+        begin = self.loop_begin
+        graph = begin.parent_graph
+        if self.expr_index in (0, 1):
+            guard = self.loop_guard
+            return graph.edges_between(guard, begin)[0]
+        elif self.expr_index in (2, 3):
+            latch = self.loop_latch
+            return graph.edges_between(latch, begin)[0]
+        elif self.expr_index == 4:
+            begin = self.loop_begin
+            return graph.edges_between(begin, begin)[0]
+
+        raise ValueError(f'Invalid expression index {self.expr_index}')
 
     def loop_increment_edge(self) -> gr.Edge[InterstateEdge]:
-        if self.expr_index <= 1:
-            return self.loop_guard.parent_graph.in_edges(self.loop_guard)
-        # TODO
-        raise NotImplementedError
+        """
+        Returns the back-edge that increments the loop induction variable.
+        """
+        begin = self.loop_begin
+        graph = begin.parent_graph
+        if self.expr_index in (0, 1):
+            guard = self.loop_guard
+            body = self.loop_body()
+            return next(e for e in graph.in_edges(guard) if e.src in body)
+        elif self.expr_index in (2, 3):
+            body = self.loop_body()
+            return next(e for e in graph.in_edges(begin) if e.src in body)
+        elif self.expr_index == 4:
+            return graph.edges_between(begin, begin)[0]
+
+        raise ValueError(f'Invalid expression index {self.expr_index}')
 
 
 def find_for_loop(
@@ -368,7 +432,8 @@ def find_for_loop(
     
     :param guard: State from which the outgoing edges detect whether to exit
                   the loop or not.
-    :param entry: First state in the loop "body".
+    :param entry: First state in the loop body.
+    :param itervar: An optional field that overrides the analyzed iteration variable.
     :return: (iteration variable, (start, end, stride),
              (start_states, last_loop_state)), or None if proper
              for-loop was not detected. ``end`` is inclusive.
@@ -472,22 +537,22 @@ def find_rotated_for_loop(
     """
     Finds rotated loop range from state machine.
     
-    :param guard: State from which the outgoing edges detect whether to exit
+    :param latch: State from which the outgoing edges detect whether to exit
                   the loop or not.
-    :param entry: First state in the loop "body".
+    :param entry: First state in the loop body.
+    :param itervar: An optional field that overrides the analyzed iteration variable.
     :return: (iteration variable, (start, end, stride),
              (start_states, last_loop_state)), or None if proper
              for-loop was not detected. ``end`` is inclusive.
     """
-    raise NotImplementedError('Loop information not implemented for rotated loops')
     # Extract state transition edge information
-    guard_inedges = graph.in_edges(guard)
-    condition_edge = graph.edges_between(guard, entry)[0]
+    entry_inedges = graph.in_edges(entry)
+    condition_edge = graph.edges_between(latch, entry)[0]
 
-    # All incoming edges to the guard must set the same variable
+    # All incoming edges to the loop entry must set the same variable
     if itervar is None:
         itervars = None
-        for iedge in guard_inedges:
+        for iedge in entry_inedges:
             if itervars is None:
                 itervars = set(iedge.data.assignments.keys())
             else:
@@ -500,14 +565,14 @@ def find_rotated_for_loop(
 
     condition = condition_edge.data.condition_sympy()
 
-    # Find the stride edge. All in-edges to the guard except for the stride edge
+    # Find the stride edge. All in-edges to the entry except for the stride edge
     # should have exactly the same assignment, since a valid for loop can only
     # have one assignment.
     init_edges = []
     init_assignment = None
     step_edge = None
     itersym = symbolic.symbol(itervar)
-    for iedge in guard_inedges:
+    for iedge in entry_inedges:
         assignment = iedge.data.assignments[itervar]
         if itersym in symbolic.pystr_to_symbolic(assignment).free_symbols:
             if step_edge is None:

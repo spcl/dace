@@ -500,7 +500,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             start, end, step = end, start, -step
 
         # If necessary, make a nested SDFG with assignments
-        entry_edge = self.loop_entry_edge()
+        entry_edge = self.loop_condition_edge()
         symbols_to_remove = set()
         if len(entry_edge.data.assignments) > 0:
             nsdfg = helpers.nest_state_subgraph(sdfg, body, gr.SubgraphView(body, body.nodes()))

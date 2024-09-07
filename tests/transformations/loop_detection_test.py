@@ -2,7 +2,7 @@
 import dace
 import pytest
 
-from dace.transformation.interstate.loop_detection import DetectLoop, find_for_loop
+from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation import transformation as xf
 
 
@@ -22,7 +22,9 @@ def test_pyloop():
     sdfg = tester.to_sdfg()
     xform = CountLoops()
     assert sdfg.apply_transformations(xform) == 1
-    xform.loop_information()
+    itvar, rng, _ = xform.loop_information()
+    assert itvar == 'i'
+    assert rng == (1, 19, 1)
 
 
 def test_loop_rotated():
@@ -36,11 +38,14 @@ def test_loop_rotated():
 
     sdfg.add_edge(entry, body, dace.InterstateEdge(assignments=dict(i=0)))
     sdfg.add_edge(body, latch, dace.InterstateEdge())
-    sdfg.add_edge(latch, body, dace.InterstateEdge('i < N', assignments=dict(i='i + 1')))
+    sdfg.add_edge(latch, body, dace.InterstateEdge('i < N', assignments=dict(i='i + 2')))
     sdfg.add_edge(latch, exitstate, dace.InterstateEdge('i >= N'))
 
     xform = CountLoops()
     assert sdfg.apply_transformations(xform) == 1
+    itvar, rng, _ = xform.loop_information()
+    assert itvar == 'i'
+    assert rng == (0, dace.symbol('N') - 1, 2)
 
 
 @pytest.mark.skip('Extra incrementation states should not be supported by loop detection')
@@ -61,6 +66,9 @@ def test_loop_rotated_extra_increment():
 
     xform = CountLoops()
     assert sdfg.apply_transformations(xform) == 1
+    itvar, rng, _ = xform.loop_information()
+    assert itvar == 'i'
+    assert rng == (0, dace.symbol('N') - 1, 1)
 
 
 def test_self_loop():
@@ -72,12 +80,15 @@ def test_self_loop():
     body = sdfg.add_state('body')
     exitstate = sdfg.add_state('exitstate')
 
-    sdfg.add_edge(entry, body, dace.InterstateEdge(assignments=dict(i=0)))
-    sdfg.add_edge(body, body, dace.InterstateEdge('i < N', assignments=dict(i='i + 1')))
+    sdfg.add_edge(entry, body, dace.InterstateEdge(assignments=dict(i=2)))
+    sdfg.add_edge(body, body, dace.InterstateEdge('i < N', assignments=dict(i='i + 3')))
     sdfg.add_edge(body, exitstate, dace.InterstateEdge('i >= N'))
 
     xform = CountLoops()
     assert sdfg.apply_transformations(xform) == 1
+    itvar, rng, _ = xform.loop_information()
+    assert itvar == 'i'
+    assert rng == (2, dace.symbol('N') - 1, 3)
 
 
 def test_loop_llvm_canonical():
@@ -102,6 +113,9 @@ def test_loop_llvm_canonical():
 
     xform = CountLoops()
     assert sdfg.apply_transformations(xform) == 1
+    itvar, rng, _ = xform.loop_information()
+    assert itvar == 'i'
+    assert rng == (0, dace.symbol('N') - 1, 1)
 
 
 @pytest.mark.skip('Extra incrementation states should not be supported by loop detection')
@@ -135,6 +149,9 @@ def test_loop_llvm_canonical_with_extras(with_bounds_check):
 
     xform = CountLoops()
     assert sdfg.apply_transformations(xform) == 1
+    itvar, rng, _ = xform.loop_information()
+    assert itvar == 'i'
+    assert rng == (0, dace.symbol('N') - 1, 1)
 
 
 if __name__ == '__main__':
