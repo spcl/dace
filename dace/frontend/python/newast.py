@@ -1155,7 +1155,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.sdfg.add_symbol(sym.name, sym.dtype)
         self.sdfg._temp_transients = tmp_idx
         self.cfg_target = self.sdfg
-        self.current_state = self.sdfg.add_state('init', is_start_state=True)
+        self.current_state = self.sdfg.add_state('init', is_start_block=True)
         self.last_block = self.current_state
         self.last_cfg_target = self.sdfg
 
