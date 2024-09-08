@@ -61,13 +61,18 @@ def all_dominators(
 
 def back_edges(cfg: ControlFlowRegion,
                idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
-               alldoms: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> List[gr.Edge[InterstateEdge]]:
+               alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = None) -> List[gr.Edge[InterstateEdge]]:
     """ Returns a list of back-edges in a control flow graph. """
     alldoms = alldoms or all_dominators(cfg, idom)
     return [e for e in cfg.edges() if e.dst in alldoms[e.src]]
 
 
-def branch_merges(cfg: ControlFlowRegion) -> Dict[ControlFlowBlock, ControlFlowBlock]:
+def branch_merges(
+        cfg: ControlFlowRegion,
+        idom: Dict[ControlFlowBlock, ControlFlowBlock] = None,
+        alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = None) -> Dict[ControlFlowBlock, ControlFlowBlock]:
+    alldoms = alldoms or all_dominators(cfg, idom)
+
     # Annotate branches
     result: Dict[SDFGState, SDFGState] = {}
     adf = acyclic_dominance_frontier(cfg)
@@ -81,10 +86,14 @@ def branch_merges(cfg: ControlFlowRegion) -> Dict[ControlFlowBlock, ControlFlowB
         # If branch without else (adf of one successor is equal to the other)
         if len(oedges) == 2:
             if {oedges[0].dst} & adf[oedges[1].dst]:
-                result[block] = oedges[0].dst
+                merge = oedges[0].dst
+                if block in alldoms[merge]:
+                    result[block] = oedges[0].dst
                 continue
             elif {oedges[1].dst} & adf[oedges[0].dst]:
-                result[block] = oedges[1].dst
+                merge = oedges[1].dst
+                if block in alldoms[merge]:
+                    result[block] = oedges[1].dst
                 continue
 
         # Try to obtain common DF to find merge state
@@ -95,7 +104,9 @@ def branch_merges(cfg: ControlFlowRegion) -> Dict[ControlFlowBlock, ControlFlowB
                 frontier = {oedge.dst}
             common_frontier |= frontier
         if len(common_frontier) == 1:
-            result[block] = next(iter(common_frontier))
+            merge = next(iter(common_frontier))
+            if block in alldoms[merge]:
+                result[block] = merge
         # elif len(common_frontier) > 1 and ipostdom and ipostdom[block] in common_frontier:
         #     result[block] = ipostdom[block]
 
@@ -118,8 +129,8 @@ def block_parent_tree(cfg: ControlFlowRegion,
                        if the block occurs after a loop. Defaults to true.
     :return: A dictionary that maps each block to a parent block, or None if the root (start) block.
     """
-    merges = branch_merges(cfg)
     idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    merges = branch_merges(cfg, idom)
     if with_loops:
         alldoms = all_dominators(cfg, idom)
         loopexits = loopexits if loopexits is not None else defaultdict(lambda: None)
@@ -351,10 +362,11 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
     """
     # Get parent states
     loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
-    ptree = block_parent_tree(cfg, loopexits)
+    idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
+    ptree = block_parent_tree(cfg, loopexits, idom=idom)
 
     # Annotate branches
-    merges = branch_merges(cfg)
+    merges = branch_merges(cfg, idom)
 
     for block in _blockorder_topological_sort(cfg, cfg.start_block, ptree, merges, loopexits=loopexits):
         if isinstance(block, ControlFlowRegion):

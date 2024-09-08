@@ -58,6 +58,7 @@ would create the control flow tree below::
 import ast
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+import networkx as nx
 import sympy as sp
 from dace import dtypes
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -1135,11 +1136,13 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
     from dace.sdfg.analysis import cfg
 
     # Get parent states and back-edges
-    ptree = cfg.block_parent_tree(sdfg)
-    back_edges = cfg.back_edges(sdfg)
+    idom = nx.immediate_dominators(sdfg.nx, sdfg.start_block)
+    alldoms = cfg.all_dominators(sdfg, idom)
+    ptree = cfg.block_parent_tree(sdfg, idom=idom)
+    back_edges = cfg.back_edges(sdfg, idom, alldoms)
 
     # Annotate branches
-    branch_merges: Dict[SDFGState, SDFGState] = cfg.branch_merges(sdfg)
+    branch_merges: Dict[SDFGState, SDFGState] = cfg.branch_merges(sdfg, idom, alldoms)
    
     root_block = GeneralBlock(dispatch_state=dispatch_state,
                               parent=None,
