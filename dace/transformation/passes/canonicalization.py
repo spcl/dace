@@ -51,7 +51,7 @@ class SeparateRefsets(ppl.Pass):
 
                     substate = StateSubgraphView(state, nodes_to_move_back)
                     sets_moved_back.add(edge)
-                    newstate = xfh.state_fission(sdfg, substate)
+                    newstate = xfh.state_fission(substate)
 
                     # Handle remaining access node
                     anode.remove_in_connector('set')

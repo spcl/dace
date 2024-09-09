@@ -17,9 +17,7 @@ sizes = [{N: 60}, {N: 180}, {N: 500}, {N: 2800}, {N: 5600}]
 args = [([N, N], datatype)]
 
 
-def init_array(path):
-    n = N.get()
-
+def init_array(path, n):
     for i in range(n):
         for j in range(n):
             path[i, j] = datatype(i * j % 7 + 1)
@@ -43,6 +41,5 @@ if __name__ == '__main__':
     if polybench:
         polybench.main(sizes, args, [(0, 'path')], init_array, floyd_warshall)
     else:
-        [k.set(v) for k, v in sizes[2].items()]
-        init_array(*args)
+        init_array(*args, **{str(k).lower(): v for k, v in sizes[2].items()})
         floyd_warshall(*args)

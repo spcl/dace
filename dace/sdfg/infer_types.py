@@ -61,7 +61,7 @@ def infer_connector_types(sdfg: SDFG):
     :param sdfg: The SDFG to infer.
     """
     # Loop over states, and in a topological sort over each state's nodes
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         for node in dfs_topological_sort(state):
             # Try to infer input connector type from node type or previous edges
             for e in state.in_edges(node):
@@ -79,9 +79,10 @@ def infer_connector_types(sdfg: SDFG):
                     if isinstance(node, nodes.NestedSDFG):
                         # NOTE: Scalars allocated on the host can be read by GPU kernels. Therefore, we do not need
                         # to use the `allocated_as_scalar` check here.
-                        scalar = isinstance(node.sdfg.arrays[cname], (data.Scalar, data.Structure))
+                        scalar = isinstance(node.sdfg.arrays[cname], data.Scalar)
+                        struct = isinstance(node.sdfg.arrays[cname], data.Structure)
                         dtype = node.sdfg.arrays[cname].dtype
-                        ctype = (dtype if scalar else dtypes.pointer(dtype))
+                        ctype = (dtype if scalar or struct else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
                         scalar |= isinstance(sdfg.arrays[e.data.data], (data.Scalar, data.Structure))
                         if isinstance(node, nodes.LibraryNode):
@@ -167,7 +168,7 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
 
     if isinstance(scope, SDFG):
         # Set device for default top-level schedules and storages
-        for state in scope.nodes():
+        for state in scope.states():
             set_default_schedule_and_storage_types(state,
                                                    parent_schedules,
                                                    use_parent_schedule=use_parent_schedule,
@@ -381,6 +382,8 @@ def _get_storage_from_parent(data_name: str, sdfg: SDFG) -> dtypes.StorageType:
     parent_sdfg = parent_state.parent
 
     # Find data descriptor in parent SDFG
+    # NOTE: Assuming that all members of a Structure have the same storage type.
+    data_name = data_name.split('.')[0]
     if data_name in nsdfg_node.in_connectors:
         e = next(iter(parent_state.in_edges_by_connector(nsdfg_node, data_name)))
         return parent_sdfg.arrays[e.data.data].storage

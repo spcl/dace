@@ -1,6 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various tests for dead code elimination passes. """
 
+import numpy as np
 import pytest
 import dace
 from dace.transformation.pass_pipeline import Pipeline
@@ -253,6 +254,43 @@ def test_dce_callback_manual():
     sdfg.validate()
 
 
+def test_dce_add_type_hint_of_variable():
+    """
+    The code of this test comes from this issue: https://github.com/spcl/dace/issues/1150#issue-1445418361
+    """
+    sdfg = dace.SDFG("test")
+    state = sdfg.add_state()
+    sdfg.add_array("out", dtype=dace.float64, shape=(10,))
+    sdfg.add_array("cond", dtype=dace.bool, shape=(10,))
+    sdfg.add_array("tmp", dtype=dace.float64, shape=(10,), transient=True)
+    tasklet, *_ = state.add_mapped_tasklet(
+        code="""
+if _cond:
+    _tmp = 3.0
+else:
+    _tmp = 7.0
+_out = _tmp
+        """,
+        inputs={"_cond": dace.Memlet(subset="k", data="cond")},
+        outputs={
+            "_out": dace.Memlet(subset="k", data="out"),
+            "_tmp": dace.Memlet(subset="k", data="tmp"),
+        },
+        map_ranges={"k": "0:10"},
+        name="test_tasklet",
+        external_edges=True,
+    )
+    sdfg.simplify()
+    assert tasklet.code.as_string.startswith("_tmp: dace.float64")
+
+    compiledsdfg = sdfg.compile()
+    cond = np.random.choice(a=[True, False], size=(10,))
+    out = np.zeros((10,))
+    compiledsdfg(cond=cond, out=out)
+    assert np.all(out == np.where(cond, 3.0, 7.0))
+
+
+
 if __name__ == '__main__':
     test_dse_simple()
     test_dse_unconditional()
@@ -267,3 +305,4 @@ if __name__ == '__main__':
     test_dce()
     test_dce_callback()
     test_dce_callback_manual()
+    test_dce_add_type_hint_of_variable()

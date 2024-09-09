@@ -57,40 +57,7 @@ class PruneConnectors(pm.SingleStateTransformation):
         nsdfg = self.nsdfg
 
         # Fission subgraph around nsdfg into its own state to avoid data races
-        predecessors = set()
-        for inedge in state.in_edges(nsdfg):
-            if inedge.data is None:
-                continue
-
-            pred = state.memlet_path(inedge)[0].src
-            if state.in_degree(pred) == 0:
-                continue
-
-            predecessors.add(pred)
-            for e in state.bfs_edges(pred, reverse=True):
-                predecessors.add(e.src)
-
-        subgraph = StateSubgraphView(state, predecessors)
-        pred_state = helpers.state_fission(sdfg, subgraph)
-
-        subgraph_nodes = set()
-        subgraph_nodes.add(nsdfg)
-        for inedge in state.in_edges(nsdfg):
-            if inedge.data is None:
-                continue
-            path = state.memlet_path(inedge)
-            for edge in path:
-                subgraph_nodes.add(edge.src)
-
-        for oedge in state.out_edges(nsdfg):
-            if oedge.data is None:
-                continue
-            path = state.memlet_path(oedge)
-            for edge in path:
-                subgraph_nodes.add(edge.dst)
-
-        subgraph = StateSubgraphView(state, subgraph_nodes)
-        nsdfg_state = helpers.state_fission(sdfg, subgraph)
+        nsdfg_state = helpers.state_fission_after(state, nsdfg)
 
         read_set, write_set = nsdfg.sdfg.read_and_write_sets()
         prune_in = nsdfg.in_connectors.keys() - read_set
@@ -157,7 +124,7 @@ class PruneSymbols(pm.SingleStateTransformation):
             candidates -= set(map(str, desc.free_symbols))
 
         ignore = set()
-        for nstate in cfg.stateorder_topological_sort(nsdfg.sdfg):
+        for nstate in cfg.blockorder_topological_sort(nsdfg.sdfg):
             state_syms = nstate.free_symbols
 
             # Try to be conservative with C++ tasklets
@@ -175,7 +142,7 @@ class PruneSymbols(pm.SingleStateTransformation):
             # Any symbol that is set in all outgoing edges is ignored from
             # this point
             local_ignore = None
-            for e in nsdfg.sdfg.out_edges(nstate):
+            for e in nstate.parent_graph.out_edges(nstate):
                 # Look for symbols in condition
                 candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))) - ignore)
 
@@ -259,7 +226,7 @@ class PruneUnusedOutputs(pm.SingleStateTransformation):
             return set(), set()
 
         # Remove candidates that are used in the nested SDFG
-        for nstate in nsdfg.sdfg.nodes():
+        for nstate in nsdfg.sdfg.states():
             for node in nstate.data_nodes():
                 if node.data in candidates:
                     # If used in nested SDFG
@@ -276,7 +243,7 @@ class PruneUnusedOutputs(pm.SingleStateTransformation):
                     candidate_nodes.add((nstate, node))
 
         # Any array that is used in interstate edges is removed
-        for e in nsdfg.sdfg.edges():
+        for e in nsdfg.sdfg.all_interstate_edges():
             candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))))
             for assign in e.data.assignments.values():
                 candidates -= (symbolic.free_symbols_and_functions(assign))

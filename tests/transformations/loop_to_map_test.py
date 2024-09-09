@@ -10,7 +10,8 @@ import pytest
 
 import dace
 from dace.sdfg import nodes, propagation
-from dace.transformation.interstate import LoopToMap
+from dace.transformation.interstate import LoopToMap, StateFusion
+from dace.transformation.interstate.loop_detection import DetectLoop
 
 
 def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after, log_path):
@@ -266,7 +267,7 @@ def test_interstate_dep():
 
     sdfg = dace.SDFG('intestate_dep')
     sdfg.add_array('A', (10, ), dtype=np.int32)
-    init = sdfg.add_state('init', is_start_state=True)
+    init = sdfg.add_state('init', is_start_block=True)
     guard = sdfg.add_state('guard')
     body0 = sdfg.add_state('body0')
     body1 = sdfg.add_state('body1')
@@ -392,7 +393,7 @@ def test_symbol_race():
 
 def test_symbol_write_before_read():
     sdfg = dace.SDFG('tester')
-    init = sdfg.add_state(is_start_state=True)
+    init = sdfg.add_state(is_start_block=True)
     body_start = sdfg.add_state()
     body = sdfg.add_state()
     body_end = sdfg.add_state()
@@ -410,7 +411,7 @@ def test_symbol_array_mix(overwrite):
     sdfg = dace.SDFG('tester')
     sdfg.add_transient('tmp', [1], dace.float64)
     sdfg.add_symbol('sym', dace.float64)
-    init = sdfg.add_state(is_start_state=True)
+    init = sdfg.add_state(is_start_block=True)
     body_start = sdfg.add_state()
     body = sdfg.add_state()
     body_end = sdfg.add_state()
@@ -438,7 +439,7 @@ def test_symbol_array_mix_2(parallel):
     sdfg.add_array('A', [20], dace.float64)
     sdfg.add_array('B', [20], dace.float64)
     sdfg.add_symbol('sym', dace.float64)
-    init = sdfg.add_state(is_start_state=True)
+    init = sdfg.add_state(is_start_block=True)
     body_start = sdfg.add_state()
     body_end = sdfg.add_state()
     after = sdfg.add_state()
@@ -461,7 +462,7 @@ def test_symbol_array_mix_2(parallel):
 @pytest.mark.parametrize('overwrite', (False, True))
 def test_internal_symbol_used_outside(overwrite):
     sdfg = dace.SDFG('tester')
-    init = sdfg.add_state(is_start_state=True)
+    init = sdfg.add_state(is_start_block=True)
     body_start = sdfg.add_state()
     body = sdfg.add_state()
     body_end = sdfg.add_state()
@@ -490,7 +491,7 @@ def test_shared_local_transient_single_state():
     """
 
     sdfg = dace.SDFG('shared_local_transient_single_state')
-    begin = sdfg.add_state('begin', is_start_state=True)
+    begin = sdfg.add_state('begin', is_start_block=True)
     guard = sdfg.add_state('guard')
     body = sdfg.add_state('body')
     end = sdfg.add_state('end')
@@ -525,7 +526,7 @@ def test_thread_local_transient_single_state():
     """
 
     sdfg = dace.SDFG('thread_local_transient_single_state')
-    begin = sdfg.add_state('begin', is_start_state=True)
+    begin = sdfg.add_state('begin', is_start_block=True)
     guard = sdfg.add_state('guard')
     body = sdfg.add_state('body')
     end = sdfg.add_state('end')
@@ -563,7 +564,7 @@ def test_shared_local_transient_multi_state():
     """
 
     sdfg = dace.SDFG('shared_local_transient_multi_state')
-    begin = sdfg.add_state('begin', is_start_state=True)
+    begin = sdfg.add_state('begin', is_start_block=True)
     guard = sdfg.add_state('guard')
     body0 = sdfg.add_state('body0')
     body1 = sdfg.add_state('body1')
@@ -601,7 +602,7 @@ def test_thread_local_transient_multi_state():
     """
 
     sdfg = dace.SDFG('thread_local_transient_multi_state')
-    begin = sdfg.add_state('begin', is_start_state=True)
+    begin = sdfg.add_state('begin', is_start_block=True)
     guard = sdfg.add_state('guard')
     body0 = sdfg.add_state('body0')
     body1 = sdfg.add_state('body1')
@@ -722,6 +723,71 @@ def test_internal_write():
     assert np.array_equal(val, ref)
 
 
+@pytest.mark.parametrize('simplify', (False, True))
+def test_rotated_loop_to_map(simplify):
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('N', dace.int32)
+    N = dace.symbol('N')
+    sdfg.add_array('A', [N], dace.float64)
+
+    entry = sdfg.add_state('entry', is_start_block=True)
+    guard = sdfg.add_state_after(entry, 'guard')
+    preheader = sdfg.add_state('preheader')
+    body = sdfg.add_state('body')
+    latch = sdfg.add_state('latch')
+    loopexit = sdfg.add_state('loopexit')
+    exitstate = sdfg.add_state('exitstate')
+
+    sdfg.add_edge(guard, exitstate, dace.InterstateEdge('N <= 0'))
+    sdfg.add_edge(guard, preheader, dace.InterstateEdge('N > 0'))
+    sdfg.add_edge(preheader, body, dace.InterstateEdge(assignments=dict(i=0)))
+    sdfg.add_edge(body, latch, dace.InterstateEdge())
+    sdfg.add_edge(latch, body, dace.InterstateEdge('i < N', assignments=dict(i='i + 1')))
+    sdfg.add_edge(latch, loopexit, dace.InterstateEdge('i >= N'))
+    sdfg.add_edge(loopexit, exitstate, dace.InterstateEdge())
+
+    t = body.add_tasklet('addone', {'inp'}, {'out'}, 'out = inp + 1')
+    body.add_edge(body.add_read('A'), None, t, 'inp', dace.Memlet('A[i]'))
+    body.add_edge(t, 'out', body.add_write('A'), None, dace.Memlet('A[i]'))
+
+    if simplify:
+        sdfg.apply_transformations_repeated(StateFusion)
+
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1
+
+    a = np.random.rand(20)
+    ref = a + 1
+    sdfg(A=a, N=20)
+    assert np.allclose(a, ref)
+
+
+def test_self_loop_to_map():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('N', dace.int32)
+    N = dace.symbol('N')
+    sdfg.add_array('A', [N], dace.float64)
+
+    entry = sdfg.add_state('entry', is_start_block=True)
+    body = sdfg.add_state('body')
+    exitstate = sdfg.add_state('exitstate')
+
+    sdfg.add_edge(entry, body, dace.InterstateEdge(assignments=dict(i=2)))
+    sdfg.add_edge(body, body, dace.InterstateEdge('i < N', assignments=dict(i='i + 2')))
+    sdfg.add_edge(body, exitstate, dace.InterstateEdge('i >= N'))
+
+    t = body.add_tasklet('addone', {'inp'}, {'out'}, 'out = inp + 1')
+    body.add_edge(body.add_read('A'), None, t, 'inp', dace.Memlet('A[i]'))
+    body.add_edge(t, 'out', body.add_write('A'), None, dace.Memlet('A[i]'))
+
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1
+
+    a = np.random.rand(20)
+    ref = np.copy(a)
+    ref[2::2] += 1
+    sdfg(A=a, N=20)
+    assert np.allclose(a, ref)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -758,3 +824,6 @@ if __name__ == "__main__":
     test_nested_loops()
     test_internal_write()
     test_specialize()
+    test_rotated_loop_to_map(False)
+    test_rotated_loop_to_map(True)
+    test_self_loop_to_map()

@@ -3,35 +3,27 @@ import ast
 import collections
 import copy
 import ctypes
-import itertools
 import gzip
 from numbers import Integral
 import os
-import pickle, json
+import json
 from hashlib import md5, sha256
-from pydoc import locate
 import random
-import re
 import shutil
 import sys
-import time
-from typing import Any, AnyStr, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
+from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
-import numpy as np
-import sympy as sp
 
 import dace
+from dace.sdfg.graph import generate_element_id
 import dace.serialize
-from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, properties, symbolic)
-from dace.sdfg.scope import ScopeTree
-from dace.sdfg.replace import replace, replace_properties, replace_properties_dict
+from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic)
+from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
-from dace.frontend.python import astutils, wrappers
+from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
-from dace.sdfg.state import SDFGState, ControlFlowRegion
-from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg.state import ControlFlowBlock, SDFGState, ControlFlowRegion
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
@@ -79,7 +71,14 @@ class NestedDict(dict):
             else:
                 desc = desc.members[token]
             token = tokens.pop(0)
-            result = token in desc.members
+            result = hasattr(desc, 'members') and token in desc.members
+        return result
+
+    def keys(self):
+        result = super(NestedDict, self).keys()
+        for k, v in self.items():
+            if isinstance(v, dt.Structure):
+                result |= set(map(lambda x: k + '.' + x, v.keys()))
         return result
 
 
@@ -113,25 +112,6 @@ def _replace_dict_values(d, old, new):
     for k, v in d.items():
         if v == old:
             d[k] = new
-
-
-def _assignments_from_string(astr):
-    """ Returns a dictionary of assignments from a semicolon-delimited
-        string of expressions. """
-
-    result = {}
-    for aitem in astr.split(';'):
-        aitem = aitem.strip()
-        m = re.search(r'([^=\s]+)\s*=\s*([^=]+)', aitem)
-        result[m.group(1)] = m.group(2)
-
-    return result
-
-
-def _assignments_to_string(assdict):
-    """ Returns a semicolon-delimited string from a dictionary of assignment
-        expressions. """
-    return '; '.join(['%s=%s' % (k, v) for k, v in assdict.items()])
 
 
 def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
@@ -192,12 +172,13 @@ class InterstateEdge(object):
     """
 
     assignments = Property(dtype=dict,
-                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
-                           from_string=_assignments_from_string,
-                           to_string=_assignments_to_string)
+                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
+    guid = Property(dtype=str, allow_none=False)
 
-    def __init__(self, condition: CodeBlock = None, assignments=None):
+    def __init__(self,
+                 condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None,
+                 assignments: Optional[Dict] = None):
         if condition is None:
             condition = CodeBlock("1")
 
@@ -215,6 +196,8 @@ class InterstateEdge(object):
         self.assignments = {k: InterstateEdge._convert_assignment(v) for k, v in assignments.items()}
         self._cond_sympy = None
         self._uncond = None
+
+        self.guid = generate_element_id(self)
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name == 'condition' or name == '_condition':
@@ -466,6 +449,9 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
+    using_experimental_blocks = Property(dtype=bool, default=False,
+                                         desc="Whether the SDFG contains experimental control flow blocks")
+
     extra_dtypes = ListProperty(dtypes.typeclass, desc='Additional data types to be added in code generation')
     defs_to_skip = ListProperty(str, desc='List of global definitions for the code generation to skip')
 
@@ -478,8 +464,8 @@ class SDFG(ControlFlowRegion):
 
             :param name: Name for the SDFG (also used as the filename for
                          the compiled shared library).
-            :param symbols: Additional dictionary of symbol names -> types that the SDFG
-                            defines, apart from symbolic data sizes.
+            :param constants: Additional dictionary of compile-time constants
+                              {name (str): tuple(type (dace.data.Data), value (Any))}.
             :param propagate: If False, disables automatic propagation of
                               memlet subsets from scopes outwards. Saves
                               processing time but disallows certain
@@ -501,7 +487,6 @@ class SDFG(ControlFlowRegion):
         self.symbols = {}
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
-        self._sdfg_list = [self]
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
         self.arg_names = []
         self._labels: Set[str] = set()
@@ -529,14 +514,16 @@ class SDFG(ControlFlowRegion):
         self._orig_name = name
         self._num = 0
 
+        self._sdfg = self
+
     def __deepcopy__(self, memo):
         cls = self.__class__
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            # Skip derivative attributes
+            # Skip derivative attributes and GUID
             if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
-                     '_sdfg_list', '_transformation_hist'):
+                     '_cfg_list', '_transformation_hist', 'guid'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes
@@ -552,12 +539,12 @@ class SDFG(ControlFlowRegion):
         # Copy SDFG list and transformation history
         if hasattr(self, '_transformation_hist'):
             setattr(result, '_transformation_hist', copy.deepcopy(self._transformation_hist, memo))
-        result._sdfg_list = []
+        result._cfg_list = []
         if self._parent_sdfg is None:
             # Avoid import loops
             from dace.transformation.passes.fusion_inline import FixNestedSDFGReferences
 
-            result._sdfg_list = result.reset_sdfg_list()
+            result._cfg_list = result.reset_cfg_list()
             fixed = FixNestedSDFGReferences().apply_pass(result, {})
             if fixed:
                 warnings.warn(f'Fixed {fixed} nested SDFG parent references during deep copy.')
@@ -567,10 +554,11 @@ class SDFG(ControlFlowRegion):
     @property
     def sdfg_id(self):
         """
-        Returns the unique index of the current SDFG within the current
-        tree of SDFGs (top-level SDFG is 0, nested SDFGs are greater).
+        Returns the unique index of the current CFG within the current tree of CFGs (Top-level CFG/SDFG is 0, nested
+        CFGs/SDFGs are greater).
+        :note: ``sdfg_id`` is deprecated, please use ``cfg_id`` instead.
         """
-        return self.sdfg_list.index(self)
+        return self.cfg_id
 
     def to_json(self, hash=False):
         """ Serializes this object to JSON format.
@@ -578,8 +566,9 @@ class SDFG(ControlFlowRegion):
             :return: A string representing the JSON-serialized SDFG.
         """
         # Location in the SDFG list (only for root SDFG)
-        if self.parent_sdfg is None:
-            self.reset_sdfg_list()
+        is_root = self.parent_sdfg is None
+        if is_root:
+            self.reset_cfg_list()
 
         tmp = super().to_json()
 
@@ -587,21 +576,18 @@ class SDFG(ControlFlowRegion):
         if 'constants_prop' in tmp['attributes']:
             tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(tmp['attributes']['constants_prop']))
 
-        tmp['sdfg_list_id'] = int(self.sdfg_id)
-        tmp['start_state'] = self._start_block
-
         tmp['attributes']['name'] = self.name
         if hash:
             tmp['attributes']['hash'] = self.hash_sdfg(tmp)
 
-        if int(self.sdfg_id) == 0:
+        if is_root:
             tmp['dace_version'] = dace.__version__
 
         return tmp
 
     @classmethod
-    def from_json(cls, json_obj, context_info=None):
-        context_info = context_info or {'sdfg': None}
+    def from_json(cls, json_obj, context=None):
+        context = context or {'sdfg': None}
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -615,27 +601,27 @@ class SDFG(ControlFlowRegion):
         else:
             constants_prop = None
 
-        ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context_info['sdfg'])
+        ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
         dace.serialize.set_properties_from_json(ret,
                                                 json_obj,
-                                                ignore_properties={'constants_prop', 'name', 'hash', 'start_state'})
+                                                ignore_properties={'constants_prop', 'name', 'hash'})
 
         nodelist = []
         for n in nodes:
-            nci = copy.copy(context_info)
+            nci = copy.copy(context)
             nci['sdfg'] = ret
 
-            state = SDFGState.from_json(n, context=nci)
-            ret.add_node(state)
-            nodelist.append(state)
+            block = dace.serialize.from_json(n, context=nci)
+            ret.add_node(block)
+            nodelist.append(block)
 
         for e in edges:
             e = dace.serialize.from_json(e)
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
-        if 'start_state' in json_obj:
-            ret._start_block = json_obj['start_state']
+        if 'start_block' in json_obj:
+            ret._start_block = json_obj['start_block']
 
         return ret
 
@@ -653,15 +639,15 @@ class SDFG(ControlFlowRegion):
             # uniquely representing the SDFG. This, among other things, includes
             # the hash, name, transformation history, and meta attributes.
             if isinstance(json_obj, dict):
-                if 'sdfg_list_id' in json_obj:
-                    del json_obj['sdfg_list_id']
+                if 'cfg_list_id' in json_obj:
+                    del json_obj['cfg_list_id']
 
                 keys_to_delete = []
                 kv_to_recurse = []
                 for key, value in json_obj.items():
                     if (isinstance(key, str)
                             and (key.startswith('_meta_')
-                                 or key in ['name', 'hash', 'orig_sdfg', 'transformation_hist', 'instrument'])):
+                                 or key in ['name', 'hash', 'orig_sdfg', 'transformation_hist', 'instrument', 'guid'])):
                         keys_to_delete.append(key)
                     else:
                         kv_to_recurse.append((key, value))
@@ -743,13 +729,15 @@ class SDFG(ControlFlowRegion):
         :param replace_keys: If True, replaces in SDFG property names (e.g., array, symbol, and constant names).
         """
         symrepl = symrepl or {
-            symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
             for k, v in repldict.items()
         }
 
         # Replace in arrays and symbols (if a variable name)
         if replace_keys:
-            for name, new_name in repldict.items():
+            # Filter out nested data names, as we cannot and do not want to replace names in nested data descriptors
+            repldict_filtered = {k: v for k, v in repldict.items() if '.' not in k}
+            for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self._arrays, name, new_name)
                     _replace_dict_keys(self.symbols, name, new_name)
@@ -904,8 +892,8 @@ class SDFG(ControlFlowRegion):
         if Config.get_bool('store_history') is False:
             return
         # Make sure the transformation is appended to the root SDFG.
-        if self.sdfg_id != 0:
-            self.sdfg_list[0].append_transformation(transformation)
+        if self.cfg_id != 0:
+            self.cfg_list[0].append_transformation(transformation)
             return
 
         if not self.orig_sdfg:
@@ -1115,32 +1103,32 @@ class SDFG(ControlFlowRegion):
         del self._arrays[name]
 
     def reset_sdfg_list(self):
-        if self.parent_sdfg is not None:
-            return self.parent_sdfg.reset_sdfg_list()
-        else:
-            # Propagate new SDFG list to all children
-            all_sdfgs = list(self.all_sdfgs_recursive())
-            for sd in all_sdfgs:
-                sd._sdfg_list = all_sdfgs
-        return self._sdfg_list
+        """
+        Reset the CFG list when changes have been made to the SDFG's CFG tree.
+        This collects all control flow graphs recursively and propagates the collection to all CFGs as the new CFG list.
+        :note: ``reset_sdfg_list`` is deprecated, please use ``reset_cfg_list`` instead.
+
+        :return: The newly updated CFG list.
+        """
+        warnings.warn('reset_sdfg_list is deprecated, use reset_cfg_list instead', DeprecationWarning)
+        return self.reset_cfg_list()
 
     def update_sdfg_list(self, sdfg_list):
-        # TODO: Refactor
-        sub_sdfg_list = self._sdfg_list
-        for sdfg in sdfg_list:
-            if sdfg not in sub_sdfg_list:
-                sub_sdfg_list.append(sdfg)
-        if self._parent_sdfg is not None:
-            self._parent_sdfg.update_sdfg_list(sub_sdfg_list)
-            self._sdfg_list = self._parent_sdfg.sdfg_list
-            for sdfg in sub_sdfg_list:
-                sdfg._sdfg_list = self._sdfg_list
-        else:
-            self._sdfg_list = sub_sdfg_list
+        """
+        Given a collection of CFGs, add them all to the current SDFG's CFG list.
+        Any CFGs already in the list are skipped, and the newly updated list is propagated across all CFGs in the CFG
+        tree.
+        :note: ``update_sdfg_list`` is deprecated, please use ``update_cfg_list`` instead.
+
+        :param sdfg_list: The collection of CFGs to add to the CFG list.
+        """
+        warnings.warn('update_sdfg_list is deprecated, use update_cfg_list instead', DeprecationWarning)
+        self.update_cfg_list(sdfg_list)
 
     @property
-    def sdfg_list(self) -> List['SDFG']:
-        return self._sdfg_list
+    def sdfg_list(self) -> List['ControlFlowRegion']:
+        warnings.warn('sdfg_list is deprecated, use cfg_list instead', DeprecationWarning)
+        return self.cfg_list
 
     def set_sourcecode(self, code: str, lang=None):
         """ Set the source code of this SDFG (for IDE purposes).
@@ -1230,15 +1218,28 @@ class SDFG(ControlFlowRegion):
         """ Returns the states in this SDFG, recursing into state scope blocks. """
         return list(self.all_states())
 
-    def arrays_recursive(self):
+    def arrays_recursive(self, include_nested_data: bool = False):
         """ Iterate over all arrays in this SDFG, including arrays within
-            nested SDFGs. Yields 3-tuples of (sdfg, array name, array)."""
+            nested SDFGs. Yields 3-tuples of (sdfg, array name, array).
+
+            :param include_nested_data: If True, also yields nested data.
+            :return: A generator of (sdfg, array name, array) tuples.
+        """
+
+        def _yield_nested_data(name, arr):
+            for nname, narr in arr.members.items():
+                if isinstance(narr, dt.Structure):
+                    yield from _yield_nested_data(name + '.' + nname, narr)
+                yield self, name + '.' + nname, narr
+
         for aname, arr in self.arrays.items():
+            if isinstance(arr, dt.Structure) and include_nested_data:
+                yield from _yield_nested_data(aname, arr)
             yield self, aname, arr
-        for state in self.nodes():
+        for state in self.states():
             for node in state.nodes():
                 if isinstance(node, nd.NestedSDFG):
-                    yield from node.sdfg.arrays_recursive()
+                    yield from node.sdfg.arrays_recursive(include_nested_data=include_nested_data)
 
     def _used_symbols_internal(self,
                                all_symbols: bool,
@@ -1435,9 +1436,13 @@ class SDFG(ControlFlowRegion):
 
         # Create renderer canvas and load SDFG
         result += """
+<div class="sdfv">
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
+</div>
 <script>
     var sdfg_{uid} = {sdfg};
+</script>
+<script>
     var sdfv_{uid} = new SDFV();
     var renderer_{uid} = new SDFGRenderer(sdfv_{uid}, parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
@@ -1473,9 +1478,13 @@ class SDFG(ControlFlowRegion):
 
         return result
 
-    def shared_transients(self, check_toplevel=True) -> List[str]:
-        """ Returns a list of transient data that appears in more than one
-            state. """
+    def shared_transients(self, check_toplevel: bool = True, include_nested_data: bool = False) -> List[str]:
+        """ Returns a list of transient data that appears in more than one state.
+
+            :param check_toplevel: If True, consider the descriptors' toplevel attribute.
+            :param include_nested_data: If True, also include nested data.
+            :return: A list of transient data names.
+        """
         seen = {}
         shared = []
 
@@ -1489,11 +1498,21 @@ class SDFG(ControlFlowRegion):
         # If transient is accessed in more than one state, it is shared
         for state in self.states():
             for node in state.data_nodes():
-                if node.desc(self).transient:
-                    if (check_toplevel and node.desc(self).toplevel) or (node.data in seen
-                                                                         and seen[node.data] != state):
-                        shared.append(node.data)
-                    seen[node.data] = state
+                tokens = node.data.split('.')
+                # NOTE: The following three lines ensure that nested data share transient and toplevel attributes.
+                desc = self.arrays[tokens[0]]
+                is_transient = desc.transient
+                is_toplevel = desc.toplevel
+                if include_nested_data:
+                    datanames = set(['.'.join(tokens[:i + 1]) for i in range(len(tokens))])
+                else:
+                    datanames = set([tokens[0]])
+                for dataname in datanames:
+                    desc = self.arrays[dataname]
+                    if is_transient:
+                        if (check_toplevel and is_toplevel) or (dataname in seen and seen[dataname] != state):
+                            shared.append(dataname)
+                        seen[dataname] = state
 
         return dtypes.deduplicate(shared)
 
@@ -1510,6 +1529,8 @@ class SDFG(ControlFlowRegion):
             :param compress: If True, uses gzip to compress the file upon saving.
             :return: The hash of the SDFG, or None if failed/not requested.
         """
+        filename = os.path.expanduser(filename)
+
         if compress:
             fileopen = lambda file, mode: gzip.open(file, mode + 't')
         else:
@@ -1537,14 +1558,15 @@ class SDFG(ControlFlowRegion):
 
         return None
 
-    def view(self, filename=None):
+    def view(self, filename=None, verbose=False):
         """
         View this sdfg in the system's HTML viewer
 
         :param filename: the filename to write the HTML to. If `None`, a temporary file will be created.
+        :param verbose: Be verbose, `False` by default.
         """
         from dace.cli.sdfv import view
-        view(self, filename=filename)
+        view(self, filename=filename, verbose=verbose)
 
     @staticmethod
     def _from_file(fp: BinaryIO) -> 'SDFG':
@@ -1903,11 +1925,15 @@ class SDFG(ControlFlowRegion):
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
         # If exists, fail
-        if name in self._arrays:
+        while name in self._arrays:
             if find_new_name:
                 name = self._find_new_name(name)
             else:
                 raise NameError(f'Array or Stream with name "{name}" already exists in SDFG')
+            # NOTE: Remove illegal characters, such as dots. Such characters may be introduced when creating views to
+            # members of Structures.
+            name = name.replace('.', '_')
+        assert name not in self._arrays
         self._arrays[name] = datadesc
 
         def _add_symbols(desc: dt.Data):
@@ -2151,16 +2177,8 @@ class SDFG(ControlFlowRegion):
 
             :param symbols: Values to specialize.
         """
-        # Set symbol values to add
-        syms = {
-            # If symbols are passed, extract the value. If constants are
-            # passed, use them directly.
-            name: val.get() if isinstance(val, dace.symbolic.symbol) else val
-            for name, val in symbols.items()
-        }
-
         # Update constants
-        for k, v in syms.items():
+        for k, v in symbols.items():
             self.add_constant(str(k), v)
 
     def is_loaded(self) -> bool:
@@ -2188,7 +2206,6 @@ class SDFG(ControlFlowRegion):
 
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
-        from dace.sdfg import utils as sdutils
 
         # Compute build folder path before running codegen
         build_folder = self.build_folder
@@ -2208,10 +2225,6 @@ class SDFG(ControlFlowRegion):
             # Fix the build folder name on the copied SDFG to avoid it changing
             # if the codegen modifies the SDFG (thereby changing its hash)
             sdfg.build_folder = build_folder
-
-            # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
-            # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
-            sdutils.inline_loop_blocks(sdfg)
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
@@ -2676,3 +2689,15 @@ class SDFG(ControlFlowRegion):
            :return: a Memlet that fully transfers array
         """
         return dace.Memlet.from_array(array, self.data(array))
+
+    def recheck_using_experimental_blocks(self) -> bool:
+        found_experimental_block = False
+        for node, graph in self.root_sdfg.all_nodes_recursive():
+            if isinstance(graph, ControlFlowRegion) and not isinstance(graph, SDFG):
+                found_experimental_block = True
+                break
+            if isinstance(node, ControlFlowBlock) and not isinstance(node, SDFGState):
+                found_experimental_block = True
+                break
+        self.root_sdfg.using_experimental_blocks = found_experimental_block
+        return found_experimental_block

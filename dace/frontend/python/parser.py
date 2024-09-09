@@ -13,13 +13,19 @@ import warnings
 from dace import data, dtypes, hooks, symbolic
 from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
 
 try:
     from typing import get_origin, get_args
 except ImportError:
     from typing_compat import get_origin, get_args
+
+try:
+    import mpi4py
+    from dace.sdfg.utils import distributed_compile
+except ImportError:
+    mpi4py = None
 
 ArgTypes = Dict[str, Data]
 
@@ -145,7 +151,9 @@ class DaceProgram(pycommon.SDFGConvertible):
                  recreate_sdfg: bool = True,
                  regenerate_code: bool = True,
                  recompile: bool = True,
-                 method: bool = False):
+                 distributed_compilation: bool = False,
+                 method: bool = False,
+                 use_experimental_cfg_blocks: bool = False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
@@ -165,6 +173,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.recreate_sdfg = recreate_sdfg
         self.regenerate_code = regenerate_code
         self.recompile = recompile
+        self.use_experimental_cfg_blocks = use_experimental_cfg_blocks
+        self.distributed_compilation = distributed_compilation
 
         self.global_vars = _get_locals_and_globals(f)
         self.signature = inspect.signature(f)
@@ -443,9 +453,12 @@ class DaceProgram(pycommon.SDFGConvertible):
                 sdfg.simplify()
 
         with hooks.invoke_sdfg_call_hooks(sdfg) as sdfg:
-            # Compile SDFG (note: this is done after symbol inference due to shape
-            # altering transformations such as Vectorization)
-            binaryobj = sdfg.compile(validate=self.validate)
+            if self.distributed_compilation and mpi4py:
+                binaryobj = distributed_compile(sdfg, mpi4py.MPI.COMM_WORLD, validate=self.validate)
+            else:
+                # Compile SDFG (note: this is done after symbol inference due to shape
+                # altering transformations such as Vectorization)
+                binaryobj = sdfg.compile(validate=self.validate)
 
             # Recreate key and add to cache
             cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
@@ -479,6 +492,11 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Obtain DaCe program as SDFG
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
+
+        if not self.use_experimental_cfg_blocks:
+            sdutils.inline_loop_blocks(sdfg)
+            sdutils.inline_control_flow_regions(sdfg)
+        sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
 
         # Apply simplification pass automatically
         if not cached and (simplify == True or
@@ -790,7 +808,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         _, key = self._load_sdfg(None, *args, **kwargs)
         return key
 
-    def _generate_pdp(self, args: Tuple[Any], kwargs: Dict[str, Any], simplify: Optional[bool] = None) -> SDFG:
+    def _generate_pdp(self, args: Tuple[Any], kwargs: Dict[str, Any],
+                      simplify: Optional[bool] = None) -> Tuple[SDFG, bool]:
         """ Generates the parsed AST representation of a DaCe program.
         
             :param args: The given arguments to the program.

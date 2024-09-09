@@ -7,6 +7,7 @@ from dace.transformation import helpers, transformation
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 
 
+@transformation.single_level_sdfg_only
 class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation):
     """
     Eliminates loops with a single loop iteration.
@@ -17,12 +18,8 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
         if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
-        # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
-        body: sd.SDFGState = self.loop_begin
-
         # Obtain iteration variable, range, and stride
-        loop_info = find_for_loop(sdfg, guard, body)
+        loop_info = self.loop_information()
         if not loop_info:
             return False
         _, (start, end, step), _ = loop_info
@@ -40,39 +37,26 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
 
     def apply(self, _, sdfg: sd.SDFG):
         # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
-        body: sd.SDFGState = self.loop_begin
-
         # Obtain iteration variable, range and stride
-        itervar, (start, end, step), (_, body_end) = find_for_loop(sdfg, guard, body)
-
-        # Find all loop-body states
-        states = set()
-        to_visit = [body]
-        while to_visit:
-            state = to_visit.pop(0)
-            for _, dst, _ in sdfg.out_edges(state):
-                if dst not in states and dst is not guard:
-                    to_visit.append(dst)
-            states.add(state)
+        itervar, (start, end, step), (_, body_end) = self.loop_information()
+        states = self.loop_body()
 
         for state in states:
             state.replace(itervar, start)
 
-        # remove loop
-        for body_inedge in sdfg.in_edges(body):
-            sdfg.remove_edge(body_inedge)
-        for body_outedge in sdfg.out_edges(body_end):
-            sdfg.remove_edge(body_outedge)
+        # Remove loop
+        sdfg.remove_edge(self.loop_increment_edge())
 
-        for guard_inedge in sdfg.in_edges(guard):
-            guard_inedge.data.assignments = {}
-            sdfg.add_edge(guard_inedge.src, body, guard_inedge.data)
-            sdfg.remove_edge(guard_inedge)
-        for guard_outedge in sdfg.out_edges(guard):
-            guard_outedge.data.condition = CodeBlock("1")
-            sdfg.add_edge(body_end, guard_outedge.dst, guard_outedge.data)
-            sdfg.remove_edge(guard_outedge)
-        sdfg.remove_node(guard)
+        init_edge = self.loop_init_edge()
+        init_edge.data.assignments = {}
+        sdfg.add_edge(init_edge.src, self.loop_begin, init_edge.data)
+        sdfg.remove_edge(init_edge)
+
+        exit_edge = self.loop_exit_edge()
+        exit_edge.data.condition = CodeBlock("1")
+        sdfg.add_edge(body_end, exit_edge.dst, exit_edge.data)
+        sdfg.remove_edge(exit_edge)
+
+        sdfg.remove_nodes_from(self.loop_meta_states())
         if itervar in sdfg.symbols and helpers.is_symbol_unused(sdfg, itervar):
             sdfg.remove_symbol(itervar)

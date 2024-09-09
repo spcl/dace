@@ -5,11 +5,12 @@ import sympy
 import pickle
 import re
 from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, Union
-import warnings
 import numpy
 
 import sympy.abc
 import sympy.printing.str
+
+import packaging.version as packaging_version
 
 from dace import dtypes
 
@@ -21,6 +22,19 @@ _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 # Since version 1.9, the values of this dictionary are None. In the dictionary
 # below, we recreate it to be as in versions < 1.9.
 _sympy_clash = {k: v if v else getattr(sympy.abc, k) for k, v in sympy.abc._clash.items()}
+
+
+# SymPy 1.13 changes the behavior of `==` such that floats with different precisions
+# are always different.
+# For DaCe, mostly the comparison of value (ignoring precision) is relevant which
+# can be done with `equal_valued`. However, `equal_valued` was only introduced in
+# SymPy 1.12, so we fall back to `==` in that case (which ignores precision in those versions).
+# For convenience, we provide this functionality in our own SymPy layer.
+if packaging_version.Version(sympy.__version__) < packaging_version.Version("1.12"):
+    def equal_valued(x, y):
+        return x == y
+else:
+    equal_valued = sympy.core.numbers.equal_valued
 
 
 class symbol(sympy.Symbol):
@@ -53,19 +67,10 @@ class symbol(sympy.Symbol):
 
         self.dtype = dtype
         self._constraints = []
-        self.value = None
         return self
 
-    def set(self, value):
-        warnings.warn('symbol.set is deprecated, use keyword arguments', DeprecationWarning)
-        if value is not None:
-            # First, check constraints
-            self.check_constraints(value)
-
-        self.value = self.dtype(value)
-
     def __getstate__(self):
-        return dict(self.assumptions0, **{'value': self.value, 'dtype': self.dtype, '_constraints': self._constraints})
+        return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
 
     def _eval_subs(self, old, new):
         """
@@ -84,15 +89,6 @@ class symbol(sympy.Symbol):
             return None
         except AttributeError:
             return None
-
-    def is_initialized(self):
-        return self.value is not None
-
-    def get(self):
-        warnings.warn('symbol.get is deprecated, use keyword arguments', DeprecationWarning)
-        if self.value is None:
-            raise UnboundLocalError('Uninitialized symbol value for \'' + self.name + '\'')
-        return self.value
 
     def set_constraints(self, constraint_list):
         try:
@@ -140,9 +136,6 @@ class symbol(sympy.Symbol):
                 raise RuntimeError('Cannot validate constraint %s for symbol %s' % (str(constraint), self.name))
         if fail is not None:
             raise RuntimeError('Value %s invalidates constraint %s for symbol %s' % (str(value), str(fail), self.name))
-
-    def get_or_return(self, uninitialized_ret):
-        return self.value or uninitialized_ret
 
 
 class SymExpr(object):
@@ -287,13 +280,6 @@ class SymExpr(object):
 SymbolicType = Union[sympy.Basic, SymExpr]
 
 
-def symvalue(val):
-    """ Returns the symbol value if it is a symbol. """
-    if isinstance(val, symbol):
-        return val.get()
-    return val
-
-
 # http://stackoverflow.com/q/3844948/
 def _checkEqualIvo(lst):
     return not lst or lst.count(lst[0]) == len(lst)
@@ -333,9 +319,8 @@ def symlist(values):
     return result
 
 
-def evaluate(expr: Union[sympy.Basic, int, float],
-             symbols: Dict[Union[symbol, str], Union[int, float]]) -> \
-        Union[int, float, numpy.number]:
+def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str],
+                                                                 Union[int, float]]) -> Union[int, float, numpy.number]:
     """
     Evaluates an expression to a constant based on a mapping from symbols
     to values.
@@ -356,9 +341,7 @@ def evaluate(expr: Union[sympy.Basic, int, float],
         return expr
 
     # Evaluate all symbols
-    syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)):
-            sval.get() if isinstance(sval, symbol) else sval
-            for sname, sval in symbols.items()}
+    syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)): sval for sname, sval in symbols.items()}
 
     # Filter out `None` values, callables, and iterables but not strings (for SymPy 1.12)
     syms = {
@@ -757,10 +740,18 @@ class Attr(sympy.Function):
 
     @property
     def free_symbols(self):
-        return {sympy.Symbol(str(self))}
+        # NOTE: The following handles the case where the attribute is an array access, e.g., "indptr[i]"
+        if isinstance(self.args[1], sympy.Function):
+            attribute = str(self.args[1].func)
+        else:
+            attribute = str(self.args[1])
+        return {sympy.Symbol(f"{self.args[0]}.{attribute}")}
 
     def __str__(self):
         return f'{self.args[0]}.{self.args[1]}'
+    
+    def _subs(self, *args, **kwargs):
+        return Attr(self.args[0].subs(*args, **kwargs), self.args[1].subs(*args, **kwargs))
 
 
 def sympy_intdiv_fix(expr):
@@ -1053,7 +1044,7 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
                                   self.visit(node.orelse)],
                             keywords=[])
         return ast.copy_location(new_node, node)
-    
+
     def visit_Subscript(self, node):
         if isinstance(node.value, ast.Attribute):
             attr = ast.Subscript(value=ast.Name(id=node.value.attr, ctx=ast.Load()), slice=node.slice, ctx=ast.Load())
@@ -1176,7 +1167,18 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) == 'OR':
             return f'(({self._print(expr.args[0])}) or ({self._print(expr.args[1])}))'
         if str(expr.func) == 'Attr':
-            return f'{self._print(expr.args[0])}.{self._print(expr.args[1])}'
+            # TODO: We want to check that args[0] is a Structure.
+            #       However, this is information is not currently passed from the code generator.
+            if self.cpp_mode:
+                sep = '->'
+            else:
+                sep = '.'
+            if isinstance(expr.args[1], sympy.Function):
+                attribute = f'{self._print(expr.args[1].func)}[{",".join(map(self._print, expr.args[1].args))}]'
+            else:
+                attribute = self._print(expr.args[1])
+            return f'{self._print(expr.args[0])}{sep}{attribute}'
+            # return f'{self._print(expr.args[0])}.{self._print(expr.args[1])}'
         return super()._print_Function(expr)
 
     def _print_Mod(self, expr):
@@ -1434,8 +1436,7 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
         return sympy.ask(sympy.Q.is_true(sympy.Eq(*args)))
 
 
-def symbols_in_code(code: str, potential_symbols: Set[str] = None,
-                    symbols_to_ignore: Set[str] = None) -> Set[str]:
+def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ignore: Set[str] = None) -> Set[str]:
     """
     Tokenizes a code string for symbols and returns a set thereof.
 
@@ -1448,7 +1449,7 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None,
     if potential_symbols is not None and len(potential_symbols) == 0:
         # Don't bother tokenizing for an empty set of potential symbols
         return set()
-    
+
     tokens = set(re.findall(_NAME_TOKENS, code))
     if potential_symbols is not None:
         tokens &= potential_symbols

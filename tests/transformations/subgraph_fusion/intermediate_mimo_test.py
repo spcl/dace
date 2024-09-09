@@ -14,7 +14,6 @@ from typing import Union, List
 from dace.sdfg.graph import SubgraphView
 
 N = dace.symbol('N')
-N.set(1000)
 
 
 @dace.program
@@ -47,15 +46,15 @@ def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.flo
 
 def _test_quantitatively(sdfg):
     graph = sdfg.nodes()[0]
-    A = np.random.rand(N.get()).astype(np.float64)
-    B = np.random.rand(N.get()).astype(np.float64)
-    C1 = np.random.rand(N.get()).astype(np.float64)
-    C2 = np.random.rand(N.get()).astype(np.float64)
-    D1 = np.random.rand(N.get()).astype(np.float64)
-    D2 = np.random.rand(N.get()).astype(np.float64)
+    A = np.random.rand(1000).astype(np.float64)
+    B = np.random.rand(1000).astype(np.float64)
+    C1 = np.random.rand(1000).astype(np.float64)
+    C2 = np.random.rand(1000).astype(np.float64)
+    D1 = np.random.rand(1000).astype(np.float64)
+    D2 = np.random.rand(1000).astype(np.float64)
 
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C1, D=D1, N=N)
+    csdfg(A=A, B=B, C=C1, D=D1, N=1000)
     del csdfg
 
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
@@ -71,7 +70,7 @@ def _test_quantitatively(sdfg):
     sf.apply(sdfg)
 
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C2, D=D2, N=N)
+    csdfg(A=A, B=B, C=C2, D=D2, N=1000)
 
     assert np.allclose(C1, C2)
     assert np.allclose(D1, D2)

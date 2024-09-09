@@ -40,16 +40,16 @@ def test():
     state.add_memlet_path(nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
 
 
-    N.set(64)
+    N = 64
 
     input = dp.ndarray([N, N], dp.float32)
     output = dp.ndarray([N, N], dp.float32)
-    input[:] = np.random.rand(N.get(), N.get()).astype(dp.float32.type)
+    input[:] = np.random.rand(N, N).astype(dp.float32.type)
     output[:] = dp.float32(0)
 
     mysdfg(A=input, B=output, N=N)
 
-    diff = np.linalg.norm(output - np.power(input, 5)) / (N.get() * N.get())
+    diff = np.linalg.norm(output - np.power(input, 5)) / (N * N)
     print("Difference:", diff)
     assert diff <= 1e-5
 

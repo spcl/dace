@@ -234,7 +234,7 @@ class StreamingMemory(xf.SingleStateTransformation):
             # Check if map has the right access pattern
             # Stride 1 access by innermost loop, innermost loop counter has to be divisible by vector size
             # Same code as in apply
-            state = sdfg.node(self.state_id)
+            state = graph
             dnode: nodes.AccessNode = self.access
             if self.expr_index == 0:
                 edges = state.out_edges(dnode)
@@ -705,7 +705,7 @@ class StreamingComposition(xf.SingleStateTransformation):
                                         find_new_name=True)
 
         # Remove transient array if possible
-        for ostate in sdfg.nodes():
+        for ostate in sdfg.states():
             if ostate is state:
                 continue
             if any(n.data == access.data for n in ostate.data_nodes()):

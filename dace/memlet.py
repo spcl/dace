@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, List, Optional, Set, Union
 import warnings
 
 import dace
+from dace.sdfg.graph import generate_element_id
 import dace.serialize
 from dace import subsets, dtypes, symbolic
 from dace.frontend.operations import detect_reduction_type
@@ -53,6 +54,8 @@ class Memlet(object):
                              desc='If True, always generates non-conflicting '
                              '(non-atomic) writes in resulting code')
     allow_oob = Property(dtype=bool, default=False, desc='Bypass out-of-bounds validation')
+
+    guid = Property(dtype=str, allow_none=False)
 
     def __init__(self,
                  expr: Optional[str] = None,
@@ -137,6 +140,9 @@ class Memlet(object):
         self.debuginfo = debuginfo
         self.allow_oob = allow_oob
 
+        self.guid = generate_element_id(self)
+
+
     @staticmethod
     def from_memlet(memlet: 'Memlet') -> 'Memlet':
         sbs = subsets.Range(memlet.subset.ndrange()) if memlet.subset is not None else None
@@ -206,6 +212,8 @@ class Memlet(object):
         node._wcr_nonatomic = self._wcr_nonatomic
         node._allow_oob = self._allow_oob
         node._is_data_src = self._is_data_src
+
+        node._guid = generate_element_id(node)
 
         # Nullify graph references
         node._sdfg = None
