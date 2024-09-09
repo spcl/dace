@@ -15,6 +15,7 @@ from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type
 import warnings
 
 import dace
+from dace.sdfg.graph import generate_element_id
 import dace.serialize
 from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic)
 from dace.sdfg.replace import replace_properties_dict
@@ -173,6 +174,7 @@ class InterstateEdge(object):
     assignments = Property(dtype=dict,
                            desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
+    guid = Property(dtype=str, allow_none=False)
 
     def __init__(self,
                  condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None,
@@ -194,6 +196,8 @@ class InterstateEdge(object):
         self.assignments = {k: InterstateEdge._convert_assignment(v) for k, v in assignments.items()}
         self._cond_sympy = None
         self._uncond = None
+
+        self.guid = generate_element_id(self)
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name == 'condition' or name == '_condition':
@@ -512,9 +516,9 @@ class SDFG(ControlFlowRegion):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            # Skip derivative attributes
+            # Skip derivative attributes and GUID
             if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
-                     '_cfg_list', '_transformation_hist'):
+                     '_cfg_list', '_transformation_hist', 'guid'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes
@@ -638,7 +642,7 @@ class SDFG(ControlFlowRegion):
                 for key, value in json_obj.items():
                     if (isinstance(key, str)
                             and (key.startswith('_meta_')
-                                 or key in ['name', 'hash', 'orig_sdfg', 'transformation_hist', 'instrument'])):
+                                 or key in ['name', 'hash', 'orig_sdfg', 'transformation_hist', 'instrument', 'guid'])):
                         keys_to_delete.append(key)
                     else:
                         kv_to_recurse.append((key, value))

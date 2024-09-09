@@ -79,17 +79,16 @@ class LoopPeeling(LoopUnroll):
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         ####################################################################
         # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
         begin: sd.SDFGState = self.loop_begin
         after_state: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride
-        condition_edge = graph.edges_between(guard, begin)[0]
-        not_condition_edge = graph.edges_between(guard, after_state)[0]
-        itervar, rng, loop_struct = find_for_loop(graph, guard, begin)
+        condition_edge = self.loop_condition_edge()
+        not_condition_edge = self.loop_exit_edge()
+        itervar, rng, loop_struct = self.loop_information()
 
         # Get loop states
-        loop_states = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != guard))
+        loop_states = self.loop_body()
         first_id = loop_states.index(begin)
         last_state = loop_struct[1]
         last_id = loop_states.index(last_state)
@@ -104,7 +103,7 @@ class LoopPeeling(LoopUnroll):
             init_edges = []
             before_states = loop_struct[0]
             for before_state in before_states:
-                init_edge = graph.edges_between(before_state, guard)[0]
+                init_edge = self.loop_init_edge()
                 init_edge.data.assignments[itervar] = str(rng[0] + self.count * rng[2])
                 init_edges.append(init_edge)
             append_states = before_states
@@ -133,7 +132,7 @@ class LoopPeeling(LoopUnroll):
                 if append_state not in before_states:
                     for init_edge in init_edges:
                         graph.remove_edge(init_edge)
-                    graph.add_edge(append_state, guard, init_edges[0].data)
+                    graph.add_edge(append_state, init_edge.dst, init_edges[0].data)
         else:
             # If begin, change initialization assignment and prepend states before
             # guard
@@ -164,4 +163,4 @@ class LoopPeeling(LoopUnroll):
             # Reconnect edge to guard state from last peeled iteration
             if prepend_state != after_state:
                 graph.remove_edge(not_condition_edge)
-                graph.add_edge(guard, prepend_state, not_condition_edge.data)
+                graph.add_edge(not_condition_edge.src, prepend_state, not_condition_edge.data)

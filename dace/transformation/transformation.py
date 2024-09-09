@@ -30,9 +30,11 @@ from dace.transformation import pass_pipeline as ppl
 from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union, Callable
 import pydoc
 import warnings
+from typing import TypeVar
 
+PassT = TypeVar('PassT', bound=ppl.Pass)
 
-def experimental_cfg_block_compatible(cls: ppl.Pass):
+def experimental_cfg_block_compatible(cls: PassT) -> PassT:
     cls.__experimental_cfg_block_compatible__ = True
     return cls
 
