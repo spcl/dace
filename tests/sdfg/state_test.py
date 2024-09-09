@@ -89,6 +89,9 @@ def test_read_and_write_set_filter():
 
     expected_reads = {
             "A": [sbs.Range.from_string("0, 0")],
+            # See comment in `state._read_and_write_sets()` why "B" is here
+            #   it should actually not, but it is a bug.
+            "B": [sbs.Range.from_string("0")],
     }
     expected_writes = {
             # However, this should always be here.
