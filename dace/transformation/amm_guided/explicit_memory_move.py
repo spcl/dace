@@ -18,7 +18,7 @@ from dace import symbol
 
 @make_properties
 class MemoryMovementNode(CodeLibraryNode):
-    def __init__(self, name, input_names, output_names, src_subset, src_arr_name, src_arr, dst_arr_name, dst_arr, num_threads, storage):
+    def __init__(self, name, input_names, output_names, src_subset, src_arr_name, src_arr, dst_arr_name, dst_arr, num_threads, storage, sync):
       self._src_subset = src_subset
       self._src_arr_name = src_arr_name
       self._src_arr  = src_arr
@@ -26,36 +26,21 @@ class MemoryMovementNode(CodeLibraryNode):
       self._dst_arr = dst_arr
       self._num_threads = num_threads
       self._storage = storage
+      self._sync = sync
       super().__init__(name=name, input_names=input_names, output_names=output_names)
 
-    def generate_code(self, inputs, outputs):
+    def write_inner_loop(self, num_threads, line_len, dim_check, dynamic_check=False):
       code = ""
-      code += f"// {self._src_arr_name}[{','.join([str(s) for s in self._src_arr.shape])}]\n"
-      code += f"// {self._dst_arr_name}[{','.join([str(s) for s in self._dst_arr.shape])}]\n"
-      num_threads = reduce(lambda x, y: x * y, self._num_threads)
-
-      conds = []
-      for (beg,end,step), lim in zip(self._src_subset, self._src_arr.shape):
-        load_len = (end+1-beg)
-        conds.append(f"{beg} <= {lim} - {load_len}")
-      code += "// Inner Loop Condition: " + " && ".join(conds) + "\n"
-      code += "const int tid = threadIdx.x + blockDim.x * threadIdx.y + (blockDim.x * blockDim.y) * threadIdx.z;\n"
-
-      # Variant 1, load multiple lines at a time
-      lb,le,ls = self._src_subset[-1]
-      line_len = le+1-lb
-      assert(ls==1)
-      code += f"// Num Threads: {num_threads}, Line Length (max): {line_len}"
-
+      conds = dim_check
       if num_threads > line_len:
         lines_at_a_time = num_threads // line_len
         real_lines_at_a_time = min(int(lines_at_a_time), int(self._dst_arr.shape[-2]))
-        code += f" load multiple lines at a time {real_lines_at_a_time}\n"
+        code += f"// load multiple lines at a time {real_lines_at_a_time}\n"
         if len(self._src_arr.shape) == 1:
           num_active_threads = line_len
           strides = self._src_arr.strides
           offset_expression_1d = "+".join([f"({stride}*({offset}))" for (offset,_,_),stride in zip(self._src_subset, strides)])
-          code += f"if (tid < {num_active_threads}){{\n"
+          code += f"if (tid < {num_active_threads}){{\n" if not dynamic_check else f"if (tid < {conds[0]}){{\n"
           code += f"{self._dst_arr_name}[tid] = {self._src_arr_name}[{offset_expression_1d}+tid];\n"
           code += f"}}\n"
         else:
@@ -66,7 +51,71 @@ class MemoryMovementNode(CodeLibraryNode):
             code += f"if (tid < {num_active_threads}){{\n"
 
           var_id = 0
-          for dim in self._dst_arr.shape[:-2]:
+          for dim in conds[:-2]:
+            f"for (int i{var_id} = 0; i{var_id} < {dim}; i{var_id} += 1) {{\n"
+            var_id += 1
+
+          further_access_strs_dst = []
+          further_access_strs_src = []
+          bound_checks = []
+          for i,(dst_stride, src_stride, src_lim) in enumerate(zip(self._dst_arr.strides[:-2], 
+                                                                   self._src_arr.strides[:-2],
+                                                                   self._src_arr.shape[:-2])):
+            further_access_strs_dst.append(f"i{i} * {dst_stride}")
+            further_access_strs_src.append(f"i{i} * {src_stride}")
+          further_access_str_src = " + ".join(further_access_strs_dst)
+          further_access_str_dst = " + ".join(further_access_strs_src)
+          if further_access_str_dst != "":
+            further_access_str_dst = " + " + further_access_str_dst
+          if further_access_str_src != "":
+            further_access_str_src = " + " + further_access_str_src
+
+          for i,(dst_stride, src_stride, src_lim) in enumerate(zip(self._dst_arr.strides[:-1], 
+                                                                   self._src_arr.strides[:-1],
+                                                                   self._src_arr.shape[:-1])):
+            bound_checks.append((f"i{i}", src_lim))
+
+          if self._dst_arr.shape[-2] > real_lines_at_a_time:
+            code += f"#pragma unroll\n"
+            code += f"for (int i{var_id} = 0; i{var_id} < {conds[-2]}; i{var_id} += {real_lines_at_a_time}) {{\n"
+            further_access_str_src += " + " + f"((i{var_id}) * {self._src_arr.strides[-2]})"
+            further_access_str_dst += " + " + f"((i{var_id}) * {self._dst_arr.strides[-2]})"
+
+          code += f"const int line_offset = tid % {line_len};\n"
+          code += f"const int line_num = tid / {line_len};\n"
+
+          if dynamic_check:
+            code += f"if(line_offset < {conds[-1]} && line_num + {bound_checks[-1][0]} < {bound_checks[-1][1]}){{\n"
+
+          code += f"{self._dst_arr_name}[line_num*{self._dst_arr.strides[-2]} + line_offset{further_access_str_dst}] = {self._src_arr_name}[{offset_expression_1d} + line_num*{self._src_arr.strides[-2]} + line_offset{further_access_str_src}];\n"
+
+          if dynamic_check:
+            code += f"}}\n"
+
+
+          if self._dst_arr.shape[-2] > real_lines_at_a_time:
+            code += f"}}\n"
+          if num_active_threads < num_threads:
+            code += f"}}\n"
+          for _ in self._dst_arr.shape[:-2]:
+            code += f"}}\n"
+      else:
+        code += f"// load one line at a time\n"
+        if len(self._src_arr.shape) == 1:
+          num_active_threads = line_len
+          strides = self._src_arr.strides
+          offset_expression_1d = "+".join([f"({stride}*({offset}))" for (offset,_,_),stride in zip(self._src_subset, strides)])
+          cond = conds[0]
+          code += f"for (int i0 = tid; i0 < {cond}; i0 += {num_active_threads}) {{\n"
+          code += f"{self._dst_arr_name}[tid] = {self._src_arr_name}[{offset_expression_1d}+tid];\n"
+          code += f"}}\n"
+        else:
+          strides = self._src_arr.strides
+          num_active_threads = num_threads
+          offset_expression_1d = "+".join([f"({stride}*({offset}))" for (offset,_,_),stride in zip(self._src_subset, strides)])
+
+          var_id = 0
+          for dim in conds[:-2]:
             f"for (int i{var_id} = 0; i{var_id} < {dim}; i{var_id} += 1) {{\n"
             var_id += 1
 
@@ -82,25 +131,55 @@ class MemoryMovementNode(CodeLibraryNode):
           if further_access_str_src != "":
             further_access_str_src = " + " + further_access_str_src
 
-          if self._dst_arr.shape[-2] > real_lines_at_a_time:
-            code += f"#pragma unroll\n"
-            code += f"for (int i{var_id} = 0; i{var_id} < {self._dst_arr.shape[-2]}; i{var_id} += {real_lines_at_a_time}) {{\n"
-            further_access_str_src += " + " + f"((i{var_id}) * {self._src_arr.strides[-2]})"
-            further_access_str_dst += " + " + f"((i{var_id}) * {self._dst_arr.strides[-2]})"
+          code += f"#pragma unroll\n"
+          code += f"for (int i{var_id} = 0; i{var_id} < {conds[-2]}; i{var_id} += 1) {{\n"
+          code += f"#pragma unroll\n"
+          code += f"for (int i{var_id+1} = tid; i{var_id+1} < {conds[-1]}; i{var_id+1} += {num_active_threads}) {{\n"
+          further_access_str_src += " + " + f"((i{var_id}) * {self._src_arr.strides[-2]}) + i{var_id+1}"
+          further_access_str_dst += f"((i{var_id}) * {self._dst_arr.strides[-2]}) + i{var_id+1}"
 
-          code += f"const int line_offset = tid % {line_len};\n"
-          code += f"const int line_num = tid / {line_len};\n"
-          code += f"{self._dst_arr_name}[line_num*{self._dst_arr.strides[-2]} + line_offset{further_access_str_dst}] = {self._src_arr_name}[{offset_expression_1d} + line_num*{self._src_arr.strides[-2]} + line_offset{further_access_str_src}];\n"
+          code += f"{self._dst_arr_name}[{further_access_str_dst}] = {self._src_arr_name}[{offset_expression_1d}{further_access_str_src}];\n"
 
-          if self._dst_arr.shape[-2] > real_lines_at_a_time:
-            code += f"}}\n"
+          code += f"}}\n}}\n"
           if num_active_threads < num_threads:
             code += f"}}\n"
           for _ in self._dst_arr.shape[:-2]:
             code += f"}}\n"
+      return code
+
+    def generate_code(self, inputs, outputs):
+      code = ""
+      code += f"// {self._src_arr_name}[{','.join([str(s) for s in self._src_arr.shape])}]\n"
+      code += f"// {self._dst_arr_name}[{','.join([str(s) for s in self._dst_arr.shape])}]\n"
+      num_threads = reduce(lambda x, y: x * y, self._num_threads)
+
+      conds = []
+      for (beg,end,step), lim in zip(self._src_subset, self._src_arr.shape):
+        load_len = (end+1-beg)
+        conds.append(f"{beg} <= {lim} - {load_len}")
+      code += "// Inner Loop Condition: " + " && ".join(conds) + "\n"
+      code += "const int tid = threadIdx.x + blockDim.x * threadIdx.y + (blockDim.x * blockDim.y) * threadIdx.z;\n"
+
+      inner_dim_checks = [lim for lim in self._dst_arr.shape]
+      outer_dim_checks = [f"Min({lim - beg}, {dst_lim})" for (beg,end,step), lim, dst_lim in zip(self._src_subset, self._src_arr.shape, self._dst_arr.shape)]
+
+      # Variant 1, load multiple lines at a time
+      lb,le,ls = self._src_subset[-1]
+      line_len = le+1-lb
+      assert(ls==1)
+      code += f"// Num Threads: {num_threads}, Line Length (max): {line_len}\n"
+
+      if len(conds) > 0:
+        code += f"if ({' && '.join(conds)}) {{\n"
+        code += self.write_inner_loop(num_threads, line_len, inner_dim_checks, False)
+        code += "} else { \n"
+        code += self.write_inner_loop(num_threads, line_len, outer_dim_checks, True)
+        code += "}\n"
       else:
-        code += f" load one line at a time\n"
-      code += "__syncthreads();\n"
+        self.write_inner_loop(num_threads, line_len)
+
+      if self._sync:
+        code += "__syncthreads();\n"
       return code
 
 
@@ -161,6 +240,14 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
     def apply(self, state: SDFGState, sdfg: SDFG):
       offsets = dict()
       loc1_to_loc2_map = dict()
+      num_loads = 0
+      for out_edge in state.out_edges(self.map_entry):
+        u, uc, v, vc, memlet = out_edge
+        src_arr_name, src_arr_storage_type = self.infer_source(state,sdfg,out_edge)
+        if src_arr_storage_type == dtypes.StorageType.GPU_Global:
+          num_loads += 1
+
+      current_load = 0
       for out_edge in state.out_edges(self.map_entry):
         u, uc, v, vc, memlet = out_edge
         src_arr_name, src_arr_storage_type = self.infer_source(state,sdfg,out_edge)
@@ -215,7 +302,6 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                                                  transient=True, 
                                                  storage=self.memory_location)
 
-
         lib_node = MemoryMovementNode(name=lib_node_name,
                                       input_names=[vc],
                                       output_names=[uc],
@@ -225,7 +311,9 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                                       dst_arr_name=dst_arr_name,
                                       dst_arr=dst_arr,
                                       num_threads=num_threads,
-                                      storage=self.memory_location)
+                                      storage=self.memory_location,
+                                      sync=bool(current_load == num_loads - 1))
+        current_load += 1
         state.add_node(lib_node)
         state.remove_edge(out_edge)
         sdfg.save("em1.sdfg")
