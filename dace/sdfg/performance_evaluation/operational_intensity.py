@@ -103,36 +103,10 @@ def find_merge_state(sdfg: SDFG, state: SDFGState):
     """
     from dace.sdfg.analysis import cfg
 
-    # Get parent states
-    ptree = cfg.state_parent_tree(sdfg)
+    merges = cfg.branch_merges(sdfg)
+    if state in merges:
+        return merges[state]
 
-    # Annotate branches
-    adf = cfg.acyclic_dominance_frontier(sdfg)
-    oedges = sdfg.out_edges(state)
-    # Skip if not branch
-    if len(oedges) <= 1:
-        return
-    # Skip if natural loop
-    if len(oedges) == 2 and ((ptree[oedges[0].dst] == state and ptree[oedges[1].dst] != state) or
-                             (ptree[oedges[1].dst] == state and ptree[oedges[0].dst] != state)):
-        return
-
-    # If branch without else (adf of one successor is equal to the other)
-    if len(oedges) == 2:
-        if {oedges[0].dst} & adf[oedges[1].dst]:
-            return oedges[0].dst
-        elif {oedges[1].dst} & adf[oedges[0].dst]:
-            return oedges[1].dst
-
-    # Try to obtain common DF to find merge state
-    common_frontier = set()
-    for oedge in oedges:
-        frontier = adf[oedge.dst]
-        if not frontier:
-            frontier = {oedge.dst}
-        common_frontier |= frontier
-    if len(common_frontier) == 1:
-        return next(iter(common_frontier))
     print(f'WARNING: No merge state could be detected for branch state "{state.name}".', )
 
 
