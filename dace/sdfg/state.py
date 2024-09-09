@@ -794,13 +794,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     for in_edge in in_edges:
                         if out_edge.data.data != in_edge.data.data:
                             # NOTE: This check does not make any sense, and is in my view wrong.
-                            #   If we consider a memlet between two access nodes, to which access
-                            #   node the `data` attribute of the memlet refers to is arbitrary and
-                            #   does not matter. However, the test will filter _some_ out but not
-                            #   all. See also the tests inside `tests/sdfg/state_test.py` for the
-                            #   wrong behaviour this check induces.
-                            #   This check is is retained for  compatibility with `RefineNestedAccess`,
-                            #   see `tests/numpy/ufunc_support_test.py::test_ufunc_add_accumulate_simple`.
+                            #   As it will filter out some accesses but not all, which one solely
+                            #   depends on how the memelts were created.
+                            #   See also [issue #1634](https://github.com/spcl/dace/issues/1643).
                             continue
                         if in_subsets[in_edge].covers(out_subsets[out_edge]):
                             out_edges.remove(out_edge)
