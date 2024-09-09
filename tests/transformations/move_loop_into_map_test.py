@@ -147,7 +147,11 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         self.assertTrue(np.allclose(val, ref))
 
     def test_more_than_a_map(self):
-        """ `out` is read and written indirectly by the MapExit, potentially leading to a RW dependency. """
+        """`out` is read and written indirectly by the MapExit, potentially leading to a RW dependency.
+
+        Note:
+            However, there is no write conflict and the transformation can be applied.
+        """
         sdfg = dace.SDFG('more_than_a_map')
         _, aarr = sdfg.add_array('A', (3, 3), dace.float64)
         _, barr = sdfg.add_array('B', (3, 3), dace.float64)
@@ -171,7 +175,7 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         body.add_nedge(twrite, owrite, dace.Memlet.from_array('out', oarr))
         sdfg.add_loop(None, body, None, '_', '0', '_ < 10', '_ + 1')
         count = sdfg.apply_transformations(MoveLoopIntoMap)
-        self.assertFalse(count > 0)
+        self.assertTrue(count > 0)
 
     def test_more_than_a_map_1(self):
         """
