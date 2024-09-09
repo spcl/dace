@@ -31,7 +31,8 @@ class RemainderLoop(transformation.SingleStateTransformation):
         pass
 
     def has_remainder(self, numerator, denominator):
-        if numerator.is_integer and denominator.is_integer:
+        if  (isinstance(numerator, int) or numerator.is_integer) and \
+            (isinstance(denominator, int) or denominator.is_integer):
             return numerator % denominator != 0
         else:
             return True
@@ -354,10 +355,14 @@ class RemainderLoop(transformation.SingleStateTransformation):
         lkernel : SDFGState = inner_loop_kernel_sdfg.add_state('kernel')
         rkernel : SDFGState = remainder_loop_kernel_sdfg.add_state('kernel')
 
-        nsdfg  : nodes.NestedSDFG = state.add_nested_sdfg(sub_sdfg, sdfg, ins, outs)
+        d = dict()
+        for sym, t in state.symbols_defined_at(map_before_split).items():
+            d[sym] = t
 
-        lnsdfg : nodes.NestedSDFG = state1.add_nested_sdfg(inner_loop_kernel_sdfg, sub_sdfg, ins, outs, copy.deepcopy(nsdfg.symbol_mapping))
-        rnsdfg : nodes.NestedSDFG = state2.add_nested_sdfg(remainder_loop_kernel_sdfg, sub_sdfg, ins, outs, copy.deepcopy(nsdfg.symbol_mapping))
+        nsdfg  : nodes.NestedSDFG = state.add_nested_sdfg(sub_sdfg, sdfg, ins, outs, symbol_type_mapping=d)
+
+        lnsdfg : nodes.NestedSDFG = state1.add_nested_sdfg(inner_loop_kernel_sdfg, sub_sdfg, ins, outs, copy.deepcopy(nsdfg.symbol_mapping), symbol_type_mapping=d)
+        rnsdfg : nodes.NestedSDFG = state2.add_nested_sdfg(remainder_loop_kernel_sdfg, sub_sdfg, ins, outs, copy.deepcopy(nsdfg.symbol_mapping), symbol_type_mapping=d)
 
         # Add necessary input and output access nodes
         for in_arr in ins:
@@ -579,10 +584,14 @@ class RemainderLoop(transformation.SingleStateTransformation):
                     lassign : SDFGState = assign_inner_sdfg.add_state('assignment')
                     rassign : SDFGState = assign_remainder_sdfg.add_state('assignment')
 
-                    assign_nsdfg  : nodes.NestedSDFG = state.add_nested_sdfg(assign_sub_sdfg, sdfg, ins, outs)
+                    d = dict()
+                    for sym, t in state.symbols_defined_at(n).items():
+                        d[sym] = t
 
-                    lnsdfg : nodes.NestedSDFG = state1.add_nested_sdfg(assign_inner_sdfg, assign_sub_sdfg, ins, outs, copy.deepcopy(assign_nsdfg.symbol_mapping))
-                    rnsdfg : nodes.NestedSDFG = state2.add_nested_sdfg(assign_remainder_sdfg, assign_sub_sdfg, ins, outs, copy.deepcopy(assign_nsdfg.symbol_mapping))
+                    assign_nsdfg  : nodes.NestedSDFG = state.add_nested_sdfg(assign_sub_sdfg, sdfg, ins, outs, symbol_type_mapping=d)
+
+                    lnsdfg : nodes.NestedSDFG = state1.add_nested_sdfg(assign_inner_sdfg, assign_sub_sdfg, ins, outs, copy.deepcopy(assign_nsdfg.symbol_mapping), symbol_type_mapping=d)
+                    rnsdfg : nodes.NestedSDFG = state2.add_nested_sdfg(assign_remainder_sdfg, assign_sub_sdfg, ins, outs, copy.deepcopy(assign_nsdfg.symbol_mapping), symbol_type_mapping=d)
 
                     i_u,i_uc,i_v,i_vc,imemlet = ie
                     o_u,o_uc,o_v,o_vc,omemlet = oe

@@ -102,7 +102,11 @@ class ChangeThreadBlockMap(transformation.SingleStateTransformation):
         # detected blocksizes, and these transformatiosn need to update them
         # Block steps are returned in the form of z, y, x
         # dev_map.gpu_block_size =  list(reversed(new_block_dimensions))
-
+        for m in [dev_map, block_map]:
+            d = dict()
+            for param in m.params:
+                d[param] = dtypes.typeclass("intc")
+            m.param_types = d
     @staticmethod
     def annotates_memlets():
         return False
