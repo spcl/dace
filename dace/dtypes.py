@@ -87,6 +87,12 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
+# A subset of CPU schedule types
+CPU_SCHEDULES = [
+    ScheduleType.CPU_Multicore,
+    ScheduleType.CPU_Pinned,
+]
+
 # A subset of on-GPU storage types
 GPU_STORAGES = [
     StorageType.GPU_Shared,
