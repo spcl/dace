@@ -221,7 +221,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                 param_id = j
                                 break
                         conditions_and_ranges[self.inner_work_map_entry.map.params[param_id]] = (ns, glb_arr.shape[i], lim)
-                    added_conditions.add(f"({" + ".join(ns + [str(lim)])} <= {glb_arr.shape[i]})")
+                    added_conditions.add(f"({' + '.join(ns + [str(lim)])} <= {glb_arr.shape[i]})")
         """
         conditions_and_ranges = dict()
         for (data, range), b in set(can_out_of_bound.items()):

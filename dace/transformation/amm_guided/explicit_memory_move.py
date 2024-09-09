@@ -30,8 +30,8 @@ class MemoryMovementNode(CodeLibraryNode):
 
     def generate_code(self, inputs, outputs):
       code = ""
-      code += f"// {self._src_arr_name}[{",".join([str(s) for s in self._src_arr.shape])}]\n"
-      code += f"// {self._dst_arr_name}[{",".join([str(s) for s in self._dst_arr.shape])}]\n"
+      code += f"// {self._src_arr_name}[{','.join([str(s) for s in self._src_arr.shape])}]\n"
+      code += f"// {self._dst_arr_name}[{','.join([str(s) for s in self._dst_arr.shape])}]\n"
       num_threads = reduce(lambda x, y: x * y, self._num_threads)
 
       conds = []
