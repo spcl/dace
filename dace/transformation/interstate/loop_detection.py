@@ -29,6 +29,9 @@ class DetectLoop(transformation.PatternTransformation):
     # Available for rotated and self loops
     entry_state = transformation.PatternNode(sd.SDFGState)
 
+    # Available for explicit-latch rotated loops
+    loop_break = transformation.PatternNode(sd.SDFGState)
+
     @classmethod
     def expressions(cls):
         # Case 1: Loop with one state
@@ -69,7 +72,32 @@ class DetectLoop(transformation.PatternTransformation):
         ssdfg.add_edge(cls.loop_begin, cls.loop_begin, sd.InterstateEdge())
         ssdfg.add_edge(cls.loop_begin, cls.exit_state, sd.InterstateEdge())
 
-        return [sdfg, msdfg, rsdfg, rmsdfg, ssdfg]
+        # Case 6: Rotated multi-state loop with explicit exiting and latch states
+        mlrmsdfg = gr.OrderedDiGraph()
+        mlrmsdfg.add_nodes_from([cls.entry_state, cls.loop_break, cls.loop_latch, cls.loop_begin, cls.exit_state])
+        mlrmsdfg.add_edge(cls.entry_state, cls.loop_begin, sd.InterstateEdge())
+        mlrmsdfg.add_edge(cls.loop_latch, cls.loop_begin, sd.InterstateEdge())
+        mlrmsdfg.add_edge(cls.loop_break, cls.exit_state, sd.InterstateEdge())
+        mlrmsdfg.add_edge(cls.loop_break, cls.loop_latch, sd.InterstateEdge())
+
+        # Case 7: Rotated single-state loop with explicit exiting and latch states
+        mlrsdfg = gr.OrderedDiGraph()
+        mlrsdfg.add_nodes_from([cls.entry_state, cls.loop_latch, cls.loop_begin, cls.exit_state])
+        mlrsdfg.add_edge(cls.entry_state, cls.loop_begin, sd.InterstateEdge())
+        mlrsdfg.add_edge(cls.loop_latch, cls.loop_begin, sd.InterstateEdge())
+        mlrsdfg.add_edge(cls.loop_begin, cls.exit_state, sd.InterstateEdge())
+        mlrsdfg.add_edge(cls.loop_begin, cls.loop_latch, sd.InterstateEdge())
+
+        # Case 8: Guarded rotated multi-state loop with explicit exiting and latch states (modification of case 6)
+        gmlrmsdfg = gr.OrderedDiGraph()
+        gmlrmsdfg.add_nodes_from([cls.entry_state, cls.loop_break, cls.loop_latch, cls.loop_begin, cls.exit_state])
+        gmlrmsdfg.add_edge(cls.entry_state, cls.loop_begin, sd.InterstateEdge())
+        gmlrmsdfg.add_edge(cls.loop_latch, cls.loop_begin, sd.InterstateEdge())
+        gmlrmsdfg.add_edge(cls.loop_begin, cls.loop_break, sd.InterstateEdge())
+        gmlrmsdfg.add_edge(cls.loop_break, cls.exit_state, sd.InterstateEdge())
+        gmlrmsdfg.add_edge(cls.loop_break, cls.loop_latch, sd.InterstateEdge())
+
+        return [sdfg, msdfg, rsdfg, rmsdfg, ssdfg, mlrmsdfg, mlrsdfg, gmlrmsdfg]
 
     def can_be_applied(self,
                        graph: ControlFlowRegion,
@@ -86,6 +114,10 @@ class DetectLoop(transformation.PatternTransformation):
             return self.detect_rotated_loop(graph, True) is not None
         elif expr_index == 4:
             return self.detect_self_loop(graph) is not None
+        elif expr_index in (5, 7):
+            return self.detect_rotated_loop(graph, True, separate_latch=True) is not None
+        elif expr_index == 6:
+            return self.detect_rotated_loop(graph, False, separate_latch=True) is not None
 
         raise ValueError(f'Invalid expression index {expr_index}')
 
@@ -165,7 +197,7 @@ class DetectLoop(transformation.PatternTransformation):
 
         return next(iter(itvar))
 
-    def detect_rotated_loop(self, graph: ControlFlowRegion, multistate_loop: bool) -> Optional[str]:
+    def detect_rotated_loop(self, graph: ControlFlowRegion, multistate_loop: bool, separate_latch: bool = False) -> Optional[str]:
         """
         Detects a loop of the form:
 
@@ -181,6 +213,9 @@ class DetectLoop(transformation.PatternTransformation):
         :return: The loop variable or ``None`` if not detected.
         """
         latch = self.loop_latch
+        ltest = self.loop_latch
+        if separate_latch:
+            ltest = self.loop_break if multistate_loop else self.loop_begin
         begin = self.loop_begin
 
         # A for-loop start has at least two incoming edges (init and increment)
@@ -188,7 +223,7 @@ class DetectLoop(transformation.PatternTransformation):
         if len(begin_inedges) < 2:
             return None
         # A for-loop latch only has two outgoing edges (loop condition and exit-loop)
-        latch_outedges = graph.out_edges(latch)
+        latch_outedges = graph.out_edges(ltest)
         if len(latch_outedges) != 2:
             return None
 
@@ -208,8 +243,13 @@ class DetectLoop(transformation.PatternTransformation):
 
         # All nodes inside loop must be dominated by loop start
         dominators = nx.dominance.immediate_dominators(graph.nx, graph.start_block)
-        loop_nodes = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != latch))
-        loop_nodes += [latch]
+        if begin is ltest:
+            loop_nodes = [begin]
+        else:
+            loop_nodes = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != ltest))
+        loop_nodes.append(latch)
+        if ltest is not latch and ltest is not begin:
+            loop_nodes.append(ltest)
         backedge = None
         for node in loop_nodes:
             for e in graph.out_edges(node):
@@ -310,9 +350,10 @@ class DetectLoop(transformation.PatternTransformation):
         if self.expr_index <= 1:
             guard = self.loop_guard
             return find_for_loop(guard.parent_graph, guard, entry, itervar)
-        elif self.expr_index in (2, 3):
+        elif self.expr_index in (2, 3, 5, 6, 7):
             latch = self.loop_latch
-            return find_rotated_for_loop(latch.parent_graph, latch, entry, itervar)
+            return find_rotated_for_loop(latch.parent_graph, latch, entry, itervar,
+                                         separate_latch=(self.expr_index in (5, 6, 7)))
         elif self.expr_index == 4:
             return find_rotated_for_loop(entry.parent_graph, entry, entry, itervar)
 
@@ -334,6 +375,14 @@ class DetectLoop(transformation.PatternTransformation):
             return loop_nodes
         elif self.expr_index == 4:
             return [begin]
+        elif self.expr_index in (5, 7):
+            ltest = self.loop_break
+            latch = self.loop_latch
+            loop_nodes = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != ltest))
+            loop_nodes += [ltest, latch]
+            return loop_nodes
+        elif self.expr_index == 6:
+            return [begin, self.loop_latch]
 
         return []
 
@@ -343,8 +392,10 @@ class DetectLoop(transformation.PatternTransformation):
         """
         if self.expr_index in (0, 1):
             return [self.loop_guard]
-        if self.expr_index in (2, 3):
+        if self.expr_index in (2, 3, 6):
             return [self.loop_latch]
+        if self.expr_index in (5, 7):
+            return [self.loop_break, self.loop_latch]
         return []
 
     def loop_init_edge(self) -> gr.Edge[InterstateEdge]:
@@ -357,7 +408,7 @@ class DetectLoop(transformation.PatternTransformation):
             guard = self.loop_guard
             body = self.loop_body()
             return next(e for e in graph.in_edges(guard) if e.src not in body)
-        elif self.expr_index in (2, 3):
+        elif self.expr_index in (2, 3, 5, 6, 7):
             latch = self.loop_latch
             return next(e for e in graph.in_edges(begin) if e.src is not latch)
         elif self.expr_index == 4:
@@ -377,9 +428,12 @@ class DetectLoop(transformation.PatternTransformation):
         elif self.expr_index in (2, 3):
             latch = self.loop_latch
             return graph.edges_between(latch, exitstate)[0]
-        elif self.expr_index == 4:
+        elif self.expr_index in (4, 6):
             begin = self.loop_begin
             return graph.edges_between(begin, exitstate)[0]
+        elif self.expr_index in (5, 7):
+            ltest = self.loop_break
+            return graph.edges_between(ltest, exitstate)[0]
 
         raise ValueError(f'Invalid expression index {self.expr_index}')
 
@@ -398,6 +452,10 @@ class DetectLoop(transformation.PatternTransformation):
         elif self.expr_index == 4:
             begin = self.loop_begin
             return graph.edges_between(begin, begin)[0]
+        elif self.expr_index in (5, 6, 7):
+            latch = self.loop_latch
+            ltest = self.loop_break if self.expr_index in (5, 7) else self.loop_begin
+            return graph.edges_between(ltest, latch)[0]
 
         raise ValueError(f'Invalid expression index {self.expr_index}')
 
@@ -411,7 +469,7 @@ class DetectLoop(transformation.PatternTransformation):
             guard = self.loop_guard
             body = self.loop_body()
             return next(e for e in graph.in_edges(guard) if e.src in body)
-        elif self.expr_index in (2, 3):
+        elif self.expr_index in (2, 3, 5, 6, 7):
             body = self.loop_body()
             return next(e for e in graph.in_edges(begin) if e.src in body)
         elif self.expr_index == 4:
@@ -520,6 +578,10 @@ def find_for_loop(
         match = condition.match(itersym >= a)
         if match:
             end = match[a]
+    if end is None:
+        match = condition.match(sp.Ne(itersym + stride, a))
+        if match:
+            end = match[a] - stride
 
     if end is None:  # No match found
         return None
@@ -531,7 +593,8 @@ def find_rotated_for_loop(
     graph: ControlFlowRegion,
     latch: sd.SDFGState,
     entry: sd.SDFGState,
-    itervar: Optional[str] = None
+    itervar: Optional[str] = None,
+    separate_latch: bool = False,
 ) -> Optional[Tuple[AnyStr, Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType], Tuple[
         List[sd.SDFGState], sd.SDFGState]]]:
     """
@@ -547,7 +610,10 @@ def find_rotated_for_loop(
     """
     # Extract state transition edge information
     entry_inedges = graph.in_edges(entry)
-    condition_edge = graph.edges_between(latch, entry)[0]
+    if separate_latch:
+        condition_edge = graph.in_edges(latch)[0]
+    else:
+        condition_edge = graph.edges_between(latch, entry)[0]
 
     # All incoming edges to the loop entry must set the same variable
     if itervar is None:
@@ -626,6 +692,10 @@ def find_rotated_for_loop(
         match = condition.match(itersym >= a)
         if match:
             end = match[a]
+    if end is None:
+        match = condition.match(sp.Ne(itersym + stride, a))
+        if match:
+            end = match[a] - stride
 
     if end is None:  # No match found
         return None
