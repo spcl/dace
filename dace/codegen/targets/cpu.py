@@ -382,7 +382,7 @@ class CPUCodeGen(TargetCodeGenerator):
         top_storage = top_desc.storage
         top_lifetime = top_desc.lifetime
 
-        if top_transient is False and top_lifetime != dtypes.AllocationLifetime.Global:
+        if (top_transient is False or nodedesc.transient is False) and top_lifetime != dtypes.AllocationLifetime.Global:
             return
 
         # Check if array is already allocated
