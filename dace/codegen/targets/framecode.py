@@ -113,8 +113,7 @@ class DaCeCodeGenerator(object):
         # Write constants
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, data.Array):
-                const_str = "constexpr " + csttype.dtype.ctype + \
-                    " " + cstname + "[" + str(cstval.size) + "] = {"
+                const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(cstval.size) + "] = {"
                 it = np.nditer(cstval, order='C')
                 for i in range(cstval.size - 1):
                     const_str += str(it[0]) + ", "
@@ -434,7 +433,12 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         components = dace.sdfg.concurrent_subgraphs(state)
 
         if len(components) <= 1:
-            self._dispatcher.dispatch_subgraph(sdfg, cfg, state, sid, global_stream, callsite_stream,
+            self._dispatcher.dispatch_subgraph(sdfg,
+                                               cfg,
+                                               state,
+                                               sid,
+                                               global_stream,
+                                               callsite_stream,
                                                skip_entry_node=False)
         else:
             if sdfg.openmp_sections:
@@ -442,7 +446,12 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             for c in components:
                 if sdfg.openmp_sections:
                     callsite_stream.write("#pragma omp section\n{")
-                self._dispatcher.dispatch_subgraph(sdfg, cfg, c, sid, global_stream, callsite_stream,
+                self._dispatcher.dispatch_subgraph(sdfg,
+                                                   cfg,
+                                                   c,
+                                                   sid,
+                                                   global_stream,
+                                                   callsite_stream,
                                                    skip_entry_node=False)
                 if sdfg.openmp_sections:
                     callsite_stream.write("} // End omp section")
@@ -491,9 +500,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # If disabled, generate entire graph as general control flow block
             states_topological = list(sdfg.bfs_nodes(sdfg.start_state))
             last = states_topological[-1]
-            cft = cflow.GeneralBlock(dispatch_state, None,
-                                    [cflow.BasicCFBlock(dispatch_state, None, s is last, s) for s in states_topological],
-                                    [], [], [], [], False)
+            cft = cflow.GeneralBlock(
+                dispatch_state, None, True, None,
+                [cflow.BasicCFBlock(dispatch_state, None, s is last, s)
+                 for s in states_topological], [], [], [], [], False)
 
         callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
 
@@ -606,10 +616,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # 5. True if allocation should take place, otherwise False.
             # 6. True if deallocation should take place, otherwise False.
 
-            first_state_instance, first_node_instance = \
-                access_instances[sdfg.cfg_id].get(name, [(None, None)])[0]
-            last_state_instance, last_node_instance = \
-                access_instances[sdfg.cfg_id].get(name, [(None, None)])[-1]
+            first_state_instance, first_node_instance = access_instances[sdfg.cfg_id].get(name, [(None, None)])[0]
+            last_state_instance, last_node_instance = access_instances[sdfg.cfg_id].get(name, [(None, None)])[-1]
 
             # Cases
             if top_lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
@@ -809,9 +817,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             else:
                 self.where_allocated[(sdfg, name)] = cursdfg
 
-    def allocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion,
-                                 scope: Union[nodes.EntryNode, SDFGState, SDFG], function_stream: CodeIOStream,
-                                 callsite_stream: CodeIOStream) -> None:
+    def allocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
+                                                                                        SDFG],
+                                 function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         """ Dispatches allocation of all arrays in the given scope. """
         for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
             if state is not None:
@@ -824,9 +832,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             self._dispatcher.dispatch_allocate(tsdfg, cfg if state is None else state.parent_graph, state, state_id,
                                                node, desc, function_stream, callsite_stream, declare, allocate)
 
-    def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion,
-                                   scope: Union[nodes.EntryNode, SDFGState, SDFG], function_stream: CodeIOStream,
-                                   callsite_stream: CodeIOStream):
+    def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
+                                                                                          SDFG],
+                                   function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Dispatches deallocation of all arrays in the given scope. """
         for tsdfg, state, node, _, _, deallocate in self.to_allocate[scope]:
             if not deallocate:
@@ -982,8 +990,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Clean up generated code
         gotos = re.findall(r'goto (.*?);', generated_code)
+        goto_ctr = collections.Counter(gotos)
         clean_code = ''
+        last_line = ''
         for line in generated_code.split('\n'):
+            # Empty line
+            if not line.strip():
+                continue
             # Empty line with semicolon
             if re.match(r'^\s*;\s*', line):
                 continue
@@ -991,8 +1004,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             label = re.findall(r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$', line)
             if len(label) > 0:
                 if label[0] not in gotos:
+                    last_line = ''
+                    continue
+                if f'goto {label[0]};' in last_line and goto_ctr[label[0]] == 1:  # goto followed by label
+                    clean_code = clean_code[:-len(last_line) - 1]
+                    last_line = ''
                     continue
             clean_code += line + '\n'
+            last_line = line
 
         # Return the generated global and local code strings
         return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)

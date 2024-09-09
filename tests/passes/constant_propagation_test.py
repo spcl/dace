@@ -352,6 +352,40 @@ def test_for_with_external_init():
     assert np.allclose(val1, ref)
 
 
+def test_for_with_conditional_assignment():
+    N = dace.symbol('N')
+
+    sdfg = dace.SDFG('for_with_conditional_assignment')
+    sdfg.add_symbol('i', dace.int64)
+    sdfg.add_symbol('check', dace.bool)
+    sdfg.add_symbol('__tmp1', dace.bool)
+    sdfg.add_array('__return', {1,}, dace.bool)
+    sdfg.add_array('in_arr', {N,}, dace.bool)
+
+    init = sdfg.add_state('init')
+    guard = sdfg.add_state('guard')
+    condition = sdfg.add_state('condition')
+    if_branch = sdfg.add_state('if_branch')
+    else_branch = sdfg.add_state('else_branch')
+    out = sdfg.add_state('out')
+
+    sdfg.add_edge(init, guard, dace.InterstateEdge(None, {'i': '0', 'check': 'False'}))
+    sdfg.add_edge(guard, condition, dace.InterstateEdge('(i < N)', {'__tmp1': 'in_arr[i]'}))
+    sdfg.add_edge(condition, if_branch, dace.InterstateEdge('__tmp1'))
+    sdfg.add_edge(if_branch, else_branch, dace.InterstateEdge(None, {'check': 'False'}))
+    sdfg.add_edge(condition, else_branch, dace.InterstateEdge('(not __tmp1)', {'check': 'True'}))
+    sdfg.add_edge(else_branch, guard, dace.InterstateEdge(None, {'i': '(i + 1)'}))
+    sdfg.add_edge(guard, out, dace.InterstateEdge('(not (i < N))'))
+
+    a = out.add_write('__return')
+    t = out.add_tasklet('tasklet', {}, {'__out'}, '__out = check')
+    out.add_edge(t, '__out', a, None, dace.Memlet('__return[0]'))
+    sdfg.validate()
+
+    ConstantPropagation().apply_pass(sdfg, {})
+    assert t.code.as_string == '__out = check'
+
+
 def test_for_with_external_init_nested():
 
     N = dace.symbol('N')
@@ -481,6 +515,7 @@ if __name__ == '__main__':
     test_allocation_varying(False)
     test_allocation_varying(True)
     test_for_with_external_init()
+    test_for_with_conditional_assignment()
     test_for_with_external_init_nested()
     test_for_with_external_init_nested_start_with_guard()
     test_skip_branch()
