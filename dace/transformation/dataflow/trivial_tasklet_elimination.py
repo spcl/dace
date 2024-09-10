@@ -17,21 +17,27 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
     """
 
     read = transformation.PatternNode(nodes.AccessNode)
+    read_map = transformation.PatternNode(nodes.MapEntry)
     tasklet = transformation.PatternNode(nodes.Tasklet)
     write = transformation.PatternNode(nodes.AccessNode)
+    write_map = transformation.PatternNode(nodes.MapExit)
 
     @classmethod
     def expressions(cls):
-        return [sdutil.node_path_graph(cls.read, cls.tasklet, cls.write)]
+        return [
+            sdutil.node_path_graph(cls.read, cls.tasklet, cls.write),
+            sdutil.node_path_graph(cls.read_map, cls.tasklet, cls.write),
+            sdutil.node_path_graph(cls.read, cls.tasklet, cls.write_map),
+        ]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        read = self.read
+        read = self.read_map if expr_index == 1 else self.read
         tasklet = self.tasklet
-        write = self.write
+        write = self.write_map if expr_index == 2 else self.write
         # Do not apply on Streams
-        if isinstance(sdfg.arrays[read.data], data.Stream):
+        if expr_index != 1 and isinstance(sdfg.arrays[read.data], data.Stream):
             return False
-        if isinstance(sdfg.arrays[write.data], data.Stream):
+        if expr_index != 2 and isinstance(sdfg.arrays[write.data], data.Stream):
             return False
         if len(graph.in_edges(tasklet)) != 1:
             return False
@@ -51,14 +57,14 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
         return True
 
     def apply(self, graph, sdfg):
-        read = self.read
+        read = self.read_map if self.expr_index == 1 else self.read
         tasklet = self.tasklet
-        write = self.write
+        write = self.write_map if self.expr_index == 2 else self.write
 
         in_edge = graph.edges_between(read, tasklet)[0]
         out_edge = graph.edges_between(tasklet, write)[0]
         graph.remove_edge(in_edge)
         graph.remove_edge(out_edge)
         out_edge.data.other_subset = in_edge.data.subset
-        graph.add_nedge(read, write, out_edge.data)
+        graph.add_edge(read, in_edge.src_conn, write, out_edge.dst_conn, out_edge.data)
         graph.remove_node(tasklet)
