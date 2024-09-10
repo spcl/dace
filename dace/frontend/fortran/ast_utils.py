@@ -95,6 +95,18 @@ def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
             for used_name in actually_used:
                 for var in res.list_of_module_vars:
                     for ii in var.children:
+
+                        # Support scenario where an imported symbol appears in kind selector
+                        # Example: REAL(KIND=JPRB) :: R2ES
+                        # Where JPRB is imported from another module.
+                        if ii.__class__.__name__ == "Intrinsic_Type_Spec":
+
+                            for iii in ii.children:
+                                if iii.__class__.__name__ == "Kind_Selector":
+                                    name_to_check = iii.children[1].string
+                                    if name_to_check not in actually_used:
+                                        actually_used.append(name_to_check)
+
                         if ii.__class__.__name__=="Entity_Decl_List":
                                 for iii in ii.children:
                                     if iii.__class__.__name__=="Entity_Decl":
