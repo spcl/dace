@@ -68,7 +68,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                             map_entry=map_entry)
 
         map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
-        #map_entry.map.gpu_block_size = gpu_block_dims_ordered
+        map_entry.map.label = "ThreadBlockMap"
         
         for m in [map_entry.map]:
             d = dict()
@@ -76,16 +76,9 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                 d[param] = dtypes.typeclass("intc")
             m.param_types = d
 
-        print(map_entry.__dict__)
-        print(map_entry.map.__dict__)
-        b = map_entry.new_symbols(sdfg, state, sdfg.symbols)
-        print(map_entry.new_symbols(sdfg, state, sdfg.symbols))
-        for b1,b2 in b.items():
-            print(b1,b2,type(b1),type(b2))
-
         # The dev map is a new map where the gpu_block_size param is not transferred over
         dev_entry = state.entry_node(map_entry)
-        #dev_entry.map.gpu_block_size = gpu_block_dims_ordered
+        dev_entry.map.label = "KernelEntryMap"
 
         # Clear the copied-over edges that are not between any connectors (happens if such an edge exist to ensure
         # proper allocation of a constnat in after the device map)

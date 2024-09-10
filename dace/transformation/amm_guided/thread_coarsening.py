@@ -83,6 +83,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         sequential_map_entry = thread_block_entry
         sequential_map_entry.map.schedule = dtypes.ScheduleType.Sequential
         sequential_map_entry.map.unroll = True
+        sequential_map_entry.map.label = "ThreadCoarsenedMap"
 
         # Find the thread block map encapsulating the sequential map
         # Entry node of a map should be the map scope avoce

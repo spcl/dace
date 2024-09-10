@@ -50,6 +50,8 @@ class BlockTiling(transformation.SingleStateTransformation):
     # Properties
     block_tile_sizes = Property(dtype=tuple, default=(16,), desc="")
 
+    global_application_number = 0
+
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.thread_block_map_entry, cls.sequential_map_entry)]
@@ -345,7 +347,6 @@ class BlockTiling(transformation.SingleStateTransformation):
         for (access_node_in_edge, access_node, access_node_out_edge, tasklet, tasklet_out_edge) in assignments_removed:
             _, _, _, in_conn, m1 = access_node_in_edge
             _, out_conn, _, _, m2 = tasklet_out_edge
-            print(m2)
             for out_edge in state.out_edges(work_map_exit):
                 u,uc,v,vc,memlet = out_edge
                 _,_,_,_,mm = tasklet_out_edge
@@ -415,14 +416,17 @@ class BlockTiling(transformation.SingleStateTransformation):
             u, u_conn, v, v_conn, memlet = out_edge
             if  v == outer_work_map_entry and u_conn == None and v_conn == None:
                 state.remove_edge(out_edge)
-        sdfg.save("owo.sdfg")
-
 
         for m in [work_map_entry.map, outer_work_map_entry.map]:
             d = dict()
             for param in m.params:
                 d[param] = dtypes.typeclass("intc")
             m.param_types = d
+
+        work_map.label = f"InnerWorkMapNo{BlockTiling.global_application_number}"
+        outer_work_map.label = f"OuterWorkMapNo{BlockTiling.global_application_number}"
+
+        BlockTiling.global_application_number += 1
 
     @staticmethod
     def annotates_memlets():
