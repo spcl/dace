@@ -940,7 +940,7 @@ class Map(object):
         self.label = label
         self.schedule = schedule
         self.unroll = unroll
-        self.collapse = 1
+        self.collapse = collapse
         self.params = params
         self.range = ndrange
         self.debuginfo = debuginfo
