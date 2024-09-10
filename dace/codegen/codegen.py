@@ -1,12 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
-import os
-from typing import List, Set
+from typing import List
 
 import dace
 from dace import dtypes
 from dace import data
-from dace.sdfg import SDFG, utils as sdutils
+from dace.sdfg import SDFG
 from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
@@ -95,7 +94,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
     for node, parent in sdfg.all_nodes_recursive():
         # Query nodes and scopes
         if isinstance(node, SDFGState):
-            frame.targets.add(disp.get_state_dispatcher(parent, node))
+            frame.targets.add(disp.get_state_dispatcher(node.sdfg, node))
         elif isinstance(node, dace.nodes.EntryNode):
             frame.targets.add(disp.get_scope_dispatcher(node.schedule))
         elif isinstance(node, dace.nodes.Node):
@@ -149,7 +148,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
-def generate_code(sdfg, validate=True) -> List[CodeObject]:
+def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
 
@@ -185,10 +184,6 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
                 shutil.move(f'{tmp_dir}/test.sdfg', 'test.sdfg')
                 shutil.move(f'{tmp_dir}/test2.sdfg', 'test2.sdfg')
                 raise RuntimeError(f'SDFG serialization failed - files do not match:\n{diff}')
-
-    # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
-    # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
-    sdutils.inline_loop_blocks(sdfg)
 
     # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)

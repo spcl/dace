@@ -46,8 +46,6 @@ def test_blockallreduce():
     print(np.linalg.norm(result2))
     assert np.allclose(result1, result2)
 
-    print("PASS")
-
 
 if __name__ == '__main__':
     test_blockallreduce()

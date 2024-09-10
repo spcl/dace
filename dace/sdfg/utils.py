@@ -13,12 +13,11 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion, ControlFlowBlock, GraphT
+from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion, ControlFlowRegion
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
-from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
+from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from dace.cli.progress import optional_progressbar
-from string import ascii_uppercase
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Union
 
 
@@ -1218,8 +1217,6 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     start = time.time()
 
     for sd in sdfg.all_sdfgs_recursive():
-        id = sd.cfg_id
-
         for cfg in sd.all_control_flow_regions():
             while True:
                 edges = list(cfg.nx.edges)
@@ -1235,7 +1232,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                         continue
                     candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
                     sf = StateFusion()
-                    sf.setup_match(cfg, id, -1, candidate, 0, override=True)
+                    sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
                     if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
                         sf.apply(cfg, sd)
                         applied += 1
@@ -1252,31 +1249,30 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
 
 def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    # Avoid import loops
-    from dace.transformation.interstate import LoopRegionInline
+    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
+    count = 0
 
-    counter = 0
-    blocks = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
+    for _block in optional_progressbar(reversed(blocks), title='Inlining Loops',
+                                       n=len(blocks), progress=progress):
+        block: LoopRegion = _block
+        if block.inline()[0]:
+            count += 1
 
-    for _block, _graph in optional_progressbar(reversed(blocks), title='Inlining Loops',
-                                               n=len(blocks), progress=progress):
-        block: ControlFlowBlock = _block
-        graph: GraphT = _graph
-        id = block.sdfg.cfg_id
+    return count
 
-        # We have to reevaluate every time due to changing IDs
-        block_id = graph.node_id(block)
 
-        candidate = {
-            LoopRegionInline.loop: block,
-        }
-        inliner = LoopRegionInline()
-        inliner.setup_match(graph, id, block_id, candidate, 0, override=True)
-        if inliner.can_be_applied(graph, 0, block.sdfg, permissive=permissive):
-            inliner.apply(graph, block.sdfg)
-            counter += 1
+def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
+    blocks = [n for n, _ in sdfg.all_nodes_recursive()
+              if isinstance(n, ControlFlowRegion) and not isinstance(n, (LoopRegion, SDFG))]
+    count = 0
 
-    return counter
+    for _block in optional_progressbar(reversed(blocks), title='Inlining control flow blocks',
+                                       n=len(blocks), progress=progress):
+        block: ControlFlowRegion = _block
+        if block.inline()[0]:
+            count += 1
+
+    return count
 
 
 def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, multistate: bool = True) -> int:
@@ -1303,9 +1299,10 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     for nsdfg_node in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
         # We have to reevaluate every time due to changing IDs
         # e.g., InlineMultistateSDFG may fission states
-        parent_state = nsdfg_node.sdfg.parent
-        parent_sdfg = parent_state.parent
-        parent_state_id = parent_sdfg.node_id(parent_state)
+        nsdfg: SDFG = nsdfg_node.sdfg
+        parent_state = nsdfg.parent
+        parent_sdfg = parent_state.sdfg
+        parent_state_id = parent_state.block_id
 
         if multistate:
             candidate = {
@@ -1313,7 +1310,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             }
             inliner = InlineMultistateSDFG()
             inliner.setup_match(sdfg=parent_sdfg,
-                                cfg_id=parent_sdfg.sdfg_id,
+                                cfg_id=parent_state.parent_graph.cfg_id,
                                 state_id=parent_state_id,
                                 subgraph=candidate,
                                 expr_index=0,
@@ -1328,7 +1325,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
         }
         inliner = InlineSDFG()
         inliner.setup_match(sdfg=parent_sdfg,
-                            cfg_id=parent_sdfg.sdfg_id,
+                            cfg_id=parent_state.parent_graph.cfg_id,
                             state_id=parent_state_id,
                             subgraph=candidate,
                             expr_index=0,
@@ -1495,6 +1492,46 @@ def _tswds_state(
     yield from _traverse(None, symbols)
 
 
+def _tswds_cf_region(
+        sdfg: SDFG,
+        region: ControlFlowRegion,
+        symbols: Dict[str, dtypes.typeclass],
+        recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+    # Add symbols from inter-state edges along the state machine
+    start_region = region.start_block
+    visited = set()
+    visited_edges = set()
+    for edge in region.dfs_edges(start_region):
+        # Source -> inter-state definition -> Destination
+        visited_edges.add(edge)
+        # Source
+        if edge.src not in visited:
+            visited.add(edge.src)
+            if isinstance(edge.src, SDFGState):
+                yield from _tswds_state(sdfg, edge.src, {}, recursive)
+            elif isinstance(edge.src, ControlFlowRegion):
+                yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
+
+        # Add edge symbols into defined symbols
+        issyms = edge.data.new_symbols(sdfg, symbols)
+        symbols.update({k: v for k, v in issyms.items() if v is not None})
+
+        # Destination
+        if edge.dst not in visited:
+            visited.add(edge.dst)
+            if isinstance(edge.dst, SDFGState):
+                yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
+            elif isinstance(edge.dst, ControlFlowRegion):
+                yield from _tswds_cf_region(sdfg, edge.dst, symbols, recursive)
+
+    # If there is only one state, the DFS will miss it
+    if start_region not in visited:
+        if isinstance(start_region, SDFGState):
+            yield from _tswds_state(sdfg, start_region, symbols, recursive)
+        elif isinstance(start_region, ControlFlowRegion):
+            yield from _tswds_cf_region(sdfg, start_region, symbols, recursive)
+
+
 def traverse_sdfg_with_defined_symbols(
         sdfg: SDFG,
         recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
@@ -1509,30 +1546,7 @@ def traverse_sdfg_with_defined_symbols(
     for desc in sdfg.arrays.values():
         symbols.update({str(s): s.dtype for s in desc.free_symbols})
 
-    # Add symbols from inter-state edges along the state machine
-    start_state = sdfg.start_state
-    visited = set()
-    visited_edges = set()
-    for edge in sdfg.dfs_edges(start_state):
-        # Source -> inter-state definition -> Destination
-        visited_edges.add(edge)
-        # Source
-        if edge.src not in visited:
-            visited.add(edge.src)
-            yield from _tswds_state(sdfg, edge.src, symbols, recursive)
-
-        # Add edge symbols into defined symbols
-        issyms = edge.data.new_symbols(sdfg, symbols)
-        symbols.update({k: v for k, v in issyms.items() if v is not None})
-
-        # Destination
-        if edge.dst not in visited:
-            visited.add(edge.dst)
-            yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
-
-    # If there is only one state, the DFS will miss it
-    if start_state not in visited:
-        yield from _tswds_state(sdfg, start_state, symbols, recursive)
+    yield from _tswds_cf_region(sdfg, sdfg, symbols, recursive)
 
 
 def is_fpga_kernel(sdfg, state):
@@ -1563,7 +1577,7 @@ def is_fpga_kernel(sdfg, state):
 def postdominators(
     sdfg: SDFG,
     return_alldoms: bool = False
-) -> Union[Dict[SDFGState, SDFGState], Tuple[Dict[SDFGState, SDFGState], Dict[SDFGState, Set[SDFGState]]]]:
+) -> Optional[Union[Dict[SDFGState, SDFGState], Tuple[Dict[SDFGState, SDFGState], Dict[SDFGState, Set[SDFGState]]]]]:
     """
     Return the immediate postdominators of an SDFG. This may require creating new nodes and removing them, which
     happens in-place on the SDFG.
@@ -1580,6 +1594,8 @@ def postdominators(
         sink = sdfg.add_state()
         for snode in sink_nodes:
             sdfg.add_edge(snode, sink, dace.InterstateEdge())
+    elif len(sink_nodes) == 0:
+        return None
     else:
         sink = sink_nodes[0]
     ipostdom: Dict[SDFGState, SDFGState] = nx.immediate_dominators(sdfg._nx.reverse(), sink)
