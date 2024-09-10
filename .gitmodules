@@ -14,3 +14,6 @@
 [submodule "dace/external/rtllib"]
 	path = dace/external/rtllib
 	url = https://github.com/carljohnsen/rtllib.git 
+[submodule "latex-tools"]
+	path = latex-tools
+	url = https://github.com/mcopik/latex-tools
