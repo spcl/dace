@@ -54,15 +54,13 @@ class Property(Generic[T]):
             indirected=False,  # This property belongs to a different class
             category='General',
             desc="",
-            optional=False,
-            optional_condition=lambda _: True):
+            serialize_if=lambda _: True): # By default serialize always
 
         self._getter = getter
         self._setter = setter
         self._dtype = dtype
         self._default = default
-        self._optional = optional
-        self._optional_condition = optional_condition
+        self._serialize_if = serialize_if
 
         if allow_none is False and default is None:
             try:
@@ -203,12 +201,8 @@ class Property(Generic[T]):
         return self._dtype
 
     @property
-    def optional(self):
-        return self._optional
-
-    @property
-    def optional_condition(self):
-        return self._optional_condition
+    def serialize_if(self):
+        return self._serialize_if
 
     def typestring(self):
         typestr = ""
