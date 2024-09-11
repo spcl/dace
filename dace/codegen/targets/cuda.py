@@ -1534,7 +1534,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                     self._dispatcher.defined_vars.add(inner_ptrname,
                                                       defined_type,
-                                                      'const %s' % ctype,
+                                                      ctype,
                                                       allow_shadowing=True)
 
                     # Rename argument in kernel prototype as necessary
@@ -2034,7 +2034,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
-                kernel_stream.write(f'{tidtype.ctype.as_arg(varname)} = {expr};', sdfg, state_id, node)
+                kernel_stream.write(f'{tidtype.as_arg(varname)} = {expr};', sdfg, state_id, node)
                 self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype)
 
             # Delinearize beyond the third dimension
