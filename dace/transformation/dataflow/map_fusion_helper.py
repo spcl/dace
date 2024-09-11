@@ -47,17 +47,10 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         default=False,
         desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
-    shared_data = properties.DictProperty(
-        key_type=SDFG,
-        value_type=set,  #[str]
-        default=None,
-        allow_none=True,
-        optional=True,  # Do not serialize.
-        optional_condition=lambda _: False,
-        desc="Maps SDFGs to the set of data that can not be removed,"
-        " because they transmit data _between states_, such data will be made 'shared'."
-        " This variable acts as a cache, and is managed by 'is_shared_data()'.",
-    )
+    # Maps SDFGs to the set of data that can not be removed,
+    #  because they transmit data _between states_, such data will be made 'shared'.
+    #  This variable acts as a cache, and is managed by 'is_shared_data()'.
+    _shared_data: Dict[SDFG, Set[str]]
 
     def __init__(
         self,
@@ -73,7 +66,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             self.only_inner_maps = bool(only_inner_maps)
         if strict_dataflow is not None:
             self.strict_dataflow = bool(strict_dataflow)
-        self.shared_data = {}
+        self._shared_data = {}
 
     @classmethod
     def expressions(cls) -> bool:
@@ -359,9 +352,9 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             There is no mechanism to detect if the cache must be evicted. However,
             as long as no additional data is added, there is no problem.
         """
-        if sdfg not in self.shared_data:
+        if sdfg not in self._shared_data:
             self._compute_shared_data(sdfg)
-        return data.data in self.shared_data[sdfg]
+        return data.data in self._shared_data[sdfg]
 
     def _compute_shared_data(
         self,
@@ -436,7 +429,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         shared_data.update(interstate_read_symbols.intersection(prevously_seen_data))
 
         # Update the internal cache
-        self.shared_data[sdfg] = shared_data
+        self._shared_data[sdfg] = shared_data
 
     def _compute_multi_write_data(
         self,
