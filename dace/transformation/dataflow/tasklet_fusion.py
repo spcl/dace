@@ -3,7 +3,7 @@
 
 import ast
 import re
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Set
 
 import astunparse
 import dace
@@ -275,7 +275,15 @@ class TaskletFusion(pm.SingleStateTransformation):
         else:
             new_name = t1.label + '_fused_' + t2.label
 
-        new_tasklet = graph.add_tasklet(new_name, inputs, t2.out_connectors, new_code_str, t1.language)
+        new_tasklet = graph.add_tasklet(new_name, inputs, t2.out_connectors, new_code_str, t1.language,
+                                        state_fields=t1.state_fields + t2.state_fields,
+                                        code_global=t1.code_global.code + t2.code_global.code,
+                                        code_init=t1.code_init.code + t2.code_init.code,
+                                        code_exit=t1.code_exit.code + t2.code_exit.code,
+                                        location=_merge_dicts(t1.location, t2.location),
+                                        side_effects=t1.side_effects or t2.side_effects,
+                                        ignored_symbols=_merge_sets(t1.ignored_symbols, t2.ignored_symbols),
+                                        debuginfo=_merge_debuginfo(t1.debuginfo, t2.debuginfo))
 
         for in_edge in graph.in_edges(t1):
             if in_edge.src_conn is None and isinstance(in_edge.src, dace.nodes.EntryNode):
@@ -298,3 +306,49 @@ class TaskletFusion(pm.SingleStateTransformation):
             graph.remove_node(data)
 
         graph.remove_node(t2)
+
+
+def _merge_dicts(a: Optional[Dict[Any, Any]], b: Optional[Dict[Any, Any]]):
+    if a is None and b is not None:
+        return b
+    if b is None and a is not None:
+        return a
+    result = dict()
+    result.update(a)
+    result.update(b)
+    return result
+
+
+def _merge_sets(a: Optional[Set[Any]], b: Optional[Set[Any]]):
+    if a is None and b is not None:
+        return b
+    if b is None and a is not None:
+        return a
+    result = set()
+    result.update(a)
+    result.update(b)
+    return result
+
+
+def _merge_debuginfo(a: Optional[dace.DebugInfo], b: Optional[dace.DebugInfo]):
+    if a is None and b is not None:
+        return b
+    if b is None and a is not None:
+        return a
+
+    if a.filename != b.filename:
+        # TODO: Support multiple files in debuginfo
+        return b
+
+    a_end_line = a.end_line if a.end_line >= 0 else a.start_line
+    b_end_line = b.end_line if b.end_line >= 0 else b.start_line
+    a_end_col = a.end_column if a.end_column >= 0 else a.start_column
+    b_end_col = b.end_column if b.end_column >= 0 else b.start_column
+
+    return dace.DebugInfo(
+        start_line=min(a.start_line, b.start_line),
+        start_column=min(a.start_column, b.start_column),
+        end_line=max(a_end_line, b_end_line),
+        end_column=max(a_end_col, b_end_col),
+        filename=a.filename,
+    )
