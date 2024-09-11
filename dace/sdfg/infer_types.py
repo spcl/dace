@@ -35,7 +35,7 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
         allocated_as_scalar = True
 
     if node.out_connectors[cname].type is not None:
-        return node.out_connectors[cname].type
+        return node.out_connectors[cname]
 
     # If nested SDFG, try to use internal array type
     if isinstance(node, nodes.NestedSDFG):
