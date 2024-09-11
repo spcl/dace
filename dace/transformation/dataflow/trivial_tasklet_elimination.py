@@ -34,26 +34,34 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
         read = self.read_map if expr_index == 1 else self.read
         tasklet = self.tasklet
         write = self.write_map if expr_index == 2 else self.write
-        # Do not apply on Streams
-        if expr_index != 1 and isinstance(sdfg.arrays[read.data], data.Stream):
-            return False
-        if expr_index != 2 and isinstance(sdfg.arrays[write.data], data.Stream):
+        if len(tasklet.in_connectors) != 1:
             return False
         if len(graph.in_edges(tasklet)) != 1:
             return False
-        if len(graph.out_edges(tasklet)) != 1:
-            return False
-        if graph.edges_between(tasklet, write)[0].data.wcr:
-            return False
-        if len(tasklet.in_connectors) != 1:
-            return False
         if len(tasklet.out_connectors) != 1:
+            return False
+        if len(graph.out_edges(tasklet)) != 1:
             return False
         in_conn = list(tasklet.in_connectors.keys())[0]
         out_conn = list(tasklet.out_connectors.keys())[0]
         if tasklet.code.as_string != f'{out_conn} = {in_conn}':
             return False
-
+        read_memlet = graph.edges_between(read, tasklet)[0].data
+        read_desc = sdfg.arrays[read_memlet.data]
+        write_memlet = graph.edges_between(tasklet, write)[0].data
+        if write_memlet.wcr:
+            return False
+        write_desc = sdfg.arrays[write_memlet.data]
+        # Do not apply on streams
+        if isinstance(read_desc, data.Stream):
+            return False
+        if isinstance(write_desc, data.Stream):
+            return False
+        # Keep copy-tasklet connected to map node if source and destination nodes
+        # have different data type (implicit type cast)
+        if expr_index != 0 and read_desc.dtype != write_desc.dtype:
+            return False
+    
         return True
 
     def apply(self, graph, sdfg):

@@ -4,9 +4,10 @@ from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTask
 
 
 N = 10
-ty_ = dace.int32
+
 
 def test_trivial_tasklet():
+    ty_ = dace.int32
     sdfg = dace.SDFG("trivial_tasklet")
     sdfg.add_symbol("s", ty_)
     sdfg.add_array("v", (N,), ty_)
@@ -48,6 +49,7 @@ def test_trivial_tasklet():
 
 
 def test_trivial_tasklet_with_map():
+    ty_ = dace.int32
     sdfg = dace.SDFG("trivial_tasklet_with_map")
     sdfg.add_symbol("s", ty_)
     sdfg.add_array("v", (N,), ty_)
@@ -87,6 +89,41 @@ def test_trivial_tasklet_with_map():
     assert st.out_edges(tmp2_node)[0].dst == mx
 
 
+def test_trivial_tasklet_with_implicit_cast():
+    ty32_ = dace.int32
+    ty64_ = dace.int64
+    sdfg = dace.SDFG("trivial_tasklet_with_implicit_cast")
+    sdfg.add_symbol("s", ty32_)
+    sdfg.add_array("v", (N,), ty32_)
+    st = sdfg.add_state()
+    
+    tmp1_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty32_, transient=True)
+    tmp1_node = st.add_access(tmp1_name)
+    init_tasklet = st.add_tasklet("init", {}, {"out"}, "out = s")
+    st.add_edge(init_tasklet, "out", tmp1_node, None, dace.Memlet(tmp1_node.data))
+
+    me, mx = st.add_map("bcast", dict(i=f"0:{N}"))
+
+    copy_tasklet = st.add_tasklet("copy", {"inp"}, {"out"}, "out = inp")
+    st.add_memlet_path(tmp1_node, me, copy_tasklet, dst_conn="inp", memlet=dace.Memlet(f"{tmp1_node.data}[0]"))
+    tmp2_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), ty64_, transient=True)
+    tmp2_node = st.add_access(tmp2_name)
+    st.add_edge(copy_tasklet, "out", tmp2_node, None, dace.Memlet(tmp2_node.data))
+    
+    bcast_tasklet = st.add_tasklet("bcast", {"inp"}, {"out"}, "out = inp")
+    st.add_edge(tmp2_node, None, bcast_tasklet, "inp", dace.Memlet(tmp2_node.data))
+    st.add_memlet_path(bcast_tasklet, mx, st.add_access("v"), src_conn="out", memlet=dace.Memlet("v[i]"))
+
+    sdfg.validate()
+    tasklet_nodes = {x for x in st.nodes() if isinstance(x, dace.nodes.Tasklet)}
+    assert tasklet_nodes == {init_tasklet, copy_tasklet, bcast_tasklet}
+
+    # not applied because of data types mismatch on read/write nodes
+    count = sdfg.apply_transformations_repeated(TrivialTaskletElimination)
+    assert count == 0
+
+
 if __name__ == '__main__':
     test_trivial_tasklet()
     test_trivial_tasklet_with_map()
+    test_trivial_tasklet_with_implicit_cast()
