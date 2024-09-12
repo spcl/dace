@@ -8,7 +8,7 @@ import copy
 
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
-from dace.transformation.dataflow import MapFusionSerial, MapFusionParallel
+from dace.transformation.dataflow import MapFusionSerial, MapFusionParallel, MapExpansion
 
 
 def count_node(sdfg: SDFG, node_type):
@@ -628,6 +628,108 @@ def test_fuse_indirect_accesses():
     assert all(in_edge.src is last_map_entry for in_edge in state.in_edges(indirect_access_tasklet))
 
 
+def make_correction_offset_sdfg(
+        range_read: bool,
+        second_read_start: int,
+) -> SDFG:
+    """Make the SDFGs for the `test_offset_correction_*` tests.
+
+    Args:
+        range_read: If `True` then a range is read in the second map.
+            if `False` then only a scalar is read.
+        second_read_start: Where the second map should start reading.
+    """
+    sdfg = SDFG("offset_correction_test")
+    state = sdfg.add_state(is_start_block=True)
+    shapes = {
+        "A": (20, 10),
+        "B": (20, 8),
+        "C": (20, 2) if range_read else (20, 1),
+    }
+    descs = {}
+    for name, shape in shapes.items():
+        _, desc = sdfg.add_array(name, shape, dace.float64, transient=False)
+        descs[name] = desc
+    sdfg.arrays["B"].transient = True
+    A, B, C = (state.add_access(name) for name in sorted(shapes.keys()))
+
+    state.add_mapped_tasklet(
+            "first_map",
+            map_ranges={"i": "0:20", "j": "2:8"},
+            inputs={"__in1": dace.Memlet("A[i, j]")},
+            code="__out = __in1 + 1.0",
+            outputs={"__out": dace.Memlet("B[i, j]")},
+            input_nodes={"A": A},
+            output_nodes={"B": B},
+            external_edges=True,
+    )
+    state.add_mapped_tasklet(
+            "second_map",
+            map_ranges=(
+                {"i": "0:20", "k": "0:2"}
+                if range_read
+                else {"i": "0:20"}
+            ),
+            inputs={"__in1": dace.Memlet(f"B[i, {second_read_start}{'+k' if range_read else ''}]")},
+            code="__out = __in1",
+            outputs={"__out": dace.Memlet(f"C[i, {'k' if range_read else '0'}]")},
+            input_nodes={"B": B},
+            output_nodes={"C": C},
+            external_edges=True,
+    )
+    sdfg.validate()
+    assert sdfg.apply_transformations_repeated(MapExpansion, validate_all=True) > 0
+    return sdfg
+
+
+def test_offset_correction_range_read():
+
+    np.random.seed(42)
+    A = np.random.rand(20, 10)
+    C = np.zeros((20, 2))
+    exp = (A + 1.0)[:, 3:5].copy()
+
+    sdfg = make_correction_offset_sdfg(range_read=True, second_read_start=3)
+
+    sdfg(A=A, C=C)
+    assert np.allclose(C, exp)
+    C[:] = 0.0
+
+    apply_fusion(sdfg)
+
+    sdfg(A=A, C=C)
+    assert np.allclose(C, exp)
+
+
+def test_offset_correction_scalar_read():
+
+    np.random.seed(42)
+    A = np.random.rand(20, 10)
+    C = np.zeros((20, 1))
+    exp = (A + 1.0)[:, 3].copy().reshape((-1, 1))
+
+    sdfg = make_correction_offset_sdfg(range_read=False, second_read_start=3)
+
+    sdfg(A=A, C=C)
+    assert np.allclose(C, exp)
+    C[:] = 0.0
+
+    apply_fusion(sdfg)
+
+    sdfg(A=A, C=C)
+    assert np.allclose(C, exp)
+
+
+def test_offset_correction_empty():
+
+    # Because the second map starts reading from 1, but the second map only
+    #  starts writing from 2 there is no overlap and it can not be fused.
+    #  NOTE: This computation is useless.
+    sdfg = make_correction_offset_sdfg(range_read=True, second_read_start=1)
+
+    apply_fusion(sdfg, removed_maps=0)
+
+
 if __name__ == '__main__':
     test_indirect_accesses()
     test_fusion_shared()
@@ -644,5 +746,8 @@ if __name__ == '__main__':
     test_fusion_with_nested_sdfg_1()
     test_parallel_fusion_simple()
     test_fuse_indirect_accesses()
+    test_offset_correction_range_read()
+    test_offset_correction_scalar_read()
+    test_offset_correction_empty()
     print("SUCCESS")
 
