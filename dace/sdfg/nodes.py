@@ -894,36 +894,28 @@ class Map(object):
     omp_num_threads = Property(dtype=int,
                                default=0,
                                desc="Number of OpenMP threads executing the Map",
-                               optional=True,
-                               optional_condition=lambda m: m.schedule in
-                               (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+                               serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
     omp_schedule = EnumProperty(dtype=dtypes.OMPScheduleType,
                                 default=dtypes.OMPScheduleType.Default,
                                 desc="OpenMP schedule {static, dynamic, guided}",
-                                optional=True,
-                                optional_condition=lambda m: m.schedule in
-                                (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+                                serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
     omp_chunk_size = Property(dtype=int,
                               default=0,
                               desc="OpenMP schedule chunk size",
-                              optional=True,
-                              optional_condition=lambda m: m.schedule in
-                              (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+                              serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,
                                   allow_none=True,
                                   desc="GPU kernel block size",
-                                  optional=True,
-                                  optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_launch_bounds = Property(dtype=str,
                                  default="0",
                                  desc="GPU kernel launch bounds. A value of -1 disables the statement, 0 (default) "
                                  "enables the statement if block size is not symbolic, and any other value "
                                  "(including tuples) sets it explicitly.",
-                                 optional=True,
-                                 optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+                                 serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     def __init__(self,
                  label,

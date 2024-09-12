@@ -12,7 +12,7 @@ import numpy as np
 import sympy as sp
 
 from dace import data as dt, dtypes, hooks, symbolic
-from dace.codegen import exceptions as cgx, common
+from dace.codegen import exceptions as cgx
 from dace.config import Config
 from dace.frontend import operations
 
@@ -369,6 +369,7 @@ class CompiledSDFG(object):
                     f'An error was detected after running "{self._sdfg.name}": {self._get_error_text(res)}')
 
     def _get_error_text(self, result: Union[str, int]) -> str:
+        from dace.codegen import common  # Circular import
         if self.has_gpu_code:
             if isinstance(result, int):
                 result = common.get_gpu_runtime().get_error_string(result)
@@ -428,6 +429,7 @@ class CompiledSDFG(object):
 
         :note: You may use `_construct_args()` to generate the processed arguments.
         """
+        from dace.codegen import common  # Circular import
         try:
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
