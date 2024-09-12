@@ -958,7 +958,7 @@ class Map(object):
         if not dtypes.validate_name(self.label):
             raise NameError(f'Invalid map name "{self.label}"')
         if self.get_param_num() == 0:
-            raise ValueError('There must me at least one parameter in a map.')
+            raise ValueError('There must be at least one parameter in a map.')
         if self.get_param_num() != self.range.dims():
             raise ValueError(f'There are {self.get_param_num()} parameters but the range'
                              f' has {self.range.dims()} dimensions.')
