@@ -1,15 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """Implements Helper functionaliyies for map fusion"""
 
-import functools
-import itertools
-import re
 import copy
-from typing import Any, Dict, Iterable, List, Optional, Set, Sequence, Tuple, Union, overload
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import dace
-from dace import data, properties, subsets, transformation, symbolic
-from dace.sdfg import SDFG, SDFGState, graph, nodes, validation, replace
+from dace import data, properties, subsets, symbolic, transformation
+from dace.sdfg import SDFG, SDFGState, nodes, validation
 from dace.transformation import helpers
 
 
@@ -240,7 +237,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
             param: tuple(simp(r) for r in rng)
             for param, rng in zip(first_params, first_map.range)
         }
-        second_rngs: Dict[Tuple[Any, Any, Any]] = {
+        second_rngs: Dict[str, Tuple[Any, Any, Any]] = {
             param: tuple(simp(r) for r in rng)
             for param, rng in zip(second_params, second_map.range)
         }
@@ -464,7 +461,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
                 multi_write_data.add(access_node.data)
             elif self.is_view(access_node, sdfg):
                 # This is an over approximation.
-                multi_write_data.update([access_node.data, track_view(access_node, state, sdfg).data])
+                multi_write_data.update([access_node.data, self.track_view(access_node, state, sdfg).data])
             data_written_to.add(access_node.data)
         return multi_write_data
 
@@ -489,11 +486,11 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
             return (edge.dst for edge in graph.out_edges(node))
 
-        to_visit: List[dace_nodes.Node] = [begin]
-        seen: Set[dace_nodes.Node] = set()
+        to_visit: List[nodes.Node] = [begin]
+        seen: Set[nodes.Node] = set()
 
         while len(to_visit) > 0:
-            node: dace_nodes.Node = to_visit.pop()
+            node: nodes.Node = to_visit.pop()
             if node == end:
                 return True
             elif node not in seen:
@@ -569,7 +566,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         found_subsets: List[subsets.Subset] = []
         for edge in outer_edges_to_inspect:
             found_subsets.extend(get_subset(e) for e in get_inner_edges(edge))
-        assert len(found_subsets) > 0, f"Could not find any subsets."
+        assert len(found_subsets) > 0, "Could not find any subsets."
         assert not any(subset is None for subset in found_subsets)
 
         found_subsets = copy.deepcopy(found_subsets)

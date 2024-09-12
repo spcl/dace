@@ -2,7 +2,7 @@
 """Implements the serial map fusing transformation."""
 
 import copy
-from typing import Any, Dict, List, Set, Tuple, Union, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
@@ -167,13 +167,13 @@ class MapFusionSerial(mfh.MapFusionHelper):
         resolved_sets: List[Set[str]] = []
         for unresolved_set in [read_map_1, write_map_1, read_map_2, write_map_2]:
             resolved_sets.append({
-                self.track_view(node).data if self.is_view(node, sdfg) else node.data
+                self.track_view(node, state, sdfg).data if self.is_view(node, sdfg) else node.data
                 for node in unresolved_set.values()
             })
             # If the resolved and unresolved names do not have the same length.
             #  Then different views point to the same location, which we forbid
             if len(unresolved_set) != len(resolved_sets[-1]):
-                return None
+                return False
         real_read_map_1, real_write_map_1, real_read_map_2, real_write_map_2 = resolved_sets
 
         # We do not allow that the first and second map each write to the same data.
@@ -189,7 +189,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
         #  to transmit information between the maps. The partition function ensures that
         #  these nodes are directly connected to the two maps.
         exchange_names: Set[str] = set(write_map_1.keys()).intersection(read_map_2.keys())
-        exchange_nodes: Set[node.AccessNode] = set(write_map_1.values()).intersection(read_map_2.values())
+        exchange_nodes: Set[nodes.AccessNode] = set(write_map_1.values()).intersection(read_map_2.values())
 
         # If the number are different then a data is accessed through multiple nodes.
         if len(exchange_names) != len(exchange_nodes):
@@ -271,7 +271,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
             if isinstance(subset, subsets.Indices):
                 subset = subsets.Range.from_indices(subset)
                 # Do we also need the reverse? See below why.
-                if any(r != (0, 0, 1) for r in test in subset.offset_new(master_subset, negative=True)):
+                if any(r != (0, 0, 1) for r in subset.offset_new(master_subset, negative=True)):
                     return False
             else:
                 # The original code used `Range.offset` here, but that one had trouble
@@ -393,11 +393,6 @@ class MapFusionSerial(mfh.MapFusionHelper):
         exclusive_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
         shared_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
 
-        # These are the iteration parameters of the two maps.
-        #  They are not yet modified, that they match each other.
-        map_params_1: Sequence[str] = map_exit_1.map.params
-        map_params_2: Sequence[str] = map_entry_2.map.params
-
         # Compute the renaming that for translating the parameter of the _second_
         #  map to the ones used by the first map.
         repl_dict: Dict[str, str] = self.find_parameter_remapping(
@@ -460,7 +455,6 @@ class MapFusionSerial(mfh.MapFusionHelper):
             #  handled has shared intermediates.
             if not isinstance(intermediate_node, nodes.AccessNode):
                 return None
-            intermediate_desc: data.Data = intermediate_node.desc(sdfg)
             if self.is_view(intermediate_node, sdfg):
                 return None
 
