@@ -2968,11 +2968,11 @@ class LoopRegion(ControlFlowRegion):
     present).
     """
 
-    update_statement = CodeProperty(optional=True,
+    update_statement = CodeProperty(serialize_if=lambda ustmnt: ustmnt is not None,
                                     allow_none=True,
                                     default=None,
                                     desc='The loop update statement. May be None if the update happens elsewhere.')
-    init_statement = CodeProperty(optional=True,
+    init_statement = CodeProperty(serialize_if=lambda istmnt: istmnt is not None,
                                   allow_none=True,
                                   default=None,
                                   desc='The loop init statement. May be None if the initialization happens elsewhere.')
