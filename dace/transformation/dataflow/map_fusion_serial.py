@@ -289,6 +289,58 @@ class MapFusionSerial(mfh.MapFusionHelper):
         #  point wise
         return True
 
+    def compute_offset_subset(
+            self,
+            original_subset: subsets.Range,
+            intermediate_desc: data.Data,
+            map_params: List[str],
+            producer_offset: Optional[subsets.Range] = None,
+    ) -> subsets.Range:
+        """Computes the memlet to correct read and writes of the intermediate.
+
+        Args:
+            original_subset: The original subset that was used to write into the
+                intermediate, must be renamed to the final map parameter.
+            intermediate_desc: The original intermediate data descriptor.
+            map_params: The parameter of the final map.
+        """
+        assert not isinstance(intermediate_desc, data.View)
+        final_offset: subsets.Range = None
+        if isinstance(intermediate_desc, data.Scalar):
+            final_offset = subsets.Range.from_string("0")
+
+        elif isinstance(intermediate_desc, data.Array):
+            basic_offsets = original_subset.min_element()
+            offset_list = []
+            for d in range(original_subset.dims()):
+                d_range = subsets.Range([original_subset[d]])
+                if d_range.free_symbols.intersection(map_params):
+                    offset_list.append(d_range[0])
+                else:
+                    offset_list.append((basic_offsets[d], basic_offsets[d], 1))
+            final_offset = subsets.Range(offset_list)
+
+        else:
+            raise TypeError(f"Does not know how to compute the subset offset for '{type(intermediate_desc).__name__}'.")
+
+        if producer_offset is not None:
+            # Here we are correcting some parts that over approximate (which partially
+            #  does under approximate) might screw up. Consider two maps, the first
+            #  map only writes the subset `[:, 2:6]`, thus the new intermediate will
+            #  have shape `(1, 4)`. Now also imagine that the second map only reads
+            #  the elements `[:, 3]`. From this we see that we can only correct the
+            #  consumer side if we also take the producer side into consideration!
+            #  See also the `transformations/mapfusion_test.py::test_offset_correction_*`
+            #  tests for more.
+            final_offset.offset(
+                    final_offset.offset_new(
+                        producer_offset,
+                        negative=True,
+                    ),
+                    negative=True,
+            )
+        return final_offset
+
     def partition_first_outputs(
         self,
         state: SDFGState,
@@ -648,6 +700,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
         output set, see `partition_first_outputs()`. The main difference is that
         in exclusive mode the intermediate nodes will be fully removed from
         the SDFG. While in shared mode the intermediate node will be preserved.
+        The function assumes that the parameter renaming was already done.
 
         Args:
             intermediate_outputs: The set of outputs, that should be processed.
@@ -662,6 +715,8 @@ class MapFusionSerial(mfh.MapFusionHelper):
             Before the transformation the `state` does not have to be valid and
             after this function has run the state is (most likely) invalid.
         """
+
+        map_params = map_exit_1.map.params.copy()
 
         # Now we will iterate over all intermediate edges and process them.
         #  If not stated otherwise the comments assume that we run in exclusive mode.
@@ -732,7 +787,11 @@ class MapFusionSerial(mfh.MapFusionHelper):
             #  Memlets, since they now write into the new (smaller) intermediate.
             assert pre_exit_edge.data.data == inter_name
             assert pre_exit_edge.data.dst_subset is not None
-            old_pre_exit_edge_subset = pre_exit_edge.data.dst_subset
+            producer_offset = self.compute_offset_subset(
+                    original_subset=pre_exit_edge.data.dst_subset,
+                    intermediate_desc=inter_desc,
+                    map_params=map_params,
+            )
 
             # Memlets have a lot of additional informations, such as dynamic.
             #  To ensure that we get all of them, we will now copy them and modify
@@ -769,7 +828,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
                     # Since we now write into a smaller memory patch, we must
                     #  compensate for that. We do this by substracting where the write
                     #  originally had begun.
-                    producer_edge.data.dst_subset.offset(old_pre_exit_edge_subset, negative=True)
+                    producer_edge.data.dst_subset.offset(producer_offset, negative=True)
                     producer_edge.data.dst_subset.pop(squeezed_dims)
 
             # Now after we have handled the input of the new intermediate node,
@@ -801,7 +860,12 @@ class MapFusionSerial(mfh.MapFusionHelper):
                     # As for the producer side, we now read from a smaller array,
                     #  So we must offset them, we use the original edge for this.
                     assert inner_edge.data.src_subset is not None
-                    inner_edge_correction_offset = copy.deepcopy(inner_edge.data.src_subset)
+                    consumer_offset = self.compute_offset_subset(
+                            original_subset=inner_edge.data.src_subset,
+                            intermediate_desc=inter_desc,
+                            map_params=map_params,
+                            producer_offset=producer_offset,
+                    )
 
                     # Now we create a new connection that instead reads from the new
                     #  intermediate, instead of the old one. For this we use the
@@ -824,7 +888,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
                     if is_scalar:
                         new_inner_memlet.subset = "0"
                     elif new_inner_memlet.src_subset is not None:
-                        new_inner_memlet.src_subset.offset(inner_edge_correction_offset, negative=True)
+                        new_inner_memlet.src_subset.offset(consumer_offset, negative=True)
                         new_inner_memlet.src_subset.pop(squeezed_dims)
 
                     # Now we have to make sure that all consumers are properly updated.
@@ -836,7 +900,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
                         if is_scalar:
                             consumer_edge.data.src_subset = "0"
                         elif consumer_edge.data.src_subset is not None:
-                            consumer_edge.data.src_subset.offset(inner_edge_correction_offset, negative=True)
+                            consumer_edge.data.src_subset.offset(consumer_offset, negative=True)
                             consumer_edge.data.src_subset.pop(squeezed_dims)
 
                 # The edge that leaves the second map entry was already deleted. We now delete

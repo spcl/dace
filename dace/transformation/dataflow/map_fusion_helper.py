@@ -133,6 +133,7 @@ class MapFusionHelper(transformation.SingleStateTransformation):
         once for the entry and then for the exit.
         While it does not remove the node themselves if guarantees that the
         `from_node` has degree zero.
+        The function assumes that the parameter renaming was already done.
 
         Args:
             from_node: Node from which the edges should be removed.
