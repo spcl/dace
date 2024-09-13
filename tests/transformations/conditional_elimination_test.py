@@ -32,7 +32,7 @@ def test_application_and_fusion(condition: str, after_pass: int, after_simplify:
             arr[i] = tmp2[i] + 1
 
 
-    sdfg = simple_program.to_sdfg()
+    sdfg = simple_program.to_sdfg(simplify=True)
 
     assert len(sdfg.nodes()) == 4
 
