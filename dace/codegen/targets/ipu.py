@@ -356,12 +356,12 @@ auto __dace_defineDataStreams({sdfg_state_name} *__state, Graph &graph, map<stri
     # __dace_init_<TARGET> function
     @property
     def has_initializer(self):
-        return False
+        return True
 
     # __dace_exit_<TARGET> function
     @property
     def has_finalizer(self):
-        return False
+        return True
     
     def state_dispatch_predicate(self, sdfg, state):
         if self._toplevel_schedule == dtypes.ScheduleType.IPU_SCHEDULE:
