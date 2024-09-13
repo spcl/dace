@@ -294,20 +294,32 @@ class MapFusionSerial(mfh.MapFusionHelper):
             original_subset: subsets.Range,
             intermediate_desc: data.Data,
             map_params: List[str],
-            producer_offset: Optional[subsets.Range] = None,
+            producer_offset: Union[subsets.Range, None],
     ) -> subsets.Range:
         """Computes the memlet to correct read and writes of the intermediate.
+
+        This is the value that must be substracted from the memlets to adjust, i.e
+        (`memlet_to_adjust(correction, negative=True)`). If `producer_offset` is
+        `None` then the function computes the correction that should be applied to
+        the producer memlets, i.e. the memlets of the tree converging at
+        `intermediate_node`. If `producer_offset` is given, it should be the output
+        of the previous call to this function, with `producer_offset=None`. In this
+        case the function computes the correction for the consumer side, i.e. the
+        memlet tree that originates at `intermediate_desc`.
 
         Args:
             original_subset: The original subset that was used to write into the
                 intermediate, must be renamed to the final map parameter.
             intermediate_desc: The original intermediate data descriptor.
             map_params: The parameter of the final map.
+            producer_offset: The correction that was applied to the producer side.
         """
         assert not isinstance(intermediate_desc, data.View)
         final_offset: subsets.Range = None
         if isinstance(intermediate_desc, data.Scalar):
-            final_offset = subsets.Range.from_string("0")
+            # If the intermediate was a scalar, then it will remain a scalar.
+            #  Thus there is no correction that we must apply.
+            return subsets.Range.from_string("0")
 
         elif isinstance(intermediate_desc, data.Array):
             basic_offsets = original_subset.min_element()
@@ -785,6 +797,7 @@ class MapFusionSerial(mfh.MapFusionHelper):
                     original_subset=pre_exit_edge.data.dst_subset,
                     intermediate_desc=inter_desc,
                     map_params=map_params,
+                    producer_offset=None,
             )
 
             # Memlets have a lot of additional informations, such as dynamic.
