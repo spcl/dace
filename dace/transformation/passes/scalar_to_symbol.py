@@ -679,6 +679,8 @@ class ScalarToSymbolPromotion(passes.Pass):
                 tasklet_inputs = [e.src for e in state.in_edges(input)]
                 # Step 2.1
                 new_state = xfh.state_fission(gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
+                if state.edges_between(input, node):  # Edge still there after fission, remove manually
+                    state.remove_edge_and_connectors(state.edges_between(input, node)[0])
                 new_isedge: sd.InterstateEdge = new_state.parent_graph.out_edges(new_state)[0]
                 # Step 2.2
                 node: nodes.AccessNode = new_state.sink_nodes()[0]
