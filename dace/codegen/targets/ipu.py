@@ -1,8 +1,9 @@
 # import
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from io import StringIO
+from dace.codegen.codeobject import CodeObject
 import sympy
-from typing import TYPE_CHECKING, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 from copy import deepcopy
 from dace import (data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config)
 from dace import dtypes, memlet as mm
@@ -33,38 +34,91 @@ import functools
 import itertools
 import warnings
 
+if TYPE_CHECKING:
+    from dace.codegen.targets.framecode import DaCeCodeGenerator
+    from dace.codegen.targets.cpu import CPUCodeGen
+import pdb; 
 
+def is_ipu_kernel(sdfg, state):
+        """
+        Returns whether the given state is an FPGA kernel and should be dispatched
+        to the FPGA code generator.
+
+        :return: True if this is an FPGA kernel, False otherwise.
+        """
+        # pdb.set_trace()
+        data_nodes = state.data_nodes()
+        at_least_one_fpga_array = False
+        for n in data_nodes:
+            desc = n.desc(sdfg)
+            print(desc.storage.name, desc.storage, desc)
+            if desc.storage == dtypes.StorageType.IPU_Memory:
+                at_least_one_fpga_array = True
+            if isinstance(desc, data.Scalar):
+                continue
+            if desc.storage != dtypes.StorageType.IPU_Memory:
+                return False
+        return at_least_one_fpga_array
+    
 @registry.autoregister_params(name='ipu')
 class IPUCodeGen(TargetCodeGenerator):
     """ IPU(Graphcore) code generator. """
     target_name = 'ipu'
     title = 'IPU'
     language = 'cpp'
+    _in_device_code = False
 
-    def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: dace.SDFG):
+    def __init__(self, frame_codegen: DaCeCodeGenerator, sdfg: SDFG):
+
+        self.program_name = sdfg.name
+        
         self.has_generated_header = False
         self.frame = frame_codegen
         self.dispatcher = frame_codegen._dispatcher
-        self.cpu_codegen: dace.codegen.targets.CPUCodeGen = self.dispatcher.get_generic_node_dispatcher()
-        self._locals = cppunparse.CPPLocals()
+        self.cpu_codegen: Optional['CPUCodeGen'] = None
+        # self._locals = cppunparse.CPPLocals()
         # Scope depth (for defining locals)
         self._ldepth = 0
         # Keep nested SDFG schedule when descending into it
         self._toplevel_schedule = None
+        self._localcode = CodeIOStream()
+        self._globalcode = CodeIOStream()
+        self._initcode = CodeIOStream()
+        self._exitcode = CodeIOStream()
+        self._global_sdfg: SDFG = sdfg
+        self._arglists: Dict[nodes.MapEntry, Dict[str, data.Data]] = {}
+        # Keep track of current "scope entry/exit" code streams for extra
+        # code generation
+        self.scope_entry_stream = self._initcode
+        self.scope_exit_stream = self._exitcode
+        self._ipu_streams, self._ipu_events = 0, 0
+        self._kernels_dependencies = dict()
+        self._kernels_names_to_id = dict()
+        self._num_kernels = 0
+        self._host_codes = []   
+        self._kernel_codes = []
         
 
+        # Register dispatchers
+        self.cpu_codegen = self.dispatcher.get_generic_node_dispatcher()        
+        
+        self.dispatcher.register_state_dispatcher(self, predicate=is_ipu_kernel)
         # self.dispatcher.register_array_dispatcher(dtypes.StorageType.IPU_Tile_Local, self)
             
         # Storage
         # ipu_storage = [dtypes.StorageType.IPU_Memory]        
-        gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.IPU_Memory]
+        ipu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.IPU_Memory]
        
-        self.dispatcher.register_array_dispatcher(gpu_storage, self)   # allocate_array/deallocate_array
-        for storage in gpu_storage:
-            for other_storage in gpu_storage:
+        self.dispatcher.register_array_dispatcher(ipu_storage, self)   # allocate_array/deallocate_array
+        for storage in ipu_storage:
+            for other_storage in dtypes.StorageType:
                 self.dispatcher.register_copy_dispatcher(storage, other_storage, None, self)
                 self.dispatcher.register_copy_dispatcher(other_storage, storage, None, self)
         
+        
+        
+                
+                
                 
         # # Dispatchers
         # self.dispatcher.register_map_dispatcher(dace.ScheduleType.IPU_Map, self)
@@ -74,20 +128,116 @@ class IPUCodeGen(TargetCodeGenerator):
         # self._dispatcher.register_map_dispatcher(dace.ScheduleType.IPU, self)
         # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
 
+    # def preprocess(self, sdfg: SDFG) -> None:        
+    #     # hack to get the ipu codegen to work
+    #     # self._toplevel_schedule = dtypes.ScheduleType.IPU_SCHEDULE
 
     def get_generated_codeobjects(self):
-        res = super().get_generated_codeobjects()
-        return res    
+
+        execution_mode = Config.get("compiler", "xilinx", "mode")
+
+        kernel_file_name = "DACE_BINARY_DIR \"/{}".format(self.program_name)
+        if execution_mode == "software_emulation":
+            kernel_file_name += "_sw_emu.xclbin\""
+            xcl_emulation_mode = "\"sw_emu\""
+            xilinx_sdx = "DACE_VITIS_DIR"
+        elif execution_mode == "hardware_emulation":
+            kernel_file_name += "_hw_emu.xclbin\""
+            xcl_emulation_mode = "\"hw_emu\""
+            xilinx_sdx = "DACE_VITIS_DIR"
+        elif execution_mode == "hardware" or execution_mode == "simulation":
+            kernel_file_name += "_hw.xclbin\""
+            xcl_emulation_mode = None
+            xilinx_sdx = None
+        else:
+            raise cgx.CodegenError("Unknown Xilinx execution mode: {}".format(execution_mode))
+
+        set_env_vars = ""
+        set_str = "dace::set_environment_variable(\"{}\", {});\n"
+        unset_str = "dace::unset_environment_variable(\"{}\");\n"
+        set_env_vars += (set_str.format("XCL_EMULATION_MODE", xcl_emulation_mode)
+                         if xcl_emulation_mode is not None else unset_str.format("XCL_EMULATION_MODE"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
+                         if xilinx_sdx is not None else unset_str.format("XILINX_SDX"))
+        set_env_vars += set_str.format(
+            "EMCONFIG_PATH",
+            "DACE_BINARY_DIR") if execution_mode == 'hardware_emulation' else unset_str.format("EMCONFIG_PATH")
+
+        host_code = CodeIOStream()
+        host_code.write("""\
+#include "dace/xilinx/host.h"
+#include "dace/dace.h"
+#include "dace/xilinx/stream.h"
+""")
+        host_code.write("\n\n")
+
+        self.frame.generate_fileheader(self._global_sdfg, host_code, 'xilinx_host')
+
+        params_comma = self._global_sdfg.init_signature(free_symbols=self.frame.free_symbols(self._global_sdfg))
+        if params_comma:
+            params_comma = ', ' + params_comma
+
+        host_code.write("""
+DACE_EXPORTED int __dace_init_xilinx({sdfg_state_name} *__state{signature}) {{
+    {environment_variables}
+
+    __state->fpga_context = new dace_fpga_context();
+    __state->fpga_context->Get().MakeProgram({kernel_file_name});
+    return 0;
+}}
+
+DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
+    delete __state->fpga_context;
+    return 0;
+}}
+
+{host_code}""".format(signature=params_comma,
+                      sdfg=self._global_sdfg,
+                      sdfg_state_name=cpp.mangle_dace_state_struct_name(self._global_sdfg),
+                      environment_variables=set_env_vars,
+                      kernel_file_name=kernel_file_name,
+                      host_code="".join([
+                          "{separator}\n// Kernel: {kernel_name}"
+                          "\n{separator}\n\n{code}\n\n".format(separator="/" * 79, kernel_name=name, code=code)
+                          for (name, code) in self._host_codes
+                      ])))
+
+        host_code_obj = CodeObject(self.program_name,
+                                   host_code.getvalue(),
+                                   "cpp",
+                                   IPUCodeGen,
+                                   "IPU",
+                                   target_type="host")
+
+        kernel_code_objs = [
+            CodeObject(kernel_name,
+                       code,
+                       "cpp",
+                       IPUCodeGen,
+                       "IPU",
+                       target_type="device") for (kernel_name, code) in self._kernel_codes
+        ]
+        
+        res = super().get_generated_codeobjects()   # Not sure why is this object here, fix it later.
+        print(res)
+        return [host_code_obj] +  kernel_code_objs + res    
 
     # __dace_init_<TARGET> function
     @property
     def has_initializer(self):
-        return False
+        return True
 
     # __dace_exit_<TARGET> function
     @property
     def has_finalizer(self):
+        return True
+    
+    def state_dispatch_predicate(self, sdfg, state):
+        if self._toplevel_schedule == dtypes.ScheduleType.IPU_SCHEDULE:
+            print("TRUE SAMEERAN")
+            return True
         return False
+
 
     @staticmethod
     def cmake_options():
@@ -637,63 +787,192 @@ class IPUCodeGen(TargetCodeGenerator):
         else:
             raise util.NotSupportedError('Only copy from Tasklets and AccessNodes is supported')
                       
-    # def generate_state(self, 
-    #                 sdfg:SDFG, 
-    #                 cfg: ControlFlowRegion, 
-    #                 state: SDFGState, 
-    #                 function_stream: CodeIOStream, 
-    #                 callsite_stream:CodeIOStream,
-    #                 generate_state_footer:bool = True):
-    #     debug_print_self(self)
-    #     self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream)
+    def generate_state(self, 
+                    sdfg:SDFG, 
+                    cfg: ControlFlowRegion, 
+                    state: SDFGState, 
+                    function_stream: CodeIOStream, 
+                    callsite_stream:CodeIOStream,
+                    generate_state_footer:bool = True):
         
-    # def declare_array(self,
-    #                   sdfg: SDFG,
-    #                   cfg: ControlFlowRegion,
-    #                   dfg: StateSubgraphView,
-    #                   state_id: int,
-    #                   node: nodes.Node,
-    #                   nodedesc: data.Data,
-    #                   function_stream: CodeIOStream,
-    #                   declaration_stream: CodeIOStream) -> None:
-    #     print("IN DECLARE_ARRAY")
-    #     fsymbols = self._frame.symbols_and_constants(sdfg)
-    #     # NOTE: `dfg` (state) will be None iff `nodedesc` is non-free symbol dependent
-    #     # (see `DaCeCodeGenerator.determine_allocation_lifetime` in `dace.codegen.targets.framecode`).
-    #     # We add the `dfg is not None` check because the `sdutils.is_nonfree_sym_dependent` check will fail if
-    #     # `nodedesc` is a View and `dfg` is None.
-    #     if dfg and not sdutils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
-    #         raise NotImplementedError("The declare_array method should only be used for variables "
-    #                                   "that must have their declaration and allocation separate.")
+        print("IPU STATE\n")
+        # disp = self.dispatcher.get_scope_dispatcher(dtypes.ScheduleType.Unrolled)
+        ipu_disp = self.dispatcher.get_state_dispatcher(sdfg, state=state)
+        cpu_disp = self.cpu_codegen
+        self.dispatcher._used_targets.add(ipu_disp)
+        self.dispatcher._used_targets.add(cpu_disp)
+        
+        state_id = state.block_id
+        
+        if IPUCodeGen._in_device_code:
+            print("IN DEVICE CODE")
+            subgraphs = dace.sdfg.concurrent_subgraphs(state)
+            self.generate_nested_state(sdfg, cfg, state, state.label, subgraphs, function_stream, callsite_stream)
+            NotImplementedError("IPU Device codegen not supported")
+        else:
+            print("IN HOST CODE")
+            kernels = []  # List of tuples (subgraph, kernel_id)
+            # Start a new state code generation: reset previous dependencies if any
+            self._kernels_dependencies.clear()
+            self._kernels_names_to_id.clear()
+            
+            # For now only 1 kernel.
+            kernels = [(state, 0)]
+            self._num_kernels = len(kernels)
 
-    #     name = node.root_data
-    #     ptrname = cpp.ptr(name, nodedesc, sdfg, self._frame)
+            state_parameters = []
+            state_host_header_stream = CodeIOStream()
+            state_host_body_stream = CodeIOStream()
+            instrumentation_stream = CodeIOStream()
+            
+            # Kernels are now sorted considering their dependencies
+            for kern, kern_id in kernels:
+                callsite_stream.write("\n SJJ: kernel started")                
+                # Generate all kernels in this state
+                subgraphs = dace.sdfg.concurrent_subgraphs(kern)
+                single_sgs: list(ScopeSubgraphView) = []
+                for sg in subgraphs:
+                    if sg is not None:
+                        single_sgs.append(sg)
+                    # skip multigraphs for now
+                        
+                shared_transients = set(sdfg.shared_transients())
+                # Allocate global memory transients, unless they are shared with
+                # other states
+                all_transients = set(kern.all_transients())
+                allocated = set(shared_transients)
+                for node in kern.data_nodes():
+                    data = node.desc(sdfg)
+                    if node.data not in all_transients or node.data in allocated:
+                        continue
+                    if (data.storage == dtypes.StorageType.IPU_Memory and not isinstance(data, data.View)):
+                        print("Allocating data")
+                        allocated.add(node.data)
+                        self.dispatcher.dispatch_allocate(sdfg, cfg, kern, state_id, node, data, function_stream,
+                                                           callsite_stream)
+                callsite_stream.write("\n SJJ: Data allocated")
+                # Create a unique kernel name to avoid name clashes
+                # If this kernels comes from a Nested SDFG, use that name also
+                if sdfg.parent_nsdfg_node is not None:
+                    kernel_name = f"{sdfg.parent_nsdfg_node.label}_{state.label}_{kern_id}_{cfg.cfg_id}"
+                else:
+                    kernel_name = f"{state.label}_{kern_id}_{cfg.cfg_id}"
+                    
+                # Add kernel name to the list of kernels    
+                self._kernels_names_to_id[kernel_name] = kern_id
+                # Generate kernel code
+                self.generate_kernel(sdfg, cfg, state, kernel_name, single_sgs, function_stream, callsite_stream,
+                                     state_host_header_stream, state_host_body_stream, instrumentation_stream,
+                                     state_parameters, kern_id)
+                callsite_stream.write("\n SJJ: Kernel generated")
 
-    #     if nodedesc.transient is False:
-    #         return
+            kernel_host_stream = CodeIOStream()            
+            self.generate_host_function(sdfg, cfg, state, state_id, function_stream, callsite_stream, state_host_header_stream, state_host_body_stream, instrumentation_stream, kernel_host_stream)
 
-    #     # Check if array is already declared
-    #     if self._dispatcher.declared_arrays.has(ptrname):
-    #         return
-
-    #     # Compute array size
-    #     arrsize = nodedesc.total_size
-    #     if not isinstance(nodedesc.dtype, dtypes.opaque):
-    #         arrsize_bytes = arrsize * nodedesc.dtype.bytes
-
-    #     if (nodedesc.storage == dtypes.StorageType.Register):
-    #         ctypedef = dtypes.pointer(nodedesc.dtype).ctype
-    #         declaration_stream.write(f'{nodedesc.dtype.ctype} *{name} = nullptr;\n', cfg, state_id, node)
-    #         #Tensor c1 = graph.addConstant<float>(FLOAT, {4}, {1.0, 1.5, 2.0, 2.5});
-    #         declaration_stream.write(f'{nodedesc.dtype.ctype} {name}_const = graph.addConstant<{nodedesc.dtype.ctype}>({nodedesc.dtype.ctype.capitalize}, {arrsize}, {nodedesc.ctype}({nodedesc.dtype.ctype}));\n', cfg, state_id, node)
-    #         self._dispatcher.declared_arrays.add(name, DefinedType.Pointer, ctypedef)
-    #         return
-    #     else:
-    #         raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
-
+            # Store code strings to be passed to compilation phase
+            self._host_codes.append((kernel_name, kernel_host_stream.getvalue()))
+            
+            # self.frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
+            
 ############################################################################################################
 # #### Helpers
+            ## Generate the global function here
+    def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
+                          src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[mmlt.Memlet],
+                          function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        self.dispatcher.dispatch_copy(src_node, dst_node, edge, sdfg, cfg, state_dfg, state_id, function_stream,
+                                       callsite_stream)
+        
+    def generate_nested_state(self, sdfg: SDFG, cfg: ControlFlowRegion, state: dace.SDFGState, nest_name: str,
+                              subgraphs: List[ScopeSubgraphView], function_stream: CodeIOStream,
+                              callsite_stream: CodeIOStream) -> None:
 
+        for sg in subgraphs:
+            self.dispatcher.dispatch_subgraph(sdfg,
+                                               cfg,
+                                               sg,
+                                               sdfg.node_id(state),
+                                               function_stream,
+                                               callsite_stream,
+                                               skip_entry_node=False)
+            
+    def generate_host_function(self, sdfg, cfg, state, state_id, function_stream, callsite_stream, state_host_header_stream, state_host_body_stream, instrumentation_stream, kernel_host_stream):
+        # Basic arguments setting
+        kernel_args_call_host = []
+        kernel_args_opencl = []
+        # Include state in args
+        kernel_args_opencl.append(f"{cpp.mangle_dace_state_struct_name(self._global_sdfg)} *__state")
+        kernel_args_call_host.append(f"__state")
+
+        # real code starts
+        
+        host_function_name = f"__dace_runstate_{cfg.cfg_id}_{state.name}_{state_id}"
+        function_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(host_function_name,
+                                                                            ", ".join(kernel_args_opencl)))
+
+        # add generated header information
+        kernel_host_stream.write(state_host_header_stream.getvalue())
+
+        kernel_host_stream.write(f"""\
+    DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{""")
+
+        kernel_host_stream.write(f"""\
+            hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();\
+    """)
+        # Create a vector to collect all events that are being generated to allow
+        # waiting before exiting this state
+        kernel_host_stream.write("std::vector<hlslib::ocl::Event> all_events;")
+
+        # Kernels invocations
+        kernel_host_stream.write(state_host_body_stream.getvalue())
+
+        # Wait for all events
+        kernel_host_stream.write("hlslib::ocl::WaitForEvents(all_events);")
+
+        kernel_host_stream.write("}\n")
+
+        callsite_stream.write("{}({});".format(host_function_name, ", ".join(kernel_args_call_host)))
+
+    def generate_kernel(self,
+                        sdfg: dace.SDFG,
+                        cfg: ControlFlowRegion,
+                        state: dace.SDFGState,
+                        kernel_name: str,
+                        subgraphs: list,
+                        function_stream: CodeIOStream,
+                        callsite_stream: CodeIOStream,
+                        state_host_header_stream: CodeIOStream,
+                        state_host_body_stream: CodeIOStream,
+                        instrumentation_stream: CodeIOStream,
+                        state_parameters: list,
+                        kernel_id: int = None):
+        """
+        Entry point for generating an FPGA Kernel out of the given subgraphs.
+
+        :param sdfg:
+        :param state:
+        :param kernel_name: the generated kernel name.
+        :param subgraphs: the connected components that constitute this kernel.
+        :param function_stream: CPU code stream, contains global declarations.
+        :param callsite_stream: CPU code stream, contains code for invoking kernels, ...
+        :param state_host_header_stream: Device-specific host code stream: contains the host code
+            for the state global declarations.
+        :param state_host_body_stream: Device-specific host code stream: contains all the code related
+            to this state, for creating transient buffers, spawning kernels, and synchronizing them.
+        :param instrumentation_stream: Code for profiling kernel execution time.
+        :param state_parameters: a list of parameters that must be passed to the state. It will get populated
+            considering all the parameters needed by the kernels in this state.
+        :param kernel_id: Unique ID of this kernels as computed in the generate_state function
+        """
+        kernel_stream = CodeIOStream()
+        #   # Actual kernel code generation
+        # self.generate_kernel_internal(sdfg, cfg, state, kernel_name, predecessors, subgraphs, kernel_stream,
+        #                               state_host_header_stream, state_host_body_stream, instrumentation_stream,
+        #                               function_stream, callsite_stream, state_parameters)
+        kernel_stream.write(f"// Kernel {kernel_name} called here", sdfg, state)
+        # Store code strings to be passed to compilation phase
+        self._kernel_codes.append((kernel_name, kernel_stream.getvalue()))
+        
     def add_header(self, function_stream: CodeIOStream):
         if self.has_generated_header:
             return

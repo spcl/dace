@@ -891,6 +891,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
+        callsite_stream.write('called allocate_arrays_in_scope outer\n', sdfg)
 
         # Define constants as top-level-allocated
         for cname, (ctype, _) in sdfg.constants_prop.items():
@@ -946,6 +947,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Deallocate transients
         self.deallocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
+        callsite_stream.write('called deallocate_arrays_in_scope internal transient\n', sdfg)
 
         # Now that we have all the information about dependencies, generate
         # header and footer

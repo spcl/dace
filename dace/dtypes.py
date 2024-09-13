@@ -19,7 +19,7 @@ from dace.registry import extensible_enum, undefined_safe_enum
 class DeviceType(aenum.AutoNumberEnum):
     CPU = ()  #: Multi-core CPU
     GPU = ()  #: GPU (AMD or NVIDIA)
-    # IPU = ()  #: IPU (Graphcore)
+    IPU = ()  #: IPU (Graphcore)
     FPGA = ()  #: FPGA (Intel or Xilinx)
     Snitch = ()  #: Compute Cluster (RISC-V)
 
@@ -80,8 +80,11 @@ class ScheduleType(aenum.AutoNumberEnum):
     Snitch = ()
     Snitch_Multicore = ()
     FPGA_Multi_Pumped = ()  #: Used for double pumping
-    # IPU_Map = ()  #: IPU (Graphcore)
+    IPU_SCHEDULE = ()  #: IPU (Graphcore)
 
+IPU_SCHEDULES = [
+    ScheduleType.IPU_SCHEDULE,
+]
 
 # A subset of GPU schedule types
 GPU_SCHEDULES = [
@@ -203,7 +206,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
     ScheduleType.Snitch: StorageType.Snitch_TCDM,
-    # ScheduleType.IPU_Map: StorageType.IPU_Tile_Local,
+    # ScheduleType.IPU_SCHEDULE: StorageType.IPU_Memory,
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -238,7 +241,7 @@ STORAGEDEFAULT_SCHEDULE = {
     StorageType.GPU_Shared: ScheduleType.GPU_ThreadBlock,
     StorageType.FPGA_Global: ScheduleType.FPGA_Device,
     StorageType.SVE_Register: ScheduleType.SVE_Map,
-    # StorageType.IPU_Tile_Local: ScheduleType.IPU_Map
+    # StorageType.IPU_Memory: ScheduleType.IPU_SCHEDULE,
 }
 
 # Translation of types to C types

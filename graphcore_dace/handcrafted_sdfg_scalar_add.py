@@ -372,6 +372,187 @@ def only_state():
 def add(A, B, C):
     C = A + B
 
+
+    
+def allocate_data(sdfg):
+        
+     # data
+    sdfg.add_array('A', 
+                   shape=[20],
+                   dtype=dace.int32, 
+                   storage=dace.StorageType.CPU_Heap, 
+                   location=None, 
+                   transient=False, 
+                   strides=[1], 
+                   offset=[0], 
+                   lifetime=dace.AllocationLifetime.Scope, 
+                   debuginfo=None, total_size=20)
+    sdfg.add_array('B', 
+                   shape=[20],
+                   dtype=dace.int32, 
+                   storage=dace.StorageType.CPU_Heap, 
+                   location=None, 
+                   transient=False, 
+                   strides=[1], 
+                   offset=[0], 
+                   lifetime=dace.AllocationLifetime.Scope, 
+                   debuginfo=None, total_size=20)
+    # Add a C array
+    sdfg.add_array('C', 
+                   shape=[20],
+                   dtype=dace.int32, 
+                   storage=dace.StorageType.CPU_Heap, 
+                   location=None, 
+                   transient=False, 
+                   strides=[1], 
+                   offset=[0], 
+                   lifetime=dace.AllocationLifetime.Scope, 
+                   debuginfo=None, total_size=20)
+    
+    # add a _tmp1 accessnode with transient state, shape 1 and dtype int32
+    sdfg.add_array('_tmp1', 
+                   shape=[1],
+                   dtype=dace.int32, 
+                   storage=dace.StorageType.Register, 
+                   location=None, 
+                   transient=True, 
+                   strides=[1], 
+                   offset=[0], 
+                   lifetime=dace.AllocationLifetime.Scope, 
+                   debuginfo=None, total_size=1)
+
+    # me, mx = state.add_map('outer', dict(i='0:2'))
+    # nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'a'}, {'b'})
+    # state.add_memlet_path(rnode, me, nsdfg_node, dst_conn='a', memlet=dace.Memlet.simple('A', 'i'))
+    # state.add_memlet_path(nsdfg_node, mx, wnode, src_conn='b', memlet=dace.Memlet.simple('A', 'i'))
+    
+def gpu_vector_add_python_copy():
+    
+      # # add a _tmp1 accessnode with transient state, shape 1 and dtype int32
+    # sdfg.add_array('_tmp1_outer', 
+    #                shape=[1],
+    #                dtype=dace.int32, 
+    #                storage=dace.StorageType.Register, 
+    #                location=None, 
+    #                transient=True, 
+    #                strides=[1], 
+    #                offset=[0], 
+    #                lifetime=dace.AllocationLifetime.Scope, 
+    #                debuginfo=None, total_size=1)
+    def nested() -> dace.SDFG:
+            # Inner SDFG
+        nsdfg = dace.SDFG('nested')
+        nsdfg.add_array('a', [1], dace.int32)
+        nsdfg.add_array('b', [1], dace.int32)
+        nsdfg.add_array('c', [1], dace.int32)
+        nsdfg.add_transient('t', [1], dace.int32)
+
+        # init state
+        ninitstate = nsdfg.add_state()
+        # a,b->t state
+        nstate = nsdfg.add_state()
+        irnode = nstate.add_read('a')
+        irnodeb = nstate.add_read('b')
+        task = nstate.add_tasklet('t1', {'inp1', 'inp2'}, {'out'}, 'out = inp1 + inp2')
+        iwnode = nstate.add_write('t')
+        nstate.add_edge(irnode, None, task, 'inp1', dace.Memlet.simple('a', '0'))
+        nstate.add_edge(irnodeb, None, task, 'inp2', dace.Memlet.simple('b', '0'))
+        nstate.add_edge(task, 'out', iwnode, None, dace.Memlet.simple('t', '0'))
+
+        # t->c state
+        first_state = nstate
+        nstate = nsdfg.add_state()
+        irnode = nstate.add_read('t')
+        task = nstate.add_tasklet('t2', {'inp1'}, {'out1'}, 'out1 = inp1')
+        iwnode = nstate.add_write('c')
+        nstate.add_edge(irnode, None, task, 'inp1', dace.Memlet.simple('t', '0'))
+        nstate.add_edge(task, 'out1', iwnode, None, dace.Memlet.simple('c', '0'))
+
+        nsdfg.add_edge(ninitstate, first_state, dace.InterstateEdge())
+        nsdfg.add_edge(first_state, nstate, dace.InterstateEdge())
+        return nsdfg
+   
+    
+    ###############################################################
+      # Outer SDFG
+    sdfg = dace.SDFG('gpu_vector_add_python_copy')
+     # data
+    sdfg.add_array('A_outer', 
+                   shape=[20],
+                   dtype=dace.int32, 
+                   storage=dace.StorageType.CPU_Heap, 
+                   location=None, 
+                   transient=False, 
+                   strides=[1], 
+                   offset=[0], 
+                   lifetime=dace.AllocationLifetime.Scope, 
+                   debuginfo=None, total_size=20)
+    sdfg.add_array('B_outer', 
+                   shape=[20],
+                   dtype=dace.int32, 
+                   storage=dace.StorageType.CPU_Heap, 
+                   location=None, 
+                   transient=False, 
+                   strides=[1], 
+                   offset=[0], 
+                   lifetime=dace.AllocationLifetime.Scope, 
+                   debuginfo=None, total_size=20)
+    # Add a C array
+    sdfg.add_array('C_outer', 
+                   shape=[20],
+                   dtype=dace.int32, 
+                   storage=dace.StorageType.CPU_Heap, 
+                   location=None, 
+                   transient=False, 
+                   strides=[1], 
+                   offset=[0], 
+                   lifetime=dace.AllocationLifetime.Scope, 
+                   debuginfo=None, total_size=20)
+    
+    sdfg.add_symbol('i', dace.int32)
+    
+    # State machine
+    initstate = sdfg.add_state("init")
+    state = sdfg.add_state()
+    rnode = state.add_read('A_outer')
+    rnodeb = state.add_read('B_outer')
+    wnode = state.add_write('C_outer')
+    me, mx = state.add_map('map_parallelizn', dict(i='0:20'))
+    nsdfg_node = state.add_nested_sdfg(nested(), None, {'a', 'b'}, {'c'}, schedule=dace.ScheduleType.Sequential)
+    state.add_memlet_path(rnode, me, nsdfg_node, dst_conn='a', memlet=dace.Memlet.simple('A_outer', 'i'))
+    state.add_memlet_path(rnodeb, me, nsdfg_node, dst_conn='b', memlet=dace.Memlet.simple('B_outer', 'i'))
+    state.add_memlet_path(nsdfg_node, mx, wnode, src_conn='c', memlet=dace.Memlet.simple('C_outer', 'i'))
+        
+   # add state edges
+    sdfg.add_edge(initstate, state, dace.InterstateEdge())
+
+ ###########CODEGEN################
+    A = np.random.rand(20)
+    B = np.random.rand(20)
+    C = np.zeros(20)
+    print("A Values:", A)
+    print("B Values:", B)
+    print("C Values:", C)
+    
+    sdfg = sdfg(A, B, C)
+    
+
+# def gpu_vec_add_python():
+            
+#     @dace.program
+#     def gpu_vector_add(A: dace.int32, B: dace.int32, C: dace.int32):
+#         for i in dace.map[0:20]:       # parallelization construct
+#             C[i] =  A[i] + B[i]
+
+#     sdfg = gpu_vector_add.to_sdfg(simplify=False)   # compiled SDFG
+#     sdfg.apply_transformations(GPUTransformSDFG)
+
+#     # call with values
+#     A = np.ones((20), dtype=np.int32)   # 1,1,1,1,...
+#     B = np.ones((20), dtype=np.int32)   # 1,1,1,1,...
+#     C = np.zeros((20), dtype=np.int32)  # 0,0,0,0,...
+#     sdfg(A, B, C)
+
 # main
 if __name__ == "__main__":
     # handcrafted_sdfg_scalar_add()
@@ -387,5 +568,6 @@ if __name__ == "__main__":
     # only_state()
     # print (C)
     # vector_add()
-    gpu_scalar_add()
+    # gpu_scalar_add()
     gpu_accessnode_test()
+    # gpu_vector_add_python_copy()
