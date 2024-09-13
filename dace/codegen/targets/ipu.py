@@ -29,6 +29,9 @@ from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from dace.sdfg.validation import validate_memlet_data
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.codegen.targets.ipu_files import ipu_utils as ipu_utils
+from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, memlet_copy_to_absolute_strides, sym2cpp,
+                                      synchronize_streams, unparse_cr, mangle_dace_state_struct_name)
+
 import copy
 import functools
 import itertools
@@ -128,79 +131,208 @@ class IPUCodeGen(TargetCodeGenerator):
         # self._dispatcher.register_map_dispatcher(dace.ScheduleType.IPU, self)
         # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
 
-    # def preprocess(self, sdfg: SDFG) -> None:        
+    def preprocess(self, sdfg: SDFG) -> None:        
+        
+        #create a new string
+        str_decl = StringIO()
+        str_decl = f"""
+// Declare variables
+optional<Device> device;  // Declaration
+Graph graph;              // Declaration
+map<string, Tensor> tensors;       // Declaration
+map<string, Program> programs;     // Declaration
+OptionFlags ENGINE_OPTIONS; // Declaration
+map<string, int> programIds;                     // Declaration
+vector<Program> programsList;                    // Declaration
+vector<float> hostData;                      // Declaration
+Engine engine; 
+"""
+    # Add above code to the statestruct
+        self.frame.statestruct.append(str_decl)
+        
     #     # hack to get the ipu codegen to work
     #     # self._toplevel_schedule = dtypes.ScheduleType.IPU_SCHEDULE
 
     def get_generated_codeobjects(self):
+        fileheader = CodeIOStream()
+        fileheader.write("""
+            #include <algorithm>
+            #include <cstdlib>
+            #include <fstream>
+            #include <iomanip>
+            #include <optional>
+            #include <iostream>
+            #include <map>
 
-        execution_mode = Config.get("compiler", "xilinx", "mode")
+            #include <poplar/DeviceManager.hpp>
+            #include <poplar/Engine.hpp>
+            #include <poplar/IPUModel.hpp>
+            #include <poplar/Program.hpp>
+            #include <popops/ElementWise.hpp>
+            #include <popops/codelets.hpp>
+            #include <poputil/TileMapping.hpp>
 
-        kernel_file_name = "DACE_BINARY_DIR \"/{}".format(self.program_name)
-        if execution_mode == "software_emulation":
-            kernel_file_name += "_sw_emu.xclbin\""
-            xcl_emulation_mode = "\"sw_emu\""
-            xilinx_sdx = "DACE_VITIS_DIR"
-        elif execution_mode == "hardware_emulation":
-            kernel_file_name += "_hw_emu.xclbin\""
-            xcl_emulation_mode = "\"hw_emu\""
-            xilinx_sdx = "DACE_VITIS_DIR"
-        elif execution_mode == "hardware" or execution_mode == "simulation":
-            kernel_file_name += "_hw.xclbin\""
-            xcl_emulation_mode = None
-            xilinx_sdx = None
-        else:
-            raise cgx.CodegenError("Unknown Xilinx execution mode: {}".format(execution_mode))
+            using ::std::map;
+            using ::std::optional;
+            using ::std::string;
+            using ::std::vector;
 
-        set_env_vars = ""
-        set_str = "dace::set_environment_variable(\"{}\", {});\n"
-        unset_str = "dace::unset_environment_variable(\"{}\");\n"
-        set_env_vars += (set_str.format("XCL_EMULATION_MODE", xcl_emulation_mode)
-                         if xcl_emulation_mode is not None else unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
-                         if xilinx_sdx is not None else unset_str.format("XILINX_SDX"))
-        set_env_vars += set_str.format(
-            "EMCONFIG_PATH",
-            "DACE_BINARY_DIR") if execution_mode == 'hardware_emulation' else unset_str.format("EMCONFIG_PATH")
-
-        host_code = CodeIOStream()
-        host_code.write("""\
-#include "dace/xilinx/host.h"
-#include "dace/dace.h"
-#include "dace/xilinx/stream.h"
-""")
-        host_code.write("\n\n")
-
-        self.frame.generate_fileheader(self._global_sdfg, host_code, 'xilinx_host')
-
+            using ::poplar::Device;
+            using ::poplar::DeviceManager;
+            using ::poplar::Engine;
+            using ::poplar::FLOAT;
+            using ::poplar::Graph;
+            using ::poplar::OptionFlags;
+            using ::poplar::TargetType;
+            using ::poplar::Tensor;
+            using ::poplar::program::Copy;
+            using ::poplar::program::Execute;
+            using ::poplar::program::Program;
+            using ::poplar::program::Repeat;
+            using ::poplar::program::Sequence;
+            
+            
+        """)
+        fileheader.write("\n\n")
+        constdefines = CodeIOStream()
+        constdefines.write("""const auto NUM_DATA_ITEMS = 200000;""")
+        constdefines.write("\n\n")
+        
         params_comma = self._global_sdfg.init_signature(free_symbols=self.frame.free_symbols(self._global_sdfg))
         if params_comma:
             params_comma = ', ' + params_comma
-
+            
+        host_code = CodeIOStream()       
         host_code.write("""
-DACE_EXPORTED int __dace_init_xilinx({sdfg_state_name} *__state{signature}) {{
-    {environment_variables}
+#include <dace/dace.h>
 
-    __state->fpga_context = new dace_fpga_context();
-    __state->fpga_context->Get().MakeProgram({kernel_file_name});
+{file_header}
+{const_defines}
+
+DACE_EXPORTED int __dace_init_ipu({sdfg_state_name} *__state{params});
+DACE_EXPORTED int __dace_exit_ipu({sdfg_state_name} *__state);
+
+// {other_globalcode}
+
+int __dace_init_ipu({sdfg_state_name} *__state{params}) {{
+
+  __state->tensors = map<string, Tensor>{{}};   // Assignment
+  __state->programs = map<string, Program>{{}}; // Assignment
+  ENGINE_OPTIONS = OptionFlags{{
+      // Assignment
+      {{"target.saveArchive", "archive.a"}},
+      {{"debug.instrument", "true"}},
+      {{"debug.instrumentCompute", "true"}},
+      {{"debug.instrumentControlFlow", "true"}},
+      {{"debug.computeInstrumentationLevel", "tile"}},
+      {{"debug.outputAllSymbols", "true"}},
+      {{"autoReport.all", "true"}},
+      {{"autoReport.outputSerializedGraph", "true"}},
+      {{"debug.retainDebugInformation", "true"}},
+  }};
+  __state->programIds = map<string, int>();                 // Assignment
+  __state->programsList = vector<Program>(__state->programs.size()); // Assignment
+  int index = 0;
+  for (auto &nameToProgram : __state->programs) {{
+    __state->programIds[nameToProgram.first] = index;
+    __state->programsList[index] = nameToProgram.second;
+    index++;
+  }}
+  __state->hostData = vector<float>(NUM_DATA_ITEMS, 1); // Assignment
+
     return 0;
 }}
 
-DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
-    delete __state->fpga_context;
+int __dace_exit_ipu({sdfg_state_name} *__state) {{
     return 0;
 }}
 
-{host_code}""".format(signature=params_comma,
-                      sdfg=self._global_sdfg,
-                      sdfg_state_name=cpp.mangle_dace_state_struct_name(self._global_sdfg),
-                      environment_variables=set_env_vars,
-                      kernel_file_name=kernel_file_name,
-                      host_code="".join([
+auto __dace_getIpuDevice({sdfg_state_name} *__state, const unsigned int numIpus = 1) -> optional<Device> 
+{{
+  DeviceManager manager = DeviceManager::createDeviceManager();
+  optional<Device> device = std::nullopt;
+  for (auto &d : manager.getDevices(TargetType::IPU, numIpus)) {{
+    std::cout << "Trying to attach to IPU " << d.getId();
+    if (d.attach()) {{
+      std::cout << " - attached" << std::endl;
+      device = {{std::move(d)}};
+      break;
+    }} else {{
+      std::cout << std::endl << "Error attaching to device" << std::endl;
+    }}
+  }}
+  return device;
+}}
+
+auto __dace_createGraphAndAddCodelets({sdfg_state_name} *__state, const optional<Device> &device) -> Graph 
+{{
+  Graph graph;                                // Declaration
+  graph = poplar::Graph(device->getTarget()); // Assignment
+
+  // Add our custom codelet, building from CPP source
+  // with the given popc compiler options
+  graph.addCodelets({{"src/codelets/SkeletonCodelets.cpp"}}, "-O3 -I codelets");
+
+  // Add the codelets for the popops librarys
+  popops::addCodelets(graph);
+  return graph;
+}}
+
+auto __dace_buildComputeGraph({sdfg_state_name} *__state, Graph &graph, map<string, Tensor> &tensors,
+                       map<string, Program> &programs, const int numTiles) 
+{{
+  // Add tensors
+  tensors["data"] = graph.addVariable(poplar::FLOAT, {{NUM_DATA_ITEMS}}, "data");
+  poputil::mapTensorLinearly(graph, tensors["data"]);
+
+  //   // Add programs and wire up data
+  //   const auto NumElemsPerTile = NUM_DATA_ITEMS / numTiles;
+  //   auto cs = graph.addComputeSet("loopBody");
+  //   for (auto tileNum = 0; tileNum < numTiles; tileNum++) {{
+  //     const auto sliceEnd =
+  //         std::min((tileNum + 1) * NumElemsPerTile, (int)NUM_DATA_ITEMS);
+  //     const auto sliceStart = tileNum * NumElemsPerTile;
+
+  //     auto v = graph.addVertex(
+  //         cs, "SkeletonVertex",
+  //         {{{{"data", tensors["data"].slice(sliceStart, sliceEnd)}}}});
+  //     graph.setInitialValue(v["howMuchToAdd"], tileNum);
+  //     graph.setPerfEstimate(v,
+  //                           100); // Ideally you'd get this as right as
+  //                           possible
+  //     graph.setTileMapping(v, tileNum);
+  //   }}
+  //   auto executeIncrementVertex = Execute(cs);
+
+  //   auto mainProgram = Repeat(10, executeIncrementVertex, "repeat10x");
+  //   programs["main"] = mainProgram; // Program 0 will be the main program
+}}
+
+
+auto __dace_defineDataStreams({sdfg_state_name} *__state, Graph &graph, map<string, Tensor> &tensors,
+                       map<string, Program> &programs) 
+{{
+  auto toIpuStream = graph.addHostToDeviceFIFO("TO_IPU", FLOAT, NUM_DATA_ITEMS);
+  auto fromIpuStream =
+      graph.addDeviceToHostFIFO("FROM_IPU", FLOAT, NUM_DATA_ITEMS);
+
+  auto copyToIpuProgram = Copy(toIpuStream, tensors["data"]);
+  auto copyToHostProgram = Copy(tensors["data"], fromIpuStream);
+
+  programs["copy_to_ipu"] = copyToIpuProgram;
+  programs["copy_to_host"] = copyToHostProgram;
+}}
+
+{host_code_seperator}""".format(params=params_comma,
+           sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
+           other_globalcode=self._globalcode.getvalue(),
+           file_header=fileheader.getvalue(),
+           const_defines = constdefines.getvalue(),
+           sdfg=self._global_sdfg, 
+           host_code_seperator="".join([
                           "{separator}\n// Kernel: {kernel_name}"
                           "\n{separator}\n\n{code}\n\n".format(separator="/" * 79, kernel_name=name, code=code)
-                          for (name, code) in self._host_codes
-                      ])))
+                          for (name, code) in self._host_codes])))
 
         host_code_obj = CodeObject(self.program_name,
                                    host_code.getvalue(),
@@ -209,6 +341,7 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
                                    "IPU",
                                    target_type="host")
 
+        # Device object
         kernel_code_objs = [
             CodeObject(kernel_name,
                        code,
@@ -217,20 +350,18 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
                        "IPU",
                        target_type="device") for (kernel_name, code) in self._kernel_codes
         ]
-        
-        res = super().get_generated_codeobjects()   # Not sure why is this object here, fix it later.
-        print(res)
-        return [host_code_obj] +  kernel_code_objs + res    
+                
+        return [host_code_obj] +  kernel_code_objs
 
     # __dace_init_<TARGET> function
     @property
     def has_initializer(self):
-        return True
+        return False
 
     # __dace_exit_<TARGET> function
     @property
     def has_finalizer(self):
-        return True
+        return False
     
     def state_dispatch_predicate(self, sdfg, state):
         if self._toplevel_schedule == dtypes.ScheduleType.IPU_SCHEDULE:
@@ -794,7 +925,6 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
                     function_stream: CodeIOStream, 
                     callsite_stream:CodeIOStream,
                     generate_state_footer:bool = True):
-        
         print("IPU STATE\n")
         # disp = self.dispatcher.get_scope_dispatcher(dtypes.ScheduleType.Unrolled)
         ipu_disp = self.dispatcher.get_state_dispatcher(sdfg, state=state)
@@ -1002,29 +1132,30 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
         
     # def debug_print_self(self):
     #     print("IN GENERATE_STATE")
+        
     #     # print below ones as well
-    #     print("TargetDispatcher:", self._dispatcher)
-    #     print("init_code", self._frame._initcode.getvalue())
-    #     print("exit_code", self._frame._exitcode.getvalue())
-    #     print("Len env:", len(self._frame.environments))
-    #     for _x in self._frame.statestruct:
+    #     print("TargetDispatcher:", self.dispatcher)
+    #     print("init_code", self.frame._initcode.getvalue())
+    #     print("exit_code", self.frame._exitcode.getvalue())
+    #     print("Len env:", len(self.frame.environments))
+    #     for _x in self.frame.statestruct:
     #         print("statestruct:", _x)
-    #     print("environments:", self._frame.environments)
-    #     print("targets:", self._frame.targets)
-    #     print("to_allocate:", self._frame.to_allocate)
-    #     print("where_allocated:", self._frame.where_allocated)
-    #     print("fsyms:", self._frame.fsyms)
-    #     print("_symbols_and_constants:", self._frame._symbols_and_constants)
-    #     print("arglist:", self._frame.arglist)  
+    #     print("environments:", self.frame.environments)
+    #     print("targets:", self.frame.targets)
+    #     print("to_allocate:", self.frame.to_allocate)
+    #     print("where_allocated:", self.frame.where_allocated)
+    #     print("fsyms:", self.frame.fsyms)
+    #     print("_symbols_and_constants:", self.frame._symbols_and_constants)
+    #     print("arglist:", self.frame.arglist)  
     #     print ("DONE")
     #     print("DISPATCHER Data")
-    #     print ("used_env", self._dispatcher.used_environments)
-    #     print ("used_targets", self._frame.dispatcher.used_targets)
+    #     print ("used_env", self.dispatcher.used_environments)
+    #     print ("used_targets", self.frame.dispatcher.used_targets)
     #     print("DONE")
     #     #######
     #     print("TargetCodeGenerator:", self)
     #     print("language", self.language)
-    #     # print("TargetDispatcher:", self._dispatcher.used_targets)
+        # print("TargetDispatcher:", self._dispatcher.used_targets)
 
     # def generate_scope(self,
     #                    sdfg: SDFG,
@@ -1079,48 +1210,3 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
     #              cppunparse.pyexpr2cpp(symbolic.symstr(skip, cpp_mode=True))), cfg, state_id, map_header)
 
     #     self._frame.allocate_arrays_in_scope(sdfg, cfg, map_header, function_stream, callsite_stream)
-
-
-    # This will generate the src/cuda/xyz.cu files and folders using "codeObjects" class.
-    # We don't need this now as we are mostly concerned about a single file codegen as of now.
-    # def get_generated_codeobjects(self):
-        # fileheader = CodeIOStream()
-        # sdfg = self._global_sdfg  
-        
-        # # cuda/mpi seemed to be using this follow 
-        # params_comma = self._global_sdfg.init_signature(free_symbols=self._frame.free_symbols(self._global_sdfg))
-        # if params_comma:
-        #     params_comma = ', ' + params_comma
-        # codelet_file_code = """
-        #                     // Copyright (c) 2018 Graphcore Ltd. All rights reserved.
-        #                     // Copied from tut3_vertices from Poplar SDK tutorials
-
-        #                     #include <poplar/Vertex.hpp>
-
-        #                     class SumVertex : public poplar::Vertex {
-        #                         public:
-        #                         // Fields
-        #                         poplar::Input<poplar::Vector<float>> in;
-        #                         poplar::Output<float> out;
-
-        #                         // Compute function
-        #                         bool compute() {
-        #                             *out = 0;
-        #                             for (const auto &v : in) {
-        #                             *out += v;
-        #                             }
-        #                             return true;
-        #                         }
-        #                     };
-        #                     """
-        
-        # codeobj = CodeObject(
-        #     name=sdfg.name + '_codelets', 
-        #     code=codelet_file_code,
-        #     language='cpp', 
-        #     target=IPUCodeGen, 
-        #     title='IPU',
-        #     linkable=False)
-        
-        # # Fill in the list
-        # return [codeobj]
