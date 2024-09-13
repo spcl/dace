@@ -22,7 +22,7 @@ def test_raise_and_duplicate_and_fusions():
         for i in dace.map[0:N]:
                 arr[i] = tmp2[i]
 
-    sdfg = program.to_sdfg()
+    sdfg = program.to_sdfg(simplify=True)
     sdfg.apply_transformations([IfRaising, StateReplication])
     sdfg.simplify()
     sdfg.apply_transformations_repeated([OTFMapFusion])
@@ -49,7 +49,7 @@ def test_if_raise_dependency():
         else:
             return 0
 
-    sdfg = program.to_sdfg()
+    sdfg = program.to_sdfg(simplify=True)
 
     transform = IfRaising()
     transform.if_guard = sdfg.start_state
