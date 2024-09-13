@@ -34,7 +34,7 @@ def eliminate_branch(sdfg: sd.SDFG, initial_edge: sd.graph.Edge):
 @make_properties
 class ResolveCondition(ppl.Pass):
     """
-    Given a condition (e.g. var = 1) assumes the condition always holds true, and removes unreachable states
+    Given a condition (e.g. var == 1) assumes the condition always holds true, and removes unreachable states
     """
 
     CATEGORY: str = 'Simplification'
