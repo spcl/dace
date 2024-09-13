@@ -27,7 +27,7 @@ def dependant_application(flag: dace.bool, arr: dace.float32[N]):
 
 
 def test_simple_application():
-    sdfg = simple_application.to_sdfg()
+    sdfg = simple_application.to_sdfg(simplify=True)
 
     assert len(sdfg.nodes()) == 1
 
@@ -43,7 +43,7 @@ def test_simple_application():
             assert not isinstance(n, NestedSDFG)
 
 def test_fails_due_to_dependency():
-    sdfg = dependant_application.to_sdfg()
+    sdfg = dependant_application.to_sdfg(simplify=True)
 
     assert sdfg.apply_transformations_repeated([IfExtraction]) == 0
 
