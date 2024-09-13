@@ -62,8 +62,11 @@ class MapSplit(transformation.SingleStateTransformation):
         map_exit = self.map_exit
 
         entry_degenerate = deepcopy(map_entry)
-        nested_degenerate = deepcopy(nested_sdfg)
+        nested_degenerate = nodes.NestedSDFG.from_json(nested_sdfg.to_json(state),
+                context={'sdfg_state': state, 'sdfg': sdfg})
         exit_degenerate = deepcopy(map_exit)
+        exit_degenerate.map = entry_degenerate.map
+
         state.add_nodes_from([entry_degenerate, nested_degenerate, exit_degenerate])
         for e in state.in_edges(map_entry):
             state.add_edge(e.src, e.src_conn, entry_degenerate, e.dst_conn, deepcopy(e.data))
