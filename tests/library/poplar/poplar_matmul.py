@@ -20,7 +20,7 @@ def make_sdfg(dtype):
     b = state.add_access("B")
     c = state.add_access("C")
     
-    poplar_mm_node = poplar.nodes.popmm.IPUMatMul("MATMUL", A_scalar_param=10, B_scalar_param=10, C_scalar_param=0)
+    poplar_mm_node = poplar.nodes.popmm.IPUMatMul("MATMUL")
     poplar_mm_node.implementation = "MM"
     
     state.add_memlet_path(a, poplar_mm_node, dst_conn="_inbufferA", memlet=dace.Memlet(f"A"))
