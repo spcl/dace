@@ -2193,15 +2193,17 @@ class SDFG(ControlFlowRegion):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True, additional_code_obj=None) -> 'CompiledSDFG':
+    def compile(self, output_file=None, validate=True, additional_code_obj=None,
+                return_program_handle=True) -> 'CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
 
             :param output_file: If not None, copies the output library file to
                                 the specified path.
             :param validate: If True, validates the SDFG prior to generating
                              code.
-            :param additional_code_obj: If not None use these objects in the compilation process
-            :return: A callable CompiledSDFG object.
+            :param additional_code_obj: If not None, use these objects in the compilation process.
+            :param return_program_handle: If False, does not load the generated libaray.
+            :return: A callable CompiledSDFG object, or None if ``return_program_handle=False``.
         """
 
         # Importing these outside creates an import loop
@@ -2268,7 +2270,8 @@ class SDFG(ControlFlowRegion):
             shutil.copyfile(shared_library, output_file)
 
         # Get the function handle
-        return compiler.get_program_handle(shared_library, sdfg)
+        if return_program_handle:
+            return compiler.get_program_handle(shared_library, sdfg)
 
     def argument_typecheck(self, args, kwargs, types_only=False):
         """ Checks if arguments and keyword arguments match the SDFG
