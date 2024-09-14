@@ -279,10 +279,10 @@ def parse_dace_program(name: str,
         ProgramVisitor.increment_progress()
     except SkipCall:
         raise
-    except Exception:
+    except Exception as e:
         # Print the offending line causing the exception
         li = visitor.current_lineinfo
-        print(f'Exception raised while parsing DaCe program:\n  in File "{li.filename}", line {li.start_line}')
+        print(f'Exception {e} raised while parsing DaCe program:\n  in File "{li.filename}", line {li.start_line}')
         lines = preprocessed_ast.src.split('\n')
         lineid = li.start_line - preprocessed_ast.src_line - 1
         if lineid >= 0 and lineid < len(lines):

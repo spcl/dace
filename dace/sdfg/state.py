@@ -349,7 +349,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             yield node, self
             if isinstance(node, nd.NestedSDFG):
                 if predicate is None or predicate(node, self):
-                    yield from node.sdfg.all_nodes_recursive()
+                    yield from node.sdfg.all_nodes_recursive(predicate)
 
     def all_edges_recursive(self) -> Iterator[Tuple[EdgeT, GraphT]]:
         for e in self.edges():
@@ -966,7 +966,7 @@ class ControlGraphView(BlockGraphView, abc.ABC):
         for node in self.nodes():
             yield node, self
             if predicate is None or predicate(node, self):
-                yield from node.all_nodes_recursive()
+                yield from node.all_nodes_recursive(predicate)
 
     def all_edges_recursive(self) -> Iterator[Tuple[EdgeT, GraphT]]:
         for e in self.edges():
@@ -2947,11 +2947,11 @@ class LoopRegion(ControlFlowRegion):
     present).
     """
 
-    update_statement = CodeProperty(optional=True,
+    update_statement = CodeProperty(serialize_if=lambda ustmnt: ustmnt is not None,
                                     allow_none=True,
                                     default=None,
                                     desc='The loop update statement. May be None if the update happens elsewhere.')
-    init_statement = CodeProperty(optional=True,
+    init_statement = CodeProperty(serialize_if=lambda istmnt: istmnt is not None,
                                   allow_none=True,
                                   default=None,
                                   desc='The loop init statement. May be None if the initialization happens elsewhere.')
