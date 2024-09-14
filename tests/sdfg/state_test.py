@@ -58,7 +58,31 @@ def test_deepcopy_state():
     sdfg.validate()
 
 
+def test_add_mapped_tasklet():
+    sdfg = dace.SDFG("test_add_mapped_tasklet")
+    state = sdfg.add_state(is_start_block=True)
+
+    for name in "AB":
+        sdfg.add_array(name, (10, 10), dace.float64)
+    A, B = (state.add_access(name) for name in "AB")
+
+    tsklt, me, mx = state.add_mapped_tasklet(
+            "test_map",
+            map_ranges={"i": "0:10", "j": "0:10"},
+            inputs={"__in": dace.Memlet("A[i, j]")},
+            code="__out = math.sin(__in)",
+            outputs={"__out": dace.Memlet("B[j, i]")},
+            external_edges=True,
+            output_nodes=[B],
+            input_nodes={A},
+    )
+    sdfg.validate()
+    assert all(out_edge.dst is B for out_edge in state.out_edges(mx))
+    assert all(in_edge.src is A for in_edge in state.in_edges(me))
+
+
 if __name__ == '__main__':
     test_read_write_set()
     test_read_write_set_y_formation()
     test_deepcopy_state()
+    test_add_mapped_tasklet()
