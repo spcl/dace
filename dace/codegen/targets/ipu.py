@@ -126,12 +126,13 @@ class IPUCodeGen(TargetCodeGenerator):
         # # Dispatchers
         # self.dispatcher.register_map_dispatcher(dace.ScheduleType.IPU_Map, self)
         # self.dispatcher.register_node_dispatcher(self, self.is_ipu_map_scope)
+        self.dispatcher.register_node_dispatcher(self, self.is_node_library_node)
         # self.dispatcher.register_node_dispatcher(self, self.is_node_tasklet)
         # self.dispatcher.register_copy_dispatcher(dtypes.StorageType.Register, dtypes.StorageType.IPU_Tile_Local, None, func=self)
         # self._dispatcher.register_map_dispatcher(dace.ScheduleType.IPU, self)
         # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
 
-    def preprocess(self, sdfg: SDFG) -> None:        
+    def preprocess(self, sdfg: SDFG) -> None:
         
         #create a new string
         str_decl = StringIO()
@@ -379,6 +380,11 @@ auto __dace_defineDataStreams({sdfg_state_name} *__state, Graph &graph, map<stri
     
     def is_node_tasklet(self, sdfg, state, node):
         if isinstance(node, nodes.Tasklet):
+            return True
+        return False
+    
+    def is_node_library_node(self, sdfg, state, node):
+        if isinstance(node, nodes.LibraryNode):
             return True
         return False
     

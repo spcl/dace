@@ -11,10 +11,38 @@ def make_sdfg(dtype):
 
     sdfg = dace.SDFG("poplar_matmul")
     state = sdfg.add_state("matmul_state")
+    sdfg.add_array('A', 
+                   shape=[1],
+                   dtype=dace.int32, 
+                   storage=dace.StorageType.IPU_Memory, 
+                   location=None, 
+                   transient=False, 
+                   strides=[1], 
+                   offset=[0], 
+                   lifetime=dace.AllocationLifetime.Scope, 
+                   debuginfo=None, total_size=1)
+    sdfg.add_array('B', 
+                   shape=[1],
+                   dtype=dace.int32, 
+                   storage=dace.StorageType.IPU_Memory, 
+                   location=None, 
+                   transient=False, 
+                   strides=[1], 
+                   offset=[0], 
+                   lifetime=dace.AllocationLifetime.Scope, 
+                   debuginfo=None, total_size=1)
+    # Add a C array
+    sdfg.add_array('C', 
+                   shape=[1],
+                   dtype=dace.int32, 
+                   storage=dace.StorageType.IPU_Memory, 
+                   location=None, 
+                   transient=False, 
+                   strides=[1], 
+                   offset=[0], 
+                   lifetime=dace.AllocationLifetime.Scope, 
+                   debuginfo=None, total_size=1)
 
-    sdfg.add_array('A', [10], dtype)
-    sdfg.add_array('B', [10], dtype)  
-    sdfg.add_array('C', [10], dtype)
     
     a = state.add_access("A")
     b = state.add_access("B")
