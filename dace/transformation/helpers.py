@@ -688,6 +688,9 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
     for e in orig_edges:
         newstate.add_edge(new_nodes[e.src], e.src_conn, new_nodes[e.dst], e.dst_conn, e.data)
 
+    for bn in boundary_nodes:
+        bn._in_connectors.clear()
+
     return newstate
 
 

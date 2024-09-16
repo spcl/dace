@@ -66,6 +66,7 @@ _DACE_SERIALIZE_TYPES = {
     "string": dace.dtypes.string,
     "bool_": dace.dtypes.bool,
     "pyobject": dace.dtypes.pyobject,
+    "fixedlenarray": dace.dtypes.fixedlenarray,
     # All classes annotated with the make_properties decorator will register
     # themselves here.
 }

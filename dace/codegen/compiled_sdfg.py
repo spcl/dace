@@ -39,16 +39,26 @@ class ReloadableDLL(object):
 
     def get_symbol(self, name, restype=ctypes.c_int):
         """ Returns a symbol (e.g., function name) in the loaded library. """
+        return ctypes.CFUNCTYPE(restype)(self.get_raw_symbol(name))
+
+    def get_raw_symbol(self, name):
+        """ Returns a symbol (e.g., function name) in the loaded library. """
 
         if self._lib is None or self._lib.value is None:
             raise ReferenceError('ReloadableDLL can only be used with a ' +
                                  '"with" statement or with load() and unload()')
 
-        func = self._stub.get_symbol(self._lib, ctypes.c_char_p(name.encode()))
-        if func is None:
-            raise KeyError(f'Function {name} not found in library {os.path.basename(self._library_filename)}')
+        sym = self._stub.get_symbol(self._lib, ctypes.c_char_p(name.encode()))
+        if sym is None:
+            raise KeyError(f'Symbol {name} not found in library {os.path.basename(self._library_filename)}')
 
-        return ctypes.CFUNCTYPE(restype)(func)
+        return sym
+
+    def set_symbol(self, name, value, dtype=ctypes.c_int):
+        """ Sets a symbol (e.g., global) in the loaded library. """
+        sym = self.get_raw_symbol(name)
+        ptr = ctypes.cast(sym, ctypes.POINTER(dtype))
+        ptr.contents = dtype(value)
 
     def is_loaded(self) -> bool:
         """ Checks if the library is already loaded. """
@@ -160,7 +170,6 @@ def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
         return array.data_ptr()
     if isinstance(array, ctypes.Array):
         return ctypes.addressof(array)
-
     if storage == dtypes.StorageType.GPU_Global:
         try:
             return array.__cuda_array_interface__['data'][0]
@@ -518,6 +527,9 @@ class CompiledSDFG(object):
                     # Otherwise, None values are passed as null pointers below
                 elif isinstance(arg, ctypes._Pointer):
                     pass
+                elif isinstance(arg, str):
+                    # Cast to bytes
+                    arglist[i] = ctypes.c_char_p(arg.encode('utf-8'))
                 else:
                     raise TypeError(f'Passing an object (type {type(arg).__name__}) to an array in argument "{a}"')
             elif is_array and not is_dtArray:
@@ -549,6 +561,8 @@ class CompiledSDFG(object):
                 elif (is_int and atype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
+                    pass
+                elif isinstance(arg, bool) and atype.dtype.type == np.bool_:
                     pass
                 elif (isinstance(arg, str) or arg is None) and atype.dtype == dtypes.string:
                     if arg is None:
