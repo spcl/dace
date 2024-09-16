@@ -11,7 +11,7 @@ import warnings
 from collections import defaultdict
 from typing import Dict, List, Set, Tuple, Union
 
-if sys.version >= (3, 8):
+if sys.version_info >= (3, 8):
     from typing import TypedDict
 else:
     from typing_extensions import TypedDict
@@ -31,7 +31,6 @@ from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.pass_pipeline import Modifies
-from dace.transformation.passes.analysis import loop_analysis
 
 
 @registry.make_registry
@@ -782,6 +781,7 @@ class UnderapproximateWrites(ppl.Pass):
         Underapproximates write-sets of loops, maps and nested SDFGs in the given SDFG.
         """
         from dace.transformation.helpers import split_interstate_edges
+        from dace.transformation.passes.analysis import loop_analysis
 
         split_interstate_edges(sdfg)
         loops = self._find_for_loops(sdfg)

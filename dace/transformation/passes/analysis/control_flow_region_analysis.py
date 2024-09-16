@@ -16,7 +16,7 @@ from dace.sdfg.scope import ScopeTree
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace.transformation.passes.analysis import AccessRanges, ControlFlowBlockReachability
+from dace.transformation.passes.analysis.analysis import AccessRanges, ControlFlowBlockReachability
 
 
 @properties.make_properties
@@ -97,8 +97,6 @@ class StateDataDependence(ppl.Pass):
                             covered = True
                             break
                     if not covered:
-                        #root_edge = state.memlet_tree(oedge).root().edge
-                        #not_covered_reads.append([root_edge, root_edge.data])
                         not_covered_reads.append([oedge, oedge.data])
         # Make sure all reads are propagated if they happen inside maps. We do not need to do this for writes, because
         # it is already taken care of by the write underapproximation analysis pass.
