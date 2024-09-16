@@ -35,28 +35,6 @@ class StateReachability(ppl.Pass):
     def depends_on(self):
         return {ControlFlowBlockReachability}
 
-    def _region_closure(self, region: ControlFlowRegion,
-                        block_reach: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]) -> Set[SDFGState]:
-        closure: Set[SDFGState] = set()
-        if isinstance(region, LoopRegion):
-            # Any point inside the loop may reach any other point inside the loop again.
-            # TODO(later): This is an overapproximation. A branch terminating in a break is excluded from this.
-            closure.update(region.all_states())
-
-        # Add all states that this region can reach in its parent graph to the closure.
-        for reached_block in block_reach[region.parent_graph.cfg_id][region]:
-            if isinstance(reached_block, ControlFlowRegion):
-                closure.update(reached_block.all_states())
-            elif isinstance(reached_block, SDFGState):
-                closure.add(reached_block)
-            
-        # Walk up the parent tree.
-        pivot = region.parent_graph
-        while pivot and not isinstance(pivot, SDFG):
-            closure.update(self._region_closure(pivot, block_reach))
-            pivot = pivot.parent_graph
-        return closure
-
     def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[int, Dict[SDFGState, Set[SDFGState]]]:
         """
         :return: A dictionary mapping each state to its other reachable states.
@@ -71,12 +49,8 @@ class StateReachability(ppl.Pass):
             result: Dict[SDFGState, Set[SDFGState]] = defaultdict(set)
             for state in sdfg.states():
                 for reached in cf_block_reach_dict[state.parent_graph.cfg_id][state]:
-                    if isinstance(reached, ControlFlowRegion):
-                        result[state].update(reached.all_states())
-                    elif isinstance(reached, SDFGState):
+                    if isinstance(reached, SDFGState):
                         result[state].add(reached)
-                if state.parent_graph is not sdfg:
-                    result[state].update(self._region_closure(state.parent_graph, cf_block_reach_dict))
             reachable[sdfg.cfg_id] = result
         return reachable
 
@@ -90,24 +64,72 @@ class ControlFlowBlockReachability(ppl.Pass):
 
     CATEGORY: str = 'Analysis'
 
+    contain_to_single_level = properties.Property(dtype=bool, default=False)
+
+    def __init__(self, contain_to_single_level=False) -> None:
+        super().__init__()
+
+        self.contain_to_single_level = contain_to_single_level
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
+    def _region_closure(self, region: ControlFlowRegion,
+                        block_reach: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]) -> Set[SDFGState]:
+        closure: Set[SDFGState] = set()
+        if isinstance(region, LoopRegion):
+            # Any point inside the loop may reach any other point inside the loop again.
+            # TODO(later): This is an overapproximation. A branch terminating in a break is excluded from this.
+            closure.update(region.all_control_flow_blocks())
+
+        # Add all states that this region can reach in its parent graph to the closure.
+        for reached_block in block_reach[region.parent_graph.cfg_id][region]:
+            if isinstance(reached_block, ControlFlowRegion):
+                closure.update(reached_block.all_control_flow_blocks())
+            closure.add(reached_block)
+            
+        # Walk up the parent tree.
+        pivot = region.parent_graph
+        while pivot and not isinstance(pivot, SDFG):
+            closure.update(self._region_closure(pivot, block_reach))
+            pivot = pivot.parent_graph
+        return closure
+
     def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]:
         """
         :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
                  control flow blocks in the same region.
         """
-        reachable: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
+        single_level_reachable: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = defaultdict(
+            lambda: defaultdict(set)
+        )
         for cfg in top_sdfg.all_control_flow_regions(recursive=True):
             # In networkx this is currently implemented naively for directed graphs.
             # The implementation below is faster
             # tc: nx.DiGraph = nx.transitive_closure(sdfg.nx)
             for n, v in reachable_nodes(cfg.nx):
-                reachable[cfg.cfg_id][n] = set(v)
+                single_level_reachable[cfg.cfg_id][n] = set(v)
+                if isinstance(cfg, LoopRegion):
+                    single_level_reachable[cfg.cfg_id][n].update(cfg.nodes())
+
+        if self.contain_to_single_level:
+            return single_level_reachable
+
+        reachable: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = {}
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            for cfg in sdfg.all_control_flow_regions():
+                result: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = defaultdict(set)
+                for block in cfg.nodes():
+                    for reached in single_level_reachable[block.parent_graph.cfg_id][block]:
+                        if isinstance(reached, ControlFlowRegion):
+                            result[block].update(reached.all_control_flow_blocks())
+                        result[block].add(reached)
+                    if block.parent_graph is not sdfg:
+                        result[block].update(self._region_closure(block.parent_graph, single_level_reachable))
+                reachable[cfg.cfg_id] = result
         return reachable
 
 

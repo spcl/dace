@@ -36,7 +36,7 @@ class LoopCarryDependencyAnalysis(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def depends_on(self) -> Set[type[Pass] | Pass]:
+    def depends_on(self):
         return {CFGDataDependence}
 
     def _intersects(self, loop: LoopRegion, write_subset: Range, read_subset: Range, update: sympy.Basic) -> bool:
