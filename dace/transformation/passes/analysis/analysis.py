@@ -32,7 +32,7 @@ class StateReachability(ppl.Pass):
         # If anything was modified, reapply
         return modified & ppl.Modifies.CFG
 
-    def depends_on(self) -> Set[ppl.Pass | ppl.Pass]:
+    def depends_on(self):
         return {ControlFlowBlockReachability}
 
     def _region_closure(self, region: ControlFlowRegion,
