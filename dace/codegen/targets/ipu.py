@@ -100,6 +100,7 @@ class IPUCodeGen(TargetCodeGenerator):
         self._num_kernels = 0
         self._host_codes = []   
         self._kernel_codes = []
+        self._generated_nodes = []
         
 
         # Register dispatchers
@@ -126,8 +127,8 @@ class IPUCodeGen(TargetCodeGenerator):
         # # Dispatchers
         # self.dispatcher.register_map_dispatcher(dace.ScheduleType.IPU_Map, self)
         # self.dispatcher.register_node_dispatcher(self, self.is_ipu_map_scope)
-        self.dispatcher.register_node_dispatcher(self, self.is_node_library_node)
-        # self.dispatcher.register_node_dispatcher(self, self.is_node_tasklet)
+        # self.dispatcher.register_node_dispatcher(self, self.is_node_library_node)
+        self.dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
         # self.dispatcher.register_copy_dispatcher(dtypes.StorageType.Register, dtypes.StorageType.IPU_Tile_Local, None, func=self)
         # self._dispatcher.register_map_dispatcher(dace.ScheduleType.IPU, self)
         # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
@@ -366,7 +367,6 @@ auto __dace_defineDataStreams({sdfg_state_name} *__state, Graph &graph, map<stri
     
     def state_dispatch_predicate(self, sdfg, state):
         if self._toplevel_schedule == dtypes.ScheduleType.IPU_SCHEDULE:
-            print("TRUE SAMEERAN")
             return True
         return False
 
@@ -384,15 +384,13 @@ auto __dace_defineDataStreams({sdfg_state_name} *__state, Graph &graph, map<stri
         return False
     
     def is_node_library_node(self, sdfg, state, node):
+        print("NODE is = ", type(node).__name__)
         if isinstance(node, nodes.LibraryNode):
-            return True
+            return True   
         return False
     
-    """    if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes(NestedSDFG, Consume, Map, LibraryNode)
-            if node.schedule == dtypes.ScheduleType.Sequential:
-                return True
-        return False
-        """
+    def node_dispatch_predicate(self, sdfg, state, node):
+        return True
 ############################################################################################################
 #   IPU specific node/state generation
 ############################################################################################################
@@ -752,30 +750,44 @@ auto __dace_defineDataStreams({sdfg_state_name} *__state, Graph &graph, map<stri
         # self._emit_copy(state_id, src_node, src_storage, dst_node, dst_storage, dst_schedule, memlet, sdfg, cfg, dfg,
         #                 callsite_stream)
 
-    def generate_node(self, sdfg: SDFG, cfg: state.ControlFlowRegion, state: SDFGState, state_id: int, node: nodes.Node,
-                      function_stream: CodeIOStream, callsite_stream: CodeIOStream):
-        """(TASKLET only)
-            0. Declarations
-            1. Generate pre tasklet
-            2. Generate tasklet code
-            3. Generate post tasklet
-            4. Writes
-        """
-        inner_stream, codegen = self.declarations(cfg, state_id, node, function_stream)    
-        self.dispatcher.defined_vars.enter_scope(node)
-        ############################################################################################################
-        # self.pre_tasklet(sdfg, cfg, state, state_id, node, function_stream, callsite_stream, inner_stream, codegen)
-        for edge in state.in_edges(node):
-            self.generate_read(sdfg, state, edge, inner_stream)
-        self.tasklet(sdfg, cfg, state, state_id, node, function_stream, inner_stream)
-        after_memlets_stream = self.post_tasklet(sdfg, cfg, state, state_id, node, function_stream, inner_stream, codegen)
-        ############################################################################################################
-        callsite_stream.write('{', cfg, state_id, node)
-        callsite_stream.write(inner_stream.getvalue(), cfg, state_id, node)
-        callsite_stream.write(after_memlets_stream.getvalue())
-        callsite_stream.write('}', cfg, state_id, node)
-        self._locals.clear_scope(self._ldepth + 1)
-        self.dispatcher.defined_vars.exit_scope(node)
+    def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                      node: nodes.Node, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        print("Generating node: ", node.label)
+            # Dynamically obtain node generator according to class name
+            # gen = getattr(self, '_generate_' + type(node).__name__, False)
+            # if gen is not False:  # Not every node type has a code generator here
+            #     gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+            #     return
+
+        # self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        
+    # def generate_node(self, sdfg: SDFG, cfg: state.ControlFlowRegion, state: SDFGState, state_id: int, node: nodes.Node,
+    #                   function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+    #     """(TASKLET only)
+    #         0. Declarations
+    #         1. Generate pre tasklet
+    #         2. Generate tasklet code
+    #         3. Generate post tasklet
+    #         4. Writes
+    #     """
+    #     callsite_stream.write(f"// Generating node {node.label}\n")
+        # inner_stream, codegen = self.declarations(cfg, state_id, node, function_stream)    
+        # self.dispatcher.defined_vars.enter_scope(node)
+        # ############################################################################################################
+        # # self.pre_tasklet(sdfg, cfg, state, state_id, node, function_stream, callsite_stream, inner_stream, codegen)
+        # for edge in state.in_edges(node):
+        #     self.generate_read(sdfg, state, edge, inner_stream)
+        # callsite_stream.write('SJJ:TASKLET', cfg, state_id, node)
+        # function_stream.write("SJJ:TASKLET Call  {0}() {{\n".format(node.label), cfg, state_id, node)
+        # self.tasklet(sdfg, cfg, state, state_id, node, function_stream, inner_stream)
+        # after_memlets_stream = self.post_tasklet(sdfg, cfg, state, state_id, node, function_stream, inner_stream, codegen)
+        # ############################################################################################################
+        # callsite_stream.write('{', cfg, state_id, node)
+        # callsite_stream.write(inner_stream.getvalue(), cfg, state_id, node)
+        # callsite_stream.write(after_memlets_stream.getvalue())
+        # callsite_stream.write('}', cfg, state_id, node)
+        # self._locals.clear_scope(self._ldepth + 1)
+        # self.dispatcher.defined_vars.exit_scope(node)
 
     def declarations(self, cfg, state_id, node, function_stream):
         self.add_header(function_stream)
@@ -812,6 +824,7 @@ auto __dace_defineDataStreams({sdfg_state_name} *__state, Graph &graph, map<stri
     def unparse_ipu_tasklet(self, sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
                         toplevel_schedule):
         # Change it later to IPU specific
+        function_stream.write(f"SJJ:  {node.label}() {{\n", cfg, state_id, node)
         self.cpu_codegen.unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
                             toplevel_schedule)
 
