@@ -62,7 +62,7 @@ class StateReachability(ppl.Pass):
         :return: A dictionary mapping each state to its other reachable states.
         """
         # Ensure control flow block reachability is run if not run within a pipeline.
-        if not ControlFlowBlockReachability.__name__ in pipeline_res:
+        if pipeline_res is None or not ControlFlowBlockReachability.__name__ in pipeline_res:
             cf_block_reach_dict = ControlFlowBlockReachability().apply_pass(top_sdfg, {})
         else:
             cf_block_reach_dict = pipeline_res[ControlFlowBlockReachability.__name__]

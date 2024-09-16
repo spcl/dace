@@ -4,25 +4,33 @@ Pass derived from ``propagation.py`` that under-approximates write-sets of for-l
 an SDFG.
 """
 
-from collections import defaultdict
 import copy
 import itertools
+import sys
 import warnings
-from typing import Any, Dict, List, Set, Tuple, Type, TypedDict, Union
+from collections import defaultdict
+from typing import Dict, List, Set, Tuple, Union
+
+if sys.version >= (3, 8):
+    from typing import TypedDict
+else:
+    from typing_extensions import TypedDict
+
 import sympy
 
 import dace
-from dace.sdfg.state import LoopRegion
-from dace.transformation import transformation
-from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
-from dace.transformation.pass_pipeline import Modifies, Pass
-from dace import registry, subsets, symbolic, dtypes, data, SDFG, Memlet
-from dace.sdfg.nodes import NestedSDFG, AccessNode
-from dace.sdfg import nodes, SDFGState, graph as gr
-from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.transformation import pass_pipeline as ppl
+from dace import SDFG, Memlet, data, dtypes, registry, subsets, symbolic
+from dace.sdfg import SDFGState
 from dace.sdfg import graph
-from dace.sdfg import scope
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes, scope
+from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.nodes import AccessNode, NestedSDFG
+from dace.sdfg.state import LoopRegion
+from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
+from dace.transformation.pass_pipeline import Modifies
 from dace.transformation.passes.analysis import loop_analysis
 
 
@@ -807,8 +815,8 @@ class UnderapproximateWrites(ppl.Pass):
         """
 
         # We import here to avoid cyclic imports.
-        from dace.transformation.interstate.loop_detection import find_for_loop
         from dace.sdfg import utils as sdutils
+        from dace.transformation.interstate.loop_detection import find_for_loop
 
         # dictionary mapping loop headers to beginstate, loopstates, looprange
         identified_loops = {}
