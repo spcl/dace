@@ -176,7 +176,7 @@ class SDFGCutout(SDFG):
         to run the graph separately. In addition, all transient data containers that may contain data when the cutout is
         executed are made global, as well as any transient data containers which are written to inside the cutout but
         may be read after the cutout.
-        
+
         :param state: The SDFG state in which the subgraph resides.
         :param nodes: The nodes in the subgraph to cut out.
         :param make_copy: If True, deep-copies every SDFG element in the copy. Otherwise, original references are kept.
