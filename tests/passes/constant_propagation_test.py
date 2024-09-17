@@ -516,6 +516,7 @@ def test_dependency_change():
     init = sdfg.add_state()
     entry = sdfg.add_state('entry')
     body = sdfg.add_state('body')
+    body2 = sdfg.add_state('body2')
     exiting = sdfg.add_state('exiting')
     latch = sdfg.add_state('latch')
     final = sdfg.add_state('final')
@@ -523,11 +524,13 @@ def test_dependency_change():
     sdfg.add_edge(init, entry, dace.InterstateEdge(assignments=dict(i='0', t='0', irev='2500')))
     sdfg.add_edge(entry, body, dace.InterstateEdge())
     sdfg.add_edge(
-        body, exiting,
+        body, body2,
         dace.InterstateEdge(assignments=dict(t_next='(t + irev)',
-                                             irev_next='(irev + (- 1))',
-                                             i_next='i + 1',
-                                             cont='i_next == 2500'), ))
+                                                irev_next='(irev + (- 1))',
+                                                i_next='i + 1'), ))
+    sdfg.add_edge(
+        body2, exiting,
+        dace.InterstateEdge(assignments=dict(cont='i_next == 2500'), ))
     sdfg.add_edge(exiting, final, dace.InterstateEdge('cont'))
     sdfg.add_edge(exiting, latch, dace.InterstateEdge('not cont', dict(
         irev='irev_next',
