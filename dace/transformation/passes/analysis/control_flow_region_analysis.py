@@ -214,7 +214,7 @@ class CFGDataDependence(ppl.Pass):
     def apply_pass(self, top_sdfg: SDFG,
                    pipeline_res: Dict[str, Any]) -> Dict[int, Tuple[Dict[str, Set[Memlet]], Dict[str, Set[Memlet]]]]:
         """
-        :return: For each SDFG, a dictionary mapping states to sets of their input and output memlets.
+        :return: For each CFG, a dictionary mapping control flow regions to sets of their input and output memlets.
         """
 
         results = defaultdict(lambda: defaultdict(lambda: [defaultdict(set), defaultdict(set)]))

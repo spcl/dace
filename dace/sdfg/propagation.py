@@ -4,21 +4,22 @@ Functionality relating to Memlet propagation (deducing external memlets
 from internal memory accesses and scope ranges).
 """
 
-from collections import deque
 import copy
-from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
-import itertools
 import functools
-import sympy
-from sympy import ceiling, Symbol
-from sympy.concrete.summations import Sum
+import itertools
 import warnings
-import networkx as nx
-
-from dace import registry, subsets, symbolic, dtypes, data
-from dace.memlet import Memlet
-from dace.sdfg import nodes, graph as gr
+from collections import deque
 from typing import List, Set
+
+import sympy
+from sympy import Symbol, ceiling
+from sympy.concrete.summations import Sum
+
+from dace import data, dtypes, registry, subsets, symbolic
+from dace.memlet import Memlet
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes
+from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 
 
 @registry.make_registry
@@ -569,8 +570,8 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
     """
 
     # We import here to avoid cyclic imports.
-    from dace.transformation.interstate.loop_detection import find_for_loop
     from dace.sdfg import utils as sdutils
+    from dace.transformation.interstate.loop_detection import find_for_loop
 
     condition_edges = {}
 
@@ -739,8 +740,8 @@ def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
 
     # We import here to avoid cyclic imports.
     from dace.sdfg import InterstateEdge
-    from dace.transformation.helpers import split_interstate_edges
     from dace.sdfg.analysis import cfg
+    from dace.transformation.helpers import split_interstate_edges
 
     # Reset the state edge annotations (which may have changed due to transformations)
     reset_state_annotations(sdfg)

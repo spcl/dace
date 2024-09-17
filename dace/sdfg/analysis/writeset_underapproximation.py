@@ -1,7 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Pass derived from ``propagation.py`` that under-approximates write-sets of for-loops and Maps in
-an SDFG.
+Pass derived from ``propagation.py`` that under-approximates write-sets of for-loops and Maps in an SDFG.
 """
 
 import copy
@@ -736,11 +735,11 @@ class UnderapproximateWrites(ppl.Pass):
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
             # Clear the global dictionaries.
-            self.approximation_dict.clear()
-            self.loop_write_dict.clear()
-            self.loop_dict.clear()
-            self.iteration_variables.clear()
-            self.ranges_per_state.clear()
+            self.approximation_dict = {}
+            self.loop_write_dict = {}
+            self.loop_dict = {}
+            self.iteration_variables = {}
+            self.ranges_per_state = defaultdict(lambda: {})
 
             # fill the approximation dictionary with the original edges as keys and the edges with the
             # approximated memlets as values
