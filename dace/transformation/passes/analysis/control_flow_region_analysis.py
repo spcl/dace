@@ -35,7 +35,7 @@ class StateDataDependence(ppl.Pass):
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Memlets)
 
     def depends_on(self):
-        return {UnderapproximateWrites, AccessRanges}
+        return {UnderapproximateWrites}
 
     def _gather_reads_scope(self, state: SDFGState, scope: ScopeTree,
                             writes: Dict[str, List[Tuple[Memlet, nodes.AccessNode]]],
