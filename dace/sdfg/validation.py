@@ -217,7 +217,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
             # Because of how the code generator works Scalars can not be return values.
             #  TODO: Remove this limitation as the CompiledSDFG contains logic for that.
-            if isinstance(desc, dt.Scalar) and name.startswith("__return") and not desc.transient:
+            if (sdfg.parent_sdfg is None and isinstance(desc, dt.Scalar) and name.startswith("__return") and
+                    not desc.transient):
                 raise InvalidSDFGError(f'Can not use scalar "{name}" as return value.', sdfg, None)
 
             # Validate array names

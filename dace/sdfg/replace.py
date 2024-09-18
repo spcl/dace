@@ -196,3 +196,6 @@ def replace_datadesc_names(sdfg: 'dace.SDFG', repl: Dict[str, str]):
                 for edge in block.edges():
                     if edge.data.data in repl:
                         edge.data.data = repl[edge.data.data]
+        
+        # Replace in properties
+        replace_properties_dict(cf, repl)
