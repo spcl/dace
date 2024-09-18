@@ -1167,15 +1167,16 @@ class SDFG(ControlFlowRegion):
         return result
 
     def add_constant(self, name: str, value: Any, dtype: dt.Data = None):
-        """ Adds/updates a new compile-time constant to this SDFG. A constant
-            may either be a scalar or a numpy ndarray thereof.
-
-            :param name: The name of the constant.
-            :param value: The constant value.
-            :param dtype: Optional data type of the symbol, or None to deduce automatically.
         """
-        if name in self.constants_prop:
-            raise FileExistsError(f'Constant "{name}" already exists.')
+        Adds/updates a new compile-time constant to this SDFG.
+
+        A constant may either be a scalar or a numpy ndarray thereof.
+
+        :param name: The name of the constant.
+        :param value: The constant value.
+        :param dtype: Optional data type of the symbol, or None to deduce automatically.
+        """
+        # We do not check if the constant already exists, as we explicitly allow update.
         if name in self.arrays:
             raise FileExistsError(f'Can not create constant "{name}", the name is used by a data descriptor.')
         if name in self.symbols:
