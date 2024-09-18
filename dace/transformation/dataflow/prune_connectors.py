@@ -15,7 +15,6 @@ class PruneConnectors(pm.SingleStateTransformation):
     Removes unused connectors from nested SDFGs, as well as their memlets in the outer scope.
 
     The transformation will not apply if this would remove all inputs and outputs.
-    Optionally: after pruning, removes the unused containers from parent SDFG.
     """
 
     nsdfg = pm.PatternNode(nodes.NestedSDFG)
@@ -50,21 +49,9 @@ class PruneConnectors(pm.SingleStateTransformation):
         prune_in = nsdfg.in_connectors.keys() - (read_set | write_set)
         prune_out = nsdfg.out_connectors.keys() - write_set
 
-        # Take into account symbol mappings
-        strs = tuple(nsdfg.symbol_mapping.keys())
-        syms = set(symbolic.pystr_to_symbolic(s) for s in strs)
-        symnames = set(s.name for s in syms if hasattr(s, 'name'))
-
-        # If the connector is an array argument, it is handled by read/write sets,
-        #  now we have to handle symbols. In the simplest one we should be able
-        #  to use `nsdfg.sdfg.used_symbols(False)` however, for some reason this
-        #  does not work. Thus we are using `nsdfg.sdfg.symbols` as an over
-        #  approximation.
-        used_symbols = nsdfg.sdfg.used_symbols(False).union(nsdfg.sdfg.symbols.keys())
-
-        for conn in prune_in.copy():
-            if conn in syms or conn in symnames or conn in used_symbols:
-                prune_in.remove(conn)
+        # Note symbols can not be passed through connectors. For that reason
+        #  we do not have to check for them. They should be passed through
+        #  the symbol mapping.
 
         return prune_in, prune_out
 
@@ -98,6 +85,7 @@ class PruneConnectors(pm.SingleStateTransformation):
             if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
                 # If the data is now unused, we can purge it from the SDFG
                 nsdfg.sdfg.remove_data(conn)
+
 
 class PruneSymbols(pm.SingleStateTransformation):
     """ 
