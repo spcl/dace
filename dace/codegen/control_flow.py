@@ -270,10 +270,17 @@ class GeneralBlock(ControlFlow):
         for i, elem in enumerate(self.elements):
             expr += elem.as_cpp(codegen, symbols)
             # In a general block, emit transitions and assignments after each individual block or region.
-            if isinstance(elem, BasicCFBlock) or (isinstance(elem, GeneralBlock) and elem.region):
-                cfg = elem.state.parent_graph if isinstance(elem, BasicCFBlock) else elem.region.parent_graph
+            if (isinstance(elem, BasicCFBlock) or (isinstance(elem, GeneralBlock) and elem.region) or
+                (isinstance(elem, GeneralLoopScope) and elem.loop)):
+                if isinstance(elem, BasicCFBlock):
+                    g_elem = elem.state
+                elif isinstance(elem, GeneralBlock):
+                    g_elem = elem.region
+                else:
+                    g_elem = elem.loop
+                cfg = g_elem.parent_graph
                 sdfg = cfg if isinstance(cfg, SDFG) else cfg.sdfg
-                out_edges = cfg.out_edges(elem.state) if isinstance(elem, BasicCFBlock) else cfg.out_edges(elem.region)
+                out_edges = cfg.out_edges(g_elem)
                 for j, e in enumerate(out_edges):
                     if e not in self.gotos_to_ignore:
                         # Skip gotos to immediate successors

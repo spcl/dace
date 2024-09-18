@@ -2965,26 +2965,35 @@ class LoopRegion(ControlFlowRegion):
 
     def __init__(self,
                  label: str,
-                 condition_expr: Optional[str] = None,
+                 condition_expr: Optional[Union[str, CodeBlock]] = None,
                  loop_var: Optional[str] = None,
-                 initialize_expr: Optional[str] = None,
-                 update_expr: Optional[str] = None,
+                 initialize_expr: Optional[Union[str, CodeBlock]] = None,
+                 update_expr: Optional[Union[str, CodeBlock]] = None,
                  inverted: bool = False,
                  sdfg: Optional['SDFG'] = None):
         super(LoopRegion, self).__init__(label, sdfg)
 
         if initialize_expr is not None:
-            self.init_statement = CodeBlock(initialize_expr)
+            if isinstance(initialize_expr, CodeBlock):
+                self.init_statement = initialize_expr
+            else:
+                self.init_statement = CodeBlock(initialize_expr)
         else:
             self.init_statement = None
 
         if condition_expr:
-            self.loop_condition = CodeBlock(condition_expr)
+            if isinstance(condition_expr, CodeBlock):
+                self.loop_condition = condition_expr
+            else:
+                self.loop_condition = CodeBlock(condition_expr)
         else:
             self.loop_condition = CodeBlock('True')
 
         if update_expr is not None:
-            self.update_statement = CodeBlock(update_expr)
+            if isinstance(update_expr, CodeBlock):
+                self.update_statement = update_expr
+            else:
+                self.update_statement = CodeBlock(update_expr)
         else:
             self.update_statement = None
 

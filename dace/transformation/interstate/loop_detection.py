@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop detection transformation """
 
 import sympy as sp
@@ -77,19 +77,20 @@ class DetectLoop(transformation.PatternTransformation):
                        sdfg: sd.SDFG,
                        permissive: bool = False) -> bool:
         if expr_index == 0:
-            return self.detect_loop(graph, False) is not None
+            return self.detect_loop(graph, False, permissive) is not None
         elif expr_index == 1:
-            return self.detect_loop(graph, True) is not None
+            return self.detect_loop(graph, True, permissive) is not None
         elif expr_index == 2:
-            return self.detect_rotated_loop(graph, False) is not None
+            return self.detect_rotated_loop(graph, False, permissive) is not None
         elif expr_index == 3:
-            return self.detect_rotated_loop(graph, True) is not None
+            return self.detect_rotated_loop(graph, True, permissive) is not None
         elif expr_index == 4:
-            return self.detect_self_loop(graph) is not None
+            return self.detect_self_loop(graph, permissive) is not None
 
         raise ValueError(f'Invalid expression index {expr_index}')
 
-    def detect_loop(self, graph: ControlFlowRegion, multistate_loop: bool) -> Optional[str]:
+    def detect_loop(self, graph: ControlFlowRegion, multistate_loop: bool,
+                    accept_missing_itvar: bool = False) -> Optional[str]:
         """
         Detects a loop of the form:
 
@@ -159,13 +160,19 @@ class DetectLoop(transformation.PatternTransformation):
         # The backedge must reassign the iteration variable
         itvar &= backedge.data.assignments.keys()
         if len(itvar) != 1:
-            # Either no consistent iteration variable found, or too many
-            # consistent iteration variables found
-            return None
+            if not accept_missing_itvar:
+                # Either no consistent iteration variable found, or too many consistent iteration variables found
+                return None
+            else:
+                if len(itvar) == 0:
+                    return ''
+                else:
+                    return None
 
         return next(iter(itvar))
 
-    def detect_rotated_loop(self, graph: ControlFlowRegion, multistate_loop: bool) -> Optional[str]:
+    def detect_rotated_loop(self, graph: ControlFlowRegion, multistate_loop: bool,
+                            accept_missing_itvar: bool = False) -> Optional[str]:
         """
         Detects a loop of the form:
 
@@ -234,13 +241,18 @@ class DetectLoop(transformation.PatternTransformation):
         # The backedge must reassign the iteration variable
         itvar &= backedge.data.assignments.keys()
         if len(itvar) != 1:
-            # Either no consistent iteration variable found, or too many
-            # consistent iteration variables found
-            return None
+            if not accept_missing_itvar:
+                # Either no consistent iteration variable found, or too many consistent iteration variables found
+                return None
+            else:
+                if len(itvar) == 0:
+                    return ''
+                else:
+                    return None
 
         return next(iter(itvar))
 
-    def detect_self_loop(self, graph: ControlFlowRegion) -> Optional[str]:
+    def detect_self_loop(self, graph: ControlFlowRegion, accept_missing_itvar: bool = False) -> Optional[str]:
         """
         Detects a loop of the form:
 
@@ -288,9 +300,14 @@ class DetectLoop(transformation.PatternTransformation):
         # The backedge must reassign the iteration variable
         itvar &= backedge.data.assignments.keys()
         if len(itvar) != 1:
-            # Either no consistent iteration variable found, or too many
-            # consistent iteration variables found
-            return None
+            if not accept_missing_itvar:
+                # Either no consistent iteration variable found, or too many consistent iteration variables found
+                return None
+            else:
+                if len(itvar) == 0:
+                    return ''
+                else:
+                    return None
 
         return next(iter(itvar))
 
