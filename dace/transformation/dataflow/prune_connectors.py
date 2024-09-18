@@ -11,17 +11,22 @@ from dace.sdfg.state import StateSubgraphView
 
 @properties.make_properties
 class PruneConnectors(pm.SingleStateTransformation):
-    """ Removes unused connectors from nested SDFGs, as well as their memlets
-        in the outer scope, replacing them with empty memlets if necessary.
+    """
+    Removes unused connectors from nested SDFGs, as well as their memlets in the outer scope.
 
-        Optionally: after pruning, removes the unused containers from parent SDFG.
+    The transformation will not apply if this would remove all inputs and outputs.
+    Optionally: after pruning, removes the unused containers from parent SDFG.
+
+    Args:
+        remove_unused_containers: If `True` the transformation will remove _all_ containers
+            That are not used from the SDFG, the function will recursively go up.
     """
 
     nsdfg = pm.PatternNode(nodes.NestedSDFG)
 
     remove_unused_containers = properties.Property(dtype=bool,
                                                    default=False,
-                                                   desc='If True, remove unused containers from parent SDFG.')
+                                                   desc='If True, remove unused containers from parent SDFG (recursively).')
 
     @classmethod
     def expressions(cls):
