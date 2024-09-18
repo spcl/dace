@@ -34,48 +34,61 @@ class PruneConnectors(pm.SingleStateTransformation):
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
 
-        nsdfg = self.nsdfg
-
-        read_set, write_set = nsdfg.sdfg.read_and_write_sets()
-        prune_in = nsdfg.in_connectors.keys() - read_set
-        prune_out = nsdfg.out_connectors.keys() - write_set
-
-        # Take into account symbol mappings
-        strs = tuple(nsdfg.symbol_mapping.values())
-        syms = tuple(symbolic.pystr_to_symbolic(s) for s in strs)
-        symnames = tuple(s.name if hasattr(s, 'name') else '' for s in syms)
-        for conn in list(prune_in):
-            if conn in syms or conn in symnames or conn in nsdfg.sdfg.symbols:
-                prune_in.remove(conn)
-
-        # Add WCR outputs to "do not prune" input list
-        for e in graph.out_edges(nsdfg):
-            if e.data.wcr is not None and e.src_conn in prune_in:
-                prune_in.remove(e.src_conn)
-
+        prune_in, prune_out = self._get_prune_sets(graph)
         if not prune_in and not prune_out:
             return False
 
         return True
 
+    def _get_prune_sets(self, state: SDFGState) -> Tuple[Set[str], Set[str]]:
+        """Computes the set of the input and output connectors that can be removed.
+
+        Returns:
+            A tuple of two sets, the first set contains the name of all input
+            connectors that can be removed and the second the name of all output
+            connectors that can be removed.
+        """
+        nsdfg = self.nsdfg
+
+        # Note the implementation of `read_and_write_sets()` filters array
+        #  that fully written and read from the read set and only includes
+        #  them in the write set. Thus we have to assume that every write
+        #  is also a read to compensate for this.
+        read_set, write_set = nsdfg.sdfg.read_and_write_sets()
+        prune_in = nsdfg.in_connectors.keys() - (read_set | write_set)
+        prune_out = nsdfg.out_connectors.keys() - write_set
+
+        # Take into account symbol mappings
+        strs = tuple(nsdfg.symbol_mapping.keys())
+        syms = set(symbolic.pystr_to_symbolic(s) for s in strs)
+        symnames = set(s.name for s in syms if hasattr(s, 'name'))
+
+        # If the connector is an array argument, it is handled by read/write sets,
+        #  now we have to handle symbols. In the simplest one we should be able
+        #  to use `nsdfg.sdfg.used_symbols(False)` however, for some reason this
+        #  does not work. Thus we are using `nsdfg.sdfg.symbols` as an over
+        #  approximation.
+        used_symbols = nsdfg.sdfg.used_symbols(False).union(nsdfg.sdfg.symbols.keys())
+
+        for conn in prune_in.copy():
+            if conn in syms or conn in symnames or conn in used_symbols:
+                prune_in.remove(conn)
+
+        return prune_in, prune_out
+
     def apply(self, state: SDFGState, sdfg: SDFG):
         nsdfg = self.nsdfg
+
+        # Determine which connectors can be removed.
+        prune_in, prune_out = self._get_prune_sets(state)
 
         # Fission subgraph around nsdfg into its own state to avoid data races
         nsdfg_state = helpers.state_fission_after(state, nsdfg)
 
-        read_set, write_set = nsdfg.sdfg.read_and_write_sets()
-        prune_in = nsdfg.in_connectors.keys() - read_set
-        prune_out = nsdfg.out_connectors.keys() - write_set
-
         # Detect which nodes are used, so we can delete unused nodes after the
         # connectors have been pruned
+        read_set, write_set = nsdfg.sdfg.read_and_write_sets()
         all_data_used = read_set | write_set
-
-        # Add WCR outputs to "do not prune" input list
-        for e in nsdfg_state.out_edges(nsdfg):
-            if e.data.wcr is not None and e.src_conn in prune_in:
-                prune_in.remove(e.src_conn)
 
         for conn in prune_in:
             for e in nsdfg_state.in_edges_by_connector(nsdfg, conn):
