@@ -4,10 +4,16 @@ import dace
 from dace.sdfg import SDFG
 from dace.memlet import Memlet
 
+import pytest
 
-ll = np.uint64(np.iinfo(np.int32).max) + np.uint64(1)
 
-def test_explicit_param():
+ll = ((np.uint64(np.iinfo(np.int32).max) + np.uint64(4))//np.uint64(4))*np.uint64(4)
+
+@pytest.mark.parametrize("set_explicit", [
+    False,
+    True
+])
+def test_explicit_param(set_explicit):
     N = dace.symbol('N', dtype=dace.dtypes.typeclass(np.uint64))
 
     @dace.program
@@ -35,7 +41,8 @@ def test_explicit_param():
 
     map_entry, map_exit = state.add_map(
         'elements', [('i', f'0:N:1')])
-    map_entry.map.param_types = {'i': dace.dtypes.typeclass(np.uint64)}
+    if set_explicit:
+        map_entry.map.param_types = {'i': dace.dtypes.typeclass(np.uint64)}
     nsdfg = state.add_nested_sdfg(
         sdfg_internal.to_sdfg(), mysdfg, {'input'}, {'output'})
 
@@ -52,8 +59,11 @@ def test_explicit_param():
     mysdfg.validate()
     mysdfg(A=input, B=input, N=N)
 
-
-def test_explicit_param_with_nested_sdfg_map():
+@pytest.mark.parametrize("set_explicit", [
+    False,
+    True
+])
+def test_explicit_param_with_nested_sdfg_map(set_explicit):
     N = dace.symbol('N')
 
     @dace.program
@@ -75,10 +85,15 @@ def test_explicit_param_with_nested_sdfg_map():
 
     map_entry, map_exit = state.add_map(
         'elements', [('i', f'0:N:4')])
-    map_entry.map.param_types = {'i': dace.dtypes.typeclass(np.uint64)}
-    nsdfg = state.add_nested_sdfg(
-        sdfg_internal_map.to_sdfg(), mysdfg, {'input'}, {'output'},
-        symbol_type_mapping={'i': dace.dtypes.typeclass(np.uint64)})
+    if set_explicit:
+        map_entry.map.param_types = {'i': dace.dtypes.typeclass(np.uint64)}
+    if set_explicit:
+        nsdfg = state.add_nested_sdfg(
+            sdfg_internal_map.to_sdfg(), mysdfg, {'input'}, {'output'},
+            symbol_type_mapping={'i': dace.dtypes.typeclass(np.uint64)})
+    else:
+        nsdfg = state.add_nested_sdfg(
+            sdfg_internal_map.to_sdfg(), mysdfg, {'input'}, {'output'})
 
     # Add edges
     state.add_memlet_path(A, map_entry, nsdfg,
@@ -95,5 +110,7 @@ def test_explicit_param_with_nested_sdfg_map():
 
 
 if __name__ == "__main__":
-    test_explicit_param()
-    test_explicit_param_with_nested_sdfg_map()
+    test_explicit_param(False)
+    test_explicit_param(True)
+    test_explicit_param_with_nested_sdfg_map(False)
+    test_explicit_param_with_nested_sdfg_map(True)
