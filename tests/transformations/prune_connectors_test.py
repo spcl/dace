@@ -137,17 +137,13 @@ of << i << "\\n";""",
     return sdfg_outer
 
 
-@pytest.mark.parametrize("remove_unused_containers", [False, True])
-def test_prune_connectors(remove_unused_containers, n=None):
+def test_prune_connectors(n=None):
     if n is None:
         n = 64
 
     sdfg = make_sdfg()
 
-    if sdfg.apply_transformations_repeated(PruneConnectors,
-                                           options=[{
-                                               'remove_unused_containers': remove_unused_containers
-                                           }]) != 3:
+    if sdfg.apply_transformations_repeated(PruneConnectors) != 3:
         raise RuntimeError("PruneConnectors was not applied.")
 
     arr_in = np.zeros((n, n), dtype=np.uint16)
@@ -158,18 +154,16 @@ def test_prune_connectors(remove_unused_containers, n=None):
     except FileNotFoundError:
         pass
 
-    if remove_unused_containers:
-        sdfg(read_used=arr_in, write_used=arr_out, N=n)
-    else:
-        sdfg(read_used=arr_in,
-             read_unused=arr_in,
-             read_used_outer=arr_in,
-             read_unused_outer=arr_in,
-             write_used=arr_out,
-             write_unused=arr_out,
-             write_used_outer=arr_out,
-             write_unused_outer=arr_out,
-             N=n)
+    # The pruned connectors are not removed so they have to be supplied.
+    sdfg(read_used=arr_in,
+            read_unused=arr_in,
+            read_used_outer=arr_in,
+            read_unused_outer=arr_in,
+            write_used=arr_out,
+            write_unused=arr_out,
+            write_used_outer=arr_out,
+            write_unused_outer=arr_out,
+            N=n)
 
     assert np.allclose(arr_out, arr_in + 1)
 
