@@ -1743,8 +1743,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                            language=dtypes.Language.Python,
                            debuginfo=None,
                            external_edges=False,
-                           input_nodes: Optional[Dict[str, nd.AccessNode]] = None,
-                           output_nodes: Optional[Dict[str, nd.AccessNode]] = None,
+                           input_nodes: Optional[Union[Dict[str, nd.AccessNode],
+                                                       List[nd.AccessNode],
+                                                       Set[nd.AccessNode]]] = None,
+                           output_nodes: Optional[Union[Dict[str, nd.AccessNode],
+                                                        List[nd.AccessNode],
+                                                        Set[nd.AccessNode]]] = None,
                            propagate=True) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
@@ -1783,6 +1787,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Create appropriate dictionaries from inputs
         tinputs = {k: None for k, v in inputs.items()}
         toutputs = {k: None for k, v in outputs.items()}
+
+        if isinstance(input_nodes, (list, set)):
+            input_nodes = {input_node.data: input_node for input_node in input_nodes}
+        if isinstance(output_nodes, (list, set)):
+            output_nodes = {output_node.data: output_node for output_node in output_nodes}
 
         tasklet = nd.Tasklet(
             name,
