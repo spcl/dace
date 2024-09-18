@@ -1172,11 +1172,12 @@ class SDFG(ControlFlowRegion):
 
             :param name: The name of the constant.
             :param value: The constant value.
-            :param dtype: Optional data type of the symbol, or None to deduce
-                          automatically.
+            :param dtype: Optional data type of the symbol, or None to deduce automatically.
         """
         if name in self.constants_prop:
             raise FileExistsError(f'Constant "{name}" already exists.')
+        if name in self.arrays:
+            raise FileExistsError(f'Can not create constant "{name}", the name is used by a data descriptor.')
         if name in self.symbols:
             raise FileExistsError(f'Can not create constant "{name}" the name is used by a symbol.')
         if name in self._subarrays:
@@ -1947,6 +1948,8 @@ class SDFG(ControlFlowRegion):
 
         if name in self.arrays:
             raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
+        if name in self.constants_prop:
+            raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a constant.')
         if name in self.symbols:
             raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
         if name in self._subarrays:
