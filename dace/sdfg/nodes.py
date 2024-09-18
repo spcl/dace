@@ -662,6 +662,10 @@ class NestedSDFG(CodeNode):
 
         connectors = self.in_connectors.keys() | self.out_connectors.keys()
         for conn in connectors:
+            if conn in self.sdfg.symbols:
+                raise ValueError(
+                    f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
+                    'To pass symbols use "symbol_mapping".')
             if conn not in self.sdfg.arrays:
                 raise NameError(
                     f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
