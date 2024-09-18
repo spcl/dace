@@ -16,17 +16,9 @@ class PruneConnectors(pm.SingleStateTransformation):
 
     The transformation will not apply if this would remove all inputs and outputs.
     Optionally: after pruning, removes the unused containers from parent SDFG.
-
-    Args:
-        remove_unused_containers: If `True` the transformation will remove _all_ containers
-            That are not used from the SDFG, the function will recursively go up.
     """
 
     nsdfg = pm.PatternNode(nodes.NestedSDFG)
-
-    remove_unused_containers = properties.Property(dtype=bool,
-                                                   default=False,
-                                                   desc='If True, remove unused containers from parent SDFG (recursively).')
 
     @classmethod
     def expressions(cls):
@@ -106,19 +98,6 @@ class PruneConnectors(pm.SingleStateTransformation):
             if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
                 # If the data is now unused, we can purge it from the SDFG
                 nsdfg.sdfg.remove_data(conn)
-
-        if self.remove_unused_containers:
-            # Remove unused containers from parent SDFGs
-            containers = list(sdfg.arrays.keys())
-            for name in containers:
-                s = nsdfg.sdfg
-                while s.parent_sdfg:
-                    s = s.parent_sdfg
-                    try:
-                        s.remove_data(name)
-                    except ValueError:
-                        break
-
 
 class PruneSymbols(pm.SingleStateTransformation):
     """ 
