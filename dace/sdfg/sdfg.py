@@ -1170,6 +1170,8 @@ class SDFG(ControlFlowRegion):
         """
         Adds/updates a new compile-time constant to this SDFG.
 
+        If there is a symbol a data descriptor or different entity with the same
+        name, then that entity will be removed.
         A constant may either be a scalar or a numpy ndarray thereof.
 
         :param name: The name of the constant.
@@ -1178,9 +1180,9 @@ class SDFG(ControlFlowRegion):
         """
         # We do not check if the constant already exists, as we explicitly allow update.
         if name in self.arrays:
-            raise FileExistsError(f'Can not create constant "{name}", the name is used by a data descriptor.')
+            del self.arrays[name]
         if name in self.symbols:
-            raise FileExistsError(f'Can not create constant "{name}" the name is used by a symbol.')
+            del self.symbols[name]
         if name in self._subarrays:
             raise FileExistsError(f'Can not create constant "{name}", the name is used by a subarray.')
         if name in self._rdistrarrays:
