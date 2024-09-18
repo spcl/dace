@@ -1092,7 +1092,7 @@ def _subgraph_transformation_extract_sdfg_arg(*args) -> SDFG:
     raise TypeError('Unrecognized graph type "%s"' % type(subgraph).__name__)
 
 
-def single_level_sdfg_only(cls: ppl.Pass):
+def single_level_sdfg_only(cls: PassT) -> PassT:
 
     for function_name in ['apply_pass', 'apply_to']:
         _make_function_blocksafe(cls, function_name, lambda *args: args[1])
