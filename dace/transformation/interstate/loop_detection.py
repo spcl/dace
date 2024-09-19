@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Loop detection transformation """
 
+from re import I
 import sympy as sp
 import networkx as nx
 from typing import AnyStr, Optional, Tuple, List, Set
@@ -199,14 +200,10 @@ class DetectLoop(transformation.PatternTransformation):
         if len(latch_outedges) != 2:
             return None
 
-        # All incoming edges to the start of the loop must set the same variable
-        itvar = None
-        for iedge in begin_inedges:
-            if itvar is None:
-                itvar = set(iedge.data.assignments.keys())
-            else:
-                itvar &= iedge.data.assignments.keys()
-        if itvar is None:
+        # A for-loop latch can further only have one incoming edge (the increment edge). A while-loop, i.e., a loop
+        # with no explicit iteration variable, may have more than that.
+        latch_inedges = graph.in_edges(latch)
+        if not accept_missing_itvar and len(latch_inedges) != 1:
             return None
 
         # Outgoing edges must be a negation of each other
@@ -238,8 +235,22 @@ class DetectLoop(transformation.PatternTransformation):
         if backedge is None:
             return None
 
-        # The backedge must reassign the iteration variable
-        itvar &= backedge.data.assignments.keys()
+        # The iteration variable must be reassigned on all incoming edges to the latch block.
+        # If an assignment overlap of exactly one variable is found between the initialization edge and the edges
+        # going into the latch block, that will be the iteration variable.
+        itvar_edge_set: Set[gr.Edge[InterstateEdge]] = set()
+        itvar_edge_set.update(begin_inedges)
+        itvar_edge_set.update(latch_inedges)
+        itvar = None
+        for iedge in itvar_edge_set:
+            if iedge is backedge:
+                continue
+            if itvar is None:
+                itvar = set(iedge.data.assignments.keys())
+            else:
+                itvar &= iedge.data.assignments.keys()
+        if itvar is None:
+            return None
         if len(itvar) != 1:
             if not accept_missing_itvar:
                 # Either no consistent iteration variable found, or too many consistent iteration variables found
@@ -430,7 +441,7 @@ class DetectLoop(transformation.PatternTransformation):
             return next(e for e in graph.in_edges(guard) if e.src in body)
         elif self.expr_index in (2, 3):
             body = self.loop_body()
-            return next(e for e in graph.in_edges(begin) if e.src in body)
+            return graph.in_edges(self.loop_latch)[0]
         elif self.expr_index == 4:
             return graph.edges_between(begin, begin)[0]
 
@@ -554,8 +565,7 @@ def find_rotated_for_loop(
     """
     Finds rotated loop range from state machine.
     
-    :param latch: State from which the outgoing edges detect whether to exit
-                  the loop or not.
+    :param latch: State from which the outgoing edges detect whether to exit the loop or not.
     :param entry: First state in the loop body.
     :param itervar: An optional field that overrides the analyzed iteration variable.
     :return: (iteration variable, (start, end, stride),
@@ -565,11 +575,20 @@ def find_rotated_for_loop(
     # Extract state transition edge information
     entry_inedges = graph.in_edges(entry)
     condition_edge = graph.edges_between(latch, entry)[0]
+    latch_inedges = graph.in_edges(latch)
 
-    # All incoming edges to the loop entry must set the same variable
+    self_loop = latch is entry
     if itervar is None:
+        # The iteration variable must be reassigned on all incoming edges to the latch block.
+        # If an assignment overlap of exactly one variable is found between the initialization edge and the edges
+        # going into the latch block, that will be the iteration variable.
+        itvar_edge_set: Set[gr.Edge[InterstateEdge]] = set()
+        itvar_edge_set.update(entry_inedges)
+        itvar_edge_set.update(latch_inedges)
         itervars = None
-        for iedge in entry_inedges:
+        for iedge in itvar_edge_set:
+            if iedge is condition_edge and not self_loop:
+                continue
             if itervars is None:
                 itervars = set(iedge.data.assignments.keys())
             else:
@@ -587,18 +606,12 @@ def find_rotated_for_loop(
     # have one assignment.
     init_edges = []
     init_assignment = None
-    step_edge = None
     itersym = symbolic.symbol(itervar)
     for iedge in entry_inedges:
+        if iedge is condition_edge:
+            continue
         assignment = iedge.data.assignments[itervar]
-        if itersym in symbolic.pystr_to_symbolic(assignment).free_symbols:
-            if step_edge is None:
-                step_edge = iedge
-            else:
-                # More than one edge with the iteration variable as a free
-                # symbol, which is not legal. Invalid for loop.
-                return None
-        else:
+        if itersym not in symbolic.pystr_to_symbolic(assignment).free_symbols:
             if init_assignment is None:
                 init_assignment = assignment
                 init_edges.append(iedge)
@@ -608,9 +621,17 @@ def find_rotated_for_loop(
                 return None
             else:
                 init_edges.append(iedge)
-    if step_edge is None or len(init_edges) == 0 or init_assignment is None:
+    if len(init_edges) == 0 or init_assignment is None:
         # Less than two assignment variations, can't be a valid for loop.
         return None
+
+    if self_loop:
+        step_edge = condition_edge
+    else:
+        step_edge = None if len(latch_inedges) != 1 else latch_inedges[0]
+        if step_edge is None:
+            # No explicit step edge found.
+            return None
 
     # Get the init expression and the stride.
     start = symbolic.pystr_to_symbolic(init_assignment)

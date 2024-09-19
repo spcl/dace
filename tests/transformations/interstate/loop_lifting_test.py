@@ -72,8 +72,8 @@ def test_lift_loop_llvm_canonical():
     sdfg.add_edge(guard, exitstate, InterstateEdge(condition='N <= 0'))
     sdfg.add_edge(guard, preheader, InterstateEdge(condition='N > 0'))
     sdfg.add_edge(preheader, body, InterstateEdge(assignments={'i': 0, 'k': 0}))
-    sdfg.add_edge(body, latch, InterstateEdge())
-    sdfg.add_edge(latch, body, InterstateEdge(condition='i < N', assignments={'i': 'i + 2', 'j': 'j + 1'}))
+    sdfg.add_edge(body, latch, InterstateEdge(assignments={'i': 'i + 2', 'j': 'j + 1'}))
+    sdfg.add_edge(latch, body, InterstateEdge(condition='i < N'))
     sdfg.add_edge(latch, loopexit, InterstateEdge(condition='i >= N', assignments={'k': 2}))
     sdfg.add_edge(loopexit, exitstate, InterstateEdge())
 

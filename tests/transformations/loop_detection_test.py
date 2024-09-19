@@ -37,8 +37,8 @@ def test_loop_rotated():
     exitstate = sdfg.add_state('exitstate')
 
     sdfg.add_edge(entry, body, dace.InterstateEdge(assignments=dict(i=0)))
-    sdfg.add_edge(body, latch, dace.InterstateEdge())
-    sdfg.add_edge(latch, body, dace.InterstateEdge('i < N', assignments=dict(i='i + 2')))
+    sdfg.add_edge(body, latch, dace.InterstateEdge(assignments=dict(i='i + 2')))
+    sdfg.add_edge(latch, body, dace.InterstateEdge('i < N'))
     sdfg.add_edge(latch, exitstate, dace.InterstateEdge('i >= N'))
 
     xform = CountLoops()
@@ -106,8 +106,8 @@ def test_loop_llvm_canonical():
     sdfg.add_edge(guard, exitstate, dace.InterstateEdge('N <= 0'))
     sdfg.add_edge(guard, preheader, dace.InterstateEdge('N > 0'))
     sdfg.add_edge(preheader, body, dace.InterstateEdge(assignments=dict(i=0)))
-    sdfg.add_edge(body, latch, dace.InterstateEdge())
-    sdfg.add_edge(latch, body, dace.InterstateEdge('i < N', assignments=dict(i='i + 1')))
+    sdfg.add_edge(body, latch, dace.InterstateEdge(assignments=dict(i='i + 1')))
+    sdfg.add_edge(latch, body, dace.InterstateEdge('i < N'))
     sdfg.add_edge(latch, loopexit, dace.InterstateEdge('i >= N'))
     sdfg.add_edge(loopexit, exitstate, dace.InterstateEdge())
 

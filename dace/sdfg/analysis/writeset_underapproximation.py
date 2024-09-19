@@ -153,19 +153,16 @@ class SeparableUnderapproximationMemlet(UnderapproximationMemletPattern):
 
             dexprs = []
             for expr in expressions:
-                if isinstance(expr[i], symbolic.SymExpr):
-                    dexprs.append(expr[i].expr)
-                elif isinstance(expr[i], tuple):
-                    dexprs.append((
-                        expr[i][0].expr if isinstance(
-                            expr[i][0], symbolic.SymExpr) else expr[i][0],
-                        expr[i][1].expr if isinstance(
-                            expr[i][1], symbolic.SymExpr) else expr[i][1],
-                        expr[i][2].expr if isinstance(
-                            expr[i][2], symbolic.SymExpr) else expr[i][2],
-                        expr.tile_sizes[i]))
+                expr_i = expr[i]
+                if isinstance(expr_i, symbolic.SymExpr):
+                    dexprs.append(expr_i.expr)
+                elif isinstance(expr_i, tuple):
+                    dexprs.append((expr_i[0].expr if isinstance(expr_i[0], symbolic.SymExpr) else expr_i[0],
+                                   expr_i[1].expr if isinstance(expr_i[1], symbolic.SymExpr) else expr_i[1],
+                                   expr_i[2].expr if isinstance(expr_i[2], symbolic.SymExpr) else expr_i[2],
+                                   expr.tile_sizes[i]))
                 else:
-                    dexprs.append(expr[i])
+                    dexprs.append(expr_i)
 
             result[i] = smpattern.propagate(array, dexprs, node_range)
 
