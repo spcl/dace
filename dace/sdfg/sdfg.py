@@ -1170,25 +1170,18 @@ class SDFG(ControlFlowRegion):
         """
         Adds/updates a new compile-time constant to this SDFG.
 
-        If there is a symbol a data descriptor or different entity with the same
-        name, then that entity will be removed.
-        A constant may either be a scalar or a numpy ndarray thereof.
+        A constant may either be a scalar or a numpy ndarray thereof. It is not an
+        error if there is already a symbol or an array with the same name inside
+        the SDFG. However, the data descripors must refer to the same type.
 
         :param name: The name of the constant.
         :param value: The constant value.
         :param dtype: Optional data type of the symbol, or None to deduce automatically.
         """
-        # We do not check if the constant already exists, as we explicitly allow update.
-        if name in self.arrays:
-            del self.arrays[name]
-        if name in self.symbols:
-            del self.symbols[name]
         if name in self._subarrays:
             raise FileExistsError(f'Can not create constant "{name}", the name is used by a subarray.')
         if name in self._rdistrarrays:
             raise FileExistsError(f'Can not create constant "{name}", the name is used by a RedistrArray.')
-        # We do not check `arrays` because there is a link between the data descriptor and
-        #  the constant.
         self.constants_prop[name] = (dtype or dt.create_datadescriptor(value), value)
 
     @property

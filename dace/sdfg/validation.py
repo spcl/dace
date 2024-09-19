@@ -210,14 +210,26 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         # Check the names of data descriptors and co.
         seen_names: Set[str] = set()
         for obj_names in [
-                sdfg.arrays.keys(), sdfg.symbols.keys(), sdfg._rdistrarrays.keys(),
-                sdfg._subarrays.keys(), sdfg.constants_prop.keys()
+                sdfg.arrays.keys(), sdfg.symbols.keys(), sdfg._rdistrarrays.keys(), sdfg._subarrays.keys()
         ]:
             if not seen_names.isdisjoint(obj_names):
                 raise InvalidSDFGError(
                     f'Found duplicated names: "{seen_names.intersection(obj_names)}". Please ensure '
                     'that the names of symbols, data descriptors, subarrays and rdistarrays are unique.', sdfg, None)
             seen_names.update(obj_names)
+
+        # Ensure that there is a mentioning of constants in either the array or symbol.
+        for const_name, (const_type, _) in sdfg.constants_prop.items():
+            if const_name in sdfg.arrays:
+                if const_type != sdfg.arrays[const_name]:
+                    raise InvalidSDFGError(
+                        f'Mismatch between constant and data descriptor of "{const_name}", '
+                        f'expected to find "{const_type}" but found "{sdfg.arrays[const_name]}".', sdfg, None)
+            elif const_name in sdfg.symbols:
+                if const_type != sdfg.symbols[const_name]:
+                    raise InvalidSDFGError(
+                        f'Mismatch between constant and symobl type of "{const_name}", '
+                        f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".', sdfg, None)
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():
