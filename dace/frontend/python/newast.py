@@ -5041,12 +5041,26 @@ class ProgramVisitor(ExtNodeVisitor):
                 strides = None
 
             if is_index:
-                tmp = self.sdfg.temp_data_name()
-                tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True)
+                if isinstance(arrobj, data.ContainerArray):
+                    tmp = self.sdfg.add_datadesc_view(array, arrobj.stype, find_new_name=True)
+                    tmparr = self.sdfg.arrays[tmp]
+                    self.views[tmp] = (array,
+                                       Memlet(data=array,
+                                              subset=str(expr.subset),
+                                              other_subset=str(other_subset),
+                                              volume=expr.accesses,
+                                              wcr=expr.wcr))
+                else:
+                    tmp = self.sdfg.temp_data_name()
+                    tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True)
             else:
+                if isinstance(arrobj, data.ContainerArray):
+                    view_dtype = arrobj.stype
+                else:
+                    view_dtype = arrobj.dtype
                 tmp, tmparr = self.sdfg.add_view(array,
                                                  other_subset.size(),
-                                                 arrobj.dtype,
+                                                 view_dtype,
                                                  storage=arrobj.storage,
                                                  strides=strides,
                                                  find_new_name=True)
