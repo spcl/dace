@@ -618,6 +618,7 @@ class NestedSDFG(CodeNode):
             internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
             keys_to_use &= internally_used_symbols
 
+        # Translate the internal symbols back to their external counterparts.
         free_syms |= set().union(*(map(str,
                                        pystr_to_symbolic(v).free_symbols) for k, v in self.symbol_mapping.items()
                                    if k in keys_to_use))
@@ -799,10 +800,8 @@ class MapEntry(EntryNode):
         for p, rng in zip(self._map.params, self._map.range):
             result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
 
-        # Add dynamic inputs
+        # Handle the dynamic map ranges.
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
-
-        # Try to get connector type from connector
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
