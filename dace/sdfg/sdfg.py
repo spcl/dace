@@ -2097,7 +2097,7 @@ class SDFG(ControlFlowRegion):
             :param array_b: Output sub-array descriptor.
             :return: Name of the new redistribution descriptor.
         """
-        rdistrarray_name = self._find_new_name('__rdistrarray')
+        name = self._find_new_name('__rdistrarray')
         if name in self._rdistrarrays:
             raise FileExistsError(f'RedistrArray "{name}" already exists.')
         if name in self.constants_prop:
@@ -2109,11 +2109,10 @@ class SDFG(ControlFlowRegion):
         if name in self.symbols:
             raise FileExistsError(f'Can not create RedistrArray "{name}", the name is used by a symbol.')
 
-        self._rdistrarrays[rdistrarray_name] = RedistrArray(rdistrarray_name, array_a, array_b)
-        self.append_init_code(self._rdistrarrays[rdistrarray_name].init_code(self))
-        self.append_exit_code(self._rdistrarrays[rdistrarray_name].exit_code(self))
-
-        return rdistrarray_name
+        self._rdistrarrays[name] = RedistrArray(name, array_a, array_b)
+        self.append_init_code(self._rdistrarrays[name].init_code(self))
+        self.append_exit_code(self._rdistrarrays[name].exit_code(self))
+        return name
 
     def add_loop(
         self,
