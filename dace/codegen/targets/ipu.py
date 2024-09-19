@@ -128,7 +128,7 @@ class IPUCodeGen(TargetCodeGenerator):
         # self.dispatcher.register_map_dispatcher(dace.ScheduleType.IPU_Map, self)
         # self.dispatcher.register_node_dispatcher(self, self.is_ipu_map_scope)
         # self.dispatcher.register_node_dispatcher(self, self.is_node_library_node)
-        self.dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
+        # self.dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
         # self.dispatcher.register_copy_dispatcher(dtypes.StorageType.Register, dtypes.StorageType.IPU_Tile_Local, None, func=self)
         # self._dispatcher.register_map_dispatcher(dace.ScheduleType.IPU, self)
         # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
@@ -955,11 +955,29 @@ auto __dace_defineDataStreams({sdfg_state_name} *__state, Graph &graph, map<stri
         
         if IPUCodeGen._in_device_code:
             print("IN DEVICE CODE")
+            
+            to_allocate = dace.sdfg.local_transients(sdfg, state, None)
+            allocated = set()
             subgraphs = dace.sdfg.concurrent_subgraphs(state)
+
+            for node in state.data_nodes():
+                data = node.desc(sdfg)
+                if node.data not in to_allocate or node.data in allocated:
+                    continue
+                # Make sure there are no global transients in the nested state
+                # that are thus not gonna be allocated
+                if data.storage == dtypes.StorageType.IPU_Memory and not isinstance(data, data.View):
+                    raise cgx.CodegenError("Cannot allocate global memory from device code.")
+                allocated.add(node.data)
+                # Allocate transients
+                self._dispatcher.dispatch_allocate(sdfg, cfg, state, state_id, node, data, function_stream,
+                                                   callsite_stream)
+
             self.generate_nested_state(sdfg, cfg, state, state.label, subgraphs, function_stream, callsite_stream)
-            NotImplementedError("IPU Device codegen not supported")
+            
         else:
             print("IN HOST CODE")
+            self.frame.generate_ipu_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
             kernels = []  # List of tuples (subgraph, kernel_id)
             # Start a new state code generation: reset previous dependencies if any
             self._kernels_dependencies.clear()

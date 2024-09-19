@@ -412,6 +412,56 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # Footer
             callsite_stream.write('}', sdfg)
 
+    def generate_ipu_state(self,
+                       sdfg: SDFG,
+                       cfg: ControlFlowRegion,
+                       state: SDFGState,
+                       global_stream: CodeIOStream,
+                       callsite_stream: CodeIOStream,
+                       generate_state_footer: bool = True):
+        callsite_stream.write(f'// GENIPU_STATE() {state.label} ({state.block_id})\n', sdfg)
+        sid = state.block_id
+
+        # Emit internal transient array allocation
+        self.allocate_arrays_in_scope(sdfg, cfg, state, global_stream, callsite_stream)
+
+        callsite_stream.write('\n')
+
+        # Invoke all instrumentation providers
+        for instr in self._dispatcher.instrumentation.values():
+            if instr is not None:
+                instr.on_state_begin(sdfg, state, callsite_stream, global_stream)
+
+        #####################
+        # Create dataflow graph for state's children.
+
+        # DFG to code scheme: Only generate code for nodes whose all
+        # dependencies have been executed (topological sort).
+        # For different connected components, run them concurrently.
+
+        components = dace.sdfg.concurrent_subgraphs(state)
+
+        if len(components) <= 1:
+            self._dispatcher.dispatch_subgraph(sdfg, cfg, state, sid, global_stream, callsite_stream,
+                                               skip_entry_node=False)
+        else:
+            callsite_stream.write("{")
+            self._dispatcher.dispatch_subgraph(sdfg, cfg, c, sid, global_stream, callsite_stream,
+                                                   skip_entry_node=False)
+            callsite_stream.write("}")
+
+        #####################
+        # Write state footer
+
+        if generate_state_footer:
+            # Emit internal transient array deallocation
+            self.deallocate_arrays_in_scope(sdfg, state.parent_graph, state, global_stream, callsite_stream)
+
+            # Invoke all instrumentation providers
+            for instr in self._dispatcher.instrumentation.values():
+                if instr is not None:
+                    instr.on_state_end(sdfg, state, callsite_stream, global_stream)
+                    
     def generate_state(self,
                        sdfg: SDFG,
                        cfg: ControlFlowRegion,
