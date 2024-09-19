@@ -321,6 +321,12 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                            for b, e, s in self.thread_block_map_entry.map.range]
 
             dst_arr_name = self.location_to_prefix[self.memory_location] + src_arr_name
+            c = 0
+            while dst_arr_name in sdfg.arrays:
+                if not (dst_arr_name + str(c) in sdfg.arrays):
+                    dst_arr_name = dst_arr_name + str(c)
+                else:
+                    c += 1
             (dst_arr_name, dst_arr) = sdfg.add_array(name=dst_arr_name,
                                                      dtype=sdfg.arrays[src_arr_name].dtype,
                                                      shape=dst_arr_shape,

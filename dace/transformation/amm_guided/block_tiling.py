@@ -132,9 +132,9 @@ class BlockTiling(transformation.SingleStateTransformation):
         for new_out_conn in new_out_conns:
             map_node.add_out_connector(new_out_conn)
 
-    def replace_subsets(self, state: SDFGState, 
-                        map_node, 
-                        match_subset : subsets.Range, 
+    def replace_subsets(self, state: SDFGState,
+                        map_node,
+                        match_subset : subsets.Range,
                         replace_subset: subsets.Range):
         edges_to_check = state.out_edges(map_node)
         while len(edges_to_check) > 0:
@@ -152,7 +152,7 @@ class BlockTiling(transformation.SingleStateTransformation):
             new_memlet = Memlet(data=memlet.data, subset=subsets.Range(new_range_list) if new_range_list != None else new_range_list)
             state.remove_edge(edge)
             state.add_edge(u, u_conn, v, v_conn, new_memlet)
-            edges_to_check += [e for e in state.out_edges(v) if e != state.exit_node(map_node)] 
+            edges_to_check += [e for e in state.out_edges(v) if e != state.exit_node(map_node)]
 
     def replace_subsets_from_data(self, state: SDFGState,
                                   begin_node,
@@ -200,8 +200,8 @@ class BlockTiling(transformation.SingleStateTransformation):
         for tiling_param, (beg, end, step) in zip(matching_tiling_params, work_map.range):
             outer_work_map_range_list.append((beg, end, step*tiling_param))
         outer_work_map_range = subsets.Range(outer_work_map_range_list)
-        outer_work_map = nodes.Map(label=f"bt_{work_map.label}", 
-                                   params=[f"{param}" for param in work_map.params], 
+        outer_work_map = nodes.Map(label=f"bt_{work_map.label}",
+                                   params=[f"{param}" for param in work_map.params],
                                    ndrange=outer_work_map_range, schedule=dtypes.ScheduleType.Sequential)
         outer_work_map_entry = nodes.MapEntry(outer_work_map)
         outer_work_map_exit = nodes.MapExit(outer_work_map)
@@ -211,10 +211,10 @@ class BlockTiling(transformation.SingleStateTransformation):
         new_params = [f"t{param}" for param in work_map.params]
         work_map.params = new_params
 
-        # Map structure: Device Map -> 
-        #   Outer Work Map(s) -> 
-        #   Thread Block Map -> 
-        #   Thread Coarsened Map -> 
+        # Map structure: Device Map ->
+        #   Outer Work Map(s) ->
+        #   Thread Block Map ->
+        #   Thread Coarsened Map ->
         #   Inner Work Map(s)
         for out_conn in thread_block_map_entry.out_connectors:
             outer_work_map_entry.add_out_connector(out_conn)
@@ -243,11 +243,15 @@ class BlockTiling(transformation.SingleStateTransformation):
         work_map_range_list = []
         inner_work_map_range_list = []
         old_work_map_ranges = []
-        for tiling_param, (beg, end, step), outer_work_map_param in zip(matching_tiling_params, work_map.range, outer_work_map.params):
+        for tiling_param, (beg, end, step), outer_work_map_param, (obeg, oend, ostep) in zip(matching_tiling_params, work_map.range, outer_work_map.params, outer_work_map.range):
             old_work_map_ranges.append((beg, end, step))
             sym_outer_work_map_param = symbol(outer_work_map_param)
-            work_map_range_list.append((sym_outer_work_map_param, sym_outer_work_map_param + step*tiling_param-1, step))
-            inner_work_map_range_list.append((0, step*tiling_param-1,step))
+            if (oend+1-obeg)//ostep <= step*tiling_param-1:
+                work_map_range_list.append((sym_outer_work_map_param, sym_outer_work_map_param + ((oend+1-obeg)//ostep), ((oend+1-obeg)//ostep)))
+                inner_work_map_range_list.append((0, (oend+1-obeg)//ostep, step))
+            else:
+                work_map_range_list.append((sym_outer_work_map_param, sym_outer_work_map_param + step*tiling_param-1, step))
+                inner_work_map_range_list.append((0, step*tiling_param-1,step))
         work_map_range = subsets.Range(inner_work_map_range_list)
         work_map.range = work_map_range
 
@@ -284,8 +288,8 @@ class BlockTiling(transformation.SingleStateTransformation):
 
         # If there was an assignment after the previous K loop, then it will be assigned every iteration of the tiled tK loop.
         # This means many more assignments to global memory we need to fix that by remove any assignment node
-        # 
-        # We have moved some access nodes above the thread block schedule, to avoid writing wrong results, 
+        #
+        # We have moved some access nodes above the thread block schedule, to avoid writing wrong results,
         # They have to be accumulated in the temporary variable after the inner work map (not the case) and assigned to the global array
         # after the outer work map.
         # The access nodes moved are saved in ther variable access_nodes = []
@@ -326,7 +330,7 @@ class BlockTiling(transformation.SingleStateTransformation):
                     nodes_to_remove.add(node)
                     nodes_to_remove.add(v)
                     edges_to_add.add((iu, iu_conn, tv, tv_conn, tmemlet))
-                    
+
             if node != thread_block_map_exit:
                 nodes_to_check = nodes_to_check.union(set([v for (u, u_conn, v, v_conn, memlet) in state.out_edges(node)]))
 
