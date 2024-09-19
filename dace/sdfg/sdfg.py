@@ -2080,8 +2080,8 @@ class SDFG(ControlFlowRegion):
             raise FileExistsError(f'Can not create subarray "{subarray_name}", the name is used by a symbol.')
         if subarray_name in self.constants_prop:
             raise FileExistsError(f'Can not create subarray "{subarray_name}", the name is used by a constant.')
-        if name in self._rdistrarrays:
-            raise FileExistsError(f'Can not create subarray "{name}", the name is used by a RedistrArray.')
+        if subarray_name in self._rdistrarrays:
+            raise FileExistsError(f'Can not create subarray "{subarray_name}", the name is used by a RedistrArray.')
 
         self._subarrays[subarray_name] = SubArray(subarray_name, dtype, shape, subshape, pgrid, correspondence)
         self.append_init_code(self._subarrays[subarray_name].init_code())
