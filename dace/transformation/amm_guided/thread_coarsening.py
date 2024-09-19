@@ -72,13 +72,15 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         # Depending on the sizes of the params use: (tz,ty,tx), (ty,tx) or (tx)
         tile_sizes[-used_dimensions:] = possible_tile_sizes[-used_dimensions:]
 
-        MapTiling.apply_to(sdfg=sdfg, 
+        MapTiling.apply_to(sdfg=sdfg,
                            options=dict(prefix="d",
                                         skew=True,
                                         tile_sizes=tile_sizes,
                                         divides_evenly=True,
                                         tile_trivial=True),
                            map_entry=thread_block_entry)
+
+
 
         sequential_map_entry = thread_block_entry
         sequential_map_entry.map.schedule = dtypes.ScheduleType.Sequential

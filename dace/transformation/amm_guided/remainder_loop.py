@@ -150,20 +150,21 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                 for symbol in free_symbols:
                                     symbols_to_ensure_in_scope.add(str(symbol))
 
-
         # 5. Go up until all the variables are defined (remove the vars as iterating the scopes ap)
         map_before_split = None
         cur_map_entry = self.inner_work_map_entry
-        syms_to_find = set(symbols_to_ensure_in_scope)
 
+        b = False
         while cur_map_entry:
-            print(cur_map_entry, cur_map_entry.map.params, symbols_to_ensure_in_scope)
-            for param in cur_map_entry.map.params:
-                if param in syms_to_find:
-                    syms_to_find.remove(param)
-            if len(syms_to_find) == 0:
-                map_before_split = cur_map_entry
+            if b:
                 break
+            for param in cur_map_entry.map.params:
+                if b:
+                    break
+                if param in symbols_to_ensure_in_scope:
+                    map_before_split = cur_map_entry
+                    b = True
+                    break
             cur_map_entry = state.entry_node(cur_map_entry)
 
         map_after_split = state.exit_node(map_before_split)
@@ -190,7 +191,6 @@ class RemainderLoop(transformation.SingleStateTransformation):
         # 4. Set up the condition
         added_conditions = set()
         conditions_and_ranges = dict()
-        print(can_out_of_bound.items())
 
         # TODO: improve (should go through all state)
         if True:  # len(conditions_and_ranges) == 0:
@@ -200,7 +200,6 @@ class RemainderLoop(transformation.SingleStateTransformation):
                         l = (end+1-beg)/step
                         dev_param = f"b_{param}"
                         block_param = f"d_{param}"
-                        print(dev_param, block_param)
                         for dp, (db, de, ds) in zip(dev_entry.map.params, dev_entry.map.range):
                             if dp == dev_param:
                                 lim = de+1
@@ -215,7 +214,6 @@ class RemainderLoop(transformation.SingleStateTransformation):
                         l = (end+1-beg)/step
                         outer_work_map_param = param[1:]
                         block_param = f"d_{param}"
-                        print(outer_work_map_param, block_param)
                         for nn in state.nodes():
                             if isinstance(nn, nodes.MapEntry) and nn.map.label.startswith("OuterWorkMap"):
                                 for op, (ob, oe, os) in zip(nn.map.params, nn.map.range):
@@ -227,7 +225,6 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                         break
 
         condition = "(" + " and ".join(added_conditions) + ")"
-        print(condition)
         # raise Exception(condition)
 
         # For example range for k is 0:K:16,
@@ -250,9 +247,8 @@ class RemainderLoop(transformation.SingleStateTransformation):
         # Inputs for NestedSDFG
         # Create nested states
         first_node_in_microkernel = None
-        for e in state.out_edges(map_before_split):
-            u, uc, v, vc, m = e
-            if isinstance(v, nodes.MapEntry):
+        for v in state.bfs_nodes(map_before_split):
+            if isinstance(v, nodes.MapEntry) and v != map_before_split:
                 first_node_in_microkernel = v
                 break
         # if not first_node_in_microkernel:
@@ -504,8 +500,6 @@ class RemainderLoop(transformation.SingleStateTransformation):
         inner_loop_kernel_sdfg.validate()
         remainder_loop_kernel_sdfg.validate()
 
-        inner_loop_kernel_sdfg.save("iii.sdfg")
-        remainder_loop_kernel_sdfg.save("rrr.sdfg")
 
         # Now need to apply it also on any assignments
         counter = 0
@@ -677,20 +671,10 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 self.substract_offsets(kernel, used_offsets)
                 self.substract_offsets(kernel, kernel_parent_offsets)
             # Add the edges that are still missing
-            print(kernel, kernel.nodes())
 
         self.prune_unused_data(sdfg)
         self.prune_unused_data(sub_sdfg)
 
-        sdfg.save("uwuowo.sdfg")
-        print("S", sdfg.arrays)
-        print("SS", sub_sdfg.arrays)
-        print("KS1", inner_loop_kernel_sdfg.arrays)
-        print("KS1", remainder_loop_kernel_sdfg.arrays)
-        print("sym1", sdfg.symbols)
-        print("sym2", sub_sdfg.symbols)
-        print("sym3", inner_loop_kernel_sdfg.symbols)
-        print("sym4", remainder_loop_kernel_sdfg.symbols)
         # We need to recursively update offets, the structure is as follows.
         # We have Main SDFG -> innerLoopKernel -> kernel
         #         Main SDFG -> remainderLoopKernel -> kernel

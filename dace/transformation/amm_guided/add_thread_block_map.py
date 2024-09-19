@@ -47,7 +47,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
         # The thread block sizes depend on the number of dimensions we have
         # GPU code gen maps the params i0:...,i1:...,i2:... respectively to blockDim.z,.y,.x
-        # If more tile sizes are given than the available number of parameters cull the list and ignore 
+        # If more tile sizes are given than the available number of parameters cull the list and ignore
         # the additional parameters
         tile_sizes = [1] * len(map_entry.map.params)
         used_dimensions = min(3, len(map_entry.map.params))
@@ -56,10 +56,10 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         applied_gpu_block_dims[-used_dimensions:] = block_dims[-used_dimensions:]
         gpu_block_dims_ordered = list(reversed(applied_gpu_block_dims))
 
-                                        
+
         # Tile trivial simplifies come checks for the BlockCoarsening and ThreadCoarsening transformations
-        MapTiling.apply_to(sdfg=sdfg, 
-                           options=dict(prefix="b", 
+        MapTiling.apply_to(sdfg=sdfg,
+                           options=dict(prefix="b",
                                         #tile_offset=map_begins,
                                         tile_sizes=tile_sizes,
                                         divides_evenly=True,
@@ -69,7 +69,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
         map_entry.map.schedule = dtypes.ScheduleType.GPU_ThreadBlock
         map_entry.map.label = "ThreadBlockMap"
-        
+
         for m in [map_entry.map]:
             d = dict()
             for param in m.params:
