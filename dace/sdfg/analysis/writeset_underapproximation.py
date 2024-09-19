@@ -82,27 +82,26 @@ class SeparableUnderapproximationMemlet(UnderapproximationMemletPattern):
         for dim in range(data_dims):
             dexprs = []
             for expr in expressions:
-                if isinstance(expr[dim], symbolic.SymExpr):
-                    dexprs.append(expr[dim].expr)
-                elif isinstance(expr[dim], tuple):
-                    dexprs.append(
-                        (expr[dim][0].expr if isinstance(expr[dim][0], symbolic.SymExpr) else
-                         expr[dim][0], expr[dim][1].expr if isinstance(
-                            expr[dim][1], symbolic.SymExpr) else expr[dim][1], expr[dim][2].expr
-                         if isinstance(expr[dim][2], symbolic.SymExpr) else expr[dim][2]))
+                expr_dim = expr[dim]
+                if isinstance(expr_dim, symbolic.SymExpr):
+                    dexprs.append(expr_dim.expr)
+                elif isinstance(expr_dim, tuple):
+                    dexprs.append((expr_dim[0].expr if isinstance(expr_dim[0], symbolic.SymExpr) else expr_dim[0],
+                                   expr_dim[1].expr if isinstance(expr_dim[1], symbolic.SymExpr) else expr_dim[1],
+                                   expr_dim[2].expr if isinstance(expr_dim[2], symbolic.SymExpr) else expr_dim[2]))
                 else:
-                    dexprs.append(expr[dim])
+                    dexprs.append(expr_dim)
 
             for pattern_class in SeparableUnderapproximationMemletPattern.extensions().keys():
                 smpattern = pattern_class()
-                if smpattern.can_be_applied(dexprs, variable_context, node_range, orig_edges, dim,
-                                            data_dims):
+                if smpattern.can_be_applied(dexprs, variable_context, node_range, orig_edges, dim, data_dims):
                     self.patterns_per_dim[dim] = smpattern
                     break
 
         return None not in self.patterns_per_dim
 
     def _iteration_variables_appear_multiple_times(self, data_dims, expressions, other_params, params):
+        # TODO: This name implies exactly the inverse of the returned value..
         for expr in expressions:
             for param in params:
                 occured_before = False
@@ -139,8 +138,7 @@ class SeparableUnderapproximationMemlet(UnderapproximationMemletPattern):
 
     def _make_range(self, node_range):
         return subsets.Range([(rb.expr if isinstance(rb, symbolic.SymExpr) else rb,
-                               re.expr if isinstance(
-                                   re, symbolic.SymExpr) else re,
+                               re.expr if isinstance(re, symbolic.SymExpr) else re,
                                rs.expr if isinstance(rs, symbolic.SymExpr) else rs)
                               for rb, re, rs in node_range])
 

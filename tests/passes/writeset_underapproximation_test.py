@@ -545,6 +545,7 @@ def test_nested_sdfg_in_map_branches():
     Nested SDFG that overwrites second dimension of array conditionally.
     --> should approximate write-set of map as empty
     """
+    # No, should be approximated precisely - at least certainly with CF regions..?
 
     @dace.program
     def nested_loop(A: dace.float64[M, N]):
