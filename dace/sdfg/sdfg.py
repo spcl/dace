@@ -754,8 +754,6 @@ class SDFG(ControlFlowRegion):
         """
         if name in self.symbols:
             raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
-        if name in self.constants_prop:
-            raise FileExistsError(f'Can not create symbol "{name}", the name is used by a constant.')
         if name in self.arrays:
             raise FileExistsError(f'Can not create symbol "{name}", the name is used by a data descriptor.')
         if name in self._subarrays:
@@ -764,6 +762,8 @@ class SDFG(ControlFlowRegion):
             raise FileExistsError(f'Can not create symbol "{name}", the name is used by a RedistrArray.')
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
+        # We do not check for data constant, because there is a link between the constants and
+        #  the data descriptors.
         self.symbols[name] = stype
 
     def remove_symbol(self, name):
@@ -1944,8 +1944,6 @@ class SDFG(ControlFlowRegion):
 
         if name in self.arrays:
             raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
-        if name in self.constants_prop:
-            raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a constant.')
         if name in self.symbols:
             raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
         if name in self._subarrays:

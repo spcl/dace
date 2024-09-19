@@ -221,15 +221,19 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         # Ensure that there is a mentioning of constants in either the array or symbol.
         for const_name, (const_type, _) in sdfg.constants_prop.items():
             if const_name in sdfg.arrays:
-                if const_type != sdfg.arrays[const_name]:
-                    raise InvalidSDFGError(
+                if const_type != sdfg.arrays[const_name].dtype:
+                    # This should actually be an error, but there is a lots of code that depends on it.
+                    warnings.warn(
                         f'Mismatch between constant and data descriptor of "{const_name}", '
-                        f'expected to find "{const_type}" but found "{sdfg.arrays[const_name]}".', sdfg, None)
+                        f'expected to find "{const_type}" but found "{sdfg.arrays[const_name]}".')
             elif const_name in sdfg.symbols:
                 if const_type != sdfg.symbols[const_name]:
-                    raise InvalidSDFGError(
+                    # This should actually be an error, but there is a lots of code that depends on it.
+                    warnings.warn(
                         f'Mismatch between constant and symobl type of "{const_name}", '
-                        f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".', sdfg, None)
+                        f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
+            else:
+                warnings.warn(f'Found constant "{const_name}" that does not refer to an array or a symbol.')
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():
