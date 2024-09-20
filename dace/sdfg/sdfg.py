@@ -493,6 +493,7 @@ class SDFG(ControlFlowRegion):
         self.orig_sdfg = None
         self.transformation_hist = []
         self.callback_mapping = {}
+
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
 
@@ -746,25 +747,32 @@ class SDFG(ControlFlowRegion):
 
         super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
 
-    def add_symbol(self, name, stype):
+    def add_symbol(self, name, stype, find_new_name: bool = False):
         """ Adds a symbol to the SDFG.
 
             :param name: Symbol name.
             :param stype: Symbol type.
+            :param find_new_name: Find a new name.
         """
-        if name in self.symbols:
-            raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
-        if name in self.arrays:
-            raise FileExistsError(f'Can not create symbol "{name}", the name is used by a data descriptor.')
-        if name in self._subarrays:
-            raise FileExistsError(f'Can not create symbol "{name}", the name is used by a subarray.')
-        if name in self._rdistrarrays:
-            raise FileExistsError(f'Can not create symbol "{name}", the name is used by a RedistrArray.')
+        if find_new_name:
+            name = self._find_new_name(name)
+        else:
+            # We do not check for data constant, because there is a link between the constants and
+            #  the data descriptors.
+            if name in self.symbols:
+                raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
+            if name in self.arrays:
+                raise FileExistsError(f'Can not create symbol "{name}", the name is used by a data descriptor.')
+            if name in self._subarrays:
+                raise FileExistsError(f'Can not create symbol "{name}", the name is used by a subarray.')
+            if name in self._rdistrarrays:
+                raise FileExistsError(f'Can not create symbol "{name}", the name is used by a RedistrArray.')
+            if name in self._pgrids:
+                raise FileExistsError(f'Can not create symbol "{name}", the name is used by a ProcessGrid.')
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
-        # We do not check for data constant, because there is a link between the constants and
-        #  the data descriptors.
         self.symbols[name] = stype
+        return name
 
     def remove_symbol(self, name):
         """ Removes a symbol from the SDFG.
@@ -1172,7 +1180,7 @@ class SDFG(ControlFlowRegion):
 
         A constant may either be a scalar or a numpy ndarray thereof. It is not an
         error if there is already a symbol or an array with the same name inside
-        the SDFG. However, the data descripors must refer to the same type.
+        the SDFG. However, the data descriptors must refer to the same type.
 
         :param name: The name of the constant.
         :param value: The constant value.
@@ -1182,6 +1190,8 @@ class SDFG(ControlFlowRegion):
             raise FileExistsError(f'Can not create constant "{name}", the name is used by a subarray.')
         if name in self._rdistrarrays:
             raise FileExistsError(f'Can not create constant "{name}", the name is used by a RedistrArray.')
+        if name in self._pgrids:
+            raise FileExistsError(f'Can not create constant "{name}", the name is used by a ProcessGrid.')
         self.constants_prop[name] = (dtype or dt.create_datadescriptor(value), value)
 
     @property
@@ -1613,36 +1623,44 @@ class SDFG(ControlFlowRegion):
         """ Tries to find a new name by adding an underscore and a number. """
 
         names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
-                 | self._rdistrarrays.keys())
+                 | self._rdistrarrays.keys() | self.symbols)
         return dt.find_new_name(name, names)
+
+    def is_name_used(self, name: str) -> bool:
+        """ Checks if `name` is already used inside the SDFG."""
+        if name in self._arrays:
+            return True
+        if name in self.symbols:
+            return True
+        if name in self.constants_prop:
+            return True
+        if name in self._pgrids:
+            return True
+        if name in self._subarrays:
+            return True
+        if name in self._rdistrarrays:
+            return True
+        return False
+
+    def is_name_free(self, name: str) -> bool:
+        """ Test if `name` is free, i.e. is not used by anything else."""
+        return not self.is_name_used(name)
 
     def find_new_constant(self, name: str):
         """
-        Tries to find a new constant name by adding an underscore and a number.
+        Tries to find a new name for a constant.
         """
-        constants = self.constants
-        if name not in constants:
+        if self.is_name_free(name):
             return name
-
-        index = 0
-        while (name + ('_%d' % index)) in constants:
-            index += 1
-
-        return name + ('_%d' % index)
+        return self._find_new_name(name)
 
     def find_new_symbol(self, name: str):
         """
         Tries to find a new symbol name by adding an underscore and a number.
         """
-        symbols = self.symbols
-        if name not in symbols:
+        if self.is_name_free(name):
             return name
-
-        index = 0
-        while (name + ('_%d' % index)) in symbols:
-            index += 1
-
-        return name + ('_%d' % index)
+        return self._find_new_name(name)
 
     def add_array(self,
                   name: str,
@@ -1871,13 +1889,14 @@ class SDFG(ControlFlowRegion):
 
     def temp_data_name(self):
         """ Returns a temporary data descriptor name that can be used in this SDFG. """
-
         name = '__tmp%d' % self._temp_transients
-        while name in self._arrays:
+
+        # NOTE: Consider switching to `_find_new_name`
+        #  The frontend seems to access this variable directly.
+        while self.is_name_used(name):
             self._temp_transients += 1
             name = '__tmp%d' % self._temp_transients
         self._temp_transients += 1
-
         return name
 
     def add_temp_transient(self,
@@ -1932,29 +1951,25 @@ class SDFG(ControlFlowRegion):
         """
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
-        # If exists, fail
-        while name in self._arrays:
-            if find_new_name:
-                name = self._find_new_name(name)
-            else:
-                raise NameError(f'Array or Stream with name "{name}" already exists in SDFG')
-            # NOTE: Remove illegal characters, such as dots. Such characters may be introduced when creating views to
-            # members of Structures.
+
+        if find_new_name:
+            name = self._find_new_name(name)
+            # These characters might be introduced through the creation of views to members
+            #  of strictures.
             name = name.replace('.', '_')
-
-        if name in self.arrays:
-            raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
-        if name in self.symbols:
-            raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
-        if name in self._subarrays:
-            raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a subarray.')
-        if name in self._rdistrarrays:
-            raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a RedistrArray.')
-        # We do not check for data constant, because there is a link between the constants and
-        #  the data descriptors.
-
-        assert name not in self._arrays
-        self._arrays[name] = datadesc
+        else:
+            # We do not check for data constant, because there is a link between the constants and
+            #  the data descriptors.
+            if name in self.arrays:
+                raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
+            if name in self.symbols:
+                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
+            if name in self._subarrays:
+                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a subarray.')
+            if name in self._rdistrarrays:
+                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a RedistrArray.')
+            if name in self._pgrids:
+                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a ProcessGrid.')
 
         def _add_symbols(desc: dt.Data):
             if isinstance(desc, dt.Structure):
@@ -1965,7 +1980,8 @@ class SDFG(ControlFlowRegion):
                 if sym.name not in self.symbols:
                     self.add_symbol(sym.name, sym.dtype)
 
-        # Add free symbols to the SDFG global symbol storage
+        # Add the data descriptor to the SDFG and all symbols that are not yet known.
+        self._arrays[name] = datadesc
         _add_symbols(datadesc)
 
         return name
@@ -2071,17 +2087,8 @@ class SDFG(ControlFlowRegion):
                 newshape.append(dace.symbolic.pystr_to_symbolic(s))
         subshape = newshape
 
+        # No need to ensure unique test.
         subarray_name = self._find_new_name('__subarray')
-        if subarray_name in self._subarrays:
-            raise FileExistsError(f'Subarray "{subarray_name}" already exists.')
-        if subarray_name in self.arrays:
-            raise FileExistsError(f'Can not create subarray "{subarray_name}", the name is used by a data descriptor.')
-        if subarray_name in self.symbols:
-            raise FileExistsError(f'Can not create subarray "{subarray_name}", the name is used by a symbol.')
-        if subarray_name in self.constants_prop:
-            raise FileExistsError(f'Can not create subarray "{subarray_name}", the name is used by a constant.')
-        if subarray_name in self._rdistrarrays:
-            raise FileExistsError(f'Can not create subarray "{subarray_name}", the name is used by a RedistrArray.')
 
         self._subarrays[subarray_name] = SubArray(subarray_name, dtype, shape, subshape, pgrid, correspondence)
         self.append_init_code(self._subarrays[subarray_name].init_code())
@@ -2097,17 +2104,8 @@ class SDFG(ControlFlowRegion):
             :param array_b: Output sub-array descriptor.
             :return: Name of the new redistribution descriptor.
         """
+        # No need to ensure unique test.
         name = self._find_new_name('__rdistrarray')
-        if name in self._rdistrarrays:
-            raise FileExistsError(f'RedistrArray "{name}" already exists.')
-        if name in self.constants_prop:
-            raise FileExistsError(f'Can not create RedistrArray "{name}", the name is used by a constant.')
-        if name in self.arrays:
-            raise FileExistsError(f'Can not create RedistrArray "{name}", the name is used by a data descriptor.')
-        if name in self._subarrays:
-            raise FileExistsError(f'Can not create RedistrArray "{name}", the name is used by a subarray.')
-        if name in self.symbols:
-            raise FileExistsError(f'Can not create RedistrArray "{name}", the name is used by a symbol.')
 
         self._rdistrarrays[name] = RedistrArray(name, array_a, array_b)
         self.append_init_code(self._rdistrarrays[name].init_code(self))
