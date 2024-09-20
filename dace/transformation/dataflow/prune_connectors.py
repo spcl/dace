@@ -41,17 +41,19 @@ class PruneConnectors(pm.SingleStateTransformation):
         """
         nsdfg = self.nsdfg
 
-        # Note the implementation of `read_and_write_sets()` filters array
-        #  that fully written and read from the read set and only includes
-        #  them in the write set. Thus we have to assume that every write
-        #  is also a read to compensate for this.
+        # From the input connectors (i.e. data container on the inside) remove
+        #  all those that are not used for reading and from the output containers
+        #  remove those that are not used fro reading.
+        # NOTE: If a data container is used for reading and writing then only the
+        #  output connector is retained, except the output is a WCR, then the input
+        #  is also retained.
         read_set, write_set = nsdfg.sdfg.read_and_write_sets()
-        prune_in = nsdfg.in_connectors.keys() - (read_set | write_set)
+        prune_in = nsdfg.in_connectors.keys() - read_set
         prune_out = nsdfg.out_connectors.keys() - write_set
 
-        # Note symbols can not be passed through connectors. For that reason
-        #  we do not have to check for them. They should be passed through
-        #  the symbol mapping.
+        for e in state.out_edges(nsdfg):
+            if e.data.wcr is not None and e.src_conn in prune_in:
+                prune_in.remove(e.src_conn)
 
         return prune_in, prune_out
 
