@@ -493,7 +493,6 @@ class SDFG(ControlFlowRegion):
         self.orig_sdfg = None
         self.transformation_hist = []
         self.callback_mapping = {}
-
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
 
@@ -1953,10 +1952,19 @@ class SDFG(ControlFlowRegion):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
 
         if find_new_name:
-            name = self._find_new_name(name)
             # These characters might be introduced through the creation of views to members
             #  of strictures.
+            # NOTES: If `find_new_name` is `True` and the name (understood as a sequence of
+            #   any characters) is not used, i.e. `assert self.is_name_free(name)`, then it
+            #   is still "cleaned", i.e. dots are replaced with underscores. However, if
+            #   `find_new_name` is `False` then this cleaning is not applied and it is possible
+            #   to create names that are formally invalid. The above code reproduces the exact
+            #   same behaviour and is maintained for  compatibility. This behaviour is
+            #   triggered by tests/python_frontend/structures/structure_python_test.py::test_rgf`.
+            name = self._find_new_name(name)
             name = name.replace('.', '_')
+            if self.is_name_used(name):
+                name = self._find_new_name(name)
         else:
             # We do not check for data constant, because there is a link between the constants and
             #  the data descriptors.
@@ -1971,18 +1979,18 @@ class SDFG(ControlFlowRegion):
             if name in self._pgrids:
                 raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a ProcessGrid.')
 
-        def _add_symbols(desc: dt.Data):
+        def _add_symbols(sdfg: SDFG, desc: dt.Data):
             if isinstance(desc, dt.Structure):
                 for v in desc.members.values():
                     if isinstance(v, dt.Data):
-                        _add_symbols(v)
+                        _add_symbols(sdfg, v)
             for sym in desc.free_symbols:
-                if sym.name not in self.symbols:
-                    self.add_symbol(sym.name, sym.dtype)
+                if sym.name not in sdfg.symbols:
+                    sdfg.add_symbol(sym.name, sym.dtype)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc
-        _add_symbols(datadesc)
+        _add_symbols(self, datadesc)
 
         return name
 
