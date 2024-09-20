@@ -2243,8 +2243,8 @@ class SDFG(ControlFlowRegion):
             sdfg = self
 
         # Compile the code and get the shared library path
-        # shared_library = compiler.configure_and_compile(program_folder, sdfg.name)
-        shared_library = "/dev/null"    # TODO: Revert this HACK to supress the compiler output.
+        shared_library = compiler.configure_and_compile(program_folder, sdfg.name)
+
         # If provided, save output to path or filename
         if output_file is not None:
             if os.path.isdir(output_file):
