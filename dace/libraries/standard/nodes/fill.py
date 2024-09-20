@@ -1,8 +1,7 @@
+import dace
 from dace import library, nodes, properties
 from dace.transformation.transformation import ExpandTransformation
 from numbers import Number
-import dace.subsets
-
 
 @library.expansion
 class ExpandPure(ExpandTransformation):

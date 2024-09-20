@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 from dace.memlet import Memlet
-from dace.libraries.standard.nodes import std_nodes 
+from dace.libraries.standard.nodes import fill
 
 
 def pure_graph(implementation, dtype, size):
@@ -15,7 +15,7 @@ def pure_graph(implementation, dtype, size):
     sdfg.add_array("r", [size], dtype)
     result = state.add_write("r")
 
-    fill_node = std_nodes.Fill("fill")
+    fill_node = fill.Fill("fill")
     fill_node.implementation = implementation
     fill_node.value = value
 
