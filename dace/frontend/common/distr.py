@@ -1078,7 +1078,7 @@ def _redistribute(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: s
         f'int* {rdistrarray_name}_self_size;'
     ])
     state.add_node(tasklet)
-    scal_name, scal = sdfg.add_scalar(rdistrarray_name, dace.int32, transient=True)
+    scal_name, scal = sdfg.add_scalar(rdistrarray_name, dace.int32, transient=True, find_new_name=True)
     wnode = state.add_write(scal_name)
     state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(scal_name, scal))
 
