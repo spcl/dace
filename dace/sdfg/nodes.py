@@ -932,7 +932,7 @@ class Map(object):
         self.label = label
         self.schedule = schedule
         self.unroll = unroll
-        self.collapse = 1
+        self.collapse = collapse
         self.params = params
         self.range = ndrange
         self.debuginfo = debuginfo
@@ -948,7 +948,12 @@ class Map(object):
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
-            raise NameError('Invalid map name "%s"' % self.label)
+            raise NameError(f'Invalid map name "{self.label}"')
+        if self.get_param_num() == 0:
+            raise ValueError('There must be at least one parameter in a map.')
+        if self.get_param_num() != self.range.dims():
+            raise ValueError(f'There are {self.get_param_num()} parameters but the range'
+                             f' has {self.range.dims()} dimensions.')
 
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
