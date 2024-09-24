@@ -3,6 +3,7 @@
 
 from collections import deque, OrderedDict
 import itertools
+import uuid
 import networkx as nx
 from dace.dtypes import deduplicate
 import dace.serialize
@@ -825,3 +826,7 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[No
 
     def is_multigraph(self) -> bool:
         return True
+
+
+def generate_element_id(element) -> str:
+    return str(uuid.uuid4())

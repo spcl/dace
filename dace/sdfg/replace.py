@@ -137,17 +137,16 @@ def replace_properties_dict(node: Any,
                     for name, new_name in reduced_repl.items():
                         if name not in tokenized:
                             continue
-
                         # Use local variables and shadowing to replace
                         replacement = f'auto {name} = {cppunparse.pyexpr2cpp(new_name)};\n'
                         prefix = replacement + prefix
                         active_replacements.add(name)
+
                     if prefix:
                         propval.code = prefix + code
-
-                        # Ignore replaced symbols since they no longer exist as reads
                         if isinstance(node, dace.nodes.Tasklet):
-                            node._ignored_symbols.update(active_replacements)
+                            # Ignore replaced symbols since they no longer exist as reads
+                            node.ignored_symbols = node.ignored_symbols.union(active_replacements)
 
                 else:
                     warnings.warn('Replacement of %s with %s was not made '

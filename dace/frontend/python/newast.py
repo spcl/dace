@@ -32,7 +32,8 @@ from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import BreakBlock, ConditionalRegion, ContinueBlock, ControlFlowBlock, LoopRegion, ControlFlowRegion
+from dace.sdfg.state import (BreakBlock, ConditionalRegion, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
+                             LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
@@ -279,10 +280,10 @@ def parse_dace_program(name: str,
         ProgramVisitor.increment_progress()
     except SkipCall:
         raise
-    except Exception:
+    except Exception as e:
         # Print the offending line causing the exception
         li = visitor.current_lineinfo
-        print(f'Exception raised while parsing DaCe program:\n  in File "{li.filename}", line {li.start_line}')
+        print(f'Exception {e} raised while parsing DaCe program:\n  in File "{li.filename}", line {li.start_line}')
         lines = preprocessed_ast.src.split('\n')
         lineid = li.start_line - preprocessed_ast.src_line - 1
         if lineid >= 0 and lineid < len(lines):
@@ -1155,7 +1156,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.sdfg.add_symbol(sym.name, sym.dtype)
         self.sdfg._temp_transients = tmp_idx
         self.cfg_target = self.sdfg
-        self.current_state = self.sdfg.add_state('init', is_start_state=True)
+        self.current_state = self.sdfg.add_state('init', is_start_block=True)
         self.last_block = self.current_state
         self.last_cfg_target = self.sdfg
 
@@ -3868,7 +3869,6 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             raise DaceSyntaxError(self, node,
                                   'Unrecognized SDFG type "%s" in call to "%s"' % (type(func).__name__, funcname))
-
         # Avoid import loops
         from dace.frontend.python.parser import infer_symbols_from_datadescriptor
 
@@ -4173,8 +4173,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Return SDFG return values, if exist
         if len(rets) == 1:
-            return rets[0]
-        return rets
+            return rets[0], args
+        return rets, args
 
     def create_callback(self, node: ast.Call, create_graph=True):
         funcname = astutils.rname(node)
@@ -4492,7 +4492,26 @@ class ProgramVisitor(ExtNodeVisitor):
         # If the function exists as a global SDFG or @dace.program, use it
         if func is not None:
             try:
-                return self._parse_sdfg_call(funcname, func, node)
+                if hasattr(func, "name"):
+                    name = func.name
+                elif hasattr(func, "__class__"):
+                    name = func.__class__.__name__
+                else:
+                    name = "call"
+                call_region = FunctionCallRegion(label=f"{name}_{node.lineno}", arguments=[])
+                self.cfg_target.add_node(call_region)
+                self._on_block_added(call_region)
+                previous_last_cfg_target = self.last_cfg_target
+                previous_target = self.cfg_target
+                prev_last_block = self.last_block
+                self.cfg_target = call_region
+                self.last_block = self._add_state("init", is_start=True)
+                result, args = self._parse_sdfg_call(funcname, func, node)
+                call_region.arguments = args
+                self.last_cfg_target = previous_last_cfg_target
+                self.cfg_target = previous_target
+                self.last_block = prev_last_block
+                return result
             except SkipCall as ex:
                 # Re-parse call with non-parsed information, trying
                 # to create callbacks instead
@@ -4694,7 +4713,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # In a nested control flow region, a return needs to be explicitly marked with a return block.
             self._on_block_added(self.cfg_target.add_return(f'return_{self.cfg_target.label}_{node.lineno}'))
 
-    def visit_With(self, node, is_async=False):
+    def visit_With(self, node: ast.With, is_async=False):
         # "with dace.tasklet" syntax
         if len(node.items) == 1:
             dec = node.items[0].context_expr
@@ -4719,6 +4738,17 @@ class ProgramVisitor(ExtNodeVisitor):
                 self._add_dependencies(state, tasklet, None, None, inputs, outputs)
                 self.inputs.update({k: (state, *v) for k, v in sdfg_inp.items()})
                 self.outputs.update({k: (state, *v) for k, v in sdfg_out.items()})
+                return
+            elif funcname == "dace.named":
+                evald = astutils.evalnode(node.items[0].context_expr, self.globals)
+                if hasattr(evald, "name"):
+                    named_region_name: str = evald.name
+                else:            
+                    named_region_name = f"Named Region {node.lineno}"
+                named_region = NamedRegion(named_region_name, debuginfo=self.current_lineinfo)
+                self.cfg_target.add_node(named_region)
+                self._on_block_added(named_region)
+                self._recursive_visit(node.body, "init_named", node.lineno, named_region, unconnected_last_block=False)
                 return
 
         raise DaceSyntaxError(self, node, 'General "with" statements disallowed in DaCe programs')

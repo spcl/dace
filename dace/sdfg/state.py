@@ -19,10 +19,11 @@ from dace import memlet as mm
 from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
-from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
+from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
                              CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
+from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
+                             OrderedDiGraph, Edge, generate_element_id)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
@@ -348,7 +349,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             yield node, self
             if isinstance(node, nd.NestedSDFG):
                 if predicate is None or predicate(node, self):
-                    yield from node.sdfg.all_nodes_recursive()
+                    yield from node.sdfg.all_nodes_recursive(predicate)
 
     def all_edges_recursive(self) -> Iterator[Tuple[EdgeT, GraphT]]:
         for e in self.edges():
@@ -965,7 +966,7 @@ class ControlGraphView(BlockGraphView, abc.ABC):
         for node in self.nodes():
             yield node, self
             if predicate is None or predicate(node, self):
-                yield from node.all_nodes_recursive()
+                yield from node.all_nodes_recursive(predicate)
 
     def all_edges_recursive(self) -> Iterator[Tuple[EdgeT, GraphT]]:
         for e in self.edges():
@@ -1099,6 +1100,8 @@ class ControlGraphView(BlockGraphView, abc.ABC):
 @make_properties
 class ControlFlowBlock(BlockGraphView, abc.ABC):
 
+    guid = Property(dtype=str, allow_none=False)
+
     is_collapsed = Property(dtype=bool, desc='Show this block as collapsed', default=False)
 
     pre_conditions = DictProperty(key_type=str, value_type=list, desc='Pre-conditions for this block')
@@ -1121,6 +1124,8 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.pre_conditions = {}
         self.post_conditions = {}
         self.invariant_conditions = {}
+
+        self.guid = generate_element_id(self)
 
     def nodes(self):
         return []
@@ -1169,7 +1174,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k in ('_parent_graph', '_sdfg'):  # Skip derivative attributes
+            if k in ('_parent_graph', '_sdfg', 'guid'):  # Skip derivative attributes and GUID
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
 
@@ -1731,8 +1736,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                            language=dtypes.Language.Python,
                            debuginfo=None,
                            external_edges=False,
-                           input_nodes: Optional[Dict[str, nd.AccessNode]] = None,
-                           output_nodes: Optional[Dict[str, nd.AccessNode]] = None,
+                           input_nodes: Optional[Union[Dict[str, nd.AccessNode],
+                                                       List[nd.AccessNode],
+                                                       Set[nd.AccessNode]]] = None,
+                           output_nodes: Optional[Union[Dict[str, nd.AccessNode],
+                                                        List[nd.AccessNode],
+                                                        Set[nd.AccessNode]]] = None,
                            propagate=True) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
@@ -1771,6 +1780,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Create appropriate dictionaries from inputs
         tinputs = {k: None for k, v in inputs.items()}
         toutputs = {k: None for k, v in outputs.items()}
+
+        if isinstance(input_nodes, (list, set)):
+            input_nodes = {input_node.data: input_node for input_node in input_nodes}
+        if isinstance(output_nodes, (list, set)):
+            output_nodes = {output_node.data: output_node for output_node in output_nodes}
 
         tasklet = nd.Tasklet(
             name,
@@ -2950,11 +2964,11 @@ class LoopRegion(ControlFlowRegion):
     present).
     """
 
-    update_statement = CodeProperty(optional=True,
+    update_statement = CodeProperty(serialize_if=lambda ustmnt: ustmnt is not None,
                                     allow_none=True,
                                     default=None,
                                     desc='The loop update statement. May be None if the update happens elsewhere.')
-    init_statement = CodeProperty(optional=True,
+    init_statement = CodeProperty(serialize_if=lambda istmnt: istmnt is not None,
                                   allow_none=True,
                                   default=None,
                                   desc='The loop init statement. May be None if the initialization happens elsewhere.')
@@ -3294,3 +3308,17 @@ class ConditionalRegion(ControlFlowBlock, ControlGraphView):
 
         return True, (guard_state, end_state)
 
+
+@make_properties
+class NamedRegion(ControlFlowRegion):
+    debuginfo = DebugInfoProperty()
+    def __init__(self, label: str, sdfg: Optional['SDFG']=None, debuginfo: Optional[dtypes.DebugInfo]=None):
+        super().__init__(label, sdfg)
+        self.debuginfo = debuginfo
+
+@make_properties
+class FunctionCallRegion(ControlFlowRegion):
+    arguments = DictProperty(str, str)
+    def __init__(self, label: str, arguments: Dict[str, str] = {}, sdfg: 'SDFG' = None):
+        super().__init__(label, sdfg)
+        self.arguments = arguments
