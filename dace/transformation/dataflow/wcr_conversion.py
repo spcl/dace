@@ -4,12 +4,11 @@ import ast
 import copy
 import re
 import copy
-from dace import registry, nodes, dtypes, Memlet
+from dace import nodes, dtypes, Memlet
 from dace.frontend.python import astutils
-from dace.transformation import transformation, helpers as xfh
-from dace.sdfg import graph as gr, utils as sdutil
+from dace.transformation import transformation
+from dace.sdfg import utils as sdutil
 from dace import Memlet, SDFG, SDFGState
-from dace.sdfg.state import StateSubgraphView
 from dace.transformation import helpers
 from dace.sdfg.propagation import propagate_memlets_state
 
