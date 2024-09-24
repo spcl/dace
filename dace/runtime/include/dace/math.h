@@ -2,14 +2,15 @@
 #ifndef __DACE_MATH_H
 #define __DACE_MATH_H
 
-#include "pi.h"
-#include "types.h"
-
 #include <complex>
 #include <numeric>
 #include <cmath>
 #include <cfloat>
 #include <type_traits>
+
+#include "pi.h"
+#include "nan.h"
+#include "types.h"
 
 #ifdef __CUDACC__
     #include <thrust/complex.h>
@@ -457,6 +458,7 @@ namespace dace
     namespace math
     {       
         static DACE_CONSTEXPR typeless_pi pi{};
+        static DACE_CONSTEXPR typeless_nan nan{};
         //////////////////////////////////////////////////////
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T exp(const T& a)
@@ -471,36 +473,29 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const T& b)
+        template<typename T, typename U>
+        DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
-            return (T)std::pow(a, b);
+            return std::pow(a, b);
         }
 
 #ifndef DACE_XILINX
         static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
         {
-/*#ifndef __CUDA_ARCH__
-            return std::pow(a, b);
-#else*/
             if (b < 0) return 0;
             int result = 1;
             for (int i = 0; i < b; ++i)
                 result *= a;
             return result;
-//#endif
         }
+
         static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
                                        const unsigned int& b)
         {
-/*#ifndef __CUDA_ARCH__
-            return std::pow(a, b);
-#else*/
             unsigned int result = 1;
             for (unsigned int i = 0; i < b; ++i)
                 result *= a;
             return result;
-//#endif
         }
 #endif
 
@@ -512,18 +507,13 @@ namespace dace
             return result;
         }
 
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const int& b)
+        template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
+        DACE_CONSTEXPR DACE_HDFI T ifloor(const T& a)
         {
-            return (T)std::pow(a, (T)b);
-        }
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const unsigned int& b)
-        {
-            return (T)std::pow(a, (T)b);
+            return a;
         }
 
-        template<typename T>
+        template<typename T, typename std::enable_if<std::is_floating_point<T>::value>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI int ifloor(const T& a)
         {
             return (int)std::floor(a);
@@ -568,6 +558,11 @@ namespace dace
         DACE_CONSTEXPR DACE_HDFI T log(const T& a)
         {
           return std::log(a);
+        }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T log10(const T& a)
+        {
+          return std::log10(a);
         }
     }
 

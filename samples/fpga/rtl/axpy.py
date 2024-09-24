@@ -1,7 +1,10 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-#
-# This sample shows the AXPY BLAS routine. It is implemented through Xilinx IPs in order to utilize floating point
-# operations. It is intended for running hardware_emulation or hardware xilinx targets.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+    This sample shows the AXPY BLAS routine. It is implemented through Xilinx IPs in order to utilize floating point
+    operations.
+
+    It is intended for running hardware_emulation or hardware xilinx targets.
+"""
 
 import dace
 import numpy as np
@@ -237,11 +240,11 @@ def make_sdfg(veclen=2):
 if __name__ == '__main__':
     with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='hardware_emulation'):
         # init data structures
-        N.set(4096)
+        N = 4096
         a = np.random.rand(1)[0].astype(np.float32)
-        x = np.random.rand(N.get()).astype(np.float32)
-        y = np.random.rand(N.get()).astype(np.float32)
-        result = np.zeros((N.get(), )).astype(np.float32)
+        x = np.random.rand(N).astype(np.float32)
+        y = np.random.rand(N).astype(np.float32)
+        result = np.zeros((N, )).astype(np.float32)
 
         # show initial values
         print("a={}, x={}, y={}".format(a, x, y))
@@ -257,6 +260,6 @@ if __name__ == '__main__':
 
         # check result
         expected = a * x + y
-        diff = np.linalg.norm(expected - result) / N.get()
+        diff = np.linalg.norm(expected - result) / N
         print("Difference:", diff)
-    exit(0 if diff <= 1e-5 else 1)
+        assert diff <= 1e-5

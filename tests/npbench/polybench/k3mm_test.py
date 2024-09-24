@@ -82,7 +82,7 @@ def test_gpu():
     run_k3mm(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False)
+@fpga_test(assert_ii_1=False, xilinx=False)
 def test_fpga():
     return run_k3mm(dace.dtypes.DeviceType.FPGA)
 

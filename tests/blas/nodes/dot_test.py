@@ -92,20 +92,23 @@ def run_test(target, size, vector_length):
 
 
 def test_dot_pure():
-    return run_test("pure", 64, 1)
+    assert isinstance(run_test("pure", 64, 1), dace.SDFG)
 
 
+# TODO: Refactor to use assert or return True/False (pytest deprecation of returning non-booleans)
 @xilinx_test()
 def test_dot_xilinx():
     return run_test("xilinx", 64, 16)
 
 
+# TODO: Refactor to use assert or return True/False (pytest deprecation of returning non-booleans)
 @xilinx_test()
 def test_dot_xilinx_decoupled():
     with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
         return run_test("xilinx", 64, 16)
 
 
+# TODO: Refactor to use assert or return True/False (pytest deprecation of returning non-booleans)
 @intel_fpga_test()
 def test_dot_intel_fpga():
     return run_test("intel_fpga", 64, 16)
@@ -119,4 +122,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     size = args.N
 
-    run_test(target, size, vector_length)
+    run_test(args.target, size, args.vector_length)

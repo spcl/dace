@@ -199,7 +199,7 @@ def _create_einsum_internal(sdfg: SDFG,
 
     if init_output is None:
         init_output = (beta != 1.0)
-    
+
     if alpha is None:
         alpha = 1.0
     if beta is None:
@@ -275,7 +275,9 @@ def _create_einsum_internal(sdfg: SDFG,
     if not is_conflicted and init_output is None:
         to_init = False
 
-    if einsum.is_reduce() and alpha == 1 and (beta == 0 or beta == 1):
+    if einsum.is_reduce() and symbolic.equal_valued(1, alpha) and (
+            symbolic.equal_valued(0, beta) or symbolic.equal_valued(1, beta)
+    ):
         from dace.libraries.standard.nodes.reduce import Reduce
         # Get reduce axes
         axes = tuple(i for i, s in enumerate(einsum.inputs[0]) if s not in einsum.output)
@@ -372,6 +374,14 @@ def _create_einsum_internal(sdfg: SDFG,
         if len(c_shape) == 1 and len(einsum.a_sum) == len(einsum.b_sum):
             strides['sCN'] = 1
             strides['sCB'] = strides['sCM'] = strides['N']
+
+        # Transposed output, swap order
+        if strides['sCM'] == 1:
+            strides['sCM'], strides['sCN'] = strides['sCN'], strides['sCM']
+            strides['M'], strides['N'] = strides['N'], strides['M']
+            (strides['sAM'], strides['sAK'], strides['sAB'], strides['sBK'], strides['sBN'], strides['sBB']) = \
+                (strides['sBN'], strides['sBK'], strides['sBB'], strides['sAK'], strides['sAM'], strides['sAB'])
+            a, b = b, a
 
         # Create nested SDFG for GEMM
         nsdfg = create_batch_gemm_sdfg(dtype, strides, alpha, beta)

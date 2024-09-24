@@ -47,7 +47,7 @@ class NumpySerializer:
             return None
 
         try:
-            dtype_json = dace.dtypes.DTYPE_TO_TYPECLASS[obj.dtype.type].to_json()
+            dtype_json = dace.dtypes.dtype_to_typeclass(obj.dtype.type).to_json()
         except KeyError:
             dtype_json = str(obj.dtype)
 
@@ -65,15 +65,23 @@ _DACE_SERIALIZE_TYPES = {
     "DebugInfo": dace.dtypes.DebugInfo,
     "string": dace.dtypes.string,
     "bool_": dace.dtypes.bool,
+    "pyobject": dace.dtypes.pyobject,
     # All classes annotated with the make_properties decorator will register
     # themselves here.
 }
-# Also register each of the basic types
-_DACE_SERIALIZE_TYPES.update({v.to_string(): v for v in dace.dtypes.DTYPE_TO_TYPECLASS.values()})
 
 
 def get_serializer(type_name):
-    return _DACE_SERIALIZE_TYPES[type_name]
+    if type_name in _DACE_SERIALIZE_TYPES:
+        return _DACE_SERIALIZE_TYPES[type_name]
+
+    # Also try each of the basic types
+    basic_dtypes = {v.to_string(): v for v in dace.dtypes.dtype_to_typeclass().values()}
+    if type_name in basic_dtypes:
+        return basic_dtypes[type_name]
+
+    raise KeyError(f'Serializer for type "{type_name}" was not found. Object type does not support serialization. '
+                   'Please implement serialization by decorating the class with ``@serializable``.')
 
 
 # Decorator for objects that should be serializable, but don't call
@@ -143,7 +151,7 @@ def from_json(obj, context=None, known_type=None):
 
     if t:
         try:
-            deserialized = _DACE_SERIALIZE_TYPES[t].from_json(obj, context=context)
+            deserialized = get_serializer(t).from_json(obj, context=context)
         except Exception as ex:
             if config.Config.get_bool('testing', 'deserialize_exception'):
                 raise
@@ -174,9 +182,12 @@ def dump(*args, **kwargs):
 
 
 def all_properties_to_json(object_with_properties):
+    save_all_fields = config.Config.get_bool('testing', 'serialize_all_fields')
     retdict = {}
     for x, v in object_with_properties.properties():
-        if x.optional and not x.optional_condition(object_with_properties):
+        if not save_all_fields and v == x.default:  # Skip default fields
+            continue
+        if not x.serialize_if(object_with_properties):
             continue
         retdict[x.attr_name] = x.to_json(v)
 

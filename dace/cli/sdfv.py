@@ -23,7 +23,7 @@ def partialclass(cls, *args, **kwds):
     return NewCls
 
 
-def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
+def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: bool = True):
     """
     View an sdfg in the system's HTML viewer
 
@@ -33,13 +33,19 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
                     the generated HTML and related sources will be
                     served using a basic web server on that port,
                     blocking the current thread.
+    :param verbose: Be verbose.
     """
     # If vscode is open, try to open it inside vscode
     if filename is None:
-        if 'VSCODE_IPC_HOOK_CLI' in os.environ or 'VSCODE_GIT_IPC_HANDLE' in os.environ:
-            filename = tempfile.mktemp(suffix='.sdfg')
+        if (
+            'VSCODE_IPC_HOOK' in os.environ
+            or 'VSCODE_IPC_HOOK_CLI' in os.environ
+            or 'VSCODE_GIT_IPC_HANDLE' in os.environ
+        ):
+            fd, filename = tempfile.mkstemp(suffix='.sdfg')
             sdfg.save(filename)
             os.system(f'code {filename}')
+            os.close(fd)
             return
 
     if type(sdfg) is dace.SDFG:
@@ -66,7 +72,8 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
     with open(html_filename, "w") as f:
         f.write(html)
 
-    print("File saved at %s" % html_filename)
+    if(verbose):
+        print("File saved at %s" % html_filename)
 
     if fd is not None:
         os.close(fd)
@@ -78,7 +85,8 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
         # start the web server
         handler = partialclass(http.server.SimpleHTTPRequestHandler, directory=dirname)
         httpd = http.server.HTTPServer(('localhost', filename), handler)
-        print(f"Serving at localhost:{filename}, press enter to stop...")
+        if(verbose):
+            print(f"Serving at localhost:{filename}, press enter to stop...")
 
         # start the server in a different thread
         def serve():

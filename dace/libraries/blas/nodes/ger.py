@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.symbolic import symstr
 from dace.properties import Property, SymbolicProperty
 from dace.transformation.transformation import ExpandTransformation
 from dace.frontend.common import op_repository as oprepo
@@ -288,7 +287,7 @@ class Ger(LibraryNode):
                 desc_y = sdfg.arrays[memlet.data]
 
         if size_a is None or size_x is None:
-            raise ValueError("Expected at least two inputs to Ger " "(matrix A and vector x)")
+            raise ValueError("Expected at least two inputs to Ger (matrix A and vector x)")
 
         if size_y is None:
             raise ValueError("Expected exactly one output from Ger (vector y).")

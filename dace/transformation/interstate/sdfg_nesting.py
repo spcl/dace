@@ -2,18 +2,15 @@
 """ SDFG nesting transformation. """
 
 import ast
-from collections import defaultdict
 from copy import deepcopy as dc
-from dace.frontend.python.ndloop import ndrange
 import itertools
 import networkx as nx
 from typing import Callable, Dict, Iterable, List, Set, Tuple, Union
-import warnings
 from functools import reduce
 import operator
 import copy
 
-from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
+from dace import memlet, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation, utils
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
@@ -25,6 +22,7 @@ from dace import data
 
 
 @make_properties
+@transformation.single_level_sdfg_only
 class InlineSDFG(transformation.SingleStateTransformation):
     """
     Inlines a single-state nested SDFG into a top-level SDFG.
@@ -248,8 +246,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nsdfg: SDFG = nsdfg_node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
 
-        if nsdfg_node.schedule is not dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, nsdfg_node.schedule)
+        if nsdfg_node.schedule != dtypes.ScheduleType.Default:
+            infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry) if nsdfg_scope_entry is not None else None)
@@ -565,7 +563,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             # Fission state if necessary
             cc = utils.weakly_connected_component(state, node)
             if not any(n in cc for n in subgraph.nodes()):
-                helpers.state_fission(state.parent, cc)
+                helpers.state_fission(cc)
         for edge in removed_out_edges:
             # Find last access node that refers to this edge
             try:
@@ -580,7 +578,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             cc = utils.weakly_connected_component(state, node)
             if not any(n in cc for n in subgraph.nodes()):
                 cc2 = SubgraphView(state, [n for n in state.nodes() if n not in cc])
-                state = helpers.state_fission(sdfg, cc2)
+                state = helpers.state_fission(cc2)
 
         #######################################################
         # Remove nested SDFG node
@@ -590,6 +588,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for dnode in state.data_nodes():
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
+
+        sdfg._cfg_list = sdfg.reset_cfg_list()
 
     def _modify_access_to_access(self,
                                  input_edges: Dict[nodes.Node, MultiConnectorEdge],
@@ -626,7 +626,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                                                                   matching_edge.data,
                                                                   use_dst_subset=True)
                             new_memlet = in_memlet
-                            new_memlet.other_subset = out_memlet.dst_subset
+                            new_memlet.other_subset = out_memlet.subset
 
                             inner_edge.data = new_memlet
                             if len(nstate.out_edges(inner_edge.dst)) > 0:
@@ -734,6 +734,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
 
 @make_properties
+@transformation.single_level_sdfg_only
 class InlineTransients(transformation.SingleStateTransformation):
     """
     Inlines all transient arrays that are not used anywhere else into a
@@ -762,8 +763,8 @@ class InlineTransients(transformation.SingleStateTransformation):
             if not desc.transient:
                 continue
             # Needs to be allocated in "Scope" or "Persistent" lifetime
-            if (desc.lifetime != dtypes.AllocationLifetime.Scope
-                    and desc.lifetime != dtypes.AllocationLifetime.Persistent):
+            if (desc.lifetime not in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.Persistent,
+                                      dtypes.AllocationLifetime.External)):
                 continue
             # If same transient is connected with multiple connectors, bail
             # for now
@@ -812,7 +813,8 @@ class InlineTransients(transformation.SingleStateTransformation):
         # Not every schedule is supported
         if not permissive:
             if nsdfg.schedule not in (None, dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential,
-                                      dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.GPU_Device):
+                                      dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent,
+                                      dtypes.ScheduleType.GPU_Device):
                 return False
 
         candidates = InlineTransients._candidates(sdfg, graph, nsdfg)
@@ -876,6 +878,7 @@ class ASTRefiner(ast.NodeTransformer):
 
 
 @make_properties
+@transformation.single_level_sdfg_only
 class RefineNestedAccess(transformation.SingleStateTransformation):
     """
     Reduces memlet shape when a memlet is connected to a nested SDFG, but not
@@ -923,7 +926,12 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     continue
 
                 # For now we only detect one element
+                read_set, write_set = nstate.read_and_write_sets()
                 for e in nstate.in_edges(dnode):
+                    if e.data.data not in write_set:
+                        # Skip data which is not in the read and write set of the state -> there also won't be a
+                        # connector
+                        continue
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in out_candidates:
@@ -939,6 +947,10 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     out_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
                 for e in nstate.out_edges(dnode):
+                    if e.data.data not in read_set:
+                        # Skip data which is not in the read and write set of the state -> there also won't be a
+                        # connector
+                        continue
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in in_candidates:
@@ -954,7 +966,21 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
 
-        # TODO: Check in_candidates in interstate edges as well
+        # Check read memlets in interstate edges for candidates
+        for e in nsdfg.sdfg.edges():
+            for m in e.data.get_read_memlets(nsdfg.sdfg.arrays):
+                # If more than one unique element detected, remove from candidates
+                if m.data in in_candidates:
+                    memlet, ns, indices = in_candidates[m.data]
+                    # Try to find dimensions in which there is a mismatch and remove them from list
+                    for i, (s1, s2) in enumerate(zip(m.subset, memlet.subset)):
+                        if s1 != s2 and i in indices:
+                            indices.remove(i)
+                    if len(indices) == 0:
+                        ignore.add(m.data)
+                    in_candidates[m.data] = (memlet, ns, indices)
+                    continue
+                in_candidates[m.data] = (m, None, set(range(len(m.subset))))
 
         # Check in/out candidates
         for cand in in_candidates.keys() & out_candidates.keys():
@@ -984,7 +1010,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     continue
 
                 # Check w.r.t. loops
-                if len(nstate.ranges) > 0:
+                if nstate is not None and len(nstate.ranges) > 0:
                     # Re-annotate loop ranges, in case someone changed them
                     # TODO: Move out of here!
                     for ns in nsdfg.sdfg.states():
@@ -1006,7 +1032,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
-                missing_symbols = (memlet.free_symbols - set(nsdfg.symbol_mapping.keys()))
+                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) - set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
                     ignore.add(cname)
                     continue
@@ -1076,6 +1102,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
 
 @make_properties
+@transformation.single_level_sdfg_only
 class NestSDFG(transformation.MultiStateTransformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
         nested SDFG node from it. """

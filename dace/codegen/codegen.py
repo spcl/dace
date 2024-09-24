@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
-import os
-from typing import List, Set
+from typing import List
 
 import dace
 from dace import dtypes
@@ -31,7 +30,7 @@ def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     exit_params = (sdfg.name, sdfg.name)
     proto += 'typedef void * %sHandle_t;\n' % sdfg.name
     proto += 'extern "C" %sHandle_t __dace_init_%s(%s);\n' % init_params
-    proto += 'extern "C" void __dace_exit_%s(%sHandle_t handle);\n' % exit_params
+    proto += 'extern "C" int __dace_exit_%s(%sHandle_t handle);\n' % exit_params
     proto += 'extern "C" void __program_%s(%sHandle_t handle%s);\n' % params
     return proto
 
@@ -69,15 +68,16 @@ def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
 
 int main(int argc, char **argv) {{
     {sdfg.name}Handle_t handle;
+    int err;
 {allocations}
 
     handle = __dace_init_{sdfg.name}({init_params});
     __program_{sdfg.name}(handle{params});
-    __dace_exit_{sdfg.name}(handle);
+    err = __dace_exit_{sdfg.name}(handle);
 
 {deallocations}
 
-    return 0;
+    return err;
 }}
 '''
 
@@ -94,7 +94,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
     for node, parent in sdfg.all_nodes_recursive():
         # Query nodes and scopes
         if isinstance(node, SDFGState):
-            frame.targets.add(disp.get_state_dispatcher(parent, node))
+            frame.targets.add(disp.get_state_dispatcher(node.sdfg, node))
         elif isinstance(node, dace.nodes.EntryNode):
             frame.targets.add(disp.get_scope_dispatcher(node.schedule))
         elif isinstance(node, dace.nodes.Node):
@@ -134,6 +134,8 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
                         frame.targets.add(tgt)
 
         # Instrumentation-related query
+        if hasattr(node, 'symbol_instrument'):
+            disp.instrumentation[node.symbol_instrument] = provider_mapping[node.symbol_instrument]
         if hasattr(node, 'instrument'):
             disp.instrumentation[node.instrument] = provider_mapping[node.instrument]
         elif hasattr(node, 'consume'):
@@ -146,7 +148,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
-def generate_code(sdfg, validate=True) -> List[CodeObject]:
+def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
 
@@ -162,24 +164,26 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
 
     if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG
+        import difflib
         import filecmp
         import shutil
         import tempfile
         with tempfile.TemporaryDirectory() as tmp_dir:
-            sdfg.save(f'{tmp_dir}/test.sdfg')
+            sdfg.save(f'{tmp_dir}/test.sdfg', hash=False)
             sdfg2 = SDFG.from_file(f'{tmp_dir}/test.sdfg')
-            sdfg2.save(f'{tmp_dir}/test2.sdfg')
+            sdfg2.save(f'{tmp_dir}/test2.sdfg', hash=False)
             print('Testing SDFG serialization...')
             if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):
-                shutil.move(f"{tmp_dir}/test.sdfg", "test.sdfg")
-                shutil.move(f"{tmp_dir}/test2.sdfg", "test2.sdfg")
-                raise RuntimeError('SDFG serialization failed - files do not match')
-
-        # Run with the deserialized version
-        # NOTE: This means that all subsequent modifications to `sdfg`
-        # are not reflected outside of this function (e.g., library
-        # node expansion).
-        sdfg = sdfg2
+                with open(f'{tmp_dir}/test.sdfg', 'r') as f1:
+                    with open(f'{tmp_dir}/test2.sdfg', 'r') as f2:
+                        diff = difflib.unified_diff(f1.readlines(),
+                                                    f2.readlines(),
+                                                    fromfile='test.sdfg  (first save)',
+                                                    tofile='test2.sdfg (after roundtrip)')
+                diff = ''.join(diff)
+                shutil.move(f'{tmp_dir}/test.sdfg', 'test.sdfg')
+                shutil.move(f'{tmp_dir}/test2.sdfg', 'test2.sdfg')
+                raise RuntimeError(f'SDFG serialization failed - files do not match:\n{diff}')
 
     # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)

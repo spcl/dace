@@ -1,12 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from os import stat
-from typing import Any, AnyStr, Dict, Optional, Set, Tuple, Union
+from typing import Set, Tuple
 import re
 
-from dace import dtypes, registry, SDFG, SDFGState, symbolic, properties, data as dt
+from dace import dtypes, SDFG, SDFGState, symbolic, properties, data as dt
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
+from dace.sdfg.state import StateSubgraphView
 
 
 @properties.make_properties
@@ -46,22 +46,18 @@ class PruneConnectors(pm.SingleStateTransformation):
         # Add WCR outputs to "do not prune" input list
         for e in graph.out_edges(nsdfg):
             if e.data.wcr is not None and e.src_conn in prune_in:
-                if (graph.in_degree(next(iter(graph.in_edges_by_connector(nsdfg, e.src_conn))).src) > 0):
-                    prune_in.remove(e.src_conn)
-        has_before = all(
-            graph.in_degree(graph.memlet_path(e)[0].src) > 0 for e in graph.in_edges(nsdfg) if e.dst_conn in prune_in)
-        has_after = all(
-            graph.out_degree(graph.memlet_path(e)[-1].dst) > 0 for e in graph.out_edges(nsdfg)
-            if e.src_conn in prune_out)
-        if has_before and has_after:
-            return False
-        if len(prune_in) > 0 or len(prune_out) > 0:
-            return True
+                prune_in.remove(e.src_conn)
 
-        return False
+        if not prune_in and not prune_out:
+            return False
+
+        return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
         nsdfg = self.nsdfg
+
+        # Fission subgraph around nsdfg into its own state to avoid data races
+        nsdfg_state = helpers.state_fission_after(state, nsdfg)
 
         read_set, write_set = nsdfg.sdfg.read_and_write_sets()
         prune_in = nsdfg.in_connectors.keys() - read_set
@@ -70,36 +66,26 @@ class PruneConnectors(pm.SingleStateTransformation):
         # Detect which nodes are used, so we can delete unused nodes after the
         # connectors have been pruned
         all_data_used = read_set | write_set
+
         # Add WCR outputs to "do not prune" input list
-        for e in state.out_edges(nsdfg):
+        for e in nsdfg_state.out_edges(nsdfg):
             if e.data.wcr is not None and e.src_conn in prune_in:
-                if (state.in_degree(next(iter(state.in_edges_by_connector(nsdfg, e.src_conn))).src) > 0):
-                    prune_in.remove(e.src_conn)
-        do_not_prune = set()
+                prune_in.remove(e.src_conn)
+
         for conn in prune_in:
-            if any(
-                    state.in_degree(state.memlet_path(e)[0].src) > 0 for e in state.in_edges(nsdfg)
-                    if e.dst_conn == conn):
-                do_not_prune.add(conn)
-                continue
-            for e in state.in_edges_by_connector(nsdfg, conn):
-                state.remove_memlet_path(e, remove_orphans=True)
+            for e in nsdfg_state.in_edges_by_connector(nsdfg, conn):
+                nsdfg_state.remove_memlet_path(e, remove_orphans=True)
 
         for conn in prune_out:
-            if any(
-                    state.out_degree(state.memlet_path(e)[-1].dst) > 0 for e in state.out_edges(nsdfg)
-                    if e.src_conn == conn):
-                do_not_prune.add(conn)
-                continue
-            for e in state.out_edges_by_connector(nsdfg, conn):
-                state.remove_memlet_path(e, remove_orphans=True)
+            for e in nsdfg_state.out_edges_by_connector(nsdfg, conn):
+                nsdfg_state.remove_memlet_path(e, remove_orphans=True)
 
         for conn in prune_in:
-            if conn in nsdfg.sdfg.arrays and conn not in all_data_used and conn not in do_not_prune:
+            if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
                 # If the data is now unused, we can purge it from the SDFG
                 nsdfg.sdfg.remove_data(conn)
         for conn in prune_out:
-            if conn in nsdfg.sdfg.arrays and conn not in all_data_used and conn not in do_not_prune:
+            if conn in nsdfg.sdfg.arrays and conn not in all_data_used:
                 # If the data is now unused, we can purge it from the SDFG
                 nsdfg.sdfg.remove_data(conn)
 
@@ -138,7 +124,7 @@ class PruneSymbols(pm.SingleStateTransformation):
             candidates -= set(map(str, desc.free_symbols))
 
         ignore = set()
-        for nstate in cfg.stateorder_topological_sort(nsdfg.sdfg):
+        for nstate in cfg.blockorder_topological_sort(nsdfg.sdfg):
             state_syms = nstate.free_symbols
 
             # Try to be conservative with C++ tasklets
@@ -156,7 +142,7 @@ class PruneSymbols(pm.SingleStateTransformation):
             # Any symbol that is set in all outgoing edges is ignored from
             # this point
             local_ignore = None
-            for e in nsdfg.sdfg.out_edges(nstate):
+            for e in nstate.parent_graph.out_edges(nstate):
                 # Look for symbols in condition
                 candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))) - ignore)
 
@@ -240,7 +226,7 @@ class PruneUnusedOutputs(pm.SingleStateTransformation):
             return set(), set()
 
         # Remove candidates that are used in the nested SDFG
-        for nstate in nsdfg.sdfg.nodes():
+        for nstate in nsdfg.sdfg.states():
             for node in nstate.data_nodes():
                 if node.data in candidates:
                     # If used in nested SDFG
@@ -257,7 +243,7 @@ class PruneUnusedOutputs(pm.SingleStateTransformation):
                     candidate_nodes.add((nstate, node))
 
         # Any array that is used in interstate edges is removed
-        for e in nsdfg.sdfg.edges():
+        for e in nsdfg.sdfg.all_interstate_edges():
             candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))))
             for assign in e.data.assignments.values():
                 candidates -= (symbolic.free_symbols_and_functions(assign))

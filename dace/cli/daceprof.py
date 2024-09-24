@@ -227,7 +227,8 @@ def enable_hooks(args: argparse.Namespace) -> List[int]:
             for n, _ in sdfg.all_nodes_recursive():
                 if isinstance(n, dace.nodes.EntryNode):
                     sched = getattr(n, 'schedule', False)
-                    if sched == dace.ScheduleType.CPU_Multicore or sched == dace.ScheduleType.Default:
+                    if sched in (dace.ScheduleType.CPU_Multicore, dace.ScheduleType.CPU_Persistent,
+                                 dace.ScheduleType.Default):
                         n.schedule = dace.ScheduleType.Sequential
 
         registered.append(dace.hooks.register_sdfg_call_hook(before_hook=make_sequential))

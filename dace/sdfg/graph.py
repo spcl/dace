@@ -3,10 +3,11 @@
 
 from collections import deque, OrderedDict
 import itertools
+import uuid
 import networkx as nx
 from dace.dtypes import deduplicate
 import dace.serialize
-from typing import Any, Callable, Generic, Iterable, List, Sequence, TypeVar, Union
+from typing import Any, Callable, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
 
 
 class NodeNotFoundError(Exception):
@@ -346,11 +347,13 @@ class Graph(Generic[NodeT, EdgeT]):
                 parent, children = stack[-1]
                 try:
                     e = next(children)
+                    to_yield = condition is None or condition(e.src, e.dst, e.data)
                     if e.dst not in visited:
                         visited.add(e.dst)
-                        if condition is None or condition(e.src, e.dst, e.data):
-                            yield e
+                        if to_yield:
                             stack.append((e.dst, self.out_edges(e.dst).__iter__()))
+                    if to_yield:
+                        yield e
                 except StopIteration:
                     stack.pop()
 
@@ -362,19 +365,19 @@ class Graph(Generic[NodeT, EdgeT]):
         """Returns nodes with no outgoing edges."""
         return [n for n in self.nodes() if self.out_degree(n) == 0]
 
-    def topological_sort(self, source: NodeT = None) -> Sequence[NodeT]:
-        """Returns nodes in topological order iff the graph contains exactly
-        one node with no incoming edges."""
+    def bfs_nodes(self, source: Optional[NodeT] = None) -> Iterable[NodeT]:
+        """Returns an iterable over nodes traversed in breadth-first search
+        order starting from ``source``."""
         if source is not None:
             sources = [source]
         else:
             sources = self.source_nodes()
-            if len(sources) == 0:
-                sources = [self.nodes()[0]]
-                #raise RuntimeError("No source nodes found")
-            if len(sources) > 1:
-                sources = [self.nodes()[0]]
-                #raise RuntimeError("Multiple source nodes found")
+            if len(sources) != 1:
+                source = next(iter(self.nodes()), None)
+                if source is None:
+                    return [] # graph has no nodes
+                sources = [source]
+
         seen = OrderedDict()  # No OrderedSet in Python
         queue = deque(sources)
         while len(queue) > 0:
@@ -524,10 +527,10 @@ class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return [DiGraph._from_nx(e) for e in self._nx.edges()]
 
     def in_edges(self, node):
-        return [DiGraph._from_nx(e) for e in self._nx.in_edges()]
+        return [DiGraph._from_nx(e) for e in self._nx.in_edges(node, True)]
 
     def out_edges(self, node):
-        return [DiGraph._from_nx(e) for e in self._nx.out_edges()]
+        return [DiGraph._from_nx(e) for e in self._nx.out_edges(node, True)]
 
     def add_node(self, node):
         return self._nx.add_node(node)
@@ -669,7 +672,8 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._edges[t] = edge
         self._nodes[src][1][t] = edge
         self._nodes[dst][0][t] = edge
-        return self._nx.add_edge(src, dst, data=data)
+        self._nx.add_edge(src, dst, data=data)
+        return edge
 
     def remove_node(self, node: NodeT):
         try:
@@ -822,3 +826,7 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[No
 
     def is_multigraph(self) -> bool:
         return True
+
+
+def generate_element_id(element) -> str:
+    return str(uuid.uuid4())

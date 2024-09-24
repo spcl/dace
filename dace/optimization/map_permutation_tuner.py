@@ -7,7 +7,7 @@ from typing import Generator, Tuple, Dict, List
 from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
 from dace.transformation import helpers as xfh
-from dace.sdfg.analysis import cutout as cutter
+from dace.sdfg.analysis.cutout import SDFGCutout
 from dace.codegen.instrumentation.data import data_report
 
 try:
@@ -31,7 +31,7 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
                 node_id = state.node_id(node)
                 state_id = self._sdfg.node_id(state)
                 subgraph_nodes = state.scope_subgraph(node).nodes()
-                cutout = cutter.cutout_state(state, *subgraph_nodes, make_copy=False)
+                cutout = SDFGCutout.singlestate_cutout(state, *subgraph_nodes, make_copy=False)
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
     def space(self, map_entry: dace.nodes.MapEntry, **kwargs) -> Generator[Tuple[str], None, None]:

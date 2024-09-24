@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Set
+import warnings
 
 from dace import SDFG, config, properties
-from dace.transformation import helpers as xfh
+from dace.transformation import helpers as xfh, transformation
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.passes.consolidate_edges import ConsolidateEdges
@@ -14,6 +15,7 @@ from dace.transformation.passes.fusion_inline import FuseStates, InlineSDFGs
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
+from dace.transformation.passes.reference_reduction import ReferenceToView
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
@@ -24,17 +26,24 @@ SIMPLIFY_PASSES = [
     DeadDataflowElimination,
     DeadStateElimination,
     RemoveUnusedSymbols,
+    ReferenceToView,
     ArrayElimination,
     ConsolidateEdges,
 ]
 
 _nonrecursive_passes = [
-    ScalarToSymbolPromotion, DeadDataflowElimination, DeadStateElimination, ArrayElimination, ConsolidateEdges
+    ScalarToSymbolPromotion,
+    DeadDataflowElimination,
+    DeadStateElimination,
+    ArrayElimination,
+    ConsolidateEdges,
+    ReferenceToView,
 ]
 
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+@transformation.experimental_cfg_block_compatible
 class SimplifyPass(ppl.FixedPointPipeline):
     """
     A pipeline that simplifies an SDFG by applying a series of simplification passes.
@@ -42,11 +51,11 @@ class SimplifyPass(ppl.FixedPointPipeline):
 
     CATEGORY: str = 'Simplification'
 
-    validate = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG at the end of the pipeline.')
+    validate = properties.Property(dtype=bool,
+                                   default=False,
+                                   desc='Whether to validate the SDFG at the end of the pipeline.')
     validate_all = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG after each pass.')
-    skip = properties.SetProperty(element_type=str,
-                                  default=set(),
-                                  desc='Set of pass names to skip.')
+    skip = properties.SetProperty(element_type=str, default=set(), desc='Set of pass names to skip.')
     verbose = properties.Property(dtype=bool, default=False, desc='Whether to print reports after every pass.')
 
     def __init__(self,
@@ -72,12 +81,25 @@ class SimplifyPass(ppl.FixedPointPipeline):
         """
         Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
         """
+        if sdfg.root_sdfg.using_experimental_blocks:
+            if (not hasattr(p, '__experimental_cfg_block_compatible__') or
+                p.__experimental_cfg_block_compatible__ == False):
+                warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
+                              'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
+                              'ensure the top level SDFG does not have `SDFG.using_experimental_blocks` set to ' +
+                              'True. If ' + p.__class__.__name__ + ' is compatible with experimental blocks, ' +
+                              'please annotate it with the class decorator ' +
+                              '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                              'for more information.')
+                return None
+
         if type(p) in _nonrecursive_passes:  # If pass needs to run recursively, do so and modify return value
             ret: Dict[int, Any] = {}
             for sd in sdfg.all_sdfgs_recursive():
                 subret = p.apply_pass(sd, state)
                 if subret is not None:
-                    ret[sd.sdfg_id] = subret
+                    ret[sd.cfg_id] = subret
             ret = ret or None
         else:
             ret = p.apply_pass(sdfg, state)

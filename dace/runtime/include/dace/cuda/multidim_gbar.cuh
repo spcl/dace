@@ -35,9 +35,13 @@
 
 #pragma once
 
-#include "../../../../external/cub/cub/util_debug.cuh"
-#include "../../../../external/cub/cub/util_namespace.cuh"
-#include "../../../../external/cub/cub/thread/thread_load.cuh"
+#if __has_include(<cub/cub.cuh>)
+    #include <cub/cub.cuh>
+#else
+    #include "../../../../external/cub/cub/util_debug.cuh"
+    #include "../../../../external/cub/cub/util_namespace.cuh"
+    #include "../../../../external/cub/cub/thread/thread_load.cuh"
+#endif
 
 /// Optional outer namespace(s)
 CUB_NS_PREFIX

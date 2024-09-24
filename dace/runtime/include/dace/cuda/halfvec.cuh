@@ -530,12 +530,13 @@ namespace dace { namespace math {
     HALF_VEC_UFUNC(exp)
     HALF_VEC_UFUNC(tanh)
 } }
-#endif
 
 // Vector comparison functions
 DACE_DFI half2 max(half2 a, half2 b) {
     return make_half2(max(a.x, b.x), max(a.y, b.y));
 }
+#endif
+
 
 DACE_DFI half4 max(half4 a, half b) {
     half2 bvec = __half2half2(b);

@@ -16,7 +16,7 @@ UUIDType = Tuple[int, int, int]
 def _uuid_to_dict(uuid: UUIDType) -> Dict[str, int]:
     result = {}
     if uuid[0] != -1:
-        result['sdfg_id'] = uuid[0]
+        result['cfg_id'] = uuid[0]
     if uuid[1] != -1:
         result['state_id'] = uuid[1]
     if uuid[2] != -1:
@@ -83,13 +83,13 @@ class InstrumentationReport(object):
         other_info = {}
         if 'args' in event:
             args = event['args']
-            if 'sdfg_id' in args and args['sdfg_id'] is not None:
-                uuid = (args['sdfg_id'], -1, -1)
+            if 'cfg_id' in args and args['cfg_id'] is not None:
+                uuid = (args['cfg_id'], -1, -1)
                 if 'state_id' in args and args['state_id'] is not None:
                     uuid = (uuid[0], args['state_id'], -1)
                     if 'id' in args and args['id'] is not None:
                         uuid = (uuid[0], uuid[1], args['id'])
-            other_info = {k: v for k, v in args.items() if k not in ('sdfg_id', 'state_id', 'id')}
+            other_info = {k: v for k, v in args.items() if k not in ('cfg_id', 'state_id', 'id')}
         return uuid, other_info
 
     def __init__(self, filename: str):
@@ -194,7 +194,8 @@ class InstrumentationReport(object):
                              string,
                              row_format,
                              colw,
-                             with_element_heading=True):
+                             with_element_heading=True,
+                             title=''):
         indent = ''
         if len(runtimes) > 0:
             element_label = ''
@@ -208,7 +209,10 @@ class InstrumentationReport(object):
                     # No parent state row present yet, print it.
                     string += row_format.format('|-State (' + str(element[1]) + ')', '', '', '', '', width=colw)
                 state = element[1]
-                element_label = '| |-Node (' + str(element[2]) + ')'
+                if title:
+                    element_label = '| |-Node (' + str(element[2]) + ', ' + title + ')'
+                else:
+                    element_label = '| |-Node (' + str(element[2]) + ')'
                 indent = '| | |'
             elif element[0] > -1 and element[1] > -1:
                 # This element is a state.
@@ -350,7 +354,7 @@ class InstrumentationReport(object):
                             label = ""
 
                         string, sdfg, state = self._get_runtimes_string(label, runtimes, element, sdfg, state, string,
-                                                                        row_format, COLW, with_element_heading)
+                                                                        row_format, COLW, with_element_heading, event)
 
                         with_element_heading = False
 

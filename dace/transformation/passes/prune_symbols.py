@@ -1,28 +1,27 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import itertools
-import re
 from dataclasses import dataclass
 from typing import Optional, Set, Tuple
 
-from dace import SDFG, dtypes, properties
+from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
-from dace.transformation import pass_pipeline as ppl
-
-_NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
+from dace.transformation import pass_pipeline as ppl, transformation
 
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class RemoveUnusedSymbols(ppl.Pass):
     """
-    Prunes unused symbols from the SDFG symbol repository (``sdfg.symbols``).
+    Prunes unused symbols from the SDFG symbol repository (``sdfg.symbols``) and interstate edges.
     Also includes uses in Tasklets of all languages.
     """
 
     CATEGORY: str = 'Simplification'
 
     recursive = properties.Property(dtype=bool, default=True, desc='Prune nested SDFGs recursively')
+    symbols = properties.SetProperty(element_type=str, allow_none=True, desc='Limit considered symbols to this set')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols
@@ -32,7 +31,7 @@ class RemoveUnusedSymbols(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[Tuple[int, str]]]:
         """
-        Propagates constants throughout the SDFG.
+        Removes unused symbols from the SDFG.
         
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
@@ -43,23 +42,35 @@ class RemoveUnusedSymbols(ppl.Pass):
         """
         result: Set[str] = set()
 
+        repository_symbols_to_consider = self.symbols or set(sdfg.symbols.keys())
+
         # Compute used symbols
         used_symbols = self.used_symbols(sdfg)
 
-        # Remove unused symbols
-        for sym in set(sdfg.symbols.keys()) - used_symbols:
-            sdfg.remove_symbol(sym)
-            result.add(sym)
+        # Remove unused symbols from interstate edge assignments.
+        for isedge in sdfg.all_interstate_edges():
+            edge_symbols_to_consider = set(isedge.data.assignments.keys())
+            for sym in edge_symbols_to_consider - used_symbols:
+                del isedge.data.assignments[sym]
+
+        # Remove unused symbols from the SDFG's symbols repository.
+        for sym in repository_symbols_to_consider - used_symbols:
+            if sym in sdfg.symbols:
+                sdfg.remove_symbol(sym)
+                result.add(sym)
 
         if self.recursive:
             # Prune nested SDFGs recursively
-            sid = sdfg.sdfg_id
+            sid = sdfg.cfg_id
             result = set((sid, sym) for sym in result)
 
             for state in sdfg.nodes():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
+                        old_symbols = self.symbols
+                        self.symbols = set()
                         nres = self.apply_pass(node.sdfg, _)
+                        self.symbols = old_symbols
                         if nres:
                             result.update(nres)
 
@@ -74,7 +85,7 @@ class RemoveUnusedSymbols(ppl.Pass):
 
         # Add symbols in global/init/exit code
         for code in itertools.chain(sdfg.global_code.values(), sdfg.init_code.values(), sdfg.exit_code.values()):
-            result |= _symbols_in_code(code.as_string)
+            result |= symbolic.symbols_in_code(code.as_string)
 
         for desc in sdfg.arrays.values():
             result |= set(map(str, desc.free_symbols))
@@ -87,21 +98,19 @@ class RemoveUnusedSymbols(ppl.Pass):
             for node in state.nodes():
                 if isinstance(node, nodes.Tasklet):
                     if node.code.language != dtypes.Language.Python:
-                        result |= _symbols_in_code(node.code.as_string)
+                        result |= symbolic.symbols_in_code(node.code.as_string, sdfg.symbols.keys(),
+                                                           node.ignored_symbols)
                     if node.code_global.language != dtypes.Language.Python:
-                        result |= _symbols_in_code(node.code_global.as_string)
+                        result |= symbolic.symbols_in_code(node.code_global.as_string, sdfg.symbols.keys(),
+                                                           node.ignored_symbols)
                     if node.code_init.language != dtypes.Language.Python:
-                        result |= _symbols_in_code(node.code_init.as_string)
+                        result |= symbolic.symbols_in_code(node.code_init.as_string, sdfg.symbols.keys(),
+                                                           node.ignored_symbols)
                     if node.code_exit.language != dtypes.Language.Python:
-                        result |= _symbols_in_code(node.code_exit.as_string)
-
+                        result |= symbolic.symbols_in_code(node.code_exit.as_string, sdfg.symbols.keys(),
+                                                           node.ignored_symbols)
 
         for e in sdfg.edges():
             result |= e.data.free_symbols
 
         return result
-
-def _symbols_in_code(code: str) -> Set[str]:
-    if not code:
-        return set()
-    return set(re.findall(_NAME_TOKENS, code))

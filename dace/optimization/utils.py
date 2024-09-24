@@ -151,7 +151,7 @@ def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queu
                 csdfg.finalize()
 
     report = cutout.get_latest_report()
-    durations = next(iter(next(iter(report.durations.values())).values()))
+    durations = next(iter(next(iter(next(iter(report.durations.values())).values())).values()))
     q.put(np.median(np.array(durations)))
 
 class MeasureProcess(mp.Process):

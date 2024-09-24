@@ -3,7 +3,7 @@
 
 import re
 import warnings
-from typing import Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 import sympy as sp
 
@@ -11,6 +11,9 @@ import dace
 from dace import dtypes, properties, symbolic
 from dace.codegen import cppunparse
 from dace.frontend.python.astutils import ASTFindReplace
+
+if TYPE_CHECKING:
+    from dace.sdfg.state import StateSubgraphView
 
 tokenize_cpp = re.compile(r'\b\w+\b')
 
@@ -21,6 +24,12 @@ def _internal_replace(sym, symrepl):
 
     # Filter out only relevant replacements
     fsyms = set(map(str, sym.free_symbols))
+    # TODO/NOTE: Could we return the generated strings below as free symbols from Attr instead or ther will be issues?
+    for s in set(fsyms):
+        if '.' in s:
+            tokens = s.split('.')
+            for i in range(1, len(tokens)):
+                fsyms.add('.'.join(tokens[:i]))
     newrepl = {k: v for k, v in symrepl.items() if str(k) in fsyms}
     if not newrepl:
         return sym
@@ -42,7 +51,7 @@ def _replsym(symlist, symrepl):
     return symlist
 
 
-def replace_dict(subgraph: 'dace.sdfg.state.StateGraphView',
+def replace_dict(subgraph: 'StateSubgraphView',
                  repl: Dict[str, str],
                  symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
     """ 
@@ -74,7 +83,7 @@ def replace_dict(subgraph: 'dace.sdfg.state.StateGraphView',
             edge.data.volume = _replsym(edge.data.volume, symrepl)
 
 
-def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str, new_name: str):
+def replace(subgraph: 'StateSubgraphView', name: str, new_name: str):
     """
     Finds and replaces all occurrences of a symbol or array in the given subgraph.
     
@@ -89,7 +98,7 @@ def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str, new_name: str
 
 def replace_properties_dict(node: Any,
                             repl: Dict[str, str],
-                            symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType] = None):
+                            symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
     symrepl = symrepl or {
         symbolic.pystr_to_symbolic(symname):
         symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
@@ -124,15 +133,21 @@ def replace_properties_dict(node: Any,
                 if lang is dtypes.Language.CPP:  # Replace in C++ code
                     prefix = ''
                     tokenized = tokenize_cpp.findall(code)
+                    active_replacements = set()
                     for name, new_name in reduced_repl.items():
                         if name not in tokenized:
                             continue
-
                         # Use local variables and shadowing to replace
                         replacement = f'auto {name} = {cppunparse.pyexpr2cpp(new_name)};\n'
                         prefix = replacement + prefix
+                        active_replacements.add(name)
+
                     if prefix:
                         propval.code = prefix + code
+                        if isinstance(node, dace.nodes.Tasklet):
+                            # Ignore replaced symbols since they no longer exist as reads
+                            node.ignored_symbols = node.ignored_symbols.union(active_replacements)
+
                 else:
                     warnings.warn('Replacement of %s with %s was not made '
                                   'for string tasklet code of language %s' % (name, new_name, lang))
@@ -150,15 +165,13 @@ def replace_properties_dict(node: Any,
                     pass
 
 
-def replace_properties(node: Any, symrepl: Dict[symbolic.symbol, symbolic.SymbolicType], name: str, new_name: str):
+def replace_properties(node: Any, symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType],
+                       name: str, new_name: str):
     replace_properties_dict(node, {name: new_name}, symrepl)
 
 
-def replace_datadesc_names(sdfg, repl: Dict[str, str]):
+def replace_datadesc_names(sdfg: 'dace.SDFG', repl: Dict[str, str]):
     """ Reduced form of replace which only replaces data descriptor names. """
-    from dace.sdfg import SDFG  # Avoid import loop
-    sdfg: SDFG = sdfg
-
     # Replace in descriptor repository
     for aname, aval in list(sdfg.arrays.items()):
         if aname in repl:
@@ -168,17 +181,18 @@ def replace_datadesc_names(sdfg, repl: Dict[str, str]):
                 sdfg.constants_prop[repl[aname]] = sdfg.constants_prop[aname]
                 del sdfg.constants_prop[aname]
 
-    # Replace in interstate edges
-    for e in sdfg.edges():
-        e.data.replace_dict(repl, replace_keys=False)
+    for cf in sdfg.all_control_flow_regions():
+        # Replace in interstate edges
+        for e in cf.edges():
+            e.data.replace_dict(repl, replace_keys=False)
 
-    for state in sdfg.nodes():
-        # Replace in access nodes
-        for node in state.data_nodes():
-            if node.data in repl:
-                node.data = repl[node.data]
-
-        # Replace in memlets
-        for edge in state.edges():
-            if edge.data.data in repl:
-                edge.data.data = repl[edge.data.data]
+        for block in cf.nodes():
+            if isinstance(block, dace.SDFGState):
+                # Replace in access nodes
+                for node in block.data_nodes():
+                    if node.data in repl:
+                        node.data = repl[node.data]
+                # Replace in memlets
+                for edge in block.edges():
+                    if edge.data.data in repl:
+                        edge.data.data = repl[edge.data.data]

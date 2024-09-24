@@ -63,7 +63,7 @@ setup(name='dace',
           "License :: OSI Approved :: BSD License",
           "Operating System :: OS Independent",
       ],
-      python_requires='>=3.6, <3.11',
+      python_requires='>=3.6, <3.13',
       packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
       package_data={
           '': [
@@ -73,19 +73,21 @@ setup(name='dace',
       },
       include_package_data=True,
       install_requires=[
-          'numpy', 'networkx >= 2.5', 'astunparse', 'sympy<=1.9', 'pyyaml', 'ply', 'websockets', 'requests', 'flask',
-          'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"',
-          'typing-compat; python_version < "3.8"'
+         'numpy < 2.0', 'networkx >= 2.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'websockets', 'jinja2',
+          'fparser >= 0.1.3', 'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill',
+          'pyreadline;platform_system=="Windows"', 'typing-compat; python_version < "3.8"', 'packaging'
       ] + cmake_requires,
       extras_require={
           'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click'],
-          'docs': ['jinja2<3.1.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1']
+          'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1']
       },
       entry_points={
           'console_scripts': [
               'dacelab = dace.cli.dacelab:main',
               'sdfv = dace.cli.sdfv:main',
               'sdfgcc = dace.cli.sdfgcc:main',
+              'sdfg-diff = dace.cli.sdfg_diff:main',
+              'fcfd = dace.cli.fcdc:main',
               'daceprof = dace.cli.daceprof:main',
           ],
       })

@@ -1,18 +1,17 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module initializes the dataflow transformations package. """
 
 # Map-related
 from .mapreduce import MapReduceFusion, MapWCRFusion
 from .map_expansion import MapExpansion
 from .map_collapse import MapCollapse
-from .map_for_loop import MapToForLoop
+from .map_for_loop import MapToForLoop, MapToForLoopRegion
 from .map_interchange import MapInterchange
 from .map_dim_shuffle import MapDimShuffle
 from .map_fusion import MapFusion
 from .map_fission import MapFission
 from .map_unroll import MapUnroll
 from .trivial_map_elimination import TrivialMapElimination
-from .trivial_map_range_elimination import TrivialMapRangeElimination
 from .otf_map_fusion import OTFMapFusion
 
 # Data movement
@@ -22,6 +21,7 @@ from .tiling_with_overlap import MapTilingWithOverlap
 from .buffer_tiling import BufferTiling
 from .vectorization import Vectorization
 from .copy_to_map import CopyToMap
+from .gpu_grid_stride_tiling import GPUGridStridedTiling
 
 # Data-related
 from .stream_transient import StreamTransient, AccumulateTransient
@@ -33,7 +33,7 @@ from .reduce_expansion import ReduceExpansion
 # Complexity reduction
 from .dedup_access import DeduplicateAccess
 from .redundant_array import (RedundantArray, RedundantSecondArray, SqueezeViewRemove, UnsqueezeViewRemove,
-                              RedundantReadSlice, RedundantWriteSlice, RemoveSliceView)
+                              RedundantReadSlice, RedundantWriteSlice, RemoveSliceView, RemoveIntermediateWrite)
 from .redundant_array_copying import (RedundantArrayCopyingIn, RedundantArrayCopying, RedundantArrayCopying2,
                                       RedundantArrayCopying3)
 from .merge_arrays import InMergeArrays, OutMergeArrays, MergeSourceSinkArrays

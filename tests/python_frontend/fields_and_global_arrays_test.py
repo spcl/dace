@@ -687,6 +687,34 @@ def test_nested_transient_field():
     assert np.allclose(1.0, A)
 
 
+def test_multiple_global_accesses():
+
+    A = np.ones((10, 10))
+
+    def get_A():
+        return A
+    
+    def get_A2():
+        return A
+    
+    @dace.program
+    def multiple_gets():
+        inp0 = np.empty_like(A)
+        inp1 = np.empty_like(A)
+        inp2 = np.empty_like(A)
+        for i, j in dace.map[0:10, 0:10]:
+            A0 = get_A()
+            inp0[i, j] = A0[i, j]
+            A1 = get_A()
+            inp1[i, j] = A1[i, j]
+            A2 = get_A2()
+            inp2[i, j] = A2[i, j]
+        return inp0 + inp1 + inp2
+    
+    val = multiple_gets()
+    assert np.array_equal(val, np.ones((10, 10)) * 3)
+
+
 if __name__ == '__main__':
     test_dynamic_closure()
     test_external_ndarray_readonly()
@@ -718,3 +746,4 @@ if __name__ == '__main__':
     test_two_inner_methods()
     test_transient_field()
     test_nested_transient_field()
+    test_multiple_global_accesses()

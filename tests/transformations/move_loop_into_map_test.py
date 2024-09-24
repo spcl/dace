@@ -96,17 +96,17 @@ class MoveLoopIntoMapTest(unittest.TestCase):
     def test_itervar_in_map_range(self):
         sdfg = should_not_apply_1.to_sdfg(simplify=True)
         count = sdfg.apply_transformations(MoveLoopIntoMap)
-        self.assertEquals(count, 0)
+        self.assertEqual(count, 0)
 
     def test_itervar_in_data(self):
         sdfg = should_not_apply_2.to_sdfg(simplify=True)
         count = sdfg.apply_transformations(MoveLoopIntoMap)
-        self.assertEquals(count, 0)
+        self.assertEqual(count, 0)
 
     def test_non_injective_index(self):
         sdfg = should_not_apply_3.to_sdfg(simplify=True)
         count = sdfg.apply_transformations(MoveLoopIntoMap)
-        self.assertEquals(count, 0)
+        self.assertEqual(count, 0)
 
     def test_apply_multiple_times(self):
         sdfg = apply_multiple_times.to_sdfg(simplify=True)

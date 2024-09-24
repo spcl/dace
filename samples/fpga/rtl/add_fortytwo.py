@@ -1,8 +1,9 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-#
-# This sample shows adding a constant integer value to a stream of integers.
-#
-# It is intended for running hardware_emulation or hardware xilinx targets.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+    This sample shows adding a constant integer value to a stream of integers.
+
+    It is intended for running hardware_emulation or hardware xilinx targets.
+"""
 
 import dace
 import numpy as np
@@ -116,21 +117,21 @@ sdfg.validate()
 ######################################################################
 
 if __name__ == '__main__':
+    with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='hardware_emulation'):
+        # init data structures
+        N = 8192
+        a = np.random.randint(0, 100, N).astype(np.int32)
+        b = np.zeros((N, )).astype(np.int32)
 
-    # init data structures
-    N.set(8192)
-    a = np.random.randint(0, 100, N.get()).astype(np.int32)
-    b = np.zeros((N.get(), )).astype(np.int32)
+        # show initial values
+        print("a={}, b={}".format(a, b))
 
-    # show initial values
-    print("a={}, b={}".format(a, b))
+        # call program
+        sdfg(A=a, B=b, N=N)
 
-    # call program
-    sdfg(A=a, B=b, N=N)
+        # show result
+        print("a={}, b={}".format(a, b))
 
-    # show result
-    print("a={}, b={}".format(a, b))
-
-    # check result
-    for i in range(N.get()):
-        assert b[i] == a[i] + 42
+        # check result
+        for i in range(N):
+            assert b[i] == a[i] + 42

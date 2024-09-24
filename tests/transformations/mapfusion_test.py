@@ -163,6 +163,43 @@ def test_fusion_with_transient():
     assert np.allclose(A, expected)
 
 
+def test_fusion_with_transient_scalar():
+    N = 10
+    K = 4
+
+    def build_sdfg():
+        sdfg = dace.SDFG("map_fusion_with_transient_scalar")
+        state = sdfg.add_state()
+        sdfg.add_array("A",  (N,K), dace.float64)
+        sdfg.add_array("B",  (N,), dace.float64)
+        sdfg.add_array("T",  (N,), dace.float64, transient=True)
+        t_node = state.add_access("T")
+        sdfg.add_scalar("V",  dace.float64, transient=True)
+        v_node = state.add_access("V")
+
+        me1, mx1 = state.add_map("map1", dict(i=f"0:{N}"))
+        tlet1 = state.add_tasklet("select", {"_v"}, {"_out"}, f"_out = _v[i, {K-1}]")
+        state.add_memlet_path(state.add_access("A"), me1, tlet1, dst_conn="_v", memlet=dace.Memlet.from_array("A", sdfg.arrays["A"]))
+        state.add_edge(tlet1, "_out", v_node, None, dace.Memlet("V[0]"))
+        state.add_memlet_path(v_node, mx1, t_node, memlet=dace.Memlet("T[i]"))
+
+        me2, mx2 = state.add_map("map2", dict(j=f"0:{N}"))
+        tlet2 = state.add_tasklet("numeric", {"_inp"}, {"_out"}, f"_out = _inp + 1")
+        state.add_memlet_path(t_node, me2, tlet2, dst_conn="_inp", memlet=dace.Memlet("T[j]"))
+        state.add_memlet_path(tlet2, mx2, state.add_access("B"), src_conn="_out", memlet=dace.Memlet("B[j]"))
+
+        return sdfg
+    
+    sdfg = build_sdfg()
+    sdfg.apply_transformations(MapFusion)
+
+    A = np.random.rand(N, K)
+    B = np.repeat(np.nan, N)
+    sdfg(A=A, B=B)
+
+    assert np.allclose(B, (A[:, K-1] + 1))
+
+
 def test_fusion_with_inverted_indices():
 
     @dace.program
@@ -214,10 +251,72 @@ def test_fusion_with_empty_memlet():
     assert np.allclose(val[0], ref)
 
 
+def test_fusion_with_nested_sdfg_0():
+    
+    @dace.program
+    def fusion_with_nested_sdfg_0(A: dace.int32[10], B: dace.int32[10], C: dace.int32[10]):
+        tmp = np.empty([10], dtype=np.int32)
+        for i in dace.map[0:10]:
+            if C[i] < 0:
+                tmp[i] = B[i] - A[i]
+            else:
+                tmp[i] = B[i] + A[i]
+        for i in dace.map[0:10]:
+            A[i] = tmp[i] * 2
+    
+    sdfg = fusion_with_nested_sdfg_0.to_sdfg(simplify=True)
+    sdfg.apply_transformations(MapFusion)
+
+    for sd in sdfg.all_sdfgs_recursive():
+        if sd is not sdfg:
+            node = sd.parent_nsdfg_node
+            state = sd.parent
+            for e0 in state.out_edges(node):
+                for e1 in state.memlet_tree(e0):
+                    dst = state.memlet_path(e1)[-1].dst
+                assert isinstance(dst, dace.nodes.AccessNode)
+
+
+def test_fusion_with_nested_sdfg_1():
+    
+    @dace.program
+    def fusion_with_nested_sdfg_1(A: dace.int32[10], B: dace.int32[10], C: dace.int32[10]):
+        tmp = np.empty([10], dtype=np.int32)
+        for i in dace.map[0:10]:
+            with dace.tasklet:
+                a << A[i]
+                b << B[i]
+                t >> tmp[i]
+                t = b - a
+        for i in dace.map[0:10]:
+            if C[i] < 0:
+                A[i] = tmp[i] * 2
+            else:
+                B[i] = tmp[i] * 2
+    
+    sdfg = fusion_with_nested_sdfg_1.to_sdfg(simplify=True)
+    sdfg.apply_transformations(MapFusion)
+
+    if len(sdfg.states()) != 1:
+        return
+
+    for sd in sdfg.all_sdfgs_recursive():
+        if sd is not sdfg:
+            node = sd.parent_nsdfg_node
+            state = sd.parent
+            for e0 in state.in_edges(node):
+                for e1 in state.memlet_tree(e0):
+                    src = state.memlet_path(e1)[0].src
+                assert isinstance(src, dace.nodes.AccessNode)
+
+
 if __name__ == '__main__':
     test_fusion_simple()
     test_multiple_fusions()
     test_fusion_chain()
     test_fusion_with_transient()
+    test_fusion_with_transient_scalar()
     test_fusion_with_inverted_indices()
     test_fusion_with_empty_memlet()
+    test_fusion_with_nested_sdfg_0()
+    test_fusion_with_nested_sdfg_1()

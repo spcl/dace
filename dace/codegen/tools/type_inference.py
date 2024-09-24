@@ -60,7 +60,7 @@ def infer_expr_type(code, symbols=None):
     if isinstance(code, (str, float, int, complex)):
         parsed_ast = ast.parse(str(code))
     elif isinstance(code, sympy.Basic):
-        parsed_ast = ast.parse(sympy.printing.pycode(code))
+        parsed_ast = ast.parse(sympy.printing.pycode(code, allow_unknown_functions=True))
     elif isinstance(code, SymExpr):
         parsed_ast = ast.parse(sympy.printing.pycode(code.expr))
     else:
@@ -338,7 +338,15 @@ def _BinOp(t, symbols, inferred_symbols):
         return dtypes.result_type_of(type_left, type_right)
     # Special case for integer power
     elif t.op.__class__.__name__ == 'Pow':
-        if (isinstance(t.right, (ast.Num, ast.Constant)) and int(t.right.n) == t.right.n and t.right.n >= 0):
+        if (sys.version_info >= (3, 8) and isinstance(t.right, ast.Constant) and
+                int(t.right.value) == t.right.value and t.right.value >= 0):
+            if t.right.value != 0:
+                type_left = _dispatch(t.left, symbols, inferred_symbols)
+                for i in range(int(t.right.n) - 1):
+                    _dispatch(t.left, symbols, inferred_symbols)
+            return dtypes.result_type_of(type_left, dtypes.typeclass(np.uint32))
+        elif (sys.version_info < (3, 8) and isinstance(t.right, ast.Num) and
+                int(t.right.n) == t.right.n and t.right.n >= 0):
             if t.right.n != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)
                 for i in range(int(t.right.n) - 1):
@@ -405,6 +413,9 @@ def _infer_dtype(t: Union[ast.Name, ast.Attribute]):
 
 def _Attribute(t, symbols, inferred_symbols):
     inferred_type = _dispatch(t.value, symbols, inferred_symbols)
+    if (isinstance(inferred_type, dtypes.pointer) and isinstance(inferred_type.base_type, dtypes.struct) and
+            t.attr in inferred_type.base_type.fields):
+        return inferred_type.base_type.fields[t.attr]
     return inferred_type
 
 

@@ -52,5 +52,10 @@ template <typename T>
 static DACE_HDFI T Abs(T val) {
     return abs(val);
 }
+template <typename T, typename U>
+DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, U>::type IfExpr(bool condition, const T& iftrue, const U& iffalse)
+{
+    return condition ? iftrue : iffalse;
+}
 
 #endif  // __DACE_INTEROP_H

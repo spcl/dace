@@ -7,12 +7,15 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from dace import SDFG, properties
+from dace.sdfg import nodes
 from dace.sdfg.utils import fuse_states, inline_sdfgs
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.transformation import experimental_cfg_block_compatible
 
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+@experimental_cfg_block_compatible
 class FuseStates(ppl.Pass):
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs).
@@ -20,7 +23,7 @@ class FuseStates(ppl.Pass):
 
     CATEGORY: str = 'Simplification'
 
-    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some race conditions checks.')
+    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some race condition checks.')
     progress = properties.Property(dtype=bool,
                                    default=None,
                                    allow_none=True,
@@ -82,3 +85,44 @@ class InlineSDFGs(ppl.Pass):
 
     def report(self, pass_retval: int) -> str:
         return f'Inlined {pass_retval} SDFGs.'
+
+
+@dataclass(unsafe_hash=True)
+@properties.make_properties
+@experimental_cfg_block_compatible
+class FixNestedSDFGReferences(ppl.Pass):
+    """
+    Fixes nested SDFG references to parent state/SDFG/node
+    """
+
+    CATEGORY: str = 'Cleanup'
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & (ppl.Modifies.States | ppl.Modifies.NestedSDFGs)
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.NestedSDFGs
+
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+        modified = 0
+        for node, state in sdfg.all_nodes_recursive():
+            if not isinstance(node, nodes.NestedSDFG):
+                continue
+            was_modified = False
+            if node.sdfg.parent_nsdfg_node is not node:
+                was_modified = True
+                node.sdfg.parent_nsdfg_node = node
+            if node.sdfg.parent is not state:
+                was_modified = True
+                node.sdfg.parent = state
+            if node.sdfg.parent_sdfg is not state.parent:
+                was_modified = True
+                node.sdfg.parent_sdfg = state.parent
+
+            if was_modified:
+                modified += 1
+
+        return modified or None
+
+    def report(self, pass_retval: int) -> str:
+        return f'Fixed {pass_retval} nested SDFG references.'

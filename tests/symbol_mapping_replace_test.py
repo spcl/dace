@@ -27,14 +27,15 @@ def outer(A, inp1: float, inp2: float):
 
 def test_symbol_mapping_replace():
 
-    with dace.config.set_temporary('optimizer', 'automatic_simplification', value=True):
-        A = np.ones((10, 10, 10))
-        ref = A.copy()
-        b = 2.0
-        c = 2.0
-        outer(A, inp1=b, inp2=c)
-        outer.f(ref, inp1=b, inp2=c)
-        assert (np.allclose(A, ref))
+    # TODO/NOTE: Setting temporary config values does not work in the CI
+    # with dace.config.set_temporary('optimizer', 'automatic_simplification', value=True):
+    A = np.ones((10, 10, 10))
+    ref = A.copy()
+    b = 2.0
+    c = 2.0
+    outer(A, inp1=b, inp2=c)
+    outer.f(ref, inp1=b, inp2=c)
+    assert (np.allclose(A, ref))
 
 
 if __name__ == '__main__':

@@ -13,12 +13,11 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import SDFGState, StateSubgraphView
+from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion, ControlFlowRegion
 from dace.sdfg.scope import ScopeSubgraphView
-from dace.sdfg import nodes as nd, graph as gr
-from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
+from dace.sdfg import nodes as nd, graph as gr, propagation
+from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from dace.cli.progress import optional_progressbar
-from string import ascii_uppercase
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Union
 
 
@@ -461,7 +460,7 @@ def merge_maps(
     inner_map_exit: nd.MapExit,
     param_merge: Callable[[ParamsType, ParamsType], ParamsType] = lambda p1, p2: p1 + p2,
     range_merge: Callable[[RangesType, RangesType], RangesType] = lambda r1, r2: type(r1)(r1.ranges + r2.ranges)
-) -> (nd.MapEntry, nd.MapExit):
+) -> Tuple[nd.MapEntry, nd.MapExit]:
     """ Merges two maps (their entries and exits). It is assumed that the
     operation is valid. """
 
@@ -585,11 +584,14 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         conn_to_remove = prefix + conn[offset:]
         remove_outer_connector(conn_to_remove)
         if isinstance(scope_node, nd.EntryNode):
-            out_edge = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == target_conn)
-            edge_to_remove = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == conn_to_remove)
+            out_edges = [ed for ed in outer_edges(scope_node) if ed.dst_conn == target_conn]
+            edges_to_remove = [ed for ed in outer_edges(scope_node) if ed.dst_conn == conn_to_remove]
         else:
-            out_edge = next(ed for ed in outer_edges(scope_node) if ed.src_conn == target_conn)
-            edge_to_remove = next(ed for ed in outer_edges(scope_node) if ed.src_conn == conn_to_remove)
+            out_edges = [ed for ed in outer_edges(scope_node) if ed.src_conn == target_conn]
+            edges_to_remove = [ed for ed in outer_edges(scope_node) if ed.src_conn == conn_to_remove]
+        assert len(edges_to_remove) == 1 and len(out_edges) == 1
+        edge_to_remove = edges_to_remove[0]
+        out_edge = out_edges[0]
         out_edge.data.subset = sbs.union(out_edge.data.subset, edge_to_remove.data.subset)
 
         # Check if dangling connectors have been created and remove them,
@@ -627,9 +629,9 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
         e = curedge.edge
         state.remove_edge(e)
         if inwards:
-            neighbors = [neighbor for neighbor in state.out_edges(e.src) if e.src_conn == neighbor.src_conn]
+            neighbors = [] if not e.src_conn else [neighbor for neighbor in state.out_edges_by_connector(e.src, e.src_conn)]
         else:
-            neighbors = [neighbor for neighbor in state.in_edges(e.dst) if e.dst_conn == neighbor.dst_conn]
+            neighbors = [] if not e.dst_conn else [neighbor for neighbor in state.in_edges_by_connector(e.dst, e.dst_conn)]
         if len(neighbors) > 0:  # There are still edges connected, leave as-is
             break
 
@@ -641,7 +643,7 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
         else:
             if e.dst_conn:
                 e.dst.remove_in_connector(e.dst_conn)
-                e.src.remove_out_connector('OUT' + e.dst_conn[2:])
+                e.dst.remove_out_connector('OUT' + e.dst_conn[2:])
 
         # Continue traversing upwards
         curedge = curedge.parent
@@ -668,7 +670,7 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
     from dace.sdfg.propagation import propagate_memlets_scope
 
     total_consolidated = 0
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         # Start bottom-up
         if starting_scope and starting_scope.entry not in state.nodes():
             continue
@@ -810,7 +812,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     out_edges = state.out_edges(view)
 
     # Invalid case: No data to view
-    if len(in_edges) == 0 or len(out_edges) == 0:
+    if len(in_edges) == 0 and len(out_edges) == 0:
         return None
 
     # If there is one edge (in/out) that leads (via memlet path) to an access
@@ -841,21 +843,21 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return out_edge
     if not src_is_data and not dst_is_data:
         return None
+    
+    # Check if there is a 'views' connector
+    if in_edge.dst_conn and in_edge.dst_conn == 'views':
+        return in_edge
+    if out_edge.src_conn and out_edge.src_conn == 'views':
+        return out_edge
 
-    # If both sides lead to access nodes, if one memlet's data points to the
-    # view it cannot point to the viewed node.
+    # TODO: This sounds arbitrary and is not well communicated to the frontends. Revisit in the future.
+    # If both sides lead to access nodes, if one memlet's data points to the view it cannot point to the viewed node.
     if in_edge.data.data == view.data and out_edge.data.data != view.data:
         return out_edge
     if in_edge.data.data != view.data and out_edge.data.data == view.data:
         return in_edge
     if in_edge.data.data == view.data and out_edge.data.data == view.data:
         return None
-
-    # Check if there is a 'views' connector
-    if in_edge.dst_conn and in_edge.dst_conn == 'views':
-        return in_edge
-    if out_edge.src_conn and out_edge.src_conn == 'views':
-        return out_edge
 
     # If both memlets' data are the respective access nodes, the access
     # node at the highest scope is the one that is viewed.
@@ -1206,8 +1208,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     counter = 0
     if progress is True or progress is None:
         fusible_states = 0
-        for sd in sdfg.all_sdfgs_recursive():
-            fusible_states += sd.number_of_edges()
+        for cfg in sdfg.all_control_flow_regions():
+            fusible_states += cfg.number_of_edges()
 
     if progress is True:
         pbar = tqdm(total=fusible_states, desc='Fusing states')
@@ -1215,35 +1217,62 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     start = time.time()
 
     for sd in sdfg.all_sdfgs_recursive():
-        id = sd.sdfg_id
+        for cfg in sd.all_control_flow_regions():
+            while True:
+                edges = list(cfg.nx.edges)
+                applied = 0
+                skip_nodes = set()
+                for u, v in edges:
+                    if (progress is None and tqdm is not None and (time.time() - start) > 5):
+                        progress = True
+                        pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
 
-        while True:
-            edges = list(sd.nx.edges)
-            applied = 0
-            skip_nodes = set()
-            for u, v in edges:
-                if (progress is None and tqdm is not None and (time.time() - start) > 5):
-                    progress = True
-                    pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
-
-                if u in skip_nodes or v in skip_nodes:
-                    continue
-                candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
-                sf = StateFusion()
-                sf.setup_match(sd, id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, 0, sd, permissive=permissive):
-                    sf.apply(sd, sd)
-                    applied += 1
-                    counter += 1
-                    if progress:
-                        pbar.update(1)
-                    skip_nodes.add(u)
-                    skip_nodes.add(v)
-            if applied == 0:
-                break
+                    if (u in skip_nodes or v in skip_nodes or not isinstance(v, SDFGState) or
+                        not isinstance(u, SDFGState)):
+                        continue
+                    candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
+                    sf = StateFusion()
+                    sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
+                    if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
+                        sf.apply(cfg, sd)
+                        applied += 1
+                        counter += 1
+                        if progress:
+                            pbar.update(1)
+                        skip_nodes.add(u)
+                        skip_nodes.add(v)
+                if applied == 0:
+                    break
     if progress:
         pbar.close()
     return counter
+
+
+def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
+    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
+    count = 0
+
+    for _block in optional_progressbar(reversed(blocks), title='Inlining Loops',
+                                       n=len(blocks), progress=progress):
+        block: LoopRegion = _block
+        if block.inline()[0]:
+            count += 1
+
+    return count
+
+
+def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
+    blocks = [n for n, _ in sdfg.all_nodes_recursive()
+              if isinstance(n, ControlFlowRegion) and not isinstance(n, (LoopRegion, SDFG))]
+    count = 0
+
+    for _block in optional_progressbar(reversed(blocks), title='Inlining control flow blocks',
+                                       n=len(blocks), progress=progress):
+        block: ControlFlowRegion = _block
+        if block.inline()[0]:
+            count += 1
+
+    return count
 
 
 def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, multistate: bool = True) -> int:
@@ -1265,32 +1294,44 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG
 
     counter = 0
-    nsdfgs = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
+    nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
 
-    for node, state in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
-        id = node.sdfg.sdfg_id
-        sd = state.parent
-
+    for nsdfg_node in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
         # We have to reevaluate every time due to changing IDs
-        state_id = sd.node_id(state)
+        # e.g., InlineMultistateSDFG may fission states
+        nsdfg: SDFG = nsdfg_node.sdfg
+        parent_state = nsdfg.parent
+        parent_sdfg = parent_state.sdfg
+        parent_state_id = parent_state.block_id
+
         if multistate:
             candidate = {
-                InlineMultistateSDFG.nested_sdfg: node,
+                InlineMultistateSDFG.nested_sdfg: nsdfg_node,
             }
             inliner = InlineMultistateSDFG()
-            inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
-            if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-                inliner.apply(state, sd)
+            inliner.setup_match(sdfg=parent_sdfg,
+                                cfg_id=parent_state.parent_graph.cfg_id,
+                                state_id=parent_state_id,
+                                subgraph=candidate,
+                                expr_index=0,
+                                override=True)
+            if inliner.can_be_applied(parent_state, 0, parent_sdfg, permissive=permissive):
+                inliner.apply(parent_state, parent_sdfg)
                 counter += 1
                 continue
 
         candidate = {
-            InlineSDFG.nested_sdfg: node,
+            InlineSDFG.nested_sdfg: nsdfg_node,
         }
         inliner = InlineSDFG()
-        inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
-        if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-            inliner.apply(state, sd)
+        inliner.setup_match(sdfg=parent_sdfg,
+                            cfg_id=parent_state.parent_graph.cfg_id,
+                            state_id=parent_state_id,
+                            subgraph=candidate,
+                            expr_index=0,
+                            override=True)
+        if inliner.can_be_applied(parent_state, 0, parent_sdfg, permissive=permissive):
+            inliner.apply(parent_state, parent_sdfg)
             counter += 1
 
     return counter
@@ -1311,7 +1352,7 @@ def load_precompiled_sdfg(folder: str):
                               csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name))
 
 
-def distributed_compile(sdfg: SDFG, comm) -> csdfg.CompiledSDFG:
+def distributed_compile(sdfg: SDFG, comm, validate: bool = True) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 
@@ -1327,7 +1368,7 @@ def distributed_compile(sdfg: SDFG, comm) -> csdfg.CompiledSDFG:
 
     # Rank 0 compiles SDFG.
     if rank == 0:
-        func = sdfg.compile()
+        func = sdfg.compile(validate=validate)
         folder = sdfg.build_folder
 
     # Broadcasts build folder.
@@ -1381,7 +1422,7 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView], node: Node) -> 
     # Build a unique representation
     sdfg = graph.parent
     state = graph if isinstance(graph, SDFGState) else graph._graph
-    return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
+    return str(sdfg.cfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
 
 
 def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGState, fsymbols: Set[str]) -> bool:
@@ -1396,7 +1437,7 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
     :param state: the state that contains the node
     :param fsymbols: the free symbols to check against
     """
-    if isinstance(desc, dt.View):
+    if isinstance(desc, (dt.View)):
         # Views can be non-free symbol dependent due to the adjacent edges.
         e = get_view_edge(state, node)
         if e.data:
@@ -1451,6 +1492,46 @@ def _tswds_state(
     yield from _traverse(None, symbols)
 
 
+def _tswds_cf_region(
+        sdfg: SDFG,
+        region: ControlFlowRegion,
+        symbols: Dict[str, dtypes.typeclass],
+        recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+    # Add symbols from inter-state edges along the state machine
+    start_region = region.start_block
+    visited = set()
+    visited_edges = set()
+    for edge in region.dfs_edges(start_region):
+        # Source -> inter-state definition -> Destination
+        visited_edges.add(edge)
+        # Source
+        if edge.src not in visited:
+            visited.add(edge.src)
+            if isinstance(edge.src, SDFGState):
+                yield from _tswds_state(sdfg, edge.src, {}, recursive)
+            elif isinstance(edge.src, ControlFlowRegion):
+                yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
+
+        # Add edge symbols into defined symbols
+        issyms = edge.data.new_symbols(sdfg, symbols)
+        symbols.update({k: v for k, v in issyms.items() if v is not None})
+
+        # Destination
+        if edge.dst not in visited:
+            visited.add(edge.dst)
+            if isinstance(edge.dst, SDFGState):
+                yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
+            elif isinstance(edge.dst, ControlFlowRegion):
+                yield from _tswds_cf_region(sdfg, edge.dst, symbols, recursive)
+
+    # If there is only one state, the DFS will miss it
+    if start_region not in visited:
+        if isinstance(start_region, SDFGState):
+            yield from _tswds_state(sdfg, start_region, symbols, recursive)
+        elif isinstance(start_region, ControlFlowRegion):
+            yield from _tswds_cf_region(sdfg, start_region, symbols, recursive)
+
+
 def traverse_sdfg_with_defined_symbols(
         sdfg: SDFG,
         recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
@@ -1465,30 +1546,7 @@ def traverse_sdfg_with_defined_symbols(
     for desc in sdfg.arrays.values():
         symbols.update({str(s): s.dtype for s in desc.free_symbols})
 
-    # Add symbols from inter-state edges along the state machine
-    start_state = sdfg.start_state
-    visited = set()
-    visited_edges = set()
-    for edge in sdfg.dfs_edges(start_state):
-        # Source -> inter-state definition -> Destination
-        visited_edges.add(edge)
-        # Source
-        if edge.src not in visited:
-            visited.add(edge.src)
-            yield from _tswds_state(sdfg, edge.src, symbols, recursive)
-
-        # Add edge symbols into defined symbols
-        issyms = edge.data.new_symbols(sdfg, symbols)
-        symbols.update({k: v for k, v in issyms.items() if v is not None})
-
-        # Destination
-        if edge.dst not in visited:
-            visited.add(edge.dst)
-            yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
-
-    # If there is only one state, the DFS will miss it
-    if start_state not in visited:
-        yield from _tswds_state(sdfg, start_state, symbols, recursive)
+    yield from _tswds_cf_region(sdfg, sdfg, symbols, recursive)
 
 
 def is_fpga_kernel(sdfg, state):
@@ -1501,19 +1559,25 @@ def is_fpga_kernel(sdfg, state):
     if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
         return False
     data_nodes = state.data_nodes()
-    if len(data_nodes) == 0:
-        return False
+    at_least_one_fpga_array = False
     for n in data_nodes:
-        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+        desc = n.desc(sdfg)
+        if desc.storage in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                            dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+            at_least_one_fpga_array = True
+        if isinstance(desc, dt.Scalar):
+            continue
+        if desc.storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                                dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
             return False
-    return True
+
+    return at_least_one_fpga_array
 
 
 def postdominators(
     sdfg: SDFG,
     return_alldoms: bool = False
-) -> Union[Dict[SDFGState, SDFGState], Tuple[Dict[SDFGState, SDFGState], Dict[SDFGState, Set[SDFGState]]]]:
+) -> Optional[Union[Dict[SDFGState, SDFGState], Tuple[Dict[SDFGState, SDFGState], Dict[SDFGState, Set[SDFGState]]]]]:
     """
     Return the immediate postdominators of an SDFG. This may require creating new nodes and removing them, which
     happens in-place on the SDFG.
@@ -1530,6 +1594,8 @@ def postdominators(
         sink = sdfg.add_state()
         for snode in sink_nodes:
             sdfg.add_edge(snode, sink, dace.InterstateEdge())
+    elif len(sink_nodes) == 0:
+        return None
     else:
         sink = sink_nodes[0]
     ipostdom: Dict[SDFGState, SDFGState] = nx.immediate_dominators(sdfg._nx.reverse(), sink)
@@ -1629,3 +1695,212 @@ def map_view_to_array(vdesc: dt.View, adesc: dt.Array,
             squeezed.append(i)
 
     return dimension_mapping, unsqueezed, squeezed
+
+
+def check_sdfg(sdfg: SDFG):
+    """ Checks that the parent attributes of an SDFG are correct.
+    
+    :param sdfg: The SDFG to check.
+    :raises AssertionError: If any of the parent attributes are incorrect.
+    """
+    for state in sdfg.nodes():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.NestedSDFG):
+                assert node.sdfg.parent_nsdfg_node is node
+                assert node.sdfg.parent is state
+                assert node.sdfg.parent_sdfg is sdfg
+                assert node.sdfg.parent.parent is sdfg
+                check_sdfg(node.sdfg)
+
+
+def normalize_offsets(sdfg: SDFG):
+    """
+    Normalizes descriptor offsets to 0 and adjusts the Memlet subsets accordingly. This operation is done in-place.
+
+    :param sdfg: The SDFG to be normalized.
+    """
+
+    import ast
+    from dace.frontend.python import astutils
+
+    for sd in sdfg.all_sdfgs_recursive():
+        offsets = dict()
+        for arrname, arrdesc in sd.arrays.items():
+            if not isinstance(arrdesc, dt.Array):  # NOTE: Does this work with Views properly?
+                continue
+            if any(o != 0 for o in arrdesc.offset):
+                offsets[arrname] = arrdesc.offset
+                arrdesc.offset = [0] * len(arrdesc.shape)
+        if offsets:
+            for e in sd.edges():
+                memlets = e.data.get_read_memlets(sd.arrays)
+                for m in memlets:
+                    if m.data in offsets:
+                        m.subset.offset(offsets[m.data], False)
+                for node in ast.walk(e.data.condition.code[0]):
+                    if isinstance(node, ast.Subscript):
+                        m = memlets.pop(0)
+                        subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                        assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                        node.slice = ast.copy_location(subscript.slice, node.slice)
+                e.data._cond_sympy = None
+                for k, v in e.data.assignments.items():
+                    vast = ast.parse(v)
+                    for node in ast.walk(vast):
+                        if isinstance(node, ast.Subscript):
+                            m = memlets.pop(0)
+                            subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                            assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                            node.slice = ast.copy_location(subscript.slice, node.slice)
+                    newv = astutils.unparse(vast)
+                    e.data.assignments[k] = newv
+                assert not memlets
+            for state in sd.states():
+                # NOTE: Ideally, here we just want to iterate over the edges. However, we need to handle both the
+                # subset and the other subset. Therefore, it is safer to traverse the Memlet paths.
+                for node in state.nodes():
+                    if isinstance(node, nd.AccessNode) and node.data in offsets:
+                        off = offsets[node.data]
+                        visited = set()
+                        for e0 in state.all_edges(node):
+                            for e1 in state.memlet_tree(e0):
+                                if e1 in visited:
+                                    continue
+                                visited.add(e1)
+                                if e1.data.data == node.data:
+                                    e1.data.subset.offset(off, False)
+                                else:
+                                    e1.data.other_subset.offset(off, False)
+
+
+def prune_symbols(sdfg: SDFG):
+    """
+    Prunes unused symbols from the SDFG and the NestedSDFG symbol mappings. This operation is done in place. See also
+    `dace.transformation.interstate.PruneSymbols`.
+
+    :param sdfg: The SDFG to have its symbols pruned.
+    """
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                prune_symbols(node.sdfg)
+                declared_symbols = set(node.sdfg.symbols.keys())
+                free_symbols = node.sdfg.free_symbols
+                defined_symbols = declared_symbols - free_symbols
+                for s in defined_symbols:
+                    del node.sdfg.symbols[s]
+                    if s in node.symbol_mapping:
+                        del node.symbol_mapping[s]
+
+
+def make_dynamic_map_inputs_unique(sdfg: SDFG):
+    for sd in sdfg.all_sdfgs_recursive():
+        dynamic_map_inputs = set(sd.arrays.keys())
+        for state in sd.states():
+            for node in state.nodes():
+                repl_dict = {}
+                if isinstance(node, nd.MapEntry):
+                    # Find all dynamic map inputs
+                    for e in state.in_edges(node):
+                        if not e.dst_conn.startswith('IN_'):
+                            if e.dst_conn in dynamic_map_inputs:
+                                new_name = dt.find_new_name(e.dst_conn, dynamic_map_inputs)
+                                dynamic_map_inputs.add(new_name)
+                                repl_dict[e.dst_conn] = new_name
+                                e._dst_conn = new_name
+                            else:
+                                dynamic_map_inputs.add(e.dst_conn)
+                    if repl_dict:
+                        in_connectors = {
+                            repl_dict[n] if n in repl_dict else n: t
+                            for n, t in node.in_connectors.items()
+                        }
+                        node.in_connectors = in_connectors
+                        node.map.range.replace(repl_dict)
+                        state.scope_subgraph(node).replace_dict(repl_dict)
+                        propagation.propagate_memlets_scope(sd, state, state.scope_tree()[node])
+
+
+def get_thread_local_data(sdfg: SDFG) -> List[str]:
+    """ Returns a list of all data that are thread-local in the SDFG.
+
+    This method DOES NOT apply recursively to nested SDFGs. It is also does not take into account outer Maps.
+    
+    :param sdfg: The SDFG to check.
+    :return: A list of the names of all data that are thread-local in the SDFG.
+    """
+    # NOTE: We could exclude non-transient data here, but it is interesting to see if we find any non-transient data
+    # only inside a Map.
+    data_to_check = {name: None for name in sdfg.arrays.keys()}
+    for state in sdfg.nodes():
+        scope_dict = state.scope_dict()
+        for node in state.nodes():
+            if isinstance(node, nd.AccessNode):
+                # If the data was already removed from the candidated, continue
+                if node.data not in data_to_check:
+                    continue
+                # If the data is not in a scope, i.e., cannot be thread-local, remove it from the candidates
+                if scope_dict[node] is None:
+                    del data_to_check[node.data]
+                    continue
+                # If the data is in a Map ...
+                if isinstance(scope_dict[node], nd.MapEntry):
+                    # ... if we haven't seen the data yet, note down the scope
+                    if data_to_check[node.data] is None:
+                        data_to_check[node.data] = scope_dict[node]
+                    # ... if we have seen the data before, but in a different scope, remove it from the candidates
+                    elif data_to_check[node.data] != scope_dict[node]:
+                        del data_to_check[node.data]
+
+    result = list(data_to_check.keys())
+    for name in result:
+        if not sdfg.arrays[name].transient:
+            warnings.warn(f'Found thread-local data "{name}" that is not transient.')
+    return result
+
+
+def get_global_memlet_path_src(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge) -> nd.Node:
+    """
+    Finds the global source node of an edge/memlet path, crossing nested SDFG scopes.
+
+    :param sdfg: The SDFG containing the edge.
+    :param state: The state containing the edge.
+    :param edge: The edge to find the global source node for.
+    :return: The global source node of the edge.
+    """
+    src = state.memlet_path(edge)[0].src
+    if isinstance(src, nd.AccessNode) and not sdfg.arrays[src.data].transient and sdfg.parent is not None:
+        psdfg = sdfg.parent_sdfg
+        pstate = sdfg.parent
+        pnode = sdfg.parent_nsdfg_node
+        pedges = list(pstate.in_edges_by_connector(pnode, src.data))
+        if len(pedges) > 0:
+            pedge = pedges[0]
+            return get_global_memlet_path_src(psdfg, pstate, pedge)
+        else:
+            pedges = list(pstate.out_edges_by_connector(pnode, src.data))
+            if len(pedges) > 0:
+                pedge = pedges[0]
+                return get_global_memlet_path_dst(psdfg, pstate, pedge)
+    return src
+
+
+def get_global_memlet_path_dst(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge) -> nd.Node:
+    """
+    Finds the global destination node of an edge/memlet path, crossing nested SDFG scopes.
+
+    :param sdfg: The SDFG containing the edge.
+    :param state: The state containing the edge.
+    :param edge: The edge to find the global destination node for.
+    :return: The global destination node of the edge.
+    """
+    dst = state.memlet_path(edge)[-1].dst
+    if isinstance(dst, nd.AccessNode) and not sdfg.arrays[dst.data].transient and sdfg.parent is not None:
+        psdfg = sdfg.parent_sdfg
+        pstate = sdfg.parent
+        pnode = sdfg.parent_nsdfg_node
+        pedges = list(pstate.out_edges_by_connector(pnode, dst.data))
+        if len(pedges) > 0:
+            pedge = pedges[0]
+            return get_global_memlet_path_dst(psdfg, pstate, pedge)
+    return dst

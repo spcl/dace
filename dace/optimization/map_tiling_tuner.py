@@ -7,8 +7,7 @@ from dace import dtypes
 from dace.optimization import cutout_tuner
 from dace.transformation import dataflow as df
 from dace.transformation import helpers as xfh
-from dace.sdfg.analysis import cutout as cutter
-from dace.codegen.instrumentation.data import data_report
+from dace.sdfg.analysis.cutout import SDFGCutout
 
 try:
     from tqdm import tqdm
@@ -33,7 +32,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
                 node_id = state.node_id(node)
                 state_id = self._sdfg.node_id(state)
                 subgraph_nodes = state.scope_subgraph(node).nodes()
-                cutout = cutter.cutout_state(state, *subgraph_nodes)
+                cutout = SDFGCutout.singlestate_cutout(state, *subgraph_nodes)
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
     def space(self, map_entry: dace.nodes.MapEntry) -> Generator[Tuple[int], None, None]:

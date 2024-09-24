@@ -1,7 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
-import re
+import sys
 from collections import namedtuple
 from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
@@ -14,6 +14,22 @@ from dace.symbolic import pystr_to_symbolic, SymbolicType
 from dace.frontend.python.common import DaceSyntaxError
 
 MemletType = Union[ast.Call, ast.Attribute, ast.Subscript, ast.Name]
+
+
+if sys.version_info < (3, 8):
+    _simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
+    BytesConstant = ast.Bytes
+    EllipsisConstant = ast.Ellipsis
+    NameConstant = ast.NameConstant
+    NumConstant = ast.Num
+    StrConstant = ast.Str
+else:
+    _simple_ast_nodes = (ast.Constant, ast.Name)
+    BytesConstant = ast.Constant
+    EllipsisConstant = ast.Constant
+    NameConstant = ast.Constant
+    NumConstant = ast.Constant
+    StrConstant = ast.Constant
 
 
 @dataclass
@@ -114,7 +130,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             offsets.append(idx)
             idx += 1
             new_idx += 1
-        elif (isinstance(dim, ast.Ellipsis) or dim is Ellipsis
+        elif ((sys.version_info < (3, 8) and isinstance(dim, ast.Ellipsis)) or dim is Ellipsis
               or (isinstance(dim, ast.Constant) and dim.value is Ellipsis)
               or (isinstance(dim, ast.Name) and dim.id is Ellipsis)):
             if has_ellipsis:
@@ -125,7 +141,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 ndslice[j] = (0, array.shape[j] - 1, 1)
                 idx += 1
                 new_idx += 1
-        elif (dim is None or (isinstance(dim, (ast.Constant, ast.NameConstant)) and dim.value is None)):
+        elif (dim is None or (isinstance(dim, (ast.Constant, NameConstant)) and dim.value is None)):
             new_axes.append(new_idx)
             new_idx += 1
             # NOTE: Do not increment idx here
@@ -200,7 +216,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 def parse_memlet_subset(array: data.Data,
                         node: Union[ast.Name, ast.Subscript],
                         das: Dict[str, Any],
-                        parsed_slice: Any = None) -> Tuple[subsets.Range, List[int]]:
+                        parsed_slice: Any = None) -> Tuple[subsets.Range, List[int], List[int]]:
     """ 
     Parses an AST subset and returns access range, as well as new dimensions to
     add.
@@ -209,7 +225,7 @@ def parse_memlet_subset(array: data.Data,
                   e.g., negative indices or empty shapes).
     :param node: AST node representing whole array or subset thereof.
     :param das: Dictionary of defined arrays and symbols mapped to their values.
-    :return: A 2-tuple of (subset, list of new axis indices).
+    :return: A 3-tuple of (subset, list of new axis indices, list of index-to-array-dimension correspondence).
     """
     # Get memlet range
     ndslice = [(0, s - 1, 1) for s in array.shape]
@@ -285,7 +301,11 @@ def ParseMemlet(visitor,
         if len(node.value.args) >= 2:
             write_conflict_resolution = node.value.args[1]
 
-    subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice)
+    try:
+        subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice)
+    except IndexError:
+        raise DaceSyntaxError(visitor, node, 'Failed to parse memlet expression due to dimensionality. '
+                              f'Array dimensions: {array.shape}, expression in code: {astutils.unparse(node)}')
 
     # If undefined, default number of accesses is the slice size
     if num_accesses is None:

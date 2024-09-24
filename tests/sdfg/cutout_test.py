@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
-from dace.sdfg.analysis import cutout
+from dace.sdfg.analysis.cutout import SDFGCutout, _reduce_in_configuration
 import pytest
 
 
@@ -18,7 +18,7 @@ def test_cutout_onenode():
     assert state.number_of_nodes() == 8
     node = next(n for n in state if isinstance(n, dace.nodes.LibraryNode))
 
-    cut_sdfg = cutout.cutout_state(state, node)
+    cut_sdfg = SDFGCutout.singlestate_cutout(state, node)
     assert cut_sdfg.number_of_nodes() == 1
     assert cut_sdfg.node(0).number_of_nodes() == 4
     assert len(cut_sdfg.arrays) == 3
@@ -39,7 +39,7 @@ def test_cutout_multinode():
     nodes = [n for n in state if isinstance(n, (dace.nodes.LibraryNode, dace.nodes.Tasklet))]
     assert len(nodes) == 2
 
-    cut_sdfg = cutout.cutout_state(state, *nodes)
+    cut_sdfg = SDFGCutout.singlestate_cutout(state, *nodes)
     assert cut_sdfg.number_of_nodes() == 1
     assert cut_sdfg.node(0).number_of_nodes() == 7
     assert len(cut_sdfg.arrays) == 5
@@ -79,7 +79,7 @@ def test_cutout_complex_case():
     state.add_memlet_path(t2, mx, d, memlet=dace.Memlet('D[i]'), src_conn='o')
 
     # Cutout
-    cut_sdfg = cutout.cutout_state(state, t2, me, mx)
+    cut_sdfg = SDFGCutout.singlestate_cutout(state, t2, me, mx)
     cut_sdfg.validate()
     assert cut_sdfg.arrays.keys() == {'B', 'ind', 'D'}
 
@@ -118,7 +118,7 @@ def test_cutout_implicit_array():
         return out
 
     sdfg = spmm.to_sdfg()
-    c = cutout.cutout_state(sdfg.start_state, *sdfg.start_state.nodes())
+    c = SDFGCutout.singlestate_cutout(sdfg.start_state, *sdfg.start_state.nodes())
     c.validate()
 
 
@@ -130,7 +130,7 @@ def test_cutout_init_map():
         A[:] = 0
 
     sdfg = init.to_sdfg()
-    c = cutout.cutout_state(sdfg.start_state, *sdfg.start_state.nodes())
+    c = SDFGCutout.singlestate_cutout(sdfg.start_state, *sdfg.start_state.nodes())
     c.validate()
 
 
@@ -185,7 +185,7 @@ def test_cutout_alibi_nodes():
     state.add_edge(acc_tmp6, None, t4, 'i3', dace.Memlet('tmp6'))
     state.add_memlet_path(t4, map_exit, write_c, src_conn='o', memlet=dace.Memlet('C[i, j]'))
 
-    ct = cutout.cutout_state(state, t4)
+    ct = SDFGCutout.singlestate_cutout(state, t4)
 
     assert ('__cutout_C' in ct.arrays)
     assert ('tmp2' in ct.arrays)
@@ -217,12 +217,12 @@ def test_multistate_cutout_simple_expand():
     sdfg.add_edge(s7, s8, dace.InterstateEdge())
     sdfg.add_edge(s8, s9, dace.InterstateEdge())
 
-    in_translation = dict()
-    ct = cutout.multistate_cutout(s6, s7, in_translation=in_translation)
-    assert len(ct.nodes()) == 3
-    assert (in_translation[s5] in ct.nodes())
-    assert (in_translation[s6] in ct.nodes())
-    assert (in_translation[s7] in ct.nodes())
+    ct: SDFGCutout = SDFGCutout.multistate_cutout(s6, s7)
+    state_names = [s.name for s in ct.states()]
+    assert len(state_names) == 3
+    assert ('s5' in state_names)
+    assert ('s6' in state_names)
+    assert ('s7' in state_names)
 
 
 def test_multistate_cutout_complex_expand():
@@ -248,16 +248,16 @@ def test_multistate_cutout_complex_expand():
     sdfg.add_edge(s7, s8, dace.InterstateEdge())
     sdfg.add_edge(s8, s9, dace.InterstateEdge())
 
-    in_translation = dict()
-    ct = cutout.multistate_cutout(s4, s5, s6, s7, in_translation=in_translation)
-    assert len(ct.nodes()) == 7
-    assert (in_translation[s1] in ct.nodes())
-    assert (in_translation[s2] in ct.nodes())
-    assert (in_translation[s3] in ct.nodes())
-    assert (in_translation[s4] in ct.nodes())
-    assert (in_translation[s5] in ct.nodes())
-    assert (in_translation[s6] in ct.nodes())
-    assert (in_translation[s7] in ct.nodes())
+    ct: SDFGCutout = SDFGCutout.multistate_cutout(s4, s5, s6, s7)
+    state_names = [s.name for s in ct.states()]
+    assert len(state_names) == 7
+    assert ('s1' in state_names)
+    assert ('s2' in state_names)
+    assert ('s3' in state_names)
+    assert ('s4' in state_names)
+    assert ('s5' in state_names)
+    assert ('s6' in state_names)
+    assert ('s7' in state_names)
 
 
 def test_input_output_configuration():
@@ -303,13 +303,113 @@ def test_input_output_configuration():
     s3.add_edge(t5, 'b', write_b, None, dace.Memlet('B[0]'))
     s3.add_edge(t6, 'b', w_tmp3, None, dace.Memlet('tmp3[0]'))
 
-    ct = cutout.cutout_state(s2, t2, t3, t4)
+    ct = SDFGCutout.singlestate_cutout(s2, t2, t3, t4)
 
     assert ct.arrays['tmp1'].transient == False
     assert ct.arrays['tmp2'].transient == False
     assert ct.arrays['tmp3'].transient == True
     assert ct.arrays['tmp4'].transient == True
     assert len(ct.arrays) == 4
+
+
+def test_minimum_cut_simple_no_further_input_config():
+    sdfg = dace.SDFG('mincut')
+    N = dace.symbol('N')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    sdfg.add_array('C', [N, N], dace.float64)
+    sdfg.add_array('tmp1', [1], dace.float64, transient=True)
+    sdfg.add_array('tmp2', [1], dace.float64, transient=True)
+    sdfg.add_array('tmp3', [1], dace.float64, transient=True)
+    sdfg.add_array('tmp4', [1], dace.float64, transient=True)
+    sdfg.add_array('tmp5', [1], dace.float64, transient=True)
+    sdfg.add_array('tmp6', [1], dace.float64, transient=True)
+    state = sdfg.add_state('state')
+    mi, mo = state.add_map('map', dict(i='0:N', j='0:N'))
+    t1 = state.add_tasklet('t1', {'a', 'b'}, {'t'}, 't = a + b')
+    t2 = state.add_tasklet(
+        't2', {'tin'}, {'t1', 't2', 't3', 't4'}, 't1 = tin + 2\nt2 = tin * 2\nt3 = tin / 2\nt4 = tin + 1'
+    )
+    t3 = state.add_tasklet('t3', {'a', 'b'}, {'t'}, 't = a + b')
+    t4 = state.add_tasklet('t4', {'a', 'b', 'c'}, {'t'}, 't = (a - b) * c')
+    a_access = state.add_access('A')
+    b_access = state.add_access('B')
+    c_access = state.add_access('C')
+    tmp1_access = state.add_access('tmp1')
+    tmp2_access = state.add_access('tmp2')
+    tmp3_access = state.add_access('tmp3')
+    tmp4_access = state.add_access('tmp4')
+    tmp5_access = state.add_access('tmp5')
+    tmp6_access = state.add_access('tmp6')
+    state.add_memlet_path(a_access, mi, t1, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(b_access, mi, t1, dst_conn='b', memlet=dace.Memlet('B[j]'))
+    state.add_edge(t1, 't', tmp1_access, None, dace.Memlet('tmp1[0]'))
+    state.add_edge(tmp1_access, None, t2, 'tin', dace.Memlet('tmp1[0]'))
+    state.add_edge(t2, 't1', tmp2_access, None, dace.Memlet('tmp2[0]'))
+    state.add_edge(t2, 't2', tmp3_access, None, dace.Memlet('tmp3[0]'))
+    state.add_edge(t2, 't3', tmp4_access, None, dace.Memlet('tmp4[0]'))
+    state.add_edge(t2, 't4', tmp5_access, None, dace.Memlet('tmp5[0]'))
+    state.add_edge(tmp2_access, None, t3, 'a', dace.Memlet('tmp2[0]'))
+    state.add_edge(tmp3_access, None, t3, 'b', dace.Memlet('tmp3[0]'))
+    state.add_edge(tmp4_access, None, t4, 'a', dace.Memlet('tmp4[0]'))
+    state.add_edge(tmp5_access, None, t4, 'b', dace.Memlet('tmp5[0]'))
+    state.add_edge(t3, 't', tmp6_access, None, dace.Memlet('tmp6[0]'))
+    state.add_edge(tmp6_access, None, t4, 'c', dace.Memlet('tmp6[0]'))
+    state.add_memlet_path(t4, mo, c_access, src_conn='t', memlet=dace.Memlet('C[i, j]'))
+
+    cutout = SDFGCutout.singlestate_cutout(state, t3, t4, tmp6_access, reduce_input_config=True)
+
+    c_state = cutout.nodes()[0]
+    c_nodes = set(c_state.nodes())
+    o_nodes = {t2, t3, t4, tmp6_access, tmp4_access, tmp5_access, tmp2_access, tmp3_access, tmp1_access, c_access}
+    assert len(c_nodes) == 10
+    for n in o_nodes:
+        assert cutout._in_translation[n] in c_nodes
+    for n in c_nodes:
+        assert cutout._out_translation[n] in o_nodes
+
+
+def test_minimum_cut_map_scopes():
+    sdfg = dace.SDFG('mincut')
+    sdfg.add_array('A', [10, 10], dace.float64)
+    sdfg.add_array('B', [10, 10], dace.float64)
+    sdfg.add_array('tmp_1', [10, 10], dace.float64, transient=True)
+    sdfg.add_array('tmp_2', [10, 10], dace.float64, transient=True)
+    sdfg.add_array('C', [10, 10], dace.float64)
+
+    state = sdfg.add_state('state')
+    t1 = state.add_tasklet('t1', {'in1', 'in2'}, {'out1'}, 'out1 = in1 + in2')
+    t2 = state.add_tasklet('t2', {'in1'}, {'out1'}, 'out1 = in1 * 2')
+    t3 = state.add_tasklet('t3', {'in1', 'in2'}, {'out1'}, 'out1 = in1 + in2')
+    m1_i, m1_o = state.add_map('m1', dict(i='0:10', j='0:10'))
+    m2_i, m2_o = state.add_map('m2', dict(i='0:10', j='0:10'))
+    m3_i, m3_o = state.add_map('m3', dict(i='0:10', j='0:10'))
+
+    a_access = state.add_access('A')
+    b_access = state.add_access('B')
+    c_access = state.add_access('C')
+    tmp1_access = state.add_access('tmp_1')
+    tmp2_access = state.add_access('tmp_2')
+
+    state.add_memlet_path(a_access, m1_i, t1, dst_conn='in1', memlet=dace.Memlet('A[i, j]'))
+    state.add_memlet_path(b_access, m1_i, t1, dst_conn='in2', memlet=dace.Memlet('B[i, j]'))
+    state.add_memlet_path(t1, m1_o, tmp1_access, src_conn='out1', memlet=dace.Memlet('tmp_1[i, j]'))
+    state.add_memlet_path(tmp1_access, m2_i, t2, dst_conn='in1', memlet=dace.Memlet('tmp_1[i, j]'))
+    state.add_memlet_path(t2, m2_o, tmp2_access, src_conn='out1', memlet=dace.Memlet('tmp_2[i, j]'))
+    state.add_memlet_path(tmp1_access, m3_i, t3, dst_conn='in1', memlet=dace.Memlet('tmp_1[i, j]'))
+    state.add_memlet_path(tmp2_access, m3_i, t3, dst_conn='in2', memlet=dace.Memlet('tmp_2[i, j]'))
+    state.add_memlet_path(t3, m3_o, c_access, src_conn='out1', memlet=dace.Memlet('C[i, j]'))
+
+    cutout = SDFGCutout.singlestate_cutout(state, t3, m3_i, m3_o, reduce_input_config=True)
+
+    c_state = cutout.nodes()[0]
+    c_nodes = set(c_state.nodes())
+    o_nodes = {t2, t3, tmp1_access, tmp2_access, c_access, m2_i, m2_o, m3_i, m3_o}
+    assert len(c_nodes) == 9
+    for n in o_nodes:
+        assert cutout._in_translation[n] in c_nodes
+    for n in c_nodes:
+        assert cutout._out_translation[n] in o_nodes
 
 
 if __name__ == '__main__':
@@ -322,3 +422,5 @@ if __name__ == '__main__':
     test_multistate_cutout_simple_expand()
     test_multistate_cutout_complex_expand()
     test_input_output_configuration()
+    test_minimum_cut_simple_no_further_input_config()
+    test_minimum_cut_map_scopes()

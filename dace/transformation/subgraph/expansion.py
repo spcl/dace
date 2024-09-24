@@ -9,7 +9,6 @@ from dace.sdfg import replace, SDFG, dynamic_map_inputs
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import transformation
 from dace.properties import make_properties, Property
-from dace.symbolic import symstr
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.subgraph import helpers
 from collections import defaultdict

@@ -84,7 +84,7 @@ class MapFusion(transformation.SingleStateTransformation):
 
         return result
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg: SDFG, permissive=False):
         first_map_exit = self.first_map_exit
         first_map_entry = graph.entry_node(first_map_exit)
         second_map_entry = self.second_map_entry
@@ -105,9 +105,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 intermediate_data.add(dst.data)
 
                 # If array is used anywhere else in this state.
-                num_occurrences = len([
-                    n for s in sdfg.nodes() for n in s.nodes() if isinstance(n, nodes.AccessNode) and n.data == dst.data
-                ])
+                num_occurrences = len([n for n in sdfg.data_nodes() if n.data == dst.data])
                 if num_occurrences > 1:
                     return False
             else:
@@ -430,7 +428,7 @@ class MapFusion(transformation.SingleStateTransformation):
         # Fix scope exit to point to the right map
         second_exit.map = first_entry.map
 
-    def fuse_nodes(self, sdfg, graph, edge, new_dst, new_dst_conn, other_edges=None):
+    def fuse_nodes(self, sdfg: SDFG, graph: SDFGState, edge, new_dst, new_dst_conn, other_edges=None):
         """ Fuses two nodes via memlets and possibly transient arrays. """
         other_edges = other_edges or []
         memlet_path = graph.memlet_path(edge)
@@ -443,9 +441,16 @@ class MapFusion(transformation.SingleStateTransformation):
             graph.node_id(edge.dst),
             edge.dst_conn,
         )
-        # Add intermediate memory between subgraphs. If a scalar,
-        # uses direct connection. If an array, adds a transient node
-        if edge.data.subset.num_elements() == 1:
+        # Add intermediate memory between subgraphs.
+        # If a scalar, uses direct connection. If an array, adds a transient node.
+        # NOTE: If any of the src/dst nodes is a nested SDFG, treat it as an array.
+        is_scalar = edge.data.subset.num_elements() == 1
+        accesses = (
+            [graph.memlet_path(e1)[0].src for e0 in graph.in_edges(access_node) for e1 in graph.memlet_tree(e0)] +
+            [graph.memlet_path(e1)[-1].dst for e0 in graph.out_edges(access_node) for e1 in graph.memlet_tree(e0)])
+        if any(isinstance(a, nodes.NestedSDFG) for a in accesses):
+            is_scalar = False
+        if is_scalar:
             local_name, _ = sdfg.add_scalar(
                 local_name,
                 dtype=access_node.desc(graph).dtype,
@@ -473,6 +478,12 @@ class MapFusion(transformation.SingleStateTransformation):
             else:
                 local_node = edge.src
                 src_connector = edge.src_conn
+
+                # update edge data in case source or destination is a scalar access node
+                test_data = [node.data for node in (edge.src, edge.dst) if isinstance(node, nodes.AccessNode)]
+                for new_data in test_data:
+                    if isinstance(sdfg.arrays[new_data], data.Scalar):
+                        edge.data.data = new_data
 
             # If destination of edge leads to multiple destinations, redirect all through an access node.
             if other_edges:
@@ -520,5 +531,7 @@ class MapFusion(transformation.SingleStateTransformation):
             # Modify data and memlets on all surrounding edges to match array
             for neighbor in graph.all_edges(local_node):
                 for e in graph.memlet_tree(neighbor):
+                    if e.data.data == local_name:
+                        continue
                     e.data.data = local_name
                     e.data.subset.offset(old_edge.data.subset, negative=True)

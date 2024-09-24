@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Implements the map interchange transformation. """
 
 from dace.sdfg import SDFG, SDFGState
@@ -117,11 +117,19 @@ class MapInterchange(transformation.SingleStateTransformation):
         for e in new_entry_edges:
             path = graph.memlet_path(e)
             index = next(i for i, edge in enumerate(path) if e is edge)
-            e.data.subset = propagate_memlet(graph, path[index + 1].data, outer_map_entry, True).subset
+            if index < len(path) - 1:
+                edge_to_propagate = path[index + 1]
+            else:
+                edge_to_propagate = e
+            e.data.subset = propagate_memlet(graph, edge_to_propagate.data, outer_map_entry, True).subset
         for e in new_exit_edges:
             path = graph.memlet_path(e)
             index = next(i for i, edge in enumerate(path) if e is edge)
-            e.data.subset = propagate_memlet(graph, path[index - 1].data, outer_map_exit, True).subset
+            if index > 0:
+                edge_to_propagate = path[index - 1]
+            else:
+                edge_to_propagate = e
+            e.data.subset = propagate_memlet(graph, edge_to_propagate.data, outer_map_exit, True).subset
 
     @staticmethod
     def annotates_memlets():

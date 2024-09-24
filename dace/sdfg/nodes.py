@@ -35,6 +35,7 @@ class Node(object):
     out_connectors = DictProperty(key_type=str,
                                   value_type=dtypes.typeclass,
                                   desc="A set of output connectors for this node.")
+    guid = Property(dtype=str, allow_none=False)
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -45,6 +46,8 @@ class Node(object):
 
         self.in_connectors = in_connectors or {}
         self.out_connectors = out_connectors or {}
+
+        self.guid = graph.generate_element_id(self)
 
     def __str__(self):
         if hasattr(self, 'label'):
@@ -253,20 +256,32 @@ class AccessNode(Node):
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
+
+        node._guid = graph.generate_element_id(node)
+
         return node
 
     @property
     def label(self):
         return self.data
 
+    @property
+    def root_data(self):
+        return self.data.split('.')[0]
+
     def __label__(self, sdfg, state):
         return self.data
 
-    def desc(self, sdfg):
+    def desc(self, sdfg: Union['dace.sdfg.SDFG', 'dace.sdfg.SDFGState', 'dace.sdfg.ScopeSubgraphView']):
+        if isinstance(sdfg, (dace.sdfg.SDFGState, dace.sdfg.ScopeSubgraphView)):
+            sdfg = sdfg.parent
+        return sdfg.arrays[self.data]
+
+    def root_desc(self, sdfg):
         from dace.sdfg import SDFGState, ScopeSubgraphView
         if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
             sdfg = sdfg.parent
-        return sdfg.arrays[self.data]
+        return sdfg.arrays[self.data.split('.')[0]]
 
     def validate(self, sdfg, state):
         if self.data not in sdfg.arrays:
@@ -342,6 +357,10 @@ class Tasklet(CodeNode):
                             'additional side effects on the system state (e.g., callback). '
                             'Defaults to None, which lets the framework make assumptions based on '
                             'the tasklet contents')
+    ignored_symbols = SetProperty(element_type=str, desc='A set of symbols to ignore when computing '
+                                  'the symbols used by this tasklet. Used to skip certain symbols in non-Python '
+                                  'tasklets, where only string analysis is possible; and to skip globals in Python '
+                                  'tasklets that should not be given as parameters to the SDFG.')
 
     def __init__(self,
                  label,
@@ -355,6 +374,7 @@ class Tasklet(CodeNode):
                  code_exit="",
                  location=None,
                  side_effects=None,
+                 ignored_symbols=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
@@ -365,6 +385,7 @@ class Tasklet(CodeNode):
         self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
         self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.side_effects = side_effects
+        self.ignored_symbols = ignored_symbols or set()
         self.debuginfo = debuginfo
 
     @property
@@ -393,7 +414,11 @@ class Tasklet(CodeNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        return self.code.get_free_symbols(self.in_connectors.keys() | self.out_connectors.keys())
+        symbols_to_ignore = self.in_connectors.keys() | self.out_connectors.keys()
+        symbols_to_ignore |= self.ignored_symbols
+
+        return self.code.get_free_symbols(symbols_to_ignore)
+
 
     def has_side_effects(self, sdfg) -> bool:
         """
@@ -550,6 +575,19 @@ class NestedSDFG(CodeNode):
         self.schedule = schedule
         self.debuginfo = debuginfo
 
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            # Skip GUID.
+            if k in ('guid',):
+                continue
+            setattr(result, k, dcpy(v, memo))
+        if result._sdfg is not None:
+            result._sdfg.parent_nsdfg_node = result
+        return result
+
     @staticmethod
     def from_json(json_obj, context=None):
         from dace import SDFG  # Avoid import loop
@@ -566,16 +604,29 @@ class NestedSDFG(CodeNode):
 
         ret.sdfg.parent_nsdfg_node = ret
 
-        ret.sdfg.update_sdfg_list([])
+        ret.sdfg.update_cfg_list([])
 
         return ret
 
+    def used_symbols(self, all_symbols: bool) -> Set[str]:
+        free_syms = set().union(*(map(str, pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
+
+        keys_to_use = set(self.symbol_mapping.keys())
+
+        # Filter out unused internal symbols from symbol mapping
+        if not all_symbols:
+            internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            keys_to_use &= internally_used_symbols
+
+        free_syms |= set().union(*(map(str,
+                                       pystr_to_symbolic(v).free_symbols) for k, v in self.symbol_mapping.items()
+                                   if k in keys_to_use))
+
+        return free_syms
+
     @property
     def free_symbols(self) -> Set[str]:
-        return set().union(*(map(str,
-                                 pystr_to_symbolic(v).free_symbols) for v in self.symbol_mapping.values()),
-                           *(map(str,
-                                 pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
+        return self.used_symbols(all_symbols=True)
 
     def infer_connector_types(self, sdfg, state):
         # Avoid import loop
@@ -593,7 +644,7 @@ class NestedSDFG(CodeNode):
         else:
             return self.label
 
-    def validate(self, sdfg, state, references: Optional[Set[int]] = None):
+    def validate(self, sdfg, state, references: Optional[Set[int]] = None, **context: bool):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid nested SDFG name "%s"' % self.label)
         for in_conn in self.in_connectors:
@@ -602,6 +653,13 @@ class NestedSDFG(CodeNode):
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
+        if self.sdfg.parent_nsdfg_node is not self:
+            raise ValueError('Parent nested SDFG node not properly set')
+        if self.sdfg.parent is not state:
+            raise ValueError('Parent state not properly set for nested SDFG node')
+        if self.sdfg.parent_sdfg is not sdfg:
+            raise ValueError('Parent SDFG not properly set for nested SDFG node')
+
         connectors = self.in_connectors.keys() | self.out_connectors.keys()
         for conn in connectors:
             if conn not in self.sdfg.arrays:
@@ -609,14 +667,28 @@ class NestedSDFG(CodeNode):
                     f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
                     'Example: parameter passed to a function without a matching array within it.')
         for dname, desc in self.sdfg.arrays.items():
-            # TODO(later): Disallow scalars without access nodes (so that this
-            #              check passes for them too).
-            if isinstance(desc, data.Scalar):
-                continue
             if not desc.transient and dname not in connectors:
                 raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
             if dname in connectors and desc.transient:
                 raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
+
+        # Validate inout connectors
+        from dace.sdfg import utils  # Avoids circular import
+        inout_connectors = self.in_connectors.keys() & self.out_connectors.keys()
+        for conn in inout_connectors:
+            inputs = set()
+            outputs = set()
+            for edge in state.in_edges_by_connector(self, conn):
+                src = utils.get_global_memlet_path_src(sdfg, state, edge)
+                if isinstance(src, AccessNode):
+                    inputs.add(src.data)
+            for edge in state.out_edges_by_connector(self, conn):
+                dst = utils.get_global_memlet_path_dst(sdfg, state, edge)
+                if isinstance(dst, AccessNode):
+                    outputs.add(dst.data)
+            if len(inputs - outputs) > 0:
+                raise ValueError(f"Inout connector {conn} is connected to different input ({inputs}) and "
+                                 f"output ({outputs}) arrays")
 
         # Validate undefined symbols
         symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
@@ -629,7 +701,7 @@ class NestedSDFG(CodeNode):
             warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
         # Recursively validate nested SDFG
-        self.sdfg.validate(references)
+        self.sdfg.validate(references, **context)
 
 
 # ------------------------------------------------------------------------------
@@ -660,7 +732,7 @@ class ExitNode(Node):
 @dace.serialize.serializable
 class MapEntry(EntryNode):
     """ Node that opens a Map scope.
-        
+
         :see: Map
     """
 
@@ -737,7 +809,7 @@ class MapEntry(EntryNode):
 @dace.serialize.serializable
 class MapExit(ExitNode):
     """ Node that closes a Map scope.
-        
+
         :see: Map
     """
 
@@ -808,6 +880,9 @@ class Map(object):
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
+    unroll_factor = Property(dtype=int, allow_none=True, default=0,
+                             desc="How much iterations should be unrolled."
+                             " To prevent unrolling, set this value to 1.")
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
@@ -819,25 +894,28 @@ class Map(object):
     omp_num_threads = Property(dtype=int,
                                default=0,
                                desc="Number of OpenMP threads executing the Map",
-                               optional=True,
-                               optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
+                               serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
     omp_schedule = EnumProperty(dtype=dtypes.OMPScheduleType,
                                 default=dtypes.OMPScheduleType.Default,
                                 desc="OpenMP schedule {static, dynamic, guided}",
-                                optional=True,
-                                optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
+                                serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
     omp_chunk_size = Property(dtype=int,
                               default=0,
                               desc="OpenMP schedule chunk size",
-                              optional=True,
-                              optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
+                              serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,
                                   allow_none=True,
                                   desc="GPU kernel block size",
-                                  optional=True,
-                                  optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
+    gpu_launch_bounds = Property(dtype=str,
+                                 default="0",
+                                 desc="GPU kernel launch bounds. A value of -1 disables the statement, 0 (default) "
+                                 "enables the statement if block size is not symbolic, and any other value "
+                                 "(including tuples) sets it explicitly.",
+                                 serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     def __init__(self,
                  label,
@@ -854,7 +932,7 @@ class Map(object):
         self.label = label
         self.schedule = schedule
         self.unroll = unroll
-        self.collapse = 1
+        self.collapse = collapse
         self.params = params
         self.range = ndrange
         self.debuginfo = debuginfo
@@ -870,7 +948,12 @@ class Map(object):
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
-            raise NameError('Invalid map name "%s"' % self.label)
+            raise NameError(f'Invalid map name "{self.label}"')
+        if self.get_param_num() == 0:
+            raise ValueError('There must be at least one parameter in a map.')
+        if self.get_param_num() != self.range.dims():
+            raise ValueError(f'There are {self.get_param_num()} parameters but the range'
+                             f' has {self.range.dims()} dimensions.')
 
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
@@ -886,7 +969,7 @@ MapEntry = indirect_properties(Map, lambda obj: obj.map)(MapEntry)
 @dace.serialize.serializable
 class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
-        
+
         :see: Consume
     """
 
@@ -941,8 +1024,10 @@ class ConsumeEntry(EntryNode):
     @property
     def free_symbols(self) -> Set[str]:
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
-        return ((set(self._consume.num_pes.free_symbols)
-                 | set(self._consume.condition.get_free_symbols())) - dyn_inputs)
+        result = set(self._consume.num_pes.free_symbols)
+        if self._consume.condition is not None:
+            result |= set(self._consume.condition.get_free_symbols())
+        return result - dyn_inputs
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         from dace.codegen.tools.type_inference import infer_expr_type
@@ -965,7 +1050,7 @@ class ConsumeEntry(EntryNode):
 @dace.serialize.serializable
 class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
-        
+
         :see: Consume
     """
 
@@ -1030,7 +1115,7 @@ class Consume(object):
     label = Property(dtype=str, desc="Name of the consume node")
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
-    condition = CodeProperty(desc="Quiescence condition", allow_none=True)
+    condition = CodeProperty(desc="Quiescence condition", allow_none=True, default=None)
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Consume schedule", default=dtypes.ScheduleType.Default)
     chunksize = Property(dtype=int, desc="Maximal size of elements to consume at a time", default=1)
     debuginfo = DebugInfoProperty()
@@ -1306,11 +1391,11 @@ class LibraryNode(CodeNode):
         if implementation not in self.implementations.keys():
             raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
-        sdfg_id = sdfg.sdfg_id
+        cfg_id = sdfg.cfg_id
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation: ExpandTransformation = transformation_type()
-        transformation.setup_match(sdfg, sdfg_id, state_id, subgraph, 0)
+        transformation.setup_match(sdfg, cfg_id, state_id, subgraph, 0)
         if not transformation.can_be_applied(state, 0, sdfg):
             raise RuntimeError("Library node expansion applicability check failed.")
         sdfg.append_transformation(transformation)
@@ -1322,7 +1407,7 @@ class LibraryNode(CodeNode):
         """Register an implementation to belong to this library node type."""
         cls.implementations[name] = transformation_type
         transformation_type._match_node = cls
-    
+
     @property
     def free_symbols(self) -> Set[str]:
         fsyms = super(LibraryNode, self).free_symbols
