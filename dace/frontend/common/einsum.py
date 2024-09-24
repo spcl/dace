@@ -122,7 +122,7 @@ def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
     BATCH, sAM, sAK, sAB, sBK, sBN, sBB, sCM, sCN, sCB = (symbolic.symbol(s) if symbolic.issymbolic(
         strides[s]) else strides[s] for s in ['BATCH', 'sAM', 'sAK', 'sAB', 'sBK', 'sBN', 'sBB', 'sCM', 'sCN', 'sCB'])
 
-    batched = strides['BATCH'] != 1
+    batched = not symbolic.equal_valued(1, strides['BATCH'])
 
     _, xarr = sdfg.add_array('X',
                              dtype=dtype,
@@ -198,7 +198,7 @@ def _create_einsum_internal(sdfg: SDFG,
         raise ValueError('Invalid number of arrays for einsum expression')
 
     if init_output is None:
-        init_output = (beta != 1.0)
+        init_output = not symbolic.equal_valued(1, beta)
 
     if alpha is None:
         alpha = 1.0
@@ -284,7 +284,7 @@ def _create_einsum_internal(sdfg: SDFG,
         rnode = Reduce('einsum_reduce')
         rnode.axes = axes
         rnode.wcr = 'lambda a, b: a + b'
-        if beta == 0:
+        if symbolic.equal_valued(0, beta):
             rnode.identity = 0
 
         c = state.add_write(output)
@@ -301,7 +301,7 @@ def _create_einsum_internal(sdfg: SDFG,
         # Add state before this one to initialize the output value
         if to_init:
             init_state = sdfg.add_state_before(state)
-            if beta == 0.0:
+            if symbolic.equal_valued(0, beta):
                 inputs = {}
                 inputs_scalar = set()
                 code = f'out_{output} = 0'
@@ -321,12 +321,12 @@ def _create_einsum_internal(sdfg: SDFG,
                 onode = init_state.add_write(output)
                 init_state.add_edge(t, 'out_%s' % output, onode, None, Memlet.simple(output, '0'))
 
-                if beta != 0.0:
+                if not symbolic.equal_valued(0, beta):
                     inode = init_state.add_read(output)
                     init_state.add_edge(inode, None, t, 'inp_%s' % output, Memlet.simple(output, '0'))
 
         wcr = 'lambda a,b: a+b' if is_conflicted else None
-        alphacode = '' if alpha == 1.0 else f'{alpha} * '
+        alphacode = '' if symbolic.equal_valued(1, alpha) else f'{alpha} * '
         # Pure einsum map
         state.add_mapped_tasklet(
             'einsum', {k: '0:%s' % v
@@ -376,7 +376,7 @@ def _create_einsum_internal(sdfg: SDFG,
             strides['sCB'] = strides['sCM'] = strides['N']
 
         # Transposed output, swap order
-        if strides['sCM'] == 1:
+        if symbolic.equal_valued(1, strides['sCM']):
             strides['sCM'], strides['sCN'] = strides['sCN'], strides['sCM']
             strides['M'], strides['N'] = strides['N'], strides['M']
             (strides['sAM'], strides['sAK'], strides['sAB'], strides['sBK'], strides['sBN'], strides['sBB']) = \

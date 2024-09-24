@@ -268,12 +268,12 @@ def test_lift_einsum_beta():
     assert np.allclose(sdfg(A, B), C)
 
 
-@pytest.mark.parametrize('symbolic', (False, True))
-def test_lift_einsum_alpha_beta(symbolic):
+@pytest.mark.parametrize('symbolic_alpha', (False, True))
+def test_lift_einsum_alpha_beta(symbolic_alpha):
     from dace.libraries.blas.nodes.einsum import Einsum
     from dace.transformation.dataflow import LiftEinsum
 
-    alph = dace.symbol('alph') if symbolic else 2
+    alph = dace.symbol('alph') if symbolic_alpha else 2
 
     @dace.program
     def tester(A, B):
@@ -296,9 +296,9 @@ def test_lift_einsum_alpha_beta(symbolic):
         if isinstance(node, Einsum):
             assert node.einsum_str == 'ij,jk->ik'
             assert node.alpha == alph
-            assert node.beta == 1.0
+            assert symbolic.equal_valued(1, node.beta)
 
-    if not symbolic:
+    if not symbolic_alpha:
         C = 1 + 2 * A @ B
         assert np.allclose(sdfg(A, B), C)
 
