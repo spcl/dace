@@ -1,13 +1,14 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
+import numpy as np
 from dace.sdfg.state import ConditionalBlock
 
 
 def test_dataflow_if_check():
 
     @dace.program
-    def dataflow_if_check(A: dace.float64, i: dace.int64):
+    def dataflow_if_check(A: dace.int32[10], i: dace.int64):
         if A[i] < 10:
             return 0
         elif A[i] == 10:
@@ -19,7 +20,9 @@ def test_dataflow_if_check():
 
     assert any(isinstance(x, ConditionalBlock) for x in sdfg.nodes())
 
-    A = [0., 0., 0., 0., 10., 100., 0.]
+    A = np.zeros((10,), np.int32)
+    A[4] = 10
+    A[5] = 100
     assert sdfg(A, 0)[0] == 0
     assert sdfg(A, 4)[0] == 10
     assert sdfg(A, 5)[0] == 100
