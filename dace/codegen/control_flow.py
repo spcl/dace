@@ -236,13 +236,17 @@ class ReturnCFBlock(ControlFlow):
 
 
 @dataclass
-class GeneralBlock(ControlFlow):
-    """ 
-    General (or unrecognized) control flow block with gotos between blocks. 
-    """
+class RegionBlock(ControlFlow):
 
     # The control flow region that this block corresponds to (may be the SDFG in the absence of hierarchical regions).
     region: Optional[ControlFlowRegion]
+
+
+@dataclass
+class GeneralBlock(RegionBlock):
+    """ 
+    General (or unrecognized) control flow block with gotos between blocks. 
+    """
 
     # List of children control flow blocks
     elements: List[ControlFlow]
@@ -270,7 +274,7 @@ class GeneralBlock(ControlFlow):
         for i, elem in enumerate(self.elements):
             expr += elem.as_cpp(codegen, symbols)
             # In a general block, emit transitions and assignments after each individual block or region.
-            if isinstance(elem, BasicCFBlock) or (isinstance(elem, GeneralBlock) and elem.region):
+            if isinstance(elem, BasicCFBlock) or (isinstance(elem, RegionBlock) and elem.region):
                 cfg = elem.state.parent_graph if isinstance(elem, BasicCFBlock) else elem.region.parent_graph
                 sdfg = cfg if isinstance(cfg, SDFG) else cfg.sdfg
                 out_edges = cfg.out_edges(elem.state) if isinstance(elem, BasicCFBlock) else cfg.out_edges(elem.region)
@@ -514,10 +518,9 @@ class DoWhileScope(ControlFlow):
 
 
 @dataclass
-class GeneralLoopScope(ControlFlow):
+class GeneralLoopScope(RegionBlock):
     """ General loop block based on a loop control flow region. """
 
-    loop: LoopRegion
     body: ControlFlow
 
     def as_cpp(self, codegen, symbols) -> str:
@@ -566,6 +569,10 @@ class GeneralLoopScope(ControlFlow):
         return expr
 
     @property
+    def loop(self) -> LoopRegion:
+        return self.region
+
+    @property
     def first_block(self) -> ControlFlowBlock:
         return self.loop.start_block
 
@@ -602,10 +609,9 @@ class SwitchCaseScope(ControlFlow):
 
 
 @dataclass
-class GeneralConditionalScope(ControlFlow):
+class GeneralConditionalScope(RegionBlock):
     """ General conditional block based on a conditional control flow region. """
 
-    conditional: ConditionalBlock
     branch_bodies: List[Tuple[Optional[CodeBlock], ControlFlow]]
 
     def as_cpp(self, codegen, symbols) -> str:
@@ -628,6 +634,10 @@ class GeneralConditionalScope(ControlFlow):
             if i == len(self.branch_bodies) - 1:
                 expr += '}\n'
         return expr
+
+    @property
+    def conditional(self) -> ConditionalBlock:
+        return self.region
 
     @property
     def first_block(self) -> ControlFlowBlock:
