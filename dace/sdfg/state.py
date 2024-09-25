@@ -3212,16 +3212,10 @@ class LoopRegion(ControlFlowRegion):
         return False
 
 
-class BranchRegion(ControlFlowRegion):
-
-    def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None):
-        super().__init__(label, sdfg)
-
-
 @make_properties
 class ConditionalBlock(ControlFlowBlock, ControlGraphView):
 
-    _branches: List[Tuple[Optional[CodeBlock], BranchRegion]]
+    _branches: List[Tuple[Optional[CodeBlock], ControlFlowRegion]]
 
     def __init__(self, label: str):
         super().__init__(label)
@@ -3234,7 +3228,7 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
         return f'ConditionalBlock ({self.label})'
 
     @property
-    def branches(self) -> List[Tuple[Optional[CodeBlock], BranchRegion]]:
+    def branches(self) -> List[Tuple[Optional[CodeBlock], ControlFlowRegion]]:
         return self._branches
     
     def nodes(self) -> List['ControlFlowBlock']:
@@ -3292,9 +3286,9 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
         for condition, region in json_obj['branches']:
             if condition is not None:
                 cond_region._branches.append((CodeBlock.from_json(condition),
-                                              BranchRegion.from_json(region, context)))
+                                              ControlFlowRegion.from_json(region, context)))
             else:
-                cond_region._branches.append((None, BranchRegion.from_json(region, context)))
+                cond_region._branches.append((None, ControlFlowRegion.from_json(region, context)))
         return cond_region
     
     def inline(self) -> Tuple[bool, Any]:

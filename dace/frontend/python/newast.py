@@ -30,7 +30,7 @@ from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import (BranchRegion, BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
                              LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
@@ -2564,7 +2564,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.cfg_target.add_node(cond_block)
         self._on_block_added(cond_block)
 
-        if_body = BranchRegion(cond_block.label + '_body', sdfg=self.sdfg)
+        if_body = ControlFlowRegion(cond_block.label + '_body', sdfg=self.sdfg)
         cond_block.branches.append((CodeBlock(cond), if_body))
         if_body.parent_graph = self.cfg_target
 
@@ -2573,7 +2573,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
-            else_body = BranchRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}', sdfg=self.sdfg)
+            else_body = ControlFlowRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}',
+                                          sdfg=self.sdfg)
             #cond_block.branches.append((CodeBlock(cond_else), else_body))
             cond_block.branches.append((None, else_body))
             else_body.parent_graph = self.cfg_target
