@@ -11,7 +11,10 @@ import warnings
 from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
                     overload)
 
+import sympy
+
 import dace
+from dace.frontend.python import astutils
 import dace.serialize
 from dace import data as dt
 from dace import dtypes
@@ -3315,13 +3318,31 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
             parent.remove_edge(a_edge)
 
         from dace.sdfg.sdfg import InterstateEdge
+        else_branch = None
+        full_cond_expression: Optional[List[ast.AST]] = None
         for condition, region in self._branches:
-            if region is not None:
+            if condition is None:
+                else_branch = region
+            else:
+                if full_cond_expression is None:
+                    full_cond_expression = condition.code[0]
+                else:
+                    full_cond_expression = astutils.and_expr(full_cond_expression, condition.code[0])
                 parent.add_node(region)
                 parent.add_edge(guard_state, region, InterstateEdge(condition=condition))
                 parent.add_edge(region, end_state, InterstateEdge())
-            else:
-                parent.add_edge(guard_state, end_state, InterstateEdge(condition=condition))
+        if full_cond_expression is not None:
+            negative_full_cond = astutils.negate_expr(full_cond_expression)
+            negative_cond = CodeBlock([negative_full_cond])
+        else:
+            negative_cond = CodeBlock('1')
+
+        if else_branch is not None:
+            parent.add_node(else_branch)
+            parent.add_edge(guard_state, else_branch, InterstateEdge(condition=negative_cond))
+            parent.add_edge(region, end_state, InterstateEdge())
+        else:
+            parent.add_edge(guard_state, end_state, InterstateEdge(condition=negative_cond))
 
         parent.remove_node(self)
 
