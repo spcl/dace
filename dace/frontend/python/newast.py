@@ -3,7 +3,6 @@ import ast
 from collections import OrderedDict
 import copy
 import itertools
-import inspect
 import networkx as nx
 import re
 import sys
@@ -25,14 +24,13 @@ from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConve
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
-from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet, pyexpr_to_symbolic, ParseMemlet,
-                                                inner_eval_ast, MemletExpr)
-from dace.sdfg import nodes, utils as sdutil
+from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, ParseMemlet, inner_eval_ast, MemletExpr
+from dace.sdfg import nodes
 from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import (BreakBlock, ConditionalRegion, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
+from dace.sdfg.state import (BranchRegion, BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
                              LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
@@ -2552,37 +2550,35 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Continue(self, node: ast.Continue):
         if not self._has_loop_ancestor(self.cfg_target):
-            raise DaceSyntaxError(self, node, "Continue block outside loop region")
+            raise DaceSyntaxError(self, node, 'Continue block outside loop region')
         continue_block = ContinueBlock(f'continue_{node.lineno}')
         self.cfg_target.add_node(continue_block, ensure_unique_name=True)
         self._on_block_added(continue_block)
 
     def visit_If(self, node: ast.If):
         # Generate conditions
-        cond, cond_else, _ = self._visit_test(node.test)
+        cond, _, _ = self._visit_test(node.test)
 
         # Add conditional region
-        cond_region = ConditionalRegion(f"if_{node.lineno}")
-        self.cfg_target.add_node(cond_region)
-        self._on_block_added(cond_region)
+        cond_block = ConditionalBlock(f'if_{node.lineno}')
+        self.cfg_target.add_node(cond_block)
+        self._on_block_added(cond_block)
 
-        if_body = ControlFlowRegion(cond_region.label + "_body", sdfg=self.sdfg)
-        cond_region.branches.append((CodeBlock(cond), if_body))
-        if_body.parent_graph = cond_region
+        if_body = BranchRegion(cond_block.label + '_body', sdfg=self.sdfg)
+        cond_block.branches.append((CodeBlock(cond), if_body))
+        if_body.parent_graph = self.cfg_target
 
         # Visit recursively
         self._recursive_visit(node.body, 'if', node.lineno, if_body, False)
 
-
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
-            else_body = ControlFlowRegion(f"{cond_region.label}_else_{node.orelse[0].lineno}", sdfg=self.sdfg)
-            cond_region.branches.append((CodeBlock(cond_else), else_body))
-            else_body.parent_graph = cond_region
+            else_body = BranchRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}', sdfg=self.sdfg)
+            #cond_block.branches.append((CodeBlock(cond_else), else_body))
+            cond_block.branches.append((None, else_body))
+            else_body.parent_graph = self.cfg_target
             # Visit recursively
             self._recursive_visit(node.orelse, 'else', node.lineno, else_body, False)
-        else:
-            cond_region.branches.append((CodeBlock(cond_else), None))
 
     def _parse_tasklet(self, state: SDFGState, node: TaskletType, name=None):
 

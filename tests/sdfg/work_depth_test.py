@@ -317,7 +317,6 @@ def test_assumption_system_contradictions(assumptions):
 
 
 if __name__ == '__main__':
-    test_work_depth("unbounded_while_do")
     for test_name in work_depth_test_cases.keys():
         test_work_depth(test_name)
 

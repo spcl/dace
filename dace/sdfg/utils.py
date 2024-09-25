@@ -13,7 +13,7 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import ConditionalRegion, SDFGState, StateSubgraphView, LoopRegion, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, SDFGState, StateSubgraphView, LoopRegion, ControlFlowRegion
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
@@ -1262,8 +1262,7 @@ def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = No
 
 
 def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    blocks = [n for n, _ in sdfg.all_nodes_recursive()
-              if isinstance(n, ControlFlowRegion) and not isinstance(n, (LoopRegion, SDFG))]
+    blocks = [n for n, _ in sdfg.all_nodes_recursive() if type(n) is ControlFlowRegion]
     count = 0
 
     for _block in optional_progressbar(reversed(blocks), title='Inlining control flow blocks',
@@ -1275,7 +1274,7 @@ def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: 
     return count
 
 def inline_conditional_regions(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalRegion)]
+    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
     count = 0
 
     for _block in optional_progressbar(reversed(blocks), title='Inlining conditional regions',

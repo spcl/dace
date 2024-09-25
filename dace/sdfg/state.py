@@ -1140,6 +1140,11 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         """
         self._default_lineinfo = lineinfo
 
+    def view(self):
+        from dace.sdfg.analysis.cutout import SDFGCutout
+        cutout = SDFGCutout.multistate_cutout(self, make_side_effects_global=False, override_start_block=self)
+        cutout.view()
+
     def to_json(self, parent=None):
         tmp = {
             'type': self.__class__.__name__,
@@ -2752,6 +2757,9 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                         yield from node.sdfg.all_control_flow_regions(recursive=recursive)
             elif isinstance(block, ControlFlowRegion):
                 yield from block.all_control_flow_regions(recursive=recursive)
+            elif isinstance(block, ConditionalBlock):
+                for _, branch in block.branches:
+                    yield from branch.all_control_flow_regions(recursive=recursive)
 
     def all_sdfgs_recursive(self) -> Iterator['SDFG']:
         """ Iterate over this and all nested SDFGs. """
@@ -2766,7 +2774,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                 yield block
             elif isinstance(block, ControlFlowRegion):
                 yield from block.all_states()
-            elif isinstance(block, ConditionalRegion):
+            elif isinstance(block, ConditionalBlock):
                 for _, region in block.branches:
                     if region is not None:
                         yield from region.all_states()
@@ -2803,7 +2811,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
         for block in ordered_blocks:
             state_symbols = set()
-            if isinstance(block, (ControlFlowRegion, ConditionalRegion)):
+            if isinstance(block, (ControlFlowRegion, ConditionalBlock)):
                 b_free_syms, b_defined_syms, b_used_before_syms = block._used_symbols_internal(all_symbols,
                                                                                                defined_syms,
                                                                                                free_syms,
@@ -3035,7 +3043,7 @@ class LoopRegion(ControlFlowRegion):
         # and return are inlined correctly.
         def recursive_inline_cf_regions(region: ControlFlowRegion) -> None:
             for block in region.nodes():
-                if (isinstance(block, ControlFlowRegion) or isinstance(block, ConditionalRegion)) and not isinstance(block, LoopRegion):
+                if (isinstance(block, ControlFlowRegion) or isinstance(block, ConditionalBlock)) and not isinstance(block, LoopRegion):
                     recursive_inline_cf_regions(block)
                     block.inline()
         recursive_inline_cf_regions(self)
@@ -3204,36 +3212,56 @@ class LoopRegion(ControlFlowRegion):
                 return True
         return False
 
-@dace.serialize.serializable
-class ConditionalRegion(ControlFlowBlock, ControlGraphView):
+
+class BranchRegion(ControlFlowRegion):
+
+    def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None):
+        super().__init__(label, sdfg)
+
+
+@make_properties
+class ConditionalBlock(ControlFlowBlock, ControlGraphView):
+
+    _branches: List[Tuple[Optional[CodeBlock], BranchRegion]]
+
     def __init__(self, label: str):
         super().__init__(label)
-        self.branches: List[Tuple[CodeBlock, ControlFlowRegion]] = []
+        self._branches = []
+
+    def __str__(self):
+        return self._label
+
+    def __repr__(self) -> str:
+        return f'ConditionalBlock ({self.label})'
+
+    @property
+    def branches(self) -> List[Tuple[Optional[CodeBlock], BranchRegion]]:
+        return self._branches
     
     def nodes(self) -> List['ControlFlowBlock']:
-        return [node for _, node in self.branches if node is not None]
+        return [node for _, node in self._branches if node is not None]
 
     def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
         return []
     
     def _used_symbols_internal(self,
-                            all_symbols: bool,
-                            defined_syms: Optional[Set] = None,
-                            free_syms: Optional[Set] = None,
-                            used_before_assignment: Optional[Set] = None,
-                            keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
+                               all_symbols: bool,
+                               defined_syms: Optional[Set] = None,
+                               free_syms: Optional[Set] = None,
+                               used_before_assignment: Optional[Set] = None,
+                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
-        for condition, region in self.branches:
-            if region is not None:
+        for condition, region in self._branches:
+            if condition is not None:
                 free_syms |= condition.get_free_symbols(defined_syms)
-                b_free_symbols, b_defined_symbols, b_used_before_assignment = region._used_symbols_internal(
-                    all_symbols, defined_syms, free_syms, used_before_assignment, keep_defined_in_mapping)
-                free_syms |= b_free_symbols
-                defined_syms |= b_defined_symbols
-                used_before_assignment |= b_used_before_assignment
+            b_free_symbols, b_defined_symbols, b_used_before_assignment = region._used_symbols_internal(
+                all_symbols, defined_syms, free_syms, used_before_assignment, keep_defined_in_mapping)
+            free_syms |= b_free_symbols
+            defined_syms |= b_defined_symbols
+            used_before_assignment |= b_used_before_assignment
 
         defined_syms -= used_before_assignment
         free_syms -= defined_syms
@@ -3241,32 +3269,33 @@ class ConditionalRegion(ControlFlowBlock, ControlGraphView):
         return free_syms, defined_syms, used_before_assignment
 
     def replace_dict(self,
-                        repl: Dict[str, str],
-                        symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
-                        replace_in_graph: bool = True,
-                        replace_keys: bool = True):
+                     repl: Dict[str, str],
+                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+                     replace_in_graph: bool = True,
+                     replace_keys: bool = True):
         if replace_keys:
             from dace.sdfg.replace import replace_properties_dict
             replace_properties_dict(self, repl, symrepl)
 
-        for _, region in self.branches:
-            if region is not None:
-                region.replace_dict(repl, symrepl, replace_in_graph)
+        for _, region in self._branches:
+            region.replace_dict(repl, symrepl, replace_in_graph)
 
     def to_json(self, parent=None):
         json = super().to_json(parent)
-        json["branches"] = [(condition.to_json(), cfg.to_json()) for condition, cfg in self.branches]
+        json['branches'] = [(condition.to_json() if condition is not None else None, cfg.to_json())
+                            for condition, cfg in self._branches]
         return json
     
     @classmethod
     def from_json(cls, json_obj, context=None):
-        cond_region = ConditionalRegion(json_obj["label"])
-        cond_region.is_collapsed = json_obj["collapsed"]
-        for condition, region in json_obj["branches"]:
-            if region is not None:
-                cond_region.branches.append((CodeBlock.from_json(condition), ControlFlowRegion.from_json(region, context)))
+        cond_region = ConditionalBlock(json_obj['label'])
+        cond_region.is_collapsed = json_obj['collapsed']
+        for condition, region in json_obj['branches']:
+            if condition is not None:
+                cond_region._branches.append((CodeBlock.from_json(condition),
+                                              BranchRegion.from_json(region, context)))
             else:
-                cond_region.branches.append((CodeBlock.from_json(condition), None))
+                cond_region._branches.append((None, BranchRegion.from_json(region, context)))
         return cond_region
     
     def inline(self) -> Tuple[bool, Any]:
@@ -3293,7 +3322,7 @@ class ConditionalRegion(ControlFlowBlock, ControlGraphView):
             parent.remove_edge(a_edge)
 
         from dace.sdfg.sdfg import InterstateEdge
-        for condition, region in self.branches:
+        for condition, region in self._branches:
             if region is not None:
                 parent.add_node(region)
                 parent.add_edge(guard_state, region, InterstateEdge(condition=condition))
@@ -3311,14 +3340,18 @@ class ConditionalRegion(ControlFlowBlock, ControlGraphView):
 
 @make_properties
 class NamedRegion(ControlFlowRegion):
+
     debuginfo = DebugInfoProperty()
+
     def __init__(self, label: str, sdfg: Optional['SDFG']=None, debuginfo: Optional[dtypes.DebugInfo]=None):
         super().__init__(label, sdfg)
         self.debuginfo = debuginfo
 
 @make_properties
 class FunctionCallRegion(ControlFlowRegion):
+
     arguments = DictProperty(str, str)
+
     def __init__(self, label: str, arguments: Dict[str, str] = {}, sdfg: 'SDFG' = None):
         super().__init__(label, sdfg)
         self.arguments = arguments

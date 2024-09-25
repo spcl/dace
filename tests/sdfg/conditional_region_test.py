@@ -4,7 +4,7 @@ import numpy as np
 import dace
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.state import ConditionalRegion, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 import dace.serialize
 
 
@@ -14,7 +14,7 @@ def test_cond_region_if():
     sdfg.add_symbol("i", dace.int32)
     state0 = sdfg.add_state('state0', is_start_block=True)
     
-    if1 = ConditionalRegion("if1")
+    if1 = ConditionalBlock("if1")
     sdfg.add_node(if1)
     sdfg.add_edge(state0, if1, InterstateEdge())
 
@@ -37,7 +37,7 @@ def test_cond_region_if():
 
 def test_serialization():
     sdfg = SDFG("test_serialization")
-    cond_region = ConditionalRegion("cond_region")
+    cond_region = ConditionalBlock("cond_region")
     sdfg.add_node(cond_region, is_start_block=True)
     sdfg.add_symbol("i", dace.int32)
 
@@ -49,7 +49,7 @@ def test_serialization():
 
     new_sdfg = SDFG.from_json(sdfg.to_json())
     assert new_sdfg.is_valid()
-    new_cond_region: ConditionalRegion = new_sdfg.nodes()[0]
+    new_cond_region: ConditionalBlock = new_sdfg.nodes()[0]
     for j in range(10):
         condition, cfg = new_cond_region.branches[j]
         assert condition == CodeBlock(f"i == {j}")
@@ -61,7 +61,7 @@ def test_if_else():
     sdfg.add_symbol("i", dace.int32)
     state0 = sdfg.add_state('state0', is_start_block=True)
     
-    if1 = ConditionalRegion("if1")
+    if1 = ConditionalBlock("if1")
     sdfg.add_node(if1)
     sdfg.add_edge(state0, if1, InterstateEdge())
 

@@ -69,6 +69,8 @@ def program(f: F,
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
                                resulting program.
+    :param use_experimental_cfg_blocks: If True, makes use of experimental CFG blocks susch as loop and conditional
+                                        regions.
     :note: If arguments are defined with type hints, the program can be compiled
            ahead-of-time with ``.compile()``.
     """

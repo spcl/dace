@@ -9,7 +9,7 @@ from dace.sdfg import SDFG
 from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
-from dace.sdfg import infer_types, utils as sdutils
+from dace.sdfg import infer_types
 
 # Import CPU code generator. TODO: Remove when refactored
 from dace.codegen.targets import cpp, cpu
@@ -158,8 +158,6 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     from dace.codegen.targets.target import TargetCodeGenerator  # Avoid import loop
 
-    sdutils.inline_conditional_regions(sdfg)
-    sdutils.inline_control_flow_regions(sdfg)
     # Before compiling, validate SDFG correctness
     if validate:
         sdfg.validate()
