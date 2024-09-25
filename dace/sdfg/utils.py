@@ -1262,10 +1262,10 @@ def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = No
 
 
 def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    blocks = [n for n, _ in sdfg.all_nodes_recursive() if type(n) is ControlFlowRegion]
+    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ControlFlowRegion)]
     count = 0
 
-    for _block in optional_progressbar(reversed(blocks), title='Inlining control flow blocks',
+    for _block in optional_progressbar(reversed(blocks), title='Inlining control flow regions',
                                        n=len(blocks), progress=progress):
         block: ControlFlowRegion = _block
         if block.inline()[0]:
@@ -1273,13 +1273,13 @@ def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: 
 
     return count
 
-def inline_conditional_regions(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
+def inline_conditional_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
     blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
     count = 0
 
-    for _block in optional_progressbar(reversed(blocks), title='Inlining conditional regions',
+    for _block in optional_progressbar(reversed(blocks), title='Inlining conditional blocks',
                                        n=len(blocks), progress=progress):
-        block: ControlFlowRegion = _block
+        block: ConditionalBlock = _block
         if block.inline()[0]:
             count += 1
 

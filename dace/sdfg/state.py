@@ -3362,10 +3362,11 @@ class NamedRegion(ControlFlowRegion):
         self.debuginfo = debuginfo
 
 @make_properties
-class FunctionCallRegion(ControlFlowRegion):
+class FunctionCallRegion(NamedRegion):
 
     arguments = DictProperty(str, str)
 
-    def __init__(self, label: str, arguments: Dict[str, str] = {}, sdfg: 'SDFG' = None):
-        super().__init__(label, sdfg)
+    def __init__(self, label: str, arguments: Dict[str, str] = {}, sdfg: 'SDFG' = None,
+                 debuginfo: Optional[dtypes.DebugInfo]=None):
+        super().__init__(label, sdfg, debuginfo)
         self.arguments = arguments
