@@ -9,6 +9,7 @@ from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import transformation
 from dace import dtypes
 from dace import symbolic
@@ -335,7 +336,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
         _, _, v, _, _ = state.out_edges(map_before_split)[0]
         for name, typeclass in state.symbols_defined_at(v).items():
             symmap_ns[name] = symbolic.symbol(name, typeclass)
-            #raise Exception(symmap, ins, outs, sdfg.symbols, sub_sdfg.symbols, d)
+            # raise Exception(symmap, ins, outs, sdfg.symbols, sub_sdfg.symbols, d)
 
         nsdfg: nodes.NestedSDFG = state.add_nested_sdfg(
             sub_sdfg, sdfg, ins, outs, symbol_type_mapping=copy.deepcopy(d))
@@ -363,7 +364,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 _state.add_node(an)
                 u, u_conn, v, v_conn, memlet = edge
                 _state.add_edge(an, None, node, in_arr, Memlet(
-                    data=in_arr, subset=Range(memlet.subset)))
+                    data=in_arr, subset=Range(memlet.subset), wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo))
         for out_arr in outs:
             for (_state, _sdfg, node) in [
                 (state1, inner_loop_kernel_sdfg, lnsdfg),
@@ -378,18 +379,18 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 _state.add_node(an)
                 u, u_conn, v, v_conn, memlet = edge
                 _state.add_edge(node, out_arr, an, None, Memlet(
-                    data=out_arr, subset=Range(memlet.subset)))
+                    data=out_arr, subset=Range(memlet.subset), wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo))
 
         # Edges that go to and come out nested sdfg
         for in_edge in state.in_edges(first_node_in_microkernel):
             u, u_conn, v, v_conn, memlet = in_edge
             state.add_edge(u, u_conn, nsdfg, memlet.data, Memlet(
-                data=memlet.data, subset=Range(memlet.subset)))
+                data=memlet.data, subset=Range(memlet.subset), wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo))
 
         for out_edge in state.out_edges(last_node_in_microkernel):
             u, u_conn, v, v_conn, memlet = out_edge
             state.add_edge(nsdfg, memlet.data, v, v_conn, Memlet(
-                data=memlet.data, subset=Range(memlet.subset)))
+                data=memlet.data, subset=Range(memlet.subset), wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo))
 
         nodes_to_copyover = set()
         edges_to_copyover = set()
@@ -437,15 +438,13 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
             for e in special_in_edges:
                 u, uc, v, vc, memlet = e
-                new_memlet = Memlet(
-                    data=memlet.data, subset=Range(memlet.subset))
+                new_memlet = copy.deepcopy(memlet)
                 an = nodes.AccessNode(data=memlet.data)
                 kernel.add_node(an)
                 kernel.add_edge(an, None, first_node, vc, new_memlet)
             for e in special_out_edges:
                 u, uc, v, vc, memlet = e
-                new_memlet = Memlet(
-                    data=memlet.data, subset=Range(memlet.subset))
+                new_memlet = copy.deepcopy(memlet)
                 an = nodes.AccessNode(data=memlet.data)
                 kernel.add_node(an)
                 kernel.add_edge(last_node, uc, an, None, new_memlet)
@@ -500,10 +499,10 @@ class RemainderLoop(transformation.SingleStateTransformation):
         inner_loop_kernel_sdfg.validate()
         remainder_loop_kernel_sdfg.validate()
 
-
-        # Now need to apply it also on any assignments
         counter = 0
-        for n in state.nodes():
+        for n in state.bfs_nodes(dev_entry):
+            if n == state.exit_node(dev_entry):
+                break
             if isinstance(n, nodes.AccessNode):
                 can_out_of_bound = False
                 i_memlet = None
@@ -614,11 +613,11 @@ class RemainderLoop(transformation.SingleStateTransformation):
                     state.add_edge(i_u, i_uc, aan, None, Memlet(
                         subset=imemlet.subset, data=imemlet.data))
                     state.add_edge(aan, None, assign_nsdfg, imemlet.data,  Memlet(
-                        subset=imemlet.subset, data=imemlet.data))
+                        subset=imemlet.subset, data=imemlet.data, wcr=imemlet.wcr, wcr_nonatomic=imemlet.wcr_nonatomic, allow_oob=imemlet.allow_oob, debuginfo=imemlet.debuginfo))
                     oarr_name = omemlet.data
                     oarr = sdfg.arrays[omemlet.data]
                     state.add_edge(assign_nsdfg, omemlet.data, o_v, o_vc, Memlet(
-                        subset=omemlet.subset, data=omemlet.data))
+                        subset=omemlet.subset, data=omemlet.data, wcr=omemlet.wcr, wcr_nonatomic=omemlet.wcr_nonatomic, allow_oob=omemlet.allow_oob, debuginfo=omemlet.debuginfo))
 
                     for s, sub_s in [(state1, lnsdfg), (state2, rnsdfg)]:
                         an_in = nodes.AccessNode(data=iarr_name)
@@ -626,16 +625,16 @@ class RemainderLoop(transformation.SingleStateTransformation):
                         s.add_node(an_in)
                         s.add_node(an_out)
                         s.add_edge(an_in, None, sub_s, iarr_name, Memlet(
-                            subset=imemlet.subset, data=iarr_name))
+                            subset=imemlet.subset, data=iarr_name, wcr=imemlet.wcr, wcr_nonatomic=imemlet.wcr_nonatomic, allow_oob=imemlet.allow_oob, debuginfo=imemlet.debuginfo))
                         s.add_edge(sub_s, oarr_name, an_out, None, Memlet(
-                            subset=omemlet.subset, data=oarr_name))
+                            subset=omemlet.subset, data=oarr_name, wcr=omemlet.wcr, wcr_nonatomic=omemlet.wcr_nonatomic, allow_oob=omemlet.allow_oob, debuginfo=omemlet.debuginfo))
 
                     for sub_s in [lassign, rassign]:
                         an_in = nodes.AccessNode(data=iarr_name)
                         an_out = nodes.AccessNode(data=oarr_name)
                         sub_s.add_node(an_out)
                         sub_s.add_edge(an_in, None, an_out, None,
-                                       Memlet(subset=omemlet.subset, data=oarr_name))
+                                       Memlet(subset=omemlet.subset, data=oarr_name, wcr=omemlet.wcr, wcr_nonatomic=omemlet.wcr_nonatomic, allow_oob=omemlet.allow_oob, debuginfo=omemlet.debuginfo))
 
                     # Update ranges in the rassign
                     if len(rassign.edges()) != 1:
@@ -651,7 +650,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                 beg, beg+symbolic.SymExpr(f"Min({dim} - ({str(beg)}), {l})-1"), 1)
                             new_assign_ranges.append(new_range)
                         new_memlet = Memlet(subset=Range(
-                            new_assign_ranges), data=memlet.data)
+                            new_assign_ranges), data=memlet.data, wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo)
                         rassign.remove_edge(e0)
                         rassign.add_edge(u, uc, v, vc, new_memlet)
 
@@ -710,7 +709,8 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 data_offsets = offsets[memlet.data]
                 new_range = [(beg-data_offset, end-data_offset, step)
                              for data_offset, (beg, end, step) in zip(data_offsets, memlet.subset)]
-                new_memlet = Memlet(subset=Range(new_range), data=memlet.data)
+                new_memlet = Memlet(subset=Range(new_range), data=memlet.data, wcr=memlet.wcr,
+                                    wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo)
                 state.remove_edge(edge)
                 state.add_edge(u, uc, v, vc, new_memlet)
 
@@ -776,6 +776,7 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
         for unused_arr_name in unused_arrays:
             sdfg.arrays.pop(unused_arr_name)
+
         return unused_arrays
 
     @staticmethod

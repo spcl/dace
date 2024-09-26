@@ -129,9 +129,9 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                     if in_memlet.data == None:
                         new_in_memlet = Memlet(subset=None, data=in_memlet.data)
                     else:
-                        new_in_memlet = Memlet(subset=subsets.Range(new_memlet_list), data=in_memlet.data)
-                    new_out_memlet = Memlet(subset=subsets.Range(new_memlet_list), data=out_memlet.data)
-                    offseted_memlet = Memlet(subset=subsets.Range(inner_offset_memlet_list), data=out_memlet.data)
+                        new_in_memlet = Memlet(subset=subsets.Range(new_memlet_list), data=in_memlet.data, wcr=in_memlet.wcr, wcr_nonatomic=in_memlet.wcr_nonatomic, allow_oob=in_memlet.allow_oob, debuginfo=in_memlet.debuginfo)
+                    new_out_memlet = Memlet(subset=subsets.Range(new_memlet_list), data=out_memlet.data, wcr=out_memlet.wcr, wcr_nonatomic=out_memlet.wcr_nonatomic, allow_oob=out_memlet.allow_oob, debuginfo=out_memlet.debuginfo)
+                    offseted_memlet = Memlet(subset=subsets.Range(inner_offset_memlet_list), data=out_memlet.data, wcr=out_memlet.wcr, wcr_nonatomic=out_memlet.wcr_nonatomic, allow_oob=out_memlet.allow_oob, debuginfo=out_memlet.debuginfo)
 
                     state.add_edge(thread_block_entry, in_u_conn, access_node, in_v_conn, new_in_memlet)
                     state.add_edge(access_node, out_u_conn, sequential_map_entry, out_v_conn, new_out_memlet)
@@ -166,7 +166,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                 edge = edges_to_check.pop()
                 u, u_conn, v, v_conn, memlet = edge
                 if memlet.data != None and memlet.data in data_to_check:
-                    offseted_memlet = Memlet(subset=subsets.Range(inner_offset_memlet_list), data=memlet.data)
+                    offseted_memlet = Memlet(subset=subsets.Range(inner_offset_memlet_list), data=memlet.data, wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo)
                     state.remove_edge(edge)
                     state.add_edge(u, u_conn, v, v_conn, offseted_memlet)
                 if not (isinstance(v, nodes.MapExit) and v == state.exit_node(sequential_map_entry)):

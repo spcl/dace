@@ -149,7 +149,8 @@ class BlockTiling(transformation.SingleStateTransformation):
                         new_range_list.append(range)
             else:
                 new_range_list = None
-            new_memlet = Memlet(data=memlet.data, subset=subsets.Range(new_range_list) if new_range_list != None else new_range_list)
+            new_memlet = Memlet(data=memlet.data, subset=subsets.Range(new_range_list) if new_range_list != None else new_range_list,
+                                wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo)
             state.remove_edge(edge)
             state.add_edge(u, u_conn, v, v_conn, new_memlet)
             edges_to_check += [e for e in state.out_edges(v) if e != state.exit_node(map_node)]
@@ -167,9 +168,9 @@ class BlockTiling(transformation.SingleStateTransformation):
             new_range_list = []
             if memlet.data == match_data:
                 if replace_range != None:
-                    new_memlet = Memlet(data=replace_data, subset=replace_range)
+                    new_memlet = Memlet(data=replace_data, subset=replace_range, wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo)
                 else:
-                    new_memlet = Memlet(data=replace_data, subset=memlet.subset)
+                    new_memlet = Memlet(data=replace_data, subset=memlet.subset, wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo)
             else:
                 new_memlet = memlet
             state.remove_edge(edge)
@@ -277,7 +278,7 @@ class BlockTiling(transformation.SingleStateTransformation):
                     step = step.subs(param_symbol, new_param_symbol)
 
                 new_ranges.append((beg, end, step))
-            new_memlet = Memlet(subset=subsets.Range(new_ranges), data=memlet.data)
+            new_memlet = Memlet(subset=subsets.Range(new_ranges), data=memlet.data, wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo)
             state.remove_edge(edge)
             state.add_edge(u, u_conn, v, v_conn, new_memlet)
             if not isinstance(v, nodes.MapExit):
@@ -360,7 +361,7 @@ class BlockTiling(transformation.SingleStateTransformation):
                         _,_,_,_,_m = oe
                         if _m.data == m1.data:
                             ss = _m.subset
-                    tmp_memlet = Memlet(subset=ss, data=m1.data)
+                    tmp_memlet = Memlet(subset=ss, data=m1.data, wcr=m1.wcr, wcr_nonatomic=m1.wcr_nonatomic, allow_oob=m1.allow_oob, debuginfo=m1.debuginfo)
                     state.remove_edge(out_edge)
                     state.add_edge(u,uc,v,vc,tmp_memlet)
             for out_edge in state.out_edges(state.exit_node(thread_coarsened_map_entry)):
@@ -368,7 +369,7 @@ class BlockTiling(transformation.SingleStateTransformation):
                 _,_,_,_,mm = tasklet_out_edge
                 if memlet.data == m2.data:
                     lens = [(0,end-1,1) for end in sdfg.arrays[m1.data].shape]
-                    tmp_memlet = Memlet(subset=subsets.Range(lens), data=m1.data)
+                    tmp_memlet = Memlet(subset=subsets.Range(lens), data=m1.data, wcr=m1.wcr, wcr_nonatomic=m1.wcr_nonatomic, allow_oob=m1.allow_oob, debuginfo=m1.debuginfo)
                     state.remove_edge(out_edge)
                     state.add_edge(u,uc,v,vc,tmp_memlet)
 
@@ -412,7 +413,7 @@ class BlockTiling(transformation.SingleStateTransformation):
                 u,uc,v,vc,memlet = out_edge
                 if memlet.data == m2.data:
                     state.add_node(an)
-                    state.add_edge(u,uc,an,None,Memlet(subset=subset,data=access_node.data))
+                    state.add_edge(u,uc,an,None,Memlet(subset=subset,data=access_node.data,wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo))
                     state.remove_edge(out_edge)
                     state.add_edge(an,None,v,vc,memlet)
 

@@ -1,5 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import dace
 from dace import subsets
 from dace.data import Array
 from dace.properties import Property, make_properties
@@ -64,7 +65,7 @@ class MemoryMovementNode(CodeLibraryNode):
 
                 var_id = 0
                 for dim in conds[:-2]:
-                    f"for (int i{var_id} = 0; i{var_id} < {dim}; i{var_id} += 1) {{\n"
+                    code += f"for (int i{var_id} = 0; i{var_id} < {dim}; i{var_id} += 1) {{\n"
                     var_id += 1
 
                 further_access_strs_dst = []
@@ -93,6 +94,12 @@ class MemoryMovementNode(CodeLibraryNode):
 
                 if self._dst_arr.shape[-2] > real_lines_at_a_time:
                     code += f"#pragma unroll\n"
+                    if not dynamic_check:
+                        if conds[-2] % real_lines_at_a_time != 0:
+                            remainder_iters = conds[-2] % real_lines_at_a_time
+                            conds[-2] -= remainder_iters
+                        else:
+                            remainder_iters = 0
                     code += f"for (int i{var_id} = 0; i{var_id} < {conds[-2]}; i{var_id} += {real_lines_at_a_time}) {{\n"
                     further_access_str_src += " + " + \
                         f"((i{var_id}) * {self._src_arr.strides[-2]})"
@@ -100,9 +107,16 @@ class MemoryMovementNode(CodeLibraryNode):
                         f"((i{var_id}) * {self._dst_arr.strides[-2]})"
 
                 if dynamic_check:
-                    code += f"if(line_offset < effective_line_len && line_num + {bound_checks[-1][0]} < {bound_checks[-1][1]}){{\n"
+                    code += f"if(line_offset < effective_line_len && line_num + {bound_checks[-1][0]} < {conds[-2]}){{\n"
 
                 code += f"{self._dst_arr_name}[line_num*{self._dst_arr.strides[-2]} + line_offset{further_access_str_dst}] = {self._src_arr_name}[{offset_expression_1d} + line_num*{self._src_arr.strides[-2]} + line_offset{further_access_str_src}];\n"
+
+                if not dynamic_check:
+                    if remainder_iters > 0:
+                        code += f"if (tid < {remainder_iters*line_len}){{\n"
+                        code += f"i{var_id} = {conds[-2]};\n"
+                        code += f"{self._dst_arr_name}[line_num*{self._dst_arr.strides[-2]} + line_offset{further_access_str_dst}] = {self._src_arr_name}[{offset_expression_1d} + line_num*{self._src_arr.strides[-2]} + line_offset{further_access_str_src}];\n"
+                        code += "}\n"
 
                 if dynamic_check:
                     code += f"}}\n"*2
@@ -132,7 +146,7 @@ class MemoryMovementNode(CodeLibraryNode):
 
                 var_id = 0
                 for dim in conds[:-2]:
-                    f"for (int i{var_id} = 0; i{var_id} < {dim}; i{var_id} += 1) {{\n"
+                    code += f"for (int i{var_id} = 0; i{var_id} < {dim}; i{var_id} += 1) {{\n"
                     var_id += 1
 
                 further_access_strs_dst = []
@@ -281,7 +295,7 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             u, uc, v, vc, memlet = out_edge
             src_arr_name, src_arr_storage_type = self.infer_source(
                 state, sdfg, out_edge)
-            if src_arr_storage_type != dtypes.StorageType.GPU_Global:
+            if src_arr_storage_type != dtypes.StorageType.GPU_Global or isinstance(sdfg.arrays[src_arr_name], dace.data.Scalar):
                 continue
 
             parsed_storage_type = f"{src_arr_storage_type}".split(".")[-1]
