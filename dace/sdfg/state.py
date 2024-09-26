@@ -782,12 +782,15 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 ac_size = ac_desc.total_size
                 in_subsets = dict()
                 for in_edge in in_edges:
-                    assert in_edge.data.dst_subset is not None or (in_edge.data.num_elements() == ac_size)
+                    # Ensure that if the destination subset is not given, our assumption, that the
+                    #  whole array is written to, is valid, by testing if the memlet transfers the
+                    #  whole array.
+                    assert (in_edge.data.dst_subset is not None) or (in_edge.data.num_elements() == ac_size)
                     in_subsets[in_edge] = (
                             sbs.Range.from_array(ac_desc)
                             if in_edge.data.dst_subset is None
                             else in_edge.data.dst_subset
-                        )
+                    )
                 out_subsets = dict()
                 for out_edge in out_edges:
                     assert (out_edge.data.src_subset is not None) or (out_edge.data.num_elements() == ac_size)
@@ -797,31 +800,35 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                         else out_edge.data.src_subset
                     )
 
-                # Filter out reads that are also written at the access node by another (single) write.
+                # If a memlet reads a particular region of data from the access node and there
+                #  exists a memlet at the same access node that writes to the same region, then
+                #  this read is ignored, and not included in the final read set, but only
+                #  accounted fro in the write set. See also note below.
+                # TODO: Handle the case when multiple disjoint writes are needed to cover the read.
                 for out_edge in list(out_edges):
                     for in_edge in in_edges:
                         if out_edge.data.data != in_edge.data.data:
                             # NOTE: This check does not make any sense, and is in my (@philip-paul-mueller)
                             #   view wrong. As it will filter out some accesses but not all, which one solely
-                            #   depends on how the memelts were created.
-                            #   See also [issue #1643](https://github.com/spcl/dace/issues/1643).
+                            #   depends on how the memelts were created, i.e. to which container their `data`
+                            #   attribute is associated to. See also [issue #1643](https://github.com/spcl/dace/issues/1643).
                             continue
                         if in_subsets[in_edge].covers(out_subsets[out_edge]):
                             out_edges.remove(out_edge)
                             break
 
+                # Update the read and write sets of the subgraph.
                 if in_edges:
                     subgraph_write_set[n.data].extend(in_subsets.values())
                 if out_edges:
                     subgraph_read_set[n.data].extend(out_subsets[out_edge] for out_edge in out_edges)
 
-            # Union all subgraphs, so an array that was excluded from the read
-            # set because it was written first is still included if it is read
-            # in another subgraph
+            # Add the subgraph's read and write set to the final ones.
             for data, accesses in subgraph_read_set.items():
                 read_set[data] += accesses
             for data, accesses in subgraph_write_set.items():
                 write_set[data] += accesses
+
         return copy.deepcopy((read_set, write_set))
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
