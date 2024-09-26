@@ -23,7 +23,7 @@ from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
-from dace.sdfg.state import ControlFlowBlock, SDFGState, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, ControlFlowRegion
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
@@ -1487,6 +1487,17 @@ class SDFG(ControlFlowRegion):
                 if sym in self.arrays and self.arrays[sym].transient:
                     seen[sym] = interstate_edge
                     shared.append(sym)
+
+        # The same goes for the conditions of conditional blocks.
+        for block in self.all_control_flow_blocks():
+            if isinstance(block, ConditionalBlock):
+                for cond, _ in block.branches:
+                    if cond is not None:
+                        cond_symbols = set(map(str, dace.symbolic.symbols_in_ast(cond.code[0])))
+                        for sym in cond_symbols:
+                            if sym in self.arrays and self.arrays[sym].transient:
+                                seen[sym] = block
+                                shared.append(sym)
 
         # If transient is accessed in more than one state, it is shared
         for state in self.states():
