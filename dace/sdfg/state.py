@@ -3220,8 +3220,8 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
 
     _branches: List[Tuple[Optional[CodeBlock], ControlFlowRegion]]
 
-    def __init__(self, label: str):
-        super().__init__(label)
+    def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None, parent: Optional['ControlFlowRegion'] = None):
+        super().__init__(label, sdfg, parent)
         self._branches = []
 
     def __str__(self):
@@ -3284,15 +3284,21 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
     
     @classmethod
     def from_json(cls, json_obj, context=None):
-        cond_region = ConditionalBlock(json_obj['label'])
-        cond_region.is_collapsed = json_obj['collapsed']
+        context = context or {'sdfg': None, 'parent_graph': None}
+        _type = json_obj['type']
+        if _type != cls.__name__:
+            raise TypeError('Class type mismatch')
+
+        ret = cls(label=json_obj['label'], sdfg=context['sdfg'])
+
+        dace.serialize.set_properties_from_json(ret, json_obj)
+
         for condition, region in json_obj['branches']:
             if condition is not None:
-                cond_region._branches.append((CodeBlock.from_json(condition),
-                                              ControlFlowRegion.from_json(region, context)))
+                ret._branches.append((CodeBlock.from_json(condition), ControlFlowRegion.from_json(region, context)))
             else:
-                cond_region._branches.append((None, ControlFlowRegion.from_json(region, context)))
-        return cond_region
+                ret._branches.append((None, ControlFlowRegion.from_json(region, context)))
+        return ret
     
     def inline(self) -> Tuple[bool, Any]:
         """
