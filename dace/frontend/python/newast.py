@@ -3302,6 +3302,7 @@ class ProgramVisitor(ExtNodeVisitor):
             tokens = name.split('.')
             name = tokens[0]
             true_name = None
+            true_array = None
             if name in defined_vars:
                 true_name = defined_vars[name]
                 if len(tokens) > 1:
@@ -3356,7 +3357,7 @@ class ProgramVisitor(ExtNodeVisitor):
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.dtype_to_typeclass().keys())
             if not (result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
-                    (isinstance(result, str) and result in self.sdfg.arrays)):
+                    (isinstance(result, str) and any(result in x for x in [self.sdfg.arrays, self.sdfg._pgrids, self.sdfg._subarrays, self.sdfg._rdistrarrays]))):
                 raise DaceSyntaxError(
                     self, node, "In assignments, the rhs may only be "
                     "data, numerical/boolean constants "
@@ -3380,6 +3381,14 @@ class ProgramVisitor(ExtNodeVisitor):
                         _, new_data = self.sdfg.add_scalar(true_name, ttype, transient=True)
                     self.variables[name] = true_name
                     defined_vars[name] = true_name
+                if any(result in x for x in [self.sdfg._pgrids, self.sdfg._rdistrarrays, self.sdfg._subarrays]):
+                    # NOTE: In previous versions some `pgrid` and subgrid related replacement function,
+                    #   see `dace/frontend/common/distr.py`, created dummy variables with the same name
+                    #   as the entities, such as process grids, they created. Thus the frontend was
+                    #   finding them. Since this is now disallowed, we have to explicitly handle this case.
+                    self.variables[name] = result
+                    defined_vars[name] = result
+                    continue
                 elif isinstance(result, str) and result in self.sdfg.arrays:
                     result_data = self.sdfg.arrays[result]
                     if (name.startswith('__return') and isinstance(result_data, data.Scalar)):
