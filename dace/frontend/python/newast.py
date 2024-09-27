@@ -2514,10 +2514,10 @@ class ProgramVisitor(ExtNodeVisitor):
         for node, parent in loop_region.all_nodes_recursive(lambda n, _: not isinstance(n, (LoopRegion, SDFGState))):
             if isinstance(node, BreakBlock):
                 for in_edge in parent.in_edges(node):
-                    in_edge.data.assignments["did_break_" + loop_region.label] = "1"
+                    in_edge.data.assignments['__dace_did_break_' + loop_region.label] = '1'
 
     def _generate_orelse(self, loop_region: LoopRegion, postloop_block: ControlFlowBlock):
-        did_break_symbol = 'did_break_' + loop_region.label
+        did_break_symbol = '__dace_did_break_' + loop_region.label
         self.sdfg.add_symbol(did_break_symbol, dace.int32)
         for iedge in self.cfg_target.in_edges(loop_region):
             iedge.data.assignments[did_break_symbol] = '0'
@@ -2527,14 +2527,14 @@ class ProgramVisitor(ExtNodeVisitor):
 
         intermediate = self.cfg_target.add_state(f'{loop_region.label}_normal_exit')
         self.cfg_target.add_edge(loop_region, intermediate,
-                                 dace.InterstateEdge(condition=f"(not {did_break_symbol} == 1)"))
+                                 dace.InterstateEdge(condition=f'(not {did_break_symbol} == 1)'))
         oedge = oedges[0]
         self.cfg_target.add_edge(intermediate, oedge.dst, copy.deepcopy(oedge.data))
         self.cfg_target.remove_edge(oedge)
-        self.cfg_target.add_edge(loop_region, postloop_block, dace.InterstateEdge(condition=f"{did_break_symbol} == 1"))
+        self.cfg_target.add_edge(loop_region, postloop_block, dace.InterstateEdge(condition=f'{did_break_symbol} == 1'))
 
     def _has_loop_ancestor(self, node: ControlFlowBlock) -> bool:
-        while node is not None and node != self.sdfg:
+        while node is not None and node is not self.sdfg:
             if isinstance(node, LoopRegion):
                 return True
             node = node.parent_graph

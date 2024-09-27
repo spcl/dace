@@ -2607,6 +2607,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                 for node in to_connect:
                     parent.add_edge(node, end_state, dace.InterstateEdge())
             else:
+                # TODO: Move this to dead state elimination.
                 dead_blocks = [succ for succ in parent.successors(self) if parent.in_degree(succ) == 1]
                 while dead_blocks:
                     layer = list(dead_blocks)
