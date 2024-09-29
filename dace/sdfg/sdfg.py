@@ -2403,12 +2403,12 @@ class SDFG(ControlFlowRegion):
     def predecessor_state_transitions(self, state):
         """ Yields paths (lists of edges) that the SDFG can pass through
             before computing the given state. """
-        return self.bfs_edges(state, reverse=True)
+        return self.edge_bfs(state, reverse=True)
 
     def predecessor_states(self, state):
         """ Returns a list of unique states that the SDFG can pass through
             before computing the given state. """
-        return (e.src for e in self.bfs_edges(state, reverse=True))
+        return (e.src for e in self.edge_bfs(state, reverse=True))
 
     def validate(self, references: Optional[Set[int]] = None, **context: bool) -> None:
         validate_sdfg(self, references, **context)
