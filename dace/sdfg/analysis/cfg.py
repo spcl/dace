@@ -6,7 +6,7 @@ import networkx as nx
 import sympy as sp
 from typing import Dict, Iterator, List, Optional, Set
 
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion
 
 
 def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
@@ -374,6 +374,13 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
                 yield block
             if recursive:
                 yield from blockorder_topological_sort(block, recursive, ignore_nonstate_blocks)
+        elif isinstance(block, ConditionalBlock):
+            if not ignore_nonstate_blocks:
+                yield block
+            for _, branch in block.branches:
+                if not ignore_nonstate_blocks:
+                    yield branch
+                yield from blockorder_topological_sort(branch, recursive, ignore_nonstate_blocks)
         elif isinstance(block, SDFGState):
             yield block
         else:

@@ -3,7 +3,6 @@ import ast
 from collections import OrderedDict
 import copy
 import itertools
-import inspect
 import networkx as nx
 import re
 import sys
@@ -25,14 +24,14 @@ from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConve
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
-from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet, pyexpr_to_symbolic, ParseMemlet,
-                                                inner_eval_ast, MemletExpr)
-from dace.sdfg import nodes, utils as sdutil
+from dace.frontend.python.memlet_parser import DaceSyntaxError, parse_memlet, ParseMemlet, inner_eval_ast, MemletExpr
+from dace.sdfg import nodes
 from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion, LoopRegion, ControlFlowRegion, NamedRegion
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, FunctionCallRegion,
+                             LoopRegion, ControlFlowRegion, NamedRegion)
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
@@ -1301,7 +1300,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return new_nodes
 
         # Map view access nodes to their respective data
-        for state in self.sdfg.states():
+        for state in self.sdfg.all_states():
             # NOTE: We need to support views of views
             nodes = list(state.data_nodes())
             while nodes:
@@ -2371,7 +2370,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                                             extra_symbols=extra_syms, parent=loop_region,
                                                             unconnected_last_block=False)
             loop_region.start_block = loop_region.node_id(first_subblock)
-
+            self._connect_break_blocks(loop_region)
             # Handle else clause
             if node.orelse:
                 # Continue visiting body
@@ -2509,14 +2508,17 @@ class ProgramVisitor(ExtNodeVisitor):
             self._generate_orelse(loop_region, postloop_block)
 
         self.last_block = loop_region
+        self._connect_break_blocks(loop_region)
+
+    def _connect_break_blocks(self, loop_region: LoopRegion):
+        for node, parent in loop_region.all_nodes_recursive(lambda n, _: not isinstance(n, (LoopRegion, SDFGState))):
+            if isinstance(node, BreakBlock):
+                for in_edge in parent.in_edges(node):
+                    in_edge.data.assignments['__dace_did_break_' + loop_region.label] = '1'
 
     def _generate_orelse(self, loop_region: LoopRegion, postloop_block: ControlFlowBlock):
-        did_break_symbol = 'did_break_' + loop_region.label
+        did_break_symbol = '__dace_did_break_' + loop_region.label
         self.sdfg.add_symbol(did_break_symbol, dace.int32)
-        for n in loop_region.nodes():
-            if isinstance(n, BreakBlock):
-                for iedge in loop_region.in_edges(n):
-                    iedge.data.assignments[did_break_symbol] = '1'
         for iedge in self.cfg_target.in_edges(loop_region):
             iedge.data.assignments[did_break_symbol] = '0'
         oedges = self.cfg_target.out_edges(loop_region)
@@ -2525,61 +2527,59 @@ class ProgramVisitor(ExtNodeVisitor):
 
         intermediate = self.cfg_target.add_state(f'{loop_region.label}_normal_exit')
         self.cfg_target.add_edge(loop_region, intermediate,
-                                 dace.InterstateEdge(condition=f"(not {did_break_symbol} == 1)"))
+                                 dace.InterstateEdge(condition=f'(not {did_break_symbol} == 1)'))
         oedge = oedges[0]
         self.cfg_target.add_edge(intermediate, oedge.dst, copy.deepcopy(oedge.data))
         self.cfg_target.remove_edge(oedge)
-        self.cfg_target.add_edge(loop_region, postloop_block, dace.InterstateEdge(condition=f"{did_break_symbol} == 1"))
+        self.cfg_target.add_edge(loop_region, postloop_block, dace.InterstateEdge(condition=f'{did_break_symbol} == 1'))
+
+    def _has_loop_ancestor(self, node: ControlFlowBlock) -> bool:
+        while node is not None and node is not self.sdfg:
+            if isinstance(node, LoopRegion):
+                return True
+            node = node.parent_graph
+        return False
+
 
     def visit_Break(self, node: ast.Break):
-        if isinstance(self.cfg_target, LoopRegion):
-            self._on_block_added(self.cfg_target.add_break(f'break_{self.cfg_target.label}_{node.lineno}'))
-        else:
-            error_msg = "'break' is only supported inside loops "
-            if self.nested:
-                error_msg += ("('break' is not supported in Maps and cannot be used in nested DaCe program calls to "
-                              " break out of loops of outer scopes)")
-            raise DaceSyntaxError(self, node, error_msg)
+        if not self._has_loop_ancestor(self.cfg_target):
+            raise DaceSyntaxError(self, node, "Break block outside loop region")
+        break_block = BreakBlock(f'break_{node.lineno}')
+        self.cfg_target.add_node(break_block, ensure_unique_name=True)
+        self._on_block_added(break_block)
 
     def visit_Continue(self, node: ast.Continue):
-        if isinstance(self.cfg_target, LoopRegion):
-            self._on_block_added(self.cfg_target.add_continue(f'continue_{self.cfg_target.label}_{node.lineno}'))
-        else:
-            error_msg = ("'continue' is only supported inside loops ")
-            if self.nested:
-                error_msg += ("('continue' is not supported in Maps and cannot be used in nested DaCe program calls to "
-                              " continue loops of outer scopes)")
-            raise DaceSyntaxError(self, node, error_msg)
+        if not self._has_loop_ancestor(self.cfg_target):
+            raise DaceSyntaxError(self, node, 'Continue block outside loop region')
+        continue_block = ContinueBlock(f'continue_{node.lineno}')
+        self.cfg_target.add_node(continue_block, ensure_unique_name=True)
+        self._on_block_added(continue_block)
 
     def visit_If(self, node: ast.If):
-        # Add a guard state
-        self._add_state('if_guard')
-        self.last_block.debuginfo = self.current_lineinfo
-
         # Generate conditions
-        cond, cond_else, _ = self._visit_test(node.test)
+        cond, _, _ = self._visit_test(node.test)
+
+        # Add conditional region
+        cond_block = ConditionalBlock(f'if_{node.lineno}')
+        self.cfg_target.add_node(cond_block)
+        self._on_block_added(cond_block)
+
+        if_body = ControlFlowRegion(cond_block.label + '_body', sdfg=self.sdfg)
+        cond_block.branches.append((CodeBlock(cond), if_body))
+        if_body.parent_graph = self.cfg_target
 
         # Visit recursively
-        laststate, first_if_state, last_if_state, return_stmt = \
-            self._recursive_visit(node.body, 'if', node.lineno, self.cfg_target, True)
-        end_if_state = self.last_block
-
-        # Connect the states
-        self.cfg_target.add_edge(laststate, first_if_state, dace.InterstateEdge(cond))
-        self.cfg_target.add_edge(last_if_state, end_if_state, dace.InterstateEdge(condition=f"{not return_stmt}"))
+        self._recursive_visit(node.body, 'if', node.lineno, if_body, False)
 
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
+            else_body = ControlFlowRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}',
+                                          sdfg=self.sdfg)
+            #cond_block.branches.append((CodeBlock(cond_else), else_body))
+            cond_block.branches.append((None, else_body))
+            else_body.parent_graph = self.cfg_target
             # Visit recursively
-            _, first_else_state, last_else_state, return_stmt = \
-                self._recursive_visit(node.orelse, 'else', node.lineno, self.cfg_target, False)
-
-            # Connect the states
-            self.cfg_target.add_edge(laststate, first_else_state, dace.InterstateEdge(cond_else))
-            self.cfg_target.add_edge(last_else_state, end_if_state, dace.InterstateEdge(condition=f"{not return_stmt}"))
-        else:
-            self.cfg_target.add_edge(laststate, end_if_state, dace.InterstateEdge(cond_else))
-        self.last_block = end_if_state
+            self._recursive_visit(node.orelse, 'else', node.lineno, else_body, False)
 
     def _parse_tasklet(self, state: SDFGState, node: TaskletType, name=None):
 

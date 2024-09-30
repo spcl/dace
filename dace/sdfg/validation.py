@@ -34,7 +34,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
                                  symbols: dict,
                                  references: Set[int] = None,
                                  **context: bool):
-    from dace.sdfg.state import SDFGState, ControlFlowRegion
+    from dace.sdfg.state import SDFGState, ControlFlowRegion, ConditionalBlock
     from dace.sdfg.scope import is_in_scope
 
     if len(region.source_nodes()) > 1 and region.start_block is None:
@@ -118,6 +118,10 @@ def validate_control_flow_region(sdfg: 'SDFG',
             if isinstance(edge.dst, SDFGState):
                 validate_state(edge.dst, region.node_id(edge.dst), sdfg, symbols, initialized_transients, references,
                                **context)
+            elif isinstance(edge.dst, ConditionalBlock):
+                for _, r in edge.dst.branches:
+                    if r is not None:
+                        validate_control_flow_region(sdfg, r, initialized_transients, symbols, references, **context)
             elif isinstance(edge.dst, ControlFlowRegion):
                 validate_control_flow_region(sdfg, edge.dst, initialized_transients, symbols, references, **context)
     # End of block DFS
