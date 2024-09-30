@@ -4,6 +4,10 @@
 #include <iostream>
 #include <unordered_map>
 
+// dace headers
+#include <dace/os.h>
+#include <dace/types.h>
+
 // file headers
 #include <algorithm>
 #include <cstdlib>

@@ -213,8 +213,7 @@ class IPUCodeGen(TargetCodeGenerator):
             
         host_code = CodeIOStream()       
         host_code.write("""
-#include "dace/poplar/host.h"
-#include "dace/dace.h"
+#include <dace/dace.h>
 """)
         
         fileheader = CodeIOStream()

@@ -41,8 +41,8 @@
 #include "intel_fpga/host.h"
 #endif
 
-// TODO:use conditional compilation later for now include poplar always
-#include "poplar_common.h"
+// // TODO:use conditional compilation later for now include poplar always
+#include "poplar_host.h"
 
 #include "fpga_common.h"
 
