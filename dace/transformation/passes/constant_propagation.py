@@ -214,7 +214,10 @@ class ConstantPropagation(ppl.Pass):
 
                     for aname, aval in constants.items():
                         # If something was assigned more than once (to a different value), it's not a constant
-                        if aname in assignments and aval != assignments[aname]:
+                        # If a symbol appearing in the replacing expression of a constant is modified,
+                        # the constant is not valid anymore
+                        if ((aname in assignments and aval != assignments[aname]) or
+                                symbolic.free_symbols_and_functions(aval) & edge.data.assignments.keys()):
                             assignments[aname] = _UnknownValue
                         else:
                             assignments[aname] = aval

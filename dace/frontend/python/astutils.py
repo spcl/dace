@@ -384,6 +384,48 @@ def negate_expr(node):
     return ast.fix_missing_locations(newexpr)
 
 
+def and_expr(node_a, node_b):
+    """ Generates the logical AND of two AST expressions.
+    """
+    if type(node_a) is not type(node_b):
+        raise ValueError('Node types do not match')
+
+    # Support for SymPy expressions
+    if isinstance(node_a, sympy.Basic):
+        return sympy.And(node_a, node_b)
+    # Support for numerical constants
+    if isinstance(node_a, (numbers.Number, numpy.bool_)):
+        return str(node_a and node_b)
+    # Support for strings (most likely dace.Data.Scalar names)
+    if isinstance(node_a, str):
+        return f'({node_a}) and ({node_b})'
+
+    from dace.properties import CodeBlock  # Avoid import loop
+    if isinstance(node_a, CodeBlock):
+        node_a = node_a.code
+        node_b = node_b.code
+
+    if hasattr(node_a, "__len__"):
+        if len(node_a) > 1:
+            raise ValueError("and_expr only expects single expressions, got: {}".format(node_a))
+        if len(node_b) > 1:
+            raise ValueError("and_expr only expects single expressions, got: {}".format(node_b))
+        expr_a = node_a[0]
+        expr_b = node_b[0]
+    else:
+        expr_a = node_a
+        expr_b = node_b
+
+    if isinstance(expr_a, ast.Expr):
+        expr_a = expr_a.value
+    if isinstance(expr_b, ast.Expr):
+        expr_b = expr_b.value
+
+    newexpr = ast.Expr(value=ast.BinOp(left=copy_tree(expr_a), op=ast.And, right=copy_tree(expr_b)))
+    newexpr = ast.copy_location(newexpr, expr_a)
+    return ast.fix_missing_locations(newexpr)
+
+
 def copy_tree(node: ast.AST) -> ast.AST:
     """
     Copies an entire AST without copying the non-AST parts (e.g., constant values).
