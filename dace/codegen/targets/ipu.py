@@ -135,6 +135,7 @@ class IPUCodeGen(TargetCodeGenerator):
 
     def preprocess(self, sdfg: SDFG) -> None:
         self.frame.statestruct.append('dace_poplar_context *poplar_context;')
+            
         
 #         #create a new string
 #         str_decl = StringIO()
@@ -215,14 +216,13 @@ class IPUCodeGen(TargetCodeGenerator):
         host_code.write("""
 #include <dace/dace.h>
 """)
-        
         fileheader = CodeIOStream()
         self.frame.generate_fileheader(self._global_sdfg, fileheader, 'poplar')
         
         host_code.write("""
 {file_header}
 
-// {other_globalcode}
+{other_globalcode}
 
 DACE_EXPORTED int __dace_init_ipu({sdfg_state_name} *__state{params}) {{
     __state->poplar_context = new dace_poplar_context();
@@ -911,6 +911,14 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
             
         else:
             print("IN HOST CODE")
+            function_stream.write("""
+                                  
+// hack to make the files compile by forward declaring the functions
+extern "C" auto getIpuDevice(const unsigned int numIpus = 1) -> optional<Device>;
+extern "C" void defineDataStreams(ipu_test1_state_t &__state);
+extern "C" void kernel_buildComputeGraph(ipu_test1_state_t &__state);
+
+                                  """)
             # self.frame.generate_ipu_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
             self.generate_ipu_cpuside_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
             
@@ -1080,7 +1088,7 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
                 
                 // Step 1: Create graph and add codelets
                 __state.poplar_context->graph = poplar::Graph(__state.poplar_context->device->getTarget());
-                __state.poplar_context->graph.addCodelets({{"src/codelets/SkeletonCodelets.cpp"}}, "-O3 -I codelets");
+                //__state.poplar_context->graph.addCodelets({{"src/codelets/SkeletonCodelets.cpp"}}, "-O3 -I codelets");
                 popops::addCodelets(__state.poplar_context->graph);
 
                 // Step 2: Add data to the graph
@@ -1091,20 +1099,19 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
                 const int numTiles = __state.poplar_context->device->getTarget().getNumTiles();
                 // Add programs and wire up data
                 const auto NumElemsPerTile = NUM_DATA_ITEMS / numTiles;
-                auto cs = __state.poplar_context->graph.addComputeSet("loopBody");
-                
-                for (auto tileNum = 0; tileNum < numTiles; tileNum++) {{
-                    const auto sliceEnd = std::min((tileNum + 1) * NumElemsPerTile, (int)NUM_DATA_ITEMS);
-                    const auto sliceStart = tileNum * NumElemsPerTile;
-
-                    auto v = __state.poplar_context->graph.addVertex(cs, "SkeletonVertex", {{"data", __state.poplar_context->tensors["data"].slice(sliceStart, sliceEnd)}});
-                    __state.poplar_context->graph.setInitialValue(v["howMuchToAdd"], tileNum);
-                    __state.poplar_context->graph.setPerfEstimate(v, 100);
-                    __state.poplar_context->graph.setTileMapping(v, tileNum);
-                }}
-                
-                __state.poplar_context->programs["main"] = Repeat(10, Execute(cs));
-                                 """)
+                //auto cs = __state.poplar_context->graph.addComputeSet("loopBody");
+                //
+                //for (auto tileNum = 0; tileNum < numTiles; tileNum++) {{
+                //    const auto sliceEnd = std::min((tileNum + 1) * NumElemsPerTile, (int)NUM_DATA_ITEMS);
+                //    const auto sliceStart = tileNum * NumElemsPerTile;
+                //    auto v = __state.poplar_context->graph.addVertex(cs, "SkeletonVertex", {{"data", __state.poplar_context->tensors["data"].slice(sliceStart, sliceEnd)}});
+                //    __state.poplar_context->graph.setInitialValue(v["howMuchToAdd"], tileNum);
+                //    __state.poplar_context->graph.setPerfEstimate(v, 100);
+                //    __state.poplar_context->graph.setTileMapping(v, tileNum);
+                //}}
+                //
+                //__state.poplar_context->programs["main"] = Repeat(10, Execute(cs));
+                //                 """)
 
         kernel_host_stream.write("}\n")
         
