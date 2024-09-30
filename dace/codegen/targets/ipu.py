@@ -911,14 +911,18 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
             
         else:
             print("IN HOST CODE")
-            function_stream.write("""
-                                  
-// hack to make the files compile by forward declaring the functions
-extern "C" auto getIpuDevice(const unsigned int numIpus = 1) -> optional<Device>;
-extern "C" void defineDataStreams(ipu_test1_state_t &__state);
-extern "C" void kernel_buildComputeGraph(ipu_test1_state_t &__state);
-
-                                  """)
+            sdfg_state_name = cpp.mangle_dace_state_struct_name(self._global_sdfg)
+            print("SDFG STATE NAME: ", sdfg_state_name)
+            formatted_string = """
+                                              
+            // hack to make the files compile by forward declaring the functions
+            extern "C" auto getIpuDevice(const unsigned int numIpus = 1) -> optional<Device>;
+            extern "C" void defineDataStreams({sdfg_state_name} &__state);
+            extern "C" void kernel_buildComputeGraph({sdfg_state_name} &__state);
+                                              """.format(sdfg_state_name=sdfg_state_name)
+            
+            function_stream.write(formatted_string)
+            
             # self.frame.generate_ipu_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
             self.generate_ipu_cpuside_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
             
