@@ -134,205 +134,140 @@ class IPUCodeGen(TargetCodeGenerator):
         # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
 
     def preprocess(self, sdfg: SDFG) -> None:
+        self.frame.statestruct.append('dace_poplar_context *poplar_context;')
         
-        #create a new string
-        str_decl = StringIO()
-        str_decl = f"""
-// Declare variables
-optional<Device> device;  // Declaration
-Graph graph;              // Declaration
-map<string, Tensor> tensors;       // Declaration
-map<string, Program> programs;     // Declaration
-OptionFlags ENGINE_OPTIONS; // Declaration
-map<string, int> programIds;                     // Declaration
-vector<Program> programsList;                    // Declaration
-vector<float> hostData;                      // Declaration
-Engine engine; 
-"""
+#         #create a new string
+#         str_decl = StringIO()
+#         str_decl = f"""
+#     optional<Device> device;
+#     Graph graph;
+#     map<string, Tensor> tensors;
+#     map<string, Program> programs;
+#     OptionFlags engineOptions;
+#     map<string, int> programIds;
+#     vector<Program> programsList;
+#     vector<float> hostData;
+# """
     # Add above code to the statestruct
-        self.frame.statestruct.append(str_decl)
+        # self.frame.statestruct.append(str_decl)
         
-    #     # hack to get the ipu codegen to work
-    #     # self._toplevel_schedule = dtypes.ScheduleType.IPU_SCHEDULE
+        pass
 
     def get_generated_codeobjects(self):
-        fileheader = CodeIOStream()
-        fileheader.write("""
-            #include <algorithm>
-            #include <cstdlib>
-            #include <fstream>
-            #include <iomanip>
-            #include <optional>
-            #include <iostream>
-            #include <map>
+        # structdecl = CodeIOStream()
+        # structdecl.write(f"""
+        #     optional<Device> device;
+        #     Graph graph;
+        #     map<string, Tensor> tensors;
+        #     map<string, Program> programs;
+        #     OptionFlags engineOptions;
+        #     map<string, int> programIds;
+        #     vector<Program> programsList;
+        #     vector<float> hostData;
+        # """)
+        
+        # fileheader = CodeIOStream()
+        # fileheader.write("""
+        #     #include <algorithm>
+        #     #include <cstdlib>
+        #     #include <iostream>
+        #     #include <optional>
+        #     #include <map>
+        #     #include <vector>
 
-            #include <poplar/DeviceManager.hpp>
-            #include <poplar/Engine.hpp>
-            #include <poplar/IPUModel.hpp>
-            #include <poplar/Program.hpp>
-            #include <popops/ElementWise.hpp>
-            #include <popops/codelets.hpp>
-            #include <poputil/TileMapping.hpp>
+        #     #include <poplar/DeviceManager.hpp>
+        #     #include <poplar/Engine.hpp>
+        #     #include <poplar/Graph.hpp>
+        #     #include <poplar/OptionFlags.hpp>
+        #     #include <popops/ElementWise.hpp>
+        #     #include <popops/codelets.hpp>
+        #     #include <poputil/TileMapping.hpp>
 
-            using ::std::map;
-            using ::std::optional;
-            using ::std::string;
-            using ::std::vector;
+        #     using ::std::map;
+        #     using ::std::optional;
+        #     using ::std::string;
+        #     using ::std::vector;
 
-            using ::poplar::Device;
-            using ::poplar::DeviceManager;
-            using ::poplar::Engine;
-            using ::poplar::FLOAT;
-            using ::poplar::Graph;
-            using ::poplar::OptionFlags;
-            using ::poplar::TargetType;
-            using ::poplar::Tensor;
-            using ::poplar::program::Copy;
-            using ::poplar::program::Execute;
-            using ::poplar::program::Program;
-            using ::poplar::program::Repeat;
-            using ::poplar::program::Sequence;
-            
-            
-        """)
-        fileheader.write("\n\n")
-        constdefines = CodeIOStream()
-        constdefines.write("""const auto NUM_DATA_ITEMS = 200000;""")
-        constdefines.write("\n\n")
+        #     using ::poplar::Device;
+        #     using ::poplar::DeviceManager;
+        #     using ::poplar::Engine;
+        #     using ::poplar::FLOAT;
+        #     using ::poplar::Graph;
+        #     using ::poplar::OptionFlags;
+        #     using ::poplar::TargetType;
+        #     using ::poplar::Tensor;
+        #     using ::poplar::program::Copy;
+        #     using ::poplar::program::Program;
+        #     using ::poplar::program::Execute;
+        #     using ::poplar::program::Repeat;            
+        # """)
+        # fileheader.write("\n\n")
+        # constdefines = CodeIOStream()
+        # constdefines.write("""const auto NUM_DATA_ITEMS = 200000;""")
+        # constdefines.write("\n\n")
         
         params_comma = self._global_sdfg.init_signature(free_symbols=self.frame.free_symbols(self._global_sdfg))
         if params_comma:
             params_comma = ', ' + params_comma
+
             
         host_code = CodeIOStream()       
         host_code.write("""
-#include <dace/dace.h>
-
+#include "dace/poplar/host.h"
+#include "dace/dace.h"
+""")
+        
+        fileheader = CodeIOStream()
+        self.frame.generate_fileheader(self._global_sdfg, fileheader, 'poplar')
+        
+        host_code.write("""
 {file_header}
-{const_defines}
-
-DACE_EXPORTED int __dace_init_ipu({sdfg_state_name} *__state{params});
-DACE_EXPORTED int __dace_exit_ipu({sdfg_state_name} *__state);
 
 // {other_globalcode}
 
-int __dace_init_ipu({sdfg_state_name} *__state{params}) {{
-
-  __state->tensors = map<string, Tensor>{{}};   // Assignment
-  __state->programs = map<string, Program>{{}}; // Assignment
-  ENGINE_OPTIONS = OptionFlags{{
-      // Assignment
-      {{"target.saveArchive", "archive.a"}},
-      {{"debug.instrument", "true"}},
-      {{"debug.instrumentCompute", "true"}},
-      {{"debug.instrumentControlFlow", "true"}},
-      {{"debug.computeInstrumentationLevel", "tile"}},
-      {{"debug.outputAllSymbols", "true"}},
-      {{"autoReport.all", "true"}},
-      {{"autoReport.outputSerializedGraph", "true"}},
-      {{"debug.retainDebugInformation", "true"}},
-  }};
-  __state->programIds = map<string, int>();                 // Assignment
-  __state->programsList = vector<Program>(__state->programs.size()); // Assignment
-  int index = 0;
-  for (auto &nameToProgram : __state->programs) {{
-    __state->programIds[nameToProgram.first] = index;
-    __state->programsList[index] = nameToProgram.second;
-    index++;
-  }}
-  __state->hostData = vector<float>(NUM_DATA_ITEMS, 1); // Assignment
-
+DACE_EXPORTED int __dace_init_ipu({sdfg_state_name} *__state{params}) {{
+    __state->poplar_context = new dace_poplar_context();
     return 0;
 }}
 
-int __dace_exit_ipu({sdfg_state_name} *__state) {{
+DACE_EXPORTED int __dace_exit_ipu({sdfg_state_name} *__state) {{
+    delete __state->poplar_context;
     return 0;
 }}
 
-auto __dace_getIpuDevice({sdfg_state_name} *__state, const unsigned int numIpus = 1) -> optional<Device> 
+DACE_EXPORTED auto getIpuDevice(const unsigned int numIpus = 1) -> optional<Device> 
 {{
-  DeviceManager manager = DeviceManager::createDeviceManager();
-  optional<Device> device = std::nullopt;
-  for (auto &d : manager.getDevices(TargetType::IPU, numIpus)) {{
-    std::cout << "Trying to attach to IPU " << d.getId();
-    if (d.attach()) {{
-      std::cout << " - attached" << std::endl;
-      device = {{std::move(d)}};
-      break;
-    }} else {{
-      std::cout << std::endl << "Error attaching to device" << std::endl;
+    DeviceManager manager = DeviceManager::createDeviceManager();
+    optional<Device> device = std::nullopt;
+    for (auto &d : manager.getDevices(TargetType::IPU, numIpus)) {{
+        std::cout << "Trying to attach to IPU " << d.getId();
+        if (d.attach()) {{
+            std::cout << " - attached" << std::endl;
+            device = {{std::move(d)}};
+            break;
+        }} else {{
+            std::cout << std::endl << "Error attaching to device" << std::endl;
+        }}
     }}
-  }}
-  return device;
+    return device;
 }}
 
-auto __dace_createGraphAndAddCodelets({sdfg_state_name} *__state, const optional<Device> &device) -> Graph 
+DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
 {{
-  Graph graph;                                // Declaration
-  graph = poplar::Graph(device->getTarget()); // Assignment
+    auto toIpuStream = __state.poplar_context->graph.addHostToDeviceFIFO("TO_IPU", FLOAT, NUM_DATA_ITEMS);
+    auto fromIpuStream = __state.poplar_context->graph.addDeviceToHostFIFO("FROM_IPU", FLOAT, NUM_DATA_ITEMS);
 
-  // Add our custom codelet, building from CPP source
-  // with the given popc compiler options
-  graph.addCodelets({{"src/codelets/SkeletonCodelets.cpp"}}, "-O3 -I codelets");
-
-  // Add the codelets for the popops librarys
-  popops::addCodelets(graph);
-  return graph;
-}}
-
-auto __dace_buildComputeGraph({sdfg_state_name} *__state, Graph &graph, map<string, Tensor> &tensors,
-                       map<string, Program> &programs, const int numTiles) 
-{{
-  // Add tensors
-  tensors["data"] = graph.addVariable(poplar::FLOAT, {{NUM_DATA_ITEMS}}, "data");
-  poputil::mapTensorLinearly(graph, tensors["data"]);
-
-  //   // Add programs and wire up data
-  //   const auto NumElemsPerTile = NUM_DATA_ITEMS / numTiles;
-  //   auto cs = graph.addComputeSet("loopBody");
-  //   for (auto tileNum = 0; tileNum < numTiles; tileNum++) {{
-  //     const auto sliceEnd =
-  //         std::min((tileNum + 1) * NumElemsPerTile, (int)NUM_DATA_ITEMS);
-  //     const auto sliceStart = tileNum * NumElemsPerTile;
-
-  //     auto v = graph.addVertex(
-  //         cs, "SkeletonVertex",
-  //         {{{{"data", tensors["data"].slice(sliceStart, sliceEnd)}}}});
-  //     graph.setInitialValue(v["howMuchToAdd"], tileNum);
-  //     graph.setPerfEstimate(v,
-  //                           100); // Ideally you'd get this as right as
-  //                           possible
-  //     graph.setTileMapping(v, tileNum);
-  //   }}
-  //   auto executeIncrementVertex = Execute(cs);
-
-  //   auto mainProgram = Repeat(10, executeIncrementVertex, "repeat10x");
-  //   programs["main"] = mainProgram; // Program 0 will be the main program
-}}
-
-
-auto __dace_defineDataStreams({sdfg_state_name} *__state, Graph &graph, map<string, Tensor> &tensors,
-                       map<string, Program> &programs) 
-{{
-  auto toIpuStream = graph.addHostToDeviceFIFO("TO_IPU", FLOAT, NUM_DATA_ITEMS);
-  auto fromIpuStream =
-      graph.addDeviceToHostFIFO("FROM_IPU", FLOAT, NUM_DATA_ITEMS);
-
-  auto copyToIpuProgram = Copy(toIpuStream, tensors["data"]);
-  auto copyToHostProgram = Copy(tensors["data"], fromIpuStream);
-
-  programs["copy_to_ipu"] = copyToIpuProgram;
-  programs["copy_to_host"] = copyToHostProgram;
+    __state.poplar_context->programs["copy_to_ipu"] = Copy(toIpuStream, __state.poplar_context->tensors["data"]);
+    __state.poplar_context->programs["copy_to_host"] = Copy(__state.poplar_context->tensors["data"], fromIpuStream);
 }}
 
 {host_code_seperator}""".format(params=params_comma,
            sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
            other_globalcode=self._globalcode.getvalue(),
            file_header=fileheader.getvalue(),
-           const_defines = constdefines.getvalue(),
            sdfg=self._global_sdfg, 
            host_code_seperator="".join([
-                          "{separator}\n// Kernel: {kernel_name}"
+                          "{separator}\n// Dataflow graph building: {kernel_name}"
                           "\n{separator}\n\n{code}\n\n".format(separator="/" * 79, kernel_name=name, code=code)
                           for (name, code) in self._host_codes])))
 
@@ -977,72 +912,110 @@ auto __dace_defineDataStreams({sdfg_state_name} *__state, Graph &graph, map<stri
             
         else:
             print("IN HOST CODE")
-            self.frame.generate_ipu_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
-            kernels = []  # List of tuples (subgraph, kernel_id)
-            # Start a new state code generation: reset previous dependencies if any
-            self._kernels_dependencies.clear()
-            self._kernels_names_to_id.clear()
-            
-            # For now only 1 kernel.
-            kernels = [(state, 0)]
-            self._num_kernels = len(kernels)
-
-            state_parameters = []
-            state_host_header_stream = CodeIOStream()
-            state_host_body_stream = CodeIOStream()
-            instrumentation_stream = CodeIOStream()
-            
-            # Kernels are now sorted considering their dependencies
-            for kern, kern_id in kernels:
-                callsite_stream.write("\n SJJ: kernel started")                
-                # Generate all kernels in this state
-                subgraphs = dace.sdfg.concurrent_subgraphs(kern)
-                single_sgs: list(ScopeSubgraphView) = []
-                for sg in subgraphs:
-                    if sg is not None:
-                        single_sgs.append(sg)
-                    # skip multigraphs for now
-                        
-                shared_transients = set(sdfg.shared_transients())
-                # Allocate global memory transients, unless they are shared with
-                # other states
-                all_transients = set(kern.all_transients())
-                allocated = set(shared_transients)
-                for node in kern.data_nodes():
-                    data = node.desc(sdfg)
-                    if node.data not in all_transients or node.data in allocated:
-                        continue
-                    if (data.storage == dtypes.StorageType.IPU_Memory and not isinstance(data, data.View)):
-                        print("Allocating data")
-                        allocated.add(node.data)
-                        self.dispatcher.dispatch_allocate(sdfg, cfg, kern, state_id, node, data, function_stream,
-                                                           callsite_stream)
-                callsite_stream.write("\n SJJ: Data allocated")
-                # Create a unique kernel name to avoid name clashes
-                # If this kernels comes from a Nested SDFG, use that name also
-                if sdfg.parent_nsdfg_node is not None:
-                    kernel_name = f"{sdfg.parent_nsdfg_node.label}_{state.label}_{kern_id}_{cfg.cfg_id}"
-                else:
-                    kernel_name = f"{state.label}_{kern_id}_{cfg.cfg_id}"
-                    
-                # Add kernel name to the list of kernels    
-                self._kernels_names_to_id[kernel_name] = kern_id
-                # Generate kernel code
-                self.generate_kernel(sdfg, cfg, state, kernel_name, single_sgs, function_stream, callsite_stream,
-                                     state_host_header_stream, state_host_body_stream, instrumentation_stream,
-                                     state_parameters, kern_id)
-                callsite_stream.write("\n SJJ: Kernel generated")
-
-            kernel_host_stream = CodeIOStream()            
-            self.generate_host_function(sdfg, cfg, state, state_id, function_stream, callsite_stream, state_host_header_stream, state_host_body_stream, instrumentation_stream, kernel_host_stream)
-
-            # Store code strings to be passed to compilation phase
-            self._host_codes.append((kernel_name, kernel_host_stream.getvalue()))
-            
-            # self.frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
+            # self.frame.generate_ipu_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
+            self.generate_ipu_cpuside_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
             
 ############################################################################################################
 # #### Helpers
+
+    def generate_ipu_cpuside_state(self,
+                                sdfg: SDFG,
+                                cfg: ControlFlowRegion,
+                                state: SDFGState,
+                                function_stream: CodeIOStream,
+                                callsite_stream: CodeIOStream,
+                                generate_state_footer: bool = True):
+        sid = state.block_id
+        
+        callsite_stream.write(f'// Ipu pipeline \n', sdfg)
+        callsite_stream.write(f"""
+            // Data initialization
+            __state->poplar_context->hostData = vector<float>(NUM_DATA_ITEMS, 1);
+
+            // Real code pipeline starts from here.
+            std::cout << "STEP 1: Connecting to an IPU device" << std::endl;
+            __state->poplar_context->device = getIpuDevice(1);
+            if (!__state->poplar_context->device.has_value()) {{
+                std::cerr << "Could not attach to an IPU device. Aborting" << std::endl;
+                return;
+            }}
+        """)
+        #####################
+        # Create dataflow graph for state's children.
+
+        
+        # Start a new state code generation: reset previous dependencies if any
+        self._kernels_dependencies.clear()
+        self._kernels_names_to_id.clear()
+        
+        # For now only 1 kernel.
+        kernels = [(state, 0)]
+
+
+        state_host_header_stream = CodeIOStream()
+        state_host_body_stream = CodeIOStream()
+        instrumentation_stream = CodeIOStream()
+    
+        for kern, kern_id in kernels:
+            if sdfg.parent_nsdfg_node is not None:
+                kernel_name = f"{sdfg.parent_nsdfg_node.label}_{state.label}_{kern_id}_{cfg.cfg_id}"
+            else:
+                kernel_name = f"{state.label}_{kern_id}_{cfg.cfg_id}"
+            self._kernels_names_to_id[kernel_name] = kern_id
+
+        kernel_host_stream = CodeIOStream()            
+        function_stream.write(f"// kernel_name = {kernel_name}\n")
+        self.generate_host_function(sdfg, cfg, state, sid, function_stream, callsite_stream, state_host_header_stream, state_host_body_stream, instrumentation_stream, kernel_host_stream)
+
+        # Store code strings to be passed to compilation phase
+        self._host_codes.append((kernel_name, kernel_host_stream.getvalue()))
+            
+        #####################
+        # Write state footer(After kernel call?)
+        callsite_stream.write(f"""
+            std::cout << "STEP 3: Define data streams" << std::endl;
+            defineDataStreams(*__state);  // Pass the state directly
+
+            std::cout << "STEP 4: Create engine and compile graph" << std::endl;
+            __state->poplar_context->engineOptions = OptionFlags{{
+                {{"target.saveArchive", "archive.a"}},
+                {{"debug.instrument", "true"}},
+                {{"debug.instrumentCompute", "true"}},
+                {{"debug.instrumentControlFlow", "true"}},
+                {{"debug.computeInstrumentationLevel", "tile"}},
+                {{"debug.outputAllSymbols", "true"}},
+                {{"autoReport.all", "true"}},
+                {{"autoReport.outputSerializedGraph", "true"}},
+                {{"debug.retainDebugInformation", "true"}},
+            }};
+
+            __state->poplar_context->programIds = map<string, int>();
+            __state->poplar_context->programsList = vector<Program>(__state->poplar_context->programs.size());  // Removing the size causes segfault
+            int index = 0;
+            for (auto &nameToProgram : __state->poplar_context->programs) {{
+                __state->poplar_context->programIds[nameToProgram.first] = index;
+                __state->poplar_context->programsList[index] = nameToProgram.second;
+                index++;
+            }}
+
+            // Now construct the Engine using the constructor
+            auto engine = Engine(__state->poplar_context->graph, __state->poplar_context->programsList, __state->poplar_context->engineOptions);
+
+            std::cout << "STEP 5: Load compiled graph onto the IPU tiles" << std::endl;
+            engine.load(*__state->poplar_context->device);
+            // engine.enableExecutionProfiling();
+
+            std::cout << "STEP 6: Attach data streams" << std::endl;
+            
+            engine.connectStream("TO_IPU", __state->poplar_context->hostData.data());
+            engine.connectStream("FROM_IPU", __state->poplar_context->hostData.data());
+
+            std::cout << "STEP 7: Run programs" << std::endl;
+            engine.run(__state->poplar_context->programIds["copy_to_ipu"]);  // Copy to IPU
+            engine.run(__state->poplar_context->programIds["main"]);         // Main program
+            engine.run(__state->poplar_context->programIds["copy_to_host"]); // Copy from IPU
+        """)
+
             ## Generate the global function here
     def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
                           src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[mmlt.Memlet],
@@ -1068,37 +1041,111 @@ auto __dace_defineDataStreams({sdfg_state_name} *__state, Graph &graph, map<stri
         kernel_args_call_host = []
         kernel_args_opencl = []
         # Include state in args
-        kernel_args_opencl.append(f"{cpp.mangle_dace_state_struct_name(self._global_sdfg)} *__state")
-        kernel_args_call_host.append(f"__state")
+        kernel_args_opencl.append(f"{cpp.mangle_dace_state_struct_name(self._global_sdfg)} &__state")
+        kernel_args_call_host.append(f"*__state")
 
         # real code starts
+        host_function_name = f"kernel_buildComputeGraph"
         
-        host_function_name = f"__dace_runstate_{cfg.cfg_id}_{state.name}_{state_id}"
-        function_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(host_function_name,
-                                                                            ", ".join(kernel_args_opencl)))
-
+        callsite_stream.write("////////////////////////////////////////KERNEL")
+        callsite_stream.write("std::cout << \"STEP 2: Building the compute graph\" << std::endl;")
+        callsite_stream.write("{}({});".format(host_function_name, ", ".join(kernel_args_call_host)))
+        callsite_stream.write("////////////////////////////////////////")
+        
+        # function_stream.write("\n\nDACE_EXPORTED auto {}({});\n\n".format(host_function_name,
+                                                                            # ", ".join(kernel_args_opencl)))
+        
+        #///////////////////////////
         # add generated header information
         kernel_host_stream.write(state_host_header_stream.getvalue())
 
         kernel_host_stream.write(f"""\
     DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{""")
 
+    #     kernel_host_stream.write(f"""\
+    #         hlslib::ocl::Program program = __state->poplar_context->fpga_context->Get().CurrentlyLoadedProgram();\
+    # """)
+    #     # Create a vector to collect all events that are being generated to allow
+    #     # waiting before exiting this state
+    #     kernel_host_stream.write("std::vector<hlslib::ocl::Event> all_events;")
+
+    #     # Kernels invocations
+    #     kernel_host_stream.write(state_host_body_stream.getvalue())
+
+    #     # Wait for all events
+    #     kernel_host_stream.write("hlslib::ocl::WaitForEvents(all_events);")
+        
+        # write the kernel_host_stream withe the commands I have copied
         kernel_host_stream.write(f"""\
-            hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();\
-    """)
-        # Create a vector to collect all events that are being generated to allow
-        # waiting before exiting this state
-        kernel_host_stream.write("std::vector<hlslib::ocl::Event> all_events;")
+                                 std::cout << "  STEP 2.1: Create graph and compile codelets" << std::endl;
+                
+                // Step 1: Create graph and add codelets
+                __state.poplar_context->graph = poplar::Graph(__state.poplar_context->device->getTarget());
+                __state.poplar_context->graph.addCodelets({{"src/codelets/SkeletonCodelets.cpp"}}, "-O3 -I codelets");
+                popops::addCodelets(__state.poplar_context->graph);
 
-        # Kernels invocations
-        kernel_host_stream.write(state_host_body_stream.getvalue())
+                // Step 2: Add data to the graph
+                std::cout << "  STEP 2.2: Add data to the graph" << std::endl;
+                __state.poplar_context->tensors["data"] = __state.poplar_context->graph.addVariable(poplar::FLOAT, {{NUM_DATA_ITEMS}}, "data");
+                poputil::mapTensorLinearly(__state.poplar_context->graph, __state.poplar_context->tensors["data"]);
 
-        # Wait for all events
-        kernel_host_stream.write("hlslib::ocl::WaitForEvents(all_events);")
+                const int numTiles = __state.poplar_context->device->getTarget().getNumTiles();
+                // Add programs and wire up data
+                const auto NumElemsPerTile = NUM_DATA_ITEMS / numTiles;
+                auto cs = __state.poplar_context->graph.addComputeSet("loopBody");
+                
+                for (auto tileNum = 0; tileNum < numTiles; tileNum++) {{
+                    const auto sliceEnd = std::min((tileNum + 1) * NumElemsPerTile, (int)NUM_DATA_ITEMS);
+                    const auto sliceStart = tileNum * NumElemsPerTile;
+
+                    auto v = __state.poplar_context->graph.addVertex(cs, "SkeletonVertex", {{"data", __state.poplar_context->tensors["data"].slice(sliceStart, sliceEnd)}});
+                    __state.poplar_context->graph.setInitialValue(v["howMuchToAdd"], tileNum);
+                    __state.poplar_context->graph.setPerfEstimate(v, 100);
+                    __state.poplar_context->graph.setTileMapping(v, tileNum);
+                }}
+                
+                __state.poplar_context->programs["main"] = Repeat(10, Execute(cs));
+                                 """)
 
         kernel_host_stream.write("}\n")
+        
+        
+        """        
+        COMMENT
+            DACE_EXPORTED auto kernel_buildComputeGraph({sdfg_state_name} &__state) 
+            {{
+                std::cout << "  STEP 2.1: Create graph and compile codelets" << std::endl;
+                
+                // Step 1: Create graph and add codelets
+                __state.poplar_context->graph = poplar::Graph(__state.poplar_context->device->getTarget());
+                __state.poplar_context->graph.addCodelets({{"src/codelets/SkeletonCodelets.cpp"}}, "-O3 -I codelets");
+                popops::addCodelets(__state.poplar_context->graph);
 
-        callsite_stream.write("{}({});".format(host_function_name, ", ".join(kernel_args_call_host)))
+                // Step 2: Add data to the graph
+                std::cout << "  STEP 2.2: Add data to the graph" << std::endl;
+                __state.poplar_context->tensors["data"] = __state.poplar_context->graph.addVariable(poplar::FLOAT, {{NUM_DATA_ITEMS}}, "data");
+                poputil::mapTensorLinearly(__state.poplar_context->graph, __state.poplar_context->tensors["data"]);
+
+                const int numTiles = __state.poplar_context->device->getTarget().getNumTiles();
+                // Add programs and wire up data
+                const auto NumElemsPerTile = NUM_DATA_ITEMS / numTiles;
+                auto cs = __state.poplar_context->graph.addComputeSet("loopBody");
+                
+                for (auto tileNum = 0; tileNum < numTiles; tileNum++) {{
+                    const auto sliceEnd = std::min((tileNum + 1) * NumElemsPerTile, (int)NUM_DATA_ITEMS);
+                    const auto sliceStart = tileNum * NumElemsPerTile;
+
+                    auto v = __state.poplar_context->graph.addVertex(cs, "SkeletonVertex", {{"data", __state.poplar_context->tensors["data"].slice(sliceStart, sliceEnd)}});
+                    __state.poplar_context->graph.setInitialValue(v["howMuchToAdd"], tileNum);
+                    __state.poplar_context->graph.setPerfEstimate(v, 100);
+                    __state.poplar_context->graph.setTileMapping(v, tileNum);
+                }}
+                
+                __state.poplar_context->programs["main"] = Repeat(10, Execute(cs));
+            }}
+        """
+
+        
 
     def generate_kernel(self,
                         sdfg: dace.SDFG,

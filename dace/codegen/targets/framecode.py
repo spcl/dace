@@ -411,7 +411,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             # Footer
             callsite_stream.write('}', sdfg)
-
+    
     def generate_ipu_state(self,
                        sdfg: SDFG,
                        cfg: ControlFlowRegion,
@@ -439,16 +439,16 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # dependencies have been executed (topological sort).
         # For different connected components, run them concurrently.
 
-        components = dace.sdfg.concurrent_subgraphs(state)
+        # components = dace.sdfg.concurrent_subgraphs(state)
 
-        if len(components) <= 1:
-            self._dispatcher.dispatch_subgraph(sdfg, cfg, state, sid, global_stream, callsite_stream,
-                                               skip_entry_node=False)
-        else:
-            callsite_stream.write("{")
-            self._dispatcher.dispatch_subgraph(sdfg, cfg, c, sid, global_stream, callsite_stream,
-                                                   skip_entry_node=False)
-            callsite_stream.write("}")
+        # if len(components) <= 1:
+        #     self._dispatcher.dispatch_subgraph(sdfg, cfg, state, sid, global_stream, callsite_stream,
+        #                                        skip_entry_node=False)
+        # else:
+        #     callsite_stream.write("{")
+        #     self._dispatcher.dispatch_subgraph(sdfg, cfg, c, sid, global_stream, callsite_stream,
+        #                                            skip_entry_node=False)
+        #     callsite_stream.write("}")
 
         #####################
         # Write state footer
@@ -556,7 +556,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         opbar.done()
 
         # Write exit label
-        callsite_stream.write(f'__state_exit_{sdfg.cfg_id}:;', sdfg)
+        # callsite_stream.write(f'__state_exit_{sdfg.cfg_id}:;', sdfg)
 
         return states_generated
 
@@ -941,7 +941,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
-        callsite_stream.write('called allocate_arrays_in_scope outer\n', sdfg)
+        # callsite_stream.write('called allocate_arrays_in_scope outer\n', sdfg)
 
         # Define constants as top-level-allocated
         for cname, (ctype, _) in sdfg.constants_prop.items():
@@ -997,7 +997,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Deallocate transients
         self.deallocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
-        callsite_stream.write('called deallocate_arrays_in_scope internal transient\n', sdfg)
+        # callsite_stream.write('called deallocate_arrays_in_scope internal transient\n', sdfg)
 
         # Now that we have all the information about dependencies, generate
         # header and footer

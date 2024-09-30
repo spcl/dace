@@ -41,6 +41,9 @@
 #include "intel_fpga/host.h"
 #endif
 
+// TODO:use conditional compilation later for now include poplar always
+#include "poplar_common.h"
+
 #include "fpga_common.h"
 
 #endif  // __DACE_RUNTIME_H
