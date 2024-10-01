@@ -10,7 +10,7 @@
 	url = https://github.com/definelicht/hlslib.git
 [submodule "dace/viewer/webclient"]
 	path = dace/viewer/webclient
-	url = https://github.com/spcl/dace-webclient.git
+	url = git@github.com:spcl/dace-webclient.git
 [submodule "dace/external/rtllib"]
 	path = dace/external/rtllib
 	url = https://github.com/carljohnsen/rtllib.git 
