@@ -87,6 +87,12 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
+# A subset of CPU schedule types
+CPU_SCHEDULES = [
+    ScheduleType.CPU_Multicore,
+    ScheduleType.CPU_Persistent,
+]
+
 # A subset of on-GPU storage types
 GPU_STORAGES = [
     StorageType.GPU_Shared,
@@ -1217,6 +1223,7 @@ int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
 int64 = typeclass(numpy.int64)
+uintp = typeclass(numpy.uintp)
 uint8 = typeclass(numpy.uint8)
 uint16 = typeclass(numpy.uint16)
 uint32 = typeclass(numpy.uint32)

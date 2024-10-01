@@ -584,7 +584,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                         DetectLoop.exit_state: nsdfg.node_id(end)
                     }
                     transformation = LoopUnroll()
-                    transformation.setup_match(nsdfg, 0, -1, subgraph, 0)
+                    transformation.setup_match(nsdfg, nsdfg.cfg_id, -1, subgraph, 0)
                     transformation.apply(nsdfg, nsdfg)
 
             elif self.unroll_loops:

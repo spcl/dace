@@ -21,16 +21,35 @@ def nng(expr):
         return expr
 
 def bounding_box_cover_exact(subset_a, subset_b) -> bool:
+    min_elements_a = subset_a.min_element()
+    max_elements_a = subset_a.max_element()
+    min_elements_b = subset_b.min_element()
+    max_elements_b = subset_b.max_element()
+
+    # Covering only make sense if the two subsets have the same number of dimensions.
+    if len(min_elements_a) != len(min_elements_b):
+        return ValueError(
+                f"A bounding box of dimensionality {len(min_elements_a)} cannot"
+                f" test covering a bounding box of dimensionality {len(min_elements_b)}."
+        )
+
     return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
                 and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
-                for rb, re, orb, ore in zip(subset_a.min_element(), subset_a.max_element(),
-                                            subset_b.min_element(), subset_b.max_element())])
+                for rb, re, orb, ore in zip(min_elements_a, max_elements_a,
+                                            min_elements_b, max_elements_b)])
 
 def bounding_box_symbolic_positive(subset_a, subset_b, approximation = False)-> bool:
     min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
     max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
     min_elements_b = subset_b.min_element_approx() if approximation else subset_b.min_element()
     max_elements_b = subset_b.max_element_approx() if approximation else subset_b.max_element()
+
+    # Covering only make sense if the two subsets have the same number of dimensions.
+    if len(min_elements_a) != len(min_elements_b):
+        return ValueError(
+                f"A bounding box of dimensionality {len(min_elements_a)} cannot"
+                f" test covering a bounding box of dimensionality {len(min_elements_b)}."
+        )
 
     for rb, re, orb, ore in zip(min_elements_a, max_elements_a,
                                 min_elements_b, max_elements_b):
@@ -53,12 +72,18 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation = False)-> 
 
 class Subset(object):
     """ Defines a subset of a data descriptor. """
+
     def covers(self, other):
         """ Returns True if this subset covers (using a bounding box) another
             subset. """
-        symbolic_positive = Config.get('optimizer', 'symbolic_positive')
 
-        if not symbolic_positive:
+        # Subsets of different dimensionality can never cover each other.
+        if self.dims() != other.dims():
+            return ValueError(
+                    f"A subset of dimensionality {self.dim()} cannot test covering a subset of dimensionality {other.dims()}"
+            )
+
+        if not Config.get('optimizer', 'symbolic_positive'):
             try:
                 return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
                             and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
@@ -66,7 +91,6 @@ class Subset(object):
                                                         other.min_element_approx(), other.max_element_approx())])
             except TypeError:
                 return False
-
         else:
             try:
                 if not bounding_box_symbolic_positive(self, other, True):
@@ -78,6 +102,12 @@ class Subset(object):
         
     def covers_precise(self, other):
         """ Returns True if self contains all the elements in other. """
+
+        # Subsets of different dimensionality can never cover each other.
+        if self.dims() != other.dims():
+            return ValueError(
+                    f"A subset of dimensionality {self.dim()} cannot test covering a subset of dimensionality {other.dims()}"
+            )
 
         # If self does not cover other with a bounding box union, return false.
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')

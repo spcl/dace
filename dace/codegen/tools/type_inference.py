@@ -60,7 +60,7 @@ def infer_expr_type(code, symbols=None):
     if isinstance(code, (str, float, int, complex)):
         parsed_ast = ast.parse(str(code))
     elif isinstance(code, sympy.Basic):
-        parsed_ast = ast.parse(sympy.printing.pycode(code))
+        parsed_ast = ast.parse(sympy.printing.pycode(code, allow_unknown_functions=True))
     elif isinstance(code, SymExpr):
         parsed_ast = ast.parse(sympy.printing.pycode(code.expr))
     else:

@@ -62,8 +62,7 @@ def infer_connector_types(sdfg: SDFG):
     :param sdfg: The SDFG to infer.
     """
     # Loop over states, and in a topological sort over each state's nodes
-
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         for node in dfs_topological_sort(state):
             # Try to infer input connector type from node type or previous edges
             for e in state.in_edges(node):
@@ -170,7 +169,7 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
 
     if isinstance(scope, SDFG):
         # Set device for default top-level schedules and storages
-        for state in scope.nodes():
+        for state in scope.states():
             set_default_schedule_and_storage_types(state,
                                                    parent_schedules,
                                                    use_parent_schedule=use_parent_schedule,

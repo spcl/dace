@@ -20,6 +20,7 @@ from dace.sdfg.utils import get_all_view_nodes, get_view_edge
 
 
 @make_properties
+@transformation.single_level_sdfg_only
 class InlineMultistateSDFG(transformation.SingleStateTransformation):
     """
     Inlines a multi-state nested SDFG into a top-level SDFG.
@@ -262,7 +263,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
     def _isolate_nsdfg_node(self, nsdfg_node: nodes.NestedSDFG, sdfg: SDFG, outer_state: SDFGState) -> SDFGState:
         # Push nsdfg plus childs into new state
-        nsdfg_state = helpers.state_fission_after(sdfg, outer_state, nsdfg_node)
+        nsdfg_state = helpers.state_fission_after(outer_state, nsdfg_node)
 
         # Split nsdfg from its childs
         direct_subgraph = set()
@@ -276,7 +277,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     direct_subgraph.add(view_node)
 
         direct_subgraph = StateSubgraphView(nsdfg_state, direct_subgraph)
-        new_state = helpers.state_fission(sdfg, direct_subgraph)
+        new_state = helpers.state_fission(direct_subgraph)
         return new_state
 
     def _replace_arguments_by_views(
@@ -565,4 +566,5 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         for argument, edge in output_memlets.items():
             outer_state.remove_memlet_path(edge)
+
 
