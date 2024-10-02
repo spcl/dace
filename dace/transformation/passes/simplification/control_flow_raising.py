@@ -7,7 +7,7 @@ from dace.transformation.interstate.loop_lifting import LoopLifting
 
 @properties.make_properties
 @transformation.experimental_cfg_block_compatible
-class ControlFlowRaising(ppl.Pass):
+class ControlFlowLifting(ppl.Pass):
 
     CATEGORY: str = 'Simplification'
 
