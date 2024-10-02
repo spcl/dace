@@ -108,8 +108,10 @@ class ConstantPropagation(ppl.Pass):
             result = {k: v for k, v in symbols_replaced.items() if k not in remaining_unknowns}
 
             # Remove single-valued symbols from data descriptors (e.g., symbolic array size)
-            sdfg.replace_dict({k: v
-                               for k, v in result.items() if k in desc_symbols},
+            sdfg.replace_dict({
+                k: v
+                for k, v in result.items() if k in desc_symbols
+            },
                               replace_in_graph=False,
                               replace_keys=False)
 
@@ -213,8 +215,10 @@ class ConstantPropagation(ppl.Pass):
                     self._propagate(constants, self._data_independent_assignments(edge.data, arrays))
 
                     for aname, aval in constants.items():
-                        # If something was assigned more than once (to a different value), it's not a constant
-                        if aname in assignments and aval != assignments[aname]:
+                        # If a symbol appearing in the replacing expression of a constant is modified,
+                        # the constant is not valid anymore
+                        if ((aname in assignments and aval != assignments[aname])
+                                or symbolic.free_symbols_and_functions(aval) & edge.data.assignments.keys()):
                             assignments[aname] = _UnknownValue
                         else:
                             assignments[aname] = aval
