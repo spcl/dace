@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import ast
 import collections
 import copy
 import re
@@ -17,6 +16,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.tools.type_inference import infer_expr_type
+from dace.frontend.python import astutils
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
@@ -920,10 +920,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             if isinstance(cfr, LoopRegion) and cfr.loop_variable is not None and cfr.init_statement is not None:
                 init_assignment = cfr.init_statement.code[0]
-                if isinstance(init_assignment, ast.Assign):
+                if isinstance(init_assignment, astutils.ast.Assign):
                     init_assignment = init_assignment.value
                 if not cfr.loop_variable in interstate_symbols:
-                    interstate_symbols[cfr.loop_variable] = infer_expr_type(ast.unparse(init_assignment))
+                    interstate_symbols[cfr.loop_variable] = infer_expr_type(astutils.unparse(init_assignment))
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
 

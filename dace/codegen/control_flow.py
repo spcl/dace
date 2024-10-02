@@ -274,14 +274,11 @@ class GeneralBlock(RegionBlock):
         for i, elem in enumerate(self.elements):
             expr += elem.as_cpp(codegen, symbols)
             # In a general block, emit transitions and assignments after each individual block or region.
-            if (isinstance(elem, BasicCFBlock) or (isinstance(elem, RegionBlock) and elem.region) or
-                (isinstance(elem, GeneralLoopScope) and elem.loop)):
+            if isinstance(elem, BasicCFBlock) or (isinstance(elem, RegionBlock) and elem.region):
                 if isinstance(elem, BasicCFBlock):
                     g_elem = elem.state
-                elif isinstance(elem, GeneralBlock):
-                    g_elem = elem.region
                 else:
-                    g_elem = elem.loop
+                    g_elem = elem.region
                 cfg = g_elem.parent_graph
                 sdfg = cfg if isinstance(cfg, SDFG) else cfg.sdfg
                 out_edges = cfg.out_edges(g_elem)
