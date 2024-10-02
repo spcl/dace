@@ -108,6 +108,16 @@ def validate_control_flow_region(sdfg: 'SDFG',
                         f'Trying to read an inaccessible data container "{container}" '
                         f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
+        # Check for race conditions on edge assignments
+        for aname, aval in edge.data.assignments.items():
+            syms = symbolic.free_symbols_and_functions(aval)
+            also_assigned = (syms & edge.data.assignments.keys()) - {aname}
+            if also_assigned:
+                eid = region.edge_id(edge)
+                raise InvalidSDFGInterstateEdgeError(f'Race condition: inter-state assignment {aname} = {aval} uses '
+                                                     f'variables {also_assigned}, which are also modified in the same '
+                                                     'edge.', sdfg, eid)
+
         # Add edge symbols into defined symbols
         symbols.update(issyms)
 
