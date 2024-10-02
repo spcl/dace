@@ -9,11 +9,9 @@ import astunparse
 import dace
 from dace.dtypes import Language
 from dace.properties import make_properties, Property
-from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
-from dace.transformation import helpers as thelpers
 
 
 class PythonConnectorRenamer(ast.NodeTransformer):
@@ -173,6 +171,7 @@ class TaskletFusion(pm.SingleStateTransformation):
         if graph.out_degree(t1) != 1 or (data is not None and graph.out_degree(data) != 1):
             return False
         access_node_count = sum(1 for s in sdfg.nodes() for n in s.data_nodes() if n.data == data.data)
+        access_node_count += sum(1 for e in sdfg.edges() if data.data in e.data.free_symbols)
         if access_node_count > 1:
             return False
 
@@ -275,7 +274,11 @@ class TaskletFusion(pm.SingleStateTransformation):
         else:
             new_name = t1.label + '_fused_' + t2.label
 
-        new_tasklet = graph.add_tasklet(new_name, inputs, t2.out_connectors, new_code_str, t1.language,
+        new_tasklet = graph.add_tasklet(new_name,
+                                        inputs,
+                                        t2.out_connectors,
+                                        new_code_str,
+                                        t1.language,
                                         state_fields=t1.state_fields + t2.state_fields,
                                         code_global=t1.code_global.code + t2.code_global.code,
                                         code_init=t1.code_init.code + t2.code_init.code,
