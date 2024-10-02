@@ -2,6 +2,7 @@
 """ Tests loop raising trainsformations. """
 
 import numpy as np
+import pytest
 import dace
 from dace.memlet import Memlet
 from dace.sdfg.sdfg import SDFG, InterstateEdge
@@ -52,7 +53,8 @@ def test_lift_regular_for_loop():
     assert np.allclose(A_valid, A)
 
 
-def test_lift_loop_llvm_canonical():
+@pytest.mark.parametrize('increment_before_condition', (True, False))
+def test_lift_loop_llvm_canonical(increment_before_condition):
     sdfg = dace.SDFG('llvm_canonical')
     N = dace.symbol('N')
     sdfg.add_symbol('i', dace.int32)
@@ -72,8 +74,12 @@ def test_lift_loop_llvm_canonical():
     sdfg.add_edge(guard, exitstate, InterstateEdge(condition='N <= 0'))
     sdfg.add_edge(guard, preheader, InterstateEdge(condition='N > 0'))
     sdfg.add_edge(preheader, body, InterstateEdge(assignments={'i': 0, 'k': 0}))
-    sdfg.add_edge(body, latch, InterstateEdge(assignments={'i': 'i + 2', 'j': 'j + 1'}))
-    sdfg.add_edge(latch, body, InterstateEdge(condition='i < N'))
+    if increment_before_condition:
+        sdfg.add_edge(body, latch, InterstateEdge(assignments={'i': 'i + 2', 'j': 'j + 1'}))
+        sdfg.add_edge(latch, body, InterstateEdge(condition='i < N'))
+    else:
+        sdfg.add_edge(body, latch, InterstateEdge(assignments={'j': 'j + 1'}))
+        sdfg.add_edge(latch, body, InterstateEdge(condition='i < N', assignments={'i': 'i + 2'}))
     sdfg.add_edge(latch, loopexit, InterstateEdge(condition='i >= N', assignments={'k': 2}))
     sdfg.add_edge(loopexit, exitstate, InterstateEdge())
 
@@ -160,5 +166,6 @@ def test_lift_loop_llvm_canonical_while():
 
 if __name__ == '__main__':
     test_lift_regular_for_loop()
-    test_lift_loop_llvm_canonical()
+    test_lift_loop_llvm_canonical(True)
+    test_lift_loop_llvm_canonical(False)
     test_lift_loop_llvm_canonical_while()

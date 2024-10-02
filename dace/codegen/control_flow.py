@@ -539,26 +539,27 @@ class GeneralLoopScope(RegionBlock):
         expr = ''
 
         if self.loop.update_statement and self.loop.init_statement and self.loop.loop_variable:
-            # Initialize to either "int i = 0" or "i = 0" depending on whether the type has been defined.
-            defined_vars = codegen.dispatcher.defined_vars
-            if not defined_vars.has(self.loop.loop_variable):
-                try:
-                    init = f'{symbols[self.loop.loop_variable]} '
-                except KeyError:
-                    init = 'auto '
-                    symbols[self.loop.loop_variable] = None
-            init += unparse_interstate_edge(self.loop.init_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
+            init = unparse_interstate_edge(self.loop.init_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
             init = init.strip(';')
 
             update = unparse_interstate_edge(self.loop.update_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
             update = update.strip(';')
 
             if self.loop.inverted:
-                expr += f'{init};\n'
-                expr += 'do {\n'
-                expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
-                expr += f'{update};\n'
-                expr += f'\n}} while({cond});\n'
+                if self.loop.update_before_condition:
+                    expr += f'{init};\n'
+                    expr += 'do {\n'
+                    expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
+                    expr += f'{update};\n'
+                    expr += f'}} while({cond});\n'
+                else:
+                    expr += f'{init};\n'
+                    expr += 'while (1) {\n'
+                    expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
+                    expr += f'if (!({cond}))\n'
+                    expr += 'break;\n'
+                    expr += f'{update};\n'
+                    expr += '}\n'
             else:
                 expr += f'for ({init}; {cond}; {update}) {{\n'
                 expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))

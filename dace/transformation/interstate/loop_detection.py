@@ -473,8 +473,9 @@ class DetectLoop(transformation.PatternTransformation):
             body = self.loop_body()
             return next(e for e in graph.in_edges(guard) if e.src in body)
         elif self.expr_index in (2, 3, 5, 6, 7):
-            body = self.loop_body()
-            return graph.in_edges(self.loop_latch)[0]
+            _, step_edge = rotated_loop_find_itvar(graph.in_edges(begin), graph.in_edges(self.loop_latch),
+                                                   graph.edges_between(self.loop_latch, begin)[0], self.loop_latch)
+            return step_edge
         elif self.expr_index == 4:
             return graph.edges_between(begin, begin)[0]
 

@@ -36,7 +36,7 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         full_body.update(meta)
         cond_edge = self.loop_condition_edge()
         incr_edge = self.loop_increment_edge()
-        inverted = self.expr_index in (2, 3)
+        inverted = self.expr_index in (2, 3, 5, 6, 7)
         init_edge = self.loop_init_edge()
         exit_edge = self.loop_exit_edge()
 
@@ -55,12 +55,19 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
             if k != itvar:
                 left_over_assignments[k] = init_edge.data.assignments[k]
         left_over_incr_assignments = {}
-        for k in incr_edge.data.assignments.keys():
-            if k != itvar:
-                left_over_incr_assignments[k] = incr_edge.data.assignments[k]
+        if incr_edge is not None:
+            for k in incr_edge.data.assignments.keys():
+                if k != itvar:
+                    left_over_incr_assignments[k] = incr_edge.data.assignments[k]
+
+        if inverted and incr_edge is cond_edge:
+            update_before_condition = False
+        else:
+            update_before_condition = True
 
         loop = LoopRegion(label, condition_expr=cond_edge.data.condition, loop_var=itvar, initialize_expr=init_expr,
-                          update_expr=incr_expr, inverted=inverted, sdfg=sdfg)
+                          update_expr=incr_expr, inverted=inverted, sdfg=sdfg,
+                          update_before_condition=update_before_condition)
 
         graph.add_node(loop)
         graph.add_edge(init_edge.src, loop,
