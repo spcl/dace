@@ -470,7 +470,7 @@ class AST_translator:
                 self.transient_mode=True
                 self.translate(self.startpoint.execution_part.execution, sdfg, cfg)
 
-    def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG):
+    def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function is responsible for translating Fortran pointer assignments into a SDFG.
         :param node: The node to be translated
@@ -533,7 +533,7 @@ class AST_translator:
                     self.unallocated_arrays.remove(i)
             self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.name]
 
-    def derivedtypedef2sdfg(self, node: ast_internal_classes.Derived_Type_Def_Node, sdfg: SDFG):
+    def derivedtypedef2sdfg(self, node: ast_internal_classes.Derived_Type_Def_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function is responsible for registering Fortran derived type declarations into a SDFG as nested data types.
         :param node: The node to be translated

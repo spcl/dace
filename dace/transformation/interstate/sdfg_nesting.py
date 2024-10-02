@@ -281,9 +281,11 @@ class InlineSDFG(transformation.SingleStateTransformation):
         struct_views : Dict[str, str] = {}
 
         for e in list(state.in_edges(nsdfg_node)):
-            
             # Structure treatment
             outer_dataname = state.memlet_path(e)[-1].data.data
+            if outer_dataname is None:
+                # Empty memlet, no data.
+                continue
             outer_tokens = outer_dataname.split('.')
             outer_dataname = outer_tokens[0]
             outer_descriptor = sdfg.arrays[outer_dataname]
@@ -314,9 +316,11 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     views[d] = (arr, mem)
 
         for e in list(state.out_edges(nsdfg_node)):
-
             # Structure treatment
             outer_dataname = state.memlet_path(e)[0].data.data
+            if outer_dataname is None:
+                # Empty memlet, no data.
+                continue
             outer_tokens = outer_dataname.split('.')
             outer_dataname = outer_tokens[0]
             outer_descriptor = sdfg.arrays[outer_dataname]
@@ -353,7 +357,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
 
         # Access nodes that need to be reshaped
-        reshapes: Set(str) = set()
+        reshapes: Set[str] = set()
         for aname, array in nsdfg.arrays.items():
             if array.transient:
                 continue

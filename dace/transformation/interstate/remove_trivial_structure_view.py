@@ -62,7 +62,7 @@ class RemoveTrivialStructureView(transformation.SingleStateTransformation):
                 state.add_edge(viewed, oedge.src_conn, oedge.dst, oedge.dst_conn, Memlet(memlet))
                 state.remove_edge(oedge)
             
-            for edge in state.bfs_edges(viewed):
+            for edge in state.edge_bfs(viewed):
                 if edge.data.data == view.data:
                     memlet = edge.data.data.replace(view.data, viewed.data) + f"[{edge.data.subset}]"
                     state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, Memlet(memlet))
@@ -75,7 +75,7 @@ class RemoveTrivialStructureView(transformation.SingleStateTransformation):
                 state.add_edge(iedge.src, iedge.src_conn, viewed, iedge.dst_conn, Memlet(memlet))
                 state.remove_edge(iedge)
             
-            for edge in state.bfs_edges(viewed, reverse=True):
+            for edge in state.edge_bfs(viewed, reverse=True):
                 if edge.data.data == view.data:
                     memlet = edge.data.data.replace(view.data, viewed.data) + f"[{edge.data.subset}]"
                     state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, Memlet(memlet))

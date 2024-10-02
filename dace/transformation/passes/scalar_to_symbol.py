@@ -671,7 +671,7 @@ class ScalarToSymbolPromotion(passes.Pass):
                 input = in_edge.src
 
                 # There is only zero or one incoming edges by definition
-                tasklet_inputs = [e.src for e in state.bfs_edges(input, reverse=True)]
+                tasklet_inputs = [e.src for e in state.edge_bfs(input, reverse=True)]
                 # Step 2.1
                 new_state = xfh.state_fission(gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
                 new_isedge: sd.InterstateEdge = new_state.parent_graph.out_edges(new_state)[0]

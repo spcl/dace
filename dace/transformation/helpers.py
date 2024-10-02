@@ -752,8 +752,8 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
         state.add_node(node_)
         new_nodes[node] = node_
 
-        if isinstance(n, nodes.AccessNode) and isinstance(state.sdfg.arrays[n.data], data.View):
-            for view_node in get_all_view_nodes(state, n):
+        if isinstance(node, nodes.AccessNode) and isinstance(state.sdfg.arrays[node.data], data.View):
+            for view_node in get_all_view_nodes(state, node):
                 node_ = copy.deepcopy(view_node)
                 state.add_node(node_)
                 new_nodes[view_node] = node_
@@ -770,10 +770,10 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
     # Move nodes
     state.remove_nodes_from(nodes_to_move)
 
-    for n in nodes_to_move:
-        if isinstance(n, nodes.NestedSDFG):
+    for node in nodes_to_move:
+        if isinstance(node, nodes.NestedSDFG):
             # Set the new parent state
-            n.sdfg.parent = newstate
+            node.sdfg.parent = newstate
 
     newstate.add_nodes_from(nodes_to_move)
 

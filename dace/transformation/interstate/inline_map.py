@@ -413,7 +413,7 @@ class InlineMapByConditions(transformation.SingleStateTransformation):
             new_start_state = matching_edge.dst
             
             # Remove unreachable states
-            branch_subgraph = set([e.dst for e in branch_nsdfg.bfs_edges(new_start_state)])
+            branch_subgraph = set([e.dst for e in branch_nsdfg.edge_bfs(new_start_state)])
             branch_subgraph.add(new_start_state)
             states_to_remove = set(branch_nsdfg.states()) - branch_subgraph
             branch_nsdfg.remove_nodes_from(states_to_remove)
