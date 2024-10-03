@@ -110,7 +110,7 @@ def ipu_test1():
                    dtype=dace.int32, 
                    storage=dace.StorageType.IPU_Memory, 
                    location=None, 
-                   transient=False, 
+                   transient=True, 
                    strides=[1], 
                    offset=[0], 
                    lifetime=dace.AllocationLifetime.Scope, 
@@ -120,22 +120,22 @@ def ipu_test1():
                    dtype=dace.int32, 
                    storage=dace.StorageType.IPU_Memory, 
                    location=None, 
-                   transient=False, 
+                   transient=True, 
                    strides=[1], 
                    offset=[0], 
                    lifetime=dace.AllocationLifetime.Scope, 
                    debuginfo=None, total_size=1)
-    # Add a C array
-    nsdfg.add_array('c', 
-                   shape=[1],
-                   dtype=dace.int32, 
-                   storage=dace.StorageType.IPU_Memory, 
-                   location=None, 
-                   transient=False, 
-                   strides=[1], 
-                   offset=[0], 
-                   lifetime=dace.AllocationLifetime.Scope, 
-                   debuginfo=None, total_size=1)
+    # # Add a C array
+    # nsdfg.add_array('c', 
+    #                shape=[1],
+    #                dtype=dace.int32, 
+    #                storage=dace.StorageType.IPU_Memory, 
+    #                location=None, 
+    #                transient=True, 
+    #                strides=[1], 
+    #                offset=[0], 
+    #                lifetime=dace.AllocationLifetime.State, 
+    #                debuginfo=None, total_size=1)
     
     
     nsdfg.add_symbol('i', dace.int32)
@@ -145,7 +145,7 @@ def ipu_test1():
                    dtype=dace.int32, 
                    storage=dace.StorageType.IPU_Memory, 
                    location=None, 
-                   transient=False, 
+                   transient=True, 
                    strides=[1], 
                    offset=[0], 
                    lifetime=dace.AllocationLifetime.Scope, 

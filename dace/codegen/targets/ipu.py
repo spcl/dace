@@ -51,17 +51,17 @@ def is_ipu_kernel(sdfg, state):
         """
         # pdb.set_trace()
         data_nodes = state.data_nodes()
-        at_least_one_fpga_array = False
+        at_least_one_ipu_allocated_array = False
         for n in data_nodes:
             desc = n.desc(sdfg)
-            print(desc.storage.name, desc.storage, desc)
+            # print(desc.storage.name, desc.storage, desc)
             if desc.storage == dtypes.StorageType.IPU_Memory:
-                at_least_one_fpga_array = True
+                at_least_one_ipu_allocated_array = True
             if isinstance(desc, data.Scalar):
                 continue
             if desc.storage != dtypes.StorageType.IPU_Memory:
                 return False
-        return at_least_one_fpga_array
+        return at_least_one_ipu_allocated_array
     
 @registry.autoregister_params(name='ipu')
 class IPUCodeGen(TargetCodeGenerator):
@@ -111,8 +111,7 @@ class IPUCodeGen(TargetCodeGenerator):
             
         # Storage
         # ipu_storage = [dtypes.StorageType.IPU_Memory]        
-        ipu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.IPU_Memory]
-       
+        ipu_storage = [dtypes.StorageType.IPU_Memory]
         self.dispatcher.register_array_dispatcher(ipu_storage, self)   # allocate_array/deallocate_array
         for storage in ipu_storage:
             for other_storage in dtypes.StorageType:
@@ -135,83 +134,13 @@ class IPUCodeGen(TargetCodeGenerator):
 
     def preprocess(self, sdfg: SDFG) -> None:
         self.frame.statestruct.append('dace_poplar_context *poplar_context;')
-            
-        
-#         #create a new string
-#         str_decl = StringIO()
-#         str_decl = f"""
-#     optional<Device> device;
-#     Graph graph;
-#     map<string, Tensor> tensors;
-#     map<string, Program> programs;
-#     OptionFlags engineOptions;
-#     map<string, int> programIds;
-#     vector<Program> programsList;
-#     vector<float> hostData;
-# """
-    # Add above code to the statestruct
-        # self.frame.statestruct.append(str_decl)
-        
         pass
 
     def get_generated_codeobjects(self):
-        # structdecl = CodeIOStream()
-        # structdecl.write(f"""
-        #     optional<Device> device;
-        #     Graph graph;
-        #     map<string, Tensor> tensors;
-        #     map<string, Program> programs;
-        #     OptionFlags engineOptions;
-        #     map<string, int> programIds;
-        #     vector<Program> programsList;
-        #     vector<float> hostData;
-        # """)
-        
-        # fileheader = CodeIOStream()
-        # fileheader.write("""
-        #     #include <algorithm>
-        #     #include <cstdlib>
-        #     #include <iostream>
-        #     #include <optional>
-        #     #include <map>
-        #     #include <vector>
-
-        #     #include <poplar/DeviceManager.hpp>
-        #     #include <poplar/Engine.hpp>
-        #     #include <poplar/Graph.hpp>
-        #     #include <poplar/OptionFlags.hpp>
-        #     #include <popops/ElementWise.hpp>
-        #     #include <popops/codelets.hpp>
-        #     #include <poputil/TileMapping.hpp>
-
-        #     using ::std::map;
-        #     using ::std::optional;
-        #     using ::std::string;
-        #     using ::std::vector;
-
-        #     using ::poplar::Device;
-        #     using ::poplar::DeviceManager;
-        #     using ::poplar::Engine;
-        #     using ::poplar::FLOAT;
-        #     using ::poplar::Graph;
-        #     using ::poplar::OptionFlags;
-        #     using ::poplar::TargetType;
-        #     using ::poplar::Tensor;
-        #     using ::poplar::program::Copy;
-        #     using ::poplar::program::Program;
-        #     using ::poplar::program::Execute;
-        #     using ::poplar::program::Repeat;            
-        # """)
-        # fileheader.write("\n\n")
-        # constdefines = CodeIOStream()
-        # constdefines.write("""const auto NUM_DATA_ITEMS = 200000;""")
-        # constdefines.write("\n\n")
-        
         params_comma = self._global_sdfg.init_signature(free_symbols=self.frame.free_symbols(self._global_sdfg))
         if params_comma:
             params_comma = ', ' + params_comma
-
-            
+ 
         host_code = CodeIOStream()       
         host_code.write("""
 #include <dace/dace.h>
@@ -617,7 +546,6 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
     def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                        node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                        declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
-        self.add_header(function_stream)
         
         if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             nodedesc = update_persistent_desc(nodedesc, sdfg)        
@@ -658,7 +586,7 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
             nodedesc.storage == dtypes.StorageType.Register:
             pass    # IPU variables are C++ objects and are automatically deallocated
         else:
-            raise NotImplementedError
+            raise NotImplementedError("Unimplemented deallocate() for StorageType " + str(nodedesc.storage))
         
     def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                     src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
@@ -1072,34 +1000,29 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
 
         kernel_host_stream.write(f"""\
     DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{""")
-
-    #     kernel_host_stream.write(f"""\
-    #         hlslib::ocl::Program program = __state->poplar_context->fpga_context->Get().CurrentlyLoadedProgram();\
-    # """)
-    #     # Create a vector to collect all events that are being generated to allow
-    #     # waiting before exiting this state
-    #     kernel_host_stream.write("std::vector<hlslib::ocl::Event> all_events;")
-
-    #     # Kernels invocations
-    #     kernel_host_stream.write(state_host_body_stream.getvalue())
-
-    #     # Wait for all events
-    #     kernel_host_stream.write("hlslib::ocl::WaitForEvents(all_events);")
         
         # write the kernel_host_stream withe the commands I have copied
         kernel_host_stream.write(f"""\
-                                 std::cout << "  STEP 2.1: Create graph and compile codelets" << std::endl;
+                std::cout << "  STEP 2.1: Create graph and compile codelets" << std::endl;
                 
                 // Step 1: Create graph and add codelets
                 __state.poplar_context->graph = poplar::Graph(__state.poplar_context->device->getTarget());
                 //__state.poplar_context->graph.addCodelets({{"src/codelets/SkeletonCodelets.cpp"}}, "-O3 -I codelets");
                 popops::addCodelets(__state.poplar_context->graph);
-
+            """)
+        
+        kernel_host_stream.write("""
                 // Step 2: Add data to the graph
-                std::cout << "  STEP 2.2: Add data to the graph" << std::endl;
-                __state.poplar_context->tensors["data"] = __state.poplar_context->graph.addVariable(poplar::FLOAT, {{NUM_DATA_ITEMS}}, "data");
+                std::cout << "  STEP 2.2: Add data to the graph" << std::endl;""")
+        # Emit internal transient array allocation
+        # __state.poplar_context->tensors["data"] = __state.poplar_context->graph.addVariable(poplar::FLOAT, {{NUM_DATA_ITEMS}}, "data");            
+        self.frame.allocate_arrays_in_scope(sdfg, cfg, state, function_stream, kernel_host_stream)
+        kernel_host_stream.write('\n')
+        
+        kernel_host_stream.write("""
                 poputil::mapTensorLinearly(__state.poplar_context->graph, __state.poplar_context->tensors["data"]);
-
+                """)
+        kernel_host_stream.write("""
                 const int numTiles = __state.poplar_context->device->getTarget().getNumTiles();
                 // Add programs and wire up data
                 const auto NumElemsPerTile = NUM_DATA_ITEMS / numTiles;
@@ -1119,43 +1042,7 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
 
         kernel_host_stream.write("}\n")
         
-        
-        """        
-        COMMENT
-            DACE_EXPORTED auto kernel_buildComputeGraph({sdfg_state_name} &__state) 
-            {{
-                std::cout << "  STEP 2.1: Create graph and compile codelets" << std::endl;
-                
-                // Step 1: Create graph and add codelets
-                __state.poplar_context->graph = poplar::Graph(__state.poplar_context->device->getTarget());
-                __state.poplar_context->graph.addCodelets({{"src/codelets/SkeletonCodelets.cpp"}}, "-O3 -I codelets");
-                popops::addCodelets(__state.poplar_context->graph);
-
-                // Step 2: Add data to the graph
-                std::cout << "  STEP 2.2: Add data to the graph" << std::endl;
-                __state.poplar_context->tensors["data"] = __state.poplar_context->graph.addVariable(poplar::FLOAT, {{NUM_DATA_ITEMS}}, "data");
-                poputil::mapTensorLinearly(__state.poplar_context->graph, __state.poplar_context->tensors["data"]);
-
-                const int numTiles = __state.poplar_context->device->getTarget().getNumTiles();
-                // Add programs and wire up data
-                const auto NumElemsPerTile = NUM_DATA_ITEMS / numTiles;
-                auto cs = __state.poplar_context->graph.addComputeSet("loopBody");
-                
-                for (auto tileNum = 0; tileNum < numTiles; tileNum++) {{
-                    const auto sliceEnd = std::min((tileNum + 1) * NumElemsPerTile, (int)NUM_DATA_ITEMS);
-                    const auto sliceStart = tileNum * NumElemsPerTile;
-
-                    auto v = __state.poplar_context->graph.addVertex(cs, "SkeletonVertex", {{"data", __state.poplar_context->tensors["data"].slice(sliceStart, sliceEnd)}});
-                    __state.poplar_context->graph.setInitialValue(v["howMuchToAdd"], tileNum);
-                    __state.poplar_context->graph.setPerfEstimate(v, 100);
-                    __state.poplar_context->graph.setTileMapping(v, tileNum);
-                }}
-                
-                __state.poplar_context->programs["main"] = Repeat(10, Execute(cs));
-            }}
-        """
-
-        
+        self.frame.deallocate_arrays_in_scope(sdfg, cfg, state, function_stream, callsite_stream)
 
     def generate_kernel(self,
                         sdfg: dace.SDFG,
