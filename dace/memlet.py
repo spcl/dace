@@ -197,6 +197,12 @@ class Memlet(object):
             ret._state = context['sdfg_state']
         return ret
 
+    def clone(self, keep_guid = False) -> 'Memlet':
+        new_memlet = dcpy(self)
+        if keep_guid:
+            new_memlet.guid = self.guid
+        return new_memlet
+
     def __deepcopy__(self, memo):
         node = object.__new__(Memlet)
 
