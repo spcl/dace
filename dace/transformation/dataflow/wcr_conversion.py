@@ -297,7 +297,15 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             edges = graph.edges_between(self.tasklet, self.map_exit)
         if len(edges) != 1:
             return False
-        return edges[0].data.wcr is not None
+        if edges[0].data.wcr is None:
+            return False
+
+        # If the access subset on the WCR edge is overapproximated (i.e., the access may be dynamic), we do not support
+        # swapping to an augmented assignment pattern with this transformation.
+        if edges[0].data.subset.num_elements() > edges[0].data.volume or edges[0].data.dynamic is True:
+            return False
+
+        return True
     
     def apply(self, state: SDFGState, sdfg: SDFG):
         if self.expr_index == 0:
