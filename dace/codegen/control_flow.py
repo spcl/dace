@@ -62,7 +62,7 @@ import networkx as nx
 import sympy as sp
 from dace import dtypes
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import (BreakBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion,
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion,
                              ReturnBlock, SDFGState)
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
@@ -236,13 +236,17 @@ class ReturnCFBlock(ControlFlow):
 
 
 @dataclass
-class GeneralBlock(ControlFlow):
-    """ 
-    General (or unrecognized) control flow block with gotos between blocks. 
-    """
+class RegionBlock(ControlFlow):
 
     # The control flow region that this block corresponds to (may be the SDFG in the absence of hierarchical regions).
     region: Optional[ControlFlowRegion]
+
+
+@dataclass
+class GeneralBlock(RegionBlock):
+    """ 
+    General (or unrecognized) control flow block with gotos between blocks. 
+    """
 
     # List of children control flow blocks
     elements: List[ControlFlow]
@@ -270,7 +274,7 @@ class GeneralBlock(ControlFlow):
         for i, elem in enumerate(self.elements):
             expr += elem.as_cpp(codegen, symbols)
             # In a general block, emit transitions and assignments after each individual block or region.
-            if isinstance(elem, BasicCFBlock) or (isinstance(elem, GeneralBlock) and elem.region):
+            if isinstance(elem, BasicCFBlock) or (isinstance(elem, RegionBlock) and elem.region):
                 cfg = elem.state.parent_graph if isinstance(elem, BasicCFBlock) else elem.region.parent_graph
                 sdfg = cfg if isinstance(cfg, SDFG) else cfg.sdfg
                 out_edges = cfg.out_edges(elem.state) if isinstance(elem, BasicCFBlock) else cfg.out_edges(elem.region)
@@ -514,10 +518,9 @@ class DoWhileScope(ControlFlow):
 
 
 @dataclass
-class GeneralLoopScope(ControlFlow):
+class GeneralLoopScope(RegionBlock):
     """ General loop block based on a loop control flow region. """
 
-    loop: LoopRegion
     body: ControlFlow
 
     def as_cpp(self, codegen, symbols) -> str:
@@ -566,6 +569,10 @@ class GeneralLoopScope(ControlFlow):
         return expr
 
     @property
+    def loop(self) -> LoopRegion:
+        return self.region
+
+    @property
     def first_block(self) -> ControlFlowBlock:
         return self.loop.start_block
 
@@ -599,6 +606,46 @@ class SwitchCaseScope(ControlFlow):
     @property
     def children(self) -> List[ControlFlow]:
         return list(self.cases.values())
+
+
+@dataclass
+class GeneralConditionalScope(RegionBlock):
+    """ General conditional block based on a conditional control flow region. """
+
+    branch_bodies: List[Tuple[Optional[CodeBlock], ControlFlow]]
+
+    def as_cpp(self, codegen, symbols) -> str:
+        sdfg = self.conditional.sdfg
+        expr = ''
+        for i in range(len(self.branch_bodies)):
+            branch = self.branch_bodies[i]
+            if branch[0] is not None:
+                cond = unparse_interstate_edge(branch[0].code, sdfg, codegen=codegen, symbols=symbols)
+                cond = cond.strip(';')
+                if i == 0:
+                    expr += f'if ({cond}) {{\n'
+                else:
+                    expr += f'}} else if ({cond}) {{\n'
+            else:
+                if i < len(self.branch_bodies) - 1 or i == 0:
+                    raise RuntimeError('Missing branch condition for non-final conditional branch')
+                expr += '} else {\n'
+            expr += branch[1].as_cpp(codegen, symbols)
+            if i == len(self.branch_bodies) - 1:
+                expr += '}\n'
+        return expr
+
+    @property
+    def conditional(self) -> ConditionalBlock:
+        return self.region
+
+    @property
+    def first_block(self) -> ControlFlowBlock:
+        return self.conditional
+
+    @property
+    def children(self) -> List[ControlFlow]:
+        return [b for _, b in self.branch_bodies]
 
 
 def _loop_from_structure(sdfg: SDFG, guard: SDFGState, enter_edge: Edge[InterstateEdge],
@@ -973,7 +1020,6 @@ def _structured_control_flow_traversal_with_regions(cfg: ControlFlowRegion,
     if branch_merges is None:
         branch_merges = cfg_analysis.branch_merges(cfg)
 
-
     if ptree is None:
         ptree = cfg_analysis.block_parent_tree(cfg, with_loops=False)
 
@@ -1004,6 +1050,14 @@ def _structured_control_flow_traversal_with_regions(cfg: ControlFlowRegion,
             cfg_block = ContinueCFBlock(dispatch_state, parent_block, True, node)
         elif isinstance(node, ReturnBlock):
             cfg_block = ReturnCFBlock(dispatch_state, parent_block, True, node)
+        elif isinstance(node, ConditionalBlock):
+            cfg_block = GeneralConditionalScope(dispatch_state, parent_block, False, node, [])
+            for cond, branch in node.branches:
+                if branch is not None:
+                    body = make_empty_block()
+                    body.parent = cfg_block
+                    _structured_control_flow_traversal_with_regions(branch, dispatch_state, body)
+                    cfg_block.branch_bodies.append((cond, body))
         elif isinstance(node, ControlFlowRegion):
             if isinstance(node, LoopRegion):
                 body = make_empty_block()
@@ -1027,69 +1081,8 @@ def _structured_control_flow_traversal_with_regions(cfg: ControlFlowRegion,
             stack.append(oe[0].dst)
             parent_block.elements.append(cfg_block)
             continue
-
-        # Potential branch or loop
-        if node in branch_merges:
-            mergeblock = branch_merges[node]
-
-            # Add branching node and ignore outgoing edges
-            parent_block.elements.append(cfg_block)
-            parent_block.gotos_to_ignore.extend(oe)  # TODO: why?
-            parent_block.assignments_to_ignore.extend(oe)  # TODO: why?
-            cfg_block.last_block = True
-
-            # Parse all outgoing edges recursively first
-            cblocks: Dict[Edge[InterstateEdge], GeneralBlock] = {}
-            for branch in oe:
-                if branch.dst is mergeblock:
-                    # If we hit the merge state (if without else), defer to end of branch traversal
-                    continue
-                cblocks[branch] = make_empty_block()
-                _structured_control_flow_traversal_with_regions(cfg=cfg,
-                                                                dispatch_state=dispatch_state,
-                                                                parent_block=cblocks[branch],
-                                                                start=branch.dst,
-                                                                stop=mergeblock,
-                                                                generate_children_of=node,
-                                                                branch_merges=branch_merges,
-                                                                ptree=ptree,
-                                                                visited=visited)
-
-            # Classify branch type:
-            branch_block = None
-            # If there are 2 out edges, one negation of the other:
-            #   * if/else in case both branches are not merge state
-            #   * if without else in case one branch is merge state
-            if (len(oe) == 2 and oe[0].data.condition_sympy() == sp.Not(oe[1].data.condition_sympy())):
-                if oe[0].dst is mergeblock:
-                    # If without else
-                    branch_block = IfScope(dispatch_state, parent_block, False, node, oe[1].data.condition,
-                                           cblocks[oe[1]])
-                elif oe[1].dst is mergeblock:
-                    branch_block = IfScope(dispatch_state, parent_block, False, node, oe[0].data.condition,
-                                           cblocks[oe[0]])
-                else:
-                    branch_block = IfScope(dispatch_state, parent_block, False, node, oe[0].data.condition,
-                                           cblocks[oe[0]], cblocks[oe[1]])
-            else:
-                # If there are 2 or more edges (one is not the negation of the
-                # other):
-                switch = _cases_from_branches(oe, cblocks)
-                if switch:
-                    # If all edges are of form "x == y" for a single x and
-                    # integer y, it is a switch/case
-                    branch_block = SwitchCaseScope(dispatch_state, parent_block, False, node, switch[0], switch[1])
-                else:
-                    # Otherwise, create if/else if/.../else goto exit chain
-                    branch_block = IfElseChain(dispatch_state, parent_block, False, node,
-                                               [(e.data.condition, cblocks[e] if e in cblocks else make_empty_block())
-                                                for e in oe])
-            # End of branch classification
-            parent_block.elements.append(branch_block)
-            if mergeblock != stop:
-                stack.append(mergeblock)
-
-        else:  # No merge state: Unstructured control flow
+        else:
+            # Unstructured control flow.
             parent_block.sequential = False
             parent_block.elements.append(cfg_block)
             stack.extend([e.dst for e in oe])
