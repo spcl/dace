@@ -151,6 +151,13 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                 for symbol in free_symbols:
                                     symbols_to_ensure_in_scope.add(str(symbol))
 
+        thread_block_map_entry = [v for v in state.all_nodes_between(dev_entry, state.exit_node(dev_entry)) if isinstance(
+            v, nodes.MapEntry) and v.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
+        assert(len(thread_block_map_entry) == 1)
+
+        for param in thread_block_map_entry[0].map.params:
+            symbols_to_ensure_in_scope.add(param)
+
         # 5. Go up until all the variables are defined (remove the vars as iterating the scopes ap)
         map_before_split = None
         cur_map_entry = self.inner_work_map_entry
@@ -167,6 +174,8 @@ class RemainderLoop(transformation.SingleStateTransformation):
                     b = True
                     break
             cur_map_entry = state.entry_node(cur_map_entry)
+
+        # raise Exception(symbols_to_ensure_in_scope, can_out_of_bound)
 
         map_after_split = state.exit_node(map_before_split)
 
@@ -195,12 +204,13 @@ class RemainderLoop(transformation.SingleStateTransformation):
 
         # TODO: improve (should go through all state)
         if True:  # len(conditions_and_ranges) == 0:
-            for n in state.bfs_nodes(source=None):
+            for n in sdutil.dfs_topological_sort(state, sources=dev_entry):
                 if isinstance(n, nodes.MapEntry) and n.map.label.startswith("ThreadCoarsened"):
                     for param, (beg, end, step) in zip(n.map.params, n.map.range):
                         l = (end+1-beg)/step
                         dev_param = f"b_{param}"
                         block_param = f"d_{param}"
+                        print("d3", dev_entry.map.params, dev_entry.map.range)
                         for dp, (db, de, ds) in zip(dev_entry.map.params, dev_entry.map.range):
                             if dp == dev_param:
                                 lim = de+1
@@ -226,7 +236,8 @@ class RemainderLoop(transformation.SingleStateTransformation):
                                         break
 
         condition = "(" + " and ".join(added_conditions) + ")"
-        # raise Exception(condition)
+        if condition == "()":
+            raise Exception(condition)
 
         # For example range for k is 0:K:16,
         # In this last iteration the inner tk goes from 0:16
@@ -235,6 +246,8 @@ class RemainderLoop(transformation.SingleStateTransformation):
         # 6. Create if condition
         inner_kernel_entry: nodes.MapEntry = map_before_split
         inner_kernel_exit: nodes.MapExit = state.exit_node(inner_kernel_entry)
+        #raise Exception(inner_kernel_entry, added_conditions,
+        #                symbols_to_ensure_in_scope)
 
         sub_sdfg: SDFG = dace.SDFG('nested_subsdfg', parent=sdfg)
         inner_loop_kernel_sdfg: SDFG = dace.SDFG(
@@ -277,12 +290,16 @@ class RemainderLoop(transformation.SingleStateTransformation):
         ins = set()
         for in_edge in state.in_edges(first_node_in_microkernel):
             _, _, _, _, memlet = in_edge
-            ins.add(memlet.data)
+            if memlet.data is not None:
+                ins.add(memlet.data)
         # Outputs for NestedSDFG
         outs = set()
         for out_edge in state.out_edges(last_node_in_microkernel):
             _, _, _, _, memlet = out_edge
-            outs.add(memlet.data)
+            if memlet.data is not None:
+                outs.add(memlet.data)
+        assert (not (None in ins))
+        assert (not (None in outs))
 
         for (_sdfg) in [
             (sub_sdfg),
@@ -378,19 +395,24 @@ class RemainderLoop(transformation.SingleStateTransformation):
                             None)
                 _state.add_node(an)
                 u, u_conn, v, v_conn, memlet = edge
-                _state.add_edge(node, out_arr, an, None, Memlet(
-                    data=out_arr, subset=Range(memlet.subset), wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo))
+                _state.add_edge(node, out_arr, an, None, copy.deepcopy(memlet))
 
         # Edges that go to and come out nested sdfg
         for in_edge in state.in_edges(first_node_in_microkernel):
             u, u_conn, v, v_conn, memlet = in_edge
-            state.add_edge(u, u_conn, nsdfg, memlet.data, Memlet(
-                data=memlet.data, subset=Range(memlet.subset), wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo))
+            if memlet is None:
+                state.add_edge(u, u_conn, nsdfg, None, None)
+            else:
+                state.add_edge(u, u_conn, nsdfg, memlet.data,
+                               copy.deepcopy(memlet))
 
         for out_edge in state.out_edges(last_node_in_microkernel):
             u, u_conn, v, v_conn, memlet = out_edge
-            state.add_edge(nsdfg, memlet.data, v, v_conn, Memlet(
-                data=memlet.data, subset=Range(memlet.subset), wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo))
+            if memlet is None:
+                state.add_edge(u, u_conn, nsdfg, None, None)
+            else:
+                state.add_edge(nsdfg, memlet.data, v,
+                               v_conn, copy.deepcopy(memlet))
 
         nodes_to_copyover = set()
         edges_to_copyover = set()
@@ -439,15 +461,19 @@ class RemainderLoop(transformation.SingleStateTransformation):
             for e in special_in_edges:
                 u, uc, v, vc, memlet = e
                 new_memlet = copy.deepcopy(memlet)
-                an = nodes.AccessNode(data=memlet.data)
-                kernel.add_node(an)
-                kernel.add_edge(an, None, first_node, vc, new_memlet)
+                if memlet.data is not None:
+                    an = nodes.AccessNode(data=memlet.data)
+                    kernel.add_node(an)
+                    kernel.add_edge(an, None, first_node, vc, new_memlet)
+                # else:
+                #    kernel.add_edge(u, None, first_node, vc, new_memlet)
             for e in special_out_edges:
                 u, uc, v, vc, memlet = e
                 new_memlet = copy.deepcopy(memlet)
-                an = nodes.AccessNode(data=memlet.data)
-                kernel.add_node(an)
-                kernel.add_edge(last_node, uc, an, None, new_memlet)
+                if memlet.data is not None:
+                    an = nodes.AccessNode(data=memlet.data)
+                    kernel.add_node(an)
+                    kernel.add_edge(last_node, uc, an, None, new_memlet)
 
             # Re-allocate transients that are first accessed in the inner kernel
             for n in dace.sdfg.utils.dfs_topological_sort(kernel):
@@ -690,13 +716,14 @@ class RemainderLoop(transformation.SingleStateTransformation):
         offsets = dict()
         for edge in edges:
             _, _, _, _, memlet = edge
-            data_offsets = [beg for (beg, end, step) in memlet.subset]
-            if not memlet.data in offsets:
-                offsets[memlet.data] = data_offsets
-            else:
-                if offsets[memlet.data] != data_offsets:
-                    raise Exception(
-                        "The transformations supports 1 offset per data container")
+            if memlet is not None and memlet.subset is not None:
+                data_offsets = [beg for (beg, end, step) in memlet.subset]
+                if not memlet.data in offsets:
+                    offsets[memlet.data] = data_offsets
+                else:
+                    if offsets[memlet.data] != data_offsets:
+                        raise Exception(
+                            "The transformations supports 1 offset per data container")
         return offsets
 
     def substract_offsets(self, state, offsets):
@@ -747,9 +774,10 @@ class RemainderLoop(transformation.SingleStateTransformation):
                 for e in s.out_edges(n):
                     _, _, _, _, memlet = e
                     arr_name = memlet.data
-                    if not arr_name in sub_sdfg.arrays:
-                        self.add_arr(parent_sdfg, sub_sdfg, arr_name)
-                        arrays_to_remove_from_parent.add(arr_name)
+                    if arr_name is not None:
+                        if not arr_name in sub_sdfg.arrays:
+                            self.add_arr(parent_sdfg, sub_sdfg, arr_name)
+                            arrays_to_remove_from_parent.add(arr_name)
 
         return arrays_to_remove_from_parent
 

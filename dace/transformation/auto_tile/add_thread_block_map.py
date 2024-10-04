@@ -32,7 +32,8 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
         if self.thread_block_size_x * self.thread_block_size_y * self.thread_block_size_z > 1024:
             return False
 
-        return MapTiling.can_be_applied(self, graph, expr_index=expr_index, sdfg=sdfg, permissive=permissive)
+        #return MapTiling.can_be_applied(self, graph, expr_index=expr_index, sdfg=sdfg, permissive=permissive)
+        return True
 
     def update_names():
         pass
@@ -82,6 +83,7 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
 
         # Clear the copied-over edges that are not between any connectors (happens if such an edge exist to ensure
         # proper allocation of a constnat in after the device map)
+        """
         edges_to_remove = []
         for edge in state.out_edges(dev_entry):
             u, u_conn, v, v_conn, memlet = edge
@@ -89,6 +91,14 @@ class AddThreadBlockMap(transformation.SingleStateTransformation):
                 edges_to_remove.append(edge)
         for edge in edges_to_remove:
             state.remove_edge(edge)
+        """
+
+        """
+        # In assignment maps it can be that the new map is not connected.
+        out_edges = state.out_edges(dev_entry)
+        if len(out_edges) == 0:
+            state.add_edge(dev_entry, None, map_entry, None, None)
+        """
 
     @staticmethod
     def annotates_memlets():

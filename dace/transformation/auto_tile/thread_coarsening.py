@@ -12,7 +12,7 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.transformation.dataflow.tiling import MapTiling
 from dace import dtypes
-from dace.transformation.amm_guided.change_thread_block_map import ChangeThreadBlockMap
+from dace.transformation.auto_tile.change_thread_block_map import ChangeThreadBlockMap
 from dace import subsets
 from typing import List
 
@@ -95,6 +95,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         sequential_map : nodes.Map = sequential_map_entry.map
 
         # Rm unnecessary copy-over edges
+        """
         edges_to_remove = []
         for edge in state.out_edges(thread_block_entry):
             u, u_conn, v, v_conn, memlet = edge
@@ -102,6 +103,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                 edges_to_remove.append(edge)
         for edge in edges_to_remove:
             state.remove_edge(edge)
+        """
 
         # Move the access above the outer sequential map and update memlets for the map entry
         if inner_sequential_map_entry != None:
