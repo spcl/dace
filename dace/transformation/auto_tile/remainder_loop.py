@@ -210,7 +210,6 @@ class RemainderLoop(transformation.SingleStateTransformation):
                         l = (end+1-beg)/step
                         dev_param = f"b_{param}"
                         block_param = f"d_{param}"
-                        print("d3", dev_entry.map.params, dev_entry.map.range)
                         for dp, (db, de, ds) in zip(dev_entry.map.params, dev_entry.map.range):
                             if dp == dev_param:
                                 lim = de+1

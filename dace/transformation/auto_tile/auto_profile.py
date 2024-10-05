@@ -17,7 +17,7 @@ outdir = "individual_kernels"
 arch_str = peak_flops_and_badwidth_nvidia.get_arch(0)
 
 
-def auto_profile(sdfg: SDFG, defined_symbols: Dict[Type[str], Any], verbose: bool = False, re_profile : bool = False):
+def auto_profile(sdfg: SDFG, defined_symbols: Dict[Type[str], Any], verbose: bool = False, re_profile : bool = False, save_individual_kernels : bool = False):
     sdfg_name = sdfg._name
     kernel_sdfgs = dict()
     perf_results = dict()
@@ -25,10 +25,11 @@ def auto_profile(sdfg: SDFG, defined_symbols: Dict[Type[str], Any], verbose: boo
         0)
 
     # If not all symbols are provided create random values for the symbols
-    all_symbols = sdfg.free_symbols
-    undefined_symbols = all_symbols - set(defined_symbols.keys())
-    for sym in undefined_symbols:
-        defined_symbols[sym] = random.randint(1, 4096)
+    #all_symbols = sdfg.free_symbols
+    #undefined_symbols = all_symbols - set(defined_symbols.keys())
+    #for sym in undefined_symbols:
+    #    defined_symbols[sym] = random.randint(1, 4096)
+    #auto_tile_util.generate_random_data()
 
     file_name = f"{sdfg_name}_perf_results.json"
     if not re_profile and Path(file_name).is_file():
@@ -56,7 +57,10 @@ def auto_profile(sdfg: SDFG, defined_symbols: Dict[Type[str], Any], verbose: boo
                     auto_tile_util.set_transient(kernel_sdfg)
                     kernel_sdfgs[guid] = kernel_sdfg
                     assert (len(kernel_sdfg.nodes()) == 1)
-                    kernel_sdfg.save(os.path.join(outdir, kernel_sdfg_name))
+
+                    if save_individual_kernels:
+                        kernel_sdfg.save(os.path.join(outdir, kernel_sdfg_name))
+
                     kernel_state = kernel_sdfg.nodes()[0]
                     kernel_entry = auto_tile_util.find_node_in_state_by_cond(kernel_state,
                                                                              lambda n: isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device)

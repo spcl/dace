@@ -17,11 +17,12 @@ from dace import dtypes
 import itertools
 import numpy as np
 import cupy as cp
-
+from pathlib import Path
+import json
 import pycuda.driver as cuda
 import pycuda.autoinit  # Actually used
 from dace.sdfg.analysis.cutout import SDFGCutout
-
+import sympy
 from dace.transformation.auto_tile import peak_flops_and_badwidth_nvidia
 from dace.transformation.auto_tile import auto_tile_util
 
@@ -114,12 +115,13 @@ def apply_using_params(
     thread_block_params: List[Tuple],
     apply_explicit_memory_transfers: List[bool],
     apply_remainder_loop: List[bool],
-    reference_result = None,
+    reference_result=None,
     inputs: Dict = dict(),
     output: cp.array = None,
-    verbose = False,
-    work_on_copy = True,
-    save_steps = False
+    verbose=False,
+    work_on_copy=True,
+    save_steps=False,
+    save_individual_kernels=False
 ):
     randomly_generated_data = dict()
     best_params = None
@@ -160,19 +162,12 @@ def apply_using_params(
 
                         guid = kernel_entry.guid
 
-                        is_assign_kernel = flops == 0 # Assign or copy map
 
+                        is_assign_kernel = flops == 0  # Assign or copy map
 
                         if work_on_copy:
-                            # kernel_sdfg.save(f"{kernel_entry.guid}_aopt.sdfg")
-                            for ie in kernel_state.in_edges(kernel_entry):
-                                u, uc, v, vc, memlet = ie
-                                if isinstance(u, nodes.AccessNode):
-                                    arr_name = u.data
-                                    arr = kernel_sdfg.arrays[arr_name]
-                                    if arr.storage == dtypes.StorageType.Default or \
-                                            arr.storage == dtypes.StorageType.CPU_Heap:
-                                        arr.storage = dtypes.StorageType.GPU_Global
+                            auto_tile_util.convert_inputs_to_gpu_storage(kernel_sdfg)
+                            auto_tile_util.set_transient(kernel_sdfg)
 
                         placeholder = 1
                         thread_block_size = list(
@@ -183,13 +178,13 @@ def apply_using_params(
                                 3))
 
                         AddThreadBlockMap.apply_to(sdfg=kernel_sdfg,
-                                            verify=True,
-                                            map_entry=kernel_entry,
-                                            options={
-                                                "thread_block_size_x": thread_block_size[0],
-                                                "thread_block_size_y": thread_block_size[1],
-                                                "thread_block_size_z": thread_block_size[2]
-                                            })
+                                                   verify=True,
+                                                   map_entry=kernel_entry,
+                                                   options={
+                                                       "thread_block_size_x": thread_block_size[0],
+                                                       "thread_block_size_y": thread_block_size[1],
+                                                       "thread_block_size_z": thread_block_size[2]
+                                                   })
 
                         # Need to restore maps after each time
                         kernel_entry = kernel_state.entry_node(kernel_entry)
@@ -206,16 +201,15 @@ def apply_using_params(
                                     itertools.cycle([placeholder])),
                                 3))
 
-
                         ThreadCoarsening.apply_to(sdfg=kernel_sdfg,
-                                                options={
-                                                    "tile_size_x": thread_tile[0],
-                                                    "tile_size_y": thread_tile[1],
-                                                    "tile_size_z": thread_tile[2],
-                                                },
-                                                verify=True,
-                                                device_map_entry=kernel_entry,
-                                                thread_block_map_entry=thread_block_map_entry)
+                                                  options={
+                                                      "tile_size_x": thread_tile[0],
+                                                      "tile_size_y": thread_tile[1],
+                                                      "tile_size_z": thread_tile[2],
+                                                  },
+                                                  verify=True,
+                                                  device_map_entry=kernel_entry,
+                                                  thread_block_map_entry=thread_block_map_entry)
 
                         if work_on_copy and save_steps:
                             kernel_sdfg.save(f"{guid}_thread_coarsened.sdfg")
@@ -242,14 +236,14 @@ def apply_using_params(
                                             itertools.cycle([placeholder])),
                                         3)))
                                 BlockTiling.apply_to(sdfg=kernel_sdfg,
-                                                    options={
-                                                        "block_tile_sizes": work_map_tile
-                                                    },
-                                                    verify=True,
-                                                    thread_block_map_entry=thread_block_map_entry,
-                                                    sequential_map_entry=work_map_entry)
+                                                     options={
+                                                         "block_tile_sizes": work_map_tile
+                                                     },
+                                                     verify=True,
+                                                     thread_block_map_entry=thread_block_map_entry,
+                                                     sequential_map_entry=work_map_entry)
 
-                        if work_on_copy and save_steps:
+                        if work_on_copy and save_steps and not is_assign_kernel:
                             kernel_sdfg.save(f"{guid}_block_tiled.sdfg")
 
                         work_maps = find_nodes_by_cond(kernel_state, kernel_entry, lambda n: isinstance(
@@ -265,17 +259,20 @@ def apply_using_params(
                                                                             lambda n: isinstance(n, nodes.MapEntry))
 
                         if explicit_mem_move[0] and not is_assign_kernel:
-                                ExplicitMemoryMove.apply_to(
-                                    sdfg=kernel_sdfg,
-                                    verify=True,
-                                    device_map_entry=kernel_entry,
-                                    thread_block_map_entry=thread_block_map_entry,
-                                    map_entry=first_map_to_apply_mem_move,
-                                    options={
-                                        "memory_location": StorageType.GPU_Shared,
-                                        "tiles_evenly": explicit_mem_move[1]
-                                    }
-                                )
+                            ExplicitMemoryMove.apply_to(
+                                sdfg=kernel_sdfg,
+                                verify=True,
+                                device_map_entry=kernel_entry,
+                                thread_block_map_entry=thread_block_map_entry,
+                                map_entry=first_map_to_apply_mem_move,
+                                options={
+                                    "memory_location": StorageType.GPU_Shared,
+                                    "tiles_evenly": explicit_mem_move[1]
+                                }
+                            )
+
+                        if save_steps and explicit_mem_move[0] and not is_assign_kernel:
+                            kernel_sdfg.save(f"{guid}_mem_moved.sdfg")
 
                         first_inner_work_map = find_node_by_cond(kernel_state, thread_block_map_entry,
                                                                  lambda n: isinstance(n, nodes.MapEntry) and n.map.label.startswith("InnerWorkMap"))
@@ -299,11 +296,14 @@ def apply_using_params(
                         if not work_on_copy:
                             return None
 
-                        kernel_sdfg.save(f"{guid}_auto_tiled.sdfg")
-                        compiled: dace.CompiledSDFG = kernel_sdfg.compile(
-                            validate=True)
+                        if save_individual_kernels:
+                            kernel_sdfg.save(f"{guid}_auto_tiled.sdfg")
+
                         inputs = auto_tile_util.generate_random_data(
                             kernel_sdfg, inputs)
+
+                        compiled: dace.CompiledSDFG = kernel_sdfg.compile(
+                            validate=True)
                         compiled(**inputs)
 
                         if output != None:
@@ -329,7 +329,8 @@ def apply_using_params(
                             kernel_sdfg, inputs)
                         print(f"Transformed SDFG: {time} ms")
                         solved_flops = auto_tile_util.solve(flops, inputs)
-                        solved_mem_access = auto_tile_util.solve(mem_access, inputs)
+                        solved_mem_access = auto_tile_util.solve(
+                            mem_access, inputs)
 
                         if flops == 0:
                             percentage_of_peak = auto_tile_util.percentage_bandwidth(
@@ -339,8 +340,8 @@ def apply_using_params(
                                 time, solved_flops, solved_mem_access, peak_flops, peak_bandwidth)
 
                         if best_params == None or percentage_of_peak > threshold:
-                            best_params = (work_map_tiles, thread_tile, thread_block_size,
-                                            explicit_mem_move, remainder_loop, percentage_of_peak)
+                            best_params = ((work_map_tiles, thread_tile, thread_block_size,
+                                            explicit_mem_move, remainder_loop), time, percentage_of_peak)
                         if percentage_of_peak > threshold:
                             b = True
 
@@ -351,7 +352,7 @@ def apply_using_params(
                         f.write(
                             f"Trandformed SDFG achieves {percentage_of_peak:.2f}% of the peak wrt. roofline model\n")
 
-                        #except Exception as ex:
+                        # except Exception as ex:
                         #    print(
                         #        f"Transformations fail for config {work_map_tiles}, {thread_tile}, {thread_block_size}, {explicit_mem_move}, {remainder_loop}")
                         #    print("Exception:", ex)
@@ -359,7 +360,6 @@ def apply_using_params(
                         #    f.write(
                         #        f"Transformations fail for config {work_map_tiles}, {thread_tile}, {thread_block_size}, {explicit_mem_move}, {remainder_loop}\n")
 
-    """
     if best_params:
         apply_using_params(
             sdfg=sdfg,
@@ -370,19 +370,19 @@ def apply_using_params(
             flops=flops,
             mem_access=mem_access,
             threshold=threshold,
-            work_map_tiling_params=[best_params[0]],
-            thread_coarsening_params=[best_params[1]],
-            thread_block_params=[best_params[2]],
-            apply_explicit_memory_transfers=[best_params[3]],
-            apply_remainder_loop=[best_params[4]],
+            work_map_tiling_params=[best_params[0][0]],
+            thread_coarsening_params=[best_params[0][1]],
+            thread_block_params=[best_params[0][2]],
+            apply_explicit_memory_transfers=[best_params[0][3]],
+            apply_remainder_loop=[best_params[0][4]],
             reference_result=reference_result,
             inputs=inputs,
             output=output,
             verbose=verbose,
             work_on_copy=False,
-            save_steps = False
+            save_steps=False,
+            save_individual_kernels=False
         )
-    """
 
     return best_params
 
@@ -398,11 +398,13 @@ def auto_apply(sdfg: SDFG,
                thread_block_params: List[Tuple],
                apply_explicit_memory_transfers: List[bool],
                apply_remainder_loop: List[bool],
-               reference_result = None,
+               reference_result=None,
                inputs: Dict = dict(),
                output: cp.array = None,
-               verbose = False,
-               save_steps = False
+               verbose=False,
+               save_steps=False,
+               save_individual_kernels=False,
+               re_apply=False
                ):
     # Any map that is GPU_Device is transformed applying the
     # AMM-guided transformations.
@@ -414,6 +416,19 @@ def auto_apply(sdfg: SDFG,
     kperf = dict()
 
     sdfg_name = sdfg._name
+
+    file_name = f"{sdfg_name}_auto_tiled_perf_results.json"
+    if not re_apply and Path(file_name).is_file():
+        with open(file_name, "r") as json_file:
+            data_dict = json.load(json_file)
+            for k, v in data_dict.items():
+                filename, params, flop_str,  mem_str, time, perc = v
+                nv = (filename, params,
+                      sympy.sympify(flop_str), sympy.sympify(mem_str),
+                       time, perc)
+                data_dict[k] = nv
+            return data_dict
+
     for state in sdfg.states():
         kernel_entry_guids = []
         for node in state.nodes():
@@ -438,32 +453,36 @@ def auto_apply(sdfg: SDFG,
                 sdfg, state, kernel_entry)
 
             if not kernel_entry.guid in kperf:
-                #try:
-                best_config = apply_using_params(
-                    sdfg=sdfg,
-                    state=state,
-                    _entry=kernel_entry,
-                    peak_flops=peak_flops,
-                    peak_bandwidth=mem_bandwidth,
-                    flops=flops,
-                    mem_access=mem_access,
-                    threshold=threshold,
-                    work_map_tiling_params=work_map_tiling_params,
-                    thread_coarsening_params=thread_coarsening_params,
-                    thread_block_params=thread_block_params,
-                    apply_explicit_memory_transfers=apply_explicit_memory_transfers,
-                    apply_remainder_loop=apply_remainder_loop,
-                    reference_result=reference_result,
-                    inputs=inputs,
-                    output=output,
-                    verbose=verbose,
-                    work_on_copy=True,
-                    save_steps=save_steps
-                )
-                kperf[kernel_entry.guid] = (kernel_entry, best_config)
-                #except Exception as e:
-                #    print("Exception: ", e)
-                #    kperf[kernel_entry.guid] = (kernel_entry, best_config)
+                try:
+                    best_config = apply_using_params(
+                        sdfg=sdfg,
+                        state=state,
+                        _entry=kernel_entry,
+                        peak_flops=peak_flops,
+                        peak_bandwidth=mem_bandwidth,
+                        flops=flops,
+                        mem_access=mem_access,
+                        threshold=threshold,
+                        work_map_tiling_params=work_map_tiling_params,
+                        thread_coarsening_params=thread_coarsening_params,
+                        thread_block_params=thread_block_params,
+                        apply_explicit_memory_transfers=apply_explicit_memory_transfers,
+                        apply_remainder_loop=apply_remainder_loop,
+                        reference_result=reference_result,
+                        inputs=inputs,
+                        output=output,
+                        verbose=verbose,
+                        work_on_copy=True,
+                        save_steps=save_steps,
+                        save_individual_kernels=save_individual_kernels
+                    )
+                    kperf[kernel_entry.guid] = (f"{kernel_entry.guid}_auto_tiled.sdfg", best_config[0], str(
+                        flops), str(mem_access), float(best_config[1]), float(best_config[2]))
+                except Exception as e:
+                    best_config = None
+                    print("Exception: on transforming {kernel_entry}:", e)
+                    kperf[kernel_entry.guid] = (f"{kernel_entry.guid}_auto_tiled.sdfg", None, str(
+                        flops), str(mem_access), float(-1.0), float("nan"))
 
             if verbose:
                 print("Best config: ",
@@ -471,11 +490,16 @@ def auto_apply(sdfg: SDFG,
                 print("Percentage of the peak: ",
                       best_config[-1] if best_config else "none")
 
-    sdfg.save(f"{sdfg_name}_auto_tiled.sdfg")
     if verbose:
         print("Auto-tiled performance results:")
         print("{")
         for k, v in kperf.items():
             print(f"\t{k}: {v}")
         print("}")
+
+    sdfg.save(f"{sdfg_name}_auto_tiled.sdfg")
+
+    with open(f"{sdfg_name}_auto_tiled_perf_results.json", "w") as json_file:
+        json.dump(kperf, json_file, indent=2)
+
     return sdfg
