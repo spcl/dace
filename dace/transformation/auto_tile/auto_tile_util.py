@@ -1,5 +1,6 @@
 import copy
 from ctypes import sizeof
+import json
 import random
 import statistics
 from typing import Any, Dict, Type
@@ -88,11 +89,20 @@ def generate_random_data(
     storage_type: dace.StorageType = dace.StorageType.GPU_Global,
 ):
     randomly_generated_data = dict()
+    print(kernel_sdfg.symbols, kernel_sdfg.free_symbols)
+    # TODO: HMMM, understand?
+    for sym in defined_symbols:
+        if sym in kernel_sdfg.free_symbols and not (sym in kernel_sdfg.symbols):
+            kernel_sdfg.add_symbol(sym, type(defined_symbols[sym]))
+    print(kernel_sdfg.symbols, kernel_sdfg.free_symbols)
+
     kernel_sdfg_args = kernel_sdfg.arglist()
     for argname, arr in kernel_sdfg_args.items():
         if argname in defined_symbols or argname in randomly_generated_data:
             continue
-        if isinstance(arr, dace.data.Array):
+        if isinstance(arr, dace.data.Scalar):
+            randomly_generated_data[argname] = random.random()
+        elif isinstance(arr, dace.data.Array):
             shape = arr.shape
             ns = []
             for s in shape:
@@ -107,21 +117,7 @@ def generate_random_data(
             else:
                 new_input = numpy.random.rand(*shape).astype(np_dtype)
             randomly_generated_data[argname] = new_input
-        elif isinstance(arr, dace.data.Scalar):
-            # shape = (1, )
-            # np_dtype = dace.dtypes.typeclass.as_numpy_dtype(arr.dtype)
-            # new_input = cupy.empty(1, dtype=np_dtype)
-            # new_input[0] = random.random()
-            randomly_generated_data[argname] = random.random()
         else:
-            # shape = (1, )
-            # np_dtype = dace.dtypes.typeclass.as_nu
-            # shape = (1, )
-            # np_dtype = dace.dtypes.typeclass.as_numpy_dtype(arr.dtype)
-            # new_input = cupy.empty(1, dtype=np_dtype)
-            # new_input[0] = random.random()mpy_dtype(arr.dtype)
-            # new_input = cupy.empty(1, dtype=np_dtype)
-            # new_input[0] = random.random()
             raise Exception(
                 f"Input type, {type(arr)} is not dace.data.Array or dace.data.Scalar (not supported)"
             )
@@ -140,7 +136,7 @@ def solve(expr, defined_symbols):
     return dace.symbolic.simplify(expr)
 
 
-def run_and_measure_time(kernel_sdfg: SDFG, inputs):
+def run_and_measure_time(kernel_sdfg: SDFG, inputs : Dict[Type[str], Any]):
     assert len(kernel_sdfg.nodes()) == 1
     kernel_state = kernel_sdfg.nodes()[0]
 
@@ -164,7 +160,7 @@ def run_and_measure_time(kernel_sdfg: SDFG, inputs):
     return time
 
 
-def run_and_measure_sdfg(kernel_sdfg: CompiledSDFG, inputs):
+def run_and_measure_sdfg(kernel_sdfg: CompiledSDFG, inputs : Dict[Type[str], Any], verbose: bool = False):
     time = 0.0
     for _ in range(5):
         kernel_sdfg(**inputs)
@@ -176,8 +172,11 @@ def run_and_measure_sdfg(kernel_sdfg: CompiledSDFG, inputs):
         final_list = next(iter(final_list.values()))
 
         time += statistics.median(final_list)
+        if verbose:
+            print(report)
     time /= 5.0
     return time
+
 
 def percentage_peak(time, flops, mem_accessed, peak_flops, peak_bandwidh):
     op_intensity = flops / mem_accessed
@@ -243,3 +242,35 @@ def convert_fp64_to_fp32(sdfg: SDFG):
     for _sdfg, _array_name, array in sdfg.arrays_recursive():
         if array.dtype == dace.float64:
             array.dtype = dace.float32
+
+
+def end_to_end_measurements(
+    program_name: str,
+    aopt_sdfg_path: str,
+    auto_tiled_sdfg_path: str,
+    inputs : Dict[Type[str], Any],
+    verbose: bool = False,
+):
+    aopt_sdfg: dace.sdfg.SDFG = dace.sdfg.SDFG.from_file(aopt_sdfg_path)
+    auto_tiled_sdfg: dace.sdfg.SDFG = dace.sdfg.SDFG.from_file(auto_tiled_sdfg_path)
+    inputs = generate_random_data(auto_tiled_sdfg, inputs, dace.StorageType.Default)
+
+    aopt_sdfg.instrument = dace.InstrumentationType.Timer
+    auto_tiled_sdfg.instrument = dace.InstrumentationType.Timer
+
+    time1 = run_and_measure_sdfg(aopt_sdfg, inputs, True)
+    time2 = run_and_measure_sdfg(auto_tiled_sdfg, inputs, True)
+
+    if verbose:
+        print(f"Auto opt time for {aopt_sdfg_path}: {time1}")
+        print(f"Auto tiled time {auto_tiled_sdfg_path}: {time2}")
+
+    results = {
+        ("Auto optimized", aopt_sdfg_path): time1,
+        ("Auto tiled", auto_tiled_sdfg_path): time2,
+    }
+
+    with open(f"{program_name}_end_to_end_perf_results.json", "w") as json_file:
+        json.dump(results, json_file, indent=2)
+
+    return (time1, time2)

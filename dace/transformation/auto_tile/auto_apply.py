@@ -1,6 +1,6 @@
 import random
 import statistics
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Type, Any
 import dace
 from dace.dtypes import ScheduleType
 from dace.dtypes import StorageType
@@ -116,7 +116,7 @@ def apply_using_params(
     apply_explicit_memory_transfers: List[bool],
     apply_remainder_loop: List[bool],
     reference_result=None,
-    inputs: Dict = dict(),
+    inputs: Dict[Type[str], Any] = dict(),
     output: cp.array = None,
     verbose=False,
     work_on_copy=True,
@@ -304,61 +304,60 @@ def apply_using_params(
 
                         compiled: dace.CompiledSDFG = kernel_sdfg.compile(
                             validate=True)
-                        compiled(**inputs)
 
-                        if output != None:
-                            result = output.get()
-                        if reference_result and output:
-                            if not np.allclose(result, reference_result):
-                                print(result)
-                                print(reference_result)
-                                print(result - reference_result)
-                                raise Exception(
-                                    "Numerical Verification Failing")
-                            elif verbose:
+                        try:
+                            compiled(**inputs)
+
+                            if output != None:
+                                result = output.get()
+                            if reference_result and output:
+                                if not np.allclose(result, reference_result):
+                                    print(result)
+                                    print(reference_result)
+                                    print(result - reference_result)
+                                    raise Exception(
+                                        "Numerical Verification Failing")
+                                elif verbose:
+                                    s = f"For config {work_map_tiles}, {thread_tile}, {thread_block_size}, {
+                                        explicit_mem_move}, {remainder_loop}: the transformations numerically verify"
+                                    print(s)
+                                    f.write(s + "\n")
+                            else:
                                 s = f"For config {work_map_tiles}, {thread_tile}, {thread_block_size}, {
-                                    explicit_mem_move}, {remainder_loop}: the transformations numerically verify"
+                                    explicit_mem_move}, {remainder_loop}: no reference result"
                                 print(s)
-                                f.write(s + "\n")
-                        else:
-                            s = f"For config {work_map_tiles}, {thread_tile}, {thread_block_size}, {
-                                explicit_mem_move}, {remainder_loop}: no reference result"
-                            print(s)
 
-                        time = auto_tile_util.run_and_measure_time(
-                            kernel_sdfg, inputs)
-                        print(f"Transformed SDFG: {time} ms")
-                        solved_flops = auto_tile_util.solve(flops, inputs)
-                        solved_mem_access = auto_tile_util.solve(
-                            mem_access, inputs)
+                            time = auto_tile_util.run_and_measure_time(
+                                kernel_sdfg, inputs)
+                            print(f"Transformed SDFG: {time} ms")
+                            solved_flops = auto_tile_util.solve(flops, inputs)
+                            solved_mem_access = auto_tile_util.solve(
+                                mem_access, inputs)
 
-                        if flops == 0:
-                            percentage_of_peak = auto_tile_util.percentage_bandwidth(
-                                time, solved_mem_access, peak_bandwidth)
-                        else:
-                            percentage_of_peak = auto_tile_util.percentage_peak(
-                                time, solved_flops, solved_mem_access, peak_flops, peak_bandwidth)
+                            if flops == 0:
+                                percentage_of_peak = auto_tile_util.percentage_bandwidth(
+                                    time, solved_mem_access, peak_bandwidth)
+                            else:
+                                percentage_of_peak = auto_tile_util.percentage_peak(
+                                    time, solved_flops, solved_mem_access, peak_flops, peak_bandwidth)
 
-                        if best_params == None or percentage_of_peak > threshold:
-                            best_params = ((work_map_tiles, thread_tile, thread_block_size,
-                                            explicit_mem_move, remainder_loop), time, percentage_of_peak)
-                        if percentage_of_peak > threshold:
-                            b = True
+                            if best_params == None or percentage_of_peak > threshold:
+                                best_params = ((work_map_tiles, thread_tile, thread_block_size,
+                                                explicit_mem_move, remainder_loop), time, percentage_of_peak)
+                            if percentage_of_peak > threshold:
+                                b = True
 
-                        print(
-                            f"Trandformed SDFG achieves {percentage_of_peak:.2f}% of the peak wrt. roofline model")
-                        print(f"{kernel_entry} was transformed using parameters {
-                            best_params}")
-                        f.write(
-                            f"Trandformed SDFG achieves {percentage_of_peak:.2f}% of the peak wrt. roofline model\n")
+                            print(
+                                f"Trandformed SDFG achieves {percentage_of_peak:.2f}% of the peak wrt. roofline model")
+                            print(f"{kernel_entry} was transformed using parameters {
+                                best_params}")
+                            f.write(
+                                f"Trandformed SDFG achieves {percentage_of_peak:.2f}% of the peak wrt. roofline model\n")
 
-                        # except Exception as ex:
-                        #    print(
-                        #        f"Transformations fail for config {work_map_tiles}, {thread_tile}, {thread_block_size}, {explicit_mem_move}, {remainder_loop}")
-                        #    print("Exception:", ex)
-                        #    kernel_sdfg.save(f"{guid}_failing.sdfg")
-                        #    f.write(
-                        #        f"Transformations fail for config {work_map_tiles}, {thread_tile}, {thread_block_size}, {explicit_mem_move}, {remainder_loop}\n")
+                        except Exception as ex:
+                            print(
+                                f"Transformations fail for config {work_map_tiles}, {thread_tile}, {thread_block_size}, {explicit_mem_move}, {remainder_loop}")
+                            print("Exception:", ex)
 
     if best_params:
         apply_using_params(
@@ -399,7 +398,7 @@ def auto_apply(sdfg: SDFG,
                apply_explicit_memory_transfers: List[bool],
                apply_remainder_loop: List[bool],
                reference_result=None,
-               inputs: Dict = dict(),
+               inputs: Dict[Type[str], Any] = dict(),
                output: cp.array = None,
                verbose=False,
                save_steps=False,
