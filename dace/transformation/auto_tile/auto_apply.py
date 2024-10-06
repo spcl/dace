@@ -148,8 +148,7 @@ def apply_using_params(
                             kernel_entry = find_node_in_state_by_cond(kernel_state, lambda n: isinstance(n, nodes.MapEntry)
                                                                       and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
                                                                       and n.guid == _entry.guid)
-                            print(f"Start working on the copy of {kernel_entry} using parameters {
-                                  (work_map_tiles, thread_tile, thread_block_size, explicit_mem_move, remainder_loop)}")
+                            print(f"Start working on the copy of {kernel_entry} using parameters {(work_map_tiles, thread_tile, thread_block_size, explicit_mem_move, remainder_loop)}")
                             for symbol, typeclass in sdfg.symbols.items():
                                 if not symbol in kernel_sdfg.symbols:
                                     kernel_sdfg.add_symbol(symbol, typeclass)
@@ -157,8 +156,7 @@ def apply_using_params(
                             kernel_sdfg = sdfg
                             kernel_state = state
                             kernel_entry = _entry
-                            print(f"Apply transformations to {kernel_entry} using the parameters {
-                                  (work_map_tiles, thread_tile, thread_block_size, explicit_mem_move, remainder_loop)}")
+                            print(f"Apply transformations to {kernel_entry} using the parameters {(work_map_tiles, thread_tile, thread_block_size, explicit_mem_move, remainder_loop)}")
 
                         guid = kernel_entry.guid
 
@@ -318,13 +316,11 @@ def apply_using_params(
                                     raise Exception(
                                         "Numerical Verification Failing")
                                 elif verbose:
-                                    s = f"For config {work_map_tiles}, {thread_tile}, {thread_block_size}, {
-                                        explicit_mem_move}, {remainder_loop}: the transformations numerically verify"
+                                    s = f"For config {work_map_tiles}, {thread_tile}, {thread_block_size}, {explicit_mem_move}, {remainder_loop}: the transformations numerically verify"
                                     print(s)
                                     f.write(s + "\n")
                             else:
-                                s = f"For config {work_map_tiles}, {thread_tile}, {thread_block_size}, {
-                                    explicit_mem_move}, {remainder_loop}: no reference result"
+                                s = f"For config {work_map_tiles}, {thread_tile}, {thread_block_size}, {explicit_mem_move}, {remainder_loop}: no reference result"
                                 print(s)
 
                             time = auto_tile_util.run_and_measure_time(
@@ -349,8 +345,7 @@ def apply_using_params(
 
                             print(
                                 f"Trandformed SDFG achieves {percentage_of_peak:.2f}% of the peak wrt. roofline model")
-                            print(f"{kernel_entry} was transformed using parameters {
-                                best_params}")
+                            print(f"{kernel_entry} was transformed using parameters {best_params}")
                             f.write(
                                 f"Trandformed SDFG achieves {percentage_of_peak:.2f}% of the peak wrt. roofline model\n")
 
@@ -475,13 +470,11 @@ def auto_apply(sdfg: SDFG,
                         save_steps=save_steps,
                         save_individual_kernels=save_individual_kernels
                     )
-                    kperf[kernel_entry.guid] = (f"{kernel_entry.guid}_auto_tiled.sdfg", best_config[0], str(
-                        flops), str(mem_access), float(best_config[1]), float(best_config[2]))
+                    kperf[kernel_entry.guid] = (f"{kernel_entry.guid}_auto_tiled.sdfg", best_config[0], str(flops), str(mem_access), float(best_config[1]), float(best_config[2]))
                 except Exception as e:
                     best_config = None
                     print("Exception: on transforming {kernel_entry}:", e)
-                    kperf[kernel_entry.guid] = (f"{kernel_entry.guid}_auto_tiled.sdfg", None, str(
-                        flops), str(mem_access), float(-1.0), float("nan"))
+                    kperf[kernel_entry.guid] = (f"{kernel_entry.guid}_auto_tiled.sdfg", None, str(flops), str(mem_access), float(-1.0), float("nan"))
 
             if verbose:
                 print("Best config: ",
