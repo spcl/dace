@@ -33,6 +33,18 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.dispatcher import DefinedType
 from typing import Any, List
 
+# optimizations
+from dace.transformation.dataflow import (
+    DoubleBuffering,
+    MapCollapse,
+    MapExpansion,
+    MapReduceFusion,
+    StripMining,
+    InLocalStorage,
+    AccumulateTransient,
+    Vectorization,
+)
+
 # Other imports
 import itertools
 import numpy as np
@@ -50,6 +62,24 @@ TC_SIZE_N = 16
 TC_A = dace.float16[TC_SIZE_M, TC_SIZE_K]
 TC_B = dace.float16[TC_SIZE_K, TC_SIZE_N]
 TC_accumulator = dace.float32[TC_SIZE_M, TC_SIZE_N]
+
+
+#####################################################################
+# Data-centric optimization helpers
+
+
+def find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
+    """Finds the first map entry node by the given parameter name."""
+    return next(
+        n
+        for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and pname in n.params
+    )
+
+
+def find_node_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
+    """Finds the first map entry node by the given parameter name."""
+    return next(node for node in sdfg.data_nodes() if node.data == pname)
 
 
 class TensorCoreCodegen(TargetCodeGenerator):
@@ -396,7 +426,113 @@ def hgemm_tiled(
         for frag_offset in dace.map[0:NUM_ACCUMULATORS] @ dace.ScheduleType.Sequential:
             frag_fill(ctile[frag_offset], 0.0)
 
-        for step_k_offset in range(0, N, TILE_K):
+        for step_k_offset in dace.map[0:N:TILE_K] @ dace.ScheduleType.Sequential:
+            # load A and B tiles into shared mem
+            a_shmem[:] = A[
+                tile_i_offset : tile_i_offset + TILE_M,
+                step_k_offset : step_k_offset + TILE_K,
+            ]
+            b_shmem[:] = B[
+                step_k_offset : step_k_offset + TILE_K,
+                tile_j_offset : tile_j_offset + TILE_N,
+            ]
+
+            for w_index, thread_index in (
+                dace.map[0:NUM_WARPS, 0:32] @ dace.ScheduleType.GPU_ThreadBlock
+            ):
+                # we have 8 warps per threadblock, 32 threads per warp
+                # now I am a warp w in the threadblock.x = tile_i, threadblock.y = tile_j
+
+                for TC_frag_offset in (
+                    dace.map[0:TILE_N:TC_SIZE_N] @ dace.ScheduleType.Sequential
+                ):  # Warp map
+                    for k_step in (
+                        dace.map[0:TILE_K:TC_SIZE_K] @ dace.ScheduleType.Sequential
+                    ):
+                        atile = dace.ndarray(
+                            [TC_SIZE_M, TC_SIZE_K],
+                            dtype=dace.float16,
+                            storage=dace.StorageType.TensorCore_A,
+                        )
+                        btile = dace.ndarray(
+                            [TC_SIZE_K, TC_SIZE_N],
+                            dtype=dace.float16,
+                            storage=dace.StorageType.TensorCore_B,
+                        )
+                        atile[:] = a_shmem[
+                            w_index * TC_SIZE_M : (w_index + 1) * TC_SIZE_M,
+                            k_step : k_step + TC_SIZE_K,
+                        ]
+                        btile[:] = b_shmem[
+                            k_step : k_step + TC_SIZE_K,
+                            TC_frag_offset : TC_frag_offset + TC_SIZE_N,
+                        ]
+                        wmma(atile, btile, ctile[TC_frag_offset // TC_SIZE_N])
+
+        # finally, store it back to global memory
+        for w_index, thread_index in (
+            dace.map[0:NUM_WARPS, 0:32] @ dace.ScheduleType.GPU_ThreadBlock
+        ):
+            for TC_frag_offset in (
+                dace.map[0:TILE_N:TC_SIZE_N] @ dace.ScheduleType.Sequential
+            ):  # Warp map
+                C[
+                    tile_i_offset
+                    + w_index * TC_SIZE_M : tile_i_offset
+                    + (w_index + 1) * TC_SIZE_M,
+                    tile_j_offset
+                    + TC_frag_offset : tile_j_offset
+                    + TC_frag_offset
+                    + TC_SIZE_N,
+                ] = ctile[TC_frag_offset // TC_SIZE_N]
+
+
+@dace.program
+def hgemm_tiled_double_buffered(
+    A: dace.float16[N, N] @ dace.StorageType.GPU_Global,
+    B: dace.float16[N, N] @ dace.StorageType.GPU_Global,
+    C: dace.float32[N, N] @ dace.StorageType.GPU_Global,
+):
+    for tile_i_offset, tile_j_offset in dace.map[0:N:TILE_M, 0:N:TILE_N]:
+        # here I am a threadblock.x = tile_i, threadblock.y = tile_j
+
+        # allocate shared memory buffers
+        a_shmem = dace.ndarray(
+            [2, TILE_M, TILE_K],
+            dtype=dace.float16,
+            storage=dace.StorageType.GPU_Shared,
+        )
+        b_shmem = dace.ndarray(
+            [2, TILE_K, TILE_N],
+            dtype=dace.float16,
+            storage=dace.StorageType.GPU_Shared,
+        )
+
+        # allocate register tile for C accumulation:
+        # - per threadblock: TILE_M x TILE_N
+        # - per warp: TC_SIZE x TC_SIZE x (TILE_N // TC_SIZE)
+        # - per thread:
+        # TC_SIZE x TC_SIZE x (TILE_N // TC_SIZE) // 32
+        ctile = dace.ndarray(
+            [NUM_ACCUMULATORS, TC_SIZE_M, TC_SIZE_N],
+            dtype=dace.float32,
+            storage=dace.StorageType.TensorCore_Accumulator,
+        )
+
+        for frag_offset in dace.map[0:NUM_ACCUMULATORS] @ dace.ScheduleType.Sequential:
+            frag_fill(ctile[frag_offset], 0.0)
+
+        # initial double buffer load
+        a_shmem[0, :] = A[
+            tile_i_offset : tile_i_offset + TILE_M,
+            step_k_offset : step_k_offset + TILE_K,
+        ]
+        b_shmem[0, :] = B[
+            step_k_offset : step_k_offset + TILE_K,
+            tile_j_offset : tile_j_offset + TILE_N,
+        ]
+
+        for step_k_offset in dace.map[TILE_K:N:TILE_K] @ dace.ScheduleType.Sequential:
             # load A and B tiles into shared mem
             a_shmem[:] = A[
                 tile_i_offset : tile_i_offset + TILE_M,
@@ -499,6 +635,11 @@ def benchmark_matmul(matmul_func, M, N, K, num_iterations=100):
     return total_runtime, avg_runtime, tflops
 
 
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
+
 if __name__ == "__main__":
     extend_dace()
 
@@ -507,27 +648,37 @@ if __name__ == "__main__":
     # Prerequisite for sample: CUDA compute capability >= 70
     dace.Config.set("compiler", "cuda", "cuda_arch", value="80")
 
-    A = torch.randn(N, N, dtype=torch.float16, device="cuda")
-    B = torch.randn(N, N, dtype=torch.float16, device="cuda")
-    C = torch.randn(N, N, dtype=torch.float32, device="cuda")
+    A = torch.randn(N, N, dtype=torch.float16, device=device)
+    B = torch.randn(N, N, dtype=torch.float16, device=device)
+    C = torch.randn(N, N, dtype=torch.float32, device=device)
 
     dace_matmul: dace.SDFG = hgemm_tiled.to_sdfg(simplify=True)
 
-    # dace_matmul.view()
-    #
-    # exit()
     # Transform the code to run on the GPU, while ensuring that the warp map
     # in the example runs within a single thread-block.
     dace_matmul.apply_transformations(
         GPUTransformSDFG, options=dict(sequential_innermaps=False)
     )
 
+    # dace_matmul.view()
+
+    # exit()
+
+    # smem_a = dace_matmul.arrays["a_shmem"]
+    # smem_b = dace_matmul.arrays["b_shmem"]
+
+    # def find_node_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
+    #     return next(node for node in sdfg.data_nodes() if node.data == pname)
+
+    # ktile = find_map_by_param(dace_matmul, "step_k_offset")
+    # smem_a = find_node_by_param(dace_matmul, "a_shmem")
+    # smem_b = find_node_by_param(dace_matmul, "b_shmem")
+
+    # DoubleBuffering.apply_to(dace_matmul, map_entry=ktile, transient=smem_a)
+    # DoubleBuffering.apply_to(dace_matmul, map_entry=ktile, transient=smem_b)
+
     compiled = dace_matmul.compile()
     # print(f"\n\ntype of dace: {type(dace_matmul)}\n\n")
-
-    A = torch.tensor(A, device="cuda", dtype=torch.float16)
-    B = torch.tensor(B, device="cuda", dtype=torch.float16)
-    C = torch.tensor(C, device="cuda", dtype=torch.float32)
 
     # torch.cuda.synchronize()
 

@@ -360,10 +360,11 @@ if __name__ == "__main__":
     )
 
     import tqdm
+
     csdfg = sdfg.compile()
     for i in tqdm.trange(100):
         csdfg(A=A, B=B, C=C, N=2048)
-    #sdfg(A=A, B=B, C=C, N=2048)
+    # sdfg(A=A, B=B, C=C, N=2048)
 
     diff = np.linalg.norm(A @ B - C) / (2048 * 2048)
     print("Difference:", diff)
