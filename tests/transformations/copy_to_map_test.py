@@ -127,7 +127,7 @@ def _perform_bypass_test(
     # Now looking for the tasklet and checking if the memlets follows the expected
     #  simple pattern.
     tasklet: dace.nodes.Tasklet = next(iter([node for node in state.nodes() if isinstance(node, dace.nodes.Tasklet)]))
-    pattern: re.Pattern = re.compile(r"(__[ji][0-9]+(\s*\+\s*\d+)?)|([0-9]+)")
+    pattern: re.Pattern = re.compile(r"(__j[0-9])|(__j[0-9]+\s*\+\s*[0-9]+)|([0-9]+)")
 
     assert state.in_degree(tasklet) == 1
     assert state.out_degree(tasklet) == 1

@@ -75,10 +75,9 @@ class CopyToMap(xf.SingleStateTransformation):
         edge = state.edges_between(avnode, bvnode)[0]
         src_subset = edge.data.get_src_subset(edge, state)
         src_subset_size = src_subset.size()
+        red_src_subset_size = tuple(s for s in src_subset_size if s != 1)
         dst_subset = edge.data.get_dst_subset(edge, state)
         dst_subset_size = dst_subset.size()
-
-        red_src_subset_size = tuple(s for s in src_subset_size if s != 1)
         red_dst_subset_size = tuple(s for s in dst_subset_size if s != 1)
 
         if len(adesc.shape) >= len(bdesc.shape):
@@ -88,36 +87,40 @@ class CopyToMap(xf.SingleStateTransformation):
             copy_shape = dst_subset_size
             copy_a = False
 
-        maprange = {f'__i{i}': (0, s - 1, 1) for i, s in enumerate(copy_shape)}
-
         if tuple(src_subset_size) == tuple(dst_subset_size):
             # The two subsets have exactly the same shape, so we can just copying with an offset.
-            a_index = [symbolic.pystr_to_symbolic(f'__i{i} + ({src_subset[i][0]})') for i in range(len(copy_shape))]
-            b_index = [symbolic.pystr_to_symbolic(f'__i{i} + ({dst_subset[i][0]})') for i in range(len(copy_shape))]
+            #  We use another index variables for the tests only.
+            maprange = {f'__j{i}': (0, s - 1, 1) for i, s in enumerate(copy_shape)}
+            a_index = [symbolic.pystr_to_symbolic(f'__j{i} + ({src_subset[i][0]})') for i in range(len(copy_shape))]
+            b_index = [symbolic.pystr_to_symbolic(f'__j{i} + ({dst_subset[i][0]})') for i in range(len(copy_shape))]
         elif red_src_subset_size == red_dst_subset_size and (len(red_dst_subset_size) > 0):
             # If we remove all size 1 dimensions that the two subsets have the same size.
             #  This is essentially the memlet `a[0:10, 2, 0:10] -> 0:10, 10:20`
             #  We use another index variable only for the tests but we would have to
             #  recreate the index anyways.
             maprange = {f'__j{i}': (0, s - 1, 1) for i, s in enumerate(red_src_subset_size)}
-            a_index = []
-            for i, s in enumerate(src_subset_size):
-                if s == 1:
-                    a_index.append(symbolic.pystr_to_symbolic(f'{src_subset[i][0]}'))
-                else:
-                    a_index.append(symbolic.pystr_to_symbolic(f'__j{i} + ({src_subset[i][0]})'))
-            b_index = []
-            for i, s in enumerate(dst_subset_size):
-                if s == 1:
-                    b_index.append(symbolic.pystr_to_symbolic(f'{dst_subset[i][0]}'))
-                else:
-                    b_index.append(symbolic.pystr_to_symbolic(f'__j{i} + ({dst_subset[i][0]})'))
-        elif copy_a:
-            a_index = [symbolic.pystr_to_symbolic(f'__i{i}') for i in range(len(copy_shape))]
-            b_index = self.delinearize_linearize(bdesc, copy_shape, edge.data.get_dst_subset(edge, state))
+            a_index = [
+                symbolic.pystr_to_symbolic(f'{src_subset[i][0]}')
+                if s == 1
+                else symbolic.pystr_to_symbolic(f'__j{i} + ({src_subset[i][0]})')
+                for i, s in enumerate(src_subset_size)
+            ]
+            b_index = [
+                symbolic.pystr_to_symbolic(f'{dst_subset[i][0]}')
+                if s == 1
+                else symbolic.pystr_to_symbolic(f'__j{i} + ({dst_subset[i][0]})')
+                for i, s in enumerate(dst_subset_size)
+            ]
         else:
-            a_index = self.delinearize_linearize(adesc, copy_shape, edge.data.get_src_subset(edge, state))
-            b_index = [symbolic.pystr_to_symbolic(f'__i{i}') for i in range(len(copy_shape))]
+            # We have to delinearize and linearize
+            #  We use another index variable for the tests.
+            maprange = {f'__i{i}': (0, s - 1, 1) for i, s in enumerate(copy_shape)}
+            if copy_a:
+                a_index = [symbolic.pystr_to_symbolic(f'__i{i}') for i in range(len(copy_shape))]
+                b_index = self.delinearize_linearize(bdesc, copy_shape, edge.data.get_dst_subset(edge, state))
+            else:
+                a_index = self.delinearize_linearize(adesc, copy_shape, edge.data.get_src_subset(edge, state))
+                b_index = [symbolic.pystr_to_symbolic(f'__i{i}') for i in range(len(copy_shape))]
 
         a_subset = subsets.Range([(ind, ind, 1) for ind in a_index])
         b_subset = subsets.Range([(ind, ind, 1) for ind in b_index])
