@@ -164,7 +164,7 @@ def _make_bypass_sdfg(
         )
         ac.append(state.add_access(name))
 
-    return sdfg, state, *ac
+    return sdfg, state, ac[0], ac[1]
 
 
 def test_bypass_1():
@@ -230,9 +230,9 @@ if __name__ == '__main__':
     test_bypass_1()
     test_bypass_2()
     test_bypass_3()
-    #test_bypass_4()
-    #test_bypass_5()
-    #test_bypass_6()
+    test_bypass_4()
+    test_bypass_5()
+    test_bypass_6()
     test_copy_to_map()
     test_flatten_to_map()
     try:

@@ -5,6 +5,7 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation import transformation as xf
 from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil
 from typing import Tuple
+import itertools
 
 
 class CopyToMap(xf.SingleStateTransformation):
@@ -99,16 +100,18 @@ class CopyToMap(xf.SingleStateTransformation):
             #  We use another index variable only for the tests but we would have to
             #  recreate the index anyways.
             maprange = {f'__j{i}': (0, s - 1, 1) for i, s in enumerate(red_src_subset_size)}
+            cnt = itertools.count(0)
             a_index = [
                 symbolic.pystr_to_symbolic(f'{src_subset[i][0]}')
                 if s == 1
-                else symbolic.pystr_to_symbolic(f'__j{i} + ({src_subset[i][0]})')
+                else symbolic.pystr_to_symbolic(f'__j{next(cnt)} + ({src_subset[i][0]})')
                 for i, s in enumerate(src_subset_size)
             ]
+            cnt = itertools.count(0)
             b_index = [
                 symbolic.pystr_to_symbolic(f'{dst_subset[i][0]}')
                 if s == 1
-                else symbolic.pystr_to_symbolic(f'__j{i} + ({dst_subset[i][0]})')
+                else symbolic.pystr_to_symbolic(f'__j{next(cnt)} + ({dst_subset[i][0]})')
                 for i, s in enumerate(dst_subset_size)
             ]
         else:
