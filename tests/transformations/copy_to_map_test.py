@@ -127,7 +127,7 @@ def _perform_bypass_test(
     # Now looking for the tasklet and checking if the memlets follows the expected
     #  simple pattern.
     tasklet: dace.nodes.Tasklet = next(iter([node for node in state.nodes() if isinstance(node, dace.nodes.Tasklet)]))
-    pattern: re.Pattern = re.compile(r"__i[0-9](\s*\+\s*\d+)?")
+    pattern: re.Pattern = re.compile(r"(__[ji][0-9]+(\s*\+\s*\d+)?)|([0-9]+)")
 
     assert state.in_degree(tasklet) == 1
     assert state.out_degree(tasklet) == 1
@@ -196,10 +196,43 @@ def test_bypass_3():
     _perform_bypass_test(sdfg)
 
 
+def test_bypass_4():
+    sdfg, state, a, b = _make_bypass_sdfg((100, 4, 100), (100, 100))
+    state.add_nedge(
+            a,
+            b,
+            dace.Memlet("a[1:11, 2, 20:30] -> 50:60, 40:50"),
+    )
+    _perform_bypass_test(sdfg)
+
+
+def test_bypass_5():
+    sdfg, state, a, b = _make_bypass_sdfg((100, 4, 100), (100, 10, 100))
+    state.add_nedge(
+            a,
+            b,
+            dace.Memlet("a[1:11, 2, 20:30] -> 50:60, 4, 40:50"),
+    )
+    _perform_bypass_test(sdfg)
+
+
+def test_bypass_6():
+    sdfg, state, a, b = _make_bypass_sdfg((100, 100), (100, 10, 100))
+    state.add_nedge(
+            a,
+            b,
+            dace.Memlet("a[1:11, 20:30] -> 50:60, 4, 40:50"),
+    )
+    _perform_bypass_test(sdfg)
+
+
 if __name__ == '__main__':
     test_bypass_1()
     test_bypass_2()
     test_bypass_3()
+    #test_bypass_4()
+    #test_bypass_5()
+    #test_bypass_6()
     test_copy_to_map()
     test_flatten_to_map()
     try:
