@@ -3257,6 +3257,13 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
         branch.parent_graph = self.parent_graph
         branch.sdfg = self.sdfg
 
+    def remove_branch(self, branch: ControlFlowRegion):
+        filtered_branches = []
+        for c, b in self._branches:
+            if b is not branch:
+                filtered_branches.append((c, b))
+        self._branches = filtered_branches
+
     def nodes(self) -> List['ControlFlowBlock']:
         return [node for _, node in self._branches if node is not None]
 

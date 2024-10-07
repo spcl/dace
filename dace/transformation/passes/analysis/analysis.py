@@ -341,6 +341,7 @@ class FindAccessNodes(ppl.Pass):
 
 
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class SymbolWriteScopes(ppl.Pass):
     """
     For each symbol, create a dictionary mapping each writing interstate edge to that symbol to the set of interstate
@@ -445,6 +446,7 @@ class SymbolWriteScopes(ppl.Pass):
 
 
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class ScalarWriteShadowScopes(ppl.Pass):
     """
     For each scalar or array of size 1, create a dictionary mapping writes to that data container to the set of reads

@@ -52,6 +52,7 @@ class FuseStates(ppl.Pass):
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+@experimental_cfg_block_compatible
 class InlineSDFGs(ppl.Pass):
     """
     Inlines all possible nested SDFGs (and sub-SDFGs).

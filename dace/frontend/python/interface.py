@@ -44,7 +44,7 @@ def program(f: F,
             recompile: bool = True,
             distributed_compilation: bool = False,
             constant_functions=False,
-            use_experimental_cfg_blocks=False,
+            use_experimental_cfg_blocks=True,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     """
     Entry point to a data-centric program. For methods and ``classmethod``s, use
