@@ -4,6 +4,8 @@ from dace.transformation.dataflow import CopyToMap
 import copy
 import pytest
 import numpy as np
+import re
+from typing import Tuple, Optional
 
 
 def _copy_to_map(storage: dace.StorageType):
@@ -102,9 +104,109 @@ def test_preprocess():
     assert np.allclose(out, inp)
 
 
+def _perform_bypass_test(
+        sdfg: dace.SDFG,
+) -> bool:
+    """Performs test for the special case CopyToMap that bypasses linearizing and delinearaziong.
+    """
+    assert sdfg.number_of_nodes() == 1
+    state: dace.SDFGState = sdfg.states()[0]
+    assert state.number_of_nodes() == 2
+    assert state.number_of_edges() == 1
+    assert all(isinstance(node, dace.nodes.AccessNode) for node in state.nodes())
+    sdfg.validate()
+
+    a = np.random.rand(*sdfg.arrays["a"].shape)
+    b_unopt = np.random.rand(*sdfg.arrays["b"].shape)
+    b_opt = b_unopt.copy()
+    sdfg(a=a, b=b_unopt)
+
+    nb_runs = sdfg.apply_transformations_repeated(CopyToMap, validate=True)
+    assert nb_runs == 1, f"Expected 1 application, but {nb_runs} were performed."
+
+    # Now looking for the tasklet and checking if the memlets follows the expected
+    #  simple pattern.
+    tasklet: dace.nodes.Tasklet = next(iter([node for node in state.nodes() if isinstance(node, dace.nodes.Tasklet)]))
+    pattern: re.Pattern = re.compile(r"__i[0-9](\s*\+\s*\d+)?")
+
+    assert state.in_degree(tasklet) == 1
+    assert state.out_degree(tasklet) == 1
+    in_edge = next(iter(state.in_edges(tasklet)))
+    out_edge = next(iter(state.out_edges(tasklet)))
+
+    assert all(pattern.fullmatch(str(idxs[0]).strip()) for idxs in in_edge.data.src_subset), f"IN: {in_edge.data.src_subset}"
+    assert all(pattern.fullmatch(str(idxs[0]).strip()) for idxs in out_edge.data.dst_subset), f"OUT: {out_edge.data.dst_subset}"
+
+    # Now call it again after the optimization.
+    sdfg(a=a, b=b_opt)
+    assert np.allclose(b_unopt, b_opt)
+
+    return True
+
+def _make_bypass_sdfg(
+        shape_a: Tuple[int, ...],
+        shape_b: Optional[Tuple[int, ...]] = None
+) -> Tuple[dace.SDFG, dace.SDFGState, dace.nodes.AccessNode, dace.nodes.AccessNode]:
+
+    if shape_b is None:
+        shape_b = shape_a
+
+    sdfg = dace.SDFG("bypass1")
+    state = sdfg.add_state(is_start_block=True)
+
+    ac = []
+    for name, shape in [('a', shape_a), ('b', shape_b)]:
+        sdfg.add_array(
+                name=name,
+                shape=shape,
+                dtype=dace.float64,
+                transient=False,
+        )
+        ac.append(state.add_access(name))
+
+    return sdfg, state, *ac
+
+
+def test_bypass_1():
+    sdfg, state, a, b = _make_bypass_sdfg((10, 10))
+    state.add_nedge(
+            a,
+            b,
+            dace.Memlet("a[0:10, 0:10] -> 0:10, 0:10"),
+    )
+    _perform_bypass_test(sdfg)
+
+def test_bypass_2():
+    sdfg, state, a, b = _make_bypass_sdfg((10, 10), (100, 100))
+    state.add_nedge(
+            a,
+            b,
+            dace.Memlet("a[0:10, 0:10] -> 50:60, 40:50"),
+    )
+    _perform_bypass_test(sdfg)
+
+
+def test_bypass_3():
+    sdfg, state, a, b = _make_bypass_sdfg((100, 100), (100, 100))
+    state.add_nedge(
+            a,
+            b,
+            dace.Memlet("a[1:11, 20:30] -> 50:60, 40:50"),
+    )
+    _perform_bypass_test(sdfg)
+
+
 if __name__ == '__main__':
+    test_bypass_1()
+    test_bypass_2()
+    test_bypass_3()
     test_copy_to_map()
-    test_copy_to_map_gpu()
     test_flatten_to_map()
-    test_flatten_to_map_gpu()
-    test_preprocess()
+    try:
+        import cupy
+        test_copy_to_map_gpu()
+        test_flatten_to_map_gpu()
+        test_preprocess()
+    except ModuleNotFoundError as E:
+        if "'cupy'" not in str(E):
+            raise
