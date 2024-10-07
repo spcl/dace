@@ -52,7 +52,7 @@ class ControlFlowRaising(ppl.Pass):
                     for i, oe in enumerate(oedges):
                         branch_name = 'branch_' + str(i) + '_' + block.label
                         branch = ControlFlowRegion(branch_name, sdfg)
-                        conditional.branches.append([oe.data.condition, branch])
+                        conditional.add_branch(oe.data.condition, branch)
                         if oe.dst is merge_block:
                             # Empty branch.
                             continue

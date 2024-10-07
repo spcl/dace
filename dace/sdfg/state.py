@@ -3251,7 +3251,12 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
     @property
     def branches(self) -> List[Tuple[Optional[CodeBlock], ControlFlowRegion]]:
         return self._branches
-    
+
+    def add_branch(self, condition: Optional[CodeBlock], branch: ControlFlowRegion):
+        self._branches.append([condition, branch])
+        branch.parent_graph = self.parent_graph
+        branch.sdfg = self.sdfg
+
     def nodes(self) -> List['ControlFlowBlock']:
         return [node for _, node in self._branches if node is not None]
 
