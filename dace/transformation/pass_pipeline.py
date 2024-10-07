@@ -511,8 +511,8 @@ class Pipeline(Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if sdfg.root_sdfg.using_experimental_blocks:
-            if (not hasattr(self, '__experimental_cfg_block_compatible__') or
-                self.__experimental_cfg_block_compatible__ == False):
+            if (type(self) != Pipeline and (not hasattr(self, '__experimental_cfg_block_compatible__') or
+                self.__experimental_cfg_block_compatible__ == False)):
                 warnings.warn('Pipeline ' + self.__class__.__name__ + ' is being skipped due to incompatibility with ' +
                               'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
                               'ensure the top level SDFG does not have `SDFG.using_experimental_blocks` set to ' +

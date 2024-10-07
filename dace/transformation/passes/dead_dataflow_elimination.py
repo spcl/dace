@@ -19,7 +19,7 @@ PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be er
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@transformation.single_level_sdfg_only
+@transformation.experimental_cfg_block_compatible
 class DeadDataflowElimination(ppl.Pass):
     """
     Removes unused computations from SDFG states.
@@ -59,13 +59,14 @@ class DeadDataflowElimination(ppl.Pass):
         # Depends on the following analysis passes:
         #  * State reachability
         #  * Read/write access sets per state
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability'][sdfg.cfg_id]
-        access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets'][sdfg.cfg_id]
+        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.cfg_id]
+        access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results[ap.AccessSets.__name__][sdfg.cfg_id]
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
         # Traverse SDFG backwards
         try:
-            state_order = list(cfg.blockorder_topological_sort(sdfg))
+            state_order: List[SDFGState] = list(cfg.blockorder_topological_sort(sdfg, recursive=True,
+                                                                                ignore_nonstate_blocks=True))
         except KeyError:
             return None
         for state in reversed(state_order):
