@@ -81,9 +81,14 @@ class CopyToMap(xf.SingleStateTransformation):
 
         edge = state.edges_between(avnode, bvnode)[0]
         src_subset = edge.data.get_src_subset(edge, state)
+        if src_subset is None:
+            src_subset = subsets.Range.from_array(adesc)
         src_subset_size = src_subset.size()
         red_src_subset_size = tuple(s for s in src_subset_size if s != 1)
+
         dst_subset = edge.data.get_dst_subset(edge, state)
+        if dst_subset is None:
+            dst_subset = subsets.Range.from_array(bdesc)
         dst_subset_size = dst_subset.size()
         red_dst_subset_size = tuple(s for s in dst_subset_size if s != 1)
 

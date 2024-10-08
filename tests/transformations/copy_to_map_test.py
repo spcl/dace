@@ -226,6 +226,28 @@ def test_non_lin_delin_6():
     _perform_non_lin_delin_test(sdfg)
 
 
+def test_non_lin_delin_7():
+    sdfg, state, a, b = _make_non_lin_delin_sdfg((10, 10), (20, 20))
+    state.add_nedge(
+            a,
+            b,
+            #dace.Memlet("a[0:10, 0:10] -> 5:15, 6:16"),
+            dace.Memlet("b[5:15, 6:16]"),
+    )
+    _perform_non_lin_delin_test(sdfg)
+
+
+def test_non_lin_delin_8():
+    sdfg, state, a, b = _make_non_lin_delin_sdfg((20, 20), (10, 10))
+    state.add_nedge(
+            a,
+            b,
+            #dace.Memlet("a[0:10, 0:10] -> 5:15, 6:16"),
+            dace.Memlet("a[5:15, 6:16]"),
+    )
+    _perform_non_lin_delin_test(sdfg)
+
+
 if __name__ == '__main__':
     test_non_lin_delin_1()
     test_non_lin_delin_2()
@@ -233,6 +255,9 @@ if __name__ == '__main__':
     test_non_lin_delin_4()
     test_non_lin_delin_5()
     test_non_lin_delin_6()
+    test_non_lin_delin_7()
+    test_non_lin_delin_8()
+
     test_copy_to_map()
     test_flatten_to_map()
     try:
