@@ -75,9 +75,6 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         graph.add_edge(loop, after, InterstateEdge(assignments=exit_edge.data.assignments))
 
         loop.add_node(first_state, is_start_block=True)
-        for n in full_body:
-            if n is not first_state:
-                loop.add_node(n)
         added = set()
         for e in graph.all_edges(*full_body):
             if e.src in full_body and e.dst in full_body:
@@ -85,11 +82,12 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
                     added.add(e)
                     if e is incr_edge:
                         if left_over_incr_assignments != {}:
-                            loop.add_edge(e.src, loop.add_state(label + '_tail'),
-                                          InterstateEdge(assignments=left_over_incr_assignments))
+                            dst = loop.add_state(label + '_tail') if not inverted else e.dst
+                            loop.add_edge(e.src, dst, InterstateEdge(assignments=left_over_incr_assignments))
                     elif e is cond_edge:
-                        e.data.condition = properties.CodeBlock('1')
-                        loop.add_edge(e.src, e.dst, e.data)
+                        if not inverted:
+                            e.data.condition = properties.CodeBlock('1')
+                            loop.add_edge(e.src, e.dst, e.data)
                     else:
                         loop.add_edge(e.src, e.dst, e.data)
 

@@ -19,7 +19,7 @@ def test_cond_region_if():
     sdfg.add_edge(state0, if1, InterstateEdge())
 
     if_body = ControlFlowRegion('if_body', sdfg=sdfg)
-    if1.add_branch((CodeBlock('i == 1'), if_body))
+    if1.add_branch(CodeBlock('i == 1'), if_body)
 
     state1 = if_body.add_state('state1', is_start_block=True)
     acc_a = state1.add_access('A')
