@@ -115,6 +115,35 @@ def test_interstate_fusion():
     assert np.allclose(our_A, actual_A)
 
 
+@dace.program
+def assign_bounary_free_floating(A: dace.float32[M, N], B: dace.float32[M, N]):
+    assign_top_row(A)
+    assign_bottom_row(B)
+
+
+def test_free_floating_fusion():
+    A = np.random.uniform(size=(4, 5)).astype(np.float32)
+    B = np.random.uniform(size=(4, 5)).astype(np.float32)
+
+    # Construct SDFG with the maps on separate states.
+    g = assign_bounary_free_floating.to_sdfg(simplify=True)
+    g.save(os.path.join('_dacegraphs', 'floating-0.sdfg'))
+    g.validate()
+    actual_A = deepcopy(A)
+    actual_B = deepcopy(B)
+    g(A=actual_A, B=actual_B, M=4, N=5)
+
+    g.apply_transformations(ConstAssignmentMapFusion)
+    g.save(os.path.join('_dacegraphs', 'floating-1.sdfg'))
+    g.validate()
+    our_A = deepcopy(A)
+    our_B = deepcopy(B)
+    g(A=our_A, B=our_B, M=4, N=5)
+
+    # print(our_A)
+    assert np.allclose(our_A, actual_A)
+
+
 if __name__ == '__main__':
     test_within_state_fusion()
     test_interstate_fusion()

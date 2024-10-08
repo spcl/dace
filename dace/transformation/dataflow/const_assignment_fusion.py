@@ -4,7 +4,9 @@ from typing import Optional
 
 from dace import transformation, SDFGState, SDFG, Memlet
 from dace.sdfg import nodes
+from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.nodes import Tasklet, ExitNode, MapEntry, MapExit
+from dace.sdfg.utils import node_path_graph
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import StateFusionExtended
 
@@ -18,12 +20,24 @@ def unique_map_node(graph: SDFGState) -> Optional[tuple[MapEntry, MapExit]]:
     return en[0], ex[0]
 
 
+def free_floating_maps(*args):
+    g = OrderedDiGraph()
+    for n in args:
+        g.add_node(n)
+    return g
+
+
 class ConstAssignmentMapFusion(MapFusion):
+    first_map_entry = transformation.PatternNode(nodes.EntryNode)
     first_map_exit = transformation.PatternNode(nodes.ExitNode)
     array = transformation.PatternNode(nodes.AccessNode)
     second_map_entry = transformation.PatternNode(nodes.EntryNode)
+    second_map_exit = transformation.PatternNode(nodes.ExitNode)
 
-    # NOTE: `expression()` is inherited.
+    @classmethod
+    def expressions(cls):
+        return [node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry),
+                free_floating_maps(cls.first_map_entry, cls.first_map_exit, cls.second_map_entry, cls.second_map_exit)]
 
     @staticmethod
     def consistent_const_assignment_table(graph: SDFGState, en: MapEntry, ex: MapExit) -> tuple[bool, dict]:
@@ -63,7 +77,21 @@ class ConstAssignmentMapFusion(MapFusion):
             return False
         return True
 
+    def can_be_applied_free_floating(self, graph: SDFGState, sdfg: SDFG, permissive: bool = False) -> bool:
+        first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
+        if first_entry != self.first_map_entry or second_exit != self.second_map_exit:
+            return False
+        if not self.compatible_range(first_entry, second_entry):
+            return False
+        if graph.all_nodes_between(first_exit, second_entry) or graph.all_nodes_between(second_exit, first_entry):
+            return False
+        return True
+
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+        assert expr_index in (0, 1)
+        if expr_index == 1:
+            if not self.can_be_applied_free_floating(graph, sdfg, permissive):
+                return False
         first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
         if not self.compatible_range(first_entry, second_entry):
             return False
