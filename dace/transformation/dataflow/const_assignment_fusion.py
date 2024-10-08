@@ -1,11 +1,21 @@
 import ast
 from itertools import chain
+from typing import Optional
 
-import dace.subsets
 from dace import transformation, SDFGState, SDFG, Memlet
 from dace.sdfg import nodes
-from dace.sdfg.nodes import Tasklet, ExitNode
+from dace.sdfg.nodes import Tasklet, ExitNode, MapEntry, MapExit
 from dace.transformation.dataflow import MapFusion
+from dace.transformation.interstate import StateFusionExtended
+
+
+def unique_map_node(graph: SDFGState) -> Optional[tuple[MapEntry, MapExit]]:
+    all_nodes = list(graph.all_nodes_recursive())
+    en: list[MapEntry] = [n for n, _ in all_nodes if isinstance(n, MapEntry)]
+    ex = [n for n, _ in all_nodes if isinstance(n, MapExit)]
+    if len(en) != 1 or len(ex) != 1:
+        return None
+    return en[0], ex[0]
 
 
 class ConstAssignmentMapFusion(MapFusion):
@@ -16,7 +26,7 @@ class ConstAssignmentMapFusion(MapFusion):
     # NOTE: `expression()` is inherited.
 
     @staticmethod
-    def consistent_const_assignment_table(graph, en, ex) -> tuple[bool, dict]:
+    def consistent_const_assignment_table(graph: SDFGState, en: MapEntry, ex: MapExit) -> tuple[bool, dict]:
         table = {}
         for n in graph.all_nodes_between(en, ex):
             # Each of the nodes in this map must be...
@@ -45,11 +55,17 @@ class ConstAssignmentMapFusion(MapFusion):
         return (graph.entry_node(self.first_map_exit), self.first_map_exit,
                 self.second_map_entry, graph.exit_node(self.second_map_entry))
 
-    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
-        first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
+    @staticmethod
+    def compatible_range(first_entry: MapEntry, second_entry: MapEntry):
         # TODO(pratyai): Make a better check for map compatibility.
         if first_entry.map.range != second_entry.map.range or first_entry.map.schedule != second_entry.map.schedule:
             # TODO(pratyai): Make it so that a permutation of the ranges, or even an union of the ranges will work.
+            return False
+        return True
+
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+        first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
+        if not self.compatible_range(first_entry, second_entry):
             return False
 
         # Both maps must have consistent constant assignment for the target arrays.
@@ -147,3 +163,41 @@ class ConstAssignmentMapFusion(MapFusion):
             graph.remove_node(n)
         graph.remove_node(second_entry)
         graph.remove_node(second_exit)
+
+
+class ConstAssignmentStateFusion(StateFusionExtended):
+    first_state = transformation.PatternNode(SDFGState)
+    second_state = transformation.PatternNode(SDFGState)
+
+    # NOTE: `expression()` is inherited.
+
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+        # All the basic rules apply.
+        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
+            return False
+        st0, st1 = self.first_state, self.second_state
+
+        # Moreover, each state must contain just one constant assignment map.
+        for st in [st0, st1]:
+            en_ex = unique_map_node(st)
+            if not en_ex:
+                return False
+            en, ex = en_ex
+            if len(st.in_edges(en)) != 0:
+                return False
+            is_const_assignment, assignments = ConstAssignmentMapFusion.consistent_const_assignment_table(st, en, ex)
+            if not is_const_assignment:
+                return False
+
+        # Moreover, both states' ranges must be compatible.
+        if not ConstAssignmentMapFusion.compatible_range(unique_map_node(st0)[0], unique_map_node(st1)[0]):
+            return False
+
+        return True
+
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        # First, fuse the two states.
+        super().apply(graph, sdfg)
+        sdfg.validate()
+        sdfg.apply_transformations_repeated(ConstAssignmentMapFusion)
+        sdfg.validate()

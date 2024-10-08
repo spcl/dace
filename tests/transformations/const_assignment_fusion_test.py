@@ -4,8 +4,7 @@ from copy import deepcopy
 import numpy as np
 
 import dace
-from dace.sdfg import nodes
-from dace.transformation.dataflow.const_assignment_fusion import ConstAssignmentMapFusion
+from dace.transformation.dataflow.const_assignment_fusion import ConstAssignmentMapFusion, ConstAssignmentStateFusion
 from dace.transformation.interstate import StateFusionExtended
 
 M = dace.symbol('M')
@@ -55,24 +54,6 @@ def assign_bounary_sdfg():
     return st0
 
 
-def find_access_node_by_name(g, name):
-    """ Finds the first data node by the given name"""
-    return next((n, s) for n, s in g.all_nodes_recursive()
-                if isinstance(n, nodes.AccessNode) and name == n.data)
-
-
-def find_map_entry_by_name(g, name):
-    """ Finds the first map entry node by the given name """
-    return next((n, s) for n, s in g.all_nodes_recursive()
-                if isinstance(n, nodes.MapEntry) and n.label.startswith(name))
-
-
-def find_map_exit_by_name(g, name):
-    """ Finds the first map entry node by the given name """
-    return next((n, s) for n, s in g.all_nodes_recursive()
-                if isinstance(n, nodes.MapExit) and n.label.startswith(name))
-
-
 def test_within_state_fusion():
     A = np.random.uniform(size=(4, 5)).astype(np.float32)
 
@@ -102,9 +83,38 @@ def test_within_state_fusion():
     our_A = deepcopy(A)
     g(A=our_A, M=4, N=5)
 
-    print(our_A)
+    # print(our_A)
+    assert np.allclose(our_A, actual_A)
+
+
+def test_interstate_fusion():
+    A = np.random.uniform(size=(4, 5)).astype(np.float32)
+
+    # Construct SDFG with the maps on separate states.
+    g = assign_bounary_sdfg()
+    g.save(os.path.join('_dacegraphs', 'interstate-0.sdfg'))
+    g.validate()
+    actual_A = deepcopy(A)
+    g(A=actual_A, M=4, N=5)
+
+    g.apply_transformations(ConstAssignmentStateFusion)
+    g.save(os.path.join('_dacegraphs', 'interstate-1.sdfg'))
+    g.validate()
+
+    g.apply_transformations(ConstAssignmentStateFusion)
+    g.save(os.path.join('_dacegraphs', 'interstate-2.sdfg'))
+    g.validate()
+
+    g.apply_transformations(ConstAssignmentStateFusion)
+    g.save(os.path.join('_dacegraphs', 'interstate-3.sdfg'))
+    g.validate()
+    our_A = deepcopy(A)
+    g(A=our_A, M=4, N=5)
+
+    # print(our_A)
     assert np.allclose(our_A, actual_A)
 
 
 if __name__ == '__main__':
     test_within_state_fusion()
+    test_interstate_fusion()
