@@ -1,13 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace import dtypes, symbolic, data, subsets, Memlet
+from dace import dtypes, symbolic, data, subsets, Memlet, properties
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation import transformation as xf
 from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil
 from typing import Tuple
 import itertools
 
-
+@properties.make_properties
 class CopyToMap(xf.SingleStateTransformation):
     """
     Converts an access node -> access node copy into a map. Useful for generating manual code and
@@ -15,6 +15,10 @@ class CopyToMap(xf.SingleStateTransformation):
     """
     a = xf.PatternNode(nodes.AccessNode)
     b = xf.PatternNode(nodes.AccessNode)
+    ignore_strides = properties.Property(
+            default=False,
+            desc='Ignore the stride of the data container; Defaults to `False`.',
+    )
 
     @classmethod
     def expressions(cls):
@@ -32,6 +36,8 @@ class CopyToMap(xf.SingleStateTransformation):
         if isinstance(self.b.desc(sdfg), data.View):
             if sdutil.get_view_node(graph, self.b) == self.a:
                 return False
+        if (not self.ignore_strides) and self.a.desc(sdfg).strides == self.b.desc(sdfg).strides:
+            return False
         if self.a.data == self.b.data:
             return False
         # Ensures that the edge goes from `a` -> `b`.

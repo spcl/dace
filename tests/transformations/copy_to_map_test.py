@@ -121,7 +121,7 @@ def _perform_bypass_test(
     b_opt = b_unopt.copy()
     sdfg(a=a, b=b_unopt)
 
-    nb_runs = sdfg.apply_transformations_repeated(CopyToMap, validate=True)
+    nb_runs = sdfg.apply_transformations_repeated(CopyToMap, validate=True, options={"ignore_strides": True})
     assert nb_runs == 1, f"Expected 1 application, but {nb_runs} were performed."
 
     # Now looking for the tasklet and checking if the memlets follows the expected
