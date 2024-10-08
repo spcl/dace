@@ -3,7 +3,9 @@
 from functools import reduce
 from itertools import chain
 from string import ascii_letters
-from typing import Dict, Optional
+from typing import Dict, List, Optional
+
+import numpy as np
 
 import dace
 from dace import dtypes, subsets, symbolic
@@ -180,6 +182,19 @@ def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
                                    beta=beta)[0]
 
 
+def _build_einsum_views(tensors: str, dimension_dict: dict) -> List[np.ndarray]:
+    """
+    Function taken and adjusted from opt_einsum package version 3.3.0 following unexpected removal in vesion 3.4.0.
+    Reference: https://github.com/dgasmith/opt_einsum/blob/v3.3.0/opt_einsum/helpers.py#L18
+    """
+    views = []
+    terms = tensors.split('->')[0].split(',')
+    for term in terms:
+        dims = [dimension_dict[x] for x in term]
+        views.append(np.random.rand(*dims))
+    return views
+
+
 def _create_einsum_internal(sdfg: SDFG,
                             state: SDFGState,
                             einsum_string: str,
@@ -231,7 +246,7 @@ def _create_einsum_internal(sdfg: SDFG,
 
         # Create optimal contraction path
         # noinspection PyTypeChecker
-        _, path_info = oe.contract_path(einsum_string, *oe.helpers.build_views(einsum_string, chardict))
+        _, path_info = oe.contract_path(einsum_string, *_build_einsum_views(einsum_string, chardict))
 
         input_nodes = nodes or {arr: state.add_read(arr) for arr in arrays}
         result_node = None
