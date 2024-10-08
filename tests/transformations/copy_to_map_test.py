@@ -104,7 +104,7 @@ def test_preprocess():
     assert np.allclose(out, inp)
 
 
-def _perform_bypass_test(
+def _perform_non_lin_delin_test(
         sdfg: dace.SDFG,
 ) -> bool:
     """Performs test for the special case CopyToMap that bypasses linearizing and delinearaziong.
@@ -143,7 +143,7 @@ def _perform_bypass_test(
 
     return True
 
-def _make_bypass_sdfg(
+def _make_non_lin_delin_sdfg(
         shape_a: Tuple[int, ...],
         shape_b: Optional[Tuple[int, ...]] = None
 ) -> Tuple[dace.SDFG, dace.SDFGState, dace.nodes.AccessNode, dace.nodes.AccessNode]:
@@ -167,72 +167,72 @@ def _make_bypass_sdfg(
     return sdfg, state, ac[0], ac[1]
 
 
-def test_bypass_1():
-    sdfg, state, a, b = _make_bypass_sdfg((10, 10))
+def test_non_lin_delin_1():
+    sdfg, state, a, b = _make_non_lin_delin_sdfg((10, 10))
     state.add_nedge(
             a,
             b,
             dace.Memlet("a[0:10, 0:10] -> 0:10, 0:10"),
     )
-    _perform_bypass_test(sdfg)
+    _perform_non_lin_delin_test(sdfg)
 
-def test_bypass_2():
-    sdfg, state, a, b = _make_bypass_sdfg((10, 10), (100, 100))
+def test_non_lin_delin_2():
+    sdfg, state, a, b = _make_non_lin_delin_sdfg((10, 10), (100, 100))
     state.add_nedge(
             a,
             b,
             dace.Memlet("a[0:10, 0:10] -> 50:60, 40:50"),
     )
-    _perform_bypass_test(sdfg)
+    _perform_non_lin_delin_test(sdfg)
 
 
-def test_bypass_3():
-    sdfg, state, a, b = _make_bypass_sdfg((100, 100), (100, 100))
+def test_non_lin_delin_3():
+    sdfg, state, a, b = _make_non_lin_delin_sdfg((100, 100), (100, 100))
     state.add_nedge(
             a,
             b,
             dace.Memlet("a[1:11, 20:30] -> 50:60, 40:50"),
     )
-    _perform_bypass_test(sdfg)
+    _perform_non_lin_delin_test(sdfg)
 
 
-def test_bypass_4():
-    sdfg, state, a, b = _make_bypass_sdfg((100, 4, 100), (100, 100))
+def test_non_lin_delin_4():
+    sdfg, state, a, b = _make_non_lin_delin_sdfg((100, 4, 100), (100, 100))
     state.add_nedge(
             a,
             b,
             dace.Memlet("a[1:11, 2, 20:30] -> 50:60, 40:50"),
     )
-    _perform_bypass_test(sdfg)
+    _perform_non_lin_delin_test(sdfg)
 
 
-def test_bypass_5():
-    sdfg, state, a, b = _make_bypass_sdfg((100, 4, 100), (100, 10, 100))
+def test_non_lin_delin_5():
+    sdfg, state, a, b = _make_non_lin_delin_sdfg((100, 4, 100), (100, 10, 100))
     state.add_nedge(
             a,
             b,
             dace.Memlet("a[1:11, 2, 20:30] -> 50:60, 4, 40:50"),
     )
-    _perform_bypass_test(sdfg)
+    _perform_non_lin_delin_test(sdfg)
 
 
-def test_bypass_6():
-    sdfg, state, a, b = _make_bypass_sdfg((100, 100), (100, 10, 100))
+def test_non_lin_delin_6():
+    sdfg, state, a, b = _make_non_lin_delin_sdfg((100, 100), (100, 10, 100))
     state.add_nedge(
             a,
             b,
             dace.Memlet("a[1:11, 20:30] -> 50:60, 4, 40:50"),
     )
-    _perform_bypass_test(sdfg)
+    _perform_non_lin_delin_test(sdfg)
 
 
 if __name__ == '__main__':
-    test_bypass_1()
-    test_bypass_2()
-    test_bypass_3()
-    test_bypass_4()
-    test_bypass_5()
-    test_bypass_6()
+    test_non_lin_delin_1()
+    test_non_lin_delin_2()
+    test_non_lin_delin_3()
+    test_non_lin_delin_4()
+    test_non_lin_delin_5()
+    test_non_lin_delin_6()
     test_copy_to_map()
     test_flatten_to_map()
     try:
