@@ -167,6 +167,7 @@ class TensorCoreCodegen(TargetCodeGenerator):
         # Add the ctype to defined_vars so that the codegen can properly pass
         # fragments to functions as an object reference.
         self._dispatcher.defined_vars.add(name, DefinedType.Pointer, ctype + "*")
+        # self._dispatcher.defined_vars.add(name, DefinedType.Object, ctype)
 
     def deallocate_array(
         self,
@@ -383,9 +384,9 @@ def extend_dace():
 
 N = dace.symbol("N")
 
-TILE_M = 256
-TILE_N = 128
-TILE_K = 32
+TILE_M = 64
+TILE_N = 64
+TILE_K = 64
 
 NUM_WARPS = TILE_M // TC_SIZE_M
 NUM_ACCUMULATORS = TILE_N // TC_SIZE_N
@@ -397,7 +398,9 @@ def hgemm_tiled(
     B: dace.float16[N, N] @ dace.StorageType.GPU_Global,
     C: dace.float32[N, N] @ dace.StorageType.GPU_Global,
 ):
-    for tile_i_offset, tile_j_offset in dace.map[0:N:TILE_M, 0:N:TILE_N]:
+    for tile_i_offset, tile_j_offset in (
+        dace.map[0:N:TILE_M, 0:N:TILE_N] @ dace.ScheduleType.GPU_Device
+    ):
         # here I am a threadblock.x = tile_i, threadblock.y = tile_j
 
         # allocate shared memory buffers
@@ -525,20 +528,33 @@ def hgemm_tiled_double_buffered(
         # initial double buffer load
         a_shmem[0, :] = A[
             tile_i_offset : tile_i_offset + TILE_M,
-            step_k_offset : step_k_offset + TILE_K,
+            0 : 0 + TILE_K,
         ]
         b_shmem[0, :] = B[
-            step_k_offset : step_k_offset + TILE_K,
+            0 : 0 + TILE_K,
             tile_j_offset : tile_j_offset + TILE_N,
         ]
 
+        atile = dace.ndarray(
+            [TC_SIZE_M, TC_SIZE_K],
+            dtype=dace.float16,
+            storage=dace.StorageType.TensorCore_A,
+        )
+        btile = dace.ndarray(
+            [TC_SIZE_K, TC_SIZE_N],
+            dtype=dace.float16,
+            storage=dace.StorageType.TensorCore_B,
+        )
+
         for step_k_offset in dace.map[TILE_K:N:TILE_K] @ dace.ScheduleType.Sequential:
+            buffer_index = (step_k_offset // TILE_K) % 2
+            load_index = 1 - buffer_index
             # load A and B tiles into shared mem
-            a_shmem[:] = A[
+            a_shmem[buffer_index, :] = A[
                 tile_i_offset : tile_i_offset + TILE_M,
                 step_k_offset : step_k_offset + TILE_K,
             ]
-            b_shmem[:] = B[
+            b_shmem[buffer_index, :] = B[
                 step_k_offset : step_k_offset + TILE_K,
                 tile_j_offset : tile_j_offset + TILE_N,
             ]
@@ -555,21 +571,13 @@ def hgemm_tiled_double_buffered(
                     for k_step in (
                         dace.map[0:TILE_K:TC_SIZE_K] @ dace.ScheduleType.Sequential
                     ):
-                        atile = dace.ndarray(
-                            [TC_SIZE_M, TC_SIZE_K],
-                            dtype=dace.float16,
-                            storage=dace.StorageType.TensorCore_A,
-                        )
-                        btile = dace.ndarray(
-                            [TC_SIZE_K, TC_SIZE_N],
-                            dtype=dace.float16,
-                            storage=dace.StorageType.TensorCore_B,
-                        )
                         atile[:] = a_shmem[
+                            load_index,
                             w_index * TC_SIZE_M : (w_index + 1) * TC_SIZE_M,
                             k_step : k_step + TC_SIZE_K,
                         ]
                         btile[:] = b_shmem[
+                            load_index,
                             k_step : k_step + TC_SIZE_K,
                             TC_frag_offset : TC_frag_offset + TC_SIZE_N,
                         ]
@@ -582,6 +590,21 @@ def hgemm_tiled_double_buffered(
             for TC_frag_offset in (
                 dace.map[0:TILE_N:TC_SIZE_N] @ dace.ScheduleType.Sequential
             ):  # Warp map
+                for k_step in (
+                    dace.map[0:TILE_K:TC_SIZE_K] @ dace.ScheduleType.Sequential
+                ):
+                    atile[:] = a_shmem[
+                        0,
+                        w_index * TC_SIZE_M : (w_index + 1) * TC_SIZE_M,
+                        k_step : k_step + TC_SIZE_K,
+                    ]
+                    btile[:] = b_shmem[
+                        0,
+                        k_step : k_step + TC_SIZE_K,
+                        TC_frag_offset : TC_frag_offset + TC_SIZE_N,
+                    ]
+                    wmma(atile, btile, ctile[TC_frag_offset // TC_SIZE_N])
+
                 C[
                     tile_i_offset
                     + w_index * TC_SIZE_M : tile_i_offset
@@ -644,7 +667,6 @@ if __name__ == "__main__":
     extend_dace()
 
     N = 4096
-
     # Prerequisite for sample: CUDA compute capability >= 70
     dace.Config.set("compiler", "cuda", "cuda_arch", value="80")
 
@@ -652,13 +674,17 @@ if __name__ == "__main__":
     B = torch.randn(N, N, dtype=torch.float16, device=device)
     C = torch.randn(N, N, dtype=torch.float32, device=device)
 
-    dace_matmul: dace.SDFG = hgemm_tiled.to_sdfg(simplify=True)
+    # A = torch.ones(N, N, dtype=torch.float16, device=device)
+    # B = torch.ones(N, N, dtype=torch.float16, device=device)
+    # C = torch.ones(N, N, dtype=torch.float32, device=device)
+
+    dace_matmul: dace.SDFG = hgemm_tiled_double_buffered.to_sdfg(simplify=True)
 
     # Transform the code to run on the GPU, while ensuring that the warp map
     # in the example runs within a single thread-block.
-    dace_matmul.apply_transformations(
-        GPUTransformSDFG, options=dict(sequential_innermaps=False)
-    )
+    # dace_matmul.apply_transformations(
+    #     GPUTransformSDFG, options=dict(sequential_innermaps=False, register_trans=False)
+    # )
 
     # dace_matmul.view()
 
@@ -689,6 +715,12 @@ if __name__ == "__main__":
     benchmark_matmul(torch.matmul, N, N, N, num_iterations=iters)
 
     compiled(A=A, B=B, C=C, N=N)
+
+    C_ref = A @ B
+
+    if N <= 64:
+        print(f"DaCe matmul:\n{C}")
+        print(f"Reference matmul:\n{C_ref}")
 
     diff = torch.linalg.norm(A @ B - C) / (N * N)
     print("Difference:", diff)
