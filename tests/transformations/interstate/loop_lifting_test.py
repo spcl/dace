@@ -55,7 +55,8 @@ def test_lift_regular_for_loop():
 
 @pytest.mark.parametrize('increment_before_condition', (True, False))
 def test_lift_loop_llvm_canonical(increment_before_condition):
-    sdfg = dace.SDFG('llvm_canonical')
+    addendum = '_incr_before_cond' if increment_before_condition else ''
+    sdfg = dace.SDFG('llvm_canonical' + addendum)
     N = dace.symbol('N')
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
@@ -77,10 +78,11 @@ def test_lift_loop_llvm_canonical(increment_before_condition):
     if increment_before_condition:
         sdfg.add_edge(body, latch, InterstateEdge(assignments={'i': 'i + 2', 'j': 'j + 1'}))
         sdfg.add_edge(latch, body, InterstateEdge(condition='i < N'))
+        sdfg.add_edge(latch, loopexit, InterstateEdge(condition='i >= N', assignments={'k': 2}))
     else:
         sdfg.add_edge(body, latch, InterstateEdge(assignments={'j': 'j + 1'}))
-        sdfg.add_edge(latch, body, InterstateEdge(condition='i < N', assignments={'i': 'i + 2'}))
-    sdfg.add_edge(latch, loopexit, InterstateEdge(condition='i >= N', assignments={'k': 2}))
+        sdfg.add_edge(latch, body, InterstateEdge(condition='i < N - 2', assignments={'i': 'i + 2'}))
+        sdfg.add_edge(latch, loopexit, InterstateEdge(condition='i >= N - 2', assignments={'k': 2}))
     sdfg.add_edge(loopexit, exitstate, InterstateEdge())
 
     a_access = body.add_access('A')
@@ -128,8 +130,8 @@ def test_lift_loop_llvm_canonical_while():
     sdfg.add_edge(guard, preheader, InterstateEdge(condition='N > 0'))
     sdfg.add_edge(preheader, body, InterstateEdge(assignments={'k': 0}))
     sdfg.add_edge(body, latch, InterstateEdge(assignments={'j':  'j + 1'}))
-    sdfg.add_edge(latch, body, InterstateEdge(condition='i < N'))
-    sdfg.add_edge(latch, loopexit, InterstateEdge(condition='i >= N', assignments={'k': 2}))
+    sdfg.add_edge(latch, body, InterstateEdge(condition='i < N - 2'))
+    sdfg.add_edge(latch, loopexit, InterstateEdge(condition='i >= N - 2', assignments={'k': 2}))
     sdfg.add_edge(loopexit, exitstate, InterstateEdge())
 
     i_init_write = entry.add_access('i')
