@@ -11,8 +11,6 @@ import warnings
 from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
                     overload)
 
-import sympy
-
 import dace
 from dace.frontend.python import astutils
 import dace.serialize

@@ -149,14 +149,15 @@ class DeadStateElimination(ppl.Pass):
     def _find_dead_branches(self, block: ConditionalBlock) -> List[Tuple[CodeBlock, ControlFlowRegion]]:
         dead_branches = []
         unconditional = None
-        for cond, branch in block.branches:
-            # If an unconditional branch is found, ignore all other branches
+        for i, (cond, branch) in enumerate(block.branches):
+            if cond is None:
+                if not i == len(block.branches) - 1:
+                    raise InvalidSDFGNodeError('Conditional block detected, where else branch is not the last branch')
+                break
+            # If an unconditional branch is found, ignore all other branches that follow this one.
             if cond.as_string.strip() == '1' or self._is_truthy(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
-                # If more than one unconditional outgoing edge exist, fail with Invalid SDFG
-                if unconditional is not None:
-                    raise InvalidSDFGNodeError('Multiple branches that are unconditionally true in conditional block',
-                                               block.parent_graph, block.block_id)
                 unconditional = branch
+                break
         if unconditional is not None:
             # Remove other (now never taken) branches
             for cond, branch in block.branches:
@@ -165,7 +166,7 @@ class DeadStateElimination(ppl.Pass):
         else:
             # Check if any branches are certainly never taken.
             for cond, branch in block.branches:
-                if self._is_falsy(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
+                if cond is not None and self._is_falsy(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
                     dead_branches.append([cond, branch])
 
         return dead_branches
