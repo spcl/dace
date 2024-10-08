@@ -923,7 +923,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if isinstance(init_assignment, astutils.ast.Assign):
                     init_assignment = init_assignment.value
                 if not cfr.loop_variable in interstate_symbols:
-                    interstate_symbols[cfr.loop_variable] = infer_expr_type(astutils.unparse(init_assignment))
+                    interstate_symbols[cfr.loop_variable] = infer_expr_type(astutils.unparse(init_assignment),
+                                                                            global_symbols)
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
 
