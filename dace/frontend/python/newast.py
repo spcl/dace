@@ -2565,8 +2565,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self._on_block_added(cond_block)
 
         if_body = ControlFlowRegion(cond_block.label + '_body', sdfg=self.sdfg)
-        cond_block.branches.append((CodeBlock(cond), if_body))
-        if_body.parent_graph = self.cfg_target
+        cond_block.add_branch(CodeBlock(cond), if_body)
 
         # Visit recursively
         self._recursive_visit(node.body, 'if', node.lineno, if_body, False)
@@ -2575,9 +2574,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if len(node.orelse) > 0:
             else_body = ControlFlowRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}',
                                           sdfg=self.sdfg)
-            #cond_block.branches.append((CodeBlock(cond_else), else_body))
-            cond_block.branches.append((None, else_body))
-            else_body.parent_graph = self.cfg_target
+            cond_block.add_branch(None, else_body)
             # Visit recursively
             self._recursive_visit(node.orelse, 'else', node.lineno, else_body, False)
 

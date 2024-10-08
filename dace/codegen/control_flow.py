@@ -275,9 +275,13 @@ class GeneralBlock(RegionBlock):
             expr += elem.as_cpp(codegen, symbols)
             # In a general block, emit transitions and assignments after each individual block or region.
             if isinstance(elem, BasicCFBlock) or (isinstance(elem, RegionBlock) and elem.region):
-                cfg = elem.state.parent_graph if isinstance(elem, BasicCFBlock) else elem.region.parent_graph
+                if isinstance(elem, BasicCFBlock):
+                    g_elem = elem.state
+                else:
+                    g_elem = elem.region
+                cfg = g_elem.parent_graph
                 sdfg = cfg if isinstance(cfg, SDFG) else cfg.sdfg
-                out_edges = cfg.out_edges(elem.state) if isinstance(elem, BasicCFBlock) else cfg.out_edges(elem.region)
+                out_edges = cfg.out_edges(g_elem)
                 for j, e in enumerate(out_edges):
                     if e not in self.gotos_to_ignore:
                         # Skip gotos to immediate successors
@@ -532,26 +536,27 @@ class GeneralLoopScope(RegionBlock):
         expr = ''
 
         if self.loop.update_statement and self.loop.init_statement and self.loop.loop_variable:
-            # Initialize to either "int i = 0" or "i = 0" depending on whether the type has been defined.
-            defined_vars = codegen.dispatcher.defined_vars
-            if not defined_vars.has(self.loop.loop_variable):
-                try:
-                    init = f'{symbols[self.loop.loop_variable]} '
-                except KeyError:
-                    init = 'auto '
-                    symbols[self.loop.loop_variable] = None
-            init += unparse_interstate_edge(self.loop.init_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
+            init = unparse_interstate_edge(self.loop.init_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
             init = init.strip(';')
 
             update = unparse_interstate_edge(self.loop.update_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
             update = update.strip(';')
 
             if self.loop.inverted:
-                expr += f'{init};\n'
-                expr += 'do {\n'
-                expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
-                expr += f'{update};\n'
-                expr += f'\n}} while({cond});\n'
+                if self.loop.update_before_condition:
+                    expr += f'{init};\n'
+                    expr += 'do {\n'
+                    expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
+                    expr += f'{update};\n'
+                    expr += f'}} while({cond});\n'
+                else:
+                    expr += f'{init};\n'
+                    expr += 'while (1) {\n'
+                    expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
+                    expr += f'if (!({cond}))\n'
+                    expr += 'break;\n'
+                    expr += f'{update};\n'
+                    expr += '}\n'
             else:
                 expr += f'for ({init}; {cond}; {update}) {{\n'
                 expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))

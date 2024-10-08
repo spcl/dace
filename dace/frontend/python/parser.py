@@ -499,6 +499,8 @@ class DaceProgram(pycommon.SDFGConvertible):
                 sdutils.inline_control_flow_regions(nsdfg)
         sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
 
+        sdfg.reset_cfg_list()
+
         # Apply simplification pass automatically
         if not cached and (simplify == True or
                            (simplify is None and Config.get_bool('optimizer', 'automatic_simplification'))):
