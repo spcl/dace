@@ -60,7 +60,7 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
                 if k != itvar:
                     left_over_incr_assignments[k] = incr_edge.data.assignments[k]
 
-        if inverted and incr_edge is cond_edge:
+        if (inverted or self.expr_index == 4) and incr_edge is cond_edge:
             update_before_condition = False
         else:
             update_before_condition = True

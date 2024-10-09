@@ -2501,13 +2501,14 @@ class StateSubgraphView(SubgraphView, DataflowGraphView):
 
 
 @make_properties
-class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView,
-                        ControlFlowBlock):
+class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView,
+                                ControlFlowBlock, abc.ABC):
 
-    def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None):
+    def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None,
+                 parent: Optional['AbstractControlFlowRegion'] = None):
         OrderedDiGraph.__init__(self)
         ControlGraphView.__init__(self)
-        ControlFlowBlock.__init__(self, label, sdfg)
+        ControlFlowBlock.__init__(self, label, sdfg, parent)
 
         self._labels: Set[str] = set()
         self._start_block: Optional[int] = None
@@ -2683,9 +2684,13 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self._cached_start_block = None
         node.parent_graph = self
         if isinstance(self, dace.SDFG):
-            node.sdfg = self
+            sdfg = self
         else:
-            node.sdfg = self.sdfg
+            sdfg = self.sdfg
+        node.sdfg = sdfg
+        if isinstance(node, AbstractControlFlowRegion):
+            for n in node.all_control_flow_blocks():
+                n.sdfg = self.sdfg
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
@@ -2961,6 +2966,13 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             raise ValueError('Invalid state ID')
         self._start_block = block_id
         self._cached_start_block = self.node(block_id)
+
+
+@make_properties
+class ControlFlowRegion(AbstractControlFlowRegion):
+
+    def __init__(self, label = '', sdfg = None, parent = None):
+        super().__init__(label, sdfg, parent)
 
 
 @make_properties
@@ -3244,7 +3256,7 @@ class LoopRegion(ControlFlowRegion):
 
 
 @make_properties
-class ConditionalBlock(ControlFlowBlock, ControlGraphView):
+class ConditionalBlock(AbstractControlFlowRegion):
 
     _branches: List[Tuple[Optional[CodeBlock], ControlFlowRegion]]
 
@@ -3264,7 +3276,7 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
 
     def add_branch(self, condition: Optional[CodeBlock], branch: ControlFlowRegion):
         self._branches.append([condition, branch])
-        branch.parent_graph = self.parent_graph
+        branch.parent_graph = self
         branch.sdfg = self.sdfg
 
     def remove_branch(self, branch: ControlFlowRegion):
@@ -3273,12 +3285,6 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
             if b is not branch:
                 filtered_branches.append((c, b))
         self._branches = filtered_branches
-
-    def nodes(self) -> List['ControlFlowBlock']:
-        return [node for _, node in self._branches if node is not None]
-
-    def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
-        return []
     
     def _used_symbols_internal(self,
                                all_symbols: bool,
@@ -3396,6 +3402,23 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
         sdfg.reset_cfg_list()
 
         return True, (guard_state, end_state)
+
+    # Graph API overrides.
+
+    def nodes(self) -> List['ControlFlowBlock']:
+        return [node for _, node in self._branches if node is not None]
+
+    def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return []
+
+    def in_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return []
+
+    def out_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return []
+
+    def all_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return []
 
 
 @make_properties

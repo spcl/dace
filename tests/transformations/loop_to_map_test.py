@@ -3,15 +3,14 @@ import argparse
 import copy
 import os
 import tempfile
-from typing import Tuple
 
 import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes, propagation
+from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap, StateFusion
-from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.interstate.loop_lifting import LoopLifting
 
 
@@ -653,34 +652,25 @@ def test_nested_loops():
 
     sdfg = nested_loops.to_sdfg()
 
-    def find_loop(sdfg: dace.SDFG, itervar: str) -> Tuple[dace.SDFGState, dace.SDFGState, dace.SDFGState]:
-
-        guard, begin, fexit = None, None, None
-        for e in sdfg.edges():
-            if itervar in e.data.assignments and e.data.assignments[itervar] == '0':
-                guard = e.dst
-            elif e.data.condition.as_string in (f'({itervar} >= 10)', f'(not ({itervar} < 10))'):
-                fexit = e.dst
-        assert all(s is not None for s in (guard, fexit))
-
-        begin = next((e for e in sdfg.out_edges(guard) if e.dst != fexit)).dst
-
-        return guard, begin, fexit
+    def find_loop(sdfg: dace.SDFG, itervar: str) -> LoopRegion:
+        for cfg in sdfg.all_control_flow_regions():
+            if isinstance(cfg, LoopRegion) and cfg.loop_variable == itervar:
+                return cfg
 
     sdfg0 = copy.deepcopy(sdfg)
-    i_guard, i_begin, i_exit = find_loop(sdfg0, 'i')
-    LoopToMap.apply_to(sdfg0, loop_guard=i_guard, loop_begin=i_begin, exit_state=i_exit)
+    i_loop = find_loop(sdfg0, 'i')
+    LoopToMap.apply_to(sdfg0, loop=i_loop)
     nsdfg = next((sd for sd in sdfg0.all_sdfgs_recursive() if sd.parent is not None))
-    j_guard, j_begin, j_exit = find_loop(nsdfg, 'j')
-    LoopToMap.apply_to(nsdfg, loop_guard=j_guard, loop_begin=j_begin, exit_state=j_exit)
+    j_loop = find_loop(nsdfg, 'j')
+    LoopToMap.apply_to(nsdfg, loop=j_loop)
 
     val = np.arange(1000, dtype=np.int32).reshape(10, 10, 10).copy()
     sdfg(A=val, l=5)
 
     assert np.allclose(ref, val)
 
-    j_guard, j_begin, j_exit = find_loop(sdfg, 'j')
-    LoopToMap.apply_to(sdfg, loop_guard=j_guard, loop_begin=j_begin, exit_state=j_exit)
+    j_loop = find_loop(sdfg, 'j')
+    LoopToMap.apply_to(sdfg, loop=j_loop)
     # NOTE: The following fails to apply because of subset A[0:i+1], which is overapproximated.
     # i_guard, i_begin, i_exit = find_loop(sdfg, 'i')
     # LoopToMap.apply_to(sdfg, loop_guard=i_guard, loop_begin=i_begin, exit_state=i_exit)
@@ -720,7 +710,7 @@ def test_internal_write():
     val = np.empty((10, ), dtype=np.int32)
 
     internal_write.f(inp0, inp1, ref)
-    internal_write(inp0, inp1, val)
+    sdfg(inp0, inp1, val)
 
     assert np.array_equal(val, ref)
 
@@ -781,6 +771,8 @@ def test_self_loop_to_map():
     t = body.add_tasklet('addone', {'inp'}, {'out'}, 'out = inp + 1')
     body.add_edge(body.add_read('A'), None, t, 'inp', dace.Memlet('A[i]'))
     body.add_edge(t, 'out', body.add_write('A'), None, dace.Memlet('A[i]'))
+
+    sdfg.apply_transformations_repeated([LoopLifting])
 
     assert sdfg.apply_transformations_repeated(LoopToMap) == 1
 

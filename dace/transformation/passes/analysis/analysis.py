@@ -254,7 +254,7 @@ class AccessSets(ppl.Pass):
 
             # Edges that read from arrays add to both ends' access sets
             anames = sdfg.arrays.keys()
-            for e in sdfg.edges():
+            for e in sdfg.all_interstate_edges():
                 fsyms = e.data.free_symbols & anames
                 if fsyms:
                     result[e.src][0].update(fsyms)

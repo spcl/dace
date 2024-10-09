@@ -41,7 +41,7 @@ class DeadDataflowElimination(ppl.Pass):
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         # If dataflow or states changed, new dead code may be exposed
-        return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.States)
+        return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.CFG)
 
     def depends_on(self) -> Set[Type[ppl.Pass]]:
         return {ap.StateReachability, ap.AccessSets}
