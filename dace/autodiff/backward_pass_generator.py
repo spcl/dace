@@ -34,6 +34,15 @@ from dace.libraries.onnx.nodes.onnx_op import ONNXOp
 
 from dace.codegen.targets.cpp import is_write_conflicted_with_reason
 
+# Performance evaluation
+from dace.sdfg.performance_evaluation.operational_intensity import analyze_sdfg_op_in
+from dace.sdfg.performance_evaluation.helpers import get_uuid
+from dace.sdfg.performance_evaluation.work_depth import (analyze_sdfg, get_tasklet_work_depth, get_tasklet_avg_par,
+                                                         parse_assumptions)
+from pulp import LpMinimize, LpProblem, LpVariable, LpStatus
+import pulp
+from dace.codegen.targets import framecode
+
 ReverseNodeReturnType = Tuple[nodes.Node, BackwardResult]
 
 log = logging.getLogger(__name__)
@@ -209,7 +218,7 @@ class BackwardPassGenerator:
                                             be computed, and thus gradients should be computed with
                                             write-conflict-resolution.
         :param overwrite_strategy: The strategy to use to provide overwritten values from the forward pass to the backward pass. 
-                                    Should be either: store_all or recompute_all.
+                                    Should be either: store_all, recompute_all, dynamic, or user_defined.
     """
 
     def __init__(
@@ -223,10 +232,12 @@ class BackwardPassGenerator:
         array_grad_map: Optional[Dict[str, str]] = None,
         conflicted_gradient_buffers: Optional[Set[str]] = None,
         overwrite_strategy: str = "store_all",
+        data_to_recompute: List[str] = None,
     ):
 
         self.sdfg: SDFG = sdfg
         self.strategy = overwrite_strategy
+        self.data_to_recompute = data_to_recompute
         self.backward_sdfg: SDFG = backward_sdfg
 
         given_gradients = [
@@ -292,6 +303,13 @@ class BackwardPassGenerator:
 
         # Save a copy of the forward sdfg in case the backward pass will be added to the same object
         self.original_forward_sdfg = copy.deepcopy(self.sdfg)
+
+        #: Mapping from overwritten input name to storing AccessNode
+        self.stored_inputs: Dict[str, nodes.AccessNode] = {}
+
+        #: List containing information about all the data to be forwarded to the backward pass
+        self._forward_data: List[Tuple[SDFGState, SDFGState, nodes.AccessNode, nodes.Node,
+                                       dstate.MultiConnectorEdge]] = []
 
         # Sanity-check: the outputs need to be present in at least one of the states of the sdfg
         for outp in self.given_gradients:
@@ -369,6 +387,9 @@ class BackwardPassGenerator:
         # Zero out the necessary gradients
         # These are the overwritten inputs and inputs that don't contribute to the desired output
         self._zero_out_required_gradients()
+
+        # Forward required data by the backward pass according to a user defined strategy
+        self._forward_data_to_backward_states()
 
         # In some cases (accessnode -> accessnode), the descriptors for the gradients of the function outputs are not
         # added yet. Add them now.
@@ -902,6 +923,19 @@ class BackwardPassGenerator:
             pass
         else:
             raise AutoDiffException("Unsupported data descriptor {}".format(new_array_desc))
+
+    def _forward_data_to_backward_states(self) -> None:
+        """
+        Iterate through all the data that needs to be forwarded to the backward pass states.
+        Create an ILP to decide the optimal combination of what to store and what to recompute.
+        """
+        # Get the strategy decision for each data that needs to be forwarded to the backward pass
+        strategy_choice, recomputation_nsdfgs = self._get_overwrite_resolution_strategy()
+
+        # Make the connection according to the chosen strategy
+        for index, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
+            self._connect_forward_accessnode(forward_state, backward_state, access_node, node, edge,
+                                             recomputation_nsdfgs[index], strategy_choice[index])
 
     def _find_subgraph_to_differentiate(self) -> None:
         """ 
@@ -2785,7 +2819,7 @@ class BackwardPassGenerator:
 
     def _connect_forward_accessnode(self, forward_state: SDFGState, backward_state: SDFGState,
                                     forward_node: nodes.AccessNode, target_node: nodes.Node,
-                                    starting_edge: dgraph.MultiConnectorEdge):
+                                    starting_edge: dgraph.MultiConnectorEdge, recomputation_nsdfg, strategy: str):
         """
         We need to forward an array from the forward pass to the backward pass.
         To do this we first check if this array has been overwritten or not.
@@ -2803,32 +2837,44 @@ class BackwardPassGenerator:
         # First, we check if the node has been overwritten
         overwritten, recomputable = self._check_node_overwrite(forward_state=forward_state, node=forward_node)
 
-        if not overwritten:
-            print(f"Need to forward data {forward_node.data}: Not overwritten")
-            # We still have access to this data
-            self._connect_forward_accessnode_not_overwritten(forward_state, backward_state, forward_node, target_node,
-                                                             starting_edge)
-            return
+        # Boolean indicating wether we should fall back to storing
+        fallback = False
+        if strategy == "recompute" and recomputable:
+            try:
+                print(f"Recomputing {forward_node.data}")
+                if recomputation_nsdfg is None:
+                    recomputation_nsdfg = self._get_recomputation_nsdfg(forward_state, target_an=forward_node)
+                self._resolve_overwrite_with_recomputation(recomputation_nsdfg=recomputation_nsdfg,
+                                                           forward_state=forward_state,
+                                                           backward_state=backward_state,
+                                                           target_an=forward_node,
+                                                           target_node=target_node,
+                                                           starting_edge=starting_edge)
+            except:
+                # If anything goes bad, print a warning and fall back to storing
+                print(f"AutoDiff Warning: failed to recompute {forward_node.data}. Falling back to storing")
+                fallback = True
 
-        print(f"Need to forward data {forward_node.data}: Overwritten")
-        # The data has been overwritten
-        # Choose what strategy to apply for this AN
-        strategy, recomputation_nsdfg = self._get_overwrite_resolution_strategy(forward_state=forward_state,
-                                                                                target_an=forward_node)
+        if strategy == "store" or (strategy == "recompute" and not recomputable) or fallback:
+            # We store if:
+            #   - This was the specified strategy
+            #   - We tried to recompute a program input
+            #   - We tried to recompute something that didn't work and we're falling back to storing
 
-        if strategy == "store":
+            # The data has been overwritten
+            if not overwritten:
+                # print(f"Storing {forward_node.data}: Not overwritten")
+                # We still have access to this data
+                self._connect_forward_accessnode_not_overwritten(forward_state, backward_state, forward_node,
+                                                                 target_node, starting_edge)
+                return
+
+            # print(f"Storing {forward_node.data}")
             self._resolve_overwrite_with_store(forward_state=forward_state,
                                                backward_state=backward_state,
                                                forward_node=forward_node,
                                                target_node=target_node,
                                                starting_edge=starting_edge)
-        else:
-            self._resolve_overwrite_with_recomputation(recomputation_nsdfg=recomputation_nsdfg,
-                                                       forward_state=forward_state,
-                                                       backward_state=backward_state,
-                                                       target_an=forward_node,
-                                                       target_node=target_node,
-                                                       starting_edge=starting_edge)
 
     def _resolve_overwrite_with_recomputation(
         self,
@@ -2881,7 +2927,6 @@ class BackwardPassGenerator:
 
             # Remove the state from the nested_sdfg
             parent = state.parent_graph
-            # TODO: hopefully this removed the edges to it
             parent.remove_node(state)
 
         # Cleanup empty LoopRegions if any
@@ -2902,8 +2947,11 @@ class BackwardPassGenerator:
             # If the target state is not within a loop
             # We remove all the decendant computation from the graph
 
-            # Do a bfs to get all the decendant computation
-            decendant_nodes = forward_state.bfs_nodes(target_an)
+            # Do a reverse bfs to get all the necessary computation
+            backward_nodes = {n for e in forward_state.bfs_edges(target_an, reverse=True) for n in [e.src, e.dst]}
+
+            # Remove everything else
+            decendant_nodes = set(forward_state.nodes()) - backward_nodes
 
             for node in decendant_nodes:
                 if node is not target_an:
@@ -2931,12 +2979,74 @@ class BackwardPassGenerator:
         # 3
         self._prune_acendant_recomputation_nsdfg(forward_state=forward_state, target_an=target_an, nsdfg=nsdfg)
 
+    def _rename_desciptors_for_recomputation_nsdfg(self, nsdfg: nodes.NestedSDFG):
+        """
+        """
+        # Get all the nodes to renmae in the NestedSDFG
+        to_rename = []
+        for inp in nsdfg.in_connectors:
+            for node, parent in nsdfg.sdfg.all_nodes_recursive():
+                if isinstance(node, nodes.AccessNode) and node.data == inp and parent.in_degree(node) > 0:
+                    # This is an input that will be written to in the SDFG we need to rename it
+                    to_rename.append(inp)
+                    break
+
+        if len(to_rename) > 0:
+            # Add a new state to copy the data at the start of the SDFG
+            initi_state = nsdfg.sdfg.add_state_before(nsdfg.sdfg.start_state, label=f"init_{nsdfg.label}")
+
+        # Rename the descriptors in the nested SDFG in addition to the in connector
+        for name in to_rename:
+            # Create a new array
+            new_name = f"recomputation_{name}"
+
+            # Change the accessnodes in the NestedSDFG
+            for node, parent in nsdfg.sdfg.all_nodes_recursive():
+                if isinstance(node, nodes.AccessNode) and node.data == name:
+                    node.data = new_name
+
+            # Change the memlets in the SDFG
+            for edge, parent in nsdfg.sdfg.all_edges_recursive():
+                # Skip interstate edges
+                if isinstance(edge.data, dace.InterstateEdge):
+                    continue
+
+                if edge.data.data == name:
+                    edge.data.data = new_name
+
+            # Add the desciptor
+            old_desc = nsdfg.sdfg.arrays[name]
+            new_desc = copy.deepcopy(old_desc)
+            
+            # Check if this is the output of the recomputation block
+            if name not in nsdfg.out_connectors:
+                new_desc.transient = True
+            else:
+                new_desc.transient = False
+                
+            nsdfg.sdfg.add_datadesc(name=new_name, datadesc=new_desc)
+
+            # Add a copy operation between the input node and the new descriptor
+            input_node = nodes.AccessNode(name)
+            new_node = nodes.AccessNode(new_name)
+            initi_state.add_node(input_node)
+            initi_state.add_node(new_node)
+
+            # Add memory copy edge
+            initi_state.add_edge(input_node, None, new_node, None, self.sdfg.make_array_memlet(name))
+
+            # Change the output if necessary
+            if name in nsdfg.out_connectors:
+                nsdfg.remove_out_connector(name)
+                nsdfg.add_out_connector(new_name)
+
     def _get_recomputation_nsdfg(self, forward_state: SDFGState, target_an: nodes.AccessNode) -> nodes.NestedSDFG:
         """
         Given an AccessNode for data that needs to be forwarded from the forward pass to the backward pass,
         Return a nested SDFG that recomputes this data from input data.
         """
         nsdfg_label = "recomputation_nsdfg_" + target_an.data
+
         # Initially, we will replicate the whole SDFG into a Nested-SDFG and connect it
         nsdfg = nodes.NestedSDFG(label=nsdfg_label,
                                  sdfg=copy.deepcopy(self.original_forward_sdfg),
@@ -2962,7 +3072,8 @@ class BackwardPassGenerator:
         nsdfg_target_node: nodes.AccessNode = None
         nb_occurances = 0
         for node in nsdfg_forward_state.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data == target_an.data:
+            if isinstance(node, nodes.AccessNode) and node.data == target_an.data and nsdfg_forward_state.node_id(
+                    node) == forward_state.node_id(target_an):
                 nsdfg_target_node = node
                 nb_occurances += 1
 
@@ -2972,6 +3083,9 @@ class BackwardPassGenerator:
 
         self._prune_recomputation_sdfg(nsdfg=nsdfg, forward_state=nsdfg_forward_state, target_an=nsdfg_target_node)
 
+        # Change descriptors if the inputs are written to
+        self._rename_desciptors_for_recomputation_nsdfg(nsdfg=nsdfg)
+
         return nsdfg
 
     def _connect_recomputation_nsdfg(self, forward_state: SDFGState, backward_state: SDFGState,
@@ -2980,18 +3094,76 @@ class BackwardPassGenerator:
         """
         
         """
-
+        initialization_state = None
         # Connect all the SDFG inputs to the nested SDFG
         # First, add the nested sdfg
         for input in nsdfg.in_connectors.keys():
             # For each argument
-            # Create the access Node for this argument
-            array = self.sdfg.arrays[input]
-            new_an = nodes.AccessNode(input)
+            input_name = input if "recomputation_" not in input else input[14:]
+
+            # Get the first instance of this AN in the SDFG
+            first_instance = None
+            for node, parent in self.sdfg.all_nodes_recursive():
+                if isinstance(node, nodes.AccessNode) and node.data == input:
+                    first_instance = node
+                    first_node_state = parent
+                    break
+
+            assert first_instance
+
+            # # Check if this input is overwritten
+            # overwritten, _ = self._check_node_overwrite(forward_state=first_node_state, node=first_instance)
+
+            # if overwritten:
+            #     # Store the input in an initial state
+            #     if input in self.stored_inputs:
+            #         # Already has been copied
+            #         new_an = copy.deepcopy(self.stored_inputs[input])
+            #         input_name = new_an.data
+            #     else:
+            #         # Create a storing state
+            #         if initialization_state is None:
+            #             for state in self.state_order:
+            #                 if "call" in state.label:
+            #                     start_state = state
+            #             initialization_state = self.sdfg.add_state_before(start_state, label="store_inputs_state")
+
+            #             # For conformity, we will add an empty state representing the reversal of this state
+            #             reversed_init_state = SDFGState("reversed_store_inputs_state")
+            #             self.backward_sdfg.add_state(reversed_init_state)
+            #             reversed_init_state.parent_graph = initialization_state.parent_graph
+            #             self.reversed_states_map[initialization_state] = reversed_init_state
+
+            #         # Create a new array and copy the data to it
+            #         new_name = f"stored_input_{input}"
+
+            #         # Add the desciptor
+            #         old_desc = nsdfg.sdfg.arrays[input]
+            #         new_desc = copy.deepcopy(old_desc)
+            #         new_desc.transient = True
+            #         self.sdfg.add_datadesc(name=new_name, datadesc=new_desc)
+
+            #         # Add a copy operation between the input node and the new descriptor
+            #         input_node = nodes.AccessNode(input)
+            #         new_an = nodes.AccessNode(new_name)
+            #         initialization_state.add_node(input_node)
+            #         initialization_state.add_node(new_an)
+
+            #         # Add memory copy edge
+            #         initialization_state.add_edge(input_node, None, new_an, None, self.sdfg.make_array_memlet(input))
+
+            #         # Add the stored input to a dictionary
+            #         self.stored_inputs[input] = new_an
+            #         input_name = new_an.data
+            # else:
+            #     # Create the access Node for this argument
+            #     new_an = nodes.AccessNode(input_name)
+
+            new_an = nodes.AccessNode(input_name)
             backward_state.add_node(new_an)
 
             # Create a memlet passing all the data to the nested-SDFG
-            memlet = self.sdfg.make_array_memlet(input)
+            memlet = self.sdfg.make_array_memlet(input_name)
 
             # Add the connection to the nested SDFG
             backward_state.add_edge(new_an, None, nsdfg, input, memlet)
@@ -3026,8 +3198,12 @@ class BackwardPassGenerator:
         # Create a memlet passing all the data to the nested-SDFG
         memlet = self.sdfg.make_array_memlet(new_recomp_node.data)
 
+        nsdfg_out_conn = list(nsdfg.out_connectors.keys())
+        assert len(nsdfg_out_conn) == 1
+        nsdfg_out_conn = nsdfg_out_conn[0]
+
         # Connect the output of the NestedSDFG
-        backward_state.add_edge(nsdfg, target_an.data, new_recomp_node, None, memlet)
+        backward_state.add_edge(nsdfg, nsdfg_out_conn, new_recomp_node, None, memlet)
 
         # Connect the new AccessNode to the required computation
         self._connect_forward_accessnode_not_overwritten(forward_state=forward_state,
@@ -3061,32 +3237,325 @@ class BackwardPassGenerator:
                                             memlets=memlets,
                                             target_node=target_node)
 
-    def _get_overwrite_resolution_strategy(self, forward_state: SDFGState, target_an: nodes.AccessNode):
+    def _get_overwrite_resolution_strategy(self) -> Tuple[List[bool], List[nodes.NestedSDFG]]:
         """
         Choose a strategy for resolving overwritten data that we need to forward to the backward passs.
         If the user wants a specific strategy, we use it.
         Otherwise, we evaluate what strategy is best for this specific node.
         """
+        strategy_choice: List[bool] = []
+        recomputation_nsdfgs: List[nodes.NestedSDFG] = []
+        
+        # As preprocessing step,
+        # We will store all of the global program inputs,
+        # if they are required for the backward pass
+        # NOTE: This can be relaxed since if an input is overwritten
+        # if can be recomputed
+        to_remove = []
+        for i, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
+            if access_node.data not in self.sdfg.arg_names:
+                continue
+            
+            # Store the input
+            self._connect_forward_accessnode(forward_state, backward_state, access_node, node, edge,
+                                             None, "store")
+            
+            # Remove this element from the list of the data to forward
+            to_remove.append(i)
+            
+        # Remove elements from the list of data to be forwarded
+        self._forward_data = [item for idx, item in enumerate(self._forward_data) if idx not in to_remove]
+            
         if self.strategy == "store_all":
-            return "store", None
+            strategy_choice = ["store"] * len(self._forward_data)
+
+            # A recomputation block is not necessary
+            recomputation_nsdfgs = [None] * len(self._forward_data)
         elif self.strategy == "recompute_all":
-            recomputation_nsdfg = self._get_recomputation_nsdfg(forward_state=forward_state, target_an=target_an)
-            return "recompute", recomputation_nsdfg
+            strategy_choice = ["recompute"] * len(self._forward_data)
+
+            # We will delay getting the recomputation block for now
+            recomputation_nsdfgs = [None] * len(self._forward_data)
+        elif self.strategy == "user_defined":
+            if self.data_to_recompute is None:
+                raise AutoDiffException("The overwrite resolution strategy is User Defined "
+                                        "but no recomputation list has been provided."
+                                        "Please set the data_to_recompute parameter.")
+
+            for forward_state, backward_state, access_node, node, edge in self._forward_data:
+
+                if access_node.data in self.data_to_recompute:
+                    try:
+                        nsdfg = self._get_recomputation_nsdfg(forward_state, access_node)
+                        choice = "recompute"
+                    except:
+                        print(f"WARNING! couldn't get the recomputation nested SDFG for {access_node.label}")
+                        nsdfg = None
+                        choice = "store"
+                    recomputation_nsdfgs.append(nsdfg)
+                    strategy_choice.append(choice)
+                else:
+                    # We store everything else
+                    recomputation_nsdfgs.append(None)
+                    strategy_choice.append("store")
         elif self.strategy == "dynamic":
-            return self._choose_overwrite_resolution_strategy()
+            # Solve the ILP and get the decision variables
+            strategy_choice, recomputation_nsdfgs = self._solve_ilp_for_data()
+        else:
+            raise AutoDiffException("Please specify a valid overwrite resolution strategy."
+                                    "Expected either store_all, recompute_all, or dynamic"
+                                    f"but got {self.strategy}")
+        return strategy_choice, recomputation_nsdfgs
 
-        raise AutoDiffException("Please specify a valid overwrite resolution strategy."
-                                "Expected either store_all, recompute_all, or dynamic"
-                                f"but got {self.strategy}")
+    def _solve_ilp_for_data(self):
+        """
+        Create and solve an ILP to decide on the best store-recompute combination for the desired data.
+        """
+        recomputation_nsdfgs: List[nodes.NestedSDFG] = []
+        storage_costs: List[int] = []
+        # Get the recomputation NSDFGs
+        for forward_state, backward_state, access_node, node, edge in self._forward_data:
+            try:
+                nsdfg = self._get_recomputation_nsdfg(forward_state, access_node)
+            except:
+                print(f"WARNING! couldn't get the recomputation nested SDFG for {access_node.label}")
+                nsdfg = None
+                
+            recomputation_nsdfgs.append(nsdfg)
+            
+            # Get the storage cost for this access node
+            size = 1
+            for shape in self.sdfg.arrays[access_node.data].shape:
+                # Only accept int sizes for now
+                if not isinstance(shape, int):
+                    raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
+                size *= shape
+            
+            # Convert the shape to KiBs
+            size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
+            
+            storage_costs.append(size)
+            
+        # Get the computational cost of each recomputation block
+        computational_cost = self._get_data_computational_cost(recomputation_nsdfgs)
 
-    def _choose_overwrite_resolution_strategy(self):
+        # Get the measurements sequence for the ILP
+        strategy_choices = self._define_and_solve_ilp(recomputation_nsdfgs, computational_cost, storage_costs)
+
+        # Solve the ILP and return the decision
+        return strategy_choices, recomputation_nsdfgs
+
+    def _get_data_computational_cost(self, recomputation_nsdfgs: List[nodes.NestedSDFG]) -> List[float]:
+        """
+        Get an estimate of the comuptational cost of recomputing the data that needs to be forwarded to the backward pass.
+        """
+        computational_costs = []
+        for nsdfg in recomputation_nsdfgs:
+            if nsdfg is None:
+                # If the array cannot be recomputed, we add an infinit cost to make sure we store it
+                computational_costs.append(float('inf'))
+                continue
+
+            # Get the operational intensity of the NSDFG
+            op_in_map: Dict[str, sp.Expr] = {}
+            c = 64 * 64  # Cache size in bytes.
+            l = 64  # Cache line size in bytes.
+            assumptions = {}  # Dictionary mapping SDFG symbols to concrete values
+            # analyze_sdfg_op_in(nsdfg.sdfg, op_in_map, c * l, l, assumptions)
+            # opin_res = (op_in_map[get_uuid(nsdfg.sdfg)])
+
+            # Get the work and work depth
+            w_d_map: Dict[str, sp.Expr] = {}
+            analyze_sdfg(nsdfg.sdfg, w_d_map, get_tasklet_work_depth, [], False)
+            w_d_res = w_d_map[get_uuid(nsdfg.sdfg)]
+
+            # Combine the three metrics with some weights
+            alpha, beta, gamma = 0.4, 0.2, 0.4
+            computational_costs.append(w_d_res[0] * alpha + w_d_res[1] * beta )
+
+        return computational_costs
+
+    def _define_and_solve_ilp(self, recomputation_nsdfgs: List[nodes.NestedSDFG], computational_costs: List[float], storage_costs: List[int]):
+        """
+        Get the memory measurement sequence to be fed to the ilp solver as constraints
+        """
+        # Define the problem
+        model = LpProblem(name=f"ILP-{self.sdfg.label}", sense=LpMinimize)
+
+        # Define the decision variables
+        decs: List[LpVariable] = []
+        for i, nsdfg in enumerate(recomputation_nsdfgs):
+            decs.append(LpVariable(name=f"v_{i}", cat="Binary"))
+
+        # Define the objective function
+        model += pulp.lpSum(cost * (1 - decs[i]) for i, cost in enumerate(computational_costs)), "Maximize_Performance"
+        
+        # Get memory constraints
+        self._add_memory_constraints_to_ilp(model, decs, storage_costs)
+
+        # Solve the ILP and return the decisions
+        # Add the parameter for supressing print messages
+        model.solve(pulp.PULP_CBC_CMD(msg=False))
+        status = pulp.LpStatus[model.status]
+        
+        # Output results
+        if status == "Infeasible":
+            print(model)
+            raise AutoDiffException("ILP Couldn't be solved please check the inputs")
+        choices = ["store" if pulp.value(dec) == 1.0 else "recompute" for dec in decs]
+        
+        # print(recomputation_nsdfgs)
+        # # print(f"Peak mempory usage is: {pulp.value("")}")
+        # print(choices)
+        return choices
+
+    def _add_memory_constraints_to_ilp(self, model: LpProblem, decs: List[LpVariable], storage_costs: List[int], max_memory_usage: int = 872200):
+        """
+        """
+        # List of constraints to return 
+        constraints :List = []
+        constraints.append(0)
+        
+        sdfg_allocation_sizes: List[int] = []
+        
+        # Create an auxiliary variable that represents the PMU
+        pmu = LpVariable(name=f"PMU", cat="Integer")
+        
+        # Call the code gen to determin where each allocation will happen
+        # codegen.to_allocate is a dictionary mapping what to allocate in each scope
+        codegen = framecode.DaCeCodeGenerator(self.sdfg)
+        codegen.determine_allocation_lifetime(self.sdfg)
+        
+        # Add the global inputs as initial constraints
+        for arg in self.sdfg.arg_names:
+            # Get the size of the array associated with this access node
+            size = 1
+            for shape in self.sdfg.arrays[arg].shape:
+                # Only accept int sizes for now
+                if not isinstance(shape, int):
+                    raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
+                size *= shape 
+                
+            # Convert the shape to KiBs
+            size = size * self.sdfg.arrays[arg].dtype.bytes / 1024
+            sdfg_allocation_sizes.append(size)
+            
+            # Add the constraint
+            new_constraint = constraints[-1] + size
+            constraints.append(new_constraint)
+            model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
+        
+        # Add global allocation constraints
+        for _, _, first_node_instance, _, _, _ in codegen.to_allocate[self.sdfg]:
+            # Get the size of the array associated with this access node
+            size = 1
+            for shape in self.sdfg.arrays[first_node_instance.data].shape:
+                # Only accept int sizes for now
+                if not isinstance(shape, int):
+                    raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
+                size *= shape 
+                
+            # Convert the shape to KiBs
+            size = size * self.sdfg.arrays[first_node_instance.data].dtype.bytes / 1024
+            sdfg_allocation_sizes.append(size)
+            
+            # Add the constraint
+            new_constraint = constraints[-1] + size
+            constraints.append(new_constraint)
+            model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
+        
+        # Add the store constraints
+        # Since we know the stored values will be used in a different state, 
+        # we know they will be allocated on the SDFG level
+        for i, v in enumerate(decs):
+            new_constraint = constraints[-1] + v*storage_costs[i]
+            constraints.append(new_constraint)
+            model += (pmu >= new_constraint, f"Constraint_{len(constraints)}") 
+            
+        # Get the order of the states 
+        states_topological = list(self.sdfg.bfs_nodes(self.sdfg.start_state))
+
+        # Identify the recomputation states
+        # These are the states where the recomputation could be inserted
+        recomputation_states: List[SDFGState] = []
+        for _, backward_state, _, _, _ in self._forward_data:
+            recomputation_states.append(backward_state)
+            
+        # Go through the states and add the allocation/deallocation accordingly
+        for state in states_topological:
+            state_allocation_sizes: list[int] = []
+            # Get the allocations for this state
+            for _, _, first_node_instance, _, _, _ in codegen.to_allocate[state]:
+                # Get the size of the array associated with this access node
+                size = 1
+                for shape in self.sdfg.arrays[first_node_instance.data].shape:
+                    # Only accept int sizes for now
+                    if not isinstance(shape, int):
+                        raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
+                    size *= shape
+                
+                # Convert the shape to KiBs
+                size = size * self.sdfg.arrays[first_node_instance.data].dtype.bytes / 1024
+                state_allocation_sizes.append(size)
+                
+                # Add the constraint
+                new_constraint = constraints[-1] + size
+                constraints.append(new_constraint)
+                model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
+            
+            # Check if any recomputation terms can be inserted here
+            if state in recomputation_states:
+                for i, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
+                    if not backward_state == state:
+                        continue
+                    
+                    # Get the size of the array associated with this access node
+                    size = 1
+                    for shape in self.sdfg.arrays[access_node.data].shape:
+                        # Only accept int sizes for now
+                        if not isinstance(shape, int):
+                            raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
+                        size *= shape
+                    
+                    # Convert the shape to KiBs
+                    size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
+                    state_allocation_sizes.append(size)
+                    
+                    # Add the constraint
+                    # TODO: evaluate the recomputation peak memory usage and replace it here
+                    new_constraint = constraints[-1] + (1-decs[i])*storage_costs[i]
+                    constraints.append(new_constraint)
+                    model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
+                
+            # Add the deallocation for when the state exists
+            for size in state_allocation_sizes:
+                # Add the constraint
+                new_constraint = constraints[-1] - size
+                constraints.append(new_constraint)
+                model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
+        
+        # Add the deallocation for when the state exists
+        for size in sdfg_allocation_sizes:
+            # Add the constraint
+            new_constraint = constraints[-1] - size
+            constraints.append(new_constraint)
+            model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
+                  
+        # Make sure the pmu is less than the user provided maximum memory usage
+        model += (pmu <= max_memory_usage, f"Final_Constraint")
+
+    def _choose_overwrite_resolution_strategy(self, forward_state: SDFGState, target_an: nodes.AccessNode):
         """
         Evaluate what is the best strategy to resolve the overwritten forward_node.
         """
         # Get Nested-SDFG block that calculates the wanted value only
-        # given the original access node and the indicies that are to be returned
-        recomputation_nsdfg = self._get_recomputation_nsdfg()
-        return "store", recomputation_nsdfg
+        # Given the original access node and the indicies that are to be returned
+        # if "B" not in target_an.data and target_an.data != "y":
+        #     recomputation_nsdfg = self._get_recomputation_nsdfg(forward_state=forward_state, target_an=target_an)
+        #     print(f"Recomputing: {target_an}")
+        #     return "recompute", recomputation_nsdfg
+        # else:
+        return "store", None
 
     def _get_accessnode_to_forward(self, forward_state: SDFGState, backward_state: SDFGState,
                                    forward_node: nodes.AccessNode):
@@ -3165,8 +3634,11 @@ class BackwardPassGenerator:
                 starting_an = starting_edge.src
                 assert isinstance(starting_an, nodes.AccessNode)
 
-                # Call the function to connect this required AccessNode
-                self._connect_forward_accessnode(state, backward_state, starting_an, forward_node, edge)
+                # Save the information about the data to be forwarded
+                # to call the function to connect this required AccessNode
+                # after the reversal
+                self._forward_data.append((state, backward_state, starting_an, forward_node, edge))
+                # self._connect_forward_accessnode(state, backward_state, starting_an, forward_node, edge)
 
                 # No further recusrive calls are required
                 # in this branch; next_required_inputs stays empty
@@ -3180,8 +3652,11 @@ class BackwardPassGenerator:
                 # Get the AccessNode to connect
                 an_to_connect = self._get_accessnode_to_forward(state, backward_state, edge_src)
 
-                # Call the function to connect this required AccessNode
-                self._connect_forward_accessnode(state, backward_state, an_to_connect, forward_node, edge)
+                # Save the information about the data to be forwarded
+                # to call the function to connect this required AccessNode
+                # after the reversal
+                self._forward_data.append((state, backward_state, an_to_connect, forward_node, edge))
+                # self._connect_forward_accessnode(state, backward_state, an_to_connect, forward_node, edge)
 
                 # No further recusrive calls are required
                 # in this branch; next_required_inputs stays empty
@@ -4011,14 +4486,12 @@ class BackwardPassGenerator:
                     if len(match_parent.in_edges(match)) > 0:
                         overwritten = True
 
-        if overwritten:
-            # We only check if the node is recomputable if it has been overwritten
-            # Iterate through all the predecessor occurances
-            # TODO: currently this only checks for a single state
-            for nd, parent in matches[:index + 1]:
-                # Check if this node has an incoming edge
-                if len(parent.in_edges(nd)) > 0:
-                    recomputable = True
+        # Iterate through all the predecessor occurances
+        # TODO: currently this only checks for a single state
+        for nd, parent in matches[:index + 1]:
+            # Check if this node has an incoming edge
+            if len(parent.in_edges(nd)) > 0:
+                recomputable = True
 
         return overwritten, recomputable
 
@@ -4141,7 +4614,9 @@ class BackwardPassGenerator:
                                     given_gradients=given_gradients,
                                     required_gradients=required_gradients,
                                     backward_sdfg=reverse_sdfg,
-                                    zero_non_transients=True)
+                                    zero_non_transients=True,
+                                    overwrite_strategy=self.strategy,
+                                    data_to_recompute=self.data_to_recompute)
         backward_result, _, backward_input_arrays = gen.backward()
 
         # we need to defer add edges until after the arrays have been added because creation of the nested
