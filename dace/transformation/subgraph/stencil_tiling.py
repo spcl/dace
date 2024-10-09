@@ -2,10 +2,8 @@
 """ This module contains classes and functions that implement the orthogonal
     stencil tiling transformation. """
 
-import math
-
 import dace
-from dace import dtypes, registry, symbolic
+from dace import dtypes, symbolic
 from dace.properties import make_properties, Property, ShapeProperty
 from dace.sdfg import nodes
 from dace.transformation import transformation
@@ -15,7 +13,6 @@ from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.strip_mining import StripMining
-from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.subgraph import SubgraphFusion
 
@@ -573,6 +570,8 @@ class StencilTiling(transformation.SubgraphTransformation):
                     nsdfg = trafo_for_loop.nsdfg
 
                     # LoopUnroll
+                    # Prevent circular import
+                    from dace.transformation.interstate.loop_unroll import LoopUnroll
 
                     guard = trafo_for_loop.guard
                     end = trafo_for_loop.after_state

@@ -27,9 +27,9 @@ def regression(A, B):
 def test_unroll():
     sdfg: dace.SDFG = tounroll.to_sdfg()
     sdfg.simplify()
-    assert len(sdfg.nodes()) == 4
+    assert len(sdfg.nodes()) == 2
     sdfg.apply_transformations(LoopUnroll)
-    assert len(sdfg.nodes()) == (5 + 2)
+    assert len(sdfg.nodes()) == 1 + 5 * 2
     sdfg.simplify()
     assert len(sdfg.nodes()) == 1
     A = np.random.rand(20)

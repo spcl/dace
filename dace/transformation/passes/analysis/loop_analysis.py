@@ -1,16 +1,12 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
-from collections import defaultdict
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional
 
 import sympy
 
-from dace import SDFG, properties, symbolic, transformation
-from dace.memlet import Memlet
+from dace import symbolic
 from dace.sdfg.state import LoopRegion
-from dace.subsets import Range, SubsetUnion
-from dace.transformation import pass_pipeline as ppl
 
 
 class FindAssignment(ast.NodeVisitor):
