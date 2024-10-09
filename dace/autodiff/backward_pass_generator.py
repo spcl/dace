@@ -3397,6 +3397,7 @@ class BackwardPassGenerator:
         # Add the parameter for supressing print messages
         model.solve(pulp.PULP_CBC_CMD(msg=False))
         status = pulp.LpStatus[model.status]
+        print(model)
         
         # Output results
         if status == "Infeasible":
@@ -3409,13 +3410,13 @@ class BackwardPassGenerator:
         # print(choices)
         return choices
 
-    def _add_memory_constraints_to_ilp(self, model: LpProblem, decs: List[LpVariable], storage_costs: List[int], max_memory_usage: int = 872200):
+    def _add_memory_constraints_to_ilp(self, model: LpProblem, decs: List[LpVariable], storage_costs: List[int], max_memory_usage: int = 8722000):
         """
         """
         # List of constraints to return 
         constraints :List = []
         constraints.append(0)
-        
+        print(decs)
         sdfg_allocation_sizes: List[int] = []
         
         # Create an auxiliary variable that represents the PMU
@@ -3480,10 +3481,28 @@ class BackwardPassGenerator:
         recomputation_states: List[SDFGState] = []
         for _, backward_state, _, _, _ in self._forward_data:
             recomputation_states.append(backward_state)
-            
+        
+        # Dictionary of state : set of last updated constraints
+        state_constraints_dict = {}
+        
         # Go through the states and add the allocation/deallocation accordingly
         for state in states_topological:
             state_allocation_sizes: list[int] = []
+            
+            # Identify where to add the measurements of this state
+            # Get all the incoming state edges to this state
+            in_edges = self.sdfg.in_edges(state)
+            
+            to_add = []
+            if len(in_edges) == 0:
+                # Start state
+                to_add.append(constraints[-1])
+            else:
+                # Get the to add list of all the incoming states and merge them
+                for edge in in_edges:
+                    state_constraints = state_constraints_dict[edge.src]
+                    to_add = to_add + state_constraints
+            
             # Get the allocations for this state
             for _, _, first_node_instance, _, _, _ in codegen.to_allocate[state]:
                 # Get the size of the array associated with this access node
@@ -3498,11 +3517,15 @@ class BackwardPassGenerator:
                 size = size * self.sdfg.arrays[first_node_instance.data].dtype.bytes / 1024
                 state_allocation_sizes.append(size)
                 
+                updated_to_add = []
+                
                 # Add the constraint
-                new_constraint = constraints[-1] + size
-                constraints.append(new_constraint)
-                model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-            
+                for const in to_add:
+                    new_constraint = const + size
+                    updated_to_add.append(new_constraint)
+                    constraints.append(new_constraint)
+                    model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
+                to_add = updated_to_add 
             # Check if any recomputation terms can be inserted here
             if state in recomputation_states:
                 for i, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
@@ -3523,23 +3546,40 @@ class BackwardPassGenerator:
                     
                     # Add the constraint
                     # TODO: evaluate the recomputation peak memory usage and replace it here
-                    new_constraint = constraints[-1] + (1-decs[i])*storage_costs[i]
-                    constraints.append(new_constraint)
-                    model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-                
+                    updated_to_add = []
+                    for const in to_add:
+                        new_constraint = const + (1-decs[i])*storage_costs[i]
+                        updated_to_add.append(new_constraint)
+                        constraints.append(new_constraint)
+                        model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
+                    to_add = updated_to_add 
             # Add the deallocation for when the state exists
             for size in state_allocation_sizes:
                 # Add the constraint
-                new_constraint = constraints[-1] - size
+                updated_to_add = []
+                for const in to_add:
+                    new_constraint = const - size
+                    updated_to_add.append(new_constraint)
+                    constraints.append(new_constraint)
+                    model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
+                to_add = updated_to_add
+            
+            # Update the state constraints dict
+            state_constraints_dict[state] = to_add
+            
+        # Add the deallocation for when the sdfg exists
+        for size in sdfg_allocation_sizes:
+            # Get the end states of the SDFG
+            end_states = [state for state in states_topological if self.sdfg.out_degree(state) == 0]
+            to_add_final = []
+            for state in end_states:
+                to_add_final += state_constraints_dict[state]
+                
+            # Add the constraint
+            for const in to_add_final:
+                new_constraint = const - size
                 constraints.append(new_constraint)
                 model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-        
-        # Add the deallocation for when the state exists
-        for size in sdfg_allocation_sizes:
-            # Add the constraint
-            new_constraint = constraints[-1] - size
-            constraints.append(new_constraint)
-            model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
                   
         # Make sure the pmu is less than the user provided maximum memory usage
         model += (pmu <= max_memory_usage, f"Final_Constraint")
