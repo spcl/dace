@@ -149,6 +149,9 @@ class ConstAssignmentMapFusion(MapFusion):
         is_const_assignment, assignments = self.consistent_const_assignment_table(graph, first_entry, first_exit)
         assert is_const_assignment
 
+        # Keep track in case loop variables are named differently.
+        param_map = {p2: p1 for p1, p2 in zip(first_entry.map.params, second_entry.map.params)}
+
         # Track all the access nodes that will survive the purge.
         access_nodes, remove_nodes = self.track_access_nodes(graph, first_exit, second_exit)
 
@@ -177,8 +180,10 @@ class ConstAssignmentMapFusion(MapFusion):
                 graph.add_memlet_path(first_entry, t, memlet=Memlet())
                 graph.remove_edge(e)
             for e in graph.out_edges(t):
+                e_data = e.data
+                e_data.subset.replace(param_map)
                 graph.add_memlet_path(e.src, first_exit, src_conn=e.src_conn, dst_conn=conn_map[e.dst_conn],
-                                      memlet=Memlet(str(e.data)))
+                                      memlet=Memlet(str(e_data)))
                 graph.remove_edge(e)
 
         # Redirect any outgoing edges from the nodes to be removed through their surviving counterparts.

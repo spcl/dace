@@ -13,26 +13,26 @@ N = dace.symbol('N')
 
 @dace.program
 def assign_top_row(A: dace.float32[M, N]):
-    for i in dace.map[0:N]:
-        A[0, i] = 1
+    for t in dace.map[0:N]:
+        A[0, t] = 1
 
 
 @dace.program
 def assign_bottom_row(A: dace.float32[M, N]):
-    for i in dace.map[0:N]:
-        A[M - 1, i] = 1
+    for b in dace.map[0:N]:
+        A[M - 1, b] = 1
 
 
 @dace.program
 def assign_left_col(A: dace.float32[M, N]):
-    for i in dace.map[0:M]:
-        A[i, 0] = 1
+    for l in dace.map[0:M]:
+        A[l, 0] = 1
 
 
 @dace.program
 def assign_right_col(A: dace.float32[M, N]):
-    for i in dace.map[0:M]:
-        A[i, N - 1] = 1
+    for r in dace.map[0:M]:
+        A[r, N - 1] = 1
 
 
 def assign_bounary_sdfg():
