@@ -536,10 +536,14 @@ class GeneralLoopScope(RegionBlock):
         expr = ''
 
         if self.loop.update_statement and self.loop.init_statement and self.loop.loop_variable:
-            init = unparse_interstate_edge(self.loop.init_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
+            lsyms = {}
+            lsyms.update(symbols)
+            if codegen.dispatcher.defined_vars.has(self.loop.loop_variable) and not self.loop.loop_variable in lsyms:
+                lsyms[self.loop.loop_variable] = codegen.dispatcher.defined_vars.get(self.loop.loop_variable)[1]
+            init = unparse_interstate_edge(self.loop.init_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
             init = init.strip(';')
 
-            update = unparse_interstate_edge(self.loop.update_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
+            update = unparse_interstate_edge(self.loop.update_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
             update = update.strip(';')
 
             if self.loop.inverted:

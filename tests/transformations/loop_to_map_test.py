@@ -12,6 +12,7 @@ import dace
 from dace.sdfg import nodes, propagation
 from dace.transformation.interstate import LoopToMap, StateFusion
 from dace.transformation.interstate.loop_detection import DetectLoop
+from dace.transformation.interstate.loop_lifting import LoopLifting
 
 
 def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after, log_path):
@@ -86,6 +87,8 @@ of << i << "\\n";""",
     e = post.add_write("E")
     post_tasklet = post.add_tasklet("post", {}, {"e"}, "e = i" if use_variable else "e = N")
     post.add_memlet_path(post_tasklet, e, src_conn="e", memlet=dace.Memlet("E[0]"))
+
+    sdfg.apply_transformations_repeated([LoopLifting])
 
     return sdfg
 
@@ -285,6 +288,7 @@ def test_interstate_dep():
 
     ref = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
     val = np.copy(ref)
+    sdfg.apply_transformations_repeated([LoopLifting])
     sdfg(A=ref)
 
     assert sdfg.apply_transformations(LoopToMap) == 0
@@ -294,7 +298,7 @@ def test_interstate_dep():
 
 
 def test_need_for_tasklet():
-
+    # Note: Since the introduction of loop regions, this no longer requires a tasklet.
     sdfg = dace.SDFG('needs_tasklet')
     aname, _ = sdfg.add_array('A', (10, ), dace.int32)
     bname, _ = sdfg.add_array('B', (10, ), dace.int32)
@@ -304,14 +308,8 @@ def test_need_for_tasklet():
     bnode = body.add_access(bname)
     body.add_nedge(anode, bnode, dace.Memlet(data=aname, subset='i', other_subset='9 - i'))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
-    found = False
-    for n, s in sdfg.all_nodes_recursive():
-        if isinstance(n, nodes.Tasklet):
-            found = True
-            break
-
-    assert found
 
     A = np.arange(10, dtype=np.int32)
     B = np.empty((10, ), dtype=np.int32)
@@ -331,6 +329,7 @@ def test_need_for_transient():
     bnode = body.add_access(bname)
     body.add_nedge(anode, bnode, dace.Memlet(data=aname, subset='0:10, i', other_subset='0:10, 9 - i'))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
     found = False
     for n, s in sdfg.all_nodes_recursive():

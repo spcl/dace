@@ -20,11 +20,11 @@ from dace import memlet as mm
 from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
-from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
-                             CodeProperty, make_properties)
+from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty,
+                             SymbolicProperty, CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
-                             OrderedDiGraph, Edge, generate_element_id)
+from dace.sdfg.graph import (MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge,
+                             generate_element_id)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
