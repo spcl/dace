@@ -298,7 +298,8 @@ def test_interstate_dep():
 
 
 def test_need_for_tasklet():
-    # Note: Since the introduction of loop regions, this no longer requires a tasklet.
+    # Note: Since the introduction of loop regions this no longer requires a tasklet, as the nested SDFG is directly
+    # equivalent to the loop region, including all direct access node to access node copy operations.
     sdfg = dace.SDFG('needs_tasklet')
     aname, _ = sdfg.add_array('A', (10, ), dace.int32)
     bname, _ = sdfg.add_array('B', (10, ), dace.int32)
@@ -319,7 +320,8 @@ def test_need_for_tasklet():
 
 
 def test_need_for_transient():
-
+    # Note: Since the introduction of loop regions this no longer requires a transient, as the nested SDFG is directly
+    # equivalent to the loop region, including all direct access node to access node copy operations.
     sdfg = dace.SDFG('needs_transient')
     aname, _ = sdfg.add_array('A', (10, 10), dace.int32)
     bname, _ = sdfg.add_array('B', (10, 10), dace.int32)
@@ -331,13 +333,6 @@ def test_need_for_transient():
 
     sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
-    found = False
-    for n, s in sdfg.all_nodes_recursive():
-        if isinstance(n, nodes.AccessNode) and n.data not in (aname, bname):
-            found = True
-            break
-
-    assert found
 
     A = np.arange(100, dtype=np.int32).reshape(10, 10).copy()
     B = np.empty((10, 10), dtype=np.int32)
@@ -402,6 +397,7 @@ def test_symbol_write_before_read():
     sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(j='0')))
     sdfg.add_edge(body, body_end, dace.InterstateEdge(assignments=dict(j='j + 1')))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     assert sdfg.apply_transformations(LoopToMap) == 1
 
 
@@ -429,6 +425,7 @@ def test_symbol_array_mix(overwrite):
         sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(sym='sym + tmp')))
     sdfg.add_edge(body, body_end, dace.InterstateEdge(assignments=dict(sym='sym + 1.0')))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     assert sdfg.apply_transformations(LoopToMap) == (1 if overwrite else 0)
 
 
@@ -455,6 +452,7 @@ def test_symbol_array_mix_2(parallel):
     t = body_start.add_tasklet('use', {}, {'o'}, 'o = sym')
     body_start.add_edge(t, 'o', body_start.add_write('B'), None, dace.Memlet('B[i]'))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     assert sdfg.apply_transformations(LoopToMap) == (1 if parallel else 0)
 
 
@@ -481,6 +479,7 @@ def test_internal_symbol_used_outside(overwrite):
     else:
         sdfg.add_edge(after, after_1, dace.InterstateEdge())
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     assert sdfg.apply_transformations(LoopToMap) == (1 if overwrite else 0)
 
 
@@ -510,6 +509,7 @@ def test_shared_local_transient_single_state():
     body.add_edge(t1, '__out', anode, None, dace.Memlet(data='A', subset='i'))
     body.add_edge(anode, None, t2, '__inp', dace.Memlet(data='A', subset='i'))
     body.add_edge(t2, '__out', bnode, None, dace.Memlet(data='__return', subset='i'))
+    sdfg.apply_transformations_repeated([LoopLifting])
 
     sdfg.apply_transformations_repeated(LoopToMap)
     assert 'A' in sdfg.arrays
@@ -549,6 +549,7 @@ def test_thread_local_transient_single_state():
     body.add_edge(anode, None, t2, '__inp', dace.Memlet(data='A', subset='i'))
     body.add_edge(t2, '__out', bnode, None, dace.Memlet(data='__return', subset='i'))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
     assert not ('A' in sdfg.arrays)
 
@@ -587,6 +588,7 @@ def test_shared_local_transient_multi_state():
     body1.add_edge(anode1, None, t2, '__inp', dace.Memlet(data='A', subset='i'))
     body1.add_edge(t2, '__out', bnode, None, dace.Memlet(data='__return', subset='i'))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
     assert 'A' in sdfg.arrays
 
@@ -628,6 +630,7 @@ def test_thread_local_transient_multi_state():
     body1.add_edge(anode1, None, t2, '__inp', dace.Memlet(data='A', subset='i'))
     body1.add_edge(t2, '__out', bnode, None, dace.Memlet(data='__return', subset='i'))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
     assert not ('A' in sdfg.arrays)
 
@@ -748,6 +751,7 @@ def test_rotated_loop_to_map(simplify):
     t = body.add_tasklet('addone', {'inp'}, {'out'}, 'out = inp + 1')
     body.add_edge(body.add_read('A'), None, t, 'inp', dace.Memlet('A[i]'))
     body.add_edge(t, 'out', body.add_write('A'), None, dace.Memlet('A[i]'))
+    sdfg.apply_transformations_repeated([LoopLifting])
 
     if simplify:
         sdfg.apply_transformations_repeated(StateFusion)

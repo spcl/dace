@@ -99,34 +99,39 @@ class LoopToMap(xf.MultiStateTransformation):
             if symbolic.contains_sympy_functions(expr):
                 return False
 
+        _, write_set = self.loop.read_and_write_sets()
         loop_states = set(self.loop.all_states())
-        write_set: Set[str] = set()
-        for state in loop_states:
-            _, wset = state.read_and_write_sets()
-            write_set |= wset
+        all_loop_blocks = set(self.loop.all_control_flow_blocks())
+        #write_set: Set[str] = set()
+        #for block in loop_states:
+        #    _, wset = block.read_and_write_sets()
+        #    write_set |= wset
 
         # Collect symbol reads and writes from inter-state assignments
+        in_order_loop_blocks = list(cfg_analysis.blockorder_topological_sort(self.loop, recursive=True,
+                                                                             ignore_nonstate_blocks=False))
         symbols_that_may_be_used: Set[str] = {itervar}
         used_before_assignment: Set[str] = set()
-        for e in self.loop.all_interstate_edges():
-            # Collect read-before-assigned symbols (this works because the states are always in order,
-            # see above call to `blockorder_topological_sort`)
-            read_symbols = e.data.read_symbols()
-            read_symbols -= symbols_that_may_be_used
-            used_before_assignment |= read_symbols
-            # If symbol was read before it is assigned, the loop cannot be parallel
-            assigned_symbols = set()
-            for k, v in e.data.assignments.items():
-                try:
-                    fsyms = symbolic.pystr_to_symbolic(v).free_symbols
-                except AttributeError:
-                    fsyms = set()
-                if not k in fsyms:
-                    assigned_symbols.add(k)
-            if assigned_symbols & used_before_assignment:
-                return False
+        for block in in_order_loop_blocks:
+            for e in block.parent_graph.out_edges(block):
+                # Collect read-before-assigned symbols (this works because the states are always in order,
+                # see above call to `blockorder_topological_sort`)
+                read_symbols = e.data.read_symbols()
+                read_symbols -= symbols_that_may_be_used
+                used_before_assignment |= read_symbols
+                # If symbol was read before it is assigned, the loop cannot be parallel
+                assigned_symbols = set()
+                for k, v in e.data.assignments.items():
+                    try:
+                        fsyms = symbolic.pystr_to_symbolic(v).free_symbols
+                    except AttributeError:
+                        fsyms = set()
+                    if not k in fsyms:
+                        assigned_symbols.add(k)
+                if assigned_symbols & used_before_assignment:
+                    return False
 
-            symbols_that_may_be_used |= e.data.assignments.keys()
+                symbols_that_may_be_used |= e.data.assignments.keys()
 
         # Get access nodes from other states to isolate local loop variables
         other_access_nodes: Set[str] = set()
@@ -183,36 +188,33 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
         isread_set: Set[memlet.Memlet] = set()
-        for s in loop_states:
-            for e in s.parent_graph.all_edges(s):
-                isread_set |= set(e.data.get_read_memlets(sdfg.arrays))
+        for e in self.loop.all_interstate_edges():
+            isread_set |= set(e.data.get_read_memlets(sdfg.arrays))
         for mmlt in isread_set:
             if mmlt.data in write_memlets:
                 if not self.test_read_memlet(sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt,
                                              mmlt.subset):
                     return False
 
-        # Check that the iteration variable and other symbols are not used on other edges or states
-        # before they are reassigned
-        in_order_states = list(cfg_analysis.blockorder_topological_sort(sdfg, recursive=True,
+        # Check that the iteration variable and other symbols are not used on other edges or blocks before they are
+        # reassigned.
+        in_order_blocks = list(cfg_analysis.blockorder_topological_sort(sdfg, recursive=True,
                                                                         ignore_nonstate_blocks=False))
-        loop_idx = in_order_states.index(self.loop)
-        for state in in_order_states[loop_idx + 1:]:
-            if not isinstance(state, SDFGState):
-                continue
-            if state in loop_states:
+        loop_idx = in_order_blocks.index(self.loop)
+        for block in in_order_blocks[loop_idx + 1:]:
+            if block in all_loop_blocks:
                 continue
             # Don't continue in this direction, as all loop symbols have been reassigned
             if not symbols_that_may_be_used:
                 break
 
             # Check state contents
-            if symbols_that_may_be_used & state.free_symbols:
+            if symbols_that_may_be_used & block.free_symbols:
                 return False
 
             # Check inter-state edges
             reassigned_symbols: Set[str] = None
-            for e in sdfg.out_edges(state):
+            for e in block.parent_graph.out_edges(block):
                 if symbols_that_may_be_used & e.data.read_symbols():
                     return False
 
@@ -389,7 +391,7 @@ class LoopToMap(xf.MultiStateTransformation):
         for block in self.loop.nodes():
             if block is self.loop.start_block:
                 continue
-            nsdfg.add_node(state)
+            nsdfg.add_node(block)
         for e in self.loop.edges():
             nsymbols.update({s: sdfg.symbols[s] for s in e.data.assignments.keys() if s in sdfg.symbols})
             nsdfg.add_edge(e.src, e.dst, e.data)

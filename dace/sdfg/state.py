@@ -960,6 +960,18 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
         ...
 
+    @overload
+    def in_edges(self, node: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        ...
+
+    @overload
+    def out_edges(self, node: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        ...
+
+    @overload
+    def all_edges(self, node: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        ...
+
     ###################################################################
     # Traversal methods
 
