@@ -391,8 +391,7 @@ def apply_using_params(
 
                         compiled: dace.CompiledSDFG = kernel_sdfg.compile(validate=True)
 
-                        #try:
-                        if True:
+                        try:
                             compiled(**inputs)
                             output_from_non_transformed = None
 
@@ -458,7 +457,6 @@ def apply_using_params(
                                         file.write(s + "\n")
                                 else:
                                     s = f"For config {work_map_tiles}, {thread_tile}, {thread_block_size}, {explicit_mem_move}, {remainder_loop}: the transformations do not numerically verify"
-                                    raise Exception(s)
                                     print(s)
                                     assert (
                                         output_from_transformed
@@ -549,13 +547,11 @@ def apply_using_params(
                                 if work_on_copy and write_kernel_report_to_file:
                                     file.write(s1 + "\n")
                                     file.write(s2 + "\n")
-                            """
-                            except Exception as ex:
-                                print(
-                                    f"Transformations fail for config {work_map_tiles}, {thread_tile}, {thread_block_size}, {explicit_mem_move}, {remainder_loop}"
-                                )
-                                print("Exception (gen.):", ex)
-                            """
+                        except Exception as ex:
+                            print(
+                                f"Transformations fail for config {work_map_tiles}, {thread_tile}, {thread_block_size}, {explicit_mem_move}, {remainder_loop}"
+                            )
+                            print("Exception (gen.):", ex)
 
     if best_params:
         apply_using_params(
@@ -692,7 +688,7 @@ def auto_apply(
                 file.write(s2 + "\n")
 
             if not kernel_entry.guid in kperf:
-                #try:
+                try:
                     best_config = apply_using_params(
                         sdfg=sdfg,
                         sdfg_name=sdfg_name,
@@ -725,25 +721,24 @@ def auto_apply(
                         float(best_config[1]),
                         float(best_config[2]),
                     )
-                    """
-                    except Exception as e:
-                        best_config = None
-                        s1 = f"Exception: on transforming {kernel_entry}:"
-                        s2 = str(e)
-                        print(s1)
-                        print(s2)
-                        kperf[kernel_entry.guid] = (
-                            f"{kernel_entry.guid}_auto_tiled.sdfg",
-                            None,
-                            str(flops),
-                            str(mem_access),
-                            float(-1.0),
-                            float("nan"),
-                        )
-                        if write_kernel_report_to_file:
-                            file.write(s1 + "\n")
-                            file.write(s2 + "\n")
-                    """
+                except Exception as e:
+                    best_config = None
+                    s1 = f"Exception: on transforming {kernel_entry}:"
+                    s2 = str(e)
+                    print(s1)
+                    print(s2)
+                    kperf[kernel_entry.guid] = (
+                        f"{kernel_entry.guid}_auto_tiled.sdfg",
+                        None,
+                        str(flops),
+                        str(mem_access),
+                        float(-1.0),
+                        float("nan"),
+                    )
+                    if write_kernel_report_to_file:
+                        file.write(s1 + "\n")
+                        file.write(s2 + "\n")
+
             if verbose:
                 s1 = f"Best config: {best_config[:-1]}" if best_config else "none"
                 s2 = f"Percentage of the peak: {best_config[-1]}" if best_config else "none"
