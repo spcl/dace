@@ -486,6 +486,7 @@ def apply_using_params(
                                 s3 = f"Transformed SDFG: {time}"
                                 print(s1)
                                 print(s2)
+                                print(s3)
                                 if work_on_copy and write_kernel_report_to_file:
                                     file.write(s1 + "\n")
                                     file.write(s2 + "\n")
@@ -599,7 +600,7 @@ def auto_apply(
     save_steps=False,
     save_individual_kernels=False,
     re_apply=False,
-    theo_flops_and_mem_access=Tuple[SymExpr, SymExpr],
+    theo_flops_and_mem_access=None,
     write_kernel_report_to_file=True,
     compare_runtime=True,
     _threshold=None,
