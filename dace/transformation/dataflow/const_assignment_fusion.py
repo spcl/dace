@@ -1,11 +1,12 @@
 import ast
+from collections import defaultdict
 from itertools import chain
-from typing import Optional
+from typing import Optional, Union
 
-from dace import transformation, SDFGState, SDFG, Memlet
+from dace import transformation, SDFGState, SDFG, Memlet, subsets
 from dace.sdfg import nodes
 from dace.sdfg.graph import OrderedDiGraph
-from dace.sdfg.nodes import Tasklet, ExitNode, MapEntry, MapExit, NestedSDFG, Node
+from dace.sdfg.nodes import Tasklet, ExitNode, MapEntry, MapExit, NestedSDFG, Node, EntryNode, AccessNode
 from dace.sdfg.state import ControlFlowBlock
 from dace.sdfg.utils import node_path_graph
 from dace.transformation.dataflow import MapFusion
@@ -191,7 +192,7 @@ class ConstAssignmentMapFusion(MapFusion):
         first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
         if first_entry != self.first_map_entry or second_exit != self.second_map_exit:
             return False
-        if graph.all_nodes_between(first_exit, second_entry) or graph.all_nodes_between(second_exit, first_entry):
+        if graph.in_edges(first_entry) or graph.in_edges(second_entry):
             return False
         return True
 
@@ -228,7 +229,8 @@ class ConstAssignmentMapFusion(MapFusion):
         2. A set of access nodes to be removed, i.e. has a duplicate in the map described earlier.
         """
         access_nodes, remove_nodes = {}, set()
-        dst_nodes = set(e.dst for e in chain(graph.out_edges(first_exit), graph.out_edges(second_exit)))
+        dst_nodes = set(e.dst for e in chain(graph.out_edges(first_exit), graph.out_edges(second_exit))
+                        if isinstance(e.dst, AccessNode))
         for n in dst_nodes:
             if n.data in access_nodes:
                 remove_nodes.add(n)
@@ -240,21 +242,21 @@ class ConstAssignmentMapFusion(MapFusion):
         return access_nodes, remove_nodes
 
     @staticmethod
-    def make_equivalent_connectors(first_exit: ExitNode, second_exit: ExitNode):
+    def add_equivalent_connectors(dst: Union[EntryNode, ExitNode], src: Union[EntryNode, ExitNode]):
         """
         Create the additional connectors in the first exit node that matches the second exit node (which will be removed
         later).
         """
-        conn_map = {}
-        for c, v in second_exit.in_connectors.items():
+        conn_map = defaultdict()
+        for c, v in src.in_connectors.items():
             assert c.startswith('IN_')
             cbase = c.removeprefix('IN_')
-            sc = first_exit.next_connector(cbase)
+            sc = dst.next_connector(cbase)
             conn_map[f"IN_{cbase}"] = f"IN_{sc}"
             conn_map[f"OUT_{cbase}"] = f"OUT_{sc}"
-            first_exit.add_in_connector(f"IN_{sc}", dtype=v)
-            first_exit.add_out_connector(f"OUT_{sc}", dtype=v)
-        for c, v in second_exit.out_connectors.items():
+            dst.add_in_connector(f"IN_{sc}", dtype=v)
+            dst.add_out_connector(f"OUT_{sc}", dtype=v)
+        for c, v in src.out_connectors.items():
             assert c in conn_map
         return conn_map
 
@@ -273,7 +275,7 @@ class ConstAssignmentMapFusion(MapFusion):
         access_nodes, remove_nodes = self.track_access_nodes(graph, first_exit, second_exit)
 
         # Set up the extra connections on the first node.
-        conn_map = self.make_equivalent_connectors(first_exit, second_exit)
+        conn_map = self.add_equivalent_connectors(first_exit, second_exit)
 
         # Redirect outgoing edges from exit nodes that are going to be invalidated.
         for e in graph.out_edges(first_exit):
