@@ -154,8 +154,8 @@ def run_and_measure_time(kernel_sdfg: SDFG, inputs : Dict[Type[str], Any]):
             report.process_events()
         # Weird hack, TODO: fix
             if len(report.durations.values()) == 0:
-                kernel_sdfg.save("/tmp/ccccc.sdfg")
-                kernel_sdfg = SDFG.from_file("/tmp/ccccc.sdfg")
+                kernel_sdfg.save("ccccc.sdfg")
+                kernel_sdfg = SDFG.from_file("ccccc.sdfg")
                 c = kernel_sdfg.compile()
                 c(**inputs)
                 report = kernel_sdfg.get_latest_report()
