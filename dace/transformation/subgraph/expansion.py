@@ -1,26 +1,21 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement the expansion transformation.
 """
 
-from dace import dtypes, registry, symbolic, subsets
+from dace import dtypes, symbolic, subsets
 from dace.sdfg import nodes
-from dace.memlet import Memlet
 from dace.sdfg import replace, SDFG, dynamic_map_inputs
 from dace.sdfg.graph import SubgraphView
 from dace.transformation import transformation
 from dace.properties import make_properties, Property
-from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.subgraph import helpers
 from collections import defaultdict
 
 from copy import deepcopy as dcpy
-from typing import List, Union
 
 import itertools
-import dace.libraries.standard as stdlib
 
 import warnings
-import sys
 
 
 def offset_map(state, map_entry):

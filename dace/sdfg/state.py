@@ -11,8 +11,6 @@ import warnings
 from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
                     overload)
 
-import sympy
-
 import dace
 from dace.frontend.python import astutils
 import dace.serialize
@@ -22,11 +20,11 @@ from dace import memlet as mm
 from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
-from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
-                             CodeProperty, make_properties)
+from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty,
+                             SymbolicProperty, CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
-                             OrderedDiGraph, Edge, generate_element_id)
+from dace.sdfg.graph import (MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge,
+                             generate_element_id)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
@@ -960,6 +958,18 @@ class ControlGraphView(BlockGraphView, abc.ABC):
 
     @overload
     def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
+        ...
+
+    @overload
+    def in_edges(self, node: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        ...
+
+    @overload
+    def out_edges(self, node: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        ...
+
+    @overload
+    def all_edges(self, node: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
         ...
 
     ###################################################################
@@ -2491,13 +2501,14 @@ class StateSubgraphView(SubgraphView, DataflowGraphView):
 
 
 @make_properties
-class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView,
-                        ControlFlowBlock):
+class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView,
+                                ControlFlowBlock, abc.ABC):
 
-    def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None):
+    def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None,
+                 parent: Optional['AbstractControlFlowRegion'] = None):
         OrderedDiGraph.__init__(self)
         ControlGraphView.__init__(self)
-        ControlFlowBlock.__init__(self, label, sdfg)
+        ControlFlowBlock.__init__(self, label, sdfg, parent)
 
         self._labels: Set[str] = set()
         self._start_block: Optional[int] = None
@@ -2673,9 +2684,13 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self._cached_start_block = None
         node.parent_graph = self
         if isinstance(self, dace.SDFG):
-            node.sdfg = self
+            sdfg = self
         else:
-            node.sdfg = self.sdfg
+            sdfg = self.sdfg
+        node.sdfg = sdfg
+        if isinstance(node, AbstractControlFlowRegion):
+            for n in node.all_control_flow_blocks():
+                n.sdfg = self.sdfg
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
@@ -2954,6 +2969,13 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
 
 @make_properties
+class ControlFlowRegion(AbstractControlFlowRegion):
+
+    def __init__(self, label = '', sdfg = None, parent = None):
+        super().__init__(label, sdfg, parent)
+
+
+@make_properties
 class LoopRegion(ControlFlowRegion):
     """
     A control flow region that represents a loop.
@@ -2987,35 +3009,52 @@ class LoopRegion(ControlFlowRegion):
     inverted = Property(dtype=bool,
                         default=False,
                         desc='If True, the loop condition is checked after the first iteration.')
+    update_before_condition = Property(dtype=bool,
+                                       default=True,
+                                       desc='If False, the loop condition is checked before the update statement is' +
+                                       ' executed. This only applies to inverted loops, turning them from a typical ' +
+                                       'do-while style into a while(true) with a break before the update (at the end ' +
+                                       'of an iteration)if the condition no longer holds.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
 
     def __init__(self,
                  label: str,
-                 condition_expr: Optional[str] = None,
+                 condition_expr: Optional[Union[str, CodeBlock]] = None,
                  loop_var: Optional[str] = None,
-                 initialize_expr: Optional[str] = None,
-                 update_expr: Optional[str] = None,
+                 initialize_expr: Optional[Union[str, CodeBlock]] = None,
+                 update_expr: Optional[Union[str, CodeBlock]] = None,
                  inverted: bool = False,
-                 sdfg: Optional['SDFG'] = None):
+                 sdfg: Optional['SDFG'] = None,
+                 update_before_condition = True):
         super(LoopRegion, self).__init__(label, sdfg)
 
         if initialize_expr is not None:
-            self.init_statement = CodeBlock(initialize_expr)
+            if isinstance(initialize_expr, CodeBlock):
+                self.init_statement = initialize_expr
+            else:
+                self.init_statement = CodeBlock(initialize_expr)
         else:
             self.init_statement = None
 
         if condition_expr:
-            self.loop_condition = CodeBlock(condition_expr)
+            if isinstance(condition_expr, CodeBlock):
+                self.loop_condition = condition_expr
+            else:
+                self.loop_condition = CodeBlock(condition_expr)
         else:
             self.loop_condition = CodeBlock('True')
 
         if update_expr is not None:
-            self.update_statement = CodeBlock(update_expr)
+            if isinstance(update_expr, CodeBlock):
+                self.update_statement = update_expr
+            else:
+                self.update_statement = CodeBlock(update_expr)
         else:
             self.update_statement = None
 
         self.loop_variable = loop_var or ''
         self.inverted = inverted
+        self.update_before_condition = update_before_condition
 
     def inline(self) -> Tuple[bool, Any]:
         """
@@ -3217,7 +3256,7 @@ class LoopRegion(ControlFlowRegion):
 
 
 @make_properties
-class ConditionalBlock(ControlFlowBlock, ControlGraphView):
+class ConditionalBlock(AbstractControlFlowRegion):
 
     _branches: List[Tuple[Optional[CodeBlock], ControlFlowRegion]]
 
@@ -3234,12 +3273,18 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
     @property
     def branches(self) -> List[Tuple[Optional[CodeBlock], ControlFlowRegion]]:
         return self._branches
-    
-    def nodes(self) -> List['ControlFlowBlock']:
-        return [node for _, node in self._branches if node is not None]
 
-    def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
-        return []
+    def add_branch(self, condition: Optional[CodeBlock], branch: ControlFlowRegion):
+        self._branches.append([condition, branch])
+        branch.parent_graph = self
+        branch.sdfg = self.sdfg
+
+    def remove_branch(self, branch: ControlFlowRegion):
+        filtered_branches = []
+        for c, b in self._branches:
+            if b is not branch:
+                filtered_branches.append((c, b))
+        self._branches = filtered_branches
     
     def _used_symbols_internal(self,
                                all_symbols: bool,
@@ -3357,6 +3402,23 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
         sdfg.reset_cfg_list()
 
         return True, (guard_state, end_state)
+
+    # Graph API overrides.
+
+    def nodes(self) -> List['ControlFlowBlock']:
+        return [node for _, node in self._branches if node is not None]
+
+    def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return []
+
+    def in_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return []
+
+    def out_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return []
+
+    def all_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return []
 
 
 @make_properties

@@ -13,7 +13,8 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import ConditionalBlock, SDFGState, StateSubgraphView, LoopRegion, ControlFlowRegion
+from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, SDFGState, StateSubgraphView, LoopRegion,
+                             ControlFlowRegion)
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
@@ -1585,41 +1586,44 @@ def is_fpga_kernel(sdfg, state):
     return at_least_one_fpga_array
 
 
-def postdominators(
-    sdfg: SDFG,
-    return_alldoms: bool = False
-) -> Optional[Union[Dict[SDFGState, SDFGState], Tuple[Dict[SDFGState, SDFGState], Dict[SDFGState, Set[SDFGState]]]]]:
-    """
-    Return the immediate postdominators of an SDFG. This may require creating new nodes and removing them, which
-    happens in-place on the SDFG.
+CFBlockDictT = Dict[ControlFlowBlock, ControlFlowBlock]
 
-    :param sdfg: The SDFG to generate the postdominators from.
+
+def postdominators(
+    cfg: ControlFlowRegion,
+    return_alldoms: bool = False
+) -> Optional[Union[CFBlockDictT, Tuple[CFBlockDictT, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]]]:
+    """
+    Return the immediate postdominators of a CFG. This may require creating new nodes and removing them, which
+    happens in-place on the CFG.
+
+    :param cfg: The CFG to generate the postdominators from.
     :param return_alldoms: If True, returns the "all postdominators" dictionary as well.
     :return: Immediate postdominators, or a 2-tuple of (ipostdom, allpostdoms) if ``return_alldoms`` is True.
     """
-    from dace.sdfg.analysis import cfg
+    from dace.sdfg.analysis import cfg as cfg_analysis
 
     # Get immediate post-dominators
-    sink_nodes = sdfg.sink_nodes()
+    sink_nodes = cfg.sink_nodes()
     if len(sink_nodes) > 1:
-        sink = sdfg.add_state()
+        sink = cfg.add_state()
         for snode in sink_nodes:
-            sdfg.add_edge(snode, sink, dace.InterstateEdge())
+            cfg.add_edge(snode, sink, dace.InterstateEdge())
     elif len(sink_nodes) == 0:
         return None
     else:
         sink = sink_nodes[0]
-    ipostdom: Dict[SDFGState, SDFGState] = nx.immediate_dominators(sdfg._nx.reverse(), sink)
+    ipostdom: CFBlockDictT = nx.immediate_dominators(cfg._nx.reverse(), sink)
 
     if return_alldoms:
-        allpostdoms = cfg.all_dominators(sdfg, ipostdom)
+        allpostdoms = cfg_analysis.all_dominators(cfg, ipostdom)
         retval = (ipostdom, allpostdoms)
     else:
         retval = ipostdom
 
     # If a new sink was added for post-dominator computation, remove it
     if len(sink_nodes) > 1:
-        sdfg.remove_node(sink)
+        cfg.remove_node(sink)
 
     return retval
 

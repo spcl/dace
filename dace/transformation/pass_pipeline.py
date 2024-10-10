@@ -22,6 +22,7 @@ class Modifies(Flag):
     Symbols = auto()  #: Symbols were modified
     States = auto()  #: The number of SDFG states and their connectivity (not their contents) were modified
     InterstateEdges = auto()  #: Contents (conditions/assignments) or existence of inter-state edges were modified
+    CFG = States | InterstateEdges #: A CFG (any level) was modified (connectivity or number of control flow blocks, but not their contents)
     AccessNodes = auto()  #: Access nodes' existence or properties were modified
     Scopes = auto()  #: Scopes (e.g., Map, Consume, Pipeline) or associated properties were created/removed/modified
     Tasklets = auto()  #: Tasklets were created/removed or their contents were modified
@@ -29,7 +30,7 @@ class Modifies(Flag):
     Memlets = auto()  #: Memlets' existence, contents, or properties were modified
     Nodes = AccessNodes | Scopes | Tasklets | NestedSDFGs  #: Modification of any dataflow node (contained in an SDFG state) was made
     Edges = InterstateEdges | Memlets  #: Any edge (memlet or inter-state) was modified
-    Everything = Descriptors | Symbols | States | InterstateEdges | Nodes | Memlets  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
+    Everything = Descriptors | Symbols | CFG | Nodes | Memlets  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
 
 
 @properties.make_properties
@@ -510,8 +511,8 @@ class Pipeline(Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if sdfg.root_sdfg.using_experimental_blocks:
-            if (not hasattr(self, '__experimental_cfg_block_compatible__') or
-                self.__experimental_cfg_block_compatible__ == False):
+            if (type(self) != Pipeline and (not hasattr(self, '__experimental_cfg_block_compatible__') or
+                self.__experimental_cfg_block_compatible__ == False)):
                 warnings.warn('Pipeline ' + self.__class__.__name__ + ' is being skipped due to incompatibility with ' +
                               'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
                               'ensure the top level SDFG does not have `SDFG.using_experimental_blocks` set to ' +

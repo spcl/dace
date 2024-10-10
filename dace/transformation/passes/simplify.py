@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Set
 import warnings
@@ -16,10 +16,12 @@ from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.reference_reduction import ReferenceToView
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
     ScalarToSymbolPromotion,
+    ControlFlowRaising,
     FuseStates,
     OptionalArrayInference,
     ConstantPropagation,
