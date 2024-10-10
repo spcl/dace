@@ -480,7 +480,7 @@ def apply_using_params(
                             print(f"Transformed SDFG: {time} ms")
                             if compare_runtime and work_on_copy:
                                 s1 = (
-                                    f"Old Time | {untransformed_time} | New Time{time} |"
+                                    f"Old Time | {untransformed_time} | New Time | {time} |"
                                 )
                                 s2 = f"Non-Transformed SDFG: {untransformed_time}"
                                 s3 = f"Transformed SDFG: {time}"
