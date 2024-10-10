@@ -21,7 +21,7 @@ def unique_map_node(graph: SDFGState) -> Optional[tuple[MapEntry, MapExit]]:
     return en[0], ex[0]
 
 
-def free_floating_maps(*args):
+def floating_nodes_graph(*args):
     g = OrderedDiGraph()
     for n in args:
         g.add_node(n)
@@ -29,6 +29,21 @@ def free_floating_maps(*args):
 
 
 class ConstAssignmentMapFusion(MapFusion):
+    """
+    Fuses two maps within a state, where each map:
+    1. Either assigns consistent constant values to elements of one or more data arrays.
+        - Consisency: The values must be the same for all elements in a data array (in both maps). But different data
+          arrays are allowed to have different values.
+    2. Or assigns constant values as described earlier, but _conditionally_. The condition must only depend on the map
+       Parameters.
+
+    Further conditions:
+    1. Range compatibility: The two map must have the exact same range.
+       # TODO(pratyai): Generalize this in `compatible_range()`.
+    2. The maps must have one of the following patterns.
+        - Exists a path like: MapExit -> AccessNode -> MapEntry
+        - Neither map is dependent on the other. I.e. There is no dependency path between them.
+    """
     first_map_entry = transformation.PatternNode(nodes.EntryNode)
     first_map_exit = transformation.PatternNode(nodes.ExitNode)
     array = transformation.PatternNode(nodes.AccessNode)
@@ -38,10 +53,15 @@ class ConstAssignmentMapFusion(MapFusion):
     @classmethod
     def expressions(cls):
         return [node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry),
-                free_floating_maps(cls.first_map_entry, cls.first_map_exit, cls.second_map_entry, cls.second_map_exit)]
+                floating_nodes_graph(cls.first_map_entry, cls.first_map_exit, cls.second_map_entry,
+                                     cls.second_map_exit)]
 
     @staticmethod
     def consistent_branch_const_assignment_table(graph: Node) -> tuple[bool, dict]:
+        """
+        If the graph consists of only conditional consistent constant assignments, produces a table mapping data arrays
+        and memlets to their consistent constant assignments. See the class docstring for what is considered consistent.
+        """
         table = {}
         # Basic premise check.
         if not isinstance(graph, NestedSDFG):
@@ -107,6 +127,11 @@ class ConstAssignmentMapFusion(MapFusion):
 
     @staticmethod
     def consistent_const_assignment_table(graph: SDFGState, en: MapEntry, ex: MapExit) -> tuple[bool, dict]:
+        """
+        If the graph consists of only (conditional or unconditional) consistent constant assignments, produces a table
+        mapping data arrays and memlets to their consistent constant assignments. See the class docstring for what is
+        considered consistent.
+        """
         table = {}
         for n in graph.all_nodes_between(en, ex):
             if isinstance(n, NestedSDFG):
@@ -146,22 +171,25 @@ class ConstAssignmentMapFusion(MapFusion):
         return True, table
 
     def map_nodes(self, graph: SDFGState):
+        """Return the entry and exit nodes of the relevant maps as a tuple: entry_1, exit_1, entry_2, exit_2."""
         return (graph.entry_node(self.first_map_exit), self.first_map_exit,
                 self.second_map_entry, graph.exit_node(self.second_map_entry))
 
     @staticmethod
-    def compatible_range(first_entry: MapEntry, second_entry: MapEntry):
-        # TODO(pratyai): Make a better check for map compatibility.
-        if first_entry.map.range != second_entry.map.range or first_entry.map.schedule != second_entry.map.schedule:
+    def compatible_range(first_entry: MapEntry, second_entry: MapEntry) -> bool:
+        """Decide if the two ranges are compatible. See the class docstring for what is considered compatible."""
+        if first_entry.map.schedule != second_entry.map.schedule:
+            # If the two maps are not to be scheduled on the same device, don't fuse them.
+            return False
+        if first_entry.map.range != second_entry.map.range:
             # TODO(pratyai): Make it so that a permutation of the ranges, or even an union of the ranges will work.
             return False
         return True
 
-    def can_be_applied_free_floating(self, graph: SDFGState, sdfg: SDFG, permissive: bool = False) -> bool:
+    def no_dependency_pattern(self, graph: SDFGState, sdfg: SDFG, permissive: bool = False) -> bool:
+        """Decide if the two maps are independent of each other."""
         first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
         if first_entry != self.first_map_entry or second_exit != self.second_map_exit:
-            return False
-        if not self.compatible_range(first_entry, second_entry):
             return False
         if graph.all_nodes_between(first_exit, second_entry) or graph.all_nodes_between(second_exit, first_entry):
             return False
@@ -170,8 +198,10 @@ class ConstAssignmentMapFusion(MapFusion):
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         assert expr_index in (0, 1)
         if expr_index == 1:
-            if not self.can_be_applied_free_floating(graph, sdfg, permissive):
+            # Test the rest of the second pattern in the `expressions()`.
+            if not self.no_dependency_pattern(graph, sdfg, permissive):
                 return False
+
         first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
         if not self.compatible_range(first_entry, second_entry):
             return False
@@ -191,8 +221,12 @@ class ConstAssignmentMapFusion(MapFusion):
         return True
 
     @staticmethod
-    def track_access_nodes(graph: SDFGState, first_exit: ExitNode, second_exit: ExitNode):
-        # Track all the access nodes that will survive the purge.
+    def track_access_nodes(graph: SDFGState, first_exit: ExitNode, second_exit: ExitNode) -> tuple[dict, set]:
+        """
+        Track all the access nodes that will survive after cleaning up duplicates. Returns a tuple with:
+        1. A map: the underlying data array -> the surviving access node.
+        2. A set of access nodes to be removed, i.e. has a duplicate in the map described earlier.
+        """
         access_nodes, remove_nodes = {}, set()
         dst_nodes = set(e.dst for e in chain(graph.out_edges(first_exit), graph.out_edges(second_exit)))
         for n in dst_nodes:
@@ -206,8 +240,11 @@ class ConstAssignmentMapFusion(MapFusion):
         return access_nodes, remove_nodes
 
     @staticmethod
-    def make_equivalent_connections(first_exit: ExitNode, second_exit: ExitNode):
-        # Set up the extra connections on the first node.
+    def make_equivalent_connectors(first_exit: ExitNode, second_exit: ExitNode):
+        """
+        Create the additional connectors in the first exit node that matches the second exit node (which will be removed
+        later).
+        """
         conn_map = {}
         for c, v in second_exit.in_connectors.items():
             assert c.startswith('IN_')
@@ -236,7 +273,7 @@ class ConstAssignmentMapFusion(MapFusion):
         access_nodes, remove_nodes = self.track_access_nodes(graph, first_exit, second_exit)
 
         # Set up the extra connections on the first node.
-        conn_map = self.make_equivalent_connections(first_exit, second_exit)
+        conn_map = self.make_equivalent_connectors(first_exit, second_exit)
 
         # Redirect outgoing edges from exit nodes that are going to be invalidated.
         for e in graph.out_edges(first_exit):
@@ -279,6 +316,12 @@ class ConstAssignmentMapFusion(MapFusion):
 
 
 class ConstAssignmentStateFusion(StateFusionExtended):
+    """
+    If two consecutive states are such that
+    1. Each state has just one _constant assigment map_ (see the docstring of `ConstAssignmentMapFusion`).
+    2. If those two maps were in the same state `ConstAssignmentMapFusion` would fuse them.
+    then fuse the two states.
+    """
     first_state = transformation.PatternNode(SDFGState)
     second_state = transformation.PatternNode(SDFGState)
 
