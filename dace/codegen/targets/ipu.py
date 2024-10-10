@@ -257,21 +257,64 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
 ############################################################################################################
 #   IPU specific node/state generation
 ############################################################################################################
-    # def copy_memory(
-    #     self,
-    #     sdfg: SDFG,
-    #     cfg: ControlFlowRegion,
-    #     dfg: StateSubgraphView,
-    #     state_id: int,
-    #     src_node: Union[nodes.Tasklet, nodes.AccessNode],
-    #     dst_node: Union[nodes.Tasklet, nodes.AccessNode],
-    #     edge: MultiConnectorEdge,
-    #     function_stream: CodeIOStream,
-    #     callsite_stream: CodeIOStream,
-    # ) -> None:  
-    #     return self.cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream)
-    #     return super().copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream)
     
+    
+    # def declare_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
+    #                   nodedesc: data.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream) -> None:
+    #     self.cpu_codegen.declare_array(sdfg, cfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream)
+    
+    # def allocate_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
+    #                    nodedesc: data.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream,
+    #                    allocation_stream: CodeIOStream) -> None:
+         
+    #     # if user provided this storage type, then we dump what they said.
+    #     if nodedesc.storage == dtypes.StorageType.IPU_Tile_Local:
+    #         name = node.data
+    #         size = nodedesc.total_size
+    #         ipu_type = "FLOAT"
+    #         self.dispatcher.defined_vars.add(name, DefinedType.Scalar, ipu_type)
+    #         declaration_stream.write(f'_state->graph.addVariable({ipu_type}, [{size}], {name});', cfg, state_id, node)       
+    #         return
+    
+    #     self.cpu_codegen.allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream,
+    #                                     allocation_stream)
+        
+    # def deallocate_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int,
+    #                      node: nodes.Node, nodedesc: data.Data, function_stream: CodeIOStream,
+    #                      callsite_stream: CodeIOStream) -> None:
+    #     # unless any cpu allocations no need for IPUs
+    #     pass
+    #     # return self.cpu_codegen.deallocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
+    #     #                                         callsite_stream)        
+    
+    # def allocate_array(self, sdfg: dace.SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int,
+        #                node: nodes.AccessNode, nodedesc: data.Array, function_stream: CodeIOStream,
+        #                declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
+        # # Make sure the codegen includes the appropriate header files
+        # self.add_header(function_stream)
+
+        # name = node.data
+        # print("ALLOCATE ARRAY - ", name)
+        # # # Based on the hardware, the total size must be 16^2
+        # # assert nodedesc.total_size == 16 * 16
+        # # # Majority is detected by the strides of the data
+        # # maj = 'row' if nodedesc.strides[-1] == 1 else 'col'
+
+        # # Write a fragment based on the storage type
+        # if nodedesc.storage == dace.StorageType.TensorCore_Accumulator:
+        #     ctype = 'wmma::fragment<wmma::accumulator, 16, 16, 16, float>'
+        #     declaration_stream.write(f'{ctype} {name};', cfg, state_id, node)
+        # # else:
+        # #     ctype = 'wmma::fragment<wmma::matrix_{mat}, 16, 16, 16, half, wmma::{maj}_major>'.format(
+        # #         mat=('a' if 'A' in nodedesc.storage.name else 'b'), maj=maj)
+        # #     declaration_stream.write(f'{ctype} {name};', cfg, state_id, node)
+            
+        # # # Add the ctype to defined_vars so that the codegen can properly pass
+        # # # fragments to functions as an object reference.
+        # self._dispatcher.defined_vars.add(name, DefinedType.Object, ctype)
+        # self.cpu_codegen.allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
+        #                                  allocation_stream)   
+
     # def declare_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
     #                   nodedesc: data.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream) -> None:
     #     self.cpu_codegen.declare_array(sdfg, cfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream)
@@ -506,7 +549,7 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
         return dataToTileMap
 
     # TODO:Similar mapVertexOntile            
-    def mapdataontile(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+    def  mapdataontile(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                     node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                     declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
         if isinstance(nodedesc, dace.data.Array):
@@ -578,7 +621,6 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
         
         # Mapping on tiles
         
-
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                          node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                          callsite_stream: CodeIOStream) -> None:
@@ -1162,32 +1204,3 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
     #                                        function_stream,
     #                                        callsite_stream,
     #                                        skip_entry_node=True)
-
-    # def generate_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: StateSubgraphView, state_id: int,
-    #                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-
-    #     function_stream.write('extern int __dace_comm_size, __dace_comm_rank;', cfg, state_id, map_header)
-
-
-    #     # Add extra opening brace (dynamic map ranges, closed in MapExit
-    #     # generator)
-    #     callsite_stream.write('{', cfg, state_id, map_header)
-
-    #     if len(map_header.map.params) > 1:
-    #         raise NotImplementedError('Multi-dimensional MPI maps are not supported')
-
-    #     state = cfg.state(state_id)
-    #     symtypes = map_header.new_symbols(sdfg, state, state.symbols_defined_at(map_header))
-
-
-    # #$$$$ First dace::copy()
-    #     for var, r in zip(map_header.map.params, map_header.map.range):
-    #         begin, end, skip = r
-
-    #         callsite_stream.write('{\n', cfg, state_id, map_header)
-    #         callsite_stream.write(
-    #             '%s %s = %s + __dace_comm_rank * (%s);\n' %
-    #             (symtypes[var], var, cppunparse.pyexpr2cpp(symbolic.symstr(begin, cpp_mode=True)),
-    #              cppunparse.pyexpr2cpp(symbolic.symstr(skip, cpp_mode=True))), cfg, state_id, map_header)
-
-    #     self._frame.allocate_arrays_in_scope(sdfg, cfg, map_header, function_stream, callsite_stream)
