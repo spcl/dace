@@ -115,8 +115,16 @@ def generate_random_data(
             np_dtype = dace.dtypes.typeclass.as_numpy_dtype(arr.dtype)
             if storage_type == dace.StorageType.GPU_Global:
                 new_input = cupy.random.rand(*shape).astype(np_dtype)
-            else:
+            elif storage_type == dace.StorageType.Default:
                 new_input = numpy.random.rand(*shape).astype(np_dtype)
+            elif storage_type == None:
+                if arr.storage == dace.StorageType.Default or arr.storage == dace.StorageType.CPU_Heap:
+                    new_input = numpy.random.rand(*shape).astype(np_dtype)
+                elif arr.storage ==  dace.StorageType.GPU_Global:
+                    new_input = cupy.random.rand(*shape).astype(np_dtype)
+                else:
+                    raise Exception(f"uwu, {arr.storage}, {storage_type}")
+
             randomly_generated_data[argname] = new_input
         else:
             raise Exception(
@@ -265,21 +273,21 @@ def end_to_end_measurements(
 ):
     aopt_sdfg: dace.sdfg.SDFG = dace.sdfg.SDFG.from_file(aopt_sdfg_path)
     auto_tiled_sdfg: dace.sdfg.SDFG = dace.sdfg.SDFG.from_file(auto_tiled_sdfg_path)
-    inputs = generate_random_data(auto_tiled_sdfg, inputs, dace.StorageType.Default)
+    inputs = generate_random_data(auto_tiled_sdfg, inputs, None)
 
     aopt_sdfg.instrument = dace.InstrumentationType.Timer
     auto_tiled_sdfg.instrument = dace.InstrumentationType.Timer
 
-    time1 = run_and_measure_sdfg(aopt_sdfg, inputs, True)
     time2 = run_and_measure_sdfg(auto_tiled_sdfg, inputs, True)
+    time1 = run_and_measure_sdfg(aopt_sdfg, inputs, True)
 
     if verbose:
         print(f"Auto opt time for {aopt_sdfg_path}: {time1}")
         print(f"Auto tiled time {auto_tiled_sdfg_path}: {time2}")
 
     results = {
-        ("Auto optimized", aopt_sdfg_path): time1,
-        ("Auto tiled", auto_tiled_sdfg_path): time2,
+        f"Auto optimized, {aopt_sdfg_path}": time1,
+        f"Auto tiled, {auto_tiled_sdfg_path}": time2,
     }
 
     with open(f"{program_name}_end_to_end_perf_results.json", "w") as json_file:
