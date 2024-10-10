@@ -44,10 +44,10 @@ import pdb;
 
 def is_ipu_kernel(sdfg, state):
         """
-        Returns whether the given state is an FPGA kernel and should be dispatched
-        to the FPGA code generator.
+        Returns whether the given state is an IPU kernel and should be dispatched
+        to the IPU code generator.
 
-        :return: True if this is an FPGA kernel, False otherwise.
+        :return: True if this is an IPU kernel, False otherwise.
         """
         # pdb.set_trace()
         data_nodes = state.data_nodes()
@@ -59,8 +59,6 @@ def is_ipu_kernel(sdfg, state):
                 at_least_one_ipu_allocated_array = True
             if isinstance(desc, data.Scalar):
                 continue
-            if desc.storage != dtypes.StorageType.IPU_Memory:
-                return False
         return at_least_one_ipu_allocated_array
     
 @registry.autoregister_params(name='ipu')
