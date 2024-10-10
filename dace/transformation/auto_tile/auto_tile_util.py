@@ -26,14 +26,15 @@ def _copy_sub_scope(state: dace.sdfg.SDFGState, scope_entry: dace.nodes.MapEntry
 
 def get_flops_and_mem_access(sdfg, state, device_map_entry):
     mem_access = 0
-    for e in state.in_edges(device_map_entry) + state.out_edges(
-        state.exit_node(device_map_entry)
-    ):
+    for e in state.in_edges(device_map_entry):
         u, uc, v, vc, memlet = e
-        acc = 1
-        for beg, end, step in memlet.subset:
-            acc *= (end + 1 - beg) / step
-        mem_access += acc * sizeof(sdfg.arrays[memlet.data].dtype.as_ctypes())
+        arr : dace.data.Array | dace.data.Scalar = sdfg.arrays[u.data]
+        mem_access += arr.total_size * sizeof(sdfg.arrays[u.data].dtype.as_ctypes())
+
+    for e in state.out_edges(state.exit_node(device_map_entry)):
+        u, uc, v, vc, memlet = e
+        arr : dace.data.Array | dace.data.Scalar = sdfg.arrays[v.data]
+        mem_access += arr.total_size  * sizeof(sdfg.arrays[v.data].dtype.as_ctypes())
 
     s = [device_map_entry]
     visited_guids = set()
@@ -89,12 +90,12 @@ def generate_random_data(
     storage_type: dace.StorageType = dace.StorageType.GPU_Global,
 ):
     randomly_generated_data = dict()
-    print(kernel_sdfg.symbols, kernel_sdfg.free_symbols)
+    # print(kernel_sdfg.symbols, kernel_sdfg.free_symbols)
     # TODO: HMMM, understand?
     for sym in defined_symbols:
         if sym in kernel_sdfg.free_symbols and not (sym in kernel_sdfg.symbols):
             kernel_sdfg.add_symbol(sym, type(defined_symbols[sym]))
-    print(kernel_sdfg.symbols, kernel_sdfg.free_symbols)
+    # print(kernel_sdfg.symbols, kernel_sdfg.free_symbols)
 
     kernel_sdfg_args = kernel_sdfg.arglist()
     for argname, arr in kernel_sdfg_args.items():
@@ -140,23 +141,34 @@ def run_and_measure_time(kernel_sdfg: SDFG, inputs : Dict[Type[str], Any]):
     assert len(kernel_sdfg.nodes()) == 1
     kernel_state = kernel_sdfg.nodes()[0]
 
-    kernel_sdfg.instrument = dace.InstrumentationType.Timer
     for node in kernel_state.nodes():
         if isinstance(node, dace.nodes.MapEntry):
             node.instrument = dace.InstrumentationType.GPU_Events
+    c = kernel_sdfg.compile()
 
     time = 0.0
-    for _ in range(5):
-        kernel_sdfg(**inputs)
+    for i in range(5):
+        c(**inputs)
         report = kernel_sdfg.get_latest_report()
-        report.process_events()
+        if report is not None:
+            report.process_events()
+        # Weird hack, TODO: fix
+            if len(report.durations.values()) == 0:
+                kernel_sdfg.save("/tmp/ccccc.sdfg")
+                kernel_sdfg = SDFG.from_file("/tmp/ccccc.sdfg")
+                c = kernel_sdfg.compile()
+                c(**inputs)
+                report = kernel_sdfg.get_latest_report()
+                report.process_events()
 
         final_list = next(iter(report.durations.values()))
         final_list = next(iter(final_list.values()))
         final_list = next(iter(final_list.values()))
 
-        time += statistics.median(final_list)
-    time /= 5.0
+        if i > 0:
+            time += statistics.median(final_list)
+
+    time /= 4.0
     return time
 
 
@@ -180,9 +192,9 @@ def run_and_measure_sdfg(kernel_sdfg: CompiledSDFG, inputs : Dict[Type[str], Any
 
 def percentage_peak(time, flops, mem_accessed, peak_flops, peak_bandwidh):
     op_intensity = flops / mem_accessed
-    theo_max_perf = min(op_intensity * peak_bandwidh, peak_flops)
-    my_perf = flops / (time / 1e3)
-    return (my_perf * 100) / theo_max_perf
+    theo_max_perf = min(peak_bandwidh * op_intensity, peak_flops)
+    my_perf = (flops * 1e3) / time
+    return (my_perf  * 100.0) / theo_max_perf
 
 
 def percentage_bandwidth(time, mem_accessed, peak_bandwidh):

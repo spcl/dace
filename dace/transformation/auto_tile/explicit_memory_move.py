@@ -111,18 +111,19 @@ class MemoryMovementNode(CodeLibraryNode):
 
                 code += f"{self._dst_arr_name}[line_num*{self._dst_arr.strides[-2]} + line_offset{further_access_str_dst}] = {self._src_arr_name}[{offset_expression_1d} + line_num*{self._src_arr.strides[-2]} + line_offset{further_access_str_src}];\n"
 
+                if self._dst_arr.shape[-2] > real_lines_at_a_time:
+                    code += f"}}\n"
+
                 if not dynamic_check:
                     if remainder_iters > 0:
                         code += f"if (tid < {remainder_iters*line_len}){{\n"
-                        code += f"i{var_id} = {conds[-2]};\n"
+                        code += f"const int i{var_id} = {conds[-2]};\n"
                         code += f"{self._dst_arr_name}[line_num*{self._dst_arr.strides[-2]} + line_offset{further_access_str_dst}] = {self._src_arr_name}[{offset_expression_1d} + line_num*{self._src_arr.strides[-2]} + line_offset{further_access_str_src}];\n"
                         code += "}\n"
 
                 if dynamic_check:
                     code += f"}}\n"*2
 
-                if self._dst_arr.shape[-2] > real_lines_at_a_time:
-                    code += f"}}\n"
                 if num_active_threads < num_threads:
                     code += f"}}\n"
                 for _ in self._dst_arr.shape[:-2]:
