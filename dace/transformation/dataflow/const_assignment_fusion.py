@@ -5,7 +5,8 @@ from typing import Optional
 from dace import transformation, SDFGState, SDFG, Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import OrderedDiGraph
-from dace.sdfg.nodes import Tasklet, ExitNode, MapEntry, MapExit
+from dace.sdfg.nodes import Tasklet, ExitNode, MapEntry, MapExit, NestedSDFG, Node
+from dace.sdfg.state import ControlFlowBlock
 from dace.sdfg.utils import node_path_graph
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import StateFusionExtended
@@ -40,22 +41,61 @@ class ConstAssignmentMapFusion(MapFusion):
                 free_floating_maps(cls.first_map_entry, cls.first_map_exit, cls.second_map_entry, cls.second_map_exit)]
 
     @staticmethod
-    def consistent_const_assignment_table(graph: SDFGState, en: MapEntry, ex: MapExit) -> tuple[bool, dict]:
+    def consistent_branch_const_assignment_table(graph: Node) -> tuple[bool, dict]:
         table = {}
-        for n in graph.all_nodes_between(en, ex):
-            # Each of the nodes in this map must be...
+        # Basic premise check.
+        if not isinstance(graph, NestedSDFG):
+            return False, table
+        graph: SDFG = graph.sdfg
+        if not isinstance(graph, ControlFlowBlock):
+            return False, table
+
+        # Must have exactly 3 nodes, and exactly one of them a source, another a sink.
+        src, snk = graph.source_nodes(), graph.sink_nodes()
+        if len(graph.nodes()) != 3 or len(src) != 1 or len(snk) != 1:
+            return False, table
+        src, snk = src[0], snk[0]
+        body = set(graph.nodes()) - {src, snk}
+        if len(body) != 1:
+            return False, table
+        body = list(body)[0]
+
+        # Must have certain structure of outgoing edges.
+        src_eds = list(graph.out_edges(src))
+        if len(src_eds) != 2 or any(e.data.is_unconditional() or e.data.assignments for e in src_eds):
+            return False, table
+        tb, el = src_eds
+        if tb.dst != body:
+            tb, el = el, tb
+        if tb.dst != body or el.dst != snk:
+            return False, table
+        body_eds = list(graph.out_edges(body))
+        if len(body_eds) != 1 or body_eds[0].dst != snk or not body_eds[0].data.is_unconditional() or body_eds[
+            0].data.assignments:
+            return False, table
+
+        # Branch conditions must depend only on the loop variables.
+        for b in [tb, el]:
+            cond = b.data.condition
+            for c in cond.code:
+                used = set([ast_node.id for ast_node in ast.walk(c) if isinstance(ast_node, ast.Name)])
+                if not used.issubset(graph.free_symbols):
+                    return False, table
+
+        # Body must have only constant assignments.
+        for n, _ in body.all_nodes_recursive():
+            # Each tasklet in this box...
             if not isinstance(n, Tasklet):
-                # ...a tasklet...
-                return False, table
+                continue
             if len(n.code.code) != 1 or not isinstance(n.code.code[0], ast.Assign):
-                # ...that assigns...
+                # ...must assign...
                 return False, table
             op = n.code.code[0]
             if not isinstance(op.value, ast.Constant) or len(op.targets) != 1:
                 # ...a constant to a single target.
                 return False, table
             const = op.value.value
-            for oe in graph.out_edges(n):
+            for oe in body.out_edges(n):
                 dst = oe.data
                 dst_arr = oe.data.data
                 if dst_arr in table and table[dst_arr] != const:
@@ -63,6 +103,46 @@ class ConstAssignmentMapFusion(MapFusion):
                     return False, table
                 table[dst] = const
                 table[dst_arr] = const
+        return True, table
+
+    @staticmethod
+    def consistent_const_assignment_table(graph: SDFGState, en: MapEntry, ex: MapExit) -> tuple[bool, dict]:
+        table = {}
+        for n in graph.all_nodes_between(en, ex):
+            if isinstance(n, NestedSDFG):
+                # First handle the case of conditional constant assignment.
+                is_branch_const_assignment, internal_table = ConstAssignmentMapFusion.consistent_branch_const_assignment_table(n)
+                if not is_branch_const_assignment:
+                    return False, table
+                for oe in graph.out_edges(n):
+                    dst = oe.data
+                    dst_arr = oe.data.data
+                    if dst_arr in table and table[dst_arr] != internal_table[oe.src_conn]:
+                        # A target array can appear multiple times, but it must always be consistently assigned.
+                        return False, table
+                    table[dst] = internal_table[oe.src_conn]
+                    table[dst_arr] = internal_table[oe.src_conn]
+            else:
+                # Each of the nodes in this map must be...
+                if not isinstance(n, Tasklet):
+                    # ...a tasklet...
+                    return False, table
+                if len(n.code.code) != 1 or not isinstance(n.code.code[0], ast.Assign):
+                    # ...that assigns...
+                    return False, table
+                op = n.code.code[0]
+                if not isinstance(op.value, ast.Constant) or len(op.targets) != 1:
+                    # ...a constant to a single target.
+                    return False, table
+                const = op.value.value
+                for oe in graph.out_edges(n):
+                    dst = oe.data
+                    dst_arr = oe.data.data
+                    if dst_arr in table and table[dst_arr] != const:
+                        # A target array can appear multiple times, but it must always be consistently assigned.
+                        return False, table
+                    table[dst] = const
+                    table[dst_arr] = const
         return True, table
 
     def map_nodes(self, graph: SDFGState):
@@ -164,26 +244,26 @@ class ConstAssignmentMapFusion(MapFusion):
             assert array_name in access_nodes
             if access_nodes[array_name] != e.dst:
                 graph.add_memlet_path(first_exit, access_nodes[array_name], src_conn=e.src_conn, dst_conn=e.dst_conn,
-                                      memlet=Memlet(str(e.data)))
+                                      memlet=Memlet.from_memlet(e.data))
                 graph.remove_edge(e)
         for e in graph.out_edges(second_exit):
             array_name = e.dst.data
             assert array_name in access_nodes
             graph.add_memlet_path(first_exit, access_nodes[array_name], src_conn=conn_map[e.src_conn],
-                                  dst_conn=e.dst_conn, memlet=Memlet(str(e.data)))
+                                  dst_conn=e.dst_conn, memlet=Memlet.from_memlet(e.data))
             graph.remove_edge(e)
 
         # Move the tasklets from the second map into the first map.
         second_tasklets = graph.all_nodes_between(second_entry, second_exit)
         for t in second_tasklets:
             for e in graph.in_edges(t):
-                graph.add_memlet_path(first_entry, t, memlet=Memlet())
+                graph.add_memlet_path(first_entry, t, memlet=Memlet.from_memlet(e.data))
                 graph.remove_edge(e)
             for e in graph.out_edges(t):
                 e_data = e.data
                 e_data.subset.replace(param_map)
                 graph.add_memlet_path(e.src, first_exit, src_conn=e.src_conn, dst_conn=conn_map[e.dst_conn],
-                                      memlet=Memlet(str(e_data)))
+                                      memlet=Memlet.from_memlet(e.data))
                 graph.remove_edge(e)
 
         # Redirect any outgoing edges from the nodes to be removed through their surviving counterparts.
@@ -191,7 +271,7 @@ class ConstAssignmentMapFusion(MapFusion):
             for e in graph.out_edges(n):
                 if e.dst != second_entry:
                     alt_n = access_nodes[n.data]
-                    memlet = Memlet(str(e.data)) if not e.data.is_empty() else Memlet()
+                    memlet = Memlet.from_memlet(e.data)
                     graph.add_memlet_path(alt_n, e.dst, src_conn=e.src_conn, dst_conn=e.dst_conn, memlet=memlet)
             graph.remove_node(n)
         graph.remove_node(second_entry)
