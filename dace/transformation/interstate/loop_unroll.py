@@ -5,7 +5,7 @@ import copy
 from typing import List, Optional
 
 from dace import sdfg as sd, symbolic
-from dace.properties import CodeBlock, Property, make_properties
+from dace.properties import Property, make_properties
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.frontend.python.astutils import ASTFindReplace
@@ -15,7 +15,7 @@ from dace.transformation.passes.analysis import loop_analysis
 @make_properties
 @xf.experimental_cfg_block_compatible
 class LoopUnroll(xf.MultiStateTransformation):
-    """ Unrolls a state machine for-loop into multiple states """
+    """ Unrolls a for-loop into multiple individual control flow regions """
 
     loop = xf.PatternNode(LoopRegion)
 
@@ -50,6 +50,10 @@ class LoopUnroll(xf.MultiStateTransformation):
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg):
+        # Loop must be fully unrollable for now.
+        if self.count != 0:
+            raise NotImplementedError # TODO(later)
+
         # Obtain loop information
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
@@ -65,9 +69,6 @@ class LoopUnroll(xf.MultiStateTransformation):
         # Create states for loop subgraph
         unrolled_iterations: List[ControlFlowRegion] = []
         for i in range(0, loop_diff, stride):
-            if self.count != 0 and i >= self.count:
-                break
-
             # Instantiate loop contents as a new control flow region with iterate value.
             current_index = start + i
             iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
@@ -78,27 +79,14 @@ class LoopUnroll(xf.MultiStateTransformation):
                 graph.add_edge(unrolled_iterations[-1], iteration_region, sd.InterstateEdge())
             unrolled_iterations.append(iteration_region)
 
-        if self.count != 0:
-            # Not all iterations of the loop were unrolled. Connect the unrolled iterations accordingly and adjust the
-            # remaining loop bounds.
-            if unrolled_iterations:
-                for ie in graph.in_edges(self.loop):
-                    graph.add_edge(ie.src, unrolled_iterations[0], ie.data)
-                graph.add_edge(unrolled_iterations[-1], self.loop, sd.InterstateEdge())
+        if unrolled_iterations:
+            for ie in graph.in_edges(self.loop):
+                graph.add_edge(ie.src, unrolled_iterations[0], ie.data)
+            for oe in graph.out_edges(self.loop):
+                graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
 
-                new_start = symbolic.evaluate(start + (self.count * stride), sdfg.constants)
-                self.loop.init_statement = CodeBlock(f'{self.loop.loop_variable} = {new_start}')
-        else:
-            # Everything was unrolled.
-            # Connect the unrolled iterations to the rest of the graph.
-            if unrolled_iterations:
-                for ie in graph.in_edges(self.loop):
-                    graph.add_edge(ie.src, unrolled_iterations[0], ie.data)
-                for oe in graph.out_edges(self.loop):
-                    graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
-
-            # Remove old loop.
-            graph.remove_node(self.loop)
+        # Remove old loop.
+        graph.remove_node(self.loop)
 
         if self.inline_iterations:
             for it in unrolled_iterations:
