@@ -431,6 +431,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Node validation
         try:
             if isinstance(node, nd.NestedSDFG):
+                if node.sdfg is None:
+                    continue
                 node.validate(sdfg, state, references, **context)
             else:
                 node.validate(sdfg, state)
@@ -716,12 +718,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Check memlet subset validity with respect to source/destination nodes
         if e.data.data is not None and e.data.allow_oob == False:
             subset_node = (dst_node
-                           if isinstance(dst_node, nd.AccessNode) and e.data.data == dst_node.data else src_node)
+                           if isinstance(dst_node, nd.AccessNode) and validate_memlet_data(e.data.data, dst_node.data) else src_node)
             other_subset_node = (dst_node
-                                 if isinstance(dst_node, nd.AccessNode) and e.data.data != dst_node.data else src_node)
+                                 if isinstance(dst_node, nd.AccessNode) and not validate_memlet_data(e.data.data, dst_node.data) else src_node)
 
             if isinstance(subset_node, nd.AccessNode):
-                arr = sdfg.arrays[subset_node.data]
+                arr = sdfg.arrays[e.data.data]
+
                 # Dimensionality
                 if e.data.subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(

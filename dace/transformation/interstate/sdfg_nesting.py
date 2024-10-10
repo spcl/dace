@@ -278,7 +278,28 @@ class InlineSDFG(transformation.SingleStateTransformation):
         views: Dict[str, Tuple[str, Memlet]] = {}
         input_set: Dict[str, str] = {}
         output_set: Dict[str, str] = {}
-        for e in state.in_edges(nsdfg_node):
+        struct_views : Dict[str, str] = {}
+
+        for e in list(state.in_edges(nsdfg_node)):
+            # Structure treatment
+            outer_dataname = state.memlet_path(e)[-1].data.data
+            if outer_dataname is None:
+                # Empty memlet, no data.
+                continue
+            outer_tokens = outer_dataname.split('.')
+            outer_dataname = outer_tokens[0]
+            outer_descriptor = sdfg.arrays[outer_dataname]
+            inner_dataname = e.dst_conn
+            inner_descriptor = nsdfg.arrays[inner_dataname]
+            if not isinstance(outer_descriptor, (type(inner_descriptor), type(data.View.view(inner_descriptor)))):
+                view_name = sdfg.add_datadesc_view(inner_dataname, inner_descriptor, find_new_name=True)
+                struct_views[inner_dataname] = view_name
+                view_node = state.add_access(view_name)
+                state.add_edge(e.src, e.src_conn, view_node, 'views', copy.deepcopy(e.data))
+                new_e = state.add_edge(view_node, None, nsdfg_node, inner_dataname, Memlet.from_array(view_name, view_node.desc(sdfg)))
+                state.remove_edge(e)
+                e = new_e
+            
             inputs[e.dst_conn] = e
             input_set[e.data.data] = e.dst_conn
             if isinstance(e.src, nodes.AccessNode):
@@ -293,7 +314,29 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     mem.subset = srcset
                     mem.other_subset = dstset
                     views[d] = (arr, mem)
-        for e in state.out_edges(nsdfg_node):
+
+        for e in list(state.out_edges(nsdfg_node)):
+            # Structure treatment
+            outer_dataname = state.memlet_path(e)[0].data.data
+            if outer_dataname is None:
+                # Empty memlet, no data.
+                continue
+            outer_tokens = outer_dataname.split('.')
+            outer_dataname = outer_tokens[0]
+            outer_descriptor = sdfg.arrays[outer_dataname]
+            inner_dataname = e.src_conn
+            inner_descriptor = nsdfg.arrays[inner_dataname]
+            if not isinstance(outer_descriptor, (type(inner_descriptor), type(data.View.view(inner_descriptor)))):
+                if inner_dataname in struct_views:
+                    view_name = struct_views[inner_dataname]
+                else:
+                    view_name = sdfg.add_datadesc_view(inner_dataname, inner_descriptor, find_new_name=True)
+                view_node = state.add_access(view_name)
+                new_e = state.add_edge(nsdfg_node, inner_dataname, view_node, None, Memlet.from_array(view_name, view_node.desc(sdfg)))
+                state.add_edge(view_node, 'views', e.dst, e.dst_conn, copy.deepcopy(e.data))
+                state.remove_edge(e)
+                e = new_e
+
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
             if isinstance(e.dst, nodes.AccessNode):
@@ -314,7 +357,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
 
         # Access nodes that need to be reshaped
-        reshapes: Set(str) = set()
+        reshapes: Set[str] = set()
         for aname, array in nsdfg.arrays.items():
             if array.transient:
                 continue
@@ -505,14 +548,24 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         if (edge not in modified_edges and edge.data.data == node.data):
                             for e in state.memlet_tree(edge):
                                 if e._data.get_dst_subset(e, state):
-                                    new_memlet = helpers.unsqueeze_memlet(e.data, outer_edge.data, use_dst_subset=True)
+                                    offset = sdfg.arrays[e.data.data].offset
+                                    new_memlet = helpers.unsqueeze_memlet(e.data,
+                                                                          outer_edge.data,
+                                                                          use_dst_subset=True,
+                                                                          internal_offset=offset,
+                                                                          external_offset=offset)
                                     e._data.dst_subset = new_memlet.subset
                     # NOTE: Node is source
                     for edge in state.out_edges(node):
                         if (edge not in modified_edges and edge.data.data == node.data):
                             for e in state.memlet_tree(edge):
                                 if e._data.get_src_subset(e, state):
-                                    new_memlet = helpers.unsqueeze_memlet(e.data, outer_edge.data, use_src_subset=True)
+                                    offset = sdfg.arrays[e.data.data].offset
+                                    new_memlet = helpers.unsqueeze_memlet(e.data,
+                                                                          outer_edge.data,
+                                                                          use_src_subset=True,
+                                                                          internal_offset=offset,
+                                                                          external_offset=offset)
                                     e._data.src_subset = new_memlet.subset
 
         # If source/sink node is not connected to a source/destination access
@@ -621,10 +674,17 @@ class InlineSDFG(transformation.SingleStateTransformation):
                                 state.out_edges_by_connector(nsdfg_node, inner_data))
                             # Create memlet by unsqueezing both w.r.t. src and
                             # dst subsets
-                            in_memlet = helpers.unsqueeze_memlet(inner_edge.data, top_edge.data, use_src_subset=True)
+                            offset = state.parent.arrays[top_edge.data.data].offset
+                            in_memlet = helpers.unsqueeze_memlet(inner_edge.data,
+                                                                 top_edge.data,
+                                                                 use_src_subset=True,
+                                                                 internal_offset=offset,
+                                                                 external_offset=offset)
                             out_memlet = helpers.unsqueeze_memlet(inner_edge.data,
                                                                   matching_edge.data,
-                                                                  use_dst_subset=True)
+                                                                  use_dst_subset=True,
+                                                                  internal_offset=offset,
+                                                                  external_offset=offset)
                             new_memlet = in_memlet
                             new_memlet.other_subset = out_memlet.subset
 
@@ -647,10 +707,18 @@ class InlineSDFG(transformation.SingleStateTransformation):
                                 state.out_edges_by_connector(nsdfg_node, inner_data))
                             # Create memlet by unsqueezing both w.r.t. src and
                             # dst subsets
-                            in_memlet = helpers.unsqueeze_memlet(inner_edge.data, top_edge.data, use_src_subset=True)
+                            offset = state.parent.arrays[top_edge.data.data].offset
+                            in_memlet = helpers.unsqueeze_memlet(inner_edge.data,
+                                                                 top_edge.data,
+                                                                 use_src_subset=True,
+                                                                 internal_offset=offset,
+                                                                 external_offset=offset)
                             out_memlet = helpers.unsqueeze_memlet(inner_edge.data,
                                                                   matching_edge.data,
-                                                                  use_dst_subset=True)
+                                                                  use_dst_subset=True,
+                                                                  internal_offset=offset,
+                                                                  external_offset=offset)
+
                             new_memlet = in_memlet
                             new_memlet.other_subset = out_memlet.subset
 
@@ -678,6 +746,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
         """ Modifies memlet paths in an inlined SDFG. Returns set of modified
             edges.
         """
+
+        def _is_nested(memlet):
+            return '.' in memlet.data
+
         result = set()
         for node, top_edge in new_edges.items():
             inner_edges = (nstate.out_edges(node) if inputs else nstate.in_edges(node))
@@ -685,7 +757,18 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 if inner_edge in edges_to_ignore:
                     new_memlet = inner_edge.data
                 else:
-                    new_memlet = helpers.unsqueeze_memlet(inner_edge.data, top_edge.data)
+                    if _is_nested(inner_edge.data):
+                        outer_root_name = top_edge.data.data.split('.')[0]
+                        tokens = inner_edge.data.data.split('.')
+                        inner_root_name = tokens[0]
+                        inner_nested_name = '.'.join(tokens[1:])
+                        new_memlet = Memlet(data=f"{outer_root_name}.{inner_nested_name}", subset=inner_edge.data.subset)
+                    else:
+                        offset = state.parent.arrays[top_edge.data.data].offset
+                        new_memlet = helpers.unsqueeze_memlet(inner_edge.data,
+                                                            top_edge.data,
+                                                            internal_offset=offset,
+                                                            external_offset=offset)
                 if inputs:
                     if inner_edge.dst in inner_to_outer:
                         dst = inner_to_outer[inner_edge.dst]
@@ -704,15 +787,19 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     mtree = state.memlet_tree(new_edge)
 
                 # Modify all memlets going forward/backward
-                def traverse(mtree_node):
+                def traverse(mtree_node, state, nstate):
                     result.add(mtree_node.edge)
-                    mtree_node.edge._data = helpers.unsqueeze_memlet(mtree_node.edge.data, top_edge.data)
+                    offset = state.parent.arrays[top_edge.data.data].offset
+                    mtree_node.edge._data = helpers.unsqueeze_memlet(mtree_node.edge.data,
+                                                                     top_edge.data,
+                                                                     internal_offset=offset,
+                                                                     external_offset=offset)
                     for child in mtree_node.children:
-                        traverse(child)
+                        traverse(child, state, nstate)
 
                 result.add(new_edge)
                 for child in mtree.children:
-                    traverse(child)
+                    traverse(child, state, nstate)
 
         return result
 
@@ -1032,7 +1119,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
-                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) - set(nsdfg.symbol_mapping.keys()))
+                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) -
+                                   set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
                     ignore.add(cname)
                     continue
@@ -1041,10 +1129,13 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         _check_cand(out_candidates, state.out_edges_by_connector)
 
         # Return result, filtering out the states
-        return ({k: (dc(v), ind)
-                 for k, (v, _, ind) in in_candidates.items()
-                 if k not in ignore}, {k: (dc(v), ind)
-                                       for k, (v, _, ind) in out_candidates.items() if k not in ignore})
+        return ({
+            k: (dc(v), ind)
+            for k, (v, _, ind) in in_candidates.items() if k not in ignore
+        }, {
+            k: (dc(v), ind)
+            for k, (v, _, ind) in out_candidates.items() if k not in ignore
+        })
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
         nsdfg = self.nsdfg
@@ -1067,7 +1158,17 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     outer_edge = next(iter(outer_edges(nsdfg_node, aname)))
                 except StopIteration:
                     continue
-                new_memlet = helpers.unsqueeze_memlet(refine, outer_edge.data)
+
+                if isinstance(outer_edge.dst, nodes.NestedSDFG):
+                    conn = outer_edge.dst_conn
+                else:
+                    conn = outer_edge.src_conn
+                int_desc = nsdfg.arrays[conn]
+                ext_desc = sdfg.arrays[outer_edge.data.data]
+                new_memlet = helpers.unsqueeze_memlet(refine,
+                                                      outer_edge.data,
+                                                      internal_offset=int_desc.offset,
+                                                      external_offset=ext_desc.offset)
                 outer_edge.data.subset = subsets.Range([
                     ns if i in indices else os
                     for i, (os, ns) in enumerate(zip(outer_edge.data.subset, new_memlet.subset))
