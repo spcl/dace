@@ -1609,6 +1609,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         schedule=dtypes.ScheduleType.Default,
         location=None,
         debuginfo=None,
+        symbol_type_mapping: Dict[str, dtypes.typeclass] = None
     ):
         """ Adds a nested SDFG to the SDFG state. """
         if name is None:
@@ -1665,6 +1666,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 # symbols_defined_at in this moment
                 sdfg.add_symbol(sym, infer_expr_type(symval, self.sdfg.symbols) or dtypes.typeclass(int))
 
+        # If we want to do this without the user input, we need use the first scope node
+        # Encompassing the nested SDFG
+        if symbol_type_mapping:
+            for sym in sdfg.symbols:
+                if sym in symbol_type_mapping:
+                    sdfg.symbols[sym] = symbol_type_mapping[sym]
         return s
 
     def add_map(
