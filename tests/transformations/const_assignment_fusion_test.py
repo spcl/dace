@@ -16,6 +16,7 @@ def assign_top_row(A: dace.float32[M, N]):
     for t in dace.map[0:N]:
         A[0, t] = 1
 
+
 @dace.program
 def assign_top_row_branched(A: dace.float32[M, N]):
     for t, in dace.map[0:N]:
@@ -42,18 +43,18 @@ def assign_right_col(A: dace.float32[M, N]):
 
 
 def assign_bounary_sdfg():
-    st0 = assign_top_row.to_sdfg(simplify=True, validate=True)
+    st0 = assign_top_row.to_sdfg(simplify=True, validate=True, use_cache=False)
     st0.start_block.label = 'st0'
 
-    st1 = assign_bottom_row.to_sdfg(simplify=True, validate=True)
+    st1 = assign_bottom_row.to_sdfg(simplify=True, validate=True, use_cache=False)
     st1.start_block.label = 'st1'
     st0.add_edge(st0.start_state, st1.start_state, dace.InterstateEdge())
 
-    st2 = assign_left_col.to_sdfg(simplify=True, validate=True)
+    st2 = assign_left_col.to_sdfg(simplify=True, validate=True, use_cache=False)
     st2.start_block.label = 'st2'
     st0.add_edge(st1.start_state, st2.start_state, dace.InterstateEdge())
 
-    st3 = assign_right_col.to_sdfg(simplify=True, validate=True)
+    st3 = assign_right_col.to_sdfg(simplify=True, validate=True, use_cache=False)
     st3.start_block.label = 'st3'
     st0.add_edge(st2.start_state, st3.start_state, dace.InterstateEdge())
 
@@ -132,7 +133,7 @@ def test_free_floating_fusion():
     B = np.random.uniform(size=(4, 5)).astype(np.float32)
 
     # Construct SDFG with the maps on separate states.
-    g = assign_bounary_free_floating.to_sdfg(simplify=True)
+    g = assign_bounary_free_floating.to_sdfg(simplify=True, validate=True, use_cache=False)
     g.save(os.path.join('_dacegraphs', 'floating-0.sdfg'))
     g.validate()
     actual_A = deepcopy(A)
@@ -161,7 +162,7 @@ def test_fusion_with_branch():
     B = np.random.uniform(size=(4, 5)).astype(np.float32)
 
     # Construct SDFG with the maps on separate states.
-    g = assign_bounary_with_branch.to_sdfg(simplify=True)
+    g = assign_bounary_with_branch.to_sdfg(simplify=True, validate=True, use_cache=False)
     g.save(os.path.join('_dacegraphs', 'branched-0.sdfg'))
     g.validate()
     actual_A = deepcopy(A)
