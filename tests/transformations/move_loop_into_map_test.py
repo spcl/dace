@@ -2,6 +2,7 @@
 import dace
 from dace.transformation.interstate import MoveLoopIntoMap
 import unittest
+import copy
 import numpy as np
 
 I = dace.symbol("I")
@@ -170,7 +171,26 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         body.add_nedge(aread, oread, dace.Memlet.from_array('A', aarr))
         body.add_nedge(twrite, owrite, dace.Memlet.from_array('out', oarr))
         sdfg.add_loop(None, body, None, '_', '0', '_ < 10', '_ + 1')
-        count = sdfg.apply_transformations(MoveLoopIntoMap)
+
+        sdfg_args_ref = {
+            "A": np.array(np.random.rand(3, 3), dtype=np.float64),
+            "B": np.array(np.random.rand(3, 3), dtype=np.float64),
+            "out": np.array(np.random.rand(3, 3), dtype=np.float64),
+        }
+        sdfg_args_res = copy.deepcopy(sdfg_args_ref)
+
+        # Perform the reference execution
+        sdfg(**sdfg_args_ref)
+
+        # Apply the transformation and execute the SDFG again.
+        count = sdfg.apply_transformations(MoveLoopIntoMap, validate_all=True, validate=True)
+        sdfg(**sdfg_args_res)
+
+        for name in sdfg_args_ref.keys():
+            self.assertTrue(
+                np.allclose(sdfg_args_ref[name], sdfg_args_res[name]),
+                f"Miss match for {name}",
+            )
         self.assertFalse(count > 0)
 
     def test_more_than_a_map_1(self):
