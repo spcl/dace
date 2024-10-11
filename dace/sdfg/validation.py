@@ -34,7 +34,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
                                  symbols: dict,
                                  references: Set[int] = None,
                                  **context: bool):
-    from dace.sdfg.state import SDFGState, ControlFlowRegion
+    from dace.sdfg.state import SDFGState, ControlFlowRegion, ConditionalBlock
     from dace.sdfg.scope import is_in_scope
 
     if len(region.source_nodes()) > 1 and region.start_block is None:
@@ -128,6 +128,10 @@ def validate_control_flow_region(sdfg: 'SDFG',
             if isinstance(edge.dst, SDFGState):
                 validate_state(edge.dst, region.node_id(edge.dst), sdfg, symbols, initialized_transients, references,
                                **context)
+            elif isinstance(edge.dst, ConditionalBlock):
+                for _, r in edge.dst.branches:
+                    if r is not None:
+                        validate_control_flow_region(sdfg, r, initialized_transients, symbols, references, **context)
             elif isinstance(edge.dst, ControlFlowRegion):
                 validate_control_flow_region(sdfg, edge.dst, initialized_transients, symbols, references, **context)
     # End of block DFS
@@ -216,6 +220,34 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             blocks = cfg.nodes()
             if len(blocks) != len(set([s.label for s in blocks])):
                 raise InvalidSDFGError('Found multiple blocks with the same name in ' + cfg.name, sdfg, None)
+
+        # Check the names of data descriptors and co.
+        seen_names: Set[str] = set()
+        for obj_names in [
+                sdfg.arrays.keys(), sdfg.symbols.keys(), sdfg._rdistrarrays.keys(), sdfg._subarrays.keys()
+        ]:
+            if not seen_names.isdisjoint(obj_names):
+                raise InvalidSDFGError(
+                    f'Found duplicated names: "{seen_names.intersection(obj_names)}". Please ensure '
+                    'that the names of symbols, data descriptors, subarrays and rdistarrays are unique.', sdfg, None)
+            seen_names.update(obj_names)
+
+        # Ensure that there is a mentioning of constants in either the array or symbol.
+        for const_name, (const_type, _) in sdfg.constants_prop.items():
+            if const_name in sdfg.arrays:
+                if const_type != sdfg.arrays[const_name].dtype:
+                    # This should actually be an error, but there is a lots of code that depends on it.
+                    warnings.warn(
+                        f'Mismatch between constant and data descriptor of "{const_name}", '
+                        f'expected to find "{const_type}" but found "{sdfg.arrays[const_name]}".')
+            elif const_name in sdfg.symbols:
+                if const_type != sdfg.symbols[const_name]:
+                    # This should actually be an error, but there is a lots of code that depends on it.
+                    warnings.warn(
+                        f'Mismatch between constant and symobl type of "{const_name}", '
+                        f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
+            else:
+                warnings.warn(f'Found constant "{const_name}" that does not refer to an array or a symbol.')
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():

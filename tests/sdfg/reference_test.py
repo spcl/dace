@@ -8,6 +8,7 @@ from dace.transformation.passes.canonicalization import SeparateRefsets
 from dace.transformation.passes.reference_reduction import ReferenceToView
 import numpy as np
 import pytest
+import networkx as nx
 
 
 def test_unset_reference():
@@ -673,6 +674,51 @@ def test_separate_references():
     assert np.allclose(b[7], a[7])
 
 
+def test_ref2view_reconnection():
+    """
+    Tests a regression in which ReferenceToView disconnects an existing weakly-connected state
+    and thus creating a race condition.
+    """
+    sdfg = dace.SDFG('reftest')
+    sdfg.add_array('A', [2], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    sdfg.add_reference('ref', [1], dace.float64)
+
+    state = sdfg.add_state()
+    a2 = state.add_access('A')
+    ref = state.add_access('ref')
+    b = state.add_access('B')
+
+    t2 = state.add_tasklet('addone', {'inp'}, {'out'}, 'out = inp + 1')
+    state.add_edge(ref, None, t2, 'inp', dace.Memlet('ref[0]'))
+    state.add_edge(t2, 'out', b, None, dace.Memlet('B[0]'))
+    state.add_edge(a2, None, ref, 'set', dace.Memlet('A[1]'))
+
+    t1 = state.add_tasklet('addone', {'inp'}, {'out'}, 'out = inp + 1')
+    a1 = state.add_access('A')
+    state.add_edge(a1, None, t1, 'inp', dace.Memlet('A[1]'))
+    state.add_edge(t1, 'out', a2, None, dace.Memlet('A[1]'))
+
+    # Test correctness before pass
+    A = np.random.rand(2)
+    B = np.random.rand(1)
+    ref = (A[1] + 2)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, ref)
+
+    # Test reference-to-view
+    result = Pipeline([ReferenceToView()]).apply_pass(sdfg, {})
+    assert result['ReferenceToView'] == {'ref'}
+
+    # Pass should not break order
+    assert len(list(nx.weakly_connected_components(state.nx))) == 1
+
+    # Test correctness after pass
+    ref = (A[1] + 2)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, ref)
+
+
 if __name__ == '__main__':
     test_unset_reference()
     test_reference_branch()
@@ -699,4 +745,5 @@ if __name__ == '__main__':
     test_ref2view_refset_in_scope(False, True)
     test_ref2view_refset_in_scope(True, False)
     test_ref2view_refset_in_scope(True, True)
+    test_ref2view_reconnection()
     test_separate_references()

@@ -529,7 +529,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
-        if sdfg.root_sdfg.using_experimental_blocks:
+        if sdfg.root_sdfg.recheck_using_experimental_blocks():
             # Use control flow blocks embedded in the SDFG to generate control flow.
             cft = cflow.structured_control_flow_tree_with_regions(sdfg, dispatch_state)
         elif config.Config.get_bool('optimizer', 'detect_control_flow'):
