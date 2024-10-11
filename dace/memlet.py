@@ -379,8 +379,8 @@ class Memlet(object):
             self._is_data_src = True
         else:
             self.data = dst_data
-            self.subset = src_subset
-            self.other_subset = dst_subset
+            self.subset = dst_subset
+            self.other_subset = src_subset
             self._is_data_src = False
 
     def try_initialize(self, sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
