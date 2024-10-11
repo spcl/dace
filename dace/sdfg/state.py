@@ -8,7 +8,7 @@ import copy
 import inspect
 import itertools
 import warnings
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
+from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type, Union,
                     overload)
 
 import dace
@@ -3417,6 +3417,9 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
     def nodes(self) -> List['ControlFlowBlock']:
         return [node for _, node in self._branches]
+
+    def number_of_nodes(self):
+        return len(self._branches)
 
     def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
         return []

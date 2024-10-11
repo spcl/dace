@@ -41,8 +41,9 @@ class DeadStateElimination(ppl.Pass):
         """
         result: Set[Union[ControlFlowBlock, InterstateEdge]] = set()
         removed_regions: Set[ControlFlowRegion] = set()
+        annotated = None
         for cfg in list(sdfg.all_control_flow_regions()):
-            if cfg in removed_regions:
+            if cfg in removed_regions or isinstance(cfg, ConditionalBlock):
                 continue
 
             # Mark dead blocks and remove them

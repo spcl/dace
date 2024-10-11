@@ -28,6 +28,9 @@ class ControlFlowRaising(ppl.Pass):
         n_cond_regions_pre = len([x for x in sdfg.all_control_flow_blocks() if isinstance(x, ConditionalBlock)])
 
         for region in cfgs:
+            if isinstance(region, ConditionalBlock):
+                continue
+
             dummy_exit = region.add_state('__DACE_DUMMY')
             for s in region.sink_nodes():
                 if s is not dummy_exit:

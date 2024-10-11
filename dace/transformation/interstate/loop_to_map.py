@@ -102,10 +102,6 @@ class LoopToMap(xf.MultiStateTransformation):
         _, write_set = self.loop.read_and_write_sets()
         loop_states = set(self.loop.all_states())
         all_loop_blocks = set(self.loop.all_control_flow_blocks())
-        #write_set: Set[str] = set()
-        #for block in loop_states:
-        #    _, wset = block.read_and_write_sets()
-        #    write_set |= wset
 
         # Collect symbol reads and writes from inter-state assignments
         in_order_loop_blocks = list(cfg_analysis.blockorder_topological_sort(self.loop, recursive=True,
@@ -200,6 +196,20 @@ class LoopToMap(xf.MultiStateTransformation):
         # reassigned.
         in_order_blocks = list(cfg_analysis.blockorder_topological_sort(sdfg, recursive=True,
                                                                         ignore_nonstate_blocks=False))
+        # First check the outgoing edges of the loop itself.
+        reassigned_symbols: Set[str] = None
+        for oe in graph.out_edges(self.loop):
+            if symbols_that_may_be_used & oe.data.read_symbols():
+                return False
+            # Check for symbols that are set by all outgoing edges
+            # TODO: Handle case of subset of out_edges
+            if reassigned_symbols is None:
+                reassigned_symbols = set(oe.data.assignments.keys())
+            else:
+                reassigned_symbols &= oe.data.assignments.keys()
+        # Remove reassigned symbols
+        if reassigned_symbols is not None:
+            symbols_that_may_be_used -= reassigned_symbols
         loop_idx = in_order_blocks.index(self.loop)
         for block in in_order_blocks[loop_idx + 1:]:
             if block in all_loop_blocks:
@@ -213,7 +223,7 @@ class LoopToMap(xf.MultiStateTransformation):
                 return False
 
             # Check inter-state edges
-            reassigned_symbols: Set[str] = None
+            reassigned_symbols = None
             for e in block.parent_graph.out_edges(block):
                 if symbols_that_may_be_used & e.data.read_symbols():
                     return False
