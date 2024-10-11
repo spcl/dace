@@ -987,9 +987,6 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
     }
 
     def visit_UnaryOp(self, node):
-        # Convert expressions of the form "-(a == b)" to ternary operators
-        node.operand = self._convert_boolop_to_ifexpr(node.operand)
-
         if isinstance(node.op, ast.Not):
             func_node = ast.copy_location(ast.Name(id=type(node.op).__name__, ctx=ast.Load()), node)
             new_node = ast.Call(func=func_node, args=[self.visit(node.operand)], keywords=[])
@@ -999,10 +996,14 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
                                           node)
             new_node = ast.Call(func=func_node, args=[self.visit(node.operand)], keywords=[])
             return ast.copy_location(new_node, node)
+
+        # Convert arithmetic expressions of the form "-(a == b)" to ternary operators
+        node.operand = self._convert_boolop_to_ifexpr(node.operand)
+
         return self.generic_visit(node)
 
     def visit_BinOp(self, node):
-        # Convert expressions of the form "a + (b == c)" to ternary operators
+        # Convert arithmetic expressions of the form "a + (b == c)" to ternary operators
         node.left = self._convert_boolop_to_ifexpr(node.left)
         node.right = self._convert_boolop_to_ifexpr(node.right)
 
