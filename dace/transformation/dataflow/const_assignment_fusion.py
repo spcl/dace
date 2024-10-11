@@ -393,13 +393,14 @@ class ConstAssignmentMapFusion(MapFusion):
         dst_en, dst_ex = dst
         src_en, src_ex = src
 
-        def with_start_and_stride(r, start, stride):
+        def range_for_grid_stride(r, val, bound):
             r = list(r)
-            r[0] = start
-            r[2] = stride
+            r[0] = val
+            r[1] = bound - 1
+            r[2] = bound
             return tuple(r)
 
-        gsl_ranges = [with_start_and_stride(rd, p, rs[1] + 1)
+        gsl_ranges = [range_for_grid_stride(rd, p, rs[1] + 1)
                       for p, rs, rd in zip(dst_en.map.params, src_en.map.range.ranges, dst_en.map.range.ranges)]
         gsl_params = [f"gsl_{p}" for p in dst_en.map.params]
         en, ex = graph.add_map(graph.sdfg._find_new_name('gsl'),
