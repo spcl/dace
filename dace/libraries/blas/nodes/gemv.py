@@ -610,12 +610,12 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGemvCuBLAS(ExpandTransformation):
+class ExpandGemvGPUBLAS(ExpandTransformation):
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
+    @classmethod
+    def expansion(cls, node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
         node.validate(sdfg, state)
 
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x, shape_x, strides_x),
@@ -646,7 +646,7 @@ class ExpandGemvCuBLAS(ExpandTransformation):
                           'one dimension. Falling back to pure expansion.')
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
-        trans = 'CUBLAS_OP_N' if transA else 'CUBLAS_OP_T'
+        trans = cls.backend_op('N') if transA else cls.backend_op('T')
         if not node.transA:
             m, n = n, m
 
@@ -655,18 +655,36 @@ class ExpandGemvCuBLAS(ExpandTransformation):
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
         try:
-            func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
+            # func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
+            func = cls.funcname(blas_helpers.to_blastype(dtype.type))
+            if dtype == dace.float16:
+                cdtype = '__half'
+                factort = 'Half'
+            elif dtype == dace.float32:
+                cdtype = 'float'
+                factort = 'Float'
+            elif dtype == dace.float64:
+                cdtype = 'double'
+                factort = 'Double'
+            elif dtype == dace.complex64:
+                cdtype = f'{cls.dtype_backend}Complex'
+                factort = 'Complex64'
+            elif dtype == dace.complex128:
+                cdtype = f'{cls.dtype_backend}DoubleComplex'
+                factort = 'Complex128'
+            else:
+                raise TypeError("Unsupported type: " + str(dtype))
+            ctype, runtimetype = cdtype, factort
         except TypeError as ex:
             warnings.warn(f'{ex}. Falling back to pure expansion')
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
-        func += 'gemv'
-        call_prefix = environments.cublas.cuBLAS.handle_setup_code(node)
+        call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ''
 
         # Handle alpha / beta
         constants = {
-            1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Pone()",
-            0.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Zero()",
+            1.0: f"__state->{cls.backend}blas_handle.Constants(__dace_cuda_device).{runtimetype}Pone()",
+            0.0: f"__state->{cls.backend}blas_handle.Constants(__dace_cuda_device).{runtimetype}Zero()",
         }
         if node.alpha not in constants or node.beta not in constants:
             # Deal with complex input constants
@@ -680,13 +698,11 @@ class ExpandGemvCuBLAS(ExpandTransformation):
                 beta = f'{dtype.ctype}({node.beta})'
 
             # Set pointer mode to host
-            call_prefix += f'''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);
+            call_prefix += f'''{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_host});
             {dtype.ctype} alpha = {alpha};
             {dtype.ctype} beta = {beta};
             '''
-            call_suffix += '''
-cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
-            '''
+            call_suffix += f'''{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_host});'''
             alpha = f'({ctype} *)&alpha'
             beta = f'({ctype} *)&beta'
         else:
@@ -694,7 +710,7 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
             beta = constants[node.beta]
 
         code = (call_prefix + f"""
-cublas{func}(__dace_cublas_handle, {trans}, {m}, {n}, {alpha}, _A, {lda},
+{cls.backend}blas{func}(__dace_{cls.backend}blas_handle, {trans}, {m}, {n}, {alpha}, _A, {lda},
              _x, {strides_x[0]}, {beta}, _y, {strides_y[0]});
                 """ + call_suffix)
 
@@ -705,6 +721,48 @@ cublas{func}(__dace_cublas_handle, {trans}, {m}, {n}, {alpha}, _A, {lda},
                                           language=dace.dtypes.Language.CPP)
 
         return tasklet
+
+
+@dace.library.expansion
+class ExpandGemvCuBLAS(ExpandGemvGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    backend = 'cu'
+    dtype_backend = 'cu'
+    set_pointer_mode = 'cublasSetPointerMode'
+    pointer_host = 'CUBLAS_POINTER_MODE_HOST'
+    pointer_device = 'CUBLAS_POINTER_MODE_DEVICE'
+    ex_suffix = 'GemvEx'
+
+    @classmethod
+    def backend_op(cls, mode: str) -> str:
+        return f'CUBLAS_OP_{mode}'
+
+    @classmethod
+    def funcname(cls, dtype: str) -> str:
+        return f'{dtype}gemv'
+
+
+@dace.library.expansion
+class ExpandGemvRocBLAS(ExpandGemvGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    backend = 'roc'
+    dtype_backend = 'hip'
+    set_pointer_mode = 'rocblas_set_pointer_mode'
+    pointer_host = 'rocblas_pointer_mode_host'
+    pointer_device = 'rocblas_pointer_mode_device'
+    ex_suffix = '_gemv_ex'
+
+    @classmethod
+    def backend_op(cls, mode: str) -> str:
+        if mode == 'N':
+            return 'rocblas_operation_none'
+        elif mode == 'T':
+            return 'rocblas_operation_transpose'
+        raise ValueError(f'Invalid gemv matrix operation {mode}')
+
+    @classmethod
+    def funcname(cls, dtype: str) -> str:
+        return f'_{dtype.lower()}gemv'
 
 
 @dace.library.expansion
@@ -859,6 +917,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandGemvOpenBLAS,
         "MKL": ExpandGemvMKL,
         "cuBLAS": ExpandGemvCuBLAS,
+        "rocBLAS": ExpandGemvRocBLAS,
         "FPGA_Accumulate": ExpandGemvFpgaAccumulate,
         "FPGA_TilesByColumn": ExpandGemvFpgaTilesByColumn,
         "PBLAS": ExpandGemvPBLAS
