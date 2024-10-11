@@ -14,10 +14,12 @@ from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import StateFusionExtended
 
 
-def unique_map_node(graph: SDFGState) -> Optional[tuple[MapEntry, MapExit]]:
-    all_nodes = list(graph.all_nodes_recursive())
-    en: list[MapEntry] = [n for n, _ in all_nodes if isinstance(n, MapEntry)]
-    ex = [n for n, _ in all_nodes if isinstance(n, MapExit)]
+def unique_top_level_map_node(graph: SDFGState) -> Optional[tuple[MapEntry, MapExit]]:
+    all_top_nodes = [n for n, s in graph.scope_dict().items() if s is None]
+    if not all(isinstance(n, (MapEntry, AccessNode)) for n in all_top_nodes):
+        return None
+    en: list[MapEntry] = [n for n in all_top_nodes if isinstance(n, MapEntry)]
+    ex: list[MapExit] = [graph.exit_node(n) for n in all_top_nodes if isinstance(n, MapEntry)]
     if len(en) != 1 or len(ex) != 1:
         return None
     return en[0], ex[0]
@@ -152,6 +154,19 @@ class ConstAssignmentMapFusion(MapFusion):
                         return False, table
                     table[dst] = internal_table[oe.src_conn]
                     table[dst_arr] = internal_table[oe.src_conn]
+            elif isinstance(n, MapEntry):
+                is_const_assignment, internal_table = ConstAssignmentMapFusion.consistent_const_assignment_table(graph,
+                                                                                                                 n,
+                                                                                                                 graph.exit_node(
+                                                                                                                     n))
+                if not is_const_assignment:
+                    return False, table
+                for k, v in internal_table.items():
+                    if k in table and v != table[k]:
+                        return False, table
+                    internal_table[k] = v
+            elif isinstance(n, MapExit):
+                pass  # Handled with `MapEntry`
             else:
                 # Each of the nodes in this map must be...
                 if not isinstance(n, Tasklet):
@@ -486,7 +501,7 @@ class ConstAssignmentStateFusion(StateFusionExtended):
         # Moreover, the states together must contain a consistent constant assignment map.
         assignments = {}
         for st in [st0, st1]:
-            en_ex = unique_map_node(st)
+            en_ex = unique_top_level_map_node(st)
             if not en_ex:
                 return False
             en, ex = en_ex
@@ -503,7 +518,8 @@ class ConstAssignmentStateFusion(StateFusionExtended):
                 assignments[k] = v
 
         # Moreover, both states' ranges must be compatible.
-        if not ConstAssignmentMapFusion.compatible_range(unique_map_node(st0)[0], unique_map_node(st1)[0]):
+        if not ConstAssignmentMapFusion.compatible_range(unique_top_level_map_node(st0)[0],
+                                                         unique_top_level_map_node(st1)[0]):
             return False
 
         return True
