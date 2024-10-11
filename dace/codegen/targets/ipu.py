@@ -256,118 +256,6 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
 #   IPU specific node/state generation
 ############################################################################################################
     
-    
-    # def declare_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
-    #                   nodedesc: data.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream) -> None:
-    #     self.cpu_codegen.declare_array(sdfg, cfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream)
-    
-    # def allocate_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
-    #                    nodedesc: data.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream,
-    #                    allocation_stream: CodeIOStream) -> None:
-         
-    #     # if user provided this storage type, then we dump what they said.
-    #     if nodedesc.storage == dtypes.StorageType.IPU_Tile_Local:
-    #         name = node.data
-    #         size = nodedesc.total_size
-    #         ipu_type = "FLOAT"
-    #         self.dispatcher.defined_vars.add(name, DefinedType.Scalar, ipu_type)
-    #         declaration_stream.write(f'_state->graph.addVariable({ipu_type}, [{size}], {name});', cfg, state_id, node)       
-    #         return
-    
-    #     self.cpu_codegen.allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream,
-    #                                     allocation_stream)
-        
-    # def deallocate_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int,
-    #                      node: nodes.Node, nodedesc: data.Data, function_stream: CodeIOStream,
-    #                      callsite_stream: CodeIOStream) -> None:
-    #     # unless any cpu allocations no need for IPUs
-    #     pass
-    #     # return self.cpu_codegen.deallocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
-    #     #                                         callsite_stream)        
-    
-    # def allocate_array(self, sdfg: dace.SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int,
-        #                node: nodes.AccessNode, nodedesc: data.Array, function_stream: CodeIOStream,
-        #                declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
-        # # Make sure the codegen includes the appropriate header files
-        # self.add_header(function_stream)
-
-        # name = node.data
-        # print("ALLOCATE ARRAY - ", name)
-        # # # Based on the hardware, the total size must be 16^2
-        # # assert nodedesc.total_size == 16 * 16
-        # # # Majority is detected by the strides of the data
-        # # maj = 'row' if nodedesc.strides[-1] == 1 else 'col'
-
-        # # Write a fragment based on the storage type
-        # if nodedesc.storage == dace.StorageType.TensorCore_Accumulator:
-        #     ctype = 'wmma::fragment<wmma::accumulator, 16, 16, 16, float>'
-        #     declaration_stream.write(f'{ctype} {name};', cfg, state_id, node)
-        # # else:
-        # #     ctype = 'wmma::fragment<wmma::matrix_{mat}, 16, 16, 16, half, wmma::{maj}_major>'.format(
-        # #         mat=('a' if 'A' in nodedesc.storage.name else 'b'), maj=maj)
-        # #     declaration_stream.write(f'{ctype} {name};', cfg, state_id, node)
-            
-        # # # Add the ctype to defined_vars so that the codegen can properly pass
-        # # # fragments to functions as an object reference.
-        # self._dispatcher.defined_vars.add(name, DefinedType.Object, ctype)
-        # self.cpu_codegen.allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
-        #                                  allocation_stream)   
-
-    # def declare_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
-    #                   nodedesc: data.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream) -> None:
-    #     self.cpu_codegen.declare_array(sdfg, cfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream)
-    
-    # def allocate_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int, node: nodes.Node,
-    #                    nodedesc: data.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream,
-    #                    allocation_stream: CodeIOStream) -> None:
-         
-    #     # if user provided this storage type, then we dump what they said.
-    #     if nodedesc.storage == dtypes.StorageType.IPU_Tile_Local:
-    #         name = node.data
-    #         size = nodedesc.total_size
-    #         ipu_type = "FLOAT"
-    #         self.dispatcher.defined_vars.add(name, DefinedType.Scalar, ipu_type)
-    #         declaration_stream.write(f'_state->graph.addVariable({ipu_type}, [{size}], {name});', cfg, state_id, node)       
-    #         return
-    
-    #     self.cpu_codegen.allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream,
-    #                                     allocation_stream)
-        
-    # def deallocate_array(self, sdfg: SDFG, cfg: state.ControlFlowRegion, dfg: SDFGState, state_id: int,
-    #                      node: nodes.Node, nodedesc: data.Data, function_stream: CodeIOStream,
-    #                      callsite_stream: CodeIOStream) -> None:
-    #     # unless any cpu allocations no need for IPUs
-    #     pass
-    #     # return self.cpu_codegen.deallocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
-    #     #                                         callsite_stream)        
-    
-    # def allocate_array(self, sdfg: dace.SDFG, cfg: ControlFlowRegion, dfg: SDFGState, state_id: int,
-        #                node: nodes.AccessNode, nodedesc: data.Array, function_stream: CodeIOStream,
-        #                declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
-        # # Make sure the codegen includes the appropriate header files
-        # self.add_header(function_stream)
-
-        # name = node.data
-        # print("ALLOCATE ARRAY - ", name)
-        # # # Based on the hardware, the total size must be 16^2
-        # # assert nodedesc.total_size == 16 * 16
-        # # # Majority is detected by the strides of the data
-        # # maj = 'row' if nodedesc.strides[-1] == 1 else 'col'
-
-        # # Write a fragment based on the storage type
-        # if nodedesc.storage == dace.StorageType.TensorCore_Accumulator:
-        #     ctype = 'wmma::fragment<wmma::accumulator, 16, 16, 16, float>'
-        #     declaration_stream.write(f'{ctype} {name};', cfg, state_id, node)
-        # # else:
-        # #     ctype = 'wmma::fragment<wmma::matrix_{mat}, 16, 16, 16, half, wmma::{maj}_major>'.format(
-        # #         mat=('a' if 'A' in nodedesc.storage.name else 'b'), maj=maj)
-        # #     declaration_stream.write(f'{ctype} {name};', cfg, state_id, node)
-            
-        # # # Add the ctype to defined_vars so that the codegen can properly pass
-        # # # fragments to functions as an object reference.
-        # self._dispatcher.defined_vars.add(name, DefinedType.Object, ctype)
-        # self.cpu_codegen.allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
-        #                                  allocation_stream)   
     def allocate_ipu_scalar(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                         node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                         declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
@@ -409,27 +297,36 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
         arrsize = nodedesc.total_size
         is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
         #arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
-        ctypedef = 'Tensor *'
+        ctypedef = 'Tensor'
         shape = nodedesc.shape
         dataname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
         
         # Check if array is already declared
         declared = self.dispatcher.declared_arrays.has(dataname)
+        #     # if user provided this storage type, then we dump what they said.
+        #     if nodedesc.storage == dtypes.StorageType.IPU_Tile_Local:
+        #         name = node.data
+        #         size = nodedesc.total_size
+        #         ipu_type = "FLOAT"
+        #         self.dispatcher.defined_vars.add(name, DefinedType.Scalar, ipu_type)
+        #         declaration_stream.write(f'_state->graph.addVariable({ipu_type}, [{size}], {name});', cfg, state_id, node)       
+        #         return
+
         # Different types of memories
         if nodedesc.storage == dtypes.StorageType.IPU_Memory:
             if not declared:
                 result_decl.write('%s %s;\n' % (ctypedef, dataname))    # Tensor *p;
-            self.dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
+            self.dispatcher.defined_vars.add(dataname, DefinedType.Object, ctypedef)
             
             if nodedesc.pool:
                 raise NotImplementedError("Pool not implemented yet " + str(nodedesc.storage))
             else:
                 shape_poplar_format = ', '.join([str(sh) for sh in shape])
-                result_alloc.write("%s = _state->graph.addVariable(%s, {%s});\n" % (dataname, ipu_utils.TYPE_TO_IPU[nodedesc.dtype], shape_poplar_format))           
+                result_alloc.write("__state.poplar_context->tensors[\"%s\"] = __state.poplar_context->graph.addVariable(%s, {%s}, \"%s\");\n" % (dataname, ipu_utils.TYPE_TO_IPU[nodedesc.dtype], shape_poplar_format, dataname))
         else:
             raise NotImplementedError("IPU: Unimplemented StorageType " + str(nodedesc.storage))
         
-        declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
+        # declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
         allocation_stream.write(result_alloc.getvalue(), cfg, state_id, node)
             
     def allocate_ipu_stream(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
@@ -560,22 +457,20 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
     def mapArrayOnTile(self, sdfg, cfg, state_id, node, nodedesc, allocation_stream):
         dataname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
             # Map array intelligently
-        spreadOverTiles = True
-        if spreadOverTiles:
+        setTileMappingCall = StringIO()
+        spreadOverTilesManually = False
+        
+        if spreadOverTilesManually:
             dataToTileMap = self.decidemapping(dataname, nodedesc, sdfg)
                 # Map array over multiple tiles
-                # loop over the dataToTileMap and set the mapping
-                # import pprint
-                # pprint.pprint(dataToTileMap)
-                
+                # loop over the dataToTileMap and set the mapping                
             for data, tilenumber in dataToTileMap.items():
-                setTileMappingCall = f"_state->graph.setTileMapping({data}, {tilenumber});"
-                allocation_stream.write(setTileMappingCall, cfg, state_id, node)
+                setTileMappingCall.write(f"_state->graph.setTileMapping({data}, {tilenumber});")
         else:
-                # Map array, given only 1 element maps on one tile
-            tilenumber = 0
-            setTileMappingCall = f"_state->graph.setTileMapping({dataname}, {tilenumber});"
-            allocation_stream.write(setTileMappingCall, cfg, state_id, node)
+            # Map linearly over tiles, let poplar decide
+            setTileMappingCall.write(f"poputil::mapTensorLinearly(__state.poplar_context->graph, __state.poplar_context->tensors[\"{dataname}\"]);")
+            
+        allocation_stream.write(setTileMappingCall.getvalue(), cfg, state_id, node)            
 
     def mapScalarOnTile(self, sdfg, cfg, state_id, node, nodedesc, allocation_stream):
         dataname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
