@@ -878,7 +878,7 @@ class ASTRefiner(ast.NodeTransformer):
 
 
 @make_properties
-@transformation.single_level_sdfg_only
+@transformation.experimental_cfg_block_compatible
 class RefineNestedAccess(transformation.SingleStateTransformation):
     """
     Reduces memlet shape when a memlet is connected to a nested SDFG, but not
@@ -920,7 +920,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         in_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         out_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         ignore = set()
-        for nstate in nsdfg.sdfg.nodes():
+        for nstate in nsdfg.sdfg.states():
             for dnode in nstate.data_nodes():
                 if nsdfg.sdfg.arrays[dnode.data].transient:
                     continue
@@ -967,7 +967,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
 
         # Check read memlets in interstate edges for candidates
-        for e in nsdfg.sdfg.edges():
+        for e in nsdfg.sdfg.all_interstate_edges():
             for m in e.data.get_read_memlets(nsdfg.sdfg.arrays):
                 # If more than one unique element detected, remove from candidates
                 if m.data in in_candidates:
@@ -1032,7 +1032,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
-                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) - set(nsdfg.symbol_mapping.keys()))
+                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices),
+                                                                      list(indices)) - set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
                     ignore.add(cname)
                     continue
@@ -1075,13 +1076,13 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 if aname in refined:
                     continue
                 # Refine internal memlets
-                for nstate in nsdfg.nodes():
+                for nstate in nsdfg.states():
                     for e in nstate.edges():
                         if e.data.data == aname:
                             e.data.subset.offset(refine.subset, True, indices)
                 # Refine accesses in interstate edges
                 refiner = ASTRefiner(aname, refine.subset, nsdfg, indices)
-                for isedge in nsdfg.edges():
+                for isedge in nsdfg.all_interstate_edges():
                     for k, v in isedge.data.assignments.items():
                         vast = ast.parse(v)
                         refiner.visit(vast)

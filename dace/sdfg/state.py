@@ -23,7 +23,7 @@ from dace import symbolic
 from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty,
                              SymbolicProperty, CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import (MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge,
+from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge,
                              generate_element_id)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
@@ -2522,7 +2522,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             raise RuntimeError('Root CFG is not of type SDFG')
         return self.cfg_list[0]
 
-    def reset_cfg_list(self) -> List['ControlFlowRegion']:
+    def reset_cfg_list(self) -> List['AbstractControlFlowRegion']:
         """
         Reset the CFG list when changes have been made to the SDFG's CFG tree.
         This collects all control flow graphs recursively and propagates the collection to all CFGs as the new CFG list.
@@ -2766,7 +2766,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
     ###################################################################
     # Traversal methods
 
-    def all_control_flow_regions(self, recursive=False) -> Iterator['ControlFlowRegion']:
+    def all_control_flow_regions(self, recursive=False) -> Iterator['AbstractControlFlowRegion']:
         """ Iterate over this and all nested control flow regions. """
         yield self
         for block in self.nodes():
@@ -2774,11 +2774,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                 for node in block.nodes():
                     if isinstance(node, nd.NestedSDFG):
                         yield from node.sdfg.all_control_flow_regions(recursive=recursive)
-            elif isinstance(block, ControlFlowRegion):
+            elif isinstance(block, AbstractControlFlowRegion):
                 yield from block.all_control_flow_regions(recursive=recursive)
-            elif isinstance(block, ConditionalBlock):
-                for _, branch in block.branches:
-                    yield from branch.all_control_flow_regions(recursive=recursive)
 
     def all_sdfgs_recursive(self) -> Iterator['SDFG']:
         """ Iterate over this and all nested SDFGs. """
@@ -2791,11 +2788,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         for block in self.nodes():
             if isinstance(block, SDFGState):
                 yield block
-            elif isinstance(block, ControlFlowRegion):
+            elif isinstance(block, AbstractControlFlowRegion):
                 yield from block.all_states()
-            elif isinstance(block, ConditionalBlock):
-                for _, region in block.branches:
-                    yield from region.all_states()
 
     def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
         """ Iterate over all control flow blocks in this control flow graph. """
@@ -3341,9 +3335,9 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
         for condition, region in json_obj['branches']:
             if condition is not None:
-                ret._branches.append((CodeBlock.from_json(condition), ControlFlowRegion.from_json(region, context)))
+                ret.add_branch(CodeBlock.from_json(condition), ControlFlowRegion.from_json(region, context))
             else:
-                ret._branches.append((None, ControlFlowRegion.from_json(region, context)))
+                ret.add_branch(None, ControlFlowRegion.from_json(region, context))
         return ret
     
     def inline(self) -> Tuple[bool, Any]:
@@ -3403,10 +3397,26 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
         return True, (guard_state, end_state)
 
+    # Abstract control flow region overrides
+
+    @property
+    def start_block(self):
+        return None
+
+    @start_block.setter
+    def start_block(self, _):
+        pass
+
     # Graph API overrides.
 
+    def node_id(self, node: 'ControlFlowBlock') -> int:
+        try:
+            return next(i for i, (_, b) in enumerate(self._branches) if b is node)
+        except StopIteration:
+            raise NodeNotFoundError(node)
+
     def nodes(self) -> List['ControlFlowBlock']:
-        return [node for _, node in self._branches if node is not None]
+        return [node for _, node in self._branches]
 
     def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
         return []
