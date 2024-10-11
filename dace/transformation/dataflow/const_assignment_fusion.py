@@ -9,7 +9,6 @@ from dace.sdfg import nodes
 from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.nodes import Tasklet, ExitNode, MapEntry, MapExit, NestedSDFG, Node, EntryNode, AccessNode
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
-from dace.sdfg.utils import node_path_graph
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import StateFusionExtended
 
@@ -49,18 +48,13 @@ class ConstAssignmentMapFusion(MapFusion):
         - Neither map is dependent on the other. I.e. There is no dependency path between them.
     """
     first_map_entry = transformation.PatternNode(nodes.EntryNode)
-    first_map_exit = transformation.PatternNode(nodes.ExitNode)
-    array = transformation.PatternNode(nodes.AccessNode)
     second_map_entry = transformation.PatternNode(nodes.EntryNode)
-    second_map_exit = transformation.PatternNode(nodes.ExitNode)
 
     @classmethod
     def expressions(cls):
-        # TODO(pratyai): Probably a better pattern idea: take any two maps, then check that _every_ path from the first
-        # map to second map has exactly one access node in the middle and the second edge of the path is empty.
-        return [node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry),
-                floating_nodes_graph(cls.first_map_entry, cls.first_map_exit, cls.second_map_entry,
-                                     cls.second_map_exit)]
+        # Take any two maps, then check that _every_ path from the first map to second map has exactly one access node
+        # in the middle and the second edge of the path is empty.
+        return [floating_nodes_graph(cls.first_map_entry, cls.second_map_entry)]
 
     @staticmethod
     def consistent_branch_const_assignment_table(graph: Node) -> tuple[bool, dict]:
@@ -192,7 +186,7 @@ class ConstAssignmentMapFusion(MapFusion):
 
     def map_nodes(self, graph: SDFGState):
         """Return the entry and exit nodes of the relevant maps as a tuple: entry_1, exit_1, entry_2, exit_2."""
-        return (graph.entry_node(self.first_map_exit), self.first_map_exit,
+        return (self.first_map_entry, graph.exit_node(self.first_map_entry),
                 self.second_map_entry, graph.exit_node(self.second_map_entry))
 
     @staticmethod
@@ -205,27 +199,44 @@ class ConstAssignmentMapFusion(MapFusion):
             # If it's not even possible to take component-wise union of the two map's range, don't fuse them.
             # TODO(pratyai): Make it so that a permutation of the ranges, or even an union of the ranges will work.
             return False
+        if first_entry.map.schedule == ScheduleType.Sequential:
+            # For _grid-strided loops_, fuse them only when their ranges are _exactly_ the same. I.e., never put them
+            # behind another layer of grid-strided loop.
+            if first_entry.map.range != second_entry.map.range:
+                return False
         return True
 
-    def no_dependency_pattern(self, graph: SDFGState, sdfg: SDFG, permissive: bool = False) -> bool:
+    def no_dependency_pattern(self, graph: SDFGState) -> bool:
         """Decide if the two maps are independent of each other."""
         first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
-        if first_entry != self.first_map_entry or second_exit != self.second_map_exit:
+        if graph.scope_dict()[first_entry] != graph.scope_dict()[second_entry]:
+            return False
+        if not all(isinstance(n, AccessNode) for n in graph.all_nodes_between(first_exit, second_entry)):
+            return False
+        if not all(isinstance(n, AccessNode) for n in graph.all_nodes_between(second_exit, first_entry)):
             return False
         if any(not e.data.is_empty()
                for e in chain(graph.in_edges(first_entry), graph.in_edges(second_entry))):
             return False
-        if any(not isinstance(e.src, AccessNode)
+        if any(not isinstance(e.src, (MapEntry, AccessNode))
                for e in chain(graph.in_edges(first_entry), graph.in_edges(second_entry))):
+            return False
+        if not (all(isinstance(e.src, AccessNode)
+                    for e in chain(graph.in_edges(first_entry), graph.in_edges(second_entry)))
+                or all(isinstance(e.src, MapEntry)
+                       for e in chain(graph.in_edges(first_entry), graph.in_edges(second_entry)))):
+            return False
+        if not (all(isinstance(e.dst, AccessNode)
+                    for e in chain(graph.out_edges(first_exit), graph.out_edges(second_exit)))
+                or all(isinstance(e.dst, MapExit)
+                       for e in chain(graph.out_edges(first_exit), graph.out_edges(second_exit)))):
             return False
         return True
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
-        assert expr_index in (0, 1)
-        if expr_index == 1:
-            # Test the rest of the second pattern in the `expressions()`.
-            if not self.no_dependency_pattern(graph, sdfg, permissive):
-                return False
+        # Test the rest of the second pattern in the `expressions()`.
+        if not self.no_dependency_pattern(graph):
+            return False
 
         first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
         if not self.compatible_range(first_entry, second_entry):
@@ -292,9 +303,10 @@ class ConstAssignmentMapFusion(MapFusion):
         table = {}
         for en in [first_entry, second_entry]:
             for e in graph.in_edges(en):
-                assert isinstance(e.src, AccessNode)
                 assert e.data.is_empty()
                 assert e.src_conn is None and e.dst_conn is None
+                if not isinstance(e.src, AccessNode):
+                    continue
                 if e.src.data not in table:
                     table[e.src.data] = e.src
                 elif table[e.src.data] in graph.bfs_nodes(e.src):
@@ -332,9 +344,10 @@ class ConstAssignmentMapFusion(MapFusion):
         surviving_nodes, all_written_nodes = {}, set()
         for ex in [first_exit, second_exit]:
             for e in graph.out_edges(ex):
-                assert isinstance(e.dst, AccessNode)
                 assert not e.data.is_empty()
-                assert e.src_conn is not None and e.dst_conn is None
+                assert e.src_conn is not None and ((e.dst_conn is None) == isinstance(e.dst, AccessNode))
+                if not isinstance(e.dst, AccessNode):
+                    continue
                 all_written_nodes.add(e.dst)
                 if e.dst.data not in surviving_nodes:
                     surviving_nodes[e.dst.data] = e.dst
@@ -478,6 +491,15 @@ class ConstAssignmentMapFusion(MapFusion):
                 self.consume_map_exactly(graph, (en, ex), (cur_en, cur_ex))
             else:
                 self.consume_map_with_grid_strided_loop(graph, (en, ex), (cur_en, cur_ex))
+
+        # Cleanup: remove duplicate empty dependencies.
+        seen = set()
+        for e in graph.in_edges(en):
+            assert e.data.is_empty()
+            if e.src not in seen:
+                seen.add(e.src)
+            else:
+                graph.remove_edge(e)
 
 
 class ConstAssignmentStateFusion(StateFusionExtended):
