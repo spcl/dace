@@ -618,6 +618,9 @@ class TargetDispatcher(object):
         """
         state = cfg.state(state_id)
         target = self.get_copy_dispatcher(src_node, dst_node, edge, sdfg, state)
+        if target is None:
+            raise ValueError(
+                f'Could not dispatch copy code generator for {src_node} -> {dst_node} in state {state.label}')
 
         # Dispatch
         self._used_targets.add(target)
