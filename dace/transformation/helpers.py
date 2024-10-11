@@ -1070,7 +1070,7 @@ def constant_symbols(sdfg: SDFG) -> Set[str]:
     :param sdfg: The input SDFG.
     :return: A set of symbol names that remain constant throughout the SDFG.
     """
-    interstate_symbols = {k for e in sdfg.edges() for k in e.data.assignments.keys()}
+    interstate_symbols = {k for e in sdfg.all_interstate_edges() for k in e.data.assignments.keys()}
     return set(sdfg.symbols) - interstate_symbols
 
 

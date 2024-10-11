@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ SDFG nesting transformation. """
 
 import ast
@@ -22,7 +22,7 @@ from dace import data
 
 
 @make_properties
-@transformation.single_level_sdfg_only
+@transformation.experimental_cfg_block_compatible
 class InlineSDFG(transformation.SingleStateTransformation):
     """
     Inlines a single-state nested SDFG into a top-level SDFG.
@@ -99,7 +99,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
-        if len(nested_sdfg.sdfg.nodes()) != 1:
+        if len(nested_sdfg.sdfg.nodes()) != 1 or not isinstance(nested_sdfg.sdfg.nodes()[0], SDFGState):
             return False
 
         # Ensure every connector has one incoming/outgoing edge and that it
@@ -154,7 +154,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 out_data[dst.data] = e.src_conn
         rem_inpconns = dc(in_connectors)
         rem_outconns = dc(out_connectors)
-        nstate = nested_sdfg.sdfg.node(0)
+        nstate: SDFGState = nested_sdfg.sdfg.nodes()[0]
         for node in nstate.nodes():
             if isinstance(node, nodes.AccessNode):
                 if node.data in rem_inpconns:
@@ -314,7 +314,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
 
         # Access nodes that need to be reshaped
-        reshapes: Set(str) = set()
+        reshapes: Set[str] = set()
         for aname, array in nsdfg.arrays.items():
             if array.transient:
                 continue
@@ -734,11 +734,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
 
 @make_properties
-@transformation.single_level_sdfg_only
+@transformation.experimental_cfg_block_compatible
 class InlineTransients(transformation.SingleStateTransformation):
     """
-    Inlines all transient arrays that are not used anywhere else into a
-    nested SDFG.
+    Inlines all transient arrays that are not used anywhere else into a nested SDFG.
     """
 
     nsdfg = transformation.PatternNode(nodes.NestedSDFG)
@@ -781,7 +780,7 @@ class InlineTransients(transformation.SingleStateTransformation):
             return candidates
 
         # Check for uses in other states
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             if state is graph:
                 continue
             for node in state.data_nodes():
@@ -1103,7 +1102,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
 
 @make_properties
-@transformation.single_level_sdfg_only
+@transformation.experimental_cfg_block_compatible
 class NestSDFG(transformation.MultiStateTransformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
         nested SDFG node from it. """
@@ -1133,7 +1132,7 @@ class NestSDFG(transformation.MultiStateTransformation):
         outputs = {}
         transients = {}
 
-        for state in nested_sdfg.nodes():
+        for state in nested_sdfg.states():
             #  Input and output nodes are added as input and output nodes of the nested SDFG
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode) and not node.desc(nested_sdfg).transient):
@@ -1254,7 +1253,7 @@ class NestSDFG(transformation.MultiStateTransformation):
             nested_sdfg.arrays[newarrname].transient = False
 
         # Update memlets
-        for state in nested_sdfg.nodes():
+        for state in nested_sdfg.states():
             for _, edge in enumerate(state.edges()):
                 _, _, _, _, mem = edge
                 src = state.memlet_path(edge)[0].src
