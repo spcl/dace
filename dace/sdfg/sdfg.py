@@ -765,8 +765,8 @@ class SDFG(ControlFlowRegion):
             #  the data descriptors.
             if name in self.symbols:
                 raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
-            if name in self.arrays:
-                raise FileExistsError(f'Can not create symbol "{name}", the name is used by a data descriptor.')
+            #if name in self.arrays:
+            #    raise FileExistsError(f'Can not create symbol "{name}", the name is used by a data descriptor.')
             if name in self._subarrays:
                 raise FileExistsError(f'Can not create symbol "{name}", the name is used by a subarray.')
             if name in self._rdistrarrays:
