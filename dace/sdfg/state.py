@@ -1606,7 +1606,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         symbol_mapping: Dict[str, Any] = None,
         name=None,
-        schedule=dtypes.ScheduleType.Default,
         location=None,
         debuginfo=None,
     ):
@@ -1632,7 +1631,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             inputs,
             outputs,
             symbol_mapping=symbol_mapping,
-            schedule=schedule,
             location=location,
             debuginfo=debuginfo,
         )
