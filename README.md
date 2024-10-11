@@ -68,6 +68,7 @@ For more information on how to use DaCe, see the [samples](samples) or tutorials
 * [SDFG API](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/sdfg_api.ipynb)
 * [Using and Creating Transformations](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb)
 * [Extending the Code Generator](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/codegen.ipynb)
+* [Targeting FPGAs with DaCe](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/fpga.ipynb)
 
 Publication
 -----------
