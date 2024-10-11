@@ -1195,7 +1195,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                      shows progress bar.
     :return: The total number of states fused.
     """
-    from dace.transformation.interstate import StateFusion  # Avoid import loop
+    from dace.transformation.interstate import StateFusion, BlockFusion  # Avoid import loop
+
 
     if progress is None and not config.Config.get_bool('progress'):
         progress = False
@@ -1228,20 +1229,33 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                         progress = True
                         pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
 
-                    if (u in skip_nodes or v in skip_nodes or not isinstance(v, SDFGState) or
-                        not isinstance(u, SDFGState)):
+                    if u in skip_nodes or v in skip_nodes:
                         continue
-                    candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
-                    sf = StateFusion()
-                    sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
-                    if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
-                        sf.apply(cfg, sd)
-                        applied += 1
-                        counter += 1
-                        if progress:
-                            pbar.update(1)
-                        skip_nodes.add(u)
-                        skip_nodes.add(v)
+
+                    if isinstance(u, SDFGState) and isinstance(v, SDFGState):
+                        candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
+                        sf = StateFusion()
+                        sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
+                        if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
+                            sf.apply(cfg, sd)
+                            applied += 1
+                            counter += 1
+                            if progress:
+                                pbar.update(1)
+                            skip_nodes.add(u)
+                            skip_nodes.add(v)
+                    else:
+                        candidate = {BlockFusion.first_block: u, BlockFusion.second_block: v}
+                        bf = BlockFusion()
+                        bf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
+                        if bf.can_be_applied(cfg, 0, sd, permissive=permissive):
+                            bf.apply(cfg, sd)
+                            applied += 1
+                            counter += 1
+                            if progress:
+                                pbar.update(1)
+                            skip_nodes.add(u)
+                            skip_nodes.add(v)
                 if applied == 0:
                     break
     if progress:
