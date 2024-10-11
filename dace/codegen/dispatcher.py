@@ -598,6 +598,8 @@ class TargetDispatcher(object):
                       cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, function_stream: CodeIOStream,
                       output_stream: CodeIOStream) -> None:
         """ Dispatches a code generator for a memory copy operation. """
+        if edge.data.is_empty():
+            return
         state = cfg.state(state_id)
         target = self.get_copy_dispatcher(src_node, dst_node, edge, sdfg, state)
         if target is None:
