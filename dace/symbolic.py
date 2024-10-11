@@ -660,6 +660,30 @@ class IfExpr(sympy.Function):
         if x.is_Boolean:
             return (y if x else z)
 
+    def _eval_is_real(self):
+        if self.args[1].is_real is True and self.args[2].is_real is True:
+            return True
+        if self.args[1].is_real is False and self.args[2].is_real is False:
+            return False
+
+    def _eval_is_nonnegative(self):
+        if self.args[1].is_nonnegative is True and self.args[2].is_nonnegative is True:
+            return True
+        if self.args[1].is_nonnegative is False and self.args[2].is_nonnegative is False:
+            return False
+
+    def _eval_is_positive(self):
+        if self.args[1].is_positive is True and self.args[2].is_positive is True:
+            return True
+        if self.args[1].is_positive is False and self.args[2].is_positive is False:
+            return False
+
+    def _eval_is_integer(self):
+        if self.args[1].is_integer is True and self.args[2].is_integer is True:
+            return True
+        if self.args[1].is_integer is False and self.args[2].is_integer is False:
+            return False
+
 
 class bitwise_and(sympy.Function):
     pass
