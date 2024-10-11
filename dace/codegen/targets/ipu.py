@@ -124,8 +124,7 @@ class IPUCodeGen(TargetCodeGenerator):
         # # Dispatchers
         # self.dispatcher.register_map_dispatcher(dace.ScheduleType.IPU_Map, self)
         # self.dispatcher.register_node_dispatcher(self, self.is_ipu_map_scope)
-        # self.dispatcher.register_node_dispatcher(self, self.is_node_library_node)
-        # self.dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
+        self.dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
         # self.dispatcher.register_copy_dispatcher(dtypes.StorageType.Register, dtypes.StorageType.IPU_Tile_Local, None, func=self)
         # self._dispatcher.register_map_dispatcher(dace.ScheduleType.IPU, self)
         # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
@@ -251,7 +250,11 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
         return False
     
     def node_dispatch_predicate(self, sdfg, state, node):
-        return True
+        if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
+            if node.schedule in dtypes.IPU_SCHEDULES:
+                return True
+        return False
+        
 ############################################################################################################
 #   IPU specific node/state generation
 ############################################################################################################
@@ -549,15 +552,28 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
 
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                       node: nodes.Node, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        method_name = "_generate_" + type(node).__name__
         print("Generating node: ", node.label)
-            # Dynamically obtain node generator according to class name
-            # gen = getattr(self, '_generate_' + type(node).__name__, False)
-            # if gen is not False:  # Not every node type has a code generator here
-            #     gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-            #     return
+        print("Method name: ", method_name)
+        # Fake inheritance... use this class' method if it exists,
+        # otherwise fall back on CPU codegen
+        if hasattr(self, method_name):
 
-        # self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-        
+            if hasattr(node, "schedule") and node.schedule not in [
+                    dtypes.ScheduleType.Default, dtypes.ScheduleType.IPU_SCHEDULE]:
+                warnings.warn("Found schedule {} on {} node in FPGA code. "
+                              "Ignoring.".format(node.schedule,
+                                                 type(node).__name__))
+
+            getattr(self, method_name)(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        else:
+            old_codegen = self._cpu_codegen.calling_codegen
+            self._cpu_codegen.calling_codegen = self
+
+            self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+
+            self._cpu_codegen.calling_codegen = old_codegen
+                    
     # def generate_node(self, sdfg: SDFG, cfg: state.ControlFlowRegion, state: SDFGState, state_id: int, node: nodes.Node,
     #                   function_stream: CodeIOStream, callsite_stream: CodeIOStream):
     #     """(TASKLET only)
@@ -788,7 +804,11 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
             
             # self.frame.generate_ipu_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
             self.generate_ipu_cpuside_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
-            
+
+    def _generate_Tasklet(self, *args, **kwargs):
+        # Call CPU implementation with this code generator as callback
+        self._cpu_codegen._generate_Tasklet(*args, codegen=self, **kwargs)
+                    
 ############################################################################################################
 # #### Helpers
 
