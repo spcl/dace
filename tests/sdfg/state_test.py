@@ -76,8 +76,6 @@ def test_read_and_write_set_filter():
     state.add_nedge(
             B,
             C,
-            # If the Memlet would be `B[0] -> 1, 1` it would then be filtered out.
-            #   This is an intentional behaviour for compatibility.
             dace.Memlet("C[1, 1] -> 0"),
     )
     state.add_nedge(
@@ -89,12 +87,8 @@ def test_read_and_write_set_filter():
 
     expected_reads = {
             "A": [sbs.Range.from_string("0, 0")],
-            # See comment in `state._read_and_write_sets()` why "B" is here
-            #   it should actually not, but it is a bug.
-            "B": [sbs.Range.from_string("0")],
     }
     expected_writes = {
-            # However, this should always be here.
             "B": [sbs.Range.from_string("0")],
             "C": [sbs.Range.from_string("0, 0"), sbs.Range.from_string("1, 1")],
     }
