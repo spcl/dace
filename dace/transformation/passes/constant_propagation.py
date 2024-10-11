@@ -177,7 +177,7 @@ class ConstantPropagation(ppl.Pass):
                     # TODO: How are we handling this?
                     pass
                 arrays.add(f'{name}.{k}')
-    
+
         for name, desc in sdfg.arrays.items():
             if isinstance(desc, data.Structure):
                 _add_nested_datanames(name, desc)
@@ -221,6 +221,20 @@ class ConstantPropagation(ppl.Pass):
                             assignments[aname] = _UnknownValue
                         else:
                             assignments[aname] = aval
+
+                for edge in sdfg.out_edges(state):
+                    for aname, aval in assignments.items():
+                        # If the specific replacement would result in the value
+                        # being both used and reassigned on the same inter-state
+                        # edge, remove it from consideration.
+                        replacements = symbolic.free_symbols_and_functions(aval)
+                        used_in_assignments = {
+                            k
+                            for k, v in edge.data.assignments.items() if aname in symbolic.free_symbols_and_functions(v)
+                        }
+                        reassignments = replacements & edge.data.assignments.keys()
+                        if reassignments and (used_in_assignments - reassignments):
+                            assignments[aname] = _UnknownValue
 
                 if state not in result:  # Condition may evaluate to False when state is the start-state
                     result[state] = {}
