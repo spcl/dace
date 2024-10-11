@@ -4,7 +4,7 @@ from copy import deepcopy
 from itertools import chain
 from typing import Optional, Union
 
-from dace import transformation, SDFGState, SDFG, Memlet, subsets
+from dace import transformation, SDFGState, SDFG, Memlet, subsets, ScheduleType
 from dace.sdfg import nodes
 from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.nodes import Tasklet, ExitNode, MapEntry, MapExit, NestedSDFG, Node, EntryNode, AccessNode
@@ -404,7 +404,8 @@ class ConstAssignmentMapFusion(MapFusion):
                       for p, rs, rd in zip(dst_en.map.params, src_en.map.range.ranges, dst_en.map.range.ranges)]
         gsl_params = [f"gsl_{p}" for p in dst_en.map.params]
         en, ex = graph.add_map(graph.sdfg._find_new_name('gsl'),
-                               {k: v for k, v in zip(gsl_params, gsl_ranges)})
+                               {k: v for k, v in zip(gsl_params, gsl_ranges)},
+                               schedule=ScheduleType.Sequential)
         # graph.add_memlet_path(dst_en, en, memlet=Memlet())
         ConstAssignmentMapFusion.consume_map_exactly(graph, (en, ex), src)
         # graph.add_memlet_path(ex, dst_ex, memlet=Memlet())
