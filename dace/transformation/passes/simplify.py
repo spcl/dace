@@ -17,6 +17,7 @@ from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.reference_reduction import ReferenceToView
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+from dace.transformation.passes.simplification.prune_empty_conditional_branches import PruneEmptyConditionalBranches
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
@@ -27,6 +28,7 @@ SIMPLIFY_PASSES = [
     ConstantPropagation,
     DeadDataflowElimination,
     DeadStateElimination,
+    PruneEmptyConditionalBranches,
     RemoveUnusedSymbols,
     ReferenceToView,
     ArrayElimination,

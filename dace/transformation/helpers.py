@@ -1419,8 +1419,8 @@ def can_run_state_on_fpga(state: SDFGState):
             return False
 
         # Streams have strict conditions due to code generator limitations
-        if (isinstance(node, nodes.AccessNode) and isinstance(graph.parent.arrays[node.data], data.Stream)):
-            nodedesc = graph.parent.arrays[node.data]
+        if (isinstance(node, nodes.AccessNode) and isinstance(graph.sdfg.arrays[node.data], data.Stream)):
+            nodedesc = graph.sdfg.arrays[node.data]
             sdict = graph.scope_dict()
             if nodedesc.storage in [
                     dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.CPU_ThreadLocal
@@ -1432,7 +1432,7 @@ def can_run_state_on_fpga(state: SDFGState):
                 return False
 
             # Arrays of streams cannot have symbolic size on FPGA
-            if symbolic.issymbolic(nodedesc.total_size, graph.parent.constants):
+            if symbolic.issymbolic(nodedesc.total_size, graph.sdfg.constants):
                 return False
 
             # Streams cannot be unbounded on FPGA
