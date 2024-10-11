@@ -1,5 +1,6 @@
 import ast
 from collections import defaultdict
+from copy import deepcopy
 from itertools import chain
 from typing import Optional, Union
 
@@ -7,7 +8,7 @@ from dace import transformation, SDFGState, SDFG, Memlet, subsets
 from dace.sdfg import nodes
 from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.nodes import Tasklet, ExitNode, MapEntry, MapExit, NestedSDFG, Node, EntryNode, AccessNode
-from dace.sdfg.state import ControlFlowBlock
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.sdfg.utils import node_path_graph
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import StateFusionExtended
@@ -53,6 +54,8 @@ class ConstAssignmentMapFusion(MapFusion):
 
     @classmethod
     def expressions(cls):
+        # TODO(pratyai): Probably a better pattern idea: take any two maps, then check that _every_ path from the first
+        # map to second map has exactly one access node in the middle and the second edge of the path is empty.
         return [node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry),
                 floating_nodes_graph(cls.first_map_entry, cls.first_map_exit, cls.second_map_entry,
                                      cls.second_map_exit)]
@@ -137,7 +140,8 @@ class ConstAssignmentMapFusion(MapFusion):
         for n in graph.all_nodes_between(en, ex):
             if isinstance(n, NestedSDFG):
                 # First handle the case of conditional constant assignment.
-                is_branch_const_assignment, internal_table = ConstAssignmentMapFusion.consistent_branch_const_assignment_table(n)
+                is_branch_const_assignment, internal_table = ConstAssignmentMapFusion.consistent_branch_const_assignment_table(
+                    n)
                 if not is_branch_const_assignment:
                     return False, table
                 for oe in graph.out_edges(n):
@@ -182,7 +186,8 @@ class ConstAssignmentMapFusion(MapFusion):
         if first_entry.map.schedule != second_entry.map.schedule:
             # If the two maps are not to be scheduled on the same device, don't fuse them.
             return False
-        if first_entry.map.range != second_entry.map.range:
+        if len(first_entry.map.range) != len(second_entry.map.range):
+            # If it's not even possible to take component-wise union of the two map's range, don't fuse them.
             # TODO(pratyai): Make it so that a permutation of the ranges, or even an union of the ranges will work.
             return False
         return True
@@ -192,7 +197,11 @@ class ConstAssignmentMapFusion(MapFusion):
         first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
         if first_entry != self.first_map_entry or second_exit != self.second_map_exit:
             return False
-        if graph.in_edges(first_entry) or graph.in_edges(second_entry):
+        if any(not e.data.is_empty()
+               for e in chain(graph.in_edges(first_entry), graph.in_edges(second_entry))):
+            return False
+        if any(not isinstance(e.src, AccessNode)
+               for e in chain(graph.in_edges(first_entry), graph.in_edges(second_entry))):
             return False
         return True
 
@@ -222,26 +231,6 @@ class ConstAssignmentMapFusion(MapFusion):
         return True
 
     @staticmethod
-    def track_access_nodes(graph: SDFGState, first_exit: ExitNode, second_exit: ExitNode) -> tuple[dict, set]:
-        """
-        Track all the access nodes that will survive after cleaning up duplicates. Returns a tuple with:
-        1. A map: the underlying data array -> the surviving access node.
-        2. A set of access nodes to be removed, i.e. has a duplicate in the map described earlier.
-        """
-        access_nodes, remove_nodes = {}, set()
-        dst_nodes = set(e.dst for e in chain(graph.out_edges(first_exit), graph.out_edges(second_exit))
-                        if isinstance(e.dst, AccessNode))
-        for n in dst_nodes:
-            if n.data in access_nodes:
-                remove_nodes.add(n)
-            else:
-                access_nodes[n.data] = n
-        for n in remove_nodes:
-            assert n.data in access_nodes
-            assert access_nodes[n.data] != n
-        return access_nodes, remove_nodes
-
-    @staticmethod
     def add_equivalent_connectors(dst: Union[EntryNode, ExitNode], src: Union[EntryNode, ExitNode]):
         """
         Create the additional connectors in the first exit node that matches the second exit node (which will be removed
@@ -260,6 +249,187 @@ class ConstAssignmentMapFusion(MapFusion):
             assert c in conn_map
         return conn_map
 
+    @staticmethod
+    def connector_counterpart(c: Union[str, None]) -> Union[str, None]:
+        """If it's an input connector, find the corresponding output connector, and vice versa."""
+        if c is None:
+            return None
+        assert isinstance(c, str)
+        if c.startswith('IN_'):
+            return f"OUT_{c.removeprefix('IN_')}"
+        elif c.startswith('OUT_'):
+            return f"IN_{c.removeprefix('OUT_')}"
+        return None
+
+    @staticmethod
+    def consolidate_empty_dependencies(graph: SDFGState, first_entry: MapEntry, second_entry: MapEntry):
+        """
+        Remove all the incoming edges of the two maps and add empty edges from the union of the access nodes they
+        depended on before.
+
+        Preconditions:
+        1. All the incoming edges of the two maps must be from an access node and empty (i.e. have existed
+        only for synchronization).
+        2. The two maps must be constistent const assignments (see the class docstring for what is considered
+        consistent).
+        """
+        # First, construct a table of the dependencies.
+        table = {}
+        for en in [first_entry, second_entry]:
+            for e in graph.in_edges(en):
+                assert isinstance(e.src, AccessNode)
+                assert e.data.is_empty()
+                assert e.src_conn is None and e.dst_conn is None
+                if e.src.data not in table:
+                    table[e.src.data] = e.src
+                elif table[e.src.data] in graph.bfs_nodes(e.src):
+                    # If this copy of the node is above the copy we've seen before, use this one instead.
+                    table[e.src.data] = e.src
+                graph.remove_edge(e)
+        # Then, if we still have so that any of the map _writes_ to these nodes, we want to just create fresh copies to
+        # avoid cycles.
+        alt_table = {}
+        for k, v in table.items():
+            if v in graph.bfs_nodes(first_entry) or v in graph.bfs_nodes(second_entry):
+                alt_v = deepcopy(v)
+                graph.add_node(alt_v)
+                alt_table[k] = alt_v
+            else:
+                alt_table[k] = v
+        # Finally, these nodes should be depended on by _both_ maps.
+        for en in [first_entry, second_entry]:
+            for n in alt_table.values():
+                graph.add_memlet_path(n, en, memlet=Memlet())
+
+    @staticmethod
+    def consolidate_written_nodes(graph: SDFGState, first_exit: MapExit, second_exit: MapExit):
+        """
+        If the two maps write to the same underlying data array through two access nodes, replace those edges'
+        destination with a single shared copy.
+
+        Precondition:
+        1. The two maps must not depend on each other through an access node (which should be taken care of already by
+        `consolidate_empty_dependencies()`.
+        2. The two maps must be constistent const assignments (see the class docstring for what is considered
+        consistent).
+        """
+        # First, construct tables of the surviving and all written access nodes.
+        surviving_nodes, all_written_nodes = {}, set()
+        for ex in [first_exit, second_exit]:
+            for e in graph.out_edges(ex):
+                assert isinstance(e.dst, AccessNode)
+                assert not e.data.is_empty()
+                assert e.src_conn is not None and e.dst_conn is None
+                all_written_nodes.add(e.dst)
+                if e.dst.data not in surviving_nodes:
+                    surviving_nodes[e.dst.data] = e.dst
+                elif e.dst in graph.bfs_nodes(surviving_nodes[e.dst.data]):
+                    # If this copy of the node is above the copy we've seen before, use this one instead.
+                    surviving_nodes[e.dst.data] = e.dst
+        # Then, redirect all the edges toward the surviving copies of the destination access nodes.
+        for n in all_written_nodes:
+            for e in graph.in_edges(n):
+                assert e.src in [first_exit, second_exit]
+                assert e.dst_conn is None
+                graph.add_memlet_path(e.src, surviving_nodes[e.dst.data],
+                                      src_conn=e.src_conn, dst_conn=e.dst_conn,
+                                      memlet=Memlet.from_memlet(e.data))
+                graph.remove_edge(e)
+            for e in graph.out_edges(n):
+                assert e.src_conn is None
+                graph.add_memlet_path(surviving_nodes[e.src.data], e.dst,
+                                      src_conn=e.src_conn, dst_conn=e.dst_conn,
+                                      memlet=Memlet.from_memlet(e.data))
+                graph.remove_edge(e)
+        # Finally, cleanup the orphan nodes.
+        for n in all_written_nodes:
+            if graph.degree(n) == 0:
+                graph.remove_node(n)
+
+    @staticmethod
+    def consume_map_exactly(graph: SDFGState, dst: tuple[MapEntry, MapExit], src: tuple[MapEntry, MapExit]):
+        """
+        Transfer the entirety of `src` map's body into `dst` map. Only possible when the two maps' ranges are identical.
+        """
+        dst_en, dst_ex = dst
+        src_en, src_ex = src
+
+        assert all(e.data.is_empty() for e in graph.in_edges(src_en))
+        cmap = ConstAssignmentMapFusion.add_equivalent_connectors(dst_en, src_en)
+        for e in graph.in_edges(src_en):
+            graph.add_memlet_path(e.src, dst_en,
+                                  src_conn=e.src_conn, dst_conn=cmap.get(e.dst_conn),
+                                  memlet=Memlet.from_memlet(e.data))
+            graph.remove_edge(e)
+        for e in graph.out_edges(src_en):
+            graph.add_memlet_path(dst_en, e.dst,
+                                  src_conn=cmap.get(e.src_conn), dst_conn=e.dst_conn,
+                                  memlet=Memlet.from_memlet(e.data))
+            graph.remove_edge(e)
+
+        cmap = ConstAssignmentMapFusion.add_equivalent_connectors(dst_ex, src_ex)
+        for e in graph.in_edges(src_ex):
+            graph.add_memlet_path(e.src, dst_ex,
+                                  src_conn=e.src_conn, dst_conn=cmap.get(e.dst_conn),
+                                  memlet=Memlet.from_memlet(e.data))
+            graph.remove_edge(e)
+        for e in graph.out_edges(src_ex):
+            graph.add_memlet_path(dst_ex, e.dst,
+                                  src_conn=cmap.get(e.src_conn), dst_conn=e.dst_conn,
+                                  memlet=Memlet.from_memlet(e.data))
+            graph.remove_edge(e)
+
+        graph.remove_node(src_en)
+        graph.remove_node(src_ex)
+
+    @staticmethod
+    def consume_map_with_grid_strided_loop(graph: SDFGState, dst: tuple[MapEntry, MapExit],
+                                           src: tuple[MapEntry, MapExit]):
+        """
+        Transfer the entirety of `src` map's body into `dst` map, guarded behind a _grid-strided_ loop.
+        Prerequisite: `dst` map's range must cover `src` map's range in entirety. Statically checking this may not
+        always be possible.
+        """
+        dst_en, dst_ex = dst
+        src_en, src_ex = src
+
+        def with_start_and_stride(r, start, stride):
+            r = list(r)
+            r[0] = start
+            r[2] = stride
+            return tuple(r)
+
+        gsl_ranges = [with_start_and_stride(rd, p, rs[1] + 1)
+                      for p, rs, rd in zip(dst_en.map.params, src_en.map.range.ranges, dst_en.map.range.ranges)]
+        gsl_params = [f"gsl_{p}" for p in dst_en.map.params]
+        en, ex = graph.add_map(graph.sdfg._find_new_name('gsl'),
+                               {k: v for k, v in zip(gsl_params, gsl_ranges)})
+        # graph.add_memlet_path(dst_en, en, memlet=Memlet())
+        ConstAssignmentMapFusion.consume_map_exactly(graph, (en, ex), src)
+        # graph.add_memlet_path(ex, dst_ex, memlet=Memlet())
+
+        assert all(e.data.is_empty() for e in graph.in_edges(en))
+        cmap = ConstAssignmentMapFusion.add_equivalent_connectors(dst_en, en)
+        for e in graph.in_edges(en):
+            graph.add_memlet_path(e.src, dst_en,
+                                  src_conn=e.src_conn, dst_conn=cmap.get(e.dst_conn),
+                                  memlet=Memlet.from_memlet(e.data))
+            graph.add_memlet_path(dst_en, e.dst,
+                                  src_conn=cmap.get(e.src_conn), dst_conn=e.dst_conn,
+                                  memlet=Memlet.from_memlet(e.data))
+            graph.remove_edge(e)
+
+        cmap = ConstAssignmentMapFusion.add_equivalent_connectors(dst_ex, ex)
+        for e in graph.out_edges(ex):
+            graph.add_memlet_path(e.src, dst_ex,
+                                  src_conn=e.src_conn,
+                                  dst_conn=ConstAssignmentMapFusion.connector_counterpart(cmap.get(e.src_conn)),
+                                  memlet=Memlet.from_memlet(e.data))
+            graph.add_memlet_path(dst_ex, e.dst,
+                                  src_conn=cmap.get(e.src_conn), dst_conn=e.dst_conn,
+                                  memlet=Memlet.from_memlet(e.data))
+            graph.remove_edge(e)
+
     def apply(self, graph: SDFGState, sdfg: SDFG):
         first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
 
@@ -268,53 +438,29 @@ class ConstAssignmentMapFusion(MapFusion):
         is_const_assignment, assignments = self.consistent_const_assignment_table(graph, first_entry, first_exit)
         assert is_const_assignment
 
-        # Keep track in case loop variables are named differently.
+        # Rename in case loop variables are named differently.
         param_map = {p2: p1 for p1, p2 in zip(first_entry.map.params, second_entry.map.params)}
-
-        # Track all the access nodes that will survive the purge.
-        access_nodes, remove_nodes = self.track_access_nodes(graph, first_exit, second_exit)
-
-        # Set up the extra connections on the first node.
-        conn_map = self.add_equivalent_connectors(first_exit, second_exit)
-
-        # Redirect outgoing edges from exit nodes that are going to be invalidated.
-        for e in graph.out_edges(first_exit):
-            array_name = e.dst.data
-            assert array_name in access_nodes
-            if access_nodes[array_name] != e.dst:
-                graph.add_memlet_path(first_exit, access_nodes[array_name], src_conn=e.src_conn, dst_conn=e.dst_conn,
-                                      memlet=Memlet.from_memlet(e.data))
-                graph.remove_edge(e)
-        for e in graph.out_edges(second_exit):
-            array_name = e.dst.data
-            assert array_name in access_nodes
-            graph.add_memlet_path(first_exit, access_nodes[array_name], src_conn=conn_map[e.src_conn],
-                                  dst_conn=e.dst_conn, memlet=Memlet.from_memlet(e.data))
-            graph.remove_edge(e)
-
-        # Move the tasklets from the second map into the first map.
-        second_tasklets = graph.all_nodes_between(second_entry, second_exit)
-        for t in second_tasklets:
-            for e in graph.in_edges(t):
-                graph.add_memlet_path(first_entry, t, memlet=Memlet.from_memlet(e.data))
-                graph.remove_edge(e)
+        for t in graph.all_nodes_between(second_entry, second_exit):
             for e in graph.out_edges(t):
-                e_data = e.data
-                e_data.subset.replace(param_map)
-                graph.add_memlet_path(e.src, first_exit, src_conn=e.src_conn, dst_conn=conn_map[e.dst_conn],
-                                      memlet=Memlet.from_memlet(e.data))
-                graph.remove_edge(e)
+                e.data.subset.replace(param_map)
+        second_entry.map.params = first_entry.map.params
 
-        # Redirect any outgoing edges from the nodes to be removed through their surviving counterparts.
-        for n in remove_nodes:
-            for e in graph.out_edges(n):
-                if e.dst != second_entry:
-                    alt_n = access_nodes[n.data]
-                    memlet = Memlet.from_memlet(e.data)
-                    graph.add_memlet_path(alt_n, e.dst, src_conn=e.src_conn, dst_conn=e.dst_conn, memlet=memlet)
-            graph.remove_node(n)
-        graph.remove_node(second_entry)
-        graph.remove_node(second_exit)
+        # Consolidate the incoming dependencies of the two maps.
+        self.consolidate_empty_dependencies(graph, first_entry, second_entry)
+
+        # Consolidate the written access nodes of the two maps.
+        self.consolidate_written_nodes(graph, first_exit, second_exit)
+
+        # If the ranges are identical, then simply fuse the two maps. Otherwise, use grid-strided loops.
+        en, ex = graph.add_map(sdfg._find_new_name('map_fusion_wrapper'),
+                               {k: v for k, v in zip(first_entry.map.params,
+                                                     subsets.union(first_entry.map.range, second_entry.map.range))},
+                               schedule=first_entry.map.schedule)
+        for cur_en, cur_ex in [(first_entry, first_exit), (second_entry, second_exit)]:
+            if en.map.range.covers(cur_en.map.range):
+                self.consume_map_exactly(graph, (en, ex), (cur_en, cur_ex))
+            else:
+                self.consume_map_with_grid_strided_loop(graph, (en, ex), (cur_en, cur_ex))
 
 
 class ConstAssignmentStateFusion(StateFusionExtended):
@@ -329,23 +475,30 @@ class ConstAssignmentStateFusion(StateFusionExtended):
 
     # NOTE: `expression()` is inherited.
 
-    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+    def can_be_applied(self, graph: ControlFlowRegion, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         # All the basic rules apply.
         if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
         st0, st1 = self.first_state, self.second_state
 
-        # Moreover, each state must contain just one constant assignment map.
+        # Moreover, the states together must contain a consistent constant assignment map.
+        assignments = {}
         for st in [st0, st1]:
             en_ex = unique_map_node(st)
             if not en_ex:
                 return False
             en, ex = en_ex
-            if len(st.in_edges(en)) != 0:
+            if any(not e.data.is_empty for e in st.in_edges(en)):
                 return False
-            is_const_assignment, assignments = ConstAssignmentMapFusion.consistent_const_assignment_table(st, en, ex)
+            is_const_assignment, further_assignments = ConstAssignmentMapFusion.consistent_const_assignment_table(st,
+                                                                                                                  en,
+                                                                                                                  ex)
             if not is_const_assignment:
                 return False
+            for k, v in further_assignments.items():
+                if k in assignments and v != assignments[k]:
+                    return False
+                assignments[k] = v
 
         # Moreover, both states' ranges must be compatible.
         if not ConstAssignmentMapFusion.compatible_range(unique_map_node(st0)[0], unique_map_node(st1)[0]):
@@ -357,5 +510,6 @@ class ConstAssignmentStateFusion(StateFusionExtended):
         # First, fuse the two states.
         super().apply(graph, sdfg)
         sdfg.validate()
+        # Then, fuse the maps inside.
         sdfg.apply_transformations_repeated(ConstAssignmentMapFusion)
         sdfg.validate()
