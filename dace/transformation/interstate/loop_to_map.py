@@ -450,7 +450,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     increment_edge = sdfg.add_edge(new_body, e.dst, e.data)
 
 
-            elif 1 < self.expr_index <= 3:  # Rotated loop
+            elif 1 < self.expr_index <= 3 or 5 <= self.expr_index <= 7:  # Rotated loop
                 entrystate = self.entry_state
                 latch = self.loop_latch
 
@@ -668,7 +668,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             body.add_nedge(entry, exit, memlet.Memlet())
 
         # Get rid of the loop exit condition edge (it will be readded below)
-        sdfg.remove_edge(after_edge)
+        if self.expr_index not in (5, 6, 7):
+            sdfg.remove_edge(after_edge)
 
         # Remove the assignment on the edge to the guard
         for e in [init_edge, increment_edge]:

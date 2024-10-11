@@ -1557,6 +1557,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         code_exit: str = "",
         location: dict = None,
         side_effects: Optional[bool] = None,
+        ignored_symbols: Optional[Set[str]] = None,
         debuginfo=None,
     ):
         """ Adds a tasklet to the SDFG state. """
@@ -1580,6 +1581,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             code_exit=code_exit,
             location=location,
             side_effects=side_effects,
+            ignored_symbols=ignored_symbols,
             debuginfo=debuginfo,
         ) if language != dtypes.Language.SystemVerilog else nd.RTLTasklet(
             name,
@@ -1593,6 +1595,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             code_exit=code_exit,
             location=location,
             side_effects=side_effects,
+            ignored_symbols=ignored_symbols,
             debuginfo=debuginfo,
         )
         self.add_node(tasklet)

@@ -44,7 +44,11 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: b
         ):
             fd, filename = tempfile.mkstemp(suffix='.sdfg')
             sdfg.save(filename)
-            os.system(f'code {filename}')
+            if platform.system() == 'Darwin':
+                # Special case for MacOS
+                os.system(f'open {filename}')
+            else:
+                os.system(f'code {filename}')
             os.close(fd)
             return
 
