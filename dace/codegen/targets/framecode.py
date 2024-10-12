@@ -22,7 +22,7 @@ from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
-from dace.transformation.passes.analysis import StateReachability
+from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -920,11 +920,19 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             if isinstance(cfr, LoopRegion) and cfr.loop_variable is not None and cfr.init_statement is not None:
                 init_assignment = cfr.init_statement.code[0]
+                update_assignment = cfr.update_statement.code[0]
                 if isinstance(init_assignment, astutils.ast.Assign):
                     init_assignment = init_assignment.value
+                if isinstance(update_assignment, astutils.ast.Assign):
+                    update_assignment = update_assignment.value
                 if not cfr.loop_variable in interstate_symbols:
-                    interstate_symbols[cfr.loop_variable] = infer_expr_type(astutils.unparse(init_assignment),
-                                                                            global_symbols)
+                    l_end = loop_analysis.get_loop_end(cfr)
+                    l_start = loop_analysis.get_init_assignment(cfr)
+                    l_step = loop_analysis.get_loop_stride(cfr)
+                    sym_type = dtypes.result_type_of(infer_expr_type(l_start, global_symbols),
+                                                     infer_expr_type(l_step, global_symbols),
+                                                     infer_expr_type(l_end, global_symbols))
+                    interstate_symbols[cfr.loop_variable] = sym_type
                 if not cfr.loop_variable in global_symbols:
                     global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
 
