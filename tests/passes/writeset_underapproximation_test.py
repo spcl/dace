@@ -1,15 +1,14 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
+from typing import Dict
 import dace
-from dace.sdfg.analysis.writeset_underapproximation import UnderapproximateWrites
+from dace.sdfg.analysis.writeset_underapproximation import UnderapproximateWrites, UnderapproximateWritesDict
 from dace.subsets import Range
 from dace.transformation.pass_pipeline import Pipeline
 
 N = dace.symbol("N")
 M = dace.symbol("M")
 K = dace.symbol("K")
-
-pipeline = Pipeline([UnderapproximateWrites()])
 
 
 def test_2D_map_overwrites_2D_array():
@@ -33,9 +32,10 @@ def test_2D_map_overwrites_2D_array():
                                  output_nodes={'B': a1},
                                  external_edges=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    result = results['approximation']
+    result = results[sdfg.cfg_id].approximation
     edge = map_state.in_edges(a1)[0]
     result_subset_list = result[edge].subset.subset_list
     result_subset = result_subset_list[0]
@@ -65,9 +65,10 @@ def test_2D_map_added_indices():
                                  output_nodes={"B": a1},
                                  external_edges=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    result = results["approximation"]
+    result = results[sdfg.cfg_id].approximation
     edge = map_state.in_edges(a1)[0]
     assert (len(result[edge].subset.subset_list) == 0)
 
@@ -94,9 +95,10 @@ def test_2D_map_multiplied_indices():
                                  output_nodes={"B": a1},
                                  external_edges=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    result = results["approximation"]
+    result = results[sdfg.cfg_id].approximation
     edge = map_state.in_edges(a1)[0]
     assert (len(result[edge].subset.subset_list) == 0)
 
@@ -121,9 +123,10 @@ def test_1D_map_one_index_multiple_dims():
                                  output_nodes={"B": a1},
                                  external_edges=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    result = results["approximation"]
+    result = results[sdfg.cfg_id].approximation
     edge = map_state.in_edges(a1)[0]
     assert (len(result[edge].subset.subset_list) == 0)
 
@@ -146,9 +149,10 @@ def test_1D_map_one_index_squared():
                                  output_nodes={"B": a1},
                                  external_edges=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    result = results["approximation"]
+    result = results[sdfg.cfg_id].approximation
     edge = map_state.in_edges(a1)[0]
     assert (len(result[edge].subset.subset_list) == 0)
 
@@ -185,9 +189,10 @@ def test_map_tree_full_write():
     inner_edge_1 = map_state.add_edge(inner_map_exit_1, "OUT_B", map_exit, "IN_B", dace.Memlet(data="B"))
     outer_edge = map_state.add_edge(map_exit, "OUT_B", a1, None, dace.Memlet(data="B"))
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    result = results["approximation"]
+    result = results[sdfg.cfg_id].approximation
     expected_subset_outer_edge = Range.from_string("0:M, 0:N")
     expected_subset_inner_edge = Range.from_string("0:M, _i")
     result_inner_edge_0 = result[inner_edge_0].subset.subset_list[0]
@@ -230,9 +235,10 @@ def test_map_tree_no_write_multiple_indices():
     inner_edge_1 = map_state.add_edge(inner_map_exit_1, "OUT_B", map_exit, "IN_B", dace.Memlet(data="B"))
     outer_edge = map_state.add_edge(map_exit, "OUT_B", a1, None, dace.Memlet(data="B"))
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    result = results["approximation"]
+    result = results[sdfg.cfg_id].approximation
     result_inner_edge_0 = result[inner_edge_0].subset.subset_list
     result_inner_edge_1 = result[inner_edge_1].subset.subset_list
     result_outer_edge = result[outer_edge].subset.subset_list
@@ -273,9 +279,10 @@ def test_map_tree_multiple_indices_per_dimension():
     inner_edge_1 = map_state.add_edge(inner_map_exit_1, "OUT_B", map_exit, "IN_B", dace.Memlet(data="B"))
     outer_edge = map_state.add_edge(map_exit, "OUT_B", a1, None, dace.Memlet(data="B"))
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    result = results["approximation"]
+    result = results[sdfg.cfg_id].approximation
     expected_subset_outer_edge = Range.from_string("0:M, 0:N")
     expected_subset_inner_edge_1 = Range.from_string("0:M, _i")
     result_inner_edge_1 = result[inner_edge_1].subset.subset_list[0]
@@ -300,11 +307,12 @@ def test_loop_in_map_multiplied_indices():
 
     sdfg = loop.to_sdfg(simplify=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
     nsdfg = sdfg.cfg_list[1].parent_nsdfg_node
     map_state = sdfg.states()[0]
-    result = results["approximation"]
+    result = results[sdfg.cfg_id].approximation
     edge = map_state.out_edges(nsdfg)[0]
     assert (len(result[edge].subset.subset_list) == 0)
 
@@ -323,11 +331,12 @@ def test_loop_in_map():
 
     sdfg = loop.to_sdfg(simplify=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
     map_state = sdfg.states()[0]
     edge = map_state.in_edges(map_state.data_nodes()[0])[0]
-    result = results["approximation"]
+    result = results[sdfg.cfg_id].approximation
     expected_subset = Range.from_string("0:N, 0:M")
     assert (str(result[edge].subset.subset_list[0]) == str(expected_subset))
 
@@ -357,9 +366,10 @@ def test_map_in_loop():
                             output_nodes={"B": a1},
                             external_edges=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    result = results["loop_approximation"]
+    result = results[sdfg.cfg_id].loop_approximation
     expected_subset = Range.from_string("0:N, 0:M")
     assert (str(result[guard]["B"].subset.subset_list[0]) == str(expected_subset))
 
@@ -390,9 +400,10 @@ def test_map_in_loop_multiplied_indices_first_dimension():
                             output_nodes={"B": a1},
                             external_edges=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    result = results["loop_approximation"]
+    result = results[sdfg.cfg_id].loop_approximation
     assert (guard not in result.keys() or len(result[guard]) == 0)
 
 
@@ -421,9 +432,10 @@ def test_map_in_loop_multiplied_indices_second_dimension():
                             output_nodes={"B": a1},
                             external_edges=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    result = results["loop_approximation"]
+    result = results[sdfg.cfg_id].loop_approximation
     assert (guard not in result.keys() or len(result[guard]) == 0)
 
 
@@ -444,8 +456,9 @@ def test_nested_sdfg_in_map_nest():
 
     sdfg = nested_loop.to_sdfg(simplify=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
-    write_approx = result["approximation"]
+    write_approx = result[sdfg.cfg_id].approximation
     # find write set
     accessnode = None
     write_set = None
@@ -478,9 +491,10 @@ def test_loop_in_nested_sdfg_in_map_partial_write():
 
     sdfg = nested_loop.to_sdfg(simplify=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    write_approx = result["approximation"]
+    write_approx = result[sdfg.cfg_id].approximation
     # find write set
     accessnode = None
     write_set = None
@@ -510,15 +524,16 @@ def test_map_in_nested_sdfg_in_map():
 
     sdfg = nested_loop.to_sdfg(simplify=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    write_approx = result["approximation"]
+    write_approx = result[sdfg.cfg_id].approximation
     # find write set
     accessnode = None
     write_set = None
-    for node, _ in sdfg.all_nodes_recursive():
+    for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.AccessNode):
-            if node.data == "A":
+            if node.data == "A" and parent.out_degree(node) == 0:
                 accessnode = node
     for edge, memlet in write_approx.items():
         if edge.dst is accessnode:
@@ -531,6 +546,7 @@ def test_nested_sdfg_in_map_branches():
     Nested SDFG that overwrites second dimension of array conditionally.
     --> should approximate write-set of map as empty
     """
+    # No, should be approximated precisely - at least certainly with CF regions..?
 
     @dace.program
     def nested_loop(A: dace.float64[M, N]):
@@ -542,15 +558,16 @@ def test_nested_sdfg_in_map_branches():
 
     sdfg = nested_loop.to_sdfg(simplify=True)
 
-    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
+    pipeline = Pipeline([UnderapproximateWrites()])
+    result: Dict[int, UnderapproximateWritesDict] = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    write_approx = result["approximation"]
+    write_approx = result[sdfg.cfg_id].approximation
     # find write set
     accessnode = None
     write_set = None
-    for node, _ in sdfg.all_nodes_recursive():
+    for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.AccessNode):
-            if node.data == "A":
+            if node.data == "A" and parent.out_degree(node) == 0:
                 accessnode = node
     for edge, memlet in write_approx.items():
         if edge.dst is accessnode:
@@ -574,9 +591,10 @@ def test_simple_loop_overwrite():
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[i]"))
 
-    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
+    pipeline = Pipeline([UnderapproximateWrites()])
+    result: UnderapproximateWritesDict = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__][sdfg.cfg_id]
 
-    assert (str(result[guard]["A"].subset) == str(Range.from_array(sdfg.arrays["A"])))
+    assert (str(result.loop_approximation[guard]["A"].subset) == str(Range.from_array(sdfg.arrays["A"])))
 
 
 def test_loop_2D_overwrite():
@@ -598,7 +616,8 @@ def test_loop_2D_overwrite():
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[j,i]"))
 
-    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
+    pipeline = Pipeline([UnderapproximateWrites()])
+    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__][sdfg.cfg_id].loop_approximation
 
     assert (str(result[guard1]["A"].subset) == str(Range.from_array(sdfg.arrays["A"])))
     assert (str(result[guard2]["A"].subset) == "j, 0:N")
@@ -629,7 +648,8 @@ def test_loop_2D_propagation_gap_symbolic():
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[j,i]"))
 
-    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
+    pipeline = Pipeline([UnderapproximateWrites()])
+    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__][sdfg.cfg_id].loop_approximation
 
     assert ("A" not in result[guard1].keys())
     assert ("A" not in result[guard2].keys())
@@ -657,7 +677,8 @@ def test_2_loops_overwrite():
     loop_tasklet_2 = loop_body_2.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body_2.add_edge(loop_tasklet_2, "a", a1, None, dace.Memlet("A[i]"))
 
-    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
+    pipeline = Pipeline([UnderapproximateWrites()])
+    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__][sdfg.cfg_id].loop_approximation
 
     assert (str(result[guard_1]["A"].subset) == str(Range.from_array(sdfg.arrays["A"])))
     assert (str(result[guard_2]["A"].subset) == str(Range.from_array(sdfg.arrays["A"])))
@@ -687,7 +708,8 @@ def test_loop_2D_overwrite_propagation_gap_non_empty():
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[j,i]"))
 
-    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
+    pipeline = Pipeline([UnderapproximateWrites()])
+    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__][sdfg.cfg_id].loop_approximation
 
     assert (str(result[guard1]["A"].subset) == str(Range.from_array(sdfg.arrays["A"])))
     assert (str(result[guard2]["A"].subset) == "j, 0:N")
@@ -717,7 +739,8 @@ def test_loop_nest_multiplied_indices():
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[i,i*j]"))
 
-    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
+    pipeline = Pipeline([UnderapproximateWrites()])
+    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__][sdfg.cfg_id].loop_approximation
 
     assert (guard1 not in result.keys() or "A" not in result[guard1].keys())
     assert (guard2 not in result.keys() or "A" not in result[guard2].keys())
@@ -748,7 +771,8 @@ def test_loop_nest_empty_nested_loop():
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[j,i]"))
 
-    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
+    pipeline = Pipeline([UnderapproximateWrites()])
+    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__][sdfg.cfg_id].loop_approximation
 
     assert (guard1 not in result.keys() or "A" not in result[guard1].keys())
     assert (guard2 not in result.keys() or "A" not in result[guard2].keys())
@@ -779,7 +803,8 @@ def test_loop_nest_inner_loop_conditional():
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[k]"))
 
-    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
+    pipeline = Pipeline([UnderapproximateWrites()])
+    result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__][sdfg.cfg_id].loop_approximation
 
     assert (guard1 not in result.keys() or "A" not in result[guard1].keys())
     assert (guard2 in result.keys() and "A" in result[guard2].keys() and str(result[guard2]['A'].subset) == "0:N")
@@ -799,9 +824,10 @@ def test_loop_in_nested_sdfg_in_map_multiplied_indices():
 
     sdfg = nested_loop.to_sdfg(simplify=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    write_approx = result["approximation"]
+    write_approx = result[sdfg.cfg_id].approximation
     write_set = None
     accessnode = None
     for node, _ in sdfg.all_nodes_recursive():
@@ -828,10 +854,11 @@ def test_loop_in_nested_sdfg_simple():
 
     sdfg = nested_loop.to_sdfg(simplify=True)
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
     # find write set
-    write_approx = result["approximation"]
+    write_approx = result[sdfg.cfg_id].approximation
     accessnode = None
     write_set = None
     for node, _ in sdfg.all_nodes_recursive():
@@ -864,9 +891,10 @@ def test_loop_break():
     loop_tasklet = loop_body_1.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body_1.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[i]"))
 
+    pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    result = results["loop_approximation"]
+    result = results[sdfg.cfg_id].loop_approximation
     assert (guard3 not in result.keys() or "A" not in result[guard3].keys())
 
 

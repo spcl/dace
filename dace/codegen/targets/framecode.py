@@ -15,12 +15,14 @@ from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.targets.target import TargetCodeGenerator
+from dace.codegen.tools.type_inference import infer_expr_type
+from dace.frontend.python import astutils
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ControlFlowRegion
-from dace.transformation.passes.analysis import StateReachability
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -915,6 +917,24 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 }
                 interstate_symbols.update(symbols)
                 global_symbols.update(symbols)
+
+            if isinstance(cfr, LoopRegion) and cfr.loop_variable is not None and cfr.init_statement is not None:
+                init_assignment = cfr.init_statement.code[0]
+                update_assignment = cfr.update_statement.code[0]
+                if isinstance(init_assignment, astutils.ast.Assign):
+                    init_assignment = init_assignment.value
+                if isinstance(update_assignment, astutils.ast.Assign):
+                    update_assignment = update_assignment.value
+                if not cfr.loop_variable in interstate_symbols:
+                    l_end = loop_analysis.get_loop_end(cfr)
+                    l_start = loop_analysis.get_init_assignment(cfr)
+                    l_step = loop_analysis.get_loop_stride(cfr)
+                    sym_type = dtypes.result_type_of(infer_expr_type(l_start, global_symbols),
+                                                     infer_expr_type(l_step, global_symbols),
+                                                     infer_expr_type(l_end, global_symbols))
+                    interstate_symbols[cfr.loop_variable] = sym_type
+                if not cfr.loop_variable in global_symbols:
+                    global_symbols[cfr.loop_variable] = interstate_symbols[cfr.loop_variable]
 
         for isvarName, isvarType in interstate_symbols.items():
             if isvarType is None:
