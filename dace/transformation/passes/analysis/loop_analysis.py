@@ -1,4 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Various analyses concerning LopoRegions, and utility functions to get information about LoopRegions for other passes.
+"""
 
 import ast
 from typing import Any, Dict, Optional

@@ -741,8 +741,8 @@ def test_rotated_loop_to_map(simplify):
     sdfg.add_edge(guard, exitstate, dace.InterstateEdge('N <= 0'))
     sdfg.add_edge(guard, preheader, dace.InterstateEdge('N > 0'))
     sdfg.add_edge(preheader, body, dace.InterstateEdge(assignments=dict(i=0)))
-    sdfg.add_edge(body, latch, dace.InterstateEdge(assignments=dict(i='i + 1')))
-    sdfg.add_edge(latch, body, dace.InterstateEdge('i < N'))
+    sdfg.add_edge(body, latch, dace.InterstateEdge())
+    sdfg.add_edge(latch, body, dace.InterstateEdge('i < N', assignments=dict(i='i + 1')))
     sdfg.add_edge(latch, loopexit, dace.InterstateEdge('i >= N'))
     sdfg.add_edge(loopexit, exitstate, dace.InterstateEdge())
 
