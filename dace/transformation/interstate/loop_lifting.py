@@ -25,7 +25,7 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
-        first_state = self.loop_guard if self.expr_index <= 1 else self.loop_begin
+        first_state = self.first_loop_block
         after = self.exit_state
 
         loop_info = self.loop_information()
@@ -36,7 +36,7 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         full_body.update(meta)
         cond_edge = self.loop_condition_edge()
         incr_edge = self.loop_increment_edge()
-        inverted = self.expr_index in (2, 3, 5, 6, 7)
+        inverted = self.inverted
         init_edge = self.loop_init_edge()
         exit_edge = self.loop_exit_edge()
 
@@ -95,5 +95,5 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         for n in full_body:
             graph.remove_node(n)
 
-        sdfg.recheck_using_experimental_blocks()
+        sdfg.root_sdfg.using_experimental_blocks = True
         sdfg.reset_cfg_list()

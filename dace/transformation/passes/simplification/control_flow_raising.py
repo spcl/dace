@@ -14,6 +14,9 @@ from dace.transformation.interstate.loop_lifting import LoopLifting
 @properties.make_properties
 @transformation.experimental_cfg_block_compatible
 class ControlFlowRaising(ppl.Pass):
+    """
+    Raises all detectable control flow that can be expressed with native SDFG structures, such as loops and branching.
+    """
 
     CATEGORY: str = 'Simplification'
 
@@ -28,10 +31,10 @@ class ControlFlowRaising(ppl.Pass):
         n_cond_regions_pre = len([x for x in sdfg.all_control_flow_blocks() if isinstance(x, ConditionalBlock)])
 
         for region in cfgs:
+            sinks = region.sink_nodes()
             dummy_exit = region.add_state('__DACE_DUMMY')
-            for s in region.sink_nodes():
-                if s is not dummy_exit:
-                    region.add_edge(s, dummy_exit, InterstateEdge())
+            for s in sinks:
+                region.add_edge(s, dummy_exit, InterstateEdge())
             idom = nx.immediate_dominators(region.nx, region.start_block)
             alldoms = cfg_analysis.all_dominators(region, idom)
             branch_merges = cfg_analysis.branch_merges(region, idom, alldoms)

@@ -4,6 +4,7 @@ Pass derived from ``propagation.py`` that under-approximates write-sets of for-l
 """
 
 import copy
+from dataclasses import dataclass
 import itertools
 import sys
 import warnings
@@ -74,7 +75,7 @@ class SeparableUnderapproximationMemlet(UnderapproximationMemletPattern):
 
         # Return False if iteration variable appears in multiple dimensions
         # or if two iteration variables appear in the same dimension
-        if not self._iteration_variables_appear_multiple_times(data_dims, expressions, other_params, params):
+        if not self._iteration_variables_appear_only_once(data_dims, expressions, other_params, params):
             return False
 
         node_range = self._make_range(node_range)
@@ -100,8 +101,7 @@ class SeparableUnderapproximationMemlet(UnderapproximationMemletPattern):
 
         return None not in self.patterns_per_dim
 
-    def _iteration_variables_appear_multiple_times(self, data_dims, expressions, other_params, params):
-        # TODO: This name implies exactly the inverse of the returned value..
+    def _iteration_variables_appear_only_once(self, data_dims, expressions, other_params, params):
         for expr in expressions:
             for param in params:
                 occured_before = False
@@ -677,25 +677,34 @@ def _merge_subsets(subset_a: subsets.Subset, subset_b: subsets.Subset) -> subset
         return subset_b
 
 
-class UnderapproximateWritesDictT(TypedDict):
-    approximation: Dict[graph.Edge, Memlet]
-    loop_approximation: Dict[SDFGState, Dict[str, Memlet]]
-    loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]
+@dataclass
+class UnderapproximateWritesDict:
+    approximation: Dict[graph.Edge, Memlet] = {}
+    loop_approximation: Dict[SDFGState, Dict[str, Memlet]] = {}
+    loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]] = {}
 
 
 @transformation.experimental_cfg_block_compatible
 class UnderapproximateWrites(ppl.Pass):
 
     # Dictionary mapping each edge to a copy of the memlet of that edge with its write set underapproximated.
-    approximation_dict: Dict[graph.Edge, Memlet] = {}
+    approximation_dict: Dict[graph.Edge, Memlet]
     # Dictionary that maps loop headers to "border memlets" that are written to in the corresponding loop.
-    loop_write_dict: Dict[SDFGState, Dict[str, Memlet]] = {}
+    loop_write_dict: Dict[SDFGState, Dict[str, Memlet]]
     # Dictionary containing information about the for loops in the SDFG.
-    loop_dict: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]] = {}
+    loop_dict: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]
     # Dictionary mapping each nested SDFG to the iteration variables surrounding it.
-    iteration_variables: Dict[SDFG, Set[str]] = {}
+    iteration_variables: Dict[SDFG, Set[str]]
     # Mapping of state to the iteration variables surrounding them, including the ones from surrounding SDFGs.
-    ranges_per_state: Dict[SDFGState, Dict[str, subsets.Range]] = defaultdict(lambda: {})
+    ranges_per_state: Dict[SDFGState, Dict[str, subsets.Range]]
+
+    def __init__(self):
+        super().__init__()
+        self.approximation_dict = {}
+        self.loop_write_dict = {}
+        self.loop_dict = {}
+        self.iteration_variables = {}
+        self.ranges_per_state = defaultdict(lambda: {})
 
     def modifies(self) -> Modifies:
         return ppl.Modifies.States
@@ -704,7 +713,7 @@ class UnderapproximateWrites(ppl.Pass):
         # If anything was modified, reapply.
         return modified & ppl.Modifies.Everything
 
-    def apply_pass(self, top_sdfg: dace.SDFG, _) -> Dict[int, UnderapproximateWritesDictT]:
+    def apply_pass(self, top_sdfg: dace.SDFG, _) -> Dict[int, UnderapproximateWritesDict]:
         """
         Applies the pass to the given SDFG.
 
@@ -726,7 +735,7 @@ class UnderapproximateWrites(ppl.Pass):
         :notes: The only modification this pass performs on the SDFG is splitting interstate
                 edges.
         """
-        result = defaultdict(lambda: {'approximation': dict(), 'loop_approximation': dict(), 'loops': dict()})
+        result = defaultdict(lambda: UnderapproximateWritesDict())
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
             # Clear the global dictionaries.
