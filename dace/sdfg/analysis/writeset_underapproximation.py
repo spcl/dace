@@ -4,7 +4,7 @@ Pass derived from ``propagation.py`` that under-approximates write-sets of for-l
 """
 
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import itertools
 import sys
 import warnings
@@ -679,9 +679,10 @@ def _merge_subsets(subset_a: subsets.Subset, subset_b: subsets.Subset) -> subset
 
 @dataclass
 class UnderapproximateWritesDict:
-    approximation: Dict[graph.Edge, Memlet] = {}
-    loop_approximation: Dict[SDFGState, Dict[str, Memlet]] = {}
-    loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]] = {}
+    approximation: Dict[graph.Edge, Memlet] = field(default_factory=dict)
+    loop_approximation: Dict[SDFGState, Dict[str, Memlet]] = field(default_factory=dict)
+    loops: Dict[SDFGState,
+                Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]] = field(default_factory=dict)
 
 
 @transformation.experimental_cfg_block_compatible
