@@ -774,9 +774,9 @@ class UnderapproximateWrites(ppl.Pass):
                 if entry.subset is None:
                     entry.subset = subsets.SubsetUnion([])
 
-            result[sdfg.cfg_id]['approximation'] = self.approximation_dict
-            result[sdfg.cfg_id]['loop_approximation'] = self.loop_write_dict
-            result[sdfg.cfg_id]['loops'] = self.loop_dict
+            result[sdfg.cfg_id].approximation = self.approximation_dict
+            result[sdfg.cfg_id].loop_approximation = self.loop_write_dict
+            result[sdfg.cfg_id].loops = self.loop_dict
 
         return result
 
