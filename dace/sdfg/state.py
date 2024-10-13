@@ -3008,7 +3008,7 @@ class LoopRegion(ControlFlowRegion):
                                        desc='If False, the loop condition is checked before the update statement is' +
                                        ' executed. This only applies to inverted loops, turning them from a typical ' +
                                        'do-while style into a while(true) with a break before the update (at the end ' +
-                                       'of an iteration)if the condition no longer holds.')
+                                       'of an iteration) if the condition no longer holds.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
 
     def __init__(self,

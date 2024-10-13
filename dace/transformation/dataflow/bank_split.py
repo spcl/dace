@@ -162,8 +162,8 @@ class BankSplit(transformation.SingleStateTransformation):
         target_offset_str = ", ".join([f"({x}):({x}+{y})" for x, y in zip(target_offset, target_size)])
         if collect_src:
             copy_memlet = memlet.Memlet(f"{src.data}[{target_hbm_bank_str}, {target_size_str}]->"
-                                        f"{target_offset_str}")
+                                        f"[{target_offset_str}]")
         else:
-            copy_memlet = memlet.Memlet(f"{src.data}[{target_offset_str}]->{target_hbm_bank_str}, "
-                                        f"{target_size_str}")
+            copy_memlet = memlet.Memlet(f"{src.data}[{target_offset_str}]->[{target_hbm_bank_str}, "
+                                        f"{target_size_str}]")
         graph.add_edge(src, None, dst, None, copy_memlet)

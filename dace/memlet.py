@@ -75,7 +75,9 @@ class Memlet(object):
                      of use API. Must follow one of the following forms:
                      1. ``ARRAY``,
                      2. ``ARRAY[SUBSET]``,
-                     3. ``ARRAY[SUBSET] -> OTHER_SUBSET``.
+                     3. ``ARRAY[SUBSET] -> [OTHER_SUBSET]``,
+                     4. ``[OTHER_SUBSET] -> ARRAY[SUBSET]``,
+                     5. ``SRC_ARRAY[SRC_SUBSET] -> DST_ARRAY[DST_SUBSET]``.
         :param data: Data descriptor name attached to this memlet.
         :param subset: The subset to take from the data attached to the edge,
                        represented either as a string or a Subset object.
@@ -330,6 +332,10 @@ class Memlet(object):
                 raise SyntaxError('Invalid memlet syntax "%s"' % expr)
             return expr, None
 
+        # [subset] syntax
+        if expr.startswith('['):
+            return None, SubsetProperty.from_string(expr[1:-1])
+      
         # array[subset] syntax
         arrname, subset_str = expr[:-1].split('[')
         if not dtypes.validate_name(arrname):
@@ -342,27 +348,40 @@ class Memlet(object):
         or the _data,_subset fields.
 
         :param expr: A string expression of the this memlet, given as an ease
-                of use API. Must follow one of the following forms:
-                1. ``ARRAY``,
-                2. ``ARRAY[SUBSET]``,
-                3. ``ARRAY[SUBSET] -> OTHER_SUBSET``.
-                Note that modes 2 and 3 are deprecated and will leave 
-                the memlet uninitialized until inserted into an SDFG.
+                     of use API. Must follow one of the following forms:
+                         1. ``ARRAY``,
+                         2. ``ARRAY[SUBSET]``,
+                         3. ``ARRAY[SUBSET] -> [OTHER_SUBSET]``,
+                         4. ``[OTHER_SUBSET] -> ARRAY[SUBSET]``,
+                         5. ``SRC_ARRAY[SRC_SUBSET] -> DST_ARRAY[DST_SUBSET]``.
+                     Note that options 1-2 will leave the memlet uninitialized
+                     until added into an SDFG.
         """
         expr = expr.strip()
         if '->' not in expr:  # Options 1 and 2
             self.data, self.subset = self._parse_from_subexpr(expr)
             return
 
-        # Option 3
+        # Options 3-5
         src_expr, dst_expr = expr.split('->')
         src_expr = src_expr.strip()
         dst_expr = dst_expr.strip()
-        if '[' not in src_expr and not dtypes.validate_name(src_expr):
-            raise SyntaxError('Expression without data name not yet allowed')
 
-        self.data, self.subset = self._parse_from_subexpr(src_expr)
-        self.other_subset = SubsetProperty.from_string(dst_expr)
+        src_data, src_subset = self._parse_from_subexpr(src_expr)
+        dst_data, dst_subset = self._parse_from_subexpr(dst_expr)
+        if src_data is None and dst_data is None:
+            raise SyntaxError('At least one data name needs to be given')
+
+        if src_data is not None:  # Prefer src[subset] -> [other_subset]
+            self.data = src_data
+            self.subset = src_subset
+            self.other_subset = dst_subset
+            self._is_data_src = True
+        else:
+            self.data = dst_data
+            self.subset = dst_subset
+            self.other_subset = src_subset
+            self._is_data_src = False
 
     def try_initialize(self, sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                        edge: 'dace.sdfg.graph.MultiConnectorEdge'):
@@ -660,7 +679,7 @@ class Memlet(object):
 
         if self.other_subset is not None:
             if self._is_data_src is False:
-                result += ' <- [%s]' % str(self.other_subset)
+                result = f'[{self.other_subset}] -> {result}'
             else:
                 result += ' -> [%s]' % str(self.other_subset)
         return result

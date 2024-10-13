@@ -99,6 +99,20 @@ class DetectLoop(transformation.PatternTransformation):
 
         return [sdfg, msdfg, rsdfg, rmsdfg, ssdfg, mlrmsdfg, mlrsdfg, gmlrmsdfg]
 
+    @property
+    def inverted(self) -> bool:
+        """
+        Whether the loop matched a pattern of an inverted (do-while style) loop.
+        """
+        return self.expr_index in (2, 3, 5, 6, 7)
+
+    @property
+    def first_loop_block(self) -> ControlFlowBlock:
+        """
+        The first control flow block executed in each loop iteration.
+        """
+        return self.loop_guard if self.expr_index <= 1 else self.loop_begin
+
     def can_be_applied(self,
                        graph: ControlFlowRegion,
                        expr_index: int,
@@ -530,7 +544,6 @@ def rotated_loop_find_itvar(begin_inedges: List[gr.Edge[InterstateEdge]],
         if cand in backedge_incremented:
             # Scenario 1.
 
-            # TODO: Not sure if the condition below is a necessary prerequisite.
             # Note, only allow this scenario if the backedge leads directly from the latch to the entry, i.e., there is
             # no intermediate block on the backedge path.
             if backedge.src is not latch:
@@ -682,7 +695,7 @@ def find_rotated_for_loop(
     """
     Finds rotated loop range from state machine.
     
-    :param latch: State from which the outgoing edges detect whether to exit the loop or not.
+    :param latch: State from which the outgoing edges detect whether to reenter the loop or not.
     :param entry: First state in the loop body.
     :param itervar: An optional field that overrides the analyzed iteration variable.
     :return: (iteration variable, (start, end, stride),

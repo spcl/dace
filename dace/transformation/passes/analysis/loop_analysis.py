@@ -1,7 +1,11 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Various analyses concerning LopoRegions, and utility functions to get information about LoopRegions for other passes.
+"""
 
 import ast
 from typing import Any, Dict, Optional
+from dace.frontend.python import astutils
 
 import sympy
 
@@ -23,7 +27,7 @@ class FindAssignment(ast.NodeVisitor):
             if isinstance(tgt, ast.Name):
                 if tgt.id in self.assignments:
                     self.multiple = True
-                self.assignments[tgt.id] = ast.unparse(node.value)
+                self.assignments[tgt.id] = astutils.unparse(node.value)
         return self.generic_visit(node)
 
 
