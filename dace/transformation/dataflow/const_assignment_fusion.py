@@ -5,6 +5,7 @@ from itertools import chain
 from typing import Optional, Union
 
 from dace import transformation, SDFGState, SDFG, Memlet, subsets, ScheduleType
+from dace.properties import make_properties, Property
 from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.nodes import Tasklet, ExitNode, MapEntry, MapExit, NestedSDFG, Node, EntryNode, AccessNode
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
@@ -358,7 +359,7 @@ def consume_map_with_grid_strided_loop(graph: SDFGState, dst: tuple[MapEntry, Ma
         graph.remove_edge(e)
 
 
-def compatible_range(first_entry: MapEntry, second_entry: MapEntry) -> bool:
+def compatible_range(first_entry: MapEntry, second_entry: MapEntry, use_grid_strided_loops: bool) -> bool:
     """Decide if the two ranges are compatible. See the class docstring for what is considered compatible."""
     if first_entry.map.schedule != second_entry.map.schedule:
         # If the two maps are not to be scheduled on the same device, don't fuse them.
@@ -367,6 +368,10 @@ def compatible_range(first_entry: MapEntry, second_entry: MapEntry) -> bool:
         # If it's not even possible to take component-wise union of the two map's range, don't fuse them.
         # TODO(pratyai): Make it so that a permutation of the ranges, or even an union of the ranges will work.
         return False
+    if not use_grid_strided_loops:
+        # If we don't use grid-strided loops, the two maps' ranges must be identical.
+        if first_entry.map.range != second_entry.map.range:
+            return False
     if first_entry.map.schedule == ScheduleType.Sequential:
         # For _grid-strided loops_, fuse them only when their ranges are _exactly_ the same. I.e., never put them
         # behind another layer of grid-strided loop.
@@ -375,6 +380,7 @@ def compatible_range(first_entry: MapEntry, second_entry: MapEntry) -> bool:
     return True
 
 
+@make_properties
 class ConstAssignmentMapFusion(MapFusion):
     """
     Fuses two maps within a state, where each map:
@@ -393,6 +399,9 @@ class ConstAssignmentMapFusion(MapFusion):
     """
     first_map_entry = transformation.PatternNode(MapEntry)
     second_map_entry = transformation.PatternNode(MapEntry)
+
+    use_grid_strided_loops = Property(dtype=bool, default=False,
+                                      desc='Set to use grid strided loops to use two maps with non-idential ranges.')
 
     @classmethod
     def expressions(cls):
@@ -438,7 +447,7 @@ class ConstAssignmentMapFusion(MapFusion):
             return False
 
         first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
-        if not compatible_range(first_entry, second_entry):
+        if not compatible_range(first_entry, second_entry, use_grid_strided_loops=self.use_grid_strided_loops):
             return False
 
         # Both maps must have consistent constant assignment for the target arrays.
@@ -483,7 +492,7 @@ class ConstAssignmentMapFusion(MapFusion):
         for cur_en, cur_ex in [(first_entry, first_exit), (second_entry, second_exit)]:
             if en.map.range.covers(cur_en.map.range):
                 consume_map_exactly(graph, (en, ex), (cur_en, cur_ex))
-            else:
+            elif self.use_grid_strided_loops:
                 consume_map_with_grid_strided_loop(graph, (en, ex), (cur_en, cur_ex))
 
         # Cleanup: remove duplicate empty dependencies.
@@ -496,6 +505,7 @@ class ConstAssignmentMapFusion(MapFusion):
                 graph.remove_edge(e)
 
 
+@make_properties
 class ConstAssignmentStateFusion(StateFusionExtended):
     """
     If two consecutive states are such that
@@ -505,6 +515,9 @@ class ConstAssignmentStateFusion(StateFusionExtended):
     """
     first_state = transformation.PatternNode(SDFGState)
     second_state = transformation.PatternNode(SDFGState)
+
+    use_grid_strided_loops = Property(dtype=bool, default=False,
+                                      desc='Set to use grid strided loops to use two maps with non-idential ranges.')
 
     # NOTE: `expression()` is inherited.
 
@@ -532,7 +545,8 @@ class ConstAssignmentStateFusion(StateFusionExtended):
                 assignments[k] = v
 
         # Moreover, both states' ranges must be compatible.
-        if not compatible_range(unique_top_level_map_node(st0)[0], unique_top_level_map_node(st1)[0]):
+        if not compatible_range(unique_top_level_map_node(st0)[0], unique_top_level_map_node(st1)[0],
+                                use_grid_strided_loops=self.use_grid_strided_loops):
             return False
 
         return True
@@ -542,5 +556,6 @@ class ConstAssignmentStateFusion(StateFusionExtended):
         super().apply(graph, sdfg)
         sdfg.validate()
         # Then, fuse the maps inside.
-        sdfg.apply_transformations_repeated(ConstAssignmentMapFusion)
+        sdfg.apply_transformations_repeated(ConstAssignmentMapFusion,
+                                            options={'use_grid_strided_loops': self.use_grid_strided_loops})
         sdfg.validate()
