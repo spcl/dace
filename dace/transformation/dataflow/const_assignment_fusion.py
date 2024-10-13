@@ -4,11 +4,12 @@ from copy import deepcopy
 from itertools import chain
 from typing import Optional, Union
 
-from dace import transformation, SDFGState, SDFG, Memlet, subsets, ScheduleType
+from dace import transformation, SDFGState, SDFG, Memlet, ScheduleType, subsets
 from dace.properties import make_properties, Property
 from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.nodes import Tasklet, ExitNode, MapEntry, MapExit, NestedSDFG, Node, EntryNode, AccessNode
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
+from dace.subsets import Range
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import StateFusionExtended
 
@@ -330,11 +331,9 @@ def consume_map_with_grid_strided_loop(graph: SDFGState, dst: tuple[MapEntry, Ma
                   for p, rs, rd in zip(dst_en.map.params, src_en.map.range.ranges, dst_en.map.range.ranges)]
     gsl_params = [f"gsl_{p}" for p in dst_en.map.params]
     en, ex = graph.add_map(graph.sdfg._find_new_name('gsl'),
-                           {k: v for k, v in zip(gsl_params, gsl_ranges)},
+                           ndrange={k: v for k, v in zip(gsl_params, gsl_ranges)},
                            schedule=ScheduleType.Sequential)
-    # graph.add_memlet_path(dst_en, en, memlet=Memlet())
     consume_map_exactly(graph, (en, ex), src)
-    # graph.add_memlet_path(ex, dst_ex, memlet=Memlet())
 
     assert all(e.data.is_empty() for e in graph.in_edges(en))
     cmap = add_equivalent_connectors(dst_en, en)
@@ -359,7 +358,26 @@ def consume_map_with_grid_strided_loop(graph: SDFGState, dst: tuple[MapEntry, Ma
         graph.remove_edge(e)
 
 
-def compatible_range(first_entry: MapEntry, second_entry: MapEntry, use_grid_strided_loops: bool) -> bool:
+def fused_range(r1: Range, r2: Range) -> Optional[Range]:
+    if r1 == r2:
+        return r1
+    if len(r1) != len(r2):
+        return None
+    r = []
+    bb = subsets.union(r1, r2).ndrange()
+    for i in range(len(r1)):
+        if r1.strides()[i] != r2.strides()[i]:
+            return None
+        if r1.strides()[i] == 1:
+            r.append(bb[i])
+        elif r1.ranges[i] == r2.ranges[i]:
+            r.append(bb[i])
+        else:
+            return None
+    return r
+
+
+def maps_have_compatible_ranges(first_entry: MapEntry, second_entry: MapEntry, use_grid_strided_loops: bool) -> bool:
     """Decide if the two ranges are compatible. See the class docstring for what is considered compatible."""
     if first_entry.map.schedule != second_entry.map.schedule:
         # If the two maps are not to be scheduled on the same device, don't fuse them.
@@ -447,7 +465,8 @@ class ConstAssignmentMapFusion(MapFusion):
             return False
 
         first_entry, first_exit, second_entry, second_exit = self.map_nodes(graph)
-        if not compatible_range(first_entry, second_entry, use_grid_strided_loops=self.use_grid_strided_loops):
+        if not maps_have_compatible_ranges(first_entry, second_entry,
+                                           use_grid_strided_loops=self.use_grid_strided_loops):
             return False
 
         # Both maps must have consistent constant assignment for the target arrays.
@@ -485,9 +504,11 @@ class ConstAssignmentMapFusion(MapFusion):
         consolidate_written_nodes(graph, first_exit, second_exit)
 
         # If the ranges are identical, then simply fuse the two maps. Otherwise, use grid-strided loops.
+        assert fused_range(first_entry.map.range, second_entry.map.range) is not None
         en, ex = graph.add_map(sdfg._find_new_name('map_fusion_wrapper'),
-                               {k: v for k, v in zip(first_entry.map.params,
-                                                     subsets.union(first_entry.map.range, second_entry.map.range))},
+                               ndrange={k: v for k, v in zip(first_entry.map.params,
+                                                             fused_range(first_entry.map.range,
+                                                                         second_entry.map.range))},
                                schedule=first_entry.map.schedule)
         for cur_en, cur_ex in [(first_entry, first_exit), (second_entry, second_exit)]:
             if en.map.range.covers(cur_en.map.range):
@@ -545,8 +566,8 @@ class ConstAssignmentStateFusion(StateFusionExtended):
                 assignments[k] = v
 
         # Moreover, both states' ranges must be compatible.
-        if not compatible_range(unique_top_level_map_node(st0)[0], unique_top_level_map_node(st1)[0],
-                                use_grid_strided_loops=self.use_grid_strided_loops):
+        if not maps_have_compatible_ranges(unique_top_level_map_node(st0)[0], unique_top_level_map_node(st1)[0],
+                                           use_grid_strided_loops=self.use_grid_strided_loops):
             return False
 
         return True
