@@ -64,10 +64,22 @@ def run_heat_3d(device_type: dace.dtypes.DeviceType):
     A_ref = np.copy(A)
     B_ref = np.copy(B)
 
+    def count_maps(sdfg: dc.SDFG) -> int:
+        nb_maps = 0
+        for _, state in sdfg.all_nodes_recursive():
+            node: dc.SDFGState
+            for node in state.nodes():
+                if isinstance(node, dc.sdfg.nodes.MapEntry):
+                    nb_maps += 1
+        return nb_maps
+
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply auto-opt
         sdfg = heat_3d_kernel.to_sdfg()
+        initial_maps = count_maps(sdfg)
         sdfg = auto_optimize(sdfg, device_type)
+        after_maps = count_maps(sdfg)
+        assert after_maps < initial_maps, f"Expected less maps, initially {initial_maps} many maps, but after optimization {after_maps}"
         sdfg(TSTEPS, A, B, N=N)
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization

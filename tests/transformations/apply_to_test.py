@@ -15,6 +15,7 @@ def dbladd(A: dace.float64[100, 100], B: dace.float64[100, 100]):
     dbl = B
     return A + dbl * B
 
+
 @dace.program
 def unfusable(A: dace.float64[100], B: dace.float64[100, 100]):
     """Test function of two maps that can not be fused."""
@@ -35,9 +36,9 @@ def test_applyto_enumerate():
     pattern = sdutil.node_path_graph(dace.nodes.MapExit, dace.nodes.AccessNode, dace.nodes.MapEntry)
     for subgraph in enumerate_matches(sdfg, pattern):
         MapFusion.apply_to(sdfg,
-                           first_map_exit=subgraph.source_nodes()[0],
-                           array=next(n for n in subgraph.nodes() if isinstance(n, dace.nodes.AccessNode)),
-                           second_map_entry=subgraph.sink_nodes()[0])
+                           map_exit_1=subgraph.source_nodes()[0],
+                           intermediate_access_node=next(n for n in subgraph.nodes() if isinstance(n, dace.nodes.AccessNode)),
+                           map_entry_2=subgraph.sink_nodes()[0])
 
 
 def test_applyto_pattern():
@@ -57,9 +58,13 @@ def test_applyto_pattern():
     transient = next(aname for aname, desc in sdfg.arrays.items() if desc.transient)
     access_node = next(n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == transient)
 
-    assert MapFusion.can_be_applied_to(sdfg, first_map_exit=mult_exit, array=access_node, second_map_entry=add_entry)
-
-    MapFusion.apply_to(sdfg, first_map_exit=mult_exit, array=access_node, second_map_entry=add_entry)
+    assert MapFusion.can_be_applied_to(
+            sdfg,
+            map_exit_1=mult_exit,
+            intermediate_access_node=access_node,
+            map_entry_2=add_entry
+    )
+    MapFusion.apply_to(sdfg, map_exit_1=mult_exit, intermediate_access_node=access_node, map_entry_2=add_entry)
 
     assert len([node for node in state.nodes() if isinstance(node, dace.nodes.MapEntry)]) == 1
 
@@ -83,9 +88,9 @@ def test_applyto_pattern_2():
 
     assert not MapFusion.can_be_applied_to(
             sdfg,
-            first_map_exit=map_exit_1,
-            array=tmp,
-            second_map_entry=map_entry_2
+            map_exit_1=map_exit_1,
+            intermediate_access_node=tmp,
+            map_entry_2=map_entry_2
     )
     with pytest.raises(
             ValueError,
@@ -94,9 +99,9 @@ def test_applyto_pattern_2():
         MapFusion.apply_to(
             sdfg,
             verify=True,
-            first_map_exit=map_exit_1,
-            array=tmp,
-            second_map_entry=map_entry_2
+            map_exit_1=map_exit_1,
+            intermediate_access_node=tmp,
+            map_entry_2=map_entry_2
         )
 
 
