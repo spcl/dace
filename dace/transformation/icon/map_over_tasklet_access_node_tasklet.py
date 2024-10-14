@@ -22,33 +22,47 @@ class MapOverTaskletAccessNodeTaskelet(transformation.SingleStateTransformation)
     def expressions(cls):
         return [sdutil.node_path_graph(cls.first_tasklet)]
 
-    def find_end_node(self, state, start_node):
-        node_gen = sdutil.dfs_topological_sort(G=state, sources=start_node)
-        end_nodes = set()
-        for node in node_gen:
-            if len(state.out_edges(node)) == 0:
-                end_nodes.add(node)
+    def get_tasklet_acces_node_chain(self, state, start_node):
+        chain = []
+        current_node = start_node
+        while current_node is not None:
+            out_edges = state.out_edges(current_node)
+            if len(out_edges) > 1:
+                return None
+            elif len(out_edges) == 0:
+                chain.append(current_node)
+                current_node = None
+            else:
+                chain.append(current_node)
+                e = out_edges[0]
+                _, _, v, _, _ = e
+                current_node = v
 
-        return list(end_nodes)
+        if not isinstance(chain[-1], nodes.AccessNode):
+            return None
+
+        return chain
 
     def can_be_applied(self, state, expr_index, sdfg, permissive=False):
+        # The pattern to look for is [Tasklet-AccesNode] n-times ending with an access node
         if (
             len(state.in_edges(self.first_tasklet)) != 0
             or len(state.out_edges(self.first_tasklet)) != 1
         ):
             return False
-        oe = state.out_edges(self.first_tasklet)[0]
-        _, _, an, _, _ = oe
-        if (
-            (not isinstance(an, nodes.AccessNode))
-            or len(state.in_edges(an)) != 1
-            or len(state.out_edges(an)) != 1
-        ):
+
+        chain = self.get_tasklet_acces_node_chain(state, self.first_tasklet)
+        if chain is None or len(chain) == 0:
             return False
-        end_nodes = self.find_end_node(state, self.first_tasklet)
-        if len(end_nodes) != 1 or (not isinstance(end_nodes[0], nodes.AccessNode)) or \
-            len(state.in_edges(end_nodes[0])) != 1:
-            return False
+
+        # If there are any access nodes without in edges, we need to put them before the map too
+        # But to be able to do that, out degree needs to be 1
+        for node in chain:
+            if state.in_degree(node) > 1:
+                for chain_in_node in [u for u,_,_,_,_ in state.in_edges(node) if not (u in chain)]:
+                    if state.in_degree(chain_in_node) != 0 or \
+                        state.out_degree(chain_in_node) != 1:
+                        return False
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
@@ -56,28 +70,28 @@ class MapOverTaskletAccessNodeTaskelet(transformation.SingleStateTransformation)
         # If pattern is found create a single-iteration map over it
         start_node = self.first_tasklet
 
-        node_gen = sdutil.dfs_topological_sort(G=state, sources=start_node)
-        end_nodes = set()
-        for node in node_gen:
-            if len(state.out_edges(node)) == 0:
-                end_nodes.add(node)
+        # Can be applied ensures chain is not None and has length > 0
+        chain = self.get_tasklet_acces_node_chain(state, start_node)
 
         counter = MapOverTaskletAccessNodeTaskelet.i
         map_entry, map_exit = state.add_map(
-            name=f"tasklet_wrapper_{counter}", ndrange={"__":subsets.Range([(0, 0, 1)])}
+            name=f"tasklet_wrapper_{counter}",
+            ndrange={"__": subsets.Range([(0, 0, 1)])},
         )
         MapOverTaskletAccessNodeTaskelet.i += 1
 
-        end_access_node = self.find_end_node(state, self.first_tasklet)[0]
+        end_access_node = chain[-1]
         in_edge = state.in_edges(end_access_node)[0]
 
-        map_to_tasklet = state.add_edge(u=map_entry,
-                                        u_connector=None,
-                                        v=start_node,
-                                        v_connector=None,
-                                        memlet=dace.memlet.Memlet(data=None))
+        state.add_edge(
+            u=map_entry,
+            u_connector=None,
+            v=start_node,
+            v_connector=None,
+            memlet=dace.memlet.Memlet(data=None),
+        )
 
-        u, uc, v, vc, memlet = in_edge
+        _, _, v, _, memlet = in_edge
         map_exit.add_in_connector("IN_" + v.data)
         map_exit.add_out_connector("OUT_" + v.data)
         state.add_edge(
@@ -85,7 +99,7 @@ class MapOverTaskletAccessNodeTaskelet(transformation.SingleStateTransformation)
             u_connector=None,
             v=map_exit,
             v_connector="IN_" + v.data,
-            memlet=copy.deepcopy(memlet)
+            memlet=copy.deepcopy(memlet),
         )
         second_an = nodes.AccessNode(data=v.data)
         state.add_node(second_an)
@@ -94,8 +108,37 @@ class MapOverTaskletAccessNodeTaskelet(transformation.SingleStateTransformation)
             u_connector="OUT_" + v.data,
             v=second_an,
             v_connector="IN_" + v.data,
-            memlet=copy.deepcopy(memlet)
+            memlet=copy.deepcopy(memlet),
         )
+
+        # If there are any access nodes without in edges, we need to put them before the map too
+        nodes_to_remove = []
+        for node in chain:
+            if state.in_degree(node) > 1:
+                for chain_in_node in [u for u,_,_,_,_ in state.in_edges(node) if not (u in chain)]:
+                    in_edge_to_copy = state.out_edges(chain_in_node)[0]
+                    _, _, _, v_conn, memlet = in_edge_to_copy
+                    pre_map_an = nodes.AccessNode(data=chain_in_node.data)
+                    state.add_node(pre_map_an)
+                    map_entry.add_in_connector("IN_" + chain_in_node.data)
+                    map_entry.add_out_connector("OUT_" + chain_in_node.data)
+                    state.add_edge(
+                        u=pre_map_an,
+                        u_connector=None,
+                        v=map_entry,
+                        v_connector="IN_" + chain_in_node.data,
+                        memlet=copy.deepcopy(memlet),
+                    )
+                    state.add_edge(
+                        u=map_entry,
+                        u_connector="OUT_" + chain_in_node.data,
+                        v=node,
+                        v_connector=v_conn,
+                        memlet=copy.deepcopy(memlet),
+                    )
+                    nodes_to_remove.append(chain_in_node)
+        for n in nodes_to_remove:
+            state.remove_node(n)
 
     def annotates_memlets():
         return False
