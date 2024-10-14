@@ -356,6 +356,10 @@ def consume_map_with_grid_strided_loop(graph: SDFGState, dst: tuple[MapEntry, Ma
                               src_conn=cmap.get(e.src_conn), dst_conn=e.dst_conn,
                               memlet=Memlet.from_memlet(e.data))
         graph.remove_edge(e)
+    if len(graph.in_edges(en)) == 0:
+        graph.add_memlet_path(dst_en, en, memlet=Memlet())
+    if len(graph.out_edges(ex)) == 0:
+        graph.add_memlet_path(ex, dst_ex, memlet=Memlet())
 
 
 def fused_range(r1: Range, r2: Range) -> Optional[Range]:
@@ -511,6 +515,7 @@ class ConstAssignmentMapFusion(MapFusion):
                                                                          second_entry.map.range))},
                                schedule=first_entry.map.schedule)
         for cur_en, cur_ex in [(first_entry, first_exit), (second_entry, second_exit)]:
+            assert en.map.range.covers(cur_en.map.range) or self.use_grid_strided_loops
             if en.map.range.covers(cur_en.map.range):
                 consume_map_exactly(graph, (en, ex), (cur_en, cur_ex))
             elif self.use_grid_strided_loops:

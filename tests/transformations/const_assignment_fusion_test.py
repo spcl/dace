@@ -173,9 +173,37 @@ def assign_bottom_face(A: dace.float32[K, M, N]):
 
 
 @dace.program
+def assign_front_face(A: dace.float32[K, M, N]):
+    for t1, t2 in dace.map[0:K, 0:N]:
+        A[t1, 0, t2] = 1
+
+
+@dace.program
+def assign_back_face(A: dace.float32[K, M, N]):
+    for t1, t2 in dace.map[0:K, 0:N]:
+        A[t1, M - 1, t2] = 1
+
+
+@dace.program
+def assign_left_face(A: dace.float32[K, M, N]):
+    for t1, t2 in dace.map[0:K, 0:M]:
+        A[t1, t2, 0] = 1
+
+
+@dace.program
+def assign_right_face(A: dace.float32[K, M, N]):
+    for t1, t2 in dace.map[0:K, 0:M]:
+        A[t1, t2, N - 1] = 1
+
+
+@dace.program
 def assign_bounary_3d(A: dace.float32[K, M, N], B: dace.float32[K, M, N]):
     assign_top_face(A)
     assign_bottom_face(B)
+    assign_front_face(A)
+    assign_back_face(B)
+    assign_left_face(A)
+    assign_right_face(B)
 
 
 def test_fusion_with_multiple_indices():
@@ -190,8 +218,17 @@ def test_fusion_with_multiple_indices():
     actual_B = deepcopy(B)
     g(A=actual_A, B=actual_B, K=3, M=4, N=5)
 
-    assert g.apply_transformations(ConstAssignmentMapFusion) == 1
+    assert g.apply_transformations_repeated(ConstAssignmentMapFusion, options={'use_grid_strided_loops': True}) == 3
     g.save(os.path.join('_dacegraphs', '3d-1.sdfg'))
+    g.validate()
+    our_A = deepcopy(A)
+    our_B = deepcopy(B)
+    g(A=our_A, B=our_B, K=3, M=4, N=5)
+
+    assert g.apply_transformations_repeated(ConstAssignmentStateFusion) == 0
+    g.simplify()
+    assert g.apply_transformations_repeated(ConstAssignmentStateFusion, options={'use_grid_strided_loops': True}) == 2
+    g.save(os.path.join('_dacegraphs', '3d-2.sdfg'))
     g.validate()
     our_A = deepcopy(A)
     our_B = deepcopy(B)
