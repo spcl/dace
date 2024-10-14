@@ -77,15 +77,19 @@ def test_within_state_fusion():
     g.save(os.path.join('_dacegraphs', 'simple-1.sdfg'))
     g.validate()
 
-    g.apply_transformations(ConstAssignmentMapFusion)
+    assert g.apply_transformations(ConstAssignmentMapFusion,
+                                   options={'use_grid_strided_loops': True}) == 1
     g.save(os.path.join('_dacegraphs', 'simple-2.sdfg'))
     g.validate()
 
-    g.apply_transformations(ConstAssignmentMapFusion)
+    assert g.apply_transformations(ConstAssignmentMapFusion,
+                                   options={'use_grid_strided_loops': True}) == 1
     g.save(os.path.join('_dacegraphs', 'simple-3.sdfg'))
     g.validate()
 
-    g.apply_transformations(ConstAssignmentMapFusion)
+    assert g.apply_transformations(ConstAssignmentMapFusion) == 0
+    assert g.apply_transformations(ConstAssignmentMapFusion,
+                                   options={'use_grid_strided_loops': True}) == 1
     g.save(os.path.join('_dacegraphs', 'simple-4.sdfg'))
     g.validate()
     our_A = deepcopy(A)
@@ -105,15 +109,19 @@ def test_interstate_fusion():
     actual_A = deepcopy(A)
     g(A=actual_A, M=4, N=5)
 
-    g.apply_transformations(ConstAssignmentStateFusion)
+    assert g.apply_transformations(ConstAssignmentStateFusion,
+                                   options={'use_grid_strided_loops': True}) == 1
     g.save(os.path.join('_dacegraphs', 'interstate-1.sdfg'))
     g.validate()
 
-    g.apply_transformations(ConstAssignmentStateFusion)
+    assert g.apply_transformations(ConstAssignmentStateFusion,
+                                   options={'use_grid_strided_loops': True}) == 1
     g.save(os.path.join('_dacegraphs', 'interstate-2.sdfg'))
     g.validate()
 
-    g.apply_transformations(ConstAssignmentStateFusion)
+    assert g.apply_transformations(ConstAssignmentStateFusion) == 0
+    assert g.apply_transformations(ConstAssignmentStateFusion,
+                                   options={'use_grid_strided_loops': True}) == 1
     g.save(os.path.join('_dacegraphs', 'interstate-3.sdfg'))
     g.validate()
     our_A = deepcopy(A)
@@ -141,7 +149,7 @@ def test_free_floating_fusion():
     actual_B = deepcopy(B)
     g(A=actual_A, B=actual_B, M=4, N=5)
 
-    g.apply_transformations(ConstAssignmentMapFusion)
+    assert g.apply_transformations(ConstAssignmentMapFusion) == 1
     g.save(os.path.join('_dacegraphs', 'floating-1.sdfg'))
     g.validate()
     our_A = deepcopy(A)
@@ -182,7 +190,7 @@ def test_fusion_with_multiple_indices():
     actual_B = deepcopy(B)
     g(A=actual_A, B=actual_B, K=3, M=4, N=5)
 
-    g.apply_transformations(ConstAssignmentMapFusion)
+    assert g.apply_transformations(ConstAssignmentMapFusion) == 1
     g.save(os.path.join('_dacegraphs', '3d-1.sdfg'))
     g.validate()
     our_A = deepcopy(A)
@@ -211,7 +219,7 @@ def test_fusion_with_branch():
     actual_B = deepcopy(B)
     g(A=actual_A, B=actual_B, M=4, N=5)
 
-    g.apply_transformations(ConstAssignmentMapFusion)
+    assert g.apply_transformations(ConstAssignmentMapFusion) == 1
     g.save(os.path.join('_dacegraphs', 'branched-1.sdfg'))
     g.validate()
     our_A = deepcopy(A)
