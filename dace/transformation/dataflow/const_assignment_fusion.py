@@ -514,12 +514,16 @@ class ConstAssignmentMapFusion(MapFusion):
                                                              fused_range(first_entry.map.range,
                                                                          second_entry.map.range))},
                                schedule=first_entry.map.schedule)
-        for cur_en, cur_ex in [(first_entry, first_exit), (second_entry, second_exit)]:
-            assert en.map.range.covers(cur_en.map.range) or self.use_grid_strided_loops
-            if en.map.range.covers(cur_en.map.range):
+        if first_entry.map.range == second_entry.map.range:
+            for cur_en, cur_ex in [(first_entry, first_exit), (second_entry, second_exit)]:
                 consume_map_exactly(graph, (en, ex), (cur_en, cur_ex))
-            elif self.use_grid_strided_loops:
-                consume_map_with_grid_strided_loop(graph, (en, ex), (cur_en, cur_ex))
+        elif self.use_grid_strided_loops:
+            assert ScheduleType.Sequential not in [first_entry.map.schedule, second_entry.map.schedule]
+            for cur_en, cur_ex in [(first_entry, first_exit), (second_entry, second_exit)]:
+                if en.map.range == cur_en.map.range:
+                    consume_map_exactly(graph, (en, ex), (cur_en, cur_ex))
+                else:
+                    consume_map_with_grid_strided_loop(graph, (en, ex), (cur_en, cur_ex))
 
         # Cleanup: remove duplicate empty dependencies.
         seen = set()
