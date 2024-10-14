@@ -71,17 +71,17 @@ def test_read_and_write_set_filter():
     state.add_nedge(
             A,
             B,
-            dace.Memlet("B[0] -> 0, 0"),
+            dace.Memlet("B[0] -> [0, 0]"),
     )
     state.add_nedge(
             B,
             C,
-            dace.Memlet("C[1, 1] -> 0"),
+            dace.Memlet("C[1, 1] -> [0]"),
     )
     state.add_nedge(
             B,
             C,
-            dace.Memlet("B[0] -> 0, 0"),
+            dace.Memlet("B[0] -> [0, 0]"),
     )
     sdfg.validate()
 
