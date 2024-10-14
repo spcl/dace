@@ -597,7 +597,7 @@ class NestedSDFG(CodeNode):
         ret = NestedSDFG("nolabel", SDFG('nosdfg'), {}, {})
 
         dace.serialize.set_properties_from_json(ret, json_obj, context)
-        
+
         if ret.sdfg is not None:
             if context and 'sdfg_state' in context:
                 ret.sdfg.parent = context['sdfg_state']
@@ -804,7 +804,7 @@ class MapEntry(EntryNode):
             if p in self._map.param_types:
                 result[p] = self._map.param_types[p]
             else:
-                result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), 
+                result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols),
                                                   infer_expr_type(rng[1], symbols))
 
         # Handle the dynamic map ranges.
@@ -929,6 +929,8 @@ class Map(object):
                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
+
+    host_map = Property(dtype=bool, desc="If set to thrue, won't be mapped to a GPU", default=False)
 
     def __init__(self,
                  label,
