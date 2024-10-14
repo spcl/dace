@@ -766,7 +766,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             subgraph_write_set = collections.defaultdict(list)
             # Traverse in topological order, so data that is written before it
             # is read is not counted in the read set
-            # TODO: This only works if every data descriptor is only once in a path.
+            # NOTE: Each AccessNode is processed individually. Thus, if an array appears multiple
+            #   times in a path, the individual results are combined, without further processing.
             for n in utils.dfs_topological_sort(subgraph, sources=subgraph.source_nodes()):
                 if not isinstance(n, nd.AccessNode):
                     # Read and writes can only be done through access nodes,
@@ -808,7 +809,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 #  exists a memlet at the same access node that writes to the same region, then
                 #  this read is ignored, and not included in the final read set, but only
                 #  accounted fro in the write set. See also note below.
-                # TODO: Handle the case when multiple disjoint writes are needed to cover the read.
+                # TODO: Handle the case when multiple disjoint writes would be needed to cover the
+                #   read. E.g. edges write `0:10` and `10:20` but the read happens at `5:15`.
                 for out_edge in list(out_edges):
                     for in_edge in in_edges:
                         if in_subsets[in_edge].covers(out_subsets[out_edge]):
