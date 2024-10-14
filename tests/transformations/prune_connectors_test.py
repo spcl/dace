@@ -206,7 +206,7 @@ def _make_read_write_sdfg(
         istate.add_nedge(
             inner_A,
             inner_B,
-            dace.Memlet("inner_A[0:4, 0:4] -> 0:4, 0:4"),
+            dace.Memlet("inner_A[0:4, 0:4] -> [0:4, 0:4]"),
         )
     else:
         # Because the `data` filed of the involved memlets differs the read to
@@ -215,7 +215,7 @@ def _make_read_write_sdfg(
         istate.add_nedge(
             inner_A,
             inner_B,
-            dace.Memlet("inner_B[0:4, 0:4] -> 0:4, 0:4"),
+            dace.Memlet("inner_B[0:4, 0:4] -> [0:4, 0:4]"),
         )
 
     # Add the nested SDFG

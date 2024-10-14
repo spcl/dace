@@ -38,12 +38,12 @@ def test_mapped_dependency_edge(reverse):
     state.add_edge(map_entry, "OUT_A", tmp_A, None, dace.Memlet("A[i]"))
     state.add_edge(map_entry, "OUT_B", tmp_B, None, dace.Memlet("B[i]"))
 
-    state.add_edge(tmp_A, None, A2, None, dace.Memlet("tmp_A[0] -> ((i+1)%2)"))
+    state.add_edge(tmp_A, None, A2, None, dace.Memlet("tmp_A[0] -> [((i+1)%2)]"))
     if not reverse:
       state.add_edge(A2, None, tmp_B, None, dace.Memlet()) # Dependency Edge
     state.add_edge(A2, None, map_exit, "IN_A", dace.Memlet("A[0:2]"))
 
-    state.add_edge(tmp_B, None, A3, None, dace.Memlet("tmp_B[0] -> ((i+1)%2)"))
+    state.add_edge(tmp_B, None, A3, None, dace.Memlet("tmp_B[0] -> [((i+1)%2)]"))
     if reverse:
       state.add_edge(A3, None, tmp_A, None, dace.Memlet()) # Dependency Edge
     state.add_edge(A3, None, map_exit, "IN_A", dace.Memlet("A[0:2]"))

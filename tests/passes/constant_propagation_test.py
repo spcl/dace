@@ -573,6 +573,59 @@ def test_dependency_change():
     assert a[0] == ref
 
 
+@pytest.mark.parametrize('extra_state', (False, True))
+def test_dependency_change_same_edge(extra_state):
+    """
+    Tests a regression in constant propagation that stems from a variable's
+    dependency being set in the same edge where the pre-propagated symbol was
+    also a right-hand side expression. In this case, ``i61`` is incorrectly
+    propagated to ``i60`` and ``i17`` is set to ``i61``, which is also updated
+    on the same inter-state edge.
+    """
+
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_array('a', [1], dace.int64)
+    sdfg.add_scalar('cont', dace.int64, transient=True)
+    init = sdfg.add_state()
+    entry = sdfg.add_state('entry')
+    body = sdfg.add_state('body')
+    latch = sdfg.add_state('latch')
+    final = sdfg.add_state('final')
+
+    sdfg.add_edge(init, entry, dace.InterstateEdge(assignments=dict(i60='0')))
+    sdfg.add_edge(entry, body, dace.InterstateEdge(assignments=dict(i61='i60 + 1', i17='i60 * 12')))
+    sdfg.add_edge(body, final, dace.InterstateEdge('cont'))
+    sdfg.add_edge(body, latch, dace.InterstateEdge('not cont', dict(i60='i61')))
+    if not extra_state:
+        sdfg.add_edge(latch, body, dace.InterstateEdge(assignments=dict(i61='i60 + 1', i17='i60 * 12')))
+    else:
+        # Test that the multi-value definition is not propagated to following edges
+        extra = sdfg.add_state('extra')
+        sdfg.add_edge(latch, extra, dace.InterstateEdge(assignments=dict(i61='i60 + 1', i17='i60 * 12')))
+        sdfg.add_edge(extra, body, dace.InterstateEdge(assignments=dict(i18='i60 + i61')))
+
+    t = body.add_tasklet('add', {'inp'}, {'out', 'c'}, 'out = inp + i17; c = i61 == 10')
+    body.add_edge(body.add_read('a'), None, t, 'inp', dace.Memlet('a[0]'))
+    body.add_edge(t, 'out', body.add_write('a'), None, dace.Memlet('a[0]'))
+    body.add_edge(t, 'c', body.add_write('cont'), None, dace.Memlet('cont[0]'))
+
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    sdfg.validate()
+
+    # Python code equivalent of the above SDFG
+    ref = 0
+    i60 = 0
+    for i60 in range(0, 10):
+        i17 = i60 * 12
+        ref += i17
+
+    a = np.zeros([1], np.int64)
+    sdfg(a=a)
+    assert a[0] == ref
+
+
 if __name__ == '__main__':
     test_simple_constants()
     test_nested_constants()
@@ -592,3 +645,5 @@ if __name__ == '__main__':
     test_for_with_external_init_nested_start_with_guard()
     test_skip_branch()
     test_dependency_change()
+    test_dependency_change_same_edge(False)
+    test_dependency_change_same_edge(True)

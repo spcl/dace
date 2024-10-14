@@ -86,6 +86,27 @@ def _make_do_for_loop() -> SDFG:
     return sdfg
 
 
+def _make_do_for_inverted_cond_loop() -> SDFG:
+    sdfg = dace.SDFG('do_for_inverted_cond')
+    sdfg.using_experimental_blocks = True
+    sdfg.add_symbol('i', dace.int32)
+    sdfg.add_array('A', [10], dace.float32)
+    state0 = sdfg.add_state('state0', is_start_block=True)
+    loop1 = LoopRegion(label='loop1', condition_expr='i < 8', loop_var='i', initialize_expr='i = 0',
+                       update_expr='i = i + 1', inverted=True, update_before_condition=False)
+    sdfg.add_node(loop1)
+    state1 = loop1.add_state('state1', is_start_block=True)
+    acc_a = state1.add_access('A')
+    t1 = state1.add_tasklet('t1', None, {'a'}, 'a = i')
+    state1.add_edge(t1, 'a', acc_a, None, dace.Memlet('A[i]'))
+    state2 = loop1.add_state('state2')
+    loop1.add_edge(state1, state2, dace.InterstateEdge())
+    state3 = sdfg.add_state('state3')
+    sdfg.add_edge(state0, loop1, dace.InterstateEdge())
+    sdfg.add_edge(loop1, state3, dace.InterstateEdge())
+    return sdfg
+
+
 def _make_triple_nested_for_loop() -> SDFG:
     sdfg = dace.SDFG('gemm')
     sdfg.using_experimental_blocks = True
@@ -177,6 +198,19 @@ def test_loop_do_for():
     assert np.allclose(a_validation, a_test)
 
 
+def test_loop_do_for_inverted_condition():
+    sdfg = _make_do_for_inverted_cond_loop()
+
+    assert sdfg.is_valid()
+
+    a_validation = np.zeros([10], dtype=np.float32)
+    a_test = np.zeros([10], dtype=np.float32)
+    sdfg(A=a_test)
+    for i in range(9):
+        a_validation[i] = i
+    assert np.allclose(a_validation, a_test)
+
+
 def test_loop_triple_nested_for():
     sdfg = _make_triple_nested_for_loop()
 
@@ -249,6 +283,21 @@ def test_loop_to_stree_do_for():
                                  f'{tn.INDENTATION}while (i < 10)')
 
 
+def test_loop_to_stree_do_for_inverted_cond():
+    sdfg = _make_do_for_inverted_cond_loop()
+
+    assert sdfg.is_valid()
+
+    stree = s2t.as_schedule_tree(sdfg)
+
+    assert stree.as_string() == (f'{tn.INDENTATION}i = 0\n' +
+                                 f'{tn.INDENTATION}while True:\n' +
+                                 f'{2 * tn.INDENTATION}A[i] = tasklet()\n' +
+                                 f'{2 * tn.INDENTATION}if (not (i < 8)):\n' +
+                                 f'{3 * tn.INDENTATION}break\n' +
+                                 f'{2 * tn.INDENTATION}i = (i + 1)\n')
+
+
 def test_loop_to_stree_triple_nested_for():
     sdfg = _make_triple_nested_for_loop()
 
@@ -267,9 +316,11 @@ if __name__ == '__main__':
     test_loop_regular_while()
     test_loop_do_while()
     test_loop_do_for()
+    test_loop_do_for_inverted_condition()
     test_loop_triple_nested_for()
     test_loop_to_stree_regular_for()
     test_loop_to_stree_regular_while()
     test_loop_to_stree_do_while()
     test_loop_to_stree_do_for()
+    test_loop_to_stree_do_for_inverted_cond()
     test_loop_to_stree_triple_nested_for()
