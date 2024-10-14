@@ -293,4 +293,7 @@ def end_to_end_measurements(
     with open(f"{program_name}_end_to_end_perf_results.json", "w") as json_file:
         json.dump(results, json_file, indent=2)
 
+    if verbose:
+        print(results)
+
     return (time1, time2)
