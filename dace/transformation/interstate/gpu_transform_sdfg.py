@@ -312,11 +312,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             for node in state.nodes():
                 if sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
-                        node.schedule = dtypes.ScheduleType.GPU_Default
-                        gpu_nodes.add((state, node))
+                        if not isinstance(node, nodes.MapEntry) or not node.map.host_map:
+                            node.schedule = dtypes.ScheduleType.GPU_Default
+                            gpu_nodes.add((state, node))
                     elif isinstance(node, nodes.EntryNode):
-                        node.schedule = dtypes.ScheduleType.GPU_Device
-                        gpu_nodes.add((state, node))
+                        if not isinstance(node, nodes.MapEntry) or not node.map.host_map:
+                            node.schedule = dtypes.ScheduleType.GPU_Device
+                            gpu_nodes.add((state, node))
                 elif self.sequential_innermaps:
                     if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
                         node.schedule = dtypes.ScheduleType.Sequential
@@ -409,7 +411,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         for state in sdfg.nodes():
             sdict = state.scope_dict()
             for node in state.nodes():
-                if isinstance(node, nodes.AccessNode) and node.desc(sdfg).transient:
+                if isinstance(node, nodes.AccessNode) and node.desc(sdfg).transient and not node.desc(sdfg).host_data:
                     nodedesc = node.desc(sdfg)
 
                     # Special case: nodes that lead to dynamic map ranges must stay on host
