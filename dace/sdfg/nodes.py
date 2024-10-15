@@ -920,6 +920,8 @@ class Map(object):
                                  "(including tuples) sets it explicitly.",
                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
+    host_map = Property(dtype=bool, desc="If set to true, to_X transformations can decide to not map X to device", default=False)
+
     def __init__(self,
                  label,
                  params,
