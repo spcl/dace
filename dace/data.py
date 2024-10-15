@@ -385,7 +385,8 @@ class Structure(Data):
                  storage: dtypes.StorageType = dtypes.StorageType.Default,
                  location: Dict[str, str] = None,
                  lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
-                 debuginfo: dtypes.DebugInfo = None):
+                 debuginfo: dtypes.DebugInfo = None,
+                 host_data: bool = False):
 
         self.members = OrderedDict(members)
         for k, v in self.members.items():
@@ -424,7 +425,7 @@ class Structure(Data):
 
         dtype = dtypes.pointer(dtypes.struct(name, fields_and_types))
         shape = (1, )
-        super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo, host_data)
 
 
     def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
@@ -1068,7 +1069,8 @@ class Tensor(Structure):
                  storage: dtypes.StorageType = dtypes.StorageType.Default,
                  location: Dict[str, str] = None,
                  lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
-                 debuginfo: dtypes.DebugInfo = None):
+                 debuginfo: dtypes.DebugInfo = None,
+                 host_data: bool = False):
         """
         Constructor for Tensor storage format.
 
@@ -1192,7 +1194,7 @@ class Tensor(Structure):
         for (lvl, index) in enumerate(indices):
             fields.update(index.fields(lvl, value_count))
 
-        super(Tensor, self).__init__(fields, name, transient, storage, location, lifetime, debuginfo)
+        super(Tensor, self).__init__(fields, name, transient, storage, location, lifetime, debuginfo, host_data)
 
     def __repr__(self):
         return f"{self.name} (dtype: {self.value_dtype}, shape: {list(self.tensor_shape)}, indices: {self.indices})"
@@ -1651,7 +1653,8 @@ class Stream(Data):
                  location=None,
                  offset=None,
                  lifetime=dtypes.AllocationLifetime.Scope,
-                 debuginfo=None):
+                 debuginfo=None,
+                 host_data=False):
 
         if shape is None:
             shape = (1, )
@@ -1665,7 +1668,7 @@ class Stream(Data):
         else:
             self.offset = [0] * len(shape)
 
-        super(Stream, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        super(Stream, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo, host_data)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -1818,7 +1821,8 @@ class ContainerArray(Array):
                  total_size=None,
                  start_offset=None,
                  optional=None,
-                 pool=False):
+                 pool=False,
+                 host_data=False):
 
         self.stype = stype
         if stype:
@@ -1830,7 +1834,7 @@ class ContainerArray(Array):
             dtype = dtypes.pointer(dtypes.typeclass(None))  # void*
         super(ContainerArray,
               self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
-                             lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+                             lifetime, alignment, debuginfo, total_size, start_offset, optional, pool, host_data)
 
     @classmethod
     def from_json(cls, json_obj, context=None):
@@ -2065,10 +2069,11 @@ class ContainerView(ContainerArray, View):
                  total_size=None,
                  start_offset=None,
                  optional=None,
-                 pool=False):
+                 pool=False,
+                 host_data=False):
         shape = [1] if shape is None else shape
         super().__init__(stype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
-                         lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+                         lifetime, alignment, debuginfo, total_size, start_offset, optional, pool, host_data)
 
     def validate(self):
         super().validate()
