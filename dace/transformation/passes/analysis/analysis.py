@@ -19,6 +19,45 @@ SymbolScopeDict = Dict[str, Dict[Edge[InterstateEdge], Set[Union[Edge[Interstate
 
 @properties.make_properties
 @transformation.experimental_cfg_block_compatible
+class InterstateEdgeReachability(ppl.Pass):
+    """
+    Evaluates which interstate edges can be executed after each control flow block.
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.CFG
+
+    def depends_on(self):
+        return {ControlFlowBlockReachability}
+
+    def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[int, Dict[SDFGState, Set[SDFGState]]]:
+        """
+        :return: A dictionary mapping each state to its other reachable states.
+        """
+        # Ensure control flow block reachability is run if not run within a pipeline.
+        if pipeline_res is None or not ControlFlowBlockReachability.__name__ in pipeline_res:
+            cf_block_reach_dict = ControlFlowBlockReachability().apply_pass(top_sdfg, {})
+        else:
+            cf_block_reach_dict = pipeline_res[ControlFlowBlockReachability.__name__]
+        reachable: Dict[int, Dict[ControlFlowBlock, Set[Edge[InterstateEdge]]]] = {}
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            result: Dict[SDFGState, Set[SDFGState]] = defaultdict(set)
+            for state in sdfg.states():
+                for reached in cf_block_reach_dict[state.parent_graph.cfg_id][state]:
+                    if isinstance(reached, SDFGState):
+                        result[state].add(reached)
+            reachable[sdfg.cfg_id] = result
+        return reachable
+
+
+@properties.make_properties
+@transformation.experimental_cfg_block_compatible
 class StateReachability(ppl.Pass):
     """
     Evaluates state reachability (which other states can be executed after each state).
