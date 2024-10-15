@@ -376,7 +376,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
 
                     graph.add_edge(node, None, edge.dst, edge.dst_conn, newmemlet)
 
-                    for e in graph.bfs_edges(edge.dst, reverse=False):
+                    for e in graph.edge_bfs(edge.dst, reverse=False):
                         parent, _, _child, _, memlet = e
                         if parent != edge.dst and not in_scope(graph, parent, edge.dst):
                             break
@@ -454,7 +454,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                     graph.add_edge(edge.src, edge.src_conn, node, None, newmemlet)
 
                     end_node = graph.entry_node(edge.src)
-                    for e in graph.bfs_edges(edge.src, reverse=True):
+                    for e in graph.edge_bfs(edge.src, reverse=True):
                         parent, _, _child, _, memlet = e
                         if parent == end_node:
                             break

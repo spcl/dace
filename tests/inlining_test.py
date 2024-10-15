@@ -54,8 +54,8 @@ def test_regression_reshape_unsqueeze():
     A = nstate.add_access("view")
     W = nstate.add_write("output")
 
-    mm1 = dace.Memlet("input[0:3, 0:3] -> 0:3, 0:3")
-    mm2 = dace.Memlet("view[0:3, 0:2] -> 3:9")
+    mm1 = dace.Memlet("input[0:3, 0:3] -> [0:3, 0:3]")
+    mm2 = dace.Memlet("view[0:3, 0:2] -> [3:9]")
 
     nstate.add_edge(R, None, A, None, mm1)
     nstate.add_edge(A, None, W, None, mm2)
@@ -405,7 +405,7 @@ def test_regression_inline_subset():
     nsdfg.add_array("input", [96, 32], dace.float64)
     nsdfg.add_array("output", [32, 32], dace.float64)
     nstate.add_edge(nstate.add_read("input"), None, nstate.add_write("output"), None,
-                    dace.Memlet("input[32:64, 0:32] -> 0:32, 0:32"))
+                    dace.Memlet("input[32:64, 0:32] -> [0:32, 0:32]"))
 
     @dace.program
     def test(A: dace.float64[96, 32]):

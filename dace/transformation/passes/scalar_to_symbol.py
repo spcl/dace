@@ -323,6 +323,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
 
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # Convert subscript to symbol name
+        node = self.generic_visit(node)
         node_name = astutils.rname(node)
         if node_name in self.in_edges:
             self.latest[node_name] += 1
@@ -346,7 +347,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
                 return ast.copy_location(ast.Name(id=new_name, ctx=ast.Store()), node)
             else:
                 self.do_not_remove.add(node_name)
-        return self.generic_visit(node)
+        return node
 
 
 def _range_is_promotable(subset: subsets.Range, defined: Set[str]) -> bool:

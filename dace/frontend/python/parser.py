@@ -494,9 +494,12 @@ class DaceProgram(pycommon.SDFGConvertible):
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
 
         if not self.use_experimental_cfg_blocks:
-            sdutils.inline_loop_blocks(sdfg)
-            sdutils.inline_control_flow_regions(sdfg)
+            for nsdfg in sdfg.all_sdfgs_recursive():
+                sdutils.inline_conditional_blocks(nsdfg)
+                sdutils.inline_control_flow_regions(nsdfg)
         sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
+
+        sdfg.reset_cfg_list()
 
         # Apply simplification pass automatically
         if not cached and (simplify == True or
