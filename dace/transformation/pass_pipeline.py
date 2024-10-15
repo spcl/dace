@@ -271,8 +271,7 @@ class ControlFlowRegionPass(Pass):
 
     CATEGORY: str = 'Helper'
 
-    def apply_pass(self, sdfg: SDFG,
-                   pipeline_results: Dict[str, Any]) -> Optional[Dict[ControlFlowRegion, Optional[Any]]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[int, Optional[Any]]]:
         """
         Applies the pass to control flow regions of the given SDFG by calling ``apply`` on each region.
 
@@ -280,14 +279,14 @@ class ControlFlowRegionPass(Pass):
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
                                  pipeline, an empty dictionary is expected.
-        :return: A dictionary of ``{region: return value}`` for visited regions with a non-None return value, or None
+        :return: A dictionary of ``{cfg_id: return value}`` for visited regions with a non-None return value, or None
                  if nothing was returned.
         """
         result = {}
         for region in sdfg.all_control_flow_regions(recursive=True):
             retval = self.apply(region, pipeline_results)
             if retval is not None:
-                result[region] = retval
+                result[region.cfg_id] = retval
 
         if not result:
             return None
