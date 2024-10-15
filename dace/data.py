@@ -493,7 +493,7 @@ class Structure(Data):
 
     def clone(self):
         return Structure(self.members, self.name, self.transient, self.storage, self.location, self.lifetime,
-                         self.debuginfo)
+                         self.debuginfo, self.host_data)
 
     # NOTE: Like scalars?
     @property
@@ -1220,7 +1220,7 @@ class Scalar(Data):
 
     def clone(self):
         return Scalar(self.dtype, self.transient, self.storage, self.allow_conflicts, self.location, self.lifetime,
-                      self.debuginfo)
+                      self.debuginfo, self.host_data)
 
     @property
     def strides(self):
@@ -1438,7 +1438,7 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset, self.optional, self.pool)
+                          self.total_size, self.start_offset, self.optional, self.pool, self.host_data)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -1641,7 +1641,7 @@ class Stream(Data):
         else:
             self.offset = [0] * len(shape)
 
-        super(Stream, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        super(Stream, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo, host_data)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -1683,7 +1683,7 @@ class Stream(Data):
 
     def clone(self):
         return type(self)(self.dtype, self.buffer_size, self.shape, self.transient, self.storage, self.location,
-                          self.offset, self.lifetime, self.debuginfo)
+                          self.offset, self.lifetime, self.debuginfo, self.host_data)
 
     # Checks for equivalent shape and type
     def is_equivalent(self, other):
@@ -1906,7 +1906,7 @@ class View:
                                host_data=viewed_container.host_data)
         else:
             # In undefined cases, make a container array view of size 1
-            result = ContainerView(cp.deepcopy(viewed_container), [1], debuginfo=debuginfo)
+            result = ContainerView(cp.deepcopy(viewed_container), [1], debuginfo=debuginfo, host_data=viewed_container.host_data)
 
         # Views are always transient
         result.transient = True
@@ -1955,9 +1955,10 @@ class Reference:
                                     start_offset=0,
                                     optional=viewed_container.optional,
                                     pool=False,
-                                    byval=False)
+                                    byval=False,
+                                    host_data=viewed_container.host_data)
         else:  # In undefined cases, make a container array reference of size 1
-            result = ContainerArrayReference(result, [1], debuginfo=debuginfo)
+            result = ContainerArrayReference(result, [1], debuginfo=debuginfo, host_data=viewed_container.host_data)
 
         if debuginfo is not None:
             result.debuginfo = debuginfo
