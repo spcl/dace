@@ -949,7 +949,11 @@ class SDFG(ControlFlowRegion):
         Clears the instrumentation report folder of this SDFG.
         """
         path = os.path.join(self.build_folder, 'perf')
-        for fname in os.listdir(path):
+        try:
+            files = os.listdir(path)
+        except FileNotFoundError:
+            return
+        for fname in files:
             if not fname.startswith('report-'):
                 continue
             os.unlink(os.path.join(path, fname))
@@ -2288,8 +2292,8 @@ class SDFG(ControlFlowRegion):
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
             if self.name != sdfg.name:
-                warnings.warn('SDFG "%s" is already loaded by another object, '
-                              'recompiling under a different name.' % self.name)
+                warnings.warn(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
+                              f"name '{sdfg.name}'.")
 
             try:
                 # Fill in scope entry/exit connectors
