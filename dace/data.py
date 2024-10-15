@@ -1202,7 +1202,7 @@ class Scalar(Data):
                  host_data=False):
         self.allow_conflicts = allow_conflicts
         shape = [1]
-        super(Scalar, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        super(Scalar, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo, host_data)
 
     @staticmethod
     def from_json(json_obj, context=None):
