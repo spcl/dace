@@ -1,19 +1,19 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Map Fission transformation. """
 
 from copy import deepcopy as dcpy
 from collections import defaultdict
-from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
+from dace import sdfg as sd, memlet as mm, subsets, data as dt
 from dace.codegen import control_flow as cf
 from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
-from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
 
+@transformation.single_level_sdfg_only
 class MapFission(transformation.SingleStateTransformation):
     """ Implements the MapFission transformation.
         Map fission refers to subsuming a map scope into its internal subgraph,

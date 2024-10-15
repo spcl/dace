@@ -1099,13 +1099,14 @@ def _structured_control_flow_traversal_with_regions(cfg: ControlFlowRegion,
     return visited - {stop}
 
 
-def structured_control_flow_tree_with_regions(sdfg: SDFG, dispatch_state: Callable[[SDFGState], str]) -> ControlFlow:
+def structured_control_flow_tree_with_regions(cfg: ControlFlowRegion,
+                                              dispatch_state: Callable[[SDFGState], str]) -> ControlFlow:
     """
-    Returns a structured control-flow tree (i.e., with constructs such as branches and loops) from an SDFG based on the
+    Returns a structured control-flow tree (i.e., with constructs such as branches and loops) from a CFG based on the
     control flow regions it contains.
     
-    :param sdfg: The SDFG to iterate over.
-    :return: Control-flow block representing the entire SDFG.
+    :param cfg: The graph to iterate over.
+    :return: Control-flow block representing the entire graph.
     """
     root_block = GeneralBlock(dispatch_state=dispatch_state,
                               parent=None,
@@ -1117,7 +1118,7 @@ def structured_control_flow_tree_with_regions(sdfg: SDFG, dispatch_state: Callab
                               gotos_to_break=[],
                               assignments_to_ignore=[],
                               sequential=True)
-    _structured_control_flow_traversal_with_regions(sdfg, dispatch_state, root_block)
+    _structured_control_flow_traversal_with_regions(cfg, dispatch_state, root_block)
     _reset_block_parents(root_block)
     return root_block
 

@@ -2,7 +2,6 @@
 
 from collections import defaultdict
 
-import blinker
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt, symbolic

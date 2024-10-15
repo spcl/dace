@@ -4,7 +4,7 @@ import copy
 import itertools
 from networkx import MultiDiGraph
 
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
 from typing import Dict, List, Optional, Tuple, Set, Union
@@ -244,33 +244,36 @@ def _copy_state(sdfg: SDFG,
     return state_copy
 
 
-def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
+def find_sdfg_control_flow(cfg: ControlFlowRegion) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
     """
-    Partitions the SDFG to subgraphs that can be nested independently of each other. The method does not nest the
-    subgraphs but alters the SDFG; (1) interstate edges are split, (2) scope source/sink states that belong to multiple
+    Partitions a CFG to subgraphs that can be nested independently of each other. The method does not nest the
+    subgraphs but alters the graph; (1) interstate edges are split, (2) scope source/sink nodes that belong to multiple
     scopes are duplicated (see _copy_state).
     
-    :param sdfg: The SDFG to be partitioned.
-    :return: The found subgraphs in the form of a dictionary where the keys are the start state of the subgraphs and the
-             values are the sets of SDFGStates contained withing each subgraph.
+    :param cfg: The graph to be partitioned.
+    :return: The found subgraphs in the form of a dictionary where the keys are the start block of the subgraphs and the
+             values are the sets of ControlFlowBlocks contained withing each subgraph.
     """
 
-    split_interstate_edges(sdfg)
+    split_interstate_edges(cfg)
 
-    # Create a unique sink state to avoid issues with finding control flow.
-    sink_states = sdfg.sink_nodes()
-    if len(sink_states) > 1:
-        new_sink = sdfg.add_state('common_sink')
-        for s in sink_states:
-            sdfg.add_edge(s, new_sink, InterstateEdge())
+    # Create a unique sink block to avoid issues with finding control flow.
+    sink_nodes = cfg.sink_nodes()
+    if len(sink_nodes) > 1:
+        new_sink = cfg.add_state('common_sink')
+        for s in sink_nodes:
+            cfg.add_edge(s, new_sink, InterstateEdge())
 
-    ipostdom = utils.postdominators(sdfg)
-    cft = cf.structured_control_flow_tree(sdfg, None)
+    ipostdom = utils.postdominators(cfg)
+    if cfg.root_sdfg.using_experimental_blocks:
+        cft = cf.structured_control_flow_tree_with_regions(cfg, None)
+    else:
+        cft = cf.structured_control_flow_tree(cfg, None)
 
-    # Iterate over the SDFG's control flow scopes and create for each an SDFG subraph. These subgraphs must be disjoint,
-    # so we duplicate SDFGStates that appear in more than one scopes (guards and exits of loops and conditionals).
-    components = {}
-    visited = {}  # Dict[SDFGState, bool]: True if SDFGState in Scope (non-SingleState)
+    # Iterate over the graph's control flow scopes and create for each a subraph. These subgraphs must be disjoint,
+    # so we duplicate blocks that appear in more than one scopes (guards and exits of loops and conditionals).
+    components: Dict[ControlFlowBlock, Tuple[Set[ControlFlowBlock], ControlFlowBlock]] = {}
+    visited: Dict[ControlFlowBlock, bool] = {}  # Block -> True if block in Scope (non-SingleState)
     for i, child in enumerate(cft.children):
         if isinstance(child, cf.BasicCFBlock):
             if child.state in visited:
@@ -281,18 +284,18 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             guard = child.guard
             fexit = None
             condition = child.condition if isinstance(child, cf.ForScope) else child.test
-            for e in sdfg.out_edges(guard):
+            for e in cfg.out_edges(guard):
                 if e.data.condition != condition:
                     fexit = e.dst
                     break
             if fexit is None:
                 raise ValueError("Cannot find for-scope's exit states.")
 
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
+            states = set(utils.dfs_conditional(cfg, [guard], lambda p, _: p is not fexit))
 
             if guard in visited:
                 if visited[guard]:
-                    guard_copy = _copy_state(sdfg, guard, False, states)
+                    guard_copy = _copy_state(cfg, guard, False, states)
                     guard.remove_nodes_from(guard.nodes())
                     states.remove(guard)
                     states.add(guard_copy)
@@ -303,7 +306,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
 
             if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.BasicCFBlock)
                     and cft.children[i + 1].state is fexit):
-                fexit_copy = _copy_state(sdfg, fexit, True, states)
+                fexit_copy = _copy_state(cfg, fexit, True, states)
                 fexit.remove_nodes_from(fexit.nodes())
                 states.remove(fexit)
                 states.add(fexit_copy)
@@ -314,11 +317,11 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             guard = child.branch_block
             ifexit = ipostdom[guard]
 
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
+            states = set(utils.dfs_conditional(cfg, [guard], lambda p, _: p is not ifexit))
 
             if guard in visited:
                 if visited[guard]:
-                    guard_copy = _copy_state(sdfg, guard, False, states)
+                    guard_copy = _copy_state(cfg, guard, False, states)
                     guard.remove_nodes_from(guard.nodes())
                     states.remove(guard)
                     states.add(guard_copy)
@@ -329,7 +332,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
 
             if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.BasicCFBlock)
                     and cft.children[i + 1].state is ifexit):
-                ifexit_copy = _copy_state(sdfg, ifexit, True, states)
+                ifexit_copy = _copy_state(cfg, ifexit, True, states)
                 ifexit.remove_nodes_from(ifexit.nodes())
                 states.remove(ifexit)
                 states.add(ifexit_copy)
