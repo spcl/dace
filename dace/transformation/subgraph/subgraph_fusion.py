@@ -537,7 +537,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             graph.remove_edge(edge)
         return ret
 
-    def adjust_arrays_nsdfg(self, sdfg: dace.sdfg.SDFG, nsdfg: nodes.NestedSDFG, name: str, nname: str, memlet: Memlet):
+    def adjust_arrays_nsdfg(self, sdfg: dace.sdfg.SDFG, nsdfg: dace.sdfg.SDFG, name: str, nname: str, memlet: Memlet):
         """
         DFS to replace strides and volumes of data that exhibits nested SDFGs 
         adjacent to its corresponding access nodes, applied during post-processing 
