@@ -13,6 +13,7 @@ from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterat
 
 import dace
 from dace.frontend.python import astutils
+from dace.sdfg.replace import replace_in_codeblock
 import dace.serialize
 from dace import data as dt
 from dace import dtypes
@@ -2766,16 +2767,19 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
     ###################################################################
     # Traversal methods
 
-    def all_control_flow_regions(self, recursive=False) -> Iterator['AbstractControlFlowRegion']:
+    def all_control_flow_regions(self, recursive=False, parent_first=True) -> Iterator['AbstractControlFlowRegion']:
         """ Iterate over this and all nested control flow regions. """
-        yield self
+        if parent_first:
+            yield self
         for block in self.nodes():
             if isinstance(block, SDFGState) and recursive:
                 for node in block.nodes():
                     if isinstance(node, nd.NestedSDFG):
-                        yield from node.sdfg.all_control_flow_regions(recursive=recursive)
+                        yield from node.sdfg.all_control_flow_regions(recursive=recursive, parent_first=parent_first)
             elif isinstance(block, AbstractControlFlowRegion):
-                yield from block.all_control_flow_regions(recursive=recursive)
+                yield from block.all_control_flow_regions(recursive=recursive, parent_first=parent_first)
+        if not parent_first:
+            yield self
 
     def all_sdfgs_recursive(self) -> Iterator['SDFG']:
         """ Iterate over this and all nested SDFGs. """
@@ -3313,8 +3317,10 @@ class ConditionalBlock(AbstractControlFlowRegion):
             from dace.sdfg.replace import replace_properties_dict
             replace_properties_dict(self, repl, symrepl)
 
-        for _, region in self._branches:
+        for cond, region in self._branches:
             region.replace_dict(repl, symrepl, replace_in_graph)
+            if cond is not None:
+                replace_in_codeblock(cond, repl)
 
     def to_json(self, parent=None):
         json = super().to_json(parent)

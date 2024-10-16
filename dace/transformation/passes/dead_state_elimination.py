@@ -65,6 +65,16 @@ class DeadStateElimination(ppl.Pass):
                         for _, b in dead_branches:
                             result.add(b)
                             node.remove_branch(b)
+                        # If only an 'else' is left over, inline it.
+                        if len(node.branches) == 1 and node.branches[0][0] is None:
+                            branch = node.branches[0][1]
+                            node.parent_graph.add_node(branch)
+                            for ie in cfg.in_edges(node):
+                                cfg.add_edge(ie.src, branch, ie.data)
+                            for oe in cfg.out_edges(node):
+                                cfg.add_edge(branch, oe.dst, oe.data)
+                            result.add(node)
+                            cfg.remove_node(node)
                     else:
                         result.add(node)
                         cfg.remove_node(block)

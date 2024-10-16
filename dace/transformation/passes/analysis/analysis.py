@@ -225,7 +225,7 @@ def reachable_nodes(G):
 @transformation.experimental_cfg_block_compatible
 class SymbolAccessSets(ppl.ControlFlowRegionPass):
     """
-    Evaluates symbol access sets (which symbols are read/written in each state or interstate edge).
+    Evaluates symbol access sets (which symbols are read/written in each control flow block or interstate edge).
     """
 
     CATEGORY: str = 'Analysis'

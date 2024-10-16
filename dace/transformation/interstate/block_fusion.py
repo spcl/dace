@@ -81,7 +81,7 @@ class BlockFusion(transformation.MultiStateTransformation):
         connecting_edge = graph.edges_between(self.first_block, self.second_block)[0]
         assignments_to_absorb = connecting_edge.data.assignments
         graph.remove_edge(connecting_edge)
-        for ie in graph.out_edges(self.first_block):
+        for ie in graph.in_edges(self.first_block):
             if assignments_to_absorb:
                 ie.data.assignments.update(assignments_to_absorb)
 

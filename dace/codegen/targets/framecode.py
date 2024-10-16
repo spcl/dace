@@ -919,12 +919,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 global_symbols.update(symbols)
 
             if isinstance(cfr, LoopRegion) and cfr.loop_variable is not None and cfr.init_statement is not None:
-                init_assignment = cfr.init_statement.code[0]
-                update_assignment = cfr.update_statement.code[0]
-                if isinstance(init_assignment, astutils.ast.Assign):
-                    init_assignment = init_assignment.value
-                if isinstance(update_assignment, astutils.ast.Assign):
-                    update_assignment = update_assignment.value
                 if not cfr.loop_variable in interstate_symbols:
                     l_end = loop_analysis.get_loop_end(cfr)
                     l_start = loop_analysis.get_init_assignment(cfr)

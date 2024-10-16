@@ -283,7 +283,7 @@ class ControlFlowRegionPass(Pass):
                  if nothing was returned.
         """
         result = {}
-        for region in sdfg.all_control_flow_regions(recursive=True):
+        for region in sdfg.all_control_flow_regions(recursive=True, parent_first=False):
             retval = self.apply(region, pipeline_results)
             if retval is not None:
                 result[region.cfg_id] = retval
