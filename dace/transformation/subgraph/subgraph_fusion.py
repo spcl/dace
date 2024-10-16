@@ -606,7 +606,7 @@ def compress_transient_arrays(sdfg: SDFG, graph: SDFGState, transient_allocation
 
             in_edges_iter = iter(in_edges)
             in_edge = next(in_edges_iter)
-            target_subset = dcpy(in_edge.data.subset)
+            target_subset = dcpy(in_edge.data.dst_subset)
             target_subset.pop(invariant_dimensions[data_name])
             while True:
                 try:  # executed if there are multiple in_edges
@@ -957,7 +957,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                     for ie in graph.in_edges(e.src):
                                         # get corresponding inner memlet and join its subset to our access set
                                         if ie.dst_conn[2:] == e.src_conn[3:]:
-                                            current_subset = dcpy(ie.data.subset)
+                                            current_subset = dcpy(ie.data.dst_subset)
                                             current_subset.pop(invariant_dimensions[node_data])
 
                                             access_set = subsets.union(access_set, current_subset)
