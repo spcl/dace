@@ -200,13 +200,13 @@ class StencilTiling(transformation.SubgraphTransformation):
 
         # get intermediate_nodes, out_nodes from SubgraphFusion Transformation
         try:
-            node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph, map_entries)
+            node_config = get_adjacent_nodes(sdfg, graph, map_entries)
             (_, intermediate_nodes, out_nodes) = node_config
         except NotImplementedError:
             return False
 
         # 1.4: check topological feasibility
-        if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
+        if not check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
             return False
         # 1.5 nodes that are both intermediate and out nodes
         # are not supported in StencilTiling
@@ -215,7 +215,7 @@ class StencilTiling(transformation.SubgraphTransformation):
 
         # 1.6 check that we only deal with compressible transients
 
-        subgraph_contains_data = SubgraphFusion.determine_compressible_nodes(sdfg, graph, intermediate_nodes,
+        subgraph_contains_data = determine_compressible_nodes(sdfg, graph, intermediate_nodes,
                                                                              map_entries, map_exits)
         if any([s == False for s in subgraph_contains_data.values()]):
             return False
