@@ -40,26 +40,26 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
     transient_allocation = EnumProperty(dtype=dtypes.StorageType,
                                         desc="Storage Location to push transients to that are "
-                                        "fully contained within the subgraph.",
+                                             "fully contained within the subgraph.",
                                         default=dtypes.StorageType.Default)
 
     schedule_innermaps = Property(desc="Schedule of inner maps. If none, "
-                                  "keeps schedule.",
+                                       "keeps schedule.",
                                   dtype=dtypes.ScheduleType,
                                   default=None,
                                   allow_none=True)
     consolidate = Property(desc="Consolidate edges that enter and exit the fused map.", dtype=bool, default=False)
 
     propagate = Property(desc="Propagate memlets of edges that enter and exit the fused map."
-                         "Disable if this causes problems (e.g., if memlet propagation does"
-                         "not work correctly).",
+                              "Disable if this causes problems (e.g., if memlet propagation does"
+                              "not work correctly).",
                          dtype=bool,
                          default=True)
 
     disjoint_subsets = Property(desc="Check for disjoint subsets in can_be_applied. If multiple"
-                                "access nodes pointing to the same data appear within a subgraph"
-                                "to be fused, this check confirms that their access sets are"
-                                "independent per iteration space to avoid race conditions.",
+                                     "access nodes pointing to the same data appear within a subgraph"
+                                     "to be fused, this check confirms that their access sets are"
+                                     "independent per iteration space to avoid race conditions.",
                                 dtype=bool,
                                 default=True)
 
@@ -160,8 +160,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 if in_edge.src in map_exits:
                     for iedge in graph.in_edges(in_edge.src):
                         if iedge.dst_conn[2:] == in_edge.src_conn[3:]:
-                            subset_to_add = dcpy(iedge.data.subset if iedge.data.data ==
-                                                 node.data else iedge.data.other_subset)
+                            subset_to_add = dcpy(iedge.data.subset
+                                                 if iedge.data.data == node.data else iedge.data.other_subset)
 
                             subset_to_add.pop(dims_to_discard)
                             upper_subsets.add(subset_to_add)
@@ -177,8 +177,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 if out_edge.dst in map_entries:
                     for oedge in graph.out_edges(out_edge.dst):
                         if oedge.src_conn and oedge.src_conn[3:] == out_edge.dst_conn[2:]:
-                            subset_to_add = dcpy(oedge.data.subset if oedge.data.data ==
-                                                 node.data else oedge.data.other_subset)
+                            subset_to_add = dcpy(oedge.data.subset
+                                                 if oedge.data.data == node.data else oedge.data.other_subset)
                             subset_to_add.pop(dims_to_discard)
                             lower_subsets.add(subset_to_add)
 
@@ -329,8 +329,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         subset_minus.replace(repl_dict)
 
                         for (rng, orng) in zip(subset_plus, subset_minus):
-                            rng_1dim = subsets.Range((rng, ))
-                            orng_1dim = subsets.Range((orng, ))
+                            rng_1dim = subsets.Range((rng,))
+                            orng_1dim = subsets.Range((orng,))
                             try:
                                 intersection = rng_1dim.intersects(orng_1dim)
                             except TypeError:
@@ -471,11 +471,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             if in_edge.src in map_exits:
                 other_edge = graph.memlet_path(in_edge)[-2]
                 other_subset = other_edge.data.subset \
-                               if other_edge.data.data == node.data \
-                               else other_edge.data.other_subset
+                    if other_edge.data.data == node.data \
+                    else other_edge.data.other_subset
 
                 for (idx, (ssbs1, ssbs2)) \
-                    in enumerate(zip(in_edge.data.subset, other_subset)):
+                        in enumerate(zip(in_edge.data.subset, other_subset)):
                     if ssbs1 != ssbs2:
                         variant_dimensions.add(idx)
             else:
@@ -494,8 +494,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 for other_edge in graph.out_edges(out_edge.dst):
                     if other_edge.src_conn and other_edge.src_conn[3:] == out_edge.dst_conn[2:]:
                         other_subset = other_edge.data.subset \
-                                       if other_edge.data.data == node.data \
-                                       else other_edge.data.other_subset
+                            if other_edge.data.data == node.data \
+                            else other_edge.data.other_subset
                         for (idx, (ssbs1, ssbs2)) in enumerate(zip(out_edge.data.subset, other_subset)):
                             if ssbs1 != ssbs2:
                                 variant_dimensions.add(idx)
@@ -629,15 +629,15 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # if so, add to data_counter_subgraph
                     # do not add if it is in out_nodes / in_nodes
                     if state == graph and \
-                        (node in intermediate_nodes or scope_dict[node] in map_entries):
+                            (node in intermediate_nodes or scope_dict[node] in map_entries):
                         data_counter_subgraph[node.data] += 1
 
         # next up: If intermediate_counter and global counter match and if the array
         # is declared transient, it is fully contained by the subgraph
 
-        subgraph_contains_data = {data: data_counter[data] == data_counter_subgraph[data] \
-                                        and sdfg.data(data).transient \
-                                        and data not in do_not_override \
+        subgraph_contains_data = {data: data_counter[data] == data_counter_subgraph[data]
+                                        and sdfg.data(data).transient
+                                        and data not in do_not_override
                                   for data in data_intermediate}
         return subgraph_contains_data
 
@@ -688,7 +688,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         return transients_created
 
     def determine_invariant_dimensions(self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
-                                       intermediate_nodes: Iterable[nodes.AccessNode], map_entries: List[nodes.MapEntry],
+                                       intermediate_nodes: Iterable[nodes.AccessNode],
+                                       map_entries: List[nodes.MapEntry],
                                        map_exits: List[nodes.MapExit]):
         """
         Determines the invariant dimensions for each node -- dimensions in 
@@ -825,9 +826,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # intermediate_nodes simultaneously
         # also check which dimensions of each transient data element correspond
         # to map axes and write this information into a dict.
-        node_info = self.prepare_intermediate_nodes(sdfg, graph, in_nodes, out_nodes, \
-                                                    intermediate_nodes,\
-                                                    map_entries, map_exits, \
+        node_info = self.prepare_intermediate_nodes(sdfg, graph, in_nodes, out_nodes,
+                                                    intermediate_nodes,
+                                                    map_entries, map_exits,
                                                     do_not_override)
 
         (subgraph_contains_data, transients_created, invariant_dimensions) = node_info
@@ -867,13 +868,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             inconnectors_dict[src] = (edge, in_conn, out_conn)
 
                         # reroute in edge via global_map_entry
-                        self.copy_edge(graph, edge, new_dst = global_map_entry, \
-                                                        new_dst_conn = in_conn)
+                        self.copy_edge(graph, edge, new_dst=global_map_entry, new_dst_conn=in_conn)
 
                     # map out edges to new map
                     for out_edge in out_edges:
-                        self.copy_edge(graph, out_edge, new_src = global_map_entry, \
-                                                            new_src_conn = out_conn)
+                        self.copy_edge(graph, out_edge, new_src=global_map_entry, new_src_conn=out_conn)
 
                 else:
                     # connect directly
@@ -1113,7 +1112,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 if len(in_edges) > 1:
                     for oedge in out_edges:
                         if oedge.dst == global_map_exit and \
-                                            oedge.data.other_subset is None:
+                                oedge.data.other_subset is None:
                             oedge.data.other_subset = dcpy(oedge.data.subset)
                             oedge.data.other_subset.offset(min_offset, True)
 
