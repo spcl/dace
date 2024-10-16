@@ -4,16 +4,17 @@ import warnings
 from collections import defaultdict
 from copy import deepcopy as dcpy
 from itertools import chain
-from typing import List, Tuple, Set, Iterable
+from typing import List, Tuple, Set, Iterable, Dict
 
 import networkx as nx
 
 import dace
-from dace import dtypes, symbolic, subsets, data
+from dace import dtypes, symbolic, subsets, data, SDFGState
 from dace.memlet import Memlet
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
 from dace.sdfg import nodes, SDFG
 from dace.sdfg.graph import SubgraphView
+from dace.sdfg.nodes import MapExit, MapEntry, AccessNode
 from dace.sdfg.propagation import _propagate_node
 from dace.sdfg.utils import consolidate_edges_scope
 from dace.transformation import transformation
@@ -432,6 +433,146 @@ def determine_compressible_nodes(sdfg: dace.sdfg.SDFG,
     return subgraph_contains_data
 
 
+def fuse_maps_into_global_map(graph: SDFGState, map_entries: List[MapEntry], map_exits: List[MapExit],
+                              global_map_entry: MapEntry, global_map_exit: MapExit,
+                              in_nodes: Set[AccessNode], intermediate_nodes: Set[AccessNode],
+                              out_nodes: Set[AccessNode],
+                              transients_created: Dict[AccessNode, AccessNode],
+                              invariant_dimensions: Dict[str, Set[int]]):
+    inconnectors_dict = {}
+    # Dict for saving incoming nodes and their assigned connectors
+    # Format: {access_node: (edge, in_conn, out_conn)}
+
+    for map_entry, map_exit in zip(map_entries, map_exits):
+        # handle inputs
+        # TODO: dynamic map range -- this is fairly unrealistic in such a setting
+        for edge in graph.in_edges(map_entry):
+            src = edge.src
+            out_edges = [
+                e for e in graph.out_edges(map_entry) if (e.src_conn and e.src_conn[3:] == edge.dst_conn[2:])
+            ]
+
+            if src in in_nodes:
+                if src in inconnectors_dict:
+                    # for access nodes only
+                    out_conn = inconnectors_dict[src][2]
+
+                else:
+                    next_conn = global_map_entry.next_connector()
+                    in_conn = 'IN_' + next_conn
+                    out_conn = 'OUT_' + next_conn
+                    global_map_entry.add_in_connector(in_conn)
+                    global_map_entry.add_out_connector(out_conn)
+
+                    if isinstance(src, nodes.AccessNode):
+                        inconnectors_dict[src] = (edge, in_conn, out_conn)
+
+                    # reroute in edge via global_map_entry
+                    copy_edge(graph, edge, new_dst=global_map_entry, new_dst_conn=in_conn)
+
+                # map out edges to new map
+                for out_edge in out_edges:
+                    copy_edge(graph, out_edge, new_src=global_map_entry, new_src_conn=out_conn)
+
+            else:
+                # connect directly
+                for out_edge in out_edges:
+                    mm = dcpy(out_edge.data)
+                    copy_edge(graph, out_edge, new_src=src, new_src_conn=None, new_data=mm)
+
+        for edge in graph.out_edges(map_entry):
+            # special case: for nodes that have no data connections
+            if not edge.src_conn:
+                copy_edge(graph, edge, new_src=global_map_entry)
+
+        ######################################
+
+        for edge in graph.in_edges(map_exit):
+            if not edge.dst_conn:
+                # no destination connector, path ends here.
+                copy_edge(graph, edge, new_dst=global_map_exit)
+                continue
+            # find corresponding out_edges for current edge
+            out_edges = [oedge for oedge in graph.out_edges(map_exit) if oedge.src_conn[3:] == edge.dst_conn[2:]]
+
+            # Tuple to store in/out connector port that might be created
+            port_created = None
+
+            for out_edge in out_edges:
+                dst = out_edge.dst
+
+                if dst in intermediate_nodes & out_nodes:
+
+                    # create connection through global map from
+                    # dst to dst_transient that was created
+                    dst_transient = transients_created[dst]
+                    next_conn = global_map_exit.next_connector()
+                    in_conn = 'IN_' + next_conn
+                    out_conn = 'OUT_' + next_conn
+                    global_map_exit.add_in_connector(in_conn)
+                    global_map_exit.add_out_connector(out_conn)
+
+                    # for each transient created, create a union
+                    # of outgoing memlets' subsets. this is
+                    # a cheap fix to override assignments in invariant
+                    # dimensions
+                    union = None
+                    for oe in graph.out_edges(transients_created[dst]):
+                        union = subsets.union(union, oe.data.subset)
+                    if isinstance(union, subsets.Indices):
+                        union = subsets.Range.from_indices(union)
+                    inner_memlet = dcpy(edge.data)
+                    for i, s in enumerate(edge.data.subset):
+                        if i in invariant_dimensions[dst.label]:
+                            inner_memlet.subset[i] = union[i]
+
+                    inner_memlet.other_subset = dcpy(inner_memlet.subset)
+
+                    e_inner = graph.add_edge(dst, None, global_map_exit, in_conn, inner_memlet)
+
+                    outer_memlet = dcpy(out_edge.data)
+                    e_outer = graph.add_edge(global_map_exit, out_conn, dst_transient, None, outer_memlet)
+
+                    # remove edge from dst to dst_transient that was created
+                    # in intermediate preparation.
+                    for e in graph.out_edges(dst):
+                        if e.dst == dst_transient:
+                            graph.remove_edge(e)
+                            break
+
+                # handle separately: intermediate_nodes and pure out nodes
+                # case 1: intermediate_nodes: can just redirect edge
+                if dst in intermediate_nodes:
+                    copy_edge(graph,
+                              out_edge,
+                              new_src=edge.src,
+                              new_src_conn=edge.src_conn,
+                              new_data=dcpy(edge.data))
+
+                # case 2: pure out node: connect to outer array node
+                if dst in (out_nodes - intermediate_nodes):
+                    if edge.dst != global_map_exit:
+                        next_conn = global_map_exit.next_connector()
+
+                        in_conn = 'IN_' + next_conn
+                        out_conn = 'OUT_' + next_conn
+                        global_map_exit.add_in_connector(in_conn)
+                        global_map_exit.add_out_connector(out_conn)
+                        copy_edge(graph, edge, new_dst=global_map_exit, new_dst_conn=in_conn)
+                        port_created = (in_conn, out_conn)
+
+                    else:
+                        in_conn, out_conn = port_created
+
+                    # map
+                    graph.add_edge(global_map_exit, out_conn, dst, out_edge.dst_conn, dcpy(out_edge.data))
+
+        # maps are now ready to be discarded
+        # all connected edges will be finally removed as well
+        graph.remove_node(map_entry)
+        graph.remove_node(map_exit)
+
+
 def change_data(transient_array: dace.data.Array, shape, strides, total_size, offset, lifetime, storage):
     """Compress original shape"""
     if shape is not None:
@@ -446,6 +587,85 @@ def change_data(transient_array: dace.data.Array, shape, strides, total_size, of
         transient_array.lifetime = lifetime
     if storage is not None:
         transient_array.storage = storage
+
+
+def compress_transient_arrays(sdfg: SDFG, graph: SDFGState, transient_allocation: bool,
+                              subgraph_contains_data: Dict[str, bool], intermediate_nodes: Set[AccessNode],
+                              invariant_dimensions: Dict[str, Set[int]]):
+    """Do one pass to compress all transient arrays."""
+
+    # create a mapping from data arrays to offsets
+    # for later memlet adjustments later
+    min_offsets = dict()
+
+    data_intermediate = set([node.data for node in intermediate_nodes])
+    for data_name in data_intermediate:
+        if subgraph_contains_data[data_name] and isinstance(sdfg.data(data_name), dace.data.Array):
+            all_nodes = [n for n in intermediate_nodes if n.data == data_name]
+            in_edges = list(chain(*(graph.in_edges(n) for n in all_nodes)))
+
+            in_edges_iter = iter(in_edges)
+            in_edge = next(in_edges_iter)
+            target_subset = dcpy(in_edge.data.subset)
+            target_subset.pop(invariant_dimensions[data_name])
+            while True:
+                try:  # executed if there are multiple in_edges
+                    in_edge = next(in_edges_iter)
+                    target_subset_curr = dcpy(in_edge.data.subset)
+                    target_subset_curr.pop(invariant_dimensions[data_name])
+                    target_subset = subsets.union(target_subset, target_subset_curr)
+                except StopIteration:
+                    break
+
+            min_offsets_cropped = target_subset.min_element_approx()
+            # calculate the new transient array size.
+            target_subset.offset(min_offsets_cropped, True)
+
+            # re-add invariant dimensions with offset 0 and save to min_offsets
+            min_offset = []
+            index = 0
+            for i in range(len(sdfg.data(data_name).shape)):
+                if i in invariant_dimensions[data_name]:
+                    min_offset.append(0)
+                else:
+                    min_offset.append(min_offsets_cropped[index])
+                    index += 1
+
+            min_offsets[data_name] = min_offset
+
+            # determine the shape of the new array.
+            new_data_shape = []
+            index = 0
+            for i, sz in enumerate(sdfg.data(data_name).shape):
+                if i in invariant_dimensions[data_name]:
+                    new_data_shape.append(sz)
+                else:
+                    new_data_shape.append(target_subset.size()[index])
+                    index += 1
+
+            new_data_strides = [data._prod(new_data_shape[i + 1:]) for i in range(len(new_data_shape))]
+
+            new_data_totalsize = data._prod(new_data_shape)
+            new_data_offset = [0] * len(new_data_shape)
+
+            change_data(sdfg.data(data_name),
+                        shape=new_data_shape,
+                        strides=new_data_strides,
+                        total_size=new_data_totalsize,
+                        offset=new_data_offset,
+                        lifetime=dtypes.AllocationLifetime.Scope,
+                        storage=transient_allocation)
+
+        else:
+            # don't modify data container - array is needed outside
+            # of subgraph.
+
+            # hack: set lifetime to State if allocation has only been
+            # scope so far to avoid allocation issues
+            if sdfg.data(data_name).lifetime == dtypes.AllocationLifetime.Scope:
+                sdfg.data(data_name).lifetime = dtypes.AllocationLifetime.State
+
+    return min_offsets
 
 
 @make_properties
@@ -816,8 +1036,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         map_exits = [graph.exit_node(map_entry) for map_entry in map_entries]
 
         # See function documentation for an explanation of these variables
-        node_config = get_adjacent_nodes(graph, map_entries)
-        (in_nodes, intermediate_nodes, out_nodes) = node_config
+        in_nodes, intermediate_nodes, out_nodes = get_adjacent_nodes(graph, map_entries)
 
         if self.debug:
             print("SubgraphFusion::In_nodes", in_nodes)
@@ -845,218 +1064,17 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                                map_entries, map_exits,
                                                do_not_override)
 
-        (subgraph_contains_data, transients_created, invariant_dimensions) = node_info
+        subgraph_contains_data, transients_created, invariant_dimensions = node_info
         if self.debug:
             print("SubgraphFusion:: {Intermediate_node: subgraph_contains_data} dict")
             print(subgraph_contains_data)
 
-        inconnectors_dict = {}
-        # Dict for saving incoming nodes and their assigned connectors
-        # Format: {access_node: (edge, in_conn, out_conn)}
+        fuse_maps_into_global_map(graph, map_entries, map_exits, global_map_entry, global_map_exit,
+                                  in_nodes, intermediate_nodes, out_nodes, transients_created, invariant_dimensions)
+        sdfg.validate()
 
-        for map_entry, map_exit in zip(map_entries, map_exits):
-            # handle inputs
-            # TODO: dynamic map range -- this is fairly unrealistic in such a setting
-            for edge in graph.in_edges(map_entry):
-                src = edge.src
-                out_edges = [
-                    e for e in graph.out_edges(map_entry) if (e.src_conn and e.src_conn[3:] == edge.dst_conn[2:])
-                ]
-
-                if src in in_nodes:
-                    in_conn = None
-                    out_conn = None
-                    if src in inconnectors_dict:
-                        # for access nodes only
-                        in_conn = inconnectors_dict[src][1]
-                        out_conn = inconnectors_dict[src][2]
-
-                    else:
-                        next_conn = global_map_entry.next_connector()
-                        in_conn = 'IN_' + next_conn
-                        out_conn = 'OUT_' + next_conn
-                        global_map_entry.add_in_connector(in_conn)
-                        global_map_entry.add_out_connector(out_conn)
-
-                        if isinstance(src, nodes.AccessNode):
-                            inconnectors_dict[src] = (edge, in_conn, out_conn)
-
-                        # reroute in edge via global_map_entry
-                        copy_edge(graph, edge, new_dst=global_map_entry, new_dst_conn=in_conn)
-
-                    # map out edges to new map
-                    for out_edge in out_edges:
-                        copy_edge(graph, out_edge, new_src=global_map_entry, new_src_conn=out_conn)
-
-                else:
-                    # connect directly
-                    for out_edge in out_edges:
-                        mm = dcpy(out_edge.data)
-                        copy_edge(graph, out_edge, new_src=src, new_src_conn=None, new_data=mm)
-
-            for edge in graph.out_edges(map_entry):
-                # special case: for nodes that have no data connections
-                if not edge.src_conn:
-                    copy_edge(graph, edge, new_src=global_map_entry)
-
-            ######################################
-
-            for edge in graph.in_edges(map_exit):
-                if not edge.dst_conn:
-                    # no destination connector, path ends here.
-                    copy_edge(graph, edge, new_dst=global_map_exit)
-                    continue
-                # find corresponding out_edges for current edge
-                out_edges = [oedge for oedge in graph.out_edges(map_exit) if oedge.src_conn[3:] == edge.dst_conn[2:]]
-
-                # Tuple to store in/out connector port that might be created
-                port_created = None
-
-                for out_edge in out_edges:
-                    dst = out_edge.dst
-
-                    if dst in intermediate_nodes & out_nodes:
-
-                        # create connection through global map from
-                        # dst to dst_transient that was created
-                        dst_transient = transients_created[dst]
-                        next_conn = global_map_exit.next_connector()
-                        in_conn = 'IN_' + next_conn
-                        out_conn = 'OUT_' + next_conn
-                        global_map_exit.add_in_connector(in_conn)
-                        global_map_exit.add_out_connector(out_conn)
-
-                        # for each transient created, create a union
-                        # of outgoing memlets' subsets. this is
-                        # a cheap fix to override assignments in invariant
-                        # dimensions
-                        union = None
-                        for oe in graph.out_edges(transients_created[dst]):
-                            union = subsets.union(union, oe.data.subset)
-                        if isinstance(union, subsets.Indices):
-                            union = subsets.Range.from_indices(union)
-                        inner_memlet = dcpy(edge.data)
-                        for i, s in enumerate(edge.data.subset):
-                            if i in invariant_dimensions[dst.label]:
-                                inner_memlet.subset[i] = union[i]
-
-                        inner_memlet.other_subset = dcpy(inner_memlet.subset)
-
-                        e_inner = graph.add_edge(dst, None, global_map_exit, in_conn, inner_memlet)
-
-                        outer_memlet = dcpy(out_edge.data)
-                        e_outer = graph.add_edge(global_map_exit, out_conn, dst_transient, None, outer_memlet)
-
-                        # remove edge from dst to dst_transient that was created
-                        # in intermediate preparation.
-                        for e in graph.out_edges(dst):
-                            if e.dst == dst_transient:
-                                graph.remove_edge(e)
-                                break
-
-                    # handle separately: intermediate_nodes and pure out nodes
-                    # case 1: intermediate_nodes: can just redirect edge
-                    if dst in intermediate_nodes:
-                        copy_edge(graph,
-                                  out_edge,
-                                  new_src=edge.src,
-                                  new_src_conn=edge.src_conn,
-                                  new_data=dcpy(edge.data))
-
-                    # case 2: pure out node: connect to outer array node
-                    if dst in (out_nodes - intermediate_nodes):
-                        if edge.dst != global_map_exit:
-                            next_conn = global_map_exit.next_connector()
-
-                            in_conn = 'IN_' + next_conn
-                            out_conn = 'OUT_' + next_conn
-                            global_map_exit.add_in_connector(in_conn)
-                            global_map_exit.add_out_connector(out_conn)
-                            copy_edge(graph, edge, new_dst=global_map_exit, new_dst_conn=in_conn)
-                            port_created = (in_conn, out_conn)
-
-                        else:
-                            in_conn, out_conn = port_created
-
-                        # map
-                        graph.add_edge(global_map_exit, out_conn, dst, out_edge.dst_conn, dcpy(out_edge.data))
-
-            # maps are now ready to be discarded
-            # all connected edges will be finally removed as well
-            graph.remove_node(map_entry)
-            graph.remove_node(map_exit)
-
-        # create a mapping from data arrays to offsets
-        # for later memlet adjustments later
-        min_offsets = dict()
-
-        # do one pass to compress all transient arrays
-        data_intermediate = set([node.data for node in intermediate_nodes])
-        for data_name in data_intermediate:
-            if subgraph_contains_data[data_name] and isinstance(sdfg.data(data_name), dace.data.Array):
-                all_nodes = [n for n in intermediate_nodes if n.data == data_name]
-                in_edges = list(chain(*(graph.in_edges(n) for n in all_nodes)))
-
-                in_edges_iter = iter(in_edges)
-                in_edge = next(in_edges_iter)
-                target_subset = dcpy(in_edge.data.subset)
-                target_subset.pop(invariant_dimensions[data_name])
-                while True:
-                    try:  # executed if there are multiple in_edges
-                        in_edge = next(in_edges_iter)
-                        target_subset_curr = dcpy(in_edge.data.subset)
-                        target_subset_curr.pop(invariant_dimensions[data_name])
-                        target_subset = subsets.union(target_subset, target_subset_curr)
-                    except StopIteration:
-                        break
-
-                min_offsets_cropped = target_subset.min_element_approx()
-                # calculate the new transient array size.
-                target_subset.offset(min_offsets_cropped, True)
-
-                # re-add invariant dimensions with offset 0 and save to min_offsets
-                min_offset = []
-                index = 0
-                for i in range(len(sdfg.data(data_name).shape)):
-                    if i in invariant_dimensions[data_name]:
-                        min_offset.append(0)
-                    else:
-                        min_offset.append(min_offsets_cropped[index])
-                        index += 1
-
-                min_offsets[data_name] = min_offset
-
-                # determine the shape of the new array.
-                new_data_shape = []
-                index = 0
-                for i, sz in enumerate(sdfg.data(data_name).shape):
-                    if i in invariant_dimensions[data_name]:
-                        new_data_shape.append(sz)
-                    else:
-                        new_data_shape.append(target_subset.size()[index])
-                        index += 1
-
-                new_data_strides = [data._prod(new_data_shape[i + 1:]) for i in range(len(new_data_shape))]
-
-                new_data_totalsize = data._prod(new_data_shape)
-                new_data_offset = [0] * len(new_data_shape)
-
-                change_data(sdfg.data(data_name),
-                            shape=new_data_shape,
-                            strides=new_data_strides,
-                            total_size=new_data_totalsize,
-                            offset=new_data_offset,
-                            lifetime=dtypes.AllocationLifetime.Scope,
-                            storage=self.transient_allocation)
-
-            else:
-                # don't modify data container - array is needed outside
-                # of subgraph.
-
-                # hack: set lifetime to State if allocation has only been
-                # scope so far to avoid allocation issues
-                if sdfg.data(data_name).lifetime == dtypes.AllocationLifetime.Scope:
-                    sdfg.data(data_name).lifetime = dtypes.AllocationLifetime.State
+        min_offsets = compress_transient_arrays(sdfg, graph, self.transient_allocation, subgraph_contains_data,
+                                                intermediate_nodes, invariant_dimensions)
 
         # do one pass to adjust strides and the memlets of in-between transients
         for node in intermediate_nodes:
