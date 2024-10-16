@@ -1,30 +1,24 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement subgraph fusion.    """
-import dace
+import warnings
+from collections import defaultdict
+from copy import deepcopy as dcpy
+from itertools import chain
+from typing import List, Tuple
+
 import networkx as nx
 
-from dace import dtypes, registry, symbolic, subsets, data
-from dace.sdfg import nodes, utils, replace, SDFG, scope_contains_scope
-from dace.sdfg.graph import SubgraphView
-from dace.sdfg.scope import ScopeTree
+import dace
+from dace import dtypes, symbolic, subsets, data
 from dace.memlet import Memlet
-from dace.transformation import transformation
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
-from dace.symbolic import overapproximate
-from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, propagate_memlets_scope, _propagate_node
-from dace.transformation.subgraph import helpers
-from dace.transformation.dataflow import RedundantArray
-from dace.sdfg.utils import consolidate_edges_scope, get_view_node
+from dace.sdfg import nodes, SDFG
+from dace.sdfg.graph import SubgraphView
+from dace.sdfg.propagation import _propagate_node
+from dace.sdfg.utils import consolidate_edges_scope
+from dace.transformation import transformation
 from dace.transformation.helpers import find_contiguous_subsets
-
-from copy import deepcopy as dcpy
-from typing import List, Union, Tuple
-import warnings
-
-import dace.libraries.standard as stdlib
-
-from collections import defaultdict
-from itertools import chain
+from dace.transformation.subgraph import helpers
 
 
 @make_properties
