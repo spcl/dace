@@ -1094,7 +1094,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # nested SDFG: adjust arrays connected
                     if isinstance(iedge.src, nodes.NestedSDFG):
                         nsdfg = iedge.src.sdfg
-                        nested_data_name = edge.src_conn
+                        nested_data_name = iedge.src_conn
                         self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, iedge.data)
 
                 for cedge in out_edges:
