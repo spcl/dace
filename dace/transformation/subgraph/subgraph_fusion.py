@@ -254,7 +254,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             return False
 
         # 2.6 Check for disjoint accesses for arrays that cannot be compressed
-        if self.disjoint_subsets == True:
+        if self.disjoint_subsets:
             container_dict = defaultdict(list)
             for node in chain(in_nodes, intermediate_nodes, out_nodes):
                 if isinstance(node, nodes.AccessNode):
@@ -335,7 +335,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 intersection = rng_1dim.intersects(orng_1dim)
                             except TypeError:
                                 return False
-                            if intersection is None or intersection == True:
+                            if intersection is None or intersection:
                                 warnings.warn("SubgraphFusion::Disjoint Accesses found!")
                                 return False
 
