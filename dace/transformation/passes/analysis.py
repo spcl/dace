@@ -7,6 +7,7 @@ from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd, utils as sdutil
 from dace.sdfg.analysis import cfg
+from dace.sdfg.propagation import align_memlet
 from typing import Dict, Set, Tuple, Any, Optional, Union
 import networkx as nx
 from networkx.algorithms import shortest_paths as nxsp
@@ -587,12 +588,12 @@ class FindReferenceSources(ppl.Pass):
                             code_sources[anode.data].add(true_src)
                         else:
                             # Array -> Reference
-                            result[anode.data].add(e.data)
+                            result[anode.data].add(align_memlet(state, e, dst=False))
 
                             # If array is view, add view targets
                             view_targets = sdutil.get_all_view_edges(state, true_src)
                             for te in view_targets:
-                                result[anode.data].add(te.data)
+                                result[anode.data].add(align_memlet(state, te, dst=False))
 
                         if 'views' in anode.out_connectors:  # Reference and view
                             out_edge, = state.out_edges_by_connector(anode, 'views')
@@ -605,7 +606,7 @@ class FindReferenceSources(ppl.Pass):
                                     code_sources[target.data].add(true_src)
                                 else:
                                     # Array -> Reference
-                                    result[target.data].add(e.data)
+                                    result[target.data].add(align_memlet(state, e, dst=False))
 
                 # Trace back through code nodes
                 if self.trace_through_code:
