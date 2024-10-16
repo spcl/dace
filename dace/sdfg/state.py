@@ -3209,11 +3209,11 @@ class LoopRegion(ControlFlowRegion):
                      replace_in_graph: bool = True,
                      replace_keys: bool = True):
         if replace_keys:
-            from dace.sdfg.replace import replace_properties_dict
-            replace_properties_dict(self, repl, symrepl)
-
             if self.loop_variable and self.loop_variable in repl:
                 self.loop_variable = repl[self.loop_variable]
+
+        from dace.sdfg.replace import replace_properties_dict
+        replace_properties_dict(self, repl, symrepl)
 
         super().replace_dict(repl, symrepl, replace_in_graph)
 

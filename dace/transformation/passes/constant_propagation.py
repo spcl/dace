@@ -126,7 +126,7 @@ class ConstantPropagation(ppl.Pass):
                     if isinstance(block, SDFGState):
                         # Replace in state contents
                         block.replace_dict(mapping)
-                    elif isinstance(block, AbstractControlFlowRegion):
+                    elif isinstance(block, ControlFlowRegion):
                         block.replace_dict(mapping, replace_in_graph=False, replace_keys=False)
 
                     # Replace in outgoing edges as well
