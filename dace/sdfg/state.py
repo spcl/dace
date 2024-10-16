@@ -3073,35 +3073,52 @@ class LoopRegion(ControlFlowRegion):
     inverted = Property(dtype=bool,
                         default=False,
                         desc='If True, the loop condition is checked after the first iteration.')
+    update_before_condition = Property(dtype=bool,
+                                       default=True,
+                                       desc='If False, the loop condition is checked before the update statement is' +
+                                       ' executed. This only applies to inverted loops, turning them from a typical ' +
+                                       'do-while style into a while(true) with a break before the update (at the end ' +
+                                       'of an iteration) if the condition no longer holds.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
 
     def __init__(self,
                  label: str,
-                 condition_expr: Optional[str] = None,
+                 condition_expr: Optional[Union[str, CodeBlock]] = None,
                  loop_var: Optional[str] = None,
-                 initialize_expr: Optional[str] = None,
-                 update_expr: Optional[str] = None,
+                 initialize_expr: Optional[Union[str, CodeBlock]] = None,
+                 update_expr: Optional[Union[str, CodeBlock]] = None,
                  inverted: bool = False,
-                 sdfg: Optional['SDFG'] = None):
+                 sdfg: Optional['SDFG'] = None,
+                 update_before_condition = True):
         super(LoopRegion, self).__init__(label, sdfg)
 
         if initialize_expr is not None:
-            self.init_statement = CodeBlock(initialize_expr)
+            if isinstance(initialize_expr, CodeBlock):
+                self.init_statement = initialize_expr
+            else:
+                self.init_statement = CodeBlock(initialize_expr)
         else:
             self.init_statement = None
 
         if condition_expr:
-            self.loop_condition = CodeBlock(condition_expr)
+            if isinstance(condition_expr, CodeBlock):
+                self.loop_condition = condition_expr
+            else:
+                self.loop_condition = CodeBlock(condition_expr)
         else:
             self.loop_condition = CodeBlock('True')
 
         if update_expr is not None:
-            self.update_statement = CodeBlock(update_expr)
+            if isinstance(update_expr, CodeBlock):
+                self.update_statement = update_expr
+            else:
+                self.update_statement = CodeBlock(update_expr)
         else:
             self.update_statement = None
 
         self.loop_variable = loop_var or ''
         self.inverted = inverted
+        self.update_before_condition = update_before_condition
 
     def inline(self) -> Tuple[bool, Any]:
         """
@@ -3320,7 +3337,12 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
     @property
     def branches(self) -> List[Tuple[Optional[CodeBlock], ControlFlowRegion]]:
         return self._branches
-    
+
+    def add_branch(self, condition: Optional[CodeBlock], branch: ControlFlowRegion):
+        self._branches.append([condition, branch])
+        branch.parent_graph = self.parent_graph
+        branch.sdfg = self.sdfg
+
     def nodes(self) -> List['ControlFlowBlock']:
         return [node for _, node in self._branches if node is not None]
 

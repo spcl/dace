@@ -7,6 +7,7 @@ from dace.transformation.passes.analysis import FindReferenceSources
 from dace.transformation.passes.reference_reduction import ReferenceToView
 import numpy as np
 import pytest
+import networkx as nx
 
 
 def test_unset_reference():
@@ -158,7 +159,7 @@ def _create_scoped_sdfg():
     inp = state.add_read('B')
     t = state.add_tasklet('doit', {'r'}, {'w'}, 'w = r + 1')
     out = state.add_write('A')
-    state.add_memlet_path(inp, me, ref, memlet=dace.Memlet('B[1, i] -> i'))
+    state.add_memlet_path(inp, me, ref, memlet=dace.Memlet('B[1, i] -> [i]'))
     state.add_edge(ref, None, t, 'r', dace.Memlet('ref[i]'))
     state.add_edge_pair(mx, t, out, internal_connector='w', internal_memlet=dace.Memlet('A[10, i]'))
 
@@ -249,7 +250,7 @@ def _create_loop_nonfree_symbols_sdfg():
     sdfg.add_loop(istate, state, after, 'i', '0', 'i < 20', 'i + 1')
 
     # Reference set inside loop
-    state.add_edge(state.add_read('A'), None, state.add_write('ref'), 'set', dace.Memlet('A[i] -> 0'))
+    state.add_edge(state.add_read('A'), None, state.add_write('ref'), 'set', dace.Memlet('A[i] -> [0]'))
 
     # Use outisde loop
     t = after.add_tasklet('setone', {}, {'out'}, 'out = 1')
@@ -518,7 +519,7 @@ def test_reference_loop_nonfree():
     assert len(sources) == 1  # There is only one SDFG
     sources = sources[0]
     assert len(sources) == 1
-    assert sources['ref'] == {dace.Memlet('A[i] -> 0')}
+    assert sources['ref'] == {dace.Memlet('A[i] -> [0]')}
 
     # Test loop-to-map - should fail to apply
     from dace.transformation.interstate import LoopToMap
@@ -636,6 +637,51 @@ def test_ref2view_refset_in_scope(array_outside_scope, depends_on_iterate):
         assert np.allclose(B, ref)
 
 
+def test_ref2view_reconnection():
+    """
+    Tests a regression in which ReferenceToView disconnects an existing weakly-connected state
+    and thus creating a race condition.
+    """
+    sdfg = dace.SDFG('reftest')
+    sdfg.add_array('A', [2], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    sdfg.add_reference('ref', [1], dace.float64)
+
+    state = sdfg.add_state()
+    a2 = state.add_access('A')
+    ref = state.add_access('ref')
+    b = state.add_access('B')
+
+    t2 = state.add_tasklet('addone', {'inp'}, {'out'}, 'out = inp + 1')
+    state.add_edge(ref, None, t2, 'inp', dace.Memlet('ref[0]'))
+    state.add_edge(t2, 'out', b, None, dace.Memlet('B[0]'))
+    state.add_edge(a2, None, ref, 'set', dace.Memlet('A[1]'))
+
+    t1 = state.add_tasklet('addone', {'inp'}, {'out'}, 'out = inp + 1')
+    a1 = state.add_access('A')
+    state.add_edge(a1, None, t1, 'inp', dace.Memlet('A[1]'))
+    state.add_edge(t1, 'out', a2, None, dace.Memlet('A[1]'))
+
+    # Test correctness before pass
+    A = np.random.rand(2)
+    B = np.random.rand(1)
+    ref = (A[1] + 2)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, ref)
+
+    # Test reference-to-view
+    result = Pipeline([ReferenceToView()]).apply_pass(sdfg, {})
+    assert result['ReferenceToView'] == {'ref'}
+
+    # Pass should not break order
+    assert len(list(nx.weakly_connected_components(state.nx))) == 1
+
+    # Test correctness after pass
+    ref = (A[1] + 2)
+    sdfg(A=A, B=B)
+    assert np.allclose(B, ref)
+
+
 if __name__ == '__main__':
     test_unset_reference()
     test_reference_branch()
@@ -662,3 +708,4 @@ if __name__ == '__main__':
     test_ref2view_refset_in_scope(False, True)
     test_ref2view_refset_in_scope(True, False)
     test_ref2view_refset_in_scope(True, True)
+    test_ref2view_reconnection()

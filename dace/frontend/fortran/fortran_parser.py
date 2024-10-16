@@ -1484,8 +1484,6 @@ class AST_translator:
                                             strides=strides,
                                             offset=offsets)   
                     else:
-                       
-
                         if isinstance(variable_in_call, ast_internal_classes.Array_Subscript_Node):
                             changed_indices = 0
                             for i in variable_in_call.indices:
@@ -1571,7 +1569,6 @@ class AST_translator:
                                             array.storage,
                                             strides=strides,
                                             offset=offsets)
-                        
             if not matched:
                 # This handles the case where the function is called with global variables
                 for array_name, array in all_arrays.items():
