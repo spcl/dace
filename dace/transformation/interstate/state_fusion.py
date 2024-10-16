@@ -246,16 +246,6 @@ class StateFusion(transformation.MultiStateTransformation):
             except StopIteration:
                 pass
 
-            # Isolated side-effect tasklets cannot be fused
-            for node in first_state.nodes():
-                if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
-                    if first_state.degree(node) == 0 and second_state.number_of_nodes() > 0:
-                        return False
-            for node in second_state.nodes():
-                if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
-                    if second_state.degree(node) == 0 and first_state.number_of_nodes() > 0:
-                        return False
-
             # If second state has other input edges, there might be issues
             # Exceptions are when none of the states contain dataflow, unless
             # the first state is an initial state (in which case the new initial
@@ -315,6 +305,15 @@ class StateFusion(transformation.MultiStateTransformation):
             # check for hazards
             resulting_ccs: List[CCDesc] = StateFusion.find_fused_components(first_cc_input, first_cc_output,
                                                                             second_cc_input, second_cc_output)
+
+            if len(resulting_ccs) > 1:
+                # Side-effect tasklets cannot be fused if could lead to data races
+                for node in first_state.nodes():
+                    if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
+                        return False
+                for node in second_state.nodes():
+                    if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
+                        return False
 
             # Check for data races
             for fused_cc in resulting_ccs:
