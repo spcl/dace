@@ -963,8 +963,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             port_created = (in_conn, out_conn)
 
                         else:
-                            in_conn = port_created.st
-                            out_conn = port_created.nd
+                            in_conn, out_conn = port_created
 
                         # map
                         graph.add_edge(global_map_exit, out_conn, dst, out_edge.dst_conn, dcpy(out_edge.data))
