@@ -1071,7 +1071,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         fuse_maps_into_global_map(graph, map_entries, map_exits, global_map_entry, global_map_exit,
                                   in_nodes, intermediate_nodes, out_nodes, transients_created, invariant_dimensions)
-        sdfg.validate()
 
         min_offsets = compress_transient_arrays(sdfg, graph, self.transient_allocation, subgraph_contains_data,
                                                 intermediate_nodes, invariant_dimensions)
