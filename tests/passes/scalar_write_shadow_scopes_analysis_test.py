@@ -10,7 +10,7 @@ from dace.transformation.passes.simplification.prune_empty_conditional_branches 
 
 
 @pytest.mark.parametrize('with_raising', (False, True))
-def test_scalar_write_shadow_split(with_raising = False):
+def test_scalar_write_shadow_split(with_raising):
     """
     Test the scalar write shadow scopes pass with writes dominating reads across state.
     """
@@ -112,7 +112,7 @@ def test_scalar_write_shadow_split(with_raising = False):
 
 
 @pytest.mark.parametrize('with_raising', (False, True))
-def test_scalar_write_shadow_fused(with_raising = False):
+def test_scalar_write_shadow_fused(with_raising):
     """
     Test the scalar write shadow scopes pass with writes dominating reads in the same state.
     """
@@ -196,7 +196,7 @@ def test_scalar_write_shadow_fused(with_raising = False):
 
 
 @pytest.mark.parametrize('with_raising', (False, True))
-def test_scalar_write_shadow_interstate_self(with_raising = False):
+def test_scalar_write_shadow_interstate_self(with_raising):
     """
     Tests the scalar write shadow pass with interstate edge reads being shadowed by the state they're originating from.
     """
@@ -300,7 +300,7 @@ def test_scalar_write_shadow_interstate_self(with_raising = False):
 
 
 @pytest.mark.parametrize('with_raising', (False, True))
-def test_scalar_write_shadow_interstate_pred(with_raising = False):
+def test_scalar_write_shadow_interstate_pred(with_raising):
     """
     Tests the scalar write shadow pass with interstate edge reads being shadowed by a predecessor state.
     """
@@ -408,7 +408,7 @@ def test_scalar_write_shadow_interstate_pred(with_raising = False):
 
 
 @pytest.mark.parametrize('with_raising', (False, True))
-def test_loop_fake_shadow(with_raising = False):
+def test_loop_fake_shadow(with_raising):
     sdfg = dace.SDFG('loop_fake_shadow')
     sdfg.add_array('A', [1], dace.float64, transient=True)
     sdfg.add_array('B', [1], dace.float64)
@@ -460,7 +460,7 @@ def test_loop_fake_shadow(with_raising = False):
 
 
 @pytest.mark.parametrize('with_raising', (False, True))
-def test_loop_fake_complex_shadow(with_raising = False):
+def test_loop_fake_complex_shadow(with_raising):
     sdfg = dace.SDFG('loop_fake_shadow')
     sdfg.add_array('A', [1], dace.float64, transient=True)
     sdfg.add_array('B', [1], dace.float64)
@@ -504,7 +504,7 @@ def test_loop_fake_complex_shadow(with_raising = False):
 
 
 @pytest.mark.parametrize('with_raising', (False, True))
-def test_loop_real_shadow(with_raising = False):
+def test_loop_real_shadow(with_raising):
     sdfg = dace.SDFG('loop_fake_shadow')
     sdfg.add_array('A', [1], dace.float64, transient=True)
     sdfg.add_array('B', [1], dace.float64)
@@ -551,7 +551,7 @@ def test_loop_real_shadow(with_raising = False):
 
 
 @pytest.mark.parametrize('with_raising', (False, True))
-def test_dominationless_write_branch(with_raising = False):
+def test_dominationless_write_branch(with_raising):
     sdfg = dace.SDFG('dominationless_write_branch')
     sdfg.add_array('A', [1], dace.float64, transient=True)
     sdfg.add_array('B', [1], dace.float64)

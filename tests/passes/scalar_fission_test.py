@@ -11,7 +11,7 @@ from dace.transformation.passes.simplification.prune_empty_conditional_branches 
 
 
 @pytest.mark.parametrize('with_raising', (False, True))
-def test_scalar_fission(with_raising = False):
+def test_scalar_fission(with_raising):
     """
     Test the scalar fission pass.
     This heavily relies on the scalar write shadow scopes pass, which is tested separately.
@@ -114,7 +114,7 @@ def test_scalar_fission(with_raising = False):
     assert all([n.data == list(tmp2_edge.assignments.values())[0] for n in [tmp2_write, loop2_read_tmp]])
 
 @pytest.mark.parametrize('with_raising', (False, True))
-def test_branch_subscopes_nofission(with_raising = False):
+def test_branch_subscopes_nofission(with_raising):
     sdfg = dace.SDFG('branch_subscope_fission')
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [2], dace.int32)
@@ -200,7 +200,7 @@ def test_branch_subscopes_nofission(with_raising = False):
     assert set(sdfg.arrays.keys()) == {'A', 'B', 'C'}
 
 @pytest.mark.parametrize('with_raising', (False, True))
-def test_branch_subscopes_fission(with_raising = False):
+def test_branch_subscopes_fission(with_raising):
     sdfg = dace.SDFG('branch_subscope_fission')
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [2], dace.int32)
