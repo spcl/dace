@@ -1425,11 +1425,12 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     result: Set[SDFGState] = set()
 
     # Traverse children until states are not empty
-    for succ in sdfg.successors(state):
-        result |= set(dfs_conditional(sdfg, sources=[succ], condition=lambda parent, _: parent.is_empty()))
+    for succ in state.parent_graph.successors(state):
+        result |= set(dfs_conditional(state.parent_graph, sources=[succ],
+                                      condition=lambda parent, _: parent.number_of_nodes() == 0))
 
     # Filter out empty states
-    result = {s for s in result if not s.is_empty()}
+    result = {s for s in result if not s.number_of_nodes() == 0}
 
     return result
 

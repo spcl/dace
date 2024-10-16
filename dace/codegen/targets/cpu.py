@@ -1852,7 +1852,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Pre-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
         if instr is not None:
-            instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
+            instr.on_scope_entry(sdfg, cfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
 
         # TODO: Refactor to generate_scope_preamble once a general code
         #  generator (that CPU inherits from) is implemented
@@ -1966,7 +1966,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
         if instr is not None and not is_devicelevel_gpu(sdfg, state_dfg, node):
-            instr.on_scope_exit(sdfg, state_dfg, node, outer_stream, callsite_stream, function_stream)
+            instr.on_scope_exit(sdfg, cfg, state_dfg, node, outer_stream, callsite_stream, function_stream)
 
         self.generate_scope_postamble(sdfg, dfg, state_id, function_stream, outer_stream, callsite_stream)
 

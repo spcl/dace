@@ -1,5 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from math import exp
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
 import dace

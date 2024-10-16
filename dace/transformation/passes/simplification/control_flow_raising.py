@@ -61,6 +61,7 @@ class ControlFlowRaising(ppl.Pass):
                         conditional.add_branch(oe.data.condition, branch)
                         if oe.dst is merge_block:
                             # Empty branch.
+                            branch.add_state('noop')
                             continue
 
                         branch_nodes = set(dfs_conditional(graph, [oe.dst], lambda _, x: x is not merge_block))
