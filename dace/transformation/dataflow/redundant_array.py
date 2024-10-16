@@ -24,7 +24,7 @@ from dace.transformation import transformation as pm
 def _validate_subsets(edge: graph.MultiConnectorEdge,
                       arrays: Dict[str, data.Data],
                       src_name: str = None,
-                      dst_name: str = None) -> Tuple[subsets.Subset]:
+                      dst_name: str = None) -> Tuple[subsets.Subset, subsets.Subset]:
     """ Extracts and validates src and dst subsets from the edge. """
 
     # Find src and dst names
@@ -637,6 +637,8 @@ class RedundantArray(pm.SingleStateTransformation):
                     src_subset = other_subset
                 else:
                     src_subset = None
+                if isinstance(e3.dst, nodes.AccessNode):
+                    dst_subset = None
 
                 subset = src_subset if src_is_data else dst_subset
                 other_subset = dst_subset if src_is_data else src_subset
