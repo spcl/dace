@@ -375,7 +375,7 @@ class ConstantSMemlet(SeparableMemletPattern):
                 matches = rngelem.match(cst)
                 if matches is None or len(matches) != 1:
                     return False
-                if not matches[cst].is_constant():
+                if matches[cst].free_symbols:
                     return False
 
         else:  # Single element case
@@ -384,7 +384,7 @@ class ConstantSMemlet(SeparableMemletPattern):
                 matches = dexpr.match(cst)
                 if matches is None or len(matches) != 1:
                     return False
-                if not matches[cst].is_constant():
+                if matches[cst].free_symbols:
                     return False
 
         return True
@@ -1294,6 +1294,8 @@ def align_memlet(state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
     # Fix memlet fields
     result.data = node.data
     result.subset = e.data.other_subset
+    if result.subset is None:
+        result.subset = subsets.Range.from_array(state.sdfg.arrays[result.data])
     result.other_subset = e.data.subset
     result._is_data_src = not is_src
     return result
