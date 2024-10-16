@@ -150,14 +150,15 @@ def from_json(obj, context=None, known_type=None):
         raise TypeError("Type mismatch in JSON, found " + t + ", expected " + known_type.__name__)
 
     if t:
-        try:
-            deserialized = get_serializer(t).from_json(obj, context=context)
-        except Exception as ex:
-            if config.Config.get_bool('testing', 'deserialize_exception'):
-                raise
-            warnings.warn(f'Failed to deserialize element, {type(ex).__name__}: {ex}')
-            deserialized = SerializableObject.from_json(obj, context=context, typename=t)
-        return deserialized
+        # TODO:
+        #try:
+            deserialized = _DACE_SERIALIZE_TYPES[t].from_json(obj, context=context)
+        #except Exception as ex:
+        #    if config.Config.get_bool('testing', 'deserialize_exception'):
+        #        raise
+        #    warnings.warn(f'Failed to deserialize element, {type(ex).__name__}: {ex}')
+        #    deserialized = SerializableObject.from_json(obj, context=context, typename=t)
+            return deserialized
 
     # No type was found, so treat this as a regular dictionary
     return {from_json(k, context): from_json(v, context) for k, v in obj.items()}

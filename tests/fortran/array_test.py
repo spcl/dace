@@ -177,16 +177,16 @@ def test_fortran_frontend_memlet_in_map_test():
         implicit None
         REAL INP(100, 10)
         REAL OUT(100, 10)
-        CALL memlet_range_test_routine(INP, OUT)
+        CALL memlet_range_test_function(INP, OUT)
         END PROGRAM
 
-        SUBROUTINE memlet_range_test_routine(INP, OUT)
+        SUBROUTINE memlet_range_test_function(INP, OUT)
             REAL INP(100, 10)
             REAL OUT(100, 10)
             DO I=1,100
                 CALL inner_loops(INP(I, :), OUT(I, :))
             ENDDO
-        END SUBROUTINE memlet_range_test_routine
+        END SUBROUTINE memlet_range_test_function
 
         SUBROUTINE inner_loops(INP, OUT)
             REAL INP(10)

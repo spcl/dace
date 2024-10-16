@@ -86,7 +86,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # General array checks
     for aname, desc in sdfg.arrays.items():
-        if (transients_only and not desc.transient) or isinstance(desc, dt.Stream):
+        if (transients_only and not desc.transient) or isinstance(desc, (dt.Stream, dt.View)):
             continue
         if desc.total_size != 1:
             continue
@@ -104,6 +104,15 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 continue
             candidate = node.data
             if candidate not in candidates:
+                continue
+
+            removed = False
+            for oe in state.out_edges(node):
+                if isinstance(oe.dst, nodes.AccessNode) and isinstance(sdfg.arrays[oe.dst.data], dt.View):
+                    candidates.remove(candidate)
+                    removed = True
+                    break
+            if removed:
                 continue
 
             # If candidate is read-only, continue normally
@@ -180,8 +189,15 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                         break
                     # If input array has inputs of its own (cannot promote within same state), skip
                     if state.in_degree(tinput.src) > 0:
-                        candidates.remove(candidate)
-                        break
+                        if isinstance(sdfg.arrays[tinput.src.data], dt.View):
+                            # Trivial views should be removed first
+                            viewing_node = sdutils.get_view_node(state, tinput.src)
+                            if viewing_node.data == tinput.src.data:
+                                candidates.remove(candidate)
+                                break         
+                        else:
+                            candidates.remove(candidate)
+                            break
                 else:
                     # Check that tasklets have only one statement
                     cb: props.CodeBlock = edge.src.code
@@ -222,6 +238,15 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                         continue
             else:  # If input is not an acceptable node type, skip
                 candidates.remove(candidate)
+
+            # # If the candidate is a view that is used to access a structure's scalar member it should not be promoted.
+            # # TODO: This is not the goal for the long run and we want to promote these kinds of scalar views too
+            # # eventually. However, this requires additional thought and discussion.
+            # if isinstance(sdfg.data(candidate), dt.View):
+            #     for oe in state.out_edges(node):
+            #         if isinstance(oe.dst, nodes.AccessNode) and isinstance(sdfg.data(oe.dst.data), dt.Structure):
+            #             candidates.remove(candidate)
+            #             break
         candidates_seen |= candidates_in_state
 
     # Filter out non-integral symbols that do not appear in inter-state edges
@@ -234,7 +259,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # Only keep candidates that were found in SDFG
     candidates &= (candidates_seen | interstate_symbols)
-
+ 
     return candidates
 
 
@@ -640,13 +665,13 @@ class ScalarToSymbolPromotion(passes.Pass):
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
             # Step 2: Assignment tasklets
             for node in scalar_nodes:
-                if state.in_degree(node) == 0:
+                if node not in state.nodes() or state.in_degree(node) == 0:
                     continue
                 in_edge = state.in_edges(node)[0]
                 input = in_edge.src
 
                 # There is only zero or one incoming edges by definition
-                tasklet_inputs = [e.src for e in state.in_edges(input)]
+                tasklet_inputs = [e.src for e in state.edge_bfs(input, reverse=True)]
                 # Step 2.1
                 new_state = xfh.state_fission(gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
                 new_isedge: sd.InterstateEdge = new_state.parent_graph.out_edges(new_state)[0]
@@ -666,8 +691,38 @@ class ScalarToSymbolPromotion(passes.Pass):
 
                     # Replace tasklet inputs with incoming edges
                     for e in new_state.in_edges(input):
-                        memlet_str: str = e.data.data
-                        if (e.data.subset is not None and not isinstance(sdfg.arrays[memlet_str], dt.Scalar)):
+                        view_nodes = sdutils.get_all_view_nodes(new_state, e.src)[::-1]
+                        
+                        current_node = view_nodes[0]
+                        current_desc = sdfg.arrays[current_node.data]
+                        memlet_path = [current_node.data]
+                        for i in range(1, len(view_nodes)):
+                            view_node = view_nodes[i]
+                            view_edge = sdutils.get_view_edge(new_state, view_node)
+                            
+                            # View on a member?
+                            if "." in view_edge.data.data:
+                                member_name = view_edge.data.data.split(".")[-1]
+                                memlet_part = member_name
+                                if i < len(view_nodes) - 1:
+                                    memlet_part += "[" + view_edge.data.subset.__str__() + "]"
+                                
+                                memlet_path.append(memlet_part)
+
+                                current_node = view_node
+                                current_desc = current_desc.members[member_name]
+                            else:
+                                # View on a subset
+                                if view_edge.data.subset != mm.Memlet.from_array(current_node.data, current_desc).subset:
+                                    # TODO: Non-trivial, memlet offsetting required
+                                    raise NotImplementedError
+                                else:
+                                    # We can simply skip
+                                    continue
+
+                        memlet_str = ".".join(memlet_path)
+
+                        if (e.data.subset is not None and not isinstance(sdfg.arrays[e.data.data], dt.Scalar)):
                             memlet_str += '[%s]' % e.data.subset
                         newcode = re.sub(r'\b%s\b' % re.escape(e.dst_conn), memlet_str, newcode)
                     # Add interstate edge assignment

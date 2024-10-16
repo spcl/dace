@@ -17,6 +17,7 @@ from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import graph
 from dace.memlet import Memlet
+from dace.sdfg.utils import get_all_view_nodes, get_view_edge
 
 
 def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGState] = None) -> SDFGState:
@@ -708,6 +709,12 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
                 nodes_to_move.add(e.src)
                 orig_edges.add(e)
 
+                if isinstance(edge.src, nodes.AccessNode) and isinstance(state.sdfg.arrays[edge.src.data], data.View):
+                    for view_node in get_all_view_nodes(state, edge.src)[:-1]:
+                        view_edge = get_view_edge(state, view_node)
+                        nodes_to_move.add(view_edge.src)
+                        orig_edges.add(view_edge)
+
     # Collect nodes_to_move
     for edge in state.edge_bfs(node):
         nodes_to_move.add(edge.dst)
@@ -745,6 +752,12 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
         state.add_node(node_)
         new_nodes[node] = node_
 
+        if isinstance(node, nodes.AccessNode) and isinstance(state.sdfg.arrays[node.data], data.View):
+            for view_node in get_all_view_nodes(state, node):
+                node_ = copy.deepcopy(view_node)
+                state.add_node(node_)
+                new_nodes[view_node] = node_
+
     for edge in state.edges():
         if edge.src in boundary_nodes and edge.dst in boundary_nodes:
             state.add_edge(new_nodes[edge.src], edge.src_conn, new_nodes[edge.dst], edge.dst_conn,
@@ -757,10 +770,10 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
     # Move nodes
     state.remove_nodes_from(nodes_to_move)
 
-    for n in nodes_to_move:
-        if isinstance(n, nodes.NestedSDFG):
+    for node in nodes_to_move:
+        if isinstance(node, nodes.NestedSDFG):
             # Set the new parent state
-            n.sdfg.parent = newstate
+            node.sdfg.parent = newstate
 
     newstate.add_nodes_from(nodes_to_move)
 
@@ -768,7 +781,6 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
         newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
 
     return newstate
-
 
 def _get_internal_subset(internal_memlet: Memlet,
                          external_memlet: Memlet,

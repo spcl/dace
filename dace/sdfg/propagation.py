@@ -1102,8 +1102,18 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             internal_memlet = border_memlets['in'][iedge.dst_conn]
             if internal_memlet is None:
                 continue
+            if internal_memlet.data != iedge.data.data:
+                continue
             try:
-                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
+                ext_desc = parent_sdfg.arrays[iedge.data.data]
+                int_desc = sdfg.arrays[iedge.dst_conn]
+                iedge.data = unsqueeze_memlet(
+                    internal_memlet,
+                    iedge.data,
+                    True,
+                    internal_offset=int_desc.offset,
+                    external_offset=ext_desc.offset
+                )
                 # If no appropriate memlet found, use array dimension
                 for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[iedge.data.data].shape)):
                     if rng[1] + 1 == s:
@@ -1122,8 +1132,18 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             internal_memlet = border_memlets['out'][oedge.src_conn]
             if internal_memlet is None:
                 continue
+            if internal_memlet.data != oedge.data.data:
+                continue
             try:
-                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
+                ext_desc = parent_sdfg.arrays[oedge.data.data]
+                int_desc = sdfg.arrays[oedge.src_conn]
+                oedge.data = unsqueeze_memlet(
+                    internal_memlet,
+                    oedge.data,
+                    True,
+                    internal_offset=int_desc.offset,
+                    external_offset=ext_desc.offset
+                )
                 # If no appropriate memlet found, use array dimension
                 for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[oedge.data.data].shape)):
                     if rng[1] + 1 == s:

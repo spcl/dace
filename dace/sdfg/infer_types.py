@@ -40,8 +40,9 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
     # If nested SDFG, try to use internal array type
     if isinstance(node, nodes.NestedSDFG):
         scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
+        struct = isinstance(node.sdfg.arrays[cname], data.Structure)
         dtype = node.sdfg.arrays[cname].dtype
-        ctype = (dtype if scalar else dtypes.pointer(dtype))
+        ctype = (dtype if scalar or struct else dtypes.pointer(dtype))
     elif e.data.data is not None:  # Obtain type from memlet
         scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
         if isinstance(node, nodes.LibraryNode):

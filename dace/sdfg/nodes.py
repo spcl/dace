@@ -556,6 +556,7 @@ class NestedSDFG(CodeNode):
                          default=False)
 
     unique_name = Property(dtype=str, desc="Unique name of the SDFG", default="")
+    path = Property(dtype=str, default = "",desc="Path to the SDFG file (if any)")
 
     def __init__(self,
                  label,
@@ -597,12 +598,13 @@ class NestedSDFG(CodeNode):
 
         dace.serialize.set_properties_from_json(ret, json_obj, context)
 
-        if context and 'sdfg_state' in context:
-            ret.sdfg.parent = context['sdfg_state']
-        if context and 'sdfg' in context:
-            ret.sdfg.parent_sdfg = context['sdfg']
+        if ret.sdfg is not None:
+            if context and 'sdfg_state' in context:
+                ret.sdfg.parent = context['sdfg_state']
+            if context and 'sdfg' in context:
+                ret.sdfg.parent_sdfg = context['sdfg']
 
-        ret.sdfg.parent_nsdfg_node = ret
+            ret.sdfg.parent_nsdfg_node = ret
 
         ret.sdfg.update_cfg_list([])
 
@@ -699,6 +701,7 @@ class NestedSDFG(CodeNode):
         symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
         missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
         if missing_symbols:
+            print(sdfg.name)
             raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))
         extra_symbols = self.symbol_mapping.keys() - symbols
         if len(extra_symbols) > 0:
@@ -798,7 +801,11 @@ class MapEntry(EntryNode):
         result = {}
         # Add map params
         for p, rng in zip(self._map.params, self._map.range):
-            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
+            if p in self._map.param_types:
+                result[p] = self._map.param_types[p]
+            else:
+                result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols),
+                                                  infer_expr_type(rng[1], symbols))
 
         # Handle the dynamic map ranges.
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
@@ -880,6 +887,7 @@ class Map(object):
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
     params = ListProperty(element_type=str, desc="Mapped parameters")
+    param_types = DictProperty(key_type=str, value_type=dtypes.typeclass, desc="Types of mapped parameters")
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
@@ -919,6 +927,10 @@ class Map(object):
                                  "enables the statement if block size is not symbolic, and any other value "
                                  "(including tuples) sets it explicitly.",
                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
+    gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
+
+    host_map = Property(dtype=bool, desc="If set to thrue, won't be mapped to a GPU", default=False)
 
     def __init__(self,
                  label,
@@ -1336,6 +1348,11 @@ class LibraryNode(CodeNode):
     def from_json(cls, json_obj, context=None):
         if cls == LibraryNode:
             clazz = pydoc.locate(json_obj['classpath'])
+            # TODO: REMOVE BEFORE MERGING!!!
+            if clazz == UnregisteredLibraryNode and (json_obj['label'].startswith('perm_') or
+                                                     json_obj['label'].startswith('unperm_')):
+                from dace.libraries.standard import TensorTranspose
+                clazz = TensorTranspose
             if clazz is None:
                 warnings.warn(f'Could not find class "{json_obj["classpath"]}" while deserializing. Falling back '
                               'to UnregisteredLibraryNode.')
