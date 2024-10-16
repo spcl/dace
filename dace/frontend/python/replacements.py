@@ -453,7 +453,7 @@ def _numpy_flip(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis
     # acpy, _ = sdfg.add_temp_transient(desc.shape, desc.dtype, desc.storage)
     # vnode = state.add_read(view)
     # anode = state.add_read(acpy)
-    # state.add_edge(vnode, None, anode, None, Memlet(f'{view}[{sset}] -> {dset}'))
+    # state.add_edge(vnode, None, anode, None, Memlet(f'{view}[{sset}] -> [{dset}]'))
 
     arr_copy, _ = sdfg.add_temp_transient_like(desc)
     inpidx = ','.join([f'__i{i}' for i in range(ndim)])
@@ -3934,7 +3934,7 @@ def implement_ufunc_accumulate(visitor: ProgramVisitor, ast_node: ast.Call, sdfg
     init_state = nested_sdfg.add_state(label="init")
     r = init_state.add_read(inpconn)
     w = init_state.add_write(outconn)
-    init_state.add_nedge(r, w, dace.Memlet("{a}[{i}] -> {oi}".format(a=inpconn, i='0', oi='0')))
+    init_state.add_nedge(r, w, dace.Memlet("{a}[{i}] -> [{oi}]".format(a=inpconn, i='0', oi='0')))
 
     body_state = nested_sdfg.add_state(label="body")
     r1 = body_state.add_read(inpconn)
@@ -4189,7 +4189,7 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
                               find_new_name=True)
 
     # Register view with DaCe program visitor
-    # NOTE: We do not create here a Memlet of the form `A[subset] -> osubset`
+    # NOTE: We do not create here a Memlet of the form `A[subset] -> [osubset]`
     # because the View can be of a different dtype. Adding `other_subset` in
     # such cases will trigger validation error.
     pv.views[newarr] = (arr, Memlet.from_array(arr, desc))

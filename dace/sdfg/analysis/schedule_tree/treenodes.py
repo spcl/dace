@@ -162,10 +162,17 @@ class GeneralLoopScope(ControlFlowScope):
         loop = self.header.loop
         if loop.update_statement and loop.init_statement and loop.loop_variable:
             if loop.inverted:
-                pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
-                header = indent * INDENTATION + 'do:\n'
-                pre_footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
-                footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
+                if loop.update_before_condition:
+                    pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
+                    header = indent * INDENTATION + 'do:\n'
+                    pre_footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
+                    footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
+                else:
+                    pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
+                    header = indent * INDENTATION + 'while True:\n'
+                    pre_footer = (indent + 1) * INDENTATION + f'if (not {loop.loop_condition.as_string}):\n'
+                    pre_footer += (indent + 2) * INDENTATION + 'break\n'
+                    footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
                 return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
             else:
                 result = (indent * INDENTATION +

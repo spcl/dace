@@ -379,7 +379,7 @@ def nest_state_subgraph(sdfg: SDFG,
                          SDFG.
         :raise ValueError: The subgraph is contained in more than one scope.
     """
-    if state.parent != sdfg:
+    if state.sdfg != sdfg:
         raise KeyError('State does not belong to given SDFG')
     if subgraph is not state and subgraph.graph is not state:
         raise KeyError('Subgraph does not belong to given state')
@@ -433,7 +433,7 @@ def nest_state_subgraph(sdfg: SDFG,
     # top-level graph)
     data_in_subgraph = set(n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
     # Find other occurrences in SDFG
-    other_nodes = set(n.data for s in sdfg.nodes() for n in s.nodes()
+    other_nodes = set(n.data for s in sdfg.states() for n in s.nodes()
                       if isinstance(n, nodes.AccessNode) and n not in subgraph.nodes())
     subgraph_transients = set()
     for data in data_in_subgraph:
