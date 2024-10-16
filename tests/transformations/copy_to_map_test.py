@@ -172,7 +172,7 @@ def test_non_lin_delin_1():
     state.add_nedge(
             a,
             b,
-            dace.Memlet("a[0:10, 0:10] -> 0:10, 0:10"),
+            dace.Memlet("a[0:10, 0:10] -> [0:10, 0:10]"),
     )
     _perform_non_lin_delin_test(sdfg)
 
@@ -181,7 +181,7 @@ def test_non_lin_delin_2():
     state.add_nedge(
             a,
             b,
-            dace.Memlet("a[0:10, 0:10] -> 50:60, 40:50"),
+            dace.Memlet("a[0:10, 0:10] -> [50:60, 40:50]"),
     )
     _perform_non_lin_delin_test(sdfg)
 
@@ -191,7 +191,7 @@ def test_non_lin_delin_3():
     state.add_nedge(
             a,
             b,
-            dace.Memlet("a[1:11, 20:30] -> 50:60, 40:50"),
+            dace.Memlet("a[1:11, 20:30] -> [50:60, 40:50]"),
     )
     _perform_non_lin_delin_test(sdfg)
 
@@ -201,7 +201,7 @@ def test_non_lin_delin_4():
     state.add_nedge(
             a,
             b,
-            dace.Memlet("a[1:11, 2, 20:30] -> 50:60, 40:50"),
+            dace.Memlet("a[1:11, 2, 20:30] -> [50:60, 40:50]"),
     )
     _perform_non_lin_delin_test(sdfg)
 
@@ -211,7 +211,7 @@ def test_non_lin_delin_5():
     state.add_nedge(
             a,
             b,
-            dace.Memlet("a[1:11, 2, 20:30] -> 50:60, 4, 40:50"),
+            dace.Memlet("a[1:11, 2, 20:30] -> [50:60, 4, 40:50]"),
     )
     _perform_non_lin_delin_test(sdfg)
 
@@ -221,7 +221,7 @@ def test_non_lin_delin_6():
     state.add_nedge(
             a,
             b,
-            dace.Memlet("a[1:11, 20:30] -> 50:60, 4, 40:50"),
+            dace.Memlet("a[1:11, 20:30] -> [50:60, 4, 40:50]"),
     )
     _perform_non_lin_delin_test(sdfg)
 
@@ -231,7 +231,6 @@ def test_non_lin_delin_7():
     state.add_nedge(
             a,
             b,
-            #dace.Memlet("a[0:10, 0:10] -> 5:15, 6:16"),
             dace.Memlet("b[5:15, 6:16]"),
     )
     _perform_non_lin_delin_test(sdfg)
@@ -242,7 +241,6 @@ def test_non_lin_delin_8():
     state.add_nedge(
             a,
             b,
-            #dace.Memlet("a[0:10, 0:10] -> 5:15, 6:16"),
             dace.Memlet("a[5:15, 6:16]"),
     )
     _perform_non_lin_delin_test(sdfg)
