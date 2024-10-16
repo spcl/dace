@@ -50,8 +50,11 @@ class NestedDict(dict):
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__getitem__(token)
+
         while tokens:
             token = tokens.pop(0)
+            if isinstance(result, dt.ContainerArray):
+                result = result.stype
             result = result.members[token]
         return result
 
@@ -427,6 +430,7 @@ class SDFG(ControlFlowRegion):
                                desc='Whether to generate OpenMP sections in code')
 
     debuginfo = DebugInfoProperty(allow_none=True)
+
 
     _pgrids = DictProperty(str,
                            ProcessGrid,
@@ -1028,7 +1032,7 @@ class SDFG(ControlFlowRegion):
 
     def call_with_instrumented_data(self, dreport: 'InstrumentedDataReport', *args, **kwargs):
         """
-        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
+        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary.
         Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
 
         :param dreport: The instrumented data report to use upon calling.
@@ -1276,11 +1280,16 @@ class SDFG(ControlFlowRegion):
 
         defined_syms |= set(self.constants_prop.keys())
 
+        init_code_symbols=set()
+        exit_code_symbols=set()
         # Add used symbols from init and exit code
         for code in self.init_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            init_code_symbols |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
         for code in self.exit_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            exit_code_symbols |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+
+        #free_syms|=set(filter(lambda x: not str(x).startswith('__f2dace_ARRAY'),init_code_symbols))
+        #free_syms|=set(filter(lambda x: not  str(x).startswith('__f2dace_ARRAY'),exit_code_symbols))
 
         return super()._used_symbols_internal(all_symbols=all_symbols,
                                               keep_defined_in_mapping=keep_defined_in_mapping,
@@ -1360,7 +1369,9 @@ class SDFG(ControlFlowRegion):
         }
 
         # Add global free symbols used in the generated code to scalar arguments
+        #TODO LATER investiagte why all_symbols=False leads to bug
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
+        free_symbols = set(filter(lambda x: not str(x).startswith('__f2dace_STRUCTARRAY'), free_symbols))
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary
@@ -1687,7 +1698,8 @@ class SDFG(ControlFlowRegion):
                   total_size=None,
                   find_new_name=False,
                   alignment=0,
-                  may_alias=False) -> Tuple[str, dt.Array]:
+                  may_alias=False,
+                  host_data=False) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1715,7 +1727,8 @@ class SDFG(ControlFlowRegion):
                         alignment=alignment,
                         debuginfo=debuginfo,
                         total_size=total_size,
-                        may_alias=may_alias)
+                        may_alias=may_alias,
+                        host_data=host_data)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1848,7 +1861,8 @@ class SDFG(ControlFlowRegion):
                    transient=False,
                    lifetime=dace.dtypes.AllocationLifetime.Scope,
                    debuginfo=None,
-                   find_new_name=False) -> Tuple[str, dt.Scalar]:
+                   find_new_name=False,
+                   host_data=False) -> Tuple[str, dt.Scalar]:
         """ Adds a scalar to the SDFG data descriptor store. """
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
@@ -1860,6 +1874,7 @@ class SDFG(ControlFlowRegion):
             transient=transient,
             lifetime=lifetime,
             debuginfo=debuginfo,
+            host_data=host_data
         )
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
@@ -2598,7 +2613,7 @@ class SDFG(ControlFlowRegion):
                                               print_report: Optional[bool] = None,
                                               order_by_transformation: bool = True,
                                               progress: Optional[bool] = None) -> int:
-        """ 
+        """
         This function applies a transformation or a set of (unique) transformations
         until throughout the entire SDFG once. Operates in-place.
 
@@ -2714,7 +2729,7 @@ class SDFG(ControlFlowRegion):
 
     def generate_code(self):
         """ Generates code from this SDFG and returns it.
-        
+
             :return: A list of `CodeObject` objects containing the generated
                       code of different files and languages.
         """

@@ -66,6 +66,9 @@ class PruneConnectors(pm.SingleStateTransformation):
         # Fission subgraph around nsdfg into its own state to avoid data races
         nsdfg_state = helpers.state_fission_after(state, nsdfg)
 
+        prune_in = nsdfg.in_connectors.keys() - read_set
+        prune_out = nsdfg.out_connectors.keys() - write_set
+
         # Detect which nodes are used, so we can delete unused nodes after the
         # connectors have been pruned
         read_set, write_set = nsdfg.sdfg.read_and_write_sets()

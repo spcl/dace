@@ -304,7 +304,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                                                                                    dst_array.desc(sdfg)))
 
         #######################################################
-        # Step 4: Change all top-level maps and library nodes to GPU schedule
+        # Step 4: Change all top-level maps and library nodes to GPU schedule unless host_map is set
 
         gpu_nodes = set()
         for state in sdfg.nodes():
@@ -312,11 +312,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             for node in state.nodes():
                 if sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
-                        node.schedule = dtypes.ScheduleType.GPU_Default
-                        gpu_nodes.add((state, node))
+                        if not isinstance(node, nodes.MapEntry) or not node.map.host_map:
+                            node.schedule = dtypes.ScheduleType.GPU_Default
+                            gpu_nodes.add((state, node))
                     elif isinstance(node, nodes.EntryNode):
-                        node.schedule = dtypes.ScheduleType.GPU_Device
-                        gpu_nodes.add((state, node))
+                        if not isinstance(node, nodes.MapEntry) or not node.map.host_map:
+                            node.schedule = dtypes.ScheduleType.GPU_Device
+                            gpu_nodes.add((state, node))
                 elif self.sequential_innermaps:
                     if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
                         node.schedule = dtypes.ScheduleType.Sequential

@@ -273,6 +273,46 @@ def test_fortran_frontend_merge_array_shift():
     for val in res:
         assert val == 100
 
+def test_fortran_frontend_merge_nonarray():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM merge_test
+                    implicit none
+                    logical :: val(2)
+                    double precision :: res(2)
+                    CALL merge_test_function(val, res)
+                    end
+
+                    SUBROUTINE merge_test_function(val, res)
+                    logical :: val(2)
+                    double precision :: res(2)
+                    double precision :: input1
+                    double precision :: input2
+
+                    input1 = 1
+                    input2 = 5
+
+                    res(1) = MERGE(input1, input2, val(1))
+
+                    END SUBROUTINE merge_test_function
+                    """
+
+    # Now test to verify it executes correctly with no offset normalization
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "merge_test", True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    val = np.full([1], 1, order="F", dtype=np.int32)
+    res = np.full([1], 40, order="F", dtype=np.float64)
+
+    sdfg(val=val, res=res)
+    assert res[0] == 1
+
+    val[0] = 0
+    sdfg(val=val, res=res)
+    assert res[0] == 5
 
 if __name__ == "__main__":
 
@@ -281,3 +321,4 @@ if __name__ == "__main__":
     test_fortran_frontend_merge_comparison_arrays()
     test_fortran_frontend_merge_comparison_arrays_offset()
     test_fortran_frontend_merge_array_shift()
+    test_fortran_frontend_merge_nonarray()
