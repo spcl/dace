@@ -12,6 +12,8 @@ from typing import Dict, Set, Tuple, Any, Optional, Union
 import networkx as nx
 from networkx.algorithms import shortest_paths as nxsp
 
+from dace.transformation.passes.analysis import loop_analysis
+
 WriteScopeDict = Dict[str, Dict[Optional[Tuple[SDFGState, nd.AccessNode]],
                                 Set[Union[Tuple[SDFGState, nd.AccessNode], Tuple[ControlFlowBlock, InterstateEdge]]]]]
 SymbolScopeDict = Dict[str, Dict[Edge[InterstateEdge], Set[Union[Edge[InterstateEdge], ControlFlowBlock]]]]
@@ -292,10 +294,12 @@ class AccessSets(ppl.Pass):
                                 readset.add(anode.data)
                     if isinstance(block, LoopRegion):
                         exprs = set([ block.loop_condition.as_string ])
-                        if block.update_statement is not None:
-                            exprs.add(block.update_statement.as_string)
-                        if block.init_statement is not None:
-                            exprs.add(block.init_statement.as_string)
+                        update_stmt = loop_analysis.get_update_assignment(block)
+                        init_stmt = loop_analysis.get_init_assignment(block)
+                        if update_stmt:
+                            exprs.add(update_stmt)
+                        if init_stmt:
+                            exprs.add(init_stmt)
                         for expr in exprs:
                             readset |= symbolic.free_symbols_and_functions(expr) & arrays
                     elif isinstance(block, ConditionalBlock):
