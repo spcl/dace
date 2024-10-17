@@ -134,6 +134,9 @@ class Pass:
 
         return result
 
+    def set_opts(self, opts: Dict[str, Any]) -> None:
+        pass
+
 @properties.make_properties
 class VisitorPass(Pass):
     """

@@ -1,6 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 import warnings
 
 from dace import SDFG, config, properties
@@ -11,7 +11,7 @@ from dace.transformation.passes.consolidate_edges import ConsolidateEdges
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
-from dace.transformation.passes.fusion_inline import FuseStates, InlineSDFGs
+from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions, InlineSDFGs
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
@@ -21,6 +21,7 @@ from dace.transformation.passes.simplification.prune_empty_conditional_branches 
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
+    InlineControlFlowRegions,
     ScalarToSymbolPromotion,
     ControlFlowRaising,
     FuseStates,
@@ -62,15 +63,21 @@ class SimplifyPass(ppl.FixedPointPipeline):
     skip = properties.SetProperty(element_type=str, default=set(), desc='Set of pass names to skip.')
     verbose = properties.Property(dtype=bool, default=False, desc='Whether to print reports after every pass.')
 
+    no_inline_function_call_regions = properties.Property(dtype=bool, default=False,
+                                                          desc='Whether to prevent inlining function call regions.')
+    no_inline_named_regions = properties.Property(dtype=bool, default=False,
+                                                  desc='Whether to prevent inlining named control flow regions.')
+
     def __init__(self,
                  validate: bool = False,
                  validate_all: bool = False,
                  skip: Optional[Set[str]] = None,
-                 verbose: bool = False):
+                 verbose: bool = False,
+                 pass_options: Optional[Dict[str, Any]] = None):
         if skip:
-            passes = [p() for p in SIMPLIFY_PASSES if p.__name__ not in skip]
+            passes: List[ppl.Pass] = [p() for p in SIMPLIFY_PASSES if p.__name__ not in skip]
         else:
-            passes = [p() for p in SIMPLIFY_PASSES]
+            passes: List[ppl.Pass] = [p() for p in SIMPLIFY_PASSES]
 
         super().__init__(passes=passes)
         self.validate = validate
@@ -80,6 +87,15 @@ class SimplifyPass(ppl.FixedPointPipeline):
             self.verbose = True
         else:
             self.verbose = verbose
+
+        pass_opts = {
+            'no_inline_function_call_regions': self.no_inline_function_call_regions,
+            'no_inline_named_regions': self.no_inline_named_regions,
+        }
+        if pass_options:
+            pass_opts.update(pass_options)
+        for p in passes:
+            p.set_opts(pass_opts)
 
     def apply_subpass(self, sdfg: SDFG, p: ppl.Pass, state: Dict[str, Any]):
         """

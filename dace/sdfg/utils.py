@@ -13,13 +13,13 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, SDFGState, StateSubgraphView, LoopRegion,
+from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, SDFGState, StateSubgraphView, LoopRegion,
                              ControlFlowRegion)
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from dace.cli.progress import optional_progressbar
-from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Type, Union
 
 
 def node_path_graph(*args) -> gr.OrderedDiGraph:
@@ -1263,38 +1263,21 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     return counter
 
 
-def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
-    count = 0
-
-    for _block in optional_progressbar(reversed(blocks), title='Inlining Loops',
-                                       n=len(blocks), progress=progress):
-        block: LoopRegion = _block
-        if block.inline()[0]:
-            count += 1
-
-    return count
-
-
-def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ControlFlowRegion)]
+def inline_control_flow_regions(sdfg: SDFG, types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
+                                blacklist: Optional[List[Type[AbstractControlFlowRegion]]] = None,
+                                progress: bool = None) -> int:
+    if types:
+        blocks = [n for n, _ in sdfg.all_nodes_recursive() if type(n) in types]
+    elif blacklist:
+        blocks = [n for n, _ in sdfg.all_nodes_recursive()
+                  if isinstance(n, AbstractControlFlowRegion) and type(n) not in blacklist]
+    else:
+        blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, AbstractControlFlowRegion)]
     count = 0
 
     for _block in optional_progressbar(reversed(blocks), title='Inlining control flow regions',
                                        n=len(blocks), progress=progress):
         block: ControlFlowRegion = _block
-        if block.inline()[0]:
-            count += 1
-
-    return count
-
-def inline_conditional_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
-    count = 0
-
-    for _block in optional_progressbar(reversed(blocks), title='Inlining conditional blocks',
-                                       n=len(blocks), progress=progress):
-        block: ConditionalBlock = _block
         if block.inline()[0]:
             count += 1
 

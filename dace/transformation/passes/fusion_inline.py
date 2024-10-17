@@ -8,7 +8,8 @@ from typing import Any, Dict, Optional
 
 from dace import SDFG, properties
 from dace.sdfg import nodes
-from dace.sdfg.utils import fuse_states, inline_sdfgs
+from dace.sdfg.state import ConditionalBlock, FunctionCallRegion, LoopRegion, NamedRegion
+from dace.sdfg.utils import fuse_states, inline_control_flow_regions, inline_sdfgs
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import experimental_cfg_block_compatible
 
@@ -86,6 +87,74 @@ class InlineSDFGs(ppl.Pass):
 
     def report(self, pass_retval: int) -> str:
         return f'Inlined {pass_retval} SDFGs.'
+
+
+@dataclass(unsafe_hash=True)
+@properties.make_properties
+@experimental_cfg_block_compatible
+class InlineControlFlowRegions(ppl.Pass):
+    """
+    Inlines all control flow regions.
+    """
+
+    CATEGORY: str = 'Simplification'
+
+    progress = properties.Property(dtype=bool,
+                                   default=None,
+                                   allow_none=True,
+                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
+
+    no_inline_loops = properties.Property(dtype=bool, default=True, desc='Whether to prevent inlining loops.')
+    no_inline_conditional = properties.Property(dtype=bool, default=True,
+                                                desc='Whether to prevent inlining conditional blocks.')
+    no_inline_function_call_regions = properties.Property(dtype=bool, default=True,
+                                                          desc='Whether to prevent inlining function call regions.')
+    no_inline_named_regions = properties.Property(dtype=bool, default=True,
+                                                  desc='Whether to prevent inlining named control flow regions.')
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & (ppl.Modifies.NestedSDFGs | ppl.Modifies.States)
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.States | ppl.Modifies.NestedSDFGs
+
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+        """
+        Inlines all possible nested SDFGs (and all sub-SDFGs).
+        
+        :param sdfg: The SDFG to transform.
+    
+        :return: The total number of states fused, or None if did not apply.
+        """
+        blacklist = []
+        if self.no_inline_loops:
+            blacklist.append(LoopRegion)
+        if self.no_inline_conditional:
+            blacklist.append(ConditionalBlock)
+        if self.no_inline_named_regions:
+            blacklist.append(NamedRegion)
+        if self.no_inline_function_call_regions:
+            blacklist.append(FunctionCallRegion)
+        if len(blacklist) < 1:
+            blacklist = None
+
+        inlined = inline_control_flow_regions(sdfg, None, blacklist, self.progress)
+        return inlined or None
+
+    def report(self, pass_retval: int) -> str:
+        return f'Inlined {pass_retval} regions.'
+
+    def set_opts(self, opts):
+        opt_keys = [
+            'no_inline_loops',
+            'no_inline_conditional',
+            'no_inline_function_call_regions',
+            'no_inline_named_regions',
+        ]
+
+        for k in opt_keys:
+            if k in opts:
+                setattr(self, k, opts[k])
 
 
 @dataclass(unsafe_hash=True)
