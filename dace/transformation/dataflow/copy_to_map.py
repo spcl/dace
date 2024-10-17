@@ -38,8 +38,6 @@ class CopyToMap(xf.SingleStateTransformation):
                 return False
         if (not self.ignore_strides) and self.a.desc(sdfg).strides == self.b.desc(sdfg).strides:
             return False
-        if self.a.data == self.b.data:
-            return False
         # Ensures that the edge goes from `a` -> `b`.
         if not any(edge.dst is self.b for edge in graph.out_edges(self.a)):
             return False
