@@ -338,7 +338,7 @@ class CUDACodeGen(TargetCodeGenerator):
     cudaMemPool_t mempool;
     cudaDeviceGetDefaultMemPool(&mempool, 0);
     uint64_t threshold = {poolcfg if poolcfg != -1 else 'UINT64_MAX'};
-    cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);            
+    cudaMemPoolSetAttribute(mempool, cudaMemPoolAttrReleaseThreshold, &threshold);
 '''
 
         self._codeobject.code = """
@@ -754,7 +754,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         """ Annotates an SDFG (and all nested ones) to include a `_cuda_stream`
             field. This field is applied to all GPU maps, tasklets, and copies
             that can be executed in parallel.
-            
+
             :param sdfg: The sdfg to modify.
             :param default_stream: The stream ID to start counting from (used
                                    in recursion to nested SDFGs).
@@ -1023,7 +1023,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         [src_node, dst_node])
                     # Write for-loop footers
                     for d in range(dims - 2):
-                        callsite_stream.write("}")
+                        callsite_stream.write("}//t13")
 
             if dims == 1 and not (src_strides[-1] != 1 or dst_strides[-1] != 1):
                 copysize = ' * '.join(_topy(copy_shape))
@@ -1062,7 +1062,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                                                                     stream=cudastream,
                                                                                     backend=self.backend), cfg,
                                 state_id, [src_node, dst_node])
-                    callsite_stream.write('}')
+                    callsite_stream.write('} //t2')
             elif dims == 1 and ((src_strides[-1] != 1 or dst_strides[-1] != 1)):
                 callsite_stream.write(
                     'DACE_GPU_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
@@ -1708,7 +1708,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         self._emit_sync(self._localcode)
 
         # Close the runkernel function
-        self._localcode.write('}')
+        self._localcode.write('} //t3')
         #######################
         # Add invocation to calling code (in another file)
         function_stream.write(
@@ -1741,7 +1741,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
         if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
-            callsite_stream.write('}', cfg, state_id, scope_entry)
+            callsite_stream.write('}//t4', cfg, state_id, scope_entry)
 
         synchronize_streams(sdfg, cfg, state, state_id, scope_entry, scope_exit, callsite_stream, self)
 
@@ -1764,6 +1764,23 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     dtypes.ScheduleType.GPU_Device,
                     dtypes.ScheduleType.GPU_ThreadBlock,
                     dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+            ):
+                res.append((node.map, {dace.symbol(k): dace.symbol(k) for k in node.map.range.free_symbols}))
+        return res
+
+    def get_warp_maps_recursive(self, subgraph):
+        res = []
+        for node in subgraph.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                for state in node.sdfg.states():
+                    warpmaps = self.get_warp_maps_recursive(state)
+                    for map, sym_map in warpmaps:
+                        for k in sym_map.values():
+                            for kk, vv in node.symbol_mapping.items():
+                                sym_map[k] = sym_map[k].subs(dace.symbol(kk), vv)
+                        res.append((map, sym_map))
+            elif isinstance(node, nodes.MapEntry) and node.schedule in (
+                    dtypes.ScheduleType.GPU_Warp,
             ):
                 res.append((node.map, {dace.symbol(k): dace.symbol(k) for k in node.map.range.free_symbols}))
         return res
@@ -1802,6 +1819,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # Obtain thread-block maps from nested SDFGs
         subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
         sub_maps = self.get_tb_maps_recursive(subgraph)
+        sub_warp_maps = self.get_warp_maps_recursive(subgraph)
 
         # Introduce extra grid dimensions based on device sub-maps
         extra_dim_offsets: Dict[nodes.Map, symbolic.SymbolicType] = {}
@@ -1843,6 +1861,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # keep only thread-block maps
         tb_maps_sym_map = [(tbmap, sym_map) for tbmap, sym_map in sub_maps
                            if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
+        warpmaps_maps_sym_map = [(warpmap, sym_map) for warpmap, sym_map in sub_warp_maps
+                           if warpmap.schedule == dtypes.ScheduleType.GPU_Warp]
 
         # Map thread-block size override
         block_size = kernelmap_entry.map.gpu_block_size
@@ -1896,8 +1916,20 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         else:
             # Find all thread-block maps to determine overall block size
             detected_block_sizes = [block_size] if block_size is not None else []
-            for tbmap, sym_map in tb_maps_sym_map:
-                tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]
+            assert warpmaps_maps_sym_map is None or len(warpmaps_maps_sym_map) == 0 or len(warpmaps_maps_sym_map) == len(tb_maps_sym_map)
+            for i, (tbmap, sym_map) in enumerate(tb_maps_sym_map):
+                if warpmaps_maps_sym_map is not None and len(warpmaps_maps_sym_map) == len(tb_maps_sym_map):
+                    (warpmap, warp_sym_map) = warpmaps_maps_sym_map[i]
+                tbsize = [s.subs(list(sym_map.items()))  for s in tbmap.range.size()[::-1]]
+                #multipliers = [((e+1-b)/s).subs(list(sym_map.items())) for b,e,s in  warpmap.range]
+                if warpmaps_maps_sym_map is not None and len(warpmaps_maps_sym_map) == len(tb_maps_sym_map):
+                    print(warpmap.range.size()[::-1], warpmap.range)
+                    multipliers = [s.subs(list(sym_map.items()))  for s in warpmap.range.size()[::-1]]
+                    print("MULT", multipliers)
+                    tbsize[:] = [a * b for a, b in zip(tbsize, multipliers)]
+                    print("TBSIZE", tbsize)
+                    print("WARPMAPS", warpmaps_maps_sym_map)
+
 
                 # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
                 # The partial trailing thread-block is emitted as an if-condition
@@ -1923,7 +1955,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # TODO: If grid/block sizes contain elements only defined within the
             #       kernel, raise an invalid SDFG exception and recommend
             #       overapproximation.
-
+            # raise Exception(detected_block_sizes)
             if len(detected_block_sizes) > 1:
 
                 # Error when both gpu_block_size and thread-block maps were defined and conflict
@@ -1952,6 +1984,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             grid_size = ['gridDim.x', '1', '1']
 
         # Check block size against configured maximum values, if those can be determined
+        print("BSIZE:", block_size)
         total_bsize = prod(block_size)
         total_limit = Config.get('compiler', 'cuda', 'block_size_limit')
         lastdim_limit = Config.get('compiler', 'cuda', 'block_size_lastdim_limit')
@@ -2105,7 +2138,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         if (not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent):
             for _ in kernel_map.params:
-                kernel_stream.write('}', cfg, state_id, node)
+                print('}4')
+                kernel_stream.write('}//t5', cfg, state_id, node)
 
         self._block_dims = None
         self._kernel_map = None
@@ -2206,7 +2240,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 '__dace_dynmap_end = {end};'.format(begin=dynmap_begin, end=dynmap_end), cfg, state_id, scope_entry)
 
             # close if
-            callsite_stream.write('}', cfg, state_id, scope_entry)
+            callsite_stream.write('}//t6', cfg, state_id, scope_entry)
 
             callsite_stream.write(
                 'dace::DynamicMap<{fine_grained}, {bsize}>::'
@@ -2424,6 +2458,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
             brange = subsets.Range(scope_map.range[::-1])
             kdims = brange.size()
+            print("KDIMS:", kdims, "BRANGE:", brange)
             dsym = [symbolic.symbol('__DAPT%d' % i, nonnegative=True, integer=True) for i in range(len(brange))]
             dsym_end = [d + (bs * rng[2]) - 1 for d, bs, rng in zip(dsym, self._block_dims, brange)]
             tidx = brange.coord_at(dsym)
@@ -2431,17 +2466,21 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # First three dimensions are evaluated directly
             for i in range(min(len(brange), 3)):
                 varname = scope_map.params[-i - 1]
+                print(varname)
 
                 # Delinearize third dimension if necessary
                 if i == 2 and len(brange) > 3:
                     block_expr = '(threadIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, kdims[3:], 1))
                 else:
-                    block_expr = 'threadIdx.%s' % _named_idx(i)
+                    block_expr = '(threadIdx.%s / (%s))' % (_named_idx(i), brange[-i - 1][-1])
 
+                print("EXPR:", block_expr, tidx[i])
                 expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
+                print("EXPR:", expr)
                 callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                 self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
 
+            # Delinearize beyond the third dimension
             # Delinearize beyond the third dimension
             if len(brange) > 3:
                 for i in range(3, len(brange)):
@@ -2455,14 +2494,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
-
-            # Generate conditions for this block's execution using min and max
-            # element, e.g. skipping out-of-bounds threads in trailing block
-            minels = brange.min_element()
-            maxels = brange.max_element()
-            for i, (v, minel, maxel) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
-                condition = ''
-
                 # Optimize conditions if they are always true
                 #############################################
 
@@ -2487,7 +2518,43 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
                 else:
                     callsite_stream.write('{', cfg, state_id, scope_entry)
+            callsite_stream.write('{', cfg, state_id, scope_entry)
 
+        # Generate all index arguments for warp
+        if scope_map.schedule == dtypes.ScheduleType.GPU_Warp:
+            brange = subsets.Range(scope_map.range[::-1])
+            kdims = brange.size()
+            dsym = [symbolic.symbol('__DAPT%d' % i, nonnegative=True, integer=True) for i in range(len(brange))]
+            dsym_end = [d + (bs * rng[2]) - 1 for d, bs, rng in zip(dsym, self._block_dims, brange)]
+            tidx = brange.coord_at(dsym)
+
+            # First three dimensions are evaluated directly
+            if len(brange) > 3:
+                raise Exception("Warp config dimension len >3 not supported")
+            for i in range(min(len(brange), 3)):
+                varname = scope_map.params[-i - 1]
+
+                # Delinearize third dimension if necessary
+                if i == 2 and len(brange) > 3:
+                    block_expr = '(threadIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, kdims[3:], 1))
+                else:
+                    block_expr = 'threadIdx.%s' % _named_idx(i)
+
+                expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
+                callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
+                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+
+            # Generate conditions for this warp's execution using min and max
+            # element, e.g. skipping out-of-bounds threads in trailing warp
+            minels = brange.min_element()
+            maxels = brange.max_element()
+            for i, (v, minel, maxel) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
+                condition = ''
+            # Delinearize beyond the third dimension
+            if len(brange) > 3:
+                raise Exception("TODO NOT SUPPORTED")
+
+            callsite_stream.write('{', cfg, state_id, scope_entry)
         ##########################################################
 
         # need to handle subgraphs appropriately if they contain
@@ -2519,7 +2586,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                                        skip_entry_node=False)
 
                     if not isinstance(c, dace.sdfg.scope.ScopeSubgraphView):
-                        callsite_stream.write('}')
+                        callsite_stream.write('}//t7')
 
             # exit node gets lost in the process, thus needs to be
             # dispatched manually
@@ -2535,19 +2602,23 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                                callsite_stream,
                                                skip_entry_node=True)
 
-        # If there are any other threadblock maps down the road,
+        # If there are any other threadblock maps down the road that is not a warp,
         # synchronize the thread-block / grid
         parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
-        if (len(next_scopes) > 0 or parent_scope.schedule == dtypes.ScheduleType.Sequential):
+        print("NS",next_scopes)
+        filtered_next_scopes = [scope for scope in next_scopes if scope.map.schedule != dtypes.ScheduleType.GPU_Warp]
+        print("FNS",filtered_next_scopes)
+        if (len(filtered_next_scopes) > 0 or parent_scope.schedule == dtypes.ScheduleType.Sequential):
             # Thread-block synchronization
             if scope_entry.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+                #raise Exception(scope_entry, parent_scope)
                 callsite_stream.write('__syncthreads();', cfg, state_id, scope_entry)
             # Grid synchronization (kernel fusion)
             elif scope_entry.map.schedule == dtypes.ScheduleType.GPU_Device \
                     and self._kernel_map.schedule == dtypes.ScheduleType.GPU_Device:
                 # Escape grid conditions
                 for _ in self._kernel_grid_conditions:
-                    callsite_stream.write('}', cfg, state_id, scope_entry)
+                    callsite_stream.write('}//t8', cfg, state_id, scope_entry)
 
                 # Synchronize entire grid
                 callsite_stream.write('__gbar.Sync();', cfg, state_id, scope_entry)
@@ -2627,13 +2698,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
             # Close block invocation conditions
             for i in range(len(node.map.params)):
-                callsite_stream.write('}', cfg, state_id, node)
+                callsite_stream.write('}//t18', cfg, state_id, node)
 
         elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             # Close lambda function
-            callsite_stream.write('});', cfg, state_id, node)
+            callsite_stream.write('});//t9', cfg, state_id, node)
             # Close block invocation
-            callsite_stream.write('}', cfg, state_id, node)
+            callsite_stream.write('}/t10', cfg, state_id, node)
             return
 
         self._cpu_codegen._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
@@ -2708,7 +2779,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         if generated_preamble_scopes > 0:
             # Generate appropriate postamble
             for i in range(generated_preamble_scopes):
-                callsite_stream.write('}', cfg, state_id, node)
+                callsite_stream.write('}//t11', cfg, state_id, node)
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)

@@ -105,7 +105,7 @@ class DaCeCodeGenerator(object):
     def preprocess(self, sdfg: SDFG) -> None:
         """
         Called before code generation. Used for making modifications on the SDFG prior to code generation.
-        
+
         :note: Post-conditions assume that the SDFG will NOT be changed after this point.
         :param sdfg: The SDFG to modify in-place.
         """
@@ -120,7 +120,7 @@ class DaCeCodeGenerator(object):
                 for i in range(cstval.size - 1):
                     const_str += str(it[0]) + ", "
                     it.iternext()
-                const_str += str(it[0]) + "};\n"
+                const_str += str(it[0]) + "};  //tf5\n"
                 callsite_stream.write(const_str, sdfg)
             else:
                 callsite_stream.write("constexpr %s %s = %s;\n" % (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)
@@ -255,7 +255,7 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
                                                                                  name=sdfg.name), sdfg)
 
         # Write closing brace of program
-        callsite_stream.write('}', sdfg)
+        callsite_stream.write('} //tff1', sdfg)
 
         # Write awkward footer to avoid 'extern "C"' issues
         params_comma = (', ' + params) if params else ''
@@ -297,7 +297,7 @@ DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({in
             if init_code:
                 callsite_stream.write("{  // Environment: " + env.__name__, sdfg)
                 callsite_stream.write(init_code)
-                callsite_stream.write("}")
+                callsite_stream.write("} //tf1")
 
         for sd in sdfg.all_sdfgs_recursive():
             if None in sd.init_code:
@@ -349,7 +349,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
             if finalize_code:
                 callsite_stream.write("{  // Environment: " + env.__name__, sdfg)
                 callsite_stream.write(finalize_code)
-                callsite_stream.write("}")
+                callsite_stream.write("}  //tf2")
 
         callsite_stream.write('delete __state;\n', sdfg)
         callsite_stream.write('return __err;\n}\n', sdfg)
@@ -404,7 +404,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 offset += arr.total_size * arr.dtype.bytes
 
             # Footer
-            callsite_stream.write('}', sdfg)
+            callsite_stream.write('} //tff2', sdfg)
 
     def generate_state(self,
                        sdfg: SDFG,

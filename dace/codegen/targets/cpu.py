@@ -559,7 +559,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                         node)
 
             # Close OpenMP parallel section
-            allocation_stream.write('}')
+            allocation_stream.write('}//Tc5')
             self._dispatcher.defined_vars.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
         else:
             raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
@@ -1537,7 +1537,7 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write('{', cfg, state_id, node)
         callsite_stream.write(inner_stream.getvalue(), cfg, state_id, node)
         callsite_stream.write(after_memlets_stream.getvalue())
-        callsite_stream.write('}', cfg, state_id, node)
+        callsite_stream.write('}//tc6 (tasklet)', cfg, state_id, node)
         callsite_stream.write(outer_stream_end.getvalue(), cfg, state_id, node)
 
         self._locals.clear_scope(self._ldepth + 1)
@@ -1800,7 +1800,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                         nested_global_stream,
                                         skip_wcr=True)
 
-            nested_stream.write('}\n\n', cfg, state_id, node)
+            nested_stream.write('}//tc7\n\n', cfg, state_id, node)
 
         ########################
         if not inline:
@@ -1971,14 +1971,14 @@ class CPUCodeGen(TargetCodeGenerator):
         self.generate_scope_postamble(sdfg, dfg, state_id, function_stream, outer_stream, callsite_stream)
 
         if map_node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
-            result.write("}", cfg, state_id, node)
+            result.write("}//tc1", cfg, state_id, node)
         else:
             for _ in map_node.map.range:
-                result.write("}", cfg, state_id, node)
+                result.write("}//tc2", cfg, state_id, node)
 
         result.write(outer_stream.getvalue())
 
-        callsite_stream.write('}', cfg, state_id, node)
+        callsite_stream.write('}//tc3', cfg, state_id, node)
 
     def _generate_ConsumeEntry(
         self,
