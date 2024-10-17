@@ -35,6 +35,9 @@ class StorageType(aenum.AutoNumberEnum):
     CPU_ThreadLocal = ()  #: Thread-local host memory
     GPU_Global = ()  #: GPU global memory
     GPU_Shared = ()  #: On-GPU shared memory
+    GPU_WMMA_Frag_A = () #: Register-distributed storage special for WMMA API
+    GPU_WMMA_Frag_B = () #: Register-distributed storage special for WMMA API
+    GPU_WMMA_Frag_C = () #: Register-distributed storage special for WMMA API
     FPGA_Global = ()  #: Off-chip global memory (DRAM)
     FPGA_Local = ()  #: On-chip memory (bulk storage)
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
@@ -73,6 +76,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
+    GPU_Warp = ()
     FPGA_Device = ()
     Snitch = ()
     Snitch_Multicore = ()
@@ -85,6 +89,7 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
+    ScheduleType.GPU_Warp,
 ]
 
 # A subset of CPU schedule types
@@ -202,6 +207,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
+    ScheduleType.GPU_Warp: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
     ScheduleType.Snitch: StorageType.Snitch_TCDM
@@ -221,6 +227,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
+    ScheduleType.GPU_Warp: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
     ScheduleType.FPGA_Multi_Pumped: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
@@ -236,6 +243,9 @@ STORAGEDEFAULT_SCHEDULE = {
     StorageType.CPU_ThreadLocal: ScheduleType.CPU_Multicore,
     StorageType.GPU_Global: ScheduleType.GPU_Device,
     StorageType.GPU_Shared: ScheduleType.GPU_ThreadBlock,
+    StorageType.GPU_WMMA_Frag_A: ScheduleType.GPU_Warp,
+    StorageType.GPU_WMMA_Frag_B: ScheduleType.GPU_Warp,
+    StorageType.GPU_WMMA_Frag_C: ScheduleType.GPU_Warp,
     StorageType.FPGA_Global: ScheduleType.FPGA_Device,
     StorageType.SVE_Register: ScheduleType.SVE_Map,
 }
@@ -743,7 +753,7 @@ class vector(typeclass):
 
 class stringtype(pointer):
     """
-    A specialization of the string data type to improve 
+    A specialization of the string data type to improve
     Python/generated code marshalling.
     Used internally when `str` types are given
     """
@@ -980,7 +990,7 @@ class callback(typeclass):
     def is_scalar_function(self) -> bool:
         """
         Returns True if the callback is a function that returns a scalar
-        value (or nothing). Scalar functions are the only ones that can be 
+        value (or nothing). Scalar functions are the only ones that can be
         used within a `dace.tasklet` explicitly.
         """
         from dace import data
@@ -1575,7 +1585,7 @@ def is_array(obj: Any) -> bool:
 
 def is_gpu_array(obj: Any) -> bool:
     """
-    Returns True if an object is a GPU array, i.e., implements the 
+    Returns True if an object is a GPU array, i.e., implements the
     ``__cuda_array_interface__`` standard (supported by Numba, CuPy, PyTorch,
     etc.). If the interface is supported, pointers can be directly obtained using the
     ``_array_interface_ptr`` function.
