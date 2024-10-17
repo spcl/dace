@@ -1394,8 +1394,8 @@ class LibraryNode(CodeNode):
         if implementation not in self.implementations.keys():
             raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
-        cfg_id = sdfg.cfg_id
-        state_id = sdfg.nodes().index(state)
+        cfg_id = state.parent_graph.cfg_id
+        state_id = state.block_id
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation: ExpandTransformation = transformation_type()
         transformation.setup_match(sdfg, cfg_id, state_id, subgraph, 0)

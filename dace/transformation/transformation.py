@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """
 This file contains classes that describe data-centric transformations.
 
@@ -20,10 +20,10 @@ All transformations extend the ``TransformationBase`` class. There are three bui
 
 import abc
 import copy
-from dace import dtypes, serialize
+from dace import serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
@@ -339,7 +339,7 @@ class PatternTransformation(TransformationBase):
         # Check that all keyword arguments are nodes and if interstate or not
         sample_node = next(iter(where.values()))
 
-        if isinstance(sample_node, SDFGState):
+        if isinstance(sample_node, ControlFlowBlock):
             graph = sample_node.parent_graph
             state_id = -1
             cfg_id = graph.cfg_id
@@ -823,13 +823,6 @@ class SubgraphTransformation(TransformationBase):
             self.subgraph = subgraph
             self.cfg_id = cfg_id
             self.state_id = state_id
-
-    def get_subgraph(self, sdfg: SDFG) -> gr.SubgraphView:
-        sdfg = sdfg.cfg_list[self.cfg_id]
-        if self.state_id == -1:
-            return gr.SubgraphView(sdfg, list(map(sdfg.node, self.subgraph)))
-        state = sdfg.node(self.state_id)
-        return st.StateSubgraphView(state, list(map(state.node, self.subgraph)))
 
     @classmethod
     def subclasses_recursive(cls) -> Set[Type['PatternTransformation']]:

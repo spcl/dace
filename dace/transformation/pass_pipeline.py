@@ -10,6 +10,8 @@ from enum import Flag, auto
 from typing import Any, Dict, Iterator, List, Optional, Set, Type, Union
 from dataclasses import dataclass
 
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+
 
 class Modifies(Flag):
     """
@@ -132,6 +134,9 @@ class Pass:
 
         return result
 
+    def set_opts(self, opts: Dict[str, Any]) -> None:
+        pass
+
 @properties.make_properties
 class VisitorPass(Pass):
     """
@@ -249,6 +254,54 @@ class StatePass(Pass):
         Applies this pass on the given state.
 
         :param state: The SDFG state to apply the pass to.
+        :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
+                                 results as ``{Pass subclass name: returned object from pass}``. If not run in a
+                                 pipeline, an empty dictionary is expected.
+        :return: Some object if pass was applied, or None if nothing changed.
+        """
+        raise NotImplementedError
+
+
+@properties.make_properties
+class ControlFlowRegionPass(Pass):
+    """
+    A specialized Pass type that applies to each control flow region separately, buttom up. Such a pass is realized by
+    implementing the ``apply`` method, which accepts a single control flow region, and assumes the pass was already
+    applied to each control flow region nested inside of that.
+    
+    :see: Pass
+    """
+
+    CATEGORY: str = 'Helper'
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[int, Optional[Any]]]:
+        """
+        Applies the pass to control flow regions of the given SDFG by calling ``apply`` on each region.
+
+        :param sdfg: The SDFG to apply the pass to.
+        :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
+                                 results as ``{Pass subclass name: returned object from pass}``. If not run in a
+                                 pipeline, an empty dictionary is expected.
+        :return: A dictionary of ``{cfg_id: return value}`` for visited regions with a non-None return value, or None
+                 if nothing was returned.
+        """
+        result = {}
+        for region in sdfg.all_control_flow_regions(recursive=True, parent_first=False):
+            if isinstance(region, ConditionalBlock):
+                continue
+            retval = self.apply(region, pipeline_results)
+            if retval is not None:
+                result[region.cfg_id] = retval
+
+        if not result:
+            return None
+        return result
+
+    def apply(self, region: ControlFlowRegion, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+        """
+        Applies this pass on the given control flow region.
+
+        :param state: The control flow region to apply the pass to.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
                                  pipeline, an empty dictionary is expected.
@@ -511,8 +564,8 @@ class Pipeline(Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if sdfg.root_sdfg.using_experimental_blocks:
-            if (not hasattr(self, '__experimental_cfg_block_compatible__') or
-                self.__experimental_cfg_block_compatible__ == False):
+            if (type(self) != Pipeline and (not hasattr(self, '__experimental_cfg_block_compatible__') or
+                self.__experimental_cfg_block_compatible__ == False)):
                 warnings.warn('Pipeline ' + self.__class__.__name__ + ' is being skipped due to incompatibility with ' +
                               'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
                               'ensure the top level SDFG does not have `SDFG.using_experimental_blocks` set to ' +

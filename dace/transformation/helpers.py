@@ -4,15 +4,15 @@ import copy
 import itertools
 from networkx import MultiDiGraph
 
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
-from typing import Dict, List, Optional, Tuple, Set, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Set, Union
 
 from dace import data, dtypes, symbolic
 from dace.codegen import control_flow as cf
 from dace.sdfg import nodes, utils
-from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
+from dace.sdfg.graph import Edge, SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import graph
@@ -244,33 +244,36 @@ def _copy_state(sdfg: SDFG,
     return state_copy
 
 
-def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
+def find_sdfg_control_flow(cfg: ControlFlowRegion) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
     """
-    Partitions the SDFG to subgraphs that can be nested independently of each other. The method does not nest the
-    subgraphs but alters the SDFG; (1) interstate edges are split, (2) scope source/sink states that belong to multiple
+    Partitions a CFG to subgraphs that can be nested independently of each other. The method does not nest the
+    subgraphs but alters the graph; (1) interstate edges are split, (2) scope source/sink nodes that belong to multiple
     scopes are duplicated (see _copy_state).
     
-    :param sdfg: The SDFG to be partitioned.
-    :return: The found subgraphs in the form of a dictionary where the keys are the start state of the subgraphs and the
-             values are the sets of SDFGStates contained withing each subgraph.
+    :param cfg: The graph to be partitioned.
+    :return: The found subgraphs in the form of a dictionary where the keys are the start block of the subgraphs and the
+             values are the sets of ControlFlowBlocks contained withing each subgraph.
     """
 
-    split_interstate_edges(sdfg)
+    split_interstate_edges(cfg)
 
-    # Create a unique sink state to avoid issues with finding control flow.
-    sink_states = sdfg.sink_nodes()
-    if len(sink_states) > 1:
-        new_sink = sdfg.add_state('common_sink')
-        for s in sink_states:
-            sdfg.add_edge(s, new_sink, InterstateEdge())
+    # Create a unique sink block to avoid issues with finding control flow.
+    sink_nodes = cfg.sink_nodes()
+    if len(sink_nodes) > 1:
+        new_sink = cfg.add_state('common_sink')
+        for s in sink_nodes:
+            cfg.add_edge(s, new_sink, InterstateEdge())
 
-    ipostdom = utils.postdominators(sdfg)
-    cft = cf.structured_control_flow_tree(sdfg, None)
+    ipostdom = utils.postdominators(cfg)
+    if cfg.root_sdfg.using_experimental_blocks:
+        cft = cf.structured_control_flow_tree_with_regions(cfg, None)
+    else:
+        cft = cf.structured_control_flow_tree(cfg, None)
 
-    # Iterate over the SDFG's control flow scopes and create for each an SDFG subraph. These subgraphs must be disjoint,
-    # so we duplicate SDFGStates that appear in more than one scopes (guards and exits of loops and conditionals).
-    components = {}
-    visited = {}  # Dict[SDFGState, bool]: True if SDFGState in Scope (non-SingleState)
+    # Iterate over the graph's control flow scopes and create for each a subraph. These subgraphs must be disjoint,
+    # so we duplicate blocks that appear in more than one scopes (guards and exits of loops and conditionals).
+    components: Dict[ControlFlowBlock, Tuple[Set[ControlFlowBlock], ControlFlowBlock]] = {}
+    visited: Dict[ControlFlowBlock, bool] = {}  # Block -> True if block in Scope (non-SingleState)
     for i, child in enumerate(cft.children):
         if isinstance(child, cf.BasicCFBlock):
             if child.state in visited:
@@ -281,18 +284,18 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             guard = child.guard
             fexit = None
             condition = child.condition if isinstance(child, cf.ForScope) else child.test
-            for e in sdfg.out_edges(guard):
+            for e in cfg.out_edges(guard):
                 if e.data.condition != condition:
                     fexit = e.dst
                     break
             if fexit is None:
                 raise ValueError("Cannot find for-scope's exit states.")
 
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
+            states = set(utils.dfs_conditional(cfg, [guard], lambda p, _: p is not fexit))
 
             if guard in visited:
                 if visited[guard]:
-                    guard_copy = _copy_state(sdfg, guard, False, states)
+                    guard_copy = _copy_state(cfg, guard, False, states)
                     guard.remove_nodes_from(guard.nodes())
                     states.remove(guard)
                     states.add(guard_copy)
@@ -303,7 +306,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
 
             if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.BasicCFBlock)
                     and cft.children[i + 1].state is fexit):
-                fexit_copy = _copy_state(sdfg, fexit, True, states)
+                fexit_copy = _copy_state(cfg, fexit, True, states)
                 fexit.remove_nodes_from(fexit.nodes())
                 states.remove(fexit)
                 states.add(fexit_copy)
@@ -314,11 +317,11 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             guard = child.branch_block
             ifexit = ipostdom[guard]
 
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
+            states = set(utils.dfs_conditional(cfg, [guard], lambda p, _: p is not ifexit))
 
             if guard in visited:
                 if visited[guard]:
-                    guard_copy = _copy_state(sdfg, guard, False, states)
+                    guard_copy = _copy_state(cfg, guard, False, states)
                     guard.remove_nodes_from(guard.nodes())
                     states.remove(guard)
                     states.add(guard_copy)
@@ -329,7 +332,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
 
             if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.BasicCFBlock)
                     and cft.children[i + 1].state is ifexit):
-                ifexit_copy = _copy_state(sdfg, ifexit, True, states)
+                ifexit_copy = _copy_state(cfg, ifexit, True, states)
                 ifexit.remove_nodes_from(ifexit.nodes())
                 states.remove(ifexit)
                 states.add(ifexit_copy)
@@ -1070,7 +1073,7 @@ def constant_symbols(sdfg: SDFG) -> Set[str]:
     :param sdfg: The input SDFG.
     :return: A set of symbol names that remain constant throughout the SDFG.
     """
-    interstate_symbols = {k for e in sdfg.edges() for k in e.data.assignments.keys()}
+    interstate_symbols = {k for e in sdfg.all_interstate_edges() for k in e.data.assignments.keys()}
     return set(sdfg.symbols) - interstate_symbols
 
 
@@ -1419,8 +1422,8 @@ def can_run_state_on_fpga(state: SDFGState):
             return False
 
         # Streams have strict conditions due to code generator limitations
-        if (isinstance(node, nodes.AccessNode) and isinstance(graph.parent.arrays[node.data], data.Stream)):
-            nodedesc = graph.parent.arrays[node.data]
+        if (isinstance(node, nodes.AccessNode) and isinstance(graph.sdfg.arrays[node.data], data.Stream)):
+            nodedesc = graph.sdfg.arrays[node.data]
             sdict = graph.scope_dict()
             if nodedesc.storage in [
                     dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.CPU_ThreadLocal
@@ -1432,7 +1435,7 @@ def can_run_state_on_fpga(state: SDFGState):
                 return False
 
             # Arrays of streams cannot have symbolic size on FPGA
-            if symbolic.issymbolic(nodedesc.total_size, graph.parent.constants):
+            if symbolic.issymbolic(nodedesc.total_size, graph.sdfg.constants):
                 return False
 
             # Streams cannot be unbounded on FPGA
@@ -1552,3 +1555,98 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
                                   memlet=Memlet(data=sink.data,
                                                 subset=copy.deepcopy(subset),
                                                 other_subset=copy.deepcopy(subset)))
+
+
+def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterable[Edge[InterstateEdge]]:
+    """
+    Helper function that generates an iterable of all edges potentially encountered between two control flow blocks.
+    """
+    if src.sdfg is not dst.sdfg:
+        raise RuntimeError('Blocks reside in different SDFGs')
+
+    if src.parent_graph is dst.parent_graph:
+        # Simple case where both blocks reside in the same graph:
+        edges = set()
+        for p in src.parent_graph.all_simple_paths(src, dst, as_edges=True):
+            for e in p:
+                edges.add(e)
+                if isinstance(e.dst, ControlFlowRegion):
+                    edges.update(e.dst.all_interstate_edges())
+        return edges
+    else:
+        # In the case where the two blocks are not in the same graph, we follow this procedure:
+        # 1. Collect the list of control flow regions on the direct path between the source and destination:
+        #   a) Determine the 'lowest common parent' region
+        #   b) Determine the list of parents of the source before the common parent is reached
+        #   c) Determine the list of parents of the destination before the common parent is reached.
+        # 2. In each of the parents of the source, add all edges from the source or the next parent until the
+        #    end(s) of each region to the result
+        # 3. In each of the destination's parents, add all edges from the start block on until the destination
+        #    or next parent to the result.
+        # 4. In the lowest common parent region, find all edge paths between the next parent regions for both
+        #    the source and destination.
+        # Note that for each edge, if the destination is a control flow region, any edges inside of it may also
+        # be on the path and consequently also need to be added.
+        edges = set()
+
+        # Step 1.a): Find the lowest common parent region.
+        common_regions = set()
+        pivot_graph = src.parent_graph
+        all_parent_regions_src = [pivot_graph]
+        while not isinstance(pivot_graph, SDFG):
+            pivot_graph = pivot_graph.parent_graph
+            all_parent_regions_src.append(pivot_graph)
+        pivot_graph = dst.parent_graph
+        all_parent_regions_dst = [pivot_graph]
+        while not isinstance(pivot_graph, SDFG):
+            pivot_graph = pivot_graph.parent_graph
+            all_parent_regions_dst.append(pivot_graph)
+            if pivot_graph in all_parent_regions_src:
+                common_regions.add(pivot_graph)
+
+        # Step 1.b) and 1.c): Determine the list of parents involved in the path for the source and destination.
+        involved_src: List[ControlFlowRegion] = []
+        involved_dst: List[ControlFlowRegion] = []
+        common_parent: ControlFlowRegion = None
+        for r in all_parent_regions_src:
+            if r not in common_regions:
+                involved_src.append(r)
+            else:
+                common_parent = r
+                break
+        for r in all_parent_regions_dst:
+            if r not in common_regions:
+                involved_dst.append(r)
+            else:
+                if r is not common_parent:
+                    raise RuntimeError('No common parent found')
+                break
+
+        # Step 2
+        src_pivot = src
+        for r in involved_src:
+            for sink in r.sink_nodes():
+                for p in r.all_simple_paths(src_pivot, sink, as_edges=True):
+                    for e in p:
+                        edges.add(e)
+                        if isinstance(e.dst, ControlFlowRegion):
+                            edges.update(e.dst.all_interstate_edges())
+            src_pivot = r
+        # Step 3
+        dst_pivot = dst
+        for r in involved_dst:
+            for p in r.all_simple_paths(r.start_block, dst_pivot, as_edges=True):
+                for e in p:
+                    edges.add(e)
+                    if isinstance(e.dst, ControlFlowRegion):
+                        edges.update(e.dst.all_interstate_edges())
+            dst_pivot = r
+
+        # Step 4
+        for p in common_parent.all_simple_paths(src_pivot, dst_pivot, as_edges=True):
+            for e in p:
+                edges.add(e)
+                if isinstance(e.dst, ControlFlowRegion) and not e.dst is dst_pivot:
+                    edges.update(e.dst.all_interstate_edges())
+
+        return edges

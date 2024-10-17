@@ -1304,7 +1304,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # Invoke all instrumentation providers
             for instr in self._frame._dispatcher.instrumentation.values():
                 if instr is not None:
-                    instr.on_state_end(sdfg, state, callsite_stream, function_stream)
+                    instr.on_state_end(sdfg, cfg, state, callsite_stream, function_stream)
 
     def generate_devicelevel_state(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState,
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -1434,8 +1434,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     create_grid_barrier = True
 
         self.create_grid_barrier = create_grid_barrier
-        kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.cfg_id, sdfg.node_id(state),
-                                       state.node_id(scope_entry))
+        kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.cfg_id, state.block_id, state.node_id(scope_entry))
 
         # Comprehend grid/block dimensions from scopes
         grid_dims, block_dims, tbmap, dtbmap, _ = self.get_kernel_dimensions(dfg_scope)
@@ -1495,9 +1494,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Instrumentation for kernel scope
         instr = self._dispatcher.instrumentation[scope_entry.map.instrument]
         if instr is not None:
-            instr.on_scope_entry(sdfg, state, scope_entry, callsite_stream, self.scope_entry_stream, self._globalcode)
+            instr.on_scope_entry(sdfg, cfg, state, scope_entry, callsite_stream, self.scope_entry_stream,
+                                 self._globalcode)
             outer_stream = CodeIOStream()
-            instr.on_scope_exit(sdfg, state, scope_exit, outer_stream, self.scope_exit_stream, self._globalcode)
+            instr.on_scope_exit(sdfg, cfg, state, scope_exit, outer_stream, self.scope_exit_stream, self._globalcode)
 
         # Redefine constant arguments and rename arguments to device counterparts
         # TODO: This (const behavior and code below) is all a hack.
@@ -1586,7 +1586,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Write kernel prototype
         self._localcode.write(
             '__global__ void %s %s(%s) {\n' %
-            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), sdfg, state_id, node)
+            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), cfg, state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
@@ -2034,7 +2034,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
-                kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', sdfg, state_id, node)
+                kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', cfg, state_id, node)
                 self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
 
             # Delinearize beyond the third dimension

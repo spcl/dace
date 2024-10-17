@@ -31,6 +31,9 @@ class ControlFlowRaising(ppl.Pass):
         n_cond_regions_pre = len([x for x in sdfg.all_control_flow_blocks() if isinstance(x, ConditionalBlock)])
 
         for region in cfgs:
+            if isinstance(region, ConditionalBlock):
+                continue
+
             sinks = region.sink_nodes()
             dummy_exit = region.add_state('__DACE_DUMMY')
             for s in sinks:
@@ -58,6 +61,7 @@ class ControlFlowRaising(ppl.Pass):
                         conditional.add_branch(oe.data.condition, branch)
                         if oe.dst is merge_block:
                             # Empty branch.
+                            branch.add_state('noop')
                             continue
 
                         branch_nodes = set(dfs_conditional(graph, [oe.dst], lambda _, x: x is not merge_block))

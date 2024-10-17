@@ -1,19 +1,19 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Map Fission transformation. """
 
 from copy import deepcopy as dcpy
 from collections import defaultdict
-from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
+from dace import sdfg as sd, memlet as mm, subsets, data as dt
 from dace.codegen import control_flow as cf
 from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
-from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
 
+@transformation.single_level_sdfg_only
 class MapFission(transformation.SingleStateTransformation):
     """ Implements the MapFission transformation.
         Map fission refers to subsuming a map scope into its internal subgraph,
@@ -64,7 +64,7 @@ class MapFission(transformation.SingleStateTransformation):
         return ns
 
     @staticmethod
-    def _border_arrays(sdfg, parent, subgraph):
+    def _border_arrays(sdfg: sd.SDFG, parent, subgraph):
         """ Returns a set of array names that are local to the fission
             subgraph. """
         nested = isinstance(parent, sd.SDFGState)
@@ -175,7 +175,7 @@ class MapFission(transformation.SingleStateTransformation):
                 # Find all nodes not in subgraph
                 not_subgraph = set(n.data for n in graph.nodes() if n not in snodes and isinstance(n, nodes.AccessNode))
                 not_subgraph.update(
-                    set(n.data for s in sdfg.nodes() if s != graph for n in s.nodes()
+                    set(n.data for s in sdfg.states() if s != graph for n in s.nodes()
                         if isinstance(n, nodes.AccessNode)))
 
                 for _, component_out in components:

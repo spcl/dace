@@ -2,6 +2,7 @@
 
 import pytest
 import dace
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.constant_propagation import ConstantPropagation, _UnknownValue
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 import numpy as np
@@ -19,8 +20,6 @@ def test_simple_constants():
             A[:] = cval + 4
 
     sdfg = program.to_sdfg()
-    ScalarToSymbolPromotion().apply_pass(sdfg, {})
-    ConstantPropagation().apply_pass(sdfg, {})
 
     assert len(sdfg.symbols) == 0
     for e in sdfg.edges():
@@ -41,8 +40,6 @@ def test_nested_constants():
         A[l] = k
 
     sdfg = program.to_sdfg()
-    ScalarToSymbolPromotion().apply_pass(sdfg, {})
-    ConstantPropagation().apply_pass(sdfg, {})
 
     assert set(sdfg.symbols.keys()) == {'i'}
 
@@ -66,10 +63,10 @@ def test_simple_loop():
         a[0] = i  # Use i - should be const
 
     sdfg = program.to_sdfg()
-    ScalarToSymbolPromotion().apply_pass(sdfg, {})
-    ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i'}
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            assert node.loop_variable == 'i'
     # Test tasklets
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.Tasklet):
@@ -88,10 +85,10 @@ def test_cprop_inside_loop():
         a[i] = i  # Use i - not const
 
     sdfg = program.to_sdfg()
-    ScalarToSymbolPromotion().apply_pass(sdfg, {})
-    ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i'}
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            assert node.loop_variable == 'i'
 
     # Test tasklets
     i_found = 0
@@ -115,10 +112,11 @@ def test_cprop_outside_loop():
         a[j, k] = 1
 
     sdfg = program.to_sdfg()
-    ScalarToSymbolPromotion().apply_pass(sdfg, {})
-    ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i', 'j'}
+    assert 'j' in sdfg.symbols
+    for node in sdfg.all_control_flow_regions():
+        if isinstance(node, LoopRegion):
+            assert node.loop_variable == 'i'
 
     # Test memlet
     last_state = sdfg.sink_nodes()[0]
@@ -143,8 +141,6 @@ def test_cond():
         a[i, j] = 3
 
     sdfg = program.to_sdfg()
-    ScalarToSymbolPromotion().apply_pass(sdfg, {})
-    ConstantPropagation().apply_pass(sdfg, {})
 
     assert len(sdfg.symbols.keys()) == 1
 
@@ -187,7 +183,9 @@ def test_complex_case():
     sdfg.add_edge(usei, merge, dace.InterstateEdge(assignments={'j': 'j+1'}))
     sdfg.add_edge(merge, last, dace.InterstateEdge('j >= 2'))
 
-    propagated = ConstantPropagation().collect_constants(sdfg)  #, reachability
+    propagated = {}
+    arrays = set(sdfg.arrays.keys() | sdfg.constants_prop.keys())
+    ConstantPropagation()._collect_constants_for_region(sdfg, arrays, propagated, {}, {}, {})
     assert len(propagated[init]) == 0
     assert propagated[branch2]['i'] == '7'
     assert propagated[guard]['i'] is _UnknownValue

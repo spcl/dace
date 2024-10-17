@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Inline multi-state SDFGs. """
 
 from copy import deepcopy as dc
@@ -18,7 +18,7 @@ from dace.sdfg.state import StateSubgraphView
 
 
 @make_properties
-@transformation.single_level_sdfg_only
+@transformation.experimental_cfg_block_compatible
 class InlineMultistateSDFG(transformation.SingleStateTransformation):
     """
     Inlines a multi-state nested SDFG into a top-level SDFG. This only happens
@@ -74,7 +74,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
-    def can_be_applied(self, state: SDFGState, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, state: SDFGState, expr_index, sdfg: SDFG, permissive=False):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
@@ -146,14 +146,14 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             sdfg.append_exit_code(code.code, loc)
 
         # Environments
-        for nstate in nsdfg.nodes():
+        for nstate in nsdfg.states():
             for node in nstate.nodes():
                 if isinstance(node, nodes.CodeNode):
                     node.environments |= nsdfg_node.environments
 
         # Symbols
         outer_symbols = {str(k): v for k, v in sdfg.symbols.items()}
-        for ise in sdfg.edges():
+        for ise in sdfg.all_interstate_edges():
             outer_symbols.update(ise.data.new_symbols(sdfg, outer_symbols))
 
         # Isolate nsdfg in a separate state
@@ -188,11 +188,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Collect and modify interstate edges as necessary
 
         outer_assignments = set()
-        for e in sdfg.edges():
+        for e in sdfg.all_interstate_edges():
             outer_assignments |= e.data.assignments.keys()
 
         inner_assignments = set()
-        for e in nsdfg.edges():
+        for e in nsdfg.all_interstate_edges():
             inner_assignments |= e.data.assignments.keys()
 
         allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
@@ -234,7 +234,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
-        for nstate in nsdfg.nodes():
+        for nstate in nsdfg.states():
             for node in nstate.nodes():
                 if isinstance(node, nodes.AccessNode):
                     datadesc = nsdfg.arrays[node.data]
@@ -326,8 +326,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         #                                     e.dst_conn, e.data)
 
         # Make unique names for states
-        statenames = set(s.label for s in sdfg.nodes())
-        for nstate in nsdfg.nodes():
+        statenames = set(s.label for s in sdfg.states())
+        for nstate in nsdfg.states():
             if nstate.label in statenames:
                 newname = data.find_new_name(nstate.label, statenames)
                 statenames.add(newname)
@@ -336,11 +336,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Add nested SDFG states into top-level SDFG
 
-        outer_start_state = sdfg.start_state
+        outer_start_state = outer_state.parent_graph.start_block
 
-        sdfg.add_nodes_from(nsdfg.nodes())
+        outer_state.parent_graph.add_nodes_from(nsdfg.nodes())
         for ise in nsdfg.edges():
-            sdfg.add_edge(ise.src, ise.dst, ise.data)
+            outer_state.parent_graph.add_edge(ise.src, ise.dst, ise.data)
 
         #######################################################
         # Reconnect inlined SDFG
@@ -349,19 +349,19 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         sinks = nsdfg.sink_nodes()
 
         # Reconnect state machine
-        for e in sdfg.in_edges(nsdfg_state):
-            sdfg.add_edge(e.src, source, e.data)
-        for e in sdfg.out_edges(nsdfg_state):
+        for e in outer_state.parent_graph.in_edges(nsdfg_state):
+            outer_state.parent_graph.add_edge(e.src, source, e.data)
+        for e in outer_state.parent_graph.out_edges(nsdfg_state):
             for sink in sinks:
-                sdfg.add_edge(sink, e.dst, dc(e.data))
+                outer_state.parent_graph.add_edge(sink, e.dst, dc(e.data))
                 # Redirect sink incoming edges with a `False` condition to e.dst (return statements)
-                for e2 in sdfg.in_edges(sink):
+                for e2 in outer_state.parent_graph.in_edges(sink):
                     if e2.data.condition_sympy() == False:
-                        sdfg.add_edge(e2.src, e.dst, InterstateEdge())
+                        outer_state.parent_graph.add_edge(e2.src, e.dst, InterstateEdge())
 
         # Modify start state as necessary
         if outer_start_state is nsdfg_state:
-            sdfg.start_state = sdfg.node_id(source)
+            outer_state.parent_graph.start_block = outer_state.parent_graph.node_id(source)
 
         # TODO: Modify memlets by offsetting
         # If both source and sink nodes are inputs/outputs, reconnect once
@@ -406,8 +406,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         #                                     e.data, outer_edge.data)
 
         # Replace nested SDFG parents with new SDFG
-        for nstate in nsdfg.nodes():
-            nstate.parent = sdfg
+        for nstate in nsdfg.states():
+            nstate.sdfg = sdfg
             for node in nstate.nodes():
                 if isinstance(node, nodes.NestedSDFG):
                     node.sdfg.parent_sdfg = sdfg
@@ -415,9 +415,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         #######################################################
         # Remove nested SDFG and state
-        sdfg.remove_node(nsdfg_state)
+        outer_state.parent_graph.remove_node(nsdfg_state)
 
-        sdfg._cfg_list = sdfg.reset_cfg_list()
+        sdfg.reset_cfg_list()
 
         return nsdfg.nodes()
 
