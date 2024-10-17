@@ -64,7 +64,7 @@ class MapFission(transformation.SingleStateTransformation):
         return ns
 
     @staticmethod
-    def _border_arrays(sdfg, parent, subgraph):
+    def _border_arrays(sdfg: sd.SDFG, parent, subgraph):
         """ Returns a set of array names that are local to the fission
             subgraph. """
         nested = isinstance(parent, sd.SDFGState)
@@ -175,7 +175,7 @@ class MapFission(transformation.SingleStateTransformation):
                 # Find all nodes not in subgraph
                 not_subgraph = set(n.data for n in graph.nodes() if n not in snodes and isinstance(n, nodes.AccessNode))
                 not_subgraph.update(
-                    set(n.data for s in sdfg.nodes() if s != graph for n in s.nodes()
+                    set(n.data for s in sdfg.states() if s != graph for n in s.nodes()
                         if isinstance(n, nodes.AccessNode)))
 
                 for _, component_out in components:

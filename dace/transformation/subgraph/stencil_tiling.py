@@ -6,6 +6,7 @@ import dace
 from dace import dtypes, symbolic
 from dace.properties import make_properties, Property, ShapeProperty
 from dace.sdfg import nodes
+from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 from dace.sdfg.propagation import _propagate_node
 
@@ -302,8 +303,8 @@ class StencilTiling(transformation.SubgraphTransformation):
         return True
 
     def apply(self, sdfg):
-        graph = sdfg.node(self.state_id)
         subgraph = self.subgraph_view(sdfg)
+        graph: SDFGState = subgraph.graph
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
 
         result = StencilTiling.topology(sdfg, graph, map_entries)
@@ -427,7 +428,7 @@ class StencilTiling(transformation.SubgraphTransformation):
 
             stripmine_subgraph = {StripMining.map_entry: graph.node_id(map_entry)}
 
-            cfg_id = sdfg.cfg_id
+            cfg_id = graph.parent_graph.cfg_id
             last_map_entry = None
             original_schedule = map_entry.schedule
             self.tile_sizes = []
@@ -554,7 +555,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 if l > 1:
                     subgraph = {MapExpansion.map_entry: graph.node_id(map_entry)}
                     trafo_expansion = MapExpansion()
-                    trafo_expansion.setup_match(sdfg, sdfg.cfg_id, sdfg.nodes().index(graph), subgraph, 0)
+                    trafo_expansion.setup_match(sdfg, graph.parent_graph.cfg_id, graph.block_id, subgraph, 0)
                     trafo_expansion.apply(graph, sdfg)
                 maps = [map_entry]
                 for _ in range(l - 1):
@@ -565,7 +566,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                     # MapToForLoop
                     subgraph = {MapToForLoop.map_entry: graph.node_id(map)}
                     trafo_for_loop = MapToForLoop()
-                    trafo_for_loop.setup_match(sdfg, sdfg.cfg_id, sdfg.nodes().index(graph), subgraph, 0)
+                    trafo_for_loop.setup_match(sdfg, graph.parent_graph.cfg_id, graph.block_id, subgraph, 0)
                     trafo_for_loop.apply(graph, sdfg)
                     nsdfg = trafo_for_loop.nsdfg
 
@@ -573,15 +574,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                     # Prevent circular import
                     from dace.transformation.interstate.loop_unroll import LoopUnroll
 
-                    guard = trafo_for_loop.guard
-                    end = trafo_for_loop.after_state
-                    begin = next(e.dst for e in nsdfg.out_edges(guard) if e.dst != end)
-
-                    subgraph = {
-                        DetectLoop.loop_guard: nsdfg.node_id(guard),
-                        DetectLoop.loop_begin: nsdfg.node_id(begin),
-                        DetectLoop.exit_state: nsdfg.node_id(end)
-                    }
+                    subgraph = { LoopUnroll.loop: trafo_for_loop.loop_region.block_id }
                     transformation = LoopUnroll()
                     transformation.setup_match(nsdfg, nsdfg.cfg_id, -1, subgraph, 0)
                     transformation.apply(nsdfg, nsdfg)

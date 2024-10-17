@@ -824,13 +824,6 @@ class SubgraphTransformation(TransformationBase):
             self.cfg_id = cfg_id
             self.state_id = state_id
 
-    def get_subgraph(self, sdfg: SDFG) -> gr.SubgraphView:
-        sdfg = sdfg.cfg_list[self.cfg_id]
-        if self.state_id == -1:
-            return gr.SubgraphView(sdfg, list(map(sdfg.node, self.subgraph)))
-        state = sdfg.node(self.state_id)
-        return st.StateSubgraphView(state, list(map(state.node, self.subgraph)))
-
     @classmethod
     def subclasses_recursive(cls) -> Set[Type['PatternTransformation']]:
         """
