@@ -1278,6 +1278,9 @@ def inline_control_flow_regions(sdfg: SDFG, types: Optional[List[Type[AbstractCo
     for _block in optional_progressbar(reversed(blocks), title='Inlining control flow regions',
                                        n=len(blocks), progress=progress):
         block: ControlFlowRegion = _block
+        # Control flow regions where the parent is a conditional block are not inlined.
+        if block.parent_graph and type(block.parent_graph) == ConditionalBlock:
+            continue
         if block.inline()[0]:
             count += 1
 
