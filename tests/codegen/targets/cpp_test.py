@@ -9,6 +9,71 @@ from dace.subsets import Range
 from dace.transformation.dataflow import RedundantArray
 
 
+class ReshapeStrides(unittest.TestCase):
+    def test_multidim_array_all_dims_unit(self):
+        r = Range([(0, 0, 1), (0, 0, 1)])
+
+        # To smaller-sized shape
+        target_dims = [1]
+        self.assertEqual(r.num_elements_exact(), reduce(mul, target_dims))
+        reshaped, strides = cpp.reshape_strides(r, None, None, target_dims)
+        self.assertEqual(reshaped, [1])
+
+        # To equal-sized shape
+        target_dims = [1, 1]
+        self.assertEqual(r.num_elements_exact(), reduce(mul, target_dims))
+        reshaped, strides = cpp.reshape_strides(r, None, None, target_dims)
+        self.assertEqual(reshaped, [1, 1])
+
+        # To larger-sized shape
+        target_dims = [1, 1, 1]
+        self.assertEqual(r.num_elements_exact(), reduce(mul, target_dims))
+        reshaped, strides = cpp.reshape_strides(r, None, None, target_dims)
+        self.assertEqual(reshaped, [1, 1, 1])
+
+    def test_multidim_array_some_dims_unit(self):
+        r = Range([(0, 1, 1), (0, 0, 1)])
+
+        # To smaller-sized shape
+        target_dims = [2]
+        self.assertEqual(r.num_elements_exact(), reduce(mul, target_dims))
+        reshaped, strides = cpp.reshape_strides(r, None, None, target_dims)
+        self.assertEqual(reshaped, target_dims)
+
+        # To equal-sized shape
+        target_dims = [2, 1]
+        self.assertEqual(r.num_elements_exact(), reduce(mul, target_dims))
+        reshaped, strides = cpp.reshape_strides(r, None, None, target_dims)
+        self.assertEqual(reshaped, target_dims)
+
+        # To equal-sized shape
+        target_dims = [2, 1, 1]
+        self.assertEqual(r.num_elements_exact(), reduce(mul, target_dims))
+        reshaped, strides = cpp.reshape_strides(r, None, None, target_dims)
+        self.assertEqual(reshaped, target_dims)
+
+    def test_multidim_array_different_shape(self):
+        r = Range([(0, 4, 1), (0, 5, 1)])
+
+        # To smaller-sized shape
+        target_dims = [30]
+        self.assertEqual(r.num_elements_exact(), reduce(mul, target_dims))
+        reshaped, strides = cpp.reshape_strides(r, None, None, target_dims)
+        self.assertEqual(reshaped, target_dims)
+
+        # To equal-sized shape
+        target_dims = [15, 2]
+        self.assertEqual(r.num_elements_exact(), reduce(mul, target_dims))
+        reshaped, strides = cpp.reshape_strides(r, None, None, target_dims)
+        self.assertEqual(reshaped, target_dims)
+
+        # To equal-sized shape
+        target_dims = [3, 5, 2]
+        self.assertEqual(r.num_elements_exact(), reduce(mul, target_dims))
+        reshaped, strides = cpp.reshape_strides(r, None, None, target_dims)
+        self.assertEqual(reshaped, target_dims)
+
+
 class RedundantArrayCrashesCodegenTest(unittest.TestCase):
     """
     This test demonstrates the bug in CPP Codegen that the [PR](https://github.com/spcl/dace/pull/1692) fixes.
@@ -45,8 +110,17 @@ class RedundantArrayCrashesCodegenTest(unittest.TestCase):
         g = self.original_graph_with_redundant_array()
         g.apply_transformations(RedundantArray)
         g.validate()
-        with self.assertRaises(IndexError):
-            g.compile()
+        g.compile()
+
+        # TODO: The produced graph still has bug. So, let's test for its existence.
+        assert len(g.states()) == 1
+        st = g.states()[0]
+        assert len(st.source_nodes()) == 1
+        src = st.source_nodes()[0]
+        assert len(st.out_edges(src)) == 1
+        e = st.out_edges(src)[0]
+        # This is the wrong part. These symbols are not available in this scope.
+        assert e.data.free_symbols == {'i', 'j'}
 
 
 if __name__ == '__main__':
