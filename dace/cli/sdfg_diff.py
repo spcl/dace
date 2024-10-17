@@ -7,7 +7,8 @@ import json
 import os
 import platform
 import tempfile
-from typing import Dict, Literal, Set, Tuple, Union
+from typing import Dict, Set, Tuple, Union
+from typing_extensions import Literal
 
 import jinja2
 import dace

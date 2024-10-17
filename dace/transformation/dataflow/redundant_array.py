@@ -638,6 +638,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 else:
                     src_subset = None
                 if isinstance(e3.dst, nodes.AccessNode):
+                    # If the edge goes to an access node, it cannot have a destination subset.
                     dst_subset = None
 
                 subset = src_subset if src_is_data else dst_subset
