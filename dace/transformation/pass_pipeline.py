@@ -10,7 +10,7 @@ from enum import Flag, auto
 from typing import Any, Dict, Iterator, List, Optional, Set, Type, Union
 from dataclasses import dataclass
 
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 
 
 class Modifies(Flag):
@@ -287,6 +287,8 @@ class ControlFlowRegionPass(Pass):
         """
         result = {}
         for region in sdfg.all_control_flow_regions(recursive=True, parent_first=False):
+            if isinstance(region, ConditionalBlock):
+                continue
             retval = self.apply(region, pipeline_results)
             if retval is not None:
                 result[region.cfg_id] = retval

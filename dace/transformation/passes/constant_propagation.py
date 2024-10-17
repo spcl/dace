@@ -263,6 +263,15 @@ class ConstantPropagation(ppl.Pass):
                     out_consts[k] = _UnknownValue
             out_const_dict[conditional] = out_consts
 
+    def _assignments_in_loop(self, loop: LoopRegion) -> Set[str]:
+        assignments_within = set()
+        for e in loop.all_interstate_edges():
+            for k in e.data.assignments.keys():
+                assignments_within.add(k)
+        if loop.loop_variable is not None:
+            assignments_within.add(loop.loop_variable)
+        return assignments_within
+
     def _collect_constants_for_region(self, cfg: ControlFlowRegion, arrays: Set[str], in_const_dict: BlockConstsT,
                                       pre_const_dict: BlockConstsT, post_const_dict: BlockConstsT,
                                       out_const_dict: BlockConstsT) -> None:
@@ -289,13 +298,8 @@ class ConstantPropagation(ppl.Pass):
                 # In the case of a loop, the 'pre constants' are equivalent to the 'in constants', with the exception
                 # of values that may at any point be re-assigned inside the loop, since that assignment would carry over
                 # into the next iteration (including increments to the loop variable, if present).
-                assignments_within = set()
-                for e in cfg.all_interstate_edges():
-                    for k in e.data.assignments.keys():
-                        assignments_within.add(k)
-                if cfg.loop_variable is not None:
-                    assignments_within.add(cfg.loop_variable)
-                pre_const = { k: (v if k not in assignments_within else _UnknownValue) for k, v in in_const.items() }
+                assigned_in_loop = self._assignments_in_loop(cfg)
+                pre_const = { k: (v if k not in assigned_in_loop else _UnknownValue) for k, v in in_const.items() }
             else:
                 # In any other case, the 'pre constants' are equivalent to the 'in constants'.
                 pre_const = {}
@@ -359,22 +363,31 @@ class ConstantPropagation(ppl.Pass):
                         reassignments = replacements & edge.data.assignments.keys()
                         if reassignments and (used_in_assignments - reassignments):
                             assignments[aname] = _UnknownValue
+
+                if isinstance(block, LoopRegion):
+                    # Any constants before a loop that may be overwritten inside the loop cannot be assumed as constants
+                    # for the loop itself.
+                    assigned_in_loop = self._assignments_in_loop(block)
+                    for k in assignments.keys():
+                        if k in assigned_in_loop:
+                            assignments[k] = _UnknownValue
+
                 if block not in in_const_dict:
                     in_const_dict[block] = {}
                 if assignments:
                     redo |= self._propagate(in_const_dict[block], assignments)
 
-                if isinstance(block, SDFGState):
-                    # Simple case, no change in constants through this block.
-                    pre_const_dict[block] = in_const_dict[block]
-                    post_const_dict[block] = in_const_dict[block]
-                    out_const_dict[block] = in_const_dict[block]
-                elif isinstance(block, ControlFlowRegion):
+                if isinstance(block, ControlFlowRegion):
                     self._collect_constants_for_region(block, arrays, in_const_dict, pre_const_dict, post_const_dict,
                                                        out_const_dict)
                 elif isinstance(block, ConditionalBlock):
                     self._collect_constants_for_conditional(block, arrays, in_const_dict, pre_const_dict,
                                                             post_const_dict, out_const_dict)
+                else:
+                    # Simple case, no change in constants through this block (states and other basic blocks).
+                    pre_const_dict[block] = in_const_dict[block]
+                    post_const_dict[block] = in_const_dict[block]
+                    out_const_dict[block] = in_const_dict[block]
 
         # For all sink nodes, compute the overlapping set of constants between them, making sure all constants in the
         # resulting intersection are actually constants (i.e., all blocks see the same constant value for them). This

@@ -9,6 +9,7 @@ import numpy as np
 
 import dace
 from dace import config, data, dtypes
+from dace import symbolic
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
@@ -20,7 +21,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -691,9 +692,23 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 curstate: SDFGState = None
                 multistate = False
 
-                # Does the array appear in inter-state edges?
+                # Does the array appear in inter-state edges or loop / conditional block conditions etc.?
                 for isedge in sdfg.all_interstate_edges():
                     if name in self.free_symbols(isedge.data):
+                        multistate = True
+                for cfg in sdfg.all_control_flow_regions():
+                    block_syms = set()
+                    if isinstance(cfg, LoopRegion):
+                        block_syms |= symbolic.free_symbols_and_functions(cfg.loop_condition.as_string)
+                        if cfg.update_statement is not None:
+                            block_syms |= symbolic.free_symbols_and_functions(cfg.update_statement.as_string)
+                        if cfg.init_statement is not None:
+                            block_syms |= symbolic.free_symbols_and_functions(cfg.init_statement.as_string)
+                    elif isinstance(cfg, ConditionalBlock):
+                        for cond, _ in cfg.branches:
+                            if cond is not None:
+                                block_syms |= symbolic.free_symbols_and_functions(cond.as_string)
+                    if name in block_syms:
                         multistate = True
 
                 for state in sdfg.states():

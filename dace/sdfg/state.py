@@ -1090,6 +1090,8 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     def replace(self, name: str, new_name: str):
         for n in self.nodes():
             n.replace(name, new_name)
+        for e in self.edges():
+            e.data.replace(name, new_name)
 
     def replace_dict(self,
                      repl: Dict[str, str],
@@ -3083,7 +3085,8 @@ class LoopRegion(ControlFlowRegion):
         # and return are inlined correctly.
         def recursive_inline_cf_regions(region: ControlFlowRegion) -> None:
             for block in region.nodes():
-                if (isinstance(block, ControlFlowRegion) or isinstance(block, ConditionalBlock)) and not isinstance(block, LoopRegion):
+                if ((isinstance(block, ControlFlowRegion) or isinstance(block, ConditionalBlock))
+                    and not isinstance(block, LoopRegion)):
                     recursive_inline_cf_regions(block)
                     block.inline()
         recursive_inline_cf_regions(self)

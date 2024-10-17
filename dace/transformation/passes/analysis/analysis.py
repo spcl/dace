@@ -274,6 +274,7 @@ class AccessSets(ppl.Pass):
         top_result: Dict[int, Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = {}
+            arrays: Set[str] = set(sdfg.arrays.keys())
             for block in sdfg.all_control_flow_blocks():
                 readset, writeset = set(), set()
                 if isinstance(block, SDFGState):
@@ -289,6 +290,18 @@ class AccessSets(ppl.Pass):
                                 writeset.add(anode.data)
                             if state.out_degree(anode) > 0:
                                 readset.add(anode.data)
+                    if isinstance(block, LoopRegion):
+                        exprs = set([ block.loop_condition.as_string ])
+                        if block.update_statement is not None:
+                            exprs.add(block.update_statement.as_string)
+                        if block.init_statement is not None:
+                            exprs.add(block.init_statement.as_string)
+                        for expr in exprs:
+                            readset |= symbolic.free_symbols_and_functions(expr) & arrays
+                    elif isinstance(block, ConditionalBlock):
+                        for cond, _ in block.branches:
+                            if cond is not None:
+                                readset |= symbolic.free_symbols_and_functions(cond.as_string) & arrays
 
                 result[block] = (readset, writeset)
 

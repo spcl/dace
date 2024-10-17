@@ -11,6 +11,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
 from dace.sdfg import infer_types
+from dace.sdfg.state import ControlFlowBlock
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
@@ -20,7 +21,7 @@ PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be er
 @dataclass(unsafe_hash=True)
 @properties.make_properties
 @transformation.experimental_cfg_block_compatible
-class DeadDataflowElimination(ppl.Pass):
+class DeadDataflowElimination(ppl.ControlFlowRegionPass):
     """
     Removes unused computations from SDFG states.
     Traverses the graph backwards, removing any computations that result in transient descriptors
@@ -44,9 +45,9 @@ class DeadDataflowElimination(ppl.Pass):
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.CFG)
 
     def depends_on(self) -> Set[Type[ppl.Pass]]:
-        return {ap.StateReachability, ap.AccessSets}
+        return {ap.ControlFlowBlockReachability, ap.AccessSets}
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Set[str]]]:
+    def apply(self, region, pipeline_results):
         """
         Removes unreachable dataflow throughout SDFG states.
         
@@ -57,15 +58,20 @@ class DeadDataflowElimination(ppl.Pass):
         :return: A dictionary mapping states to removed data descriptor names, or None if nothing changed.
         """
         # Depends on the following analysis passes:
-        #  * State reachability
-        #  * Read/write access sets per state
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.cfg_id]
-        access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results[ap.AccessSets.__name__][sdfg.cfg_id]
+        #  * Control flow block reachability
+        #  * Read/write access sets per block
+        sdfg = region if isinstance(region, SDFG) else region.sdfg
+        reachable: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = pipeline_results[
+            ap.ControlFlowBlockReachability.__name__
+        ][region.cfg_id]
+        access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = pipeline_results[
+            ap.AccessSets.__name__
+        ][sdfg.cfg_id]
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
-        # Traverse SDFG backwards
+        # Traverse region backwards
         try:
-            state_order: List[SDFGState] = list(cfg.blockorder_topological_sort(sdfg, recursive=True,
+            state_order: List[SDFGState] = list(cfg.blockorder_topological_sort(region, recursive=False,
                                                                                 ignore_nonstate_blocks=True))
         except KeyError:
             return None
