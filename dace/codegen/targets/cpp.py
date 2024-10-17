@@ -420,7 +420,7 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
     reduced_tile_sizes += [1] * (dims - len(reduced_tile_sizes))  # Pad the remainder with 1s to maintain dimensions.
 
     reshaped_copy = copy_shape + [ts for ts in subset.tile_sizes if ts != 1]
-    reshaped_copy[:len(copy_shape)] = [s / ts for s, ts in zip(copy_shape, reduced_tile_sizes)]
+    reshaped_copy[:len(copy_shape)] = [s // ts for s, ts in zip(copy_shape, reduced_tile_sizes)]
 
     new_strides = [0] * len(reshaped_copy)
     elements_remaining = functools.reduce(sp.Mul, copy_shape, 1)
