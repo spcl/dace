@@ -17,6 +17,7 @@ import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
+from dace.sdfg.state import LoopRegion
 
 
 def test_fortran_frontend_array_access():
@@ -199,9 +200,10 @@ def test_fortran_frontend_memlet_in_map_test():
     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "memlet_range_test")
     sdfg.simplify()
-    # Expect that start is begin of for loop -> only one out edge to guard defining iterator variable
-    assert len(sdfg.out_edges(sdfg.start_state)) == 1
-    iter_var = symbolic.symbol(list(sdfg.out_edges(sdfg.start_state)[0].data.assignments.keys())[0])
+    # Expect that the start block is a loop
+    loop = sdfg.nodes()[0]
+    assert isinstance(loop, LoopRegion)
+    iter_var = symbolic.pystr_to_symbolic(loop.loop_variable)
 
     for state in sdfg.states():
         if len(state.nodes()) > 1:

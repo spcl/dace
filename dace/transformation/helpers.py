@@ -4,10 +4,10 @@ import copy
 import itertools
 from networkx import MultiDiGraph
 
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Set, Union
+from typing import Dict, Iterable, List, Optional, Tuple, Set, Union
 
 from dace import data, dtypes, symbolic
 from dace.codegen import control_flow as cf
@@ -30,10 +30,13 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
     """
 
     # Nest states
-    states = subgraph.nodes()
+    blocks: List[ControlFlowBlock] = subgraph.nodes()
     return_state = None
-    if len(states) > 1:
+    if len(blocks) > 1:
+        # Avoid cyclic imports
+        from dace.transformation.passes.analysis import loop_analysis
 
+        graph: ControlFlowRegion = blocks[0].parent_graph
         if start is not None:
             source_node = start
         else:
@@ -47,6 +50,22 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         if len(sink_nodes) != 1:
             raise NotImplementedError
         sink_node = sink_nodes[0]
+
+        all_blocks: List[ControlFlowBlock] = []
+        is_edges: List[Edge[InterstateEdge]] = []
+        for b in blocks:
+            if isinstance(b, AbstractControlFlowRegion):
+                for nb in b.all_control_flow_blocks():
+                    all_blocks.append(nb)
+                for e in b.all_interstate_edges():
+                    is_edges.append(e)
+            else:
+                all_blocks.append(b)
+        states: List[SDFGState] = [b for b in all_blocks if isinstance(b, SDFGState)]
+        for src in blocks:
+            for dst in blocks:
+                for edge in graph.edges_between(src, dst):
+                    is_edges.append(edge)
 
         # Find read/write sets
         read_set, write_set = set(), set()
@@ -67,12 +86,10 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                         if e.data.data and e.data.data in sdfg.arrays:
                             write_set.add(e.data.data)
         # Add data from edges
-        for src in states:
-            for dst in states:
-                for edge in sdfg.edges_between(src, dst):
-                    for s in edge.data.free_symbols:
-                        if s in sdfg.arrays:
-                            read_set.add(s)
+        for edge in is_edges:
+            for s in edge.data.free_symbols:
+                if s in sdfg.arrays:
+                    read_set.add(s)
 
         # Find NestedSDFG's unique data
         rw_set = read_set | write_set
@@ -82,7 +99,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                 continue
             found = False
             for state in sdfg.states():
-                if state in states:
+                if state in blocks:
                     continue
                 for node in state.nodes():
                     if (isinstance(node, nodes.AccessNode) and node.data == name):
@@ -98,7 +115,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         # Find defined subgraph symbols
         defined_symbols = set()
         strictly_defined_symbols = set()
-        for e in subgraph.edges():
+        for e in is_edges:
             defined_symbols.update(set(e.data.assignments.keys()))
             for k, v in e.data.assignments.items():
                 try:
@@ -107,22 +124,30 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                 except AttributeError:
                     # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
                     pass
+        for b in all_blocks:
+            if isinstance(b, LoopRegion) and b.loop_variable is not None and b.loop_variable != '':
+                defined_symbols.update(b.loop_variable)
+                if b.loop_variable not in sdfg.symbols:
+                    if b.init_statement:
+                        init_assignment = loop_analysis.get_init_assignment(b)
+                        if b.loop_variable not in {str(s) for s in symbolic.pystr_to_symbolic(init_assignment).args}:
+                            strictly_defined_symbols.add(b.loop_variable)
+                    else:
+                        strictly_defined_symbols.add(b.loop_variable)
 
-        return_state = new_state = sdfg.add_state('nested_sdfg_parent')
+        return_state = new_state = graph.add_state('nested_sdfg_parent')
         nsdfg = SDFG("nested_sdfg", constants=sdfg.constants_prop, parent=new_state)
         nsdfg.add_node(source_node, is_start_state=True)
-        nsdfg.add_nodes_from([s for s in states if s is not source_node])
-        for s in states:
-            s.parent = nsdfg
+        nsdfg.add_nodes_from([s for s in blocks if s is not source_node])
         for e in subgraph.edges():
             nsdfg.add_edge(e.src, e.dst, e.data)
 
-        for e in sdfg.in_edges(source_node):
-            sdfg.add_edge(e.src, new_state, e.data)
-        for e in sdfg.out_edges(sink_node):
-            sdfg.add_edge(new_state, e.dst, e.data)
+        for e in graph.in_edges(source_node):
+            graph.add_edge(e.src, new_state, e.data)
+        for e in graph.out_edges(sink_node):
+            graph.add_edge(new_state, e.dst, e.data)
 
-        sdfg.remove_nodes_from(states)
+        graph.remove_nodes_from(blocks)
 
         # Add NestedSDFG arrays
         for name in read_set | write_set:
@@ -177,15 +202,15 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
 
         # Part (2)
         if out_state is not None:
-            extra_state = sdfg.add_state('symbolic_output')
-            for e in sdfg.out_edges(new_state):
-                sdfg.add_edge(extra_state, e.dst, e.data)
-                sdfg.remove_edge(e)
-            sdfg.add_edge(new_state, extra_state, InterstateEdge(assignments=out_mapping))
+            extra_state = graph.add_state('symbolic_output')
+            for e in graph.out_edges(new_state):
+                graph.add_edge(extra_state, e.dst, e.data)
+                graph.remove_edge(e)
+            graph.add_edge(new_state, extra_state, InterstateEdge(assignments=out_mapping))
             new_state = extra_state
 
     else:
-        return_state = states[0]
+        return_state = blocks[0]
 
     return return_state
 
@@ -244,7 +269,8 @@ def _copy_state(sdfg: SDFG,
     return state_copy
 
 
-def find_sdfg_control_flow(cfg: ControlFlowRegion) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
+def find_sdfg_control_flow(cfg: ControlFlowRegion) -> Dict[ControlFlowBlock,
+                                                           Tuple[Set[ControlFlowBlock], ControlFlowBlock]]:
     """
     Partitions a CFG to subgraphs that can be nested independently of each other. The method does not nest the
     subgraphs but alters the graph; (1) interstate edges are split, (2) scope source/sink nodes that belong to multiple
@@ -352,16 +378,10 @@ def nest_sdfg_control_flow(sdfg: SDFG, components=None):
     :param sdfg: The SDFG to be partitioned.
     :param components: An existing partition of the SDFG.
     """
-
-    components = components or find_sdfg_control_flow(sdfg)
-
-    num_components = len(components)
-
-    if num_components < 2:
-        return
-
-    for i, (start, (component, _)) in enumerate(components.items()):
-        nest_sdfg_subgraph(sdfg, graph.SubgraphView(sdfg, component), start)
+    regions = list(sdfg.all_control_flow_regions())
+    for region in regions:
+        nest_sdfg_subgraph(region.sdfg, SubgraphView(region.sdfg, [region]), region)
+        sdfg.reset_cfg_list()
 
 
 def nest_state_subgraph(sdfg: SDFG,

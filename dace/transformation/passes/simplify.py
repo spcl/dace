@@ -73,6 +73,8 @@ class SimplifyPass(ppl.FixedPointPipeline):
                  validate_all: bool = False,
                  skip: Optional[Set[str]] = None,
                  verbose: bool = False,
+                 no_inline_function_call_regions: bool = False,
+                 no_inline_named_regions: bool = False,
                  pass_options: Optional[Dict[str, Any]] = None):
         if skip:
             passes: List[ppl.Pass] = [p() for p in SIMPLIFY_PASSES if p.__name__ not in skip]
@@ -87,6 +89,9 @@ class SimplifyPass(ppl.FixedPointPipeline):
             self.verbose = True
         else:
             self.verbose = verbose
+
+        self.no_inline_function_call_regions = no_inline_function_call_regions
+        self.no_inline_named_regions = no_inline_named_regions
 
         pass_opts = {
             'no_inline_function_call_regions': self.no_inline_function_call_regions,

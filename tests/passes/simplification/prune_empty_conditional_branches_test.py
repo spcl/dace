@@ -36,7 +36,7 @@ def test_prune_empty_else():
 
     res = PruneEmptyConditionalBranches().apply_pass(sdfg, {})
 
-    assert res[conditional] == 1
+    assert res[conditional.cfg_id] == 1
     assert len(conditional.branches) == 1
 
     N1 = 32
@@ -82,7 +82,7 @@ def test_prune_empty_if_with_else():
 
     res = PruneEmptyConditionalBranches().apply_pass(sdfg, {})
 
-    assert res[conditional] == 1
+    assert res[conditional.cfg_id] == 1
     assert len(conditional.branches) == 1
     assert conditional.branches[0][0] is not None
 

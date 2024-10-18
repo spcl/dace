@@ -13,7 +13,6 @@ from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterat
 
 import dace
 from dace.frontend.python import astutils
-from dace.sdfg.replace import replace_in_codeblock
 import dace.serialize
 from dace import data as dt
 from dace import dtypes
@@ -3319,6 +3318,9 @@ class ConditionalBlock(AbstractControlFlowRegion):
                      symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
                      replace_in_graph: bool = True,
                      replace_keys: bool = True):
+        # Avoid circular imports
+        from dace.sdfg.replace import replace_in_codeblock
+
         if replace_keys:
             from dace.sdfg.replace import replace_properties_dict
             replace_properties_dict(self, repl, symrepl)

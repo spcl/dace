@@ -77,7 +77,7 @@ class DeadStateElimination(ppl.Pass):
                             cfg.remove_node(node)
                     else:
                         result.add(node)
-                        cfg.remove_node(block)
+                        cfg.remove_node(node)
 
         if not annotated:
             return result or None

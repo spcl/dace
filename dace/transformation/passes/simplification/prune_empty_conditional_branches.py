@@ -14,6 +14,10 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
 
     CATEGORY: str = 'Simplification'
 
+    def __init__(self):
+        super().__init__()
+        self.apply_to_conditionals = True
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG
 
@@ -58,5 +62,8 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
             region.parent_graph.add_edge(replacement_node_before, replacement_node_after, InterstateEdge())
             region.parent_graph.remove_node(region)
 
-        return removed_branches if removed_branches > 0 else None
+        if removed_branches > 0:
+            region.reset_cfg_list()
+            return removed_branches
+        return None
 

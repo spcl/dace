@@ -274,6 +274,10 @@ class ControlFlowRegionPass(Pass):
 
     CATEGORY: str = 'Helper'
 
+    apply_to_conditionals = properties.Property(dtype=bool, default=False,
+                                                desc='Whether or not to apply to conditional blocks. If false, do ' +
+                                                'not apply to conditional blocks, but only their children.')
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[int, Optional[Any]]]:
         """
         Applies the pass to control flow regions of the given SDFG by calling ``apply`` on each region.
@@ -287,7 +291,7 @@ class ControlFlowRegionPass(Pass):
         """
         result = {}
         for region in sdfg.all_control_flow_regions(recursive=True, parent_first=False):
-            if isinstance(region, ConditionalBlock):
+            if isinstance(region, ConditionalBlock) and not self.apply_to_conditionals:
                 continue
             retval = self.apply(region, pipeline_results)
             if retval is not None:

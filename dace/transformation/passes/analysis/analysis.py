@@ -153,7 +153,12 @@ class ControlFlowBlockReachability(ppl.Pass):
             # The implementation below is faster
             # tc: nx.DiGraph = nx.transitive_closure(sdfg.nx)
             for n, v in reachable_nodes(cfg.nx):
-                single_level_reachable[cfg.cfg_id][n] = set(v)
+                reach = set()
+                for nd in v:
+                    reach.add(nd)
+                    if isinstance(nd, AbstractControlFlowRegion):
+                        reach.update(nd.all_control_flow_blocks())
+                single_level_reachable[cfg.cfg_id][n] = reach
                 if isinstance(cfg, LoopRegion):
                     single_level_reachable[cfg.cfg_id][n].update(cfg.nodes())
 
@@ -166,7 +171,7 @@ class ControlFlowBlockReachability(ppl.Pass):
                 result: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = defaultdict(set)
                 for block in cfg.nodes():
                     for reached in single_level_reachable[block.parent_graph.cfg_id][block]:
-                        if isinstance(reached, ControlFlowRegion):
+                        if isinstance(reached, AbstractControlFlowRegion):
                             result[block].update(reached.all_control_flow_blocks())
                         result[block].add(reached)
                     if block.parent_graph is not sdfg:
@@ -516,7 +521,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
         return modified & ppl.Modifies.States
 
     def depends_on(self):
-        return {AccessSets, FindAccessNodes, StateReachability}
+        return {AccessSets, FindAccessNodes, ControlFlowBlockReachability}
 
     def _find_dominating_write(self,
                                desc: str,
@@ -615,7 +620,9 @@ class ScalarWriteShadowScopes(ppl.Pass):
             access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]] = pipeline_results[
                 FindAccessNodes.__name__][sdfg.cfg_id]
 
-            state_reach: Dict[SDFGState, Set[SDFGState]] = pipeline_results[StateReachability.__name__][sdfg.cfg_id]
+            block_reach: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = pipeline_results[
+                ControlFlowBlockReachability.__name__
+            ]
 
             anames = sdfg.arrays.keys()
             for desc in sdfg.arrays:
@@ -657,7 +664,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         continue
                     write_state, write_node = write
                     dominators = all_doms_transitive[write_state]
-                    reach = state_reach[write_state]
+                    reach = block_reach[write_state.parent_graph.cfg_id][write_state]
                     for other_write, other_accesses in result[desc].items():
                         if other_write is not None and other_write[1] is write_node and other_write[0] is write_state:
                             continue

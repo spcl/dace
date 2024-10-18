@@ -62,8 +62,8 @@ import networkx as nx
 import sympy as sp
 from dace import dtypes
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion,
-                             ReturnBlock, SDFGState)
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion,
+                             LoopRegion, ReturnBlock, SDFGState)
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.properties import CodeBlock

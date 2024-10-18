@@ -265,12 +265,12 @@ def test_dce():
     sdfg = dce_tester.to_sdfg(simplify=False)
     result = Pipeline([DeadDataflowElimination(), DeadStateElimination()]).apply_pass(sdfg, {})
     sdfg.simplify()
-    assert sdfg.number_of_nodes() <= 6
+    assert sdfg.number_of_nodes() <= 4
 
     # Check that arrays were removed
     assert all('c' not in [n.data for n in state.data_nodes()] for state in sdfg.nodes())
     assert any('f' in [n.data for n in rstate if isinstance(n, dace.nodes.AccessNode)]
-               for rstate in result['DeadDataflowElimination'].values())
+               for rstate in result[DeadDataflowElimination.__name__][0].values())
 
 
 def test_dce_callback():
