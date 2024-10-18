@@ -5,7 +5,7 @@ import networkx as nx
 from dace import properties
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.sdfg.utils import dfs_conditional
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.loop_lifting import LoopLifting

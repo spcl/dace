@@ -123,6 +123,8 @@ class SimplifyPass(ppl.FixedPointPipeline):
             ret = ret or None
         else:
             ret = p.apply_pass(sdfg, state)
+        if ret is not None:
+            sdfg.reset_cfg_list()
 
         if self.verbose:
             if ret is not None:

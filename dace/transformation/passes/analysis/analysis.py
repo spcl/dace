@@ -462,7 +462,7 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
         for read_loc, (reads, _) in symbol_access_sets.items():
             for sym in reads:
                 dominating_write = self._find_dominating_write(sym, read_loc, idom)
-                result[sym][dominating_write].add(read_loc if isinstance(read_loc, ControlFlowBlock) else read_loc.dst)
+                result[sym][dominating_write].add(read_loc)
 
         # If any write A is dominated by another write B and any reads in B's scope are also reachable by A, then merge
         # A and its scope into B's scope.
