@@ -250,9 +250,6 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         target_objects.extend(tgt.get_generated_codeobjects())
 
     # Ensure that no new targets were dynamically added
-    print("\nused_targets = ", frame._dispatcher.used_targets)
-    print("\nframe.targets = ", frame.targets)
-    print("\nframe=", frame)
     
     assert frame._dispatcher.used_targets == (frame.targets - {frame})
 

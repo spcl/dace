@@ -244,7 +244,6 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
         return False
     
     def is_node_library_node(self, sdfg, state, node):
-        print("NODE is = ", type(node).__name__)
         if isinstance(node, nodes.LibraryNode):
             return True   
         return False
@@ -553,8 +552,6 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                       node: nodes.Node, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         method_name = "_generate_" + type(node).__name__
-        print("Generating node: ", node.label)
-        print("Method name: ", method_name)
         # Fake inheritance... use this class' method if it exists,
         # otherwise fall back on CPU codegen
         if hasattr(self, method_name):
@@ -757,7 +754,6 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
                     function_stream: CodeIOStream, 
                     callsite_stream:CodeIOStream,
                     generate_state_footer:bool = True):
-        print("IPU STATE\n")
         # disp = self.dispatcher.get_scope_dispatcher(dtypes.ScheduleType.Unrolled)
         ipu_disp = self.dispatcher.get_state_dispatcher(sdfg, state=state)
         cpu_disp = self.cpu_codegen
@@ -767,7 +763,6 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
         state_id = state.block_id
         
         if IPUCodeGen._in_device_code:
-            print("IN DEVICE CODE")
             
             to_allocate = dace.sdfg.local_transients(sdfg, state, None)
             allocated = set()
@@ -789,9 +784,7 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
             self.generate_nested_state(sdfg, cfg, state, state.label, subgraphs, function_stream, callsite_stream)
             
         else:
-            print("IN HOST CODE")
             sdfg_state_name = cpp.mangle_dace_state_struct_name(self._global_sdfg)
-            print("SDFG STATE NAME: ", sdfg_state_name)
             formatted_string = """
                                               
             // hack to make the files compile by forward declaring the functions
