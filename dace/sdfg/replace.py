@@ -211,4 +211,5 @@ def replace_datadesc_names(sdfg: 'dace.SDFG', repl: Dict[str, str]):
                 replace_in_codeblock(cf.init_statement, repl)
         elif isinstance(cf, ConditionalBlock):
             for c, _ in cf.branches:
-                replace_in_codeblock(c, repl)
+                if c is not None:
+                    replace_in_codeblock(c, repl)

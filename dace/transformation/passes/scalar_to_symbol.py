@@ -21,6 +21,7 @@ from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutils
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as passes
 from dace.transformation.transformation import experimental_cfg_block_compatible
@@ -228,6 +229,19 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     interstate_symbols = set()
     for edge in sdfg.all_interstate_edges():
         interstate_symbols |= edge.data.free_symbols
+    for reg in sdfg.all_control_flow_regions():
+        if isinstance(reg, LoopRegion):
+            interstate_symbols |= reg.loop_condition.get_free_symbols()
+            if reg.loop_variable:
+                interstate_symbols.add(reg.loop_variable)
+            if reg.update_statement:
+                interstate_symbols |= reg.update_statement.get_free_symbols()
+            if reg.init_statement:
+                interstate_symbols |= reg.init_statement.get_free_symbols()
+        elif isinstance(reg, ConditionalBlock):
+            for c, _ in reg.branches:
+                if c is not None:
+                    interstate_symbols |= c.get_free_symbols()
     for candidate in (candidates - interstate_symbols):
         if integers_only and sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
             candidates.remove(candidate)
@@ -722,6 +736,21 @@ class ScalarToSymbolPromotion(passes.Pass):
                         # should work for all Python versions.
                         assignment = cleanup_re[scalar].sub(scalar, assignment.strip())
                 ise.assignments[aname] = assignment
+        for reg in sdfg.all_control_flow_regions():
+            if isinstance(reg, LoopRegion):
+                codes = [reg.loop_condition]
+                if reg.init_statement:
+                    codes.append(reg.init_statement)
+                if reg.update_statement:
+                    codes.append(reg.update_statement)
+                for cd in codes:
+                    for stmt in cd.code:
+                        promo.visit(stmt)
+            elif isinstance(reg, ConditionalBlock):
+                for c, _ in reg.branches:
+                    if c is not None:
+                        for stmt in c.code:
+                            promo.visit(stmt)
 
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)
