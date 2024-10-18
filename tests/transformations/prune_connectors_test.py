@@ -153,7 +153,6 @@ def _make_read_write_sdfg(
 
     Depending on `conforming_memlet` the memlet that copies `inner_A` into `inner_B`
     will either be associated to `inner_A` (`True`) or `inner_B` (`False`).
-    This choice has consequences on if the transformation can apply or not.
 
     Notes:
         This is most likely a bug, see [issue#1643](https://github.com/spcl/dace/issues/1643),
@@ -421,7 +420,6 @@ def test_prune_connectors_with_dependencies():
 
 
 def test_read_write_1():
-    # Because the memlet is conforming, we can apply the transformation.
     sdfg, nsdfg = _make_read_write_sdfg(True)
 
     assert PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=sdfg, expr_index=0, permissive=False)
@@ -429,10 +427,13 @@ def test_read_write_1():
 
 
 def test_read_write_2():
-    # Because the memlet is not conforming, we can not apply the transformation.
+    # In previous versions of DaCe the transformation could not be applied in the
+    #  case of a not conforming Memlet.
+    #  See [PR#1678](https://github.com/spcl/dace/pull/1678)
     sdfg, nsdfg = _make_read_write_sdfg(False)
 
-    assert not PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=sdfg, expr_index=0, permissive=False)
+    assert PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=sdfg, expr_index=0, permissive=False)
+    sdfg.apply_transformations_repeated(PruneConnectors, validate=True, validate_all=True)
 
 
 if __name__ == "__main__":
