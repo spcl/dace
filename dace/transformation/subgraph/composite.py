@@ -64,9 +64,10 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 graph_indices = [i for (i, n) in enumerate(graph.nodes()) if n in subgraph]
                 sdfg_copy = copy.deepcopy(sdfg)
                 sdfg_copy.reset_cfg_list()
-                graph_copy = sdfg_copy.nodes()[sdfg.nodes().index(graph)]
+                par_graph_copy = sdfg_copy.cfg_list[graph.parent_graph.cfg_id]
+                graph_copy = par_graph_copy.nodes()[graph.block_id]
                 subgraph_copy = SubgraphView(graph_copy, [graph_copy.nodes()[i] for i in graph_indices])
-                expansion.cfg_id = sdfg_copy.cfg_id
+                expansion.cfg_id = par_graph_copy.cfg_id
 
                 ##sdfg_copy.apply_transformations(MultiExpansion, states=[graph])
                 #expansion = MultiExpansion()
@@ -100,9 +101,6 @@ class CompositeFusion(transformation.SubgraphTransformation):
     def apply(self, sdfg):
         subgraph = self.subgraph_view(sdfg)
         graph = subgraph.graph
-        scope_dict = graph.scope_dict()
-        map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph, scope_dict)
-        first_entry = next(iter(map_entries))
 
         if self.allow_expansion:
             expansion = MultiExpansion()

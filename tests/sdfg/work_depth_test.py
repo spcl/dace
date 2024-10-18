@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains test cases for the work depth analysis. """
 from typing import Dict, List, Tuple
 
@@ -17,6 +17,8 @@ from dace.transformation.interstate import NestSDFG
 from dace.transformation.dataflow import MapExpansion
 
 from pytest import raises
+
+from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
 
 N = dc.symbol('N')
 M = dc.symbol('M')
@@ -192,9 +194,9 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
     'nested_if_else': (nested_if_else, (sp.Max(K, 3 * N, M + N), sp.Max(3, K, M + 1))),
     'max_of_positive_symbols': (max_of_positive_symbol, (3 * N**2, 3 * N)),
     'multiple_array_sizes': (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
-    'unbounded_while_do': (unbounded_while_do, (sp.Symbol('num_execs_0_2') * N, sp.Symbol('num_execs_0_2'))),
+    'unbounded_while_do': (unbounded_while_do, (sp.Symbol('num_execs_0_4') * N, sp.Symbol('num_execs_0_4'))),
     # We get this Max(1, num_execs), since it is a do-while loop, but the num_execs symbol does not capture this.
-    'unbounded_nonnegify': (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_7') * N, 2 * sp.Symbol('num_execs_0_7'))),
+    'unbounded_nonnegify': (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_4') * N, 2 * sp.Symbol('num_execs_0_4'))),
     'break_for_loop': (break_for_loop, (N**2, N)),
     'break_while_loop': (break_while_loop, (sp.Symbol('num_execs_0_5') * N, sp.Symbol('num_execs_0_5'))),
     'sequential_ifs': (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
@@ -217,6 +219,15 @@ def test_work_depth(test_name):
         sdfg.apply_transformations(NestSDFG)
     if 'nested_maps' in test.name:
         sdfg.apply_transformations(MapExpansion)
+
+    # NOTE: Until the W/D Analysis is changed to make use of the new blocks, inline control flow for the analysis.
+    inliner = InlineControlFlowRegions()
+    inliner.no_inline_conditional = False
+    inliner.no_inline_loops = False
+    inliner.no_inline_function_call_regions = False
+    inliner.no_inline_named_regions = False
+    inliner.apply_pass(sdfg, {})
+
     analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     res = w_d_map[get_uuid(sdfg)]
     # substitue each symbol without assumptions.
@@ -264,6 +275,15 @@ def test_avg_par(test_name: str):
         sdfg.apply_transformations(NestSDFG)
     if 'nested_maps' in test_name:
         sdfg.apply_transformations(MapExpansion)
+
+    # NOTE: Until the W/D Analysis is changed to make use of the new blocks, inline control flow for the analysis.
+    inliner = InlineControlFlowRegions()
+    inliner.no_inline_conditional = False
+    inliner.no_inline_loops = False
+    inliner.no_inline_function_call_regions = False
+    inliner.no_inline_named_regions = False
+    inliner.apply_pass(sdfg, {})
+
     analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
     res = w_d_map[get_uuid(sdfg)][0] / w_d_map[get_uuid(sdfg)][1]
     # substitue each symbol without assumptions.
@@ -320,8 +340,8 @@ if __name__ == '__main__':
     for test_name in work_depth_test_cases.keys():
         test_work_depth(test_name)
 
-    for test, correct in tests_cases_avg_par:
-        test_avg_par(test, correct)
+    for test_name in tests_cases_avg_par.keys():
+        test_avg_par(test_name)
 
     for expr, assums, res in assumptions_tests:
         test_assumption_system(expr, assums, res)

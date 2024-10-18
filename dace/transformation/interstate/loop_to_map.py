@@ -394,7 +394,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Create NestedSDFG and add the loop contents to it. Gaher symbols defined in the NestedSDFG.
         fsymbols = set(sdfg.free_symbols)
-        body = graph.add_state('single_state_body')
+        body = graph.add_state('single_state_body', is_start_block=(graph.start_block is self.loop))
         nsdfg = SDFG('loop_body', constants=sdfg.constants_prop, parent=body)
         nsdfg.add_node(self.loop.start_block, is_start_block=True)
         nsymbols = dict()

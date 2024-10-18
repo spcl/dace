@@ -3192,7 +3192,9 @@ class LoopRegion(ControlFlowRegion):
             free_syms |= self.init_statement.get_free_symbols()
         if self.update_statement is not None:
             free_syms |= self.update_statement.get_free_symbols()
-        free_syms |= self.loop_condition.get_free_symbols()
+        cond_free_syms = self.loop_condition.get_free_symbols()
+        if self.loop_variable and self.loop_variable in cond_free_syms:
+            cond_free_syms.remove(self.loop_variable)
 
         b_free_symbols, b_defined_symbols, b_used_before_assignment = super()._used_symbols_internal(
             all_symbols, keep_defined_in_mapping=keep_defined_in_mapping)
@@ -3203,6 +3205,7 @@ class LoopRegion(ControlFlowRegion):
 
         defined_syms -= used_before_assignment
         free_syms -= defined_syms
+        free_syms |= cond_free_syms
 
         return free_syms, defined_syms, used_before_assignment
 

@@ -100,11 +100,11 @@ class FPGATransformState(transformation.MultiStateTransformation):
         wcr_input_nodes = set()
         stack = []
 
-        for node, graph in state.all_nodes_recursive():
+        for node, pGraph in state.all_nodes_recursive():
             if isinstance(node, dace.sdfg.nodes.AccessNode):
-                for e in graph.in_edges(node):
+                for e in pGraph.in_edges(node):
                     if e.data.wcr is not None:
-                        trace = dace.sdfg.trace_nested_access(node, graph, graph.sdfg)
+                        trace = dace.sdfg.trace_nested_access(node, pGraph, pGraph.sdfg)
                         for node_trace, memlet_trace, state_trace, sdfg_trace in trace:
                             # Find the name of the accessed node in our scope
                             if state_trace == state and sdfg_trace == sdfg:
