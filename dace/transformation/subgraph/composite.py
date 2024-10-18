@@ -3,6 +3,7 @@
     Subgraph Fusion - Stencil Tiling Transformation
 """
 
+from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.transformation.subgraph import SubgraphFusion, MultiExpansion
 from dace.transformation.subgraph.stencil_tiling import StencilTiling
 from dace.transformation.subgraph import helpers
@@ -18,7 +19,7 @@ import warnings
 
 
 @make_properties
-@transformation.single_level_sdfg_only
+@transformation.experimental_cfg_block_compatible
 class CompositeFusion(transformation.SubgraphTransformation):
     """ MultiExpansion + SubgraphFusion in one Transformation
         Additional StencilTiling is also possible as a canonicalizing
@@ -46,8 +47,8 @@ class CompositeFusion(transformation.SubgraphTransformation):
 
     expansion_split = Property(desc="Allow MultiExpansion to split up maps, if enabled", dtype=bool, default=True)
 
-    def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
-        graph = subgraph.graph
+    def can_be_applied(self, sdfg: SDFG, subgraph: StateSubgraphView) -> bool:
+        graph: SDFGState = subgraph.graph
         if self.allow_expansion == True:
             subgraph_fusion = SubgraphFusion()
             subgraph_fusion.setup_match(subgraph)
@@ -63,9 +64,10 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 graph_indices = [i for (i, n) in enumerate(graph.nodes()) if n in subgraph]
                 sdfg_copy = copy.deepcopy(sdfg)
                 sdfg_copy.reset_cfg_list()
-                graph_copy = sdfg_copy.nodes()[sdfg.nodes().index(graph)]
+                par_graph_copy = sdfg_copy.cfg_list[graph.parent_graph.cfg_id]
+                graph_copy = par_graph_copy.nodes()[graph.block_id]
                 subgraph_copy = SubgraphView(graph_copy, [graph_copy.nodes()[i] for i in graph_indices])
-                expansion.cfg_id = sdfg_copy.cfg_id
+                expansion.cfg_id = par_graph_copy.cfg_id
 
                 ##sdfg_copy.apply_transformations(MultiExpansion, states=[graph])
                 #expansion = MultiExpansion()
@@ -99,9 +101,6 @@ class CompositeFusion(transformation.SubgraphTransformation):
     def apply(self, sdfg):
         subgraph = self.subgraph_view(sdfg)
         graph = subgraph.graph
-        scope_dict = graph.scope_dict()
-        map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph, scope_dict)
-        first_entry = next(iter(map_entries))
 
         if self.allow_expansion:
             expansion = MultiExpansion()

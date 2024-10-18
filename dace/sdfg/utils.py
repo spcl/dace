@@ -13,12 +13,13 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import ConditionalBlock, SDFGState, StateSubgraphView, LoopRegion, ControlFlowRegion
+from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, SDFGState, StateSubgraphView, LoopRegion,
+                             ControlFlowRegion)
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from dace.cli.progress import optional_progressbar
-from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Type, Union
 
 
 def node_path_graph(*args) -> gr.OrderedDiGraph:
@@ -1194,7 +1195,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                      shows progress bar.
     :return: The total number of states fused.
     """
-    from dace.transformation.interstate import StateFusion  # Avoid import loop
+    from dace.transformation.interstate import StateFusion, BlockFusion  # Avoid import loop
+
 
     if progress is None and not config.Config.get_bool('progress'):
         progress = False
@@ -1227,20 +1229,33 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                         progress = True
                         pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
 
-                    if (u in skip_nodes or v in skip_nodes or not isinstance(v, SDFGState) or
-                        not isinstance(u, SDFGState)):
+                    if u in skip_nodes or v in skip_nodes:
                         continue
-                    candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
-                    sf = StateFusion()
-                    sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
-                    if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
-                        sf.apply(cfg, sd)
-                        applied += 1
-                        counter += 1
-                        if progress:
-                            pbar.update(1)
-                        skip_nodes.add(u)
-                        skip_nodes.add(v)
+
+                    if isinstance(u, SDFGState) and isinstance(v, SDFGState):
+                        candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
+                        sf = StateFusion()
+                        sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
+                        if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
+                            sf.apply(cfg, sd)
+                            applied += 1
+                            counter += 1
+                            if progress:
+                                pbar.update(1)
+                            skip_nodes.add(u)
+                            skip_nodes.add(v)
+                    else:
+                        candidate = {BlockFusion.first_block: u, BlockFusion.second_block: v}
+                        bf = BlockFusion()
+                        bf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
+                        if bf.can_be_applied(cfg, 0, sd, permissive=permissive):
+                            bf.apply(cfg, sd)
+                            applied += 1
+                            counter += 1
+                            if progress:
+                                pbar.update(1)
+                            skip_nodes.add(u)
+                            skip_nodes.add(v)
                 if applied == 0:
                     break
     if progress:
@@ -1248,38 +1263,24 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     return counter
 
 
-def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
-    count = 0
-
-    for _block in optional_progressbar(reversed(blocks), title='Inlining Loops',
-                                       n=len(blocks), progress=progress):
-        block: LoopRegion = _block
-        if block.inline()[0]:
-            count += 1
-
-    return count
-
-
-def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ControlFlowRegion)]
+def inline_control_flow_regions(sdfg: SDFG, types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
+                                blacklist: Optional[List[Type[AbstractControlFlowRegion]]] = None,
+                                progress: bool = None) -> int:
+    if types:
+        blocks = [n for n, _ in sdfg.all_nodes_recursive() if type(n) in types]
+    elif blacklist:
+        blocks = [n for n, _ in sdfg.all_nodes_recursive()
+                  if isinstance(n, AbstractControlFlowRegion) and type(n) not in blacklist]
+    else:
+        blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, AbstractControlFlowRegion)]
     count = 0
 
     for _block in optional_progressbar(reversed(blocks), title='Inlining control flow regions',
                                        n=len(blocks), progress=progress):
         block: ControlFlowRegion = _block
-        if block.inline()[0]:
-            count += 1
-
-    return count
-
-def inline_conditional_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
-    count = 0
-
-    for _block in optional_progressbar(reversed(blocks), title='Inlining conditional blocks',
-                                       n=len(blocks), progress=progress):
-        block: ConditionalBlock = _block
+        # Control flow regions where the parent is a conditional block are not inlined.
+        if block.parent_graph and type(block.parent_graph) == ConditionalBlock:
+            continue
         if block.inline()[0]:
             count += 1
 
@@ -1410,11 +1411,12 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     result: Set[SDFGState] = set()
 
     # Traverse children until states are not empty
-    for succ in sdfg.successors(state):
-        result |= set(dfs_conditional(sdfg, sources=[succ], condition=lambda parent, _: parent.is_empty()))
+    for succ in state.parent_graph.successors(state):
+        result |= set(dfs_conditional(state.parent_graph, sources=[succ],
+                                      condition=lambda parent, _: parent.number_of_nodes() == 0))
 
     # Filter out empty states
-    result = {s for s in result if not s.is_empty()}
+    result = {s for s in result if not s.number_of_nodes() == 0}
 
     return result
 
@@ -1585,41 +1587,44 @@ def is_fpga_kernel(sdfg, state):
     return at_least_one_fpga_array
 
 
-def postdominators(
-    sdfg: SDFG,
-    return_alldoms: bool = False
-) -> Optional[Union[Dict[SDFGState, SDFGState], Tuple[Dict[SDFGState, SDFGState], Dict[SDFGState, Set[SDFGState]]]]]:
-    """
-    Return the immediate postdominators of an SDFG. This may require creating new nodes and removing them, which
-    happens in-place on the SDFG.
+CFBlockDictT = Dict[ControlFlowBlock, ControlFlowBlock]
 
-    :param sdfg: The SDFG to generate the postdominators from.
+
+def postdominators(
+    cfg: ControlFlowRegion,
+    return_alldoms: bool = False
+) -> Optional[Union[CFBlockDictT, Tuple[CFBlockDictT, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]]]:
+    """
+    Return the immediate postdominators of a CFG. This may require creating new nodes and removing them, which
+    happens in-place on the CFG.
+
+    :param cfg: The CFG to generate the postdominators from.
     :param return_alldoms: If True, returns the "all postdominators" dictionary as well.
     :return: Immediate postdominators, or a 2-tuple of (ipostdom, allpostdoms) if ``return_alldoms`` is True.
     """
-    from dace.sdfg.analysis import cfg
+    from dace.sdfg.analysis import cfg as cfg_analysis
 
     # Get immediate post-dominators
-    sink_nodes = sdfg.sink_nodes()
+    sink_nodes = cfg.sink_nodes()
     if len(sink_nodes) > 1:
-        sink = sdfg.add_state()
+        sink = cfg.add_state()
         for snode in sink_nodes:
-            sdfg.add_edge(snode, sink, dace.InterstateEdge())
+            cfg.add_edge(snode, sink, dace.InterstateEdge())
     elif len(sink_nodes) == 0:
         return None
     else:
         sink = sink_nodes[0]
-    ipostdom: Dict[SDFGState, SDFGState] = nx.immediate_dominators(sdfg._nx.reverse(), sink)
+    ipostdom: CFBlockDictT = nx.immediate_dominators(cfg._nx.reverse(), sink)
 
     if return_alldoms:
-        allpostdoms = cfg.all_dominators(sdfg, ipostdom)
+        allpostdoms = cfg_analysis.all_dominators(cfg, ipostdom)
         retval = (ipostdom, allpostdoms)
     else:
         retval = ipostdom
 
     # If a new sink was added for post-dominator computation, remove it
     if len(sink_nodes) > 1:
-        sdfg.remove_node(sink)
+        cfg.remove_node(sink)
 
     return retval
 

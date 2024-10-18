@@ -5,6 +5,8 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 import numpy as np
 
+from dace.sdfg.utils import inline_control_flow_regions
+
 
 def test_for_in_map_in_for():
 

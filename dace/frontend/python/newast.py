@@ -4502,7 +4502,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     name = "call"
                 call_region = FunctionCallRegion(label=f"{name}_{node.lineno}", arguments=[])
-                self.cfg_target.add_node(call_region)
+                self.cfg_target.add_node(call_region, ensure_unique_name=True)
                 self._on_block_added(call_region)
                 previous_last_cfg_target = self.last_cfg_target
                 previous_target = self.cfg_target
@@ -4749,7 +4749,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:            
                     named_region_name = f"Named Region {node.lineno}"
                 named_region = NamedRegion(named_region_name, debuginfo=self.current_lineinfo)
-                self.cfg_target.add_node(named_region)
+                self.cfg_target.add_node(named_region, ensure_unique_name=True)
                 self._on_block_added(named_region)
                 self._recursive_visit(node.body, "init_named", node.lineno, named_region, unconnected_last_block=False)
                 return

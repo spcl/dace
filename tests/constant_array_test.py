@@ -112,12 +112,10 @@ def test_constant_transient_double_nested_scalar():
 
     sdfg = test.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated([StateFusion, RedundantArray, RedundantSecondArray])
-    state = sdfg.node(0)
 
     # modify cst to be a dace constant: the python frontend adds an assignment tasklet
-    n = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == 'cst'][0]
-    for pred in state.predecessors(n):
-        state.remove_node(pred)
+    assign_state = sdfg.node(0)
+    sdfg.remove_node(assign_state)
 
     sdfg.add_constant('cst', 1.0, sdfg.arrays['cst'])
 
