@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
 
+from dace.sdfg.data_group import DataGroup
 
 class NestedDict(dict):
 
@@ -407,6 +408,10 @@ class SDFG(ControlFlowRegion):
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_nested_arrays_from_json)
+    data_groups = Property(dtype=NestedDict,
+                           desc="Data group descriptors for this SDFG",
+                           to_json=_arrays_to_json,
+                           from_json=_nested_arrays_from_json)
     symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -485,6 +490,7 @@ class SDFG(ControlFlowRegion):
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
+        self.data_groups = NestedDict()
         self.arg_names = []
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -1028,7 +1034,7 @@ class SDFG(ControlFlowRegion):
 
     def call_with_instrumented_data(self, dreport: 'InstrumentedDataReport', *args, **kwargs):
         """
-        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
+        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary.
         Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
 
         :param dreport: The instrumented data report to use upon calling.
@@ -1719,6 +1725,12 @@ class SDFG(ControlFlowRegion):
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
+    def add_data_group(self,
+                       name: str,
+                       find_new_name: bool = False) -> Tuple[str, DataGroup]:
+        dg_desc = DataGroup(name)
+        return self.add_data_group_desc(name, dg_desc, find_new_name=find_new_name), dg_desc
+
     def add_view(self,
                  name: str,
                  shape,
@@ -2002,6 +2014,42 @@ class SDFG(ControlFlowRegion):
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc
         _add_symbols(self, datadesc)
+
+        return name
+
+    def add_data_group_desc(self, name: str, data_group_desc: DataGroup, find_new_name=False) -> str:
+        if not isinstance(name, str):
+            raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
+
+        if find_new_name:
+            name = self._find_new_name(name)
+            name = name.replace('.', '_')
+            if self.is_name_used(name):
+                name = self._find_new_name(name)
+        else:
+            if name in self.arrays:
+                raise FileExistsError(f'Data group descriptor "{name}" already exists in SDFG')
+            if name in self.symbols:
+                raise FileExistsError(f'Can not create data group descriptor "{name}", the name is used by a symbol.')
+            if name in self._subarrays:
+                raise FileExistsError(f'Can not create data group descriptor "{name}", the name is used by a subarray.')
+            if name in self._rdistrarrays:
+                raise FileExistsError(f'Can not create data group descriptor "{name}", the name is used by a RedistrArray.')
+            if name in self._pgrids:
+                raise FileExistsError(f'Can not create data group descriptor "{name}", the name is used by a ProcessGrid.')
+
+        def _add_symbols(sdfg: SDFG, desc: dt.Data):
+            if isinstance(desc, dt.Structure):
+                for v in desc.members.values():
+                    if isinstance(v, dt.Data):
+                        _add_symbols(sdfg, v)
+            for sym in desc.free_symbols:
+                if sym.name not in sdfg.symbols:
+                    sdfg.add_symbol(sym.name, sym.dtype)
+
+        # Add the data descriptor to the SDFG and all symbols that are not yet known.
+        self.data_groups[name] = data_group_desc
+        _add_symbols(self, data_group_desc)
 
         return name
 
@@ -2598,7 +2646,7 @@ class SDFG(ControlFlowRegion):
                                               print_report: Optional[bool] = None,
                                               order_by_transformation: bool = True,
                                               progress: Optional[bool] = None) -> int:
-        """ 
+        """
         This function applies a transformation or a set of (unique) transformations
         until throughout the entire SDFG once. Operates in-place.
 
@@ -2714,7 +2762,7 @@ class SDFG(ControlFlowRegion):
 
     def generate_code(self):
         """ Generates code from this SDFG and returns it.
-        
+
             :return: A list of `CodeObject` objects containing the generated
                       code of different files and languages.
         """
@@ -2753,3 +2801,37 @@ class SDFG(ControlFlowRegion):
                 break
         self.root_sdfg.using_experimental_blocks = found_experimental_block
         return found_experimental_block
+
+    def register_data_group_members(self):
+        for _, dg in self.data_groups.items():
+            self._register_data_group_members(data_group=dg, prefix_name='')
+        print(self._arrays)
+
+    def _register_data_group_members(self, data_group: DataGroup, prefix_name: str):
+        for name, member in data_group.members.items():
+            dg_prefix = prefix_name + f'__datagroup_{data_group.name}'
+            if isinstance(member, DataGroup):
+                self._register_data_group_members(data_group=member, prefix_name=dg_prefix)
+            else:
+                member_demangled_name = dg_prefix + f'__member_{name}'
+                self.add_datadesc(name=member_demangled_name, datadesc=member, find_new_name=False)
+
+    def get_demangled_data_group_member_name(self, name_hierarchy: List[Type[str]]):
+        current_dg = None
+        demangled_name = ''
+        for i, name in enumerate(name_hierarchy):
+            if current_dg is None:
+                current_dg = self.data_groups[name]
+                demangled_name += f"__datagroup_{current_dg.name}"
+            elif name in current_dg.members:
+                if isinstance(current_dg.members[name], DataGroup):
+                    current_dg = current_dg.members[name]
+                    demangled_name += f"__datagroup_{current_dg.name}"
+                else:
+                    assert isinstance(current_dg.members[name], dace.data.Data)
+                    assert i == len(name_hierarchy) - 1
+                    demangled_name += f"__member_{name}"
+                    return demangled_name
+            else:
+                raise Exception('Name Hierarchy Not in DataGroups')
+        raise Exception('Name Hierarchy Not in DataGroups')
