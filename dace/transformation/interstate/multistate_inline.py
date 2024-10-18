@@ -14,7 +14,7 @@ from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties
 from dace import data
-from dace.sdfg.state import StateSubgraphView
+from dace.sdfg.state import LoopRegion, StateSubgraphView
 
 
 @make_properties
@@ -190,10 +190,18 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         outer_assignments = set()
         for e in sdfg.all_interstate_edges():
             outer_assignments |= e.data.assignments.keys()
+        for b in sdfg.all_control_flow_blocks():
+            if isinstance(b, LoopRegion):
+                if b.loop_variable is not None:
+                    outer_assignments.add(b.loop_variable)
 
         inner_assignments = set()
         for e in nsdfg.all_interstate_edges():
             inner_assignments |= e.data.assignments.keys()
+        for b in nsdfg.all_control_flow_blocks():
+            if isinstance(b, LoopRegion):
+                if b.loop_variable is not None:
+                    inner_assignments.add(b.loop_variable)
 
         allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)

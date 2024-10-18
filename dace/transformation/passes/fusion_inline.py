@@ -138,8 +138,17 @@ class InlineControlFlowRegions(ppl.Pass):
         if len(blacklist) < 1:
             blacklist = None
 
-        inlined = inline_control_flow_regions(sdfg, None, blacklist, self.progress)
-        return inlined or None
+        inlined = 0
+        while True:
+            inlined_in_iteration = inline_control_flow_regions(sdfg, None, blacklist, self.progress)
+            if inlined_in_iteration < 1:
+                break
+            inlined += inlined_in_iteration
+
+        if inlined:
+            sdfg.reset_cfg_list()
+            return inlined
+        return None
 
     def report(self, pass_retval: int) -> str:
         return f'Inlined {pass_retval} regions.'
