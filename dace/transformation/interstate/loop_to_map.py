@@ -415,7 +415,7 @@ class LoopToMap(xf.MultiStateTransformation):
             del sdfg.arrays[name]
 
         # Add NestedSDFG node
-        cnode = body.add_nested_sdfg(nsdfg, None, read_set, write_set)
+        cnode = body.add_nested_sdfg(nsdfg, body, read_set, write_set)
         if sdfg.parent:
             for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
                 if s not in cnode.symbol_mapping:
@@ -567,3 +567,8 @@ class LoopToMap(xf.MultiStateTransformation):
             sdfg.remove_symbol(itervar)
 
         sdfg.reset_cfg_list()
+        for n, p in sdfg.all_nodes_recursive():
+            if isinstance(n, nodes.NestedSDFG):
+                n.sdfg.parent = p
+                n.sdfg.parent_nsdfg_node = n
+                n.sdfg.parent_sdfg = p.sdfg
