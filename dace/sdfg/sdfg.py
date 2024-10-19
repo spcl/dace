@@ -1032,7 +1032,7 @@ class SDFG(ControlFlowRegion):
 
     def call_with_instrumented_data(self, dreport: 'InstrumentedDataReport', *args, **kwargs):
         """
-        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
+        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary.
         Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
 
         :param dreport: The instrumented data report to use upon calling.
@@ -1691,7 +1691,8 @@ class SDFG(ControlFlowRegion):
                   total_size=None,
                   find_new_name=False,
                   alignment=0,
-                  may_alias=False) -> Tuple[str, dt.Array]:
+                  may_alias=False,
+                  host_data=False) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1719,7 +1720,8 @@ class SDFG(ControlFlowRegion):
                         alignment=alignment,
                         debuginfo=debuginfo,
                         total_size=total_size,
-                        may_alias=may_alias)
+                        may_alias=may_alias,
+                        host_data=host_data)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1735,7 +1737,8 @@ class SDFG(ControlFlowRegion):
                  total_size=None,
                  find_new_name=False,
                  alignment=0,
-                 may_alias=False) -> Tuple[str, dt.ArrayView]:
+                 may_alias=False,
+                 host_data=False) -> Tuple[str, dt.ArrayView]:
         """ Adds a view to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1761,7 +1764,8 @@ class SDFG(ControlFlowRegion):
                             alignment=alignment,
                             debuginfo=debuginfo,
                             total_size=total_size,
-                            may_alias=may_alias)
+                            may_alias=may_alias,
+                            host_data=host_data)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1777,7 +1781,8 @@ class SDFG(ControlFlowRegion):
                       total_size=None,
                       find_new_name=False,
                       alignment=0,
-                      may_alias=False) -> Tuple[str, dt.Reference]:
+                      may_alias=False,
+                      host_data=False) -> Tuple[str, dt.Reference]:
         """ Adds a reference to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1803,7 +1808,8 @@ class SDFG(ControlFlowRegion):
                                  alignment=alignment,
                                  debuginfo=debuginfo,
                                  total_size=total_size,
-                                 may_alias=may_alias)
+                                 may_alias=may_alias,
+                                 host_data=host_data)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1817,7 +1823,8 @@ class SDFG(ControlFlowRegion):
                    offset=None,
                    lifetime=dace.dtypes.AllocationLifetime.Scope,
                    debuginfo=None,
-                   find_new_name=False) -> Tuple[str, dt.Stream]:
+                   find_new_name=False,
+                   host_data=False) -> Tuple[str, dt.Stream]:
         """ Adds a stream to the SDFG data descriptor store. """
 
         # Convert to int if possible, otherwise to symbolic
@@ -1841,6 +1848,7 @@ class SDFG(ControlFlowRegion):
             offset=offset,
             lifetime=lifetime,
             debuginfo=debuginfo,
+            host_data=host_data
         )
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
@@ -1852,7 +1860,8 @@ class SDFG(ControlFlowRegion):
                    transient=False,
                    lifetime=dace.dtypes.AllocationLifetime.Scope,
                    debuginfo=None,
-                   find_new_name=False) -> Tuple[str, dt.Scalar]:
+                   find_new_name=False,
+                   host_data=False) -> Tuple[str, dt.Scalar]:
         """ Adds a scalar to the SDFG data descriptor store. """
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
@@ -1864,6 +1873,7 @@ class SDFG(ControlFlowRegion):
             transient=transient,
             lifetime=lifetime,
             debuginfo=debuginfo,
+            host_data=host_data
         )
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
@@ -1882,7 +1892,8 @@ class SDFG(ControlFlowRegion):
                       total_size=None,
                       find_new_name=False,
                       alignment=0,
-                      may_alias=False) -> Tuple[str, dt.Array]:
+                      may_alias=False,
+                      host_data=False) -> Tuple[str, dt.Array]:
         """ Convenience function to add a transient array to the data
             descriptor store. """
         return self.add_array(name,
@@ -1899,7 +1910,8 @@ class SDFG(ControlFlowRegion):
                               total_size=total_size,
                               alignment=alignment,
                               may_alias=may_alias,
-                              find_new_name=find_new_name)
+                              find_new_name=find_new_name,
+                              host_data=host_data)
 
     def temp_data_name(self):
         """ Returns a temporary data descriptor name that can be used in this SDFG. """
@@ -1925,7 +1937,8 @@ class SDFG(ControlFlowRegion):
                            allow_conflicts=False,
                            total_size=None,
                            alignment=0,
-                           may_alias=False):
+                           may_alias=False,
+                           host_data=False):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         return self.add_array(self.temp_data_name(),
@@ -1941,9 +1954,10 @@ class SDFG(ControlFlowRegion):
                               debuginfo=debuginfo,
                               allow_conflicts=allow_conflicts,
                               total_size=total_size,
-                              may_alias=may_alias)
+                              may_alias=may_alias,
+                              host_data=host_data)
 
-    def add_temp_transient_like(self, desc: Union[dt.Array, dt.Scalar], dtype=None, debuginfo=None):
+    def add_temp_transient_like(self, desc: Union[dt.Array, dt.Scalar], dtype=None, debuginfo=None, host_data=False):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         debuginfo = debuginfo or desc.debuginfo
@@ -1952,6 +1966,7 @@ class SDFG(ControlFlowRegion):
         newdesc.dtype = dtype
         newdesc.transient = True
         newdesc.debuginfo = debuginfo
+        newdesc.host_data = host_data
         return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
     def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
@@ -2602,7 +2617,7 @@ class SDFG(ControlFlowRegion):
                                               print_report: Optional[bool] = None,
                                               order_by_transformation: bool = True,
                                               progress: Optional[bool] = None) -> int:
-        """ 
+        """
         This function applies a transformation or a set of (unique) transformations
         until throughout the entire SDFG once. Operates in-place.
 
@@ -2718,7 +2733,7 @@ class SDFG(ControlFlowRegion):
 
     def generate_code(self):
         """ Generates code from this SDFG and returns it.
-        
+
             :return: A list of `CodeObject` objects containing the generated
                       code of different files and languages.
         """
