@@ -14,7 +14,7 @@ class CodeIOStream(StringIO):
         nodes. """
     def __init__(self, base_indentation=0):
         super(CodeIOStream, self).__init__()
-        self._indent = 0
+        self._indent = base_indentation
         self._spaces = int(Config.get('compiler', 'indentation_spaces'))
         self._lineinfo = Config.get_bool('compiler', 'codegen_lineinfo')
 
