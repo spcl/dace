@@ -2848,5 +2848,12 @@ class SDFG(ControlFlowRegion):
                     demangled_name += f"__member_{name}"
                     return demangled_name
             else:
-                raise Exception('Name Hierarchy Not in DataGroups')
-        raise Exception('Name Hierarchy Not in DataGroups')
+                raise Exception(f'Name Hierarchy {name_hierarchy} Not in DataGroups {self.data_groups}')
+        raise Exception(f'Name Hierarchy {name_hierarchy} Not in DataGroups {self.data_groups}')
+
+    def generate_data_groups_from_structs(self):
+        for arr_name, arr in self._arrays.items():
+            if isinstance(arr, dt.Structure):
+                dg_name = arr_name
+                dg = DataGroup.from_struct(name=dg_name, structure=arr)
+                self.data_groups[dg_name] = dg

@@ -1,11 +1,15 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import OrderedDict
-from typing import Any, Set, Union
+from typing import Set, Union
 
+from dace import data
 from dace.data import Data
 
 from dace import serialize, symbolic
 from dace.properties import OrderedDictProperty, Property, make_properties
+
+import sympy
+import numpy
 
 
 def _members_to_json(members):
@@ -79,3 +83,29 @@ class DataGroup:
 
     def __str__(self):
         return self.__repr__()
+
+    @classmethod
+    def from_struct(cls, name: str, structure: data.Structure) -> "DataGroup":
+        dg = cls(name)
+
+        for member_name, member in structure.members.items():
+            if isinstance(member, data.Structure):
+                # Recursively convert nested Structures
+                dg.add_member(
+                    name=f"{member_name}",
+                    member=cls.from_struct(
+                        name=f"{member_name}", structure=member
+                    )
+                )
+            elif isinstance(member, (data.Array, data.Scalar)):
+                # Directly add Arrays and Scalars
+                dg.add_member(member_name, member)
+            elif isinstance(
+                member, (sympy.Basic, symbolic.SymExpr, int, numpy.integer)
+            ):
+                # Convert other types to Scalar
+                dg.add_member(member_name, data.Scalar(symbolic.symtype(member)))
+            else:
+                raise TypeError(f"Unsupported member type in Structure: {type(member)}")
+
+        return dg
