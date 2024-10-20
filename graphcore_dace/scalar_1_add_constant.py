@@ -20,7 +20,7 @@ def array_add_constant_sdfg():
     C_write = state.add_write('C')
     
     # Add map
-    map_entry, map_exit = state.add_map('map', dict(i='0:1'))
+    map_entry, map_exit = state.add_map('map', dict(i='0:1'), schedule=dace.ScheduleType.Sequential)
     
     # Add tasklet
     tasklet = state.add_tasklet('add_constant', {'a_in', 'b_in'}, {'c_out'}, 'c_out = a_in + b_in')
