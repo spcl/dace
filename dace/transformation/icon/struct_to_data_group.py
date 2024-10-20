@@ -136,6 +136,7 @@ class StructToDataGroup(transformation.SingleStateTransformation):
             dst_edges = state.out_edges(v)
             assert len(dst_edges) == 1
             dst_edge = dst_edges[0]
+            # TODO: Fix memlet calculation in recursive data groups
             mc = copy.deepcopy(dst_edge.data)
             mc.data = demangled_name
             state.add_edge(an, None, dst_edge.dst, dst_edge.dst_conn, mc)
@@ -143,6 +144,7 @@ class StructToDataGroup(transformation.SingleStateTransformation):
             src_edges = state.in_edges(u)
             assert len(src_edges) == 1
             src_edge = src_edges[0]
+            # TODO: Fix memlet calculation in recursive data groups
             mc = copy.deepcopy(src_edge.data)
             mc.data = demangled_name
             state.add_edge(src_edge.src, src_edge.src_conn, an, None, mc)
