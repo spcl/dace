@@ -83,6 +83,38 @@ def test_fusion_simple():
     assert diff <= 1e-3
 
 
+def fusion_twostate():
+    """Same effect as applying `fusion()` twice."""
+    st0 = fusion.to_sdfg(simplify=True, validate=True)
+    st0.start_block.label = 'st0'  # Rename to avoid name conflict
+    st0.apply_transformations(dace.transformation.interstate.StateFusionExtended, validate_all=True)
+
+    # Construct the second block
+    st1 = fusion.to_sdfg(simplify=True, validate=True)
+    st1.start_block.label = 'st1'  # Rename to avoid name conflict
+    st1.apply_transformations(dace.transformation.interstate.StateFusionExtended, validate_all=True)
+
+    st0.add_edge(st0.start_state, st1.start_state, dace.InterstateEdge())
+    return st0
+
+
+def test_fusion_twostate():
+    sdfg = fusion_twostate()
+    sdfg.save(os.path.join('_dacegraphs', 'before-twostate.sdfg'))
+    sdfg.apply_transformations_repeated(MapFusion)
+    sdfg.save(os.path.join('_dacegraphs', 'after-twostate.sdfg'))
+
+    A = np.random.rand(10, 20).astype(np.float32)
+    B = np.random.rand(10, 20).astype(np.float32)
+    out = np.zeros(shape=1, dtype=np.float32)
+    sdfg(A=A, B=B, out=out)
+
+    # NOTE: `2 * np.sum(A * A + B)` is the expected result of applying `fusion()` twice.
+    diff = abs(2 * np.sum(A * A + B) - out)
+    print('Difference:', diff)
+    assert diff <= 1e-3
+
+
 def test_multiple_fusions():
     sdfg = multiple_fusions.to_sdfg()
     num_nodes_before = len([node for state in sdfg.nodes() for node in state.nodes()])
@@ -312,6 +344,7 @@ def test_fusion_with_nested_sdfg_1():
 
 if __name__ == '__main__':
     test_fusion_simple()
+    test_fusion_twostate()
     test_multiple_fusions()
     test_fusion_chain()
     test_fusion_with_transient()
