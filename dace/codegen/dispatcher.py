@@ -444,6 +444,8 @@ class TargetDispatcher(object):
         state = cfg.state(state_id)
         disp = self.get_node_dispatcher(sdfg, state, node)
         self._used_targets.add(disp)
+        # print debugging for the dispatcher
+        print("SJJ: Dispatching node", node, "to", disp)
         disp.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def get_scope_dispatcher(self, schedule: dtypes.ScheduleType) -> target.TargetCodeGenerator:

@@ -1,5 +1,6 @@
 # import
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import inspect
 from io import StringIO
 from dace.codegen.codeobject import CodeObject
 import sympy
@@ -98,17 +99,14 @@ class IPUCodeGen(TargetCodeGenerator):
         self._num_kernels = 0
         self._host_codes = []   
         self._kernel_codes = []
-        self._generated_nodes = []
+        self._generated_nodes = set()
+        self._locals = cppunparse.CPPLocals()
         
 
         # Register dispatchers
-        self.cpu_codegen = self.dispatcher.get_generic_node_dispatcher()        
+        self.cpu_codegen = self.dispatcher.get_generic_node_dispatcher()
         
         self.dispatcher.register_state_dispatcher(self, predicate=is_ipu_kernel)
-        # self.dispatcher.register_array_dispatcher(dtypes.StorageType.IPU_Tile_Local, self)
-            
-        # Storage
-        # ipu_storage = [dtypes.StorageType.IPU_Memory]        
         ipu_storage = [dtypes.StorageType.IPU_Memory]
         self.dispatcher.register_array_dispatcher(ipu_storage, self)   # allocate_array/deallocate_array
         for storage in ipu_storage:
@@ -116,18 +114,11 @@ class IPUCodeGen(TargetCodeGenerator):
                 self.dispatcher.register_copy_dispatcher(storage, other_storage, None, self)
                 self.dispatcher.register_copy_dispatcher(other_storage, storage, None, self)
         
-        
-        
-                
-                
-                
         # # Dispatchers
-        # self.dispatcher.register_map_dispatcher(dace.ScheduleType.IPU_Map, self)
+        # self.dispatcher.register_map_dispatcher(dace.ScheduleType.Default, self)
         # self.dispatcher.register_node_dispatcher(self, self.is_ipu_map_scope)
-        self.dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
-        # self.dispatcher.register_copy_dispatcher(dtypes.StorageType.Register, dtypes.StorageType.IPU_Tile_Local, None, func=self)
-        # self._dispatcher.register_map_dispatcher(dace.ScheduleType.IPU, self)
-        # self._dispatcher.register_state_dispatcher(self, self.state_dispatch_predicate)
+        # self.dispatcher.register_node_dispatcher(self)
+        # self.dispatcher.register_node_dispatcher(self, self.node_dispatch_predicate)
 
     def preprocess(self, sdfg: SDFG) -> None:
         self.frame.statestruct.append('dace_poplar_context *poplar_context;')
@@ -196,24 +187,29 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
                           "\n{separator}\n\n{code}\n\n".format(separator="/" * 79, kernel_name=name, code=code)
                           for (name, code) in self._host_codes])))
 
-        host_code_obj = CodeObject(self.program_name,
-                                   host_code.getvalue(),
-                                   "cpp",
-                                   IPUCodeGen,
-                                   "IPU",
-                                   target_type="host")
-
-        # Device object
-        kernel_code_objs = [
-            CodeObject(kernel_name,
-                       code,
-                       "cpp",
-                       IPUCodeGen,
-                       "IPU",
-                       target_type="device") for (kernel_name, code) in self._kernel_codes
-        ]
+        # only generate ipu/file.cpp when it's an IPU kernel, else only cpu/file.cpp
+        if is_ipu_kernel(self._global_sdfg, self._global_sdfg.node(0)): 
+            host_code_obj = CodeObject(self.program_name,
+                                    host_code.getvalue(),
+                                    "cpp",
+                                    IPUCodeGen,
+                                    "IPU",
+                                    target_type="host")
+            return [host_code_obj]
+        else:
+            return []
+        
+        # # Device object
+        # kernel_code_objs = [
+        #     CodeObject(kernel_name,
+        #                code,
+        #                "cpp",
+        #                IPUCodeGen,
+        #                "IPU",
+        #                target_type="device") for (kernel_name, code) in self._kernel_codes
+        # ]
                 
-        return [host_code_obj] +  kernel_code_objs
+
 
     # __dace_init_<TARGET> function
     @property
@@ -249,10 +245,13 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
         return False
     
     def node_dispatch_predicate(self, sdfg, state, node):
+        return True
+        retval = False
         if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
             if node.schedule in dtypes.IPU_SCHEDULES:
-                return True
-        return False
+                retval = True
+        print("Node dispatch predicate: ", retval)
+        return retval
         
 ############################################################################################################
 #   IPU specific node/state generation
@@ -293,7 +292,6 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
     def allocate_ipu_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                         node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                         declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
-        
         result_decl = StringIO()
         result_alloc = StringIO()
         arrsize = nodedesc.total_size
@@ -305,15 +303,7 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
         
         # Check if array is already declared
         declared = self.dispatcher.declared_arrays.has(dataname)
-        #     # if user provided this storage type, then we dump what they said.
-        #     if nodedesc.storage == dtypes.StorageType.IPU_Tile_Local:
-        #         name = node.data
-        #         size = nodedesc.total_size
-        #         ipu_type = "FLOAT"
-        #         self.dispatcher.defined_vars.add(name, DefinedType.Scalar, ipu_type)
-        #         declaration_stream.write(f'_state->graph.addVariable({ipu_type}, [{size}], {name});', cfg, state_id, node)       
-        #         return
-
+      
         # Different types of memories
         if nodedesc.storage == dtypes.StorageType.IPU_Memory:
             if not declared:
@@ -484,7 +474,7 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
     def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                        node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
                        declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
-        
+        allocation_stream.write("// Allocating array %s\n" % node.data, cfg, state_id, node)
         if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             nodedesc = update_persistent_desc(nodedesc, sdfg)        
         
@@ -524,17 +514,19 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
             pass    # IPU variables are C++ objects and are automatically deallocated
         else:
             raise NotImplementedError("Unimplemented deallocate() for StorageType " + str(nodedesc.storage))
-        
+
     def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                     src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
-                    memlet: Memlet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+                    edge: MultiConnectorEdge[mm.Memlet], function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        callsite_stream.write("// Copying from {} (name: {}) to {} (name: {}) with edge: {}\n".format(
+            src_node, src_node.label, dst_node, dst_node.label, edge), cfg, state_id)
         state = cfg.state(state_id)
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register
             src_parent = state.entry_node(src_node)
             dst_schedule = None if src_parent is None else src_parent.map.schedule
         else:
-            src_storage = src_node.desc(sdfg).storage
+            src_storage = src_node.desc(sdfg).storage 
 
         if isinstance(dst_node, nodes.Tasklet):
             dst_storage = dtypes.StorageType.Register
@@ -552,25 +544,32 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                       node: nodes.Node, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         method_name = "_generate_" + type(node).__name__
-        # Fake inheritance... use this class' method if it exists,
-        # otherwise fall back on CPU codegen
-        if hasattr(self, method_name):
+        # print(method_name)
+        # function_stream.write(f"//SJJ: Generating node {node.label}, method name = {method_name} \n")
+        callsite_stream.write("// Generating Node: " + str(node) + ", Type: " + type(node).__name__ + ", Details: " + repr(node) + "\n", sdfg, state_id)
+        
+        try:
+            gen = getattr(self, "_generate_" + type(node).__name__)
+        except AttributeError:
+            if isinstance(node, nodes.LibraryNode):
+                raise NodeNotExpandedError(sdfg, state_id, dfg.node_id(node))
+            raise
+        gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        # Mark node as "generated"
+        self._generated_nodes.add(node)
+        self._locals.clear_scope(self._ldepth + 1)
+                            
+                                           
+        # else:
+        #     old_codegen = self._cpu_codegen.calling_codegen
+        #     self._cpu_codegen.calling_codegen = self
 
-            if hasattr(node, "schedule") and node.schedule not in [
-                    dtypes.ScheduleType.Default, dtypes.ScheduleType.IPU_SCHEDULE]:
-                warnings.warn("Found schedule {} on {} node in FPGA code. "
-                              "Ignoring.".format(node.schedule,
-                                                 type(node).__name__))
+        #     self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
-            getattr(self, method_name)(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-        else:
-            old_codegen = self._cpu_codegen.calling_codegen
-            self._cpu_codegen.calling_codegen = self
-
-            self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-
-            self._cpu_codegen.calling_codegen = old_codegen
-                    
+        #     self._cpu_codegen.calling_codegen = old_codegen
+         # Dynamically obtain node generator according to class name
+        
+        
     # def generate_node(self, sdfg: SDFG, cfg: state.ControlFlowRegion, state: SDFGState, state_id: int, node: nodes.Node,
     #                   function_stream: CodeIOStream, callsite_stream: CodeIOStream):
     #     """(TASKLET only)
@@ -761,12 +760,14 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
         self.dispatcher._used_targets.add(cpu_disp)
         
         state_id = state.block_id
+        subgraphs = dace.sdfg.concurrent_subgraphs(state)
         
         if IPUCodeGen._in_device_code:
+            print("device code")
             
             to_allocate = dace.sdfg.local_transients(sdfg, state, None)
             allocated = set()
-            subgraphs = dace.sdfg.concurrent_subgraphs(state)
+            
 
             for node in state.data_nodes():
                 data = node.desc(sdfg)
@@ -778,11 +779,11 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
                     raise cgx.CodegenError("Cannot allocate global memory from device code.")
                 allocated.add(node.data)
                 # Allocate transients
-                self._dispatcher.dispatch_allocate(sdfg, cfg, state, state_id, node, data, function_stream,
+                self.dispatcher.dispatch_allocate(sdfg, cfg, state, state_id, node, data, function_stream,
                                                    callsite_stream)
 
             self.generate_nested_state(sdfg, cfg, state, state.label, subgraphs, function_stream, callsite_stream)
-            
+                         
         else:
             sdfg_state_name = cpp.mangle_dace_state_struct_name(self._global_sdfg)
             formatted_string = """
@@ -795,16 +796,355 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
             
             function_stream.write(formatted_string)
             
+            self.generate_nested_state(sdfg, cfg, state, state.label, subgraphs, function_stream, callsite_stream)
+        
             # self.frame.generate_ipu_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
             self.generate_ipu_cpuside_state(sdfg, cfg, state, function_stream, callsite_stream, generate_state_footer=False)
 
-    def _generate_Tasklet(self, *args, **kwargs):
-        # Call CPU implementation with this code generator as callback
-        self._cpu_codegen._generate_Tasklet(*args, codegen=self, **kwargs)
-                    
+
+    def _generate_MapEntry(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        dfg: StateSubgraphView,
+        state_id: int,
+        node: nodes.MapEntry,
+        function_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
+    ):
+        callsite_stream.write(f"// Generating MapEntry {node.label}\n")
+        state_dfg = cfg.state(state_id)
+        map_params = node.map.params
+
+        result = callsite_stream
+        map_header = ""
+
+        # Encapsulate map with a C scope
+        # TODO: Refactor out of MapEntry generation (generate_scope_header?)
+        callsite_stream.write('{', cfg, state_id, node)
+
+        # Define all input connectors of this map entry
+        for e in dynamic_map_inputs(state_dfg, node):
+            if e.data.data != e.dst_conn:
+                callsite_stream.write(
+                    self.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg,
+                    state_id, node)
+
+        inner_stream = CodeIOStream()
+        self.generate_scope_preamble(sdfg, dfg, state_id, function_stream, callsite_stream, inner_stream)
+
+        # Instrumentation: Pre-scope
+        instr = self._dispatcher.instrumentation[node.map.instrument]
+        if instr is not None:
+            instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
+
+        # TODO: Refactor to generate_scope_preamble once a general code
+        #  generator (that CPU inherits from) is implemented
+        if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
+            # OpenMP header
+            in_persistent = False
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+                in_persistent = is_in_scope(sdfg, state_dfg, node, [dtypes.ScheduleType.CPU_Persistent])
+                if in_persistent:
+                    # If already in a #pragma omp parallel, no need to use it twice
+                    map_header += "#pragma omp for"
+                    # TODO(later): barriers and map_header += " nowait"
+                else:
+                    map_header += "#pragma omp parallel for"
+
+            elif node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
+                map_header += "#pragma omp parallel"
+
+            # OpenMP schedule properties
+            if not in_persistent:
+                if node.map.omp_schedule != dtypes.OMPScheduleType.Default:
+                    schedule = " schedule("
+                    if node.map.omp_schedule == dtypes.OMPScheduleType.Static:
+                        schedule += "static"
+                    elif node.map.omp_schedule == dtypes.OMPScheduleType.Dynamic:
+                        schedule += "dynamic"
+                    elif node.map.omp_schedule == dtypes.OMPScheduleType.Guided:
+                        schedule += "guided"
+                    else:
+                        raise ValueError("Unknown OpenMP schedule type")
+                    if node.map.omp_chunk_size > 0:
+                        schedule += f", {node.map.omp_chunk_size}"
+                    schedule += ")"
+                    map_header += schedule
+
+                if node.map.omp_num_threads > 0:
+                    map_header += f" num_threads({node.map.omp_num_threads})"
+
+            # OpenMP nested loop properties
+            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.collapse > 1:
+                map_header += ' collapse(%d)' % node.map.collapse
+
+        if node.map.unroll:
+            if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
+                raise ValueError("An OpenMP map cannot be unrolled (" + node.map.label + ")")
+
+        result.write(map_header, cfg, state_id, node)
+
+        if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
+            result.write('{\n', cfg, state_id, node)
+
+            # Find if bounds are used within the scope
+            scope = state_dfg.scope_subgraph(node, False, False)
+            fsyms = self._frame.free_symbols(scope)
+            # Include external edges
+            for n in scope.nodes():
+                for e in state_dfg.all_edges(n):
+                    fsyms |= e.data.used_symbols(False, e)
+            fsyms = set(map(str, fsyms))
+
+            ntid_is_used = '__omp_num_threads' in fsyms
+            tid_is_used = node.map.params[0] in fsyms
+            if tid_is_used or ntid_is_used:
+                function_stream.write('#include <omp.h>', cfg, state_id, node)
+            if tid_is_used:
+                result.write(f'auto {node.map.params[0]} = omp_get_thread_num();', cfg, state_id, node)
+            if ntid_is_used:
+                result.write(f'auto __omp_num_threads = omp_get_num_threads();', cfg, state_id, node)
+        else:
+            # Emit nested loops
+            for i, r in enumerate(node.map.range):
+                var = map_params[i]
+                begin, end, skip = r
+
+                if node.map.unroll:
+                    result.write("#pragma unroll", cfg, state_id, node)
+
+                result.write(
+                    "for (auto %s = %s; %s < %s; %s += %s) {\n" %
+                    (var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
+                    cfg,
+                    state_id,
+                    node,
+                )
+
+        callsite_stream.write(inner_stream.getvalue())
+
+        # Emit internal transient array allocation
+        self._frame.allocate_arrays_in_scope(sdfg, cfg, node, function_stream, result)
+
+    
+    def _generate_MapExit(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                          node: nodes.MapExit, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        callsite_stream.write(f"// Mapping MapExit {node.label} \n")
+        self.cpu_codegen._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        
+    def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                          node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        callsite_stream.write(f"// Generating node {node.label} using {inspect.currentframe().f_code.co_name} \n")
+        self.cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+
+    def _generate_AccessNode(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
+                             node: nodes.Node, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        # print metadata
+        callsite_stream.write(f"// Generating node {node.label} using {inspect.currentframe().f_code.co_name} \n")
+        #print current function name
+        
+        state_dfg: SDFGState = cfg.nodes()[state_id]
+
+
+        sdict = state_dfg.scope_dict()
+        for edge in state_dfg.in_edges(node):
+            predecessor, _, _, _, memlet = edge
+            if memlet.data is None:
+                continue  # If the edge has to be skipped
+
+            # Determines if this path ends here or has a definite source (array) node
+            memlet_path = state_dfg.memlet_path(edge)
+            if memlet_path[-1].dst == node:
+                src_node = memlet_path[0].src
+                # Only generate code in case this is the innermost scope
+                # (copies are generated at the inner scope, where both arrays exist)
+                if (scope_contains_scope(sdict, src_node, node) and sdict[src_node] != sdict[node]):
+                    self.dispatcher.dispatch_copy(
+                        src_node,
+                        node,
+                        edge,
+                        sdfg,
+                        cfg,
+                        dfg,
+                        state_id,
+                        function_stream,
+                        callsite_stream,
+                    )
+
+        # Process outgoing memlets (array-to-array write should be emitted
+        # from the first leading edge out of the array)
+        self.process_out_memlets(
+            sdfg,
+            cfg,
+            state_id,
+            node,
+            dfg,
+            self.dispatcher,
+            callsite_stream,
+            False,
+            function_stream,
+        )
+
 ############################################################################################################
 # #### Helpers
 
+    def process_out_memlets(self,
+                            sdfg: SDFG,
+                            cfg: ControlFlowRegion,
+                            state_id: int,
+                            node: nodes.Node,
+                            dfg: StateSubgraphView,
+                            dispatcher: TargetDispatcher,
+                            result: CodeIOStream,
+                            locals_defined: bool,
+                            function_stream: CodeIOStream,
+                            skip_wcr: bool = False,
+                            codegen: Optional[TargetCodeGenerator] = None):
+
+        codegen = codegen if codegen is not None else self
+        state: SDFGState = cfg.nodes()[state_id]
+        scope_dict = state.scope_dict()
+
+        for edge in dfg.out_edges(node):
+            
+            _, uconn, v, _, memlet = edge
+            if skip_wcr and memlet.wcr is not None:
+                continue
+            dst_edge = dfg.memlet_path(edge)[-1]
+            dst_node = dst_edge.dst
+
+            # Target is neither a data nor a tasklet node
+            if isinstance(node, nodes.AccessNode) and (not isinstance(dst_node, nodes.AccessNode)
+                                                       and not isinstance(dst_node, nodes.CodeNode)):
+                continue
+
+            # Skip array->code (will be handled as a tasklet input)
+            if isinstance(node, nodes.AccessNode) and isinstance(v, nodes.CodeNode):
+                continue
+
+            # code->code (e.g., tasklet to tasklet)
+            if isinstance(dst_node, nodes.CodeNode) and edge.src_conn:
+                shared_data_name = edge.data.data
+                if not shared_data_name:
+                    # Very unique name. TODO: Make more intuitive
+                    shared_data_name = '__dace_%d_%d_%d_%d_%s' % (cfg.cfg_id, state_id, dfg.node_id(node),
+                                                                  dfg.node_id(dst_node), edge.src_conn)
+
+                result.write(
+                    "%s = %s;" % (shared_data_name, edge.src_conn),
+                    cfg,
+                    state_id,
+                    [edge.src, edge.dst],
+                )
+                continue
+
+            # If the memlet is not pointing to a data node (e.g. tasklet), then
+            # the tasklet will take care of the copy
+            if not isinstance(dst_node, nodes.AccessNode):
+                continue
+            # If the memlet is pointing into an array in an inner scope, then
+            # the inner scope (i.e., the output array) must handle it
+            if scope_dict[node] != scope_dict[dst_node] and scope_contains_scope(scope_dict, node, dst_node):
+                continue
+
+            # Array to tasklet (path longer than 1, handled at tasklet entry)
+            if node == dst_node:
+                continue
+
+            # Tasklet -> array
+            if isinstance(node, nodes.CodeNode):
+                if not uconn:
+                    raise SyntaxError("Cannot copy memlet without a local connector: {} to {}".format(
+                        str(edge.src), str(edge.dst)))
+
+                conntype = node.out_connectors[uconn]
+                is_scalar = not isinstance(conntype, dtypes.pointer)
+                if isinstance(conntype, dtypes.pointer) and sdfg.arrays[memlet.data].dtype == conntype:
+                    is_scalar = True  # Pointer to pointer assignment
+                is_stream = isinstance(sdfg.arrays[memlet.data], data.Stream)
+                is_refset = isinstance(sdfg.arrays[memlet.data], data.Reference) and dst_edge.dst_conn == 'set'
+
+                if (is_scalar and not memlet.dynamic and not is_stream) or is_refset:
+                    out_local_name = "    __" + uconn
+                    in_local_name = uconn
+                    if not locals_defined:
+                        out_local_name = self.memlet_ctor(sdfg, memlet, node.out_connectors[uconn], True)
+                        in_memlets = [d for _, _, _, _, d in dfg.in_edges(node)]
+                        assert len(in_memlets) == 1
+                        in_local_name = self.memlet_ctor(sdfg, in_memlets[0], node.out_connectors[uconn], False)
+
+                    if memlet.wcr is not None:
+                        nc = not cpp.is_write_conflicted(dfg, edge, sdfg_schedule=self._toplevel_schedule)
+                        write_expr = codegen.write_and_resolve_expr(
+                            sdfg, memlet, nc, out_local_name, in_local_name, dtype=node.out_connectors[uconn]) + ";"
+                    else:
+                        if isinstance(node, nodes.NestedSDFG):
+                            # This case happens with nested SDFG outputs,
+                            # which we skip since the memlets are references
+                            continue
+                        desc = sdfg.arrays[memlet.data]
+                        ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                        is_global = desc.lifetime in (dtypes.AllocationLifetime.Global,
+                                                      dtypes.AllocationLifetime.Persistent,
+                                                      dtypes.AllocationLifetime.External)
+                        try:
+                            defined_type, _ = self.dispatcher.declared_arrays.get(ptrname, is_global=is_global)
+                        except KeyError:
+                            defined_type, _ = self.dispatcher.defined_vars.get(ptrname, is_global=is_global)
+
+                        if defined_type == DefinedType.Scalar:
+                            mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                            write_expr = f"{mname} = {in_local_name};"
+                        elif defined_type == DefinedType.Pointer and is_refset:
+                            mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                            write_expr = f"{mname} = {in_local_name};"
+                        elif (defined_type == DefinedType.ArrayInterface and not isinstance(desc, data.View)):
+                            # Special case: No need to write anything between
+                            # array interfaces going out
+                            try:
+                                deftype, _ = self.dispatcher.defined_vars.get(in_local_name)
+                            except KeyError:
+                                deftype = None
+                            if deftype == DefinedType.ArrayInterface:
+                                continue
+                            array_expr = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
+                            decouple_array_interfaces = Config.get_bool("compiler", "xilinx",
+                                                                        "decouple_array_interfaces")
+                            ptr_str = fpga.fpga_ptr(  # we are on fpga, since this is array interface
+                                memlet.data,
+                                desc,
+                                sdfg,
+                                memlet.subset,
+                                True,
+                                None,
+                                None,
+                                True,
+                                decouple_array_interfaces=decouple_array_interfaces)
+                            write_expr = f"*({ptr_str} + {array_expr}) = {in_local_name};"
+                        else:
+                            desc_dtype = desc.dtype
+                            expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
+                            write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
+
+                    # Write out
+                    result.write(write_expr, cfg, state_id, node)
+
+            # Dispatch array-to-array outgoing copies here
+            elif isinstance(node, nodes.AccessNode):
+                if dst_node != node and not isinstance(dst_node, nodes.Tasklet):
+                    dispatcher.dispatch_copy(
+                        node,
+                        dst_node,
+                        edge,
+                        sdfg,
+                        cfg,
+                        dfg,
+                        state_id,
+                        function_stream,
+                        result,
+                    )
+                    
     def generate_ipu_cpuside_state(self,
                                 sdfg: SDFG,
                                 cfg: ControlFlowRegion,
@@ -904,6 +1244,7 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
         """)
 
             ## Generate the global function here
+    
     def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
                           src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[mmlt.Memlet],
                           function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
@@ -949,13 +1290,14 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
         kernel_host_stream.write(f"""\
     DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{""")
         
+        # BODY OF THE FUNCTION
         # write the kernel_host_stream withe the commands I have copied
         kernel_host_stream.write(f"""\
                 std::cout << "  STEP 2.1: Create graph and compile codelets" << std::endl;
                 
                 // Step 1: Create graph and add codelets
                 __state.poplar_context->graph = poplar::Graph(__state.poplar_context->device->getTarget());
-                //__state.poplar_context->graph.addCodelets({{"src/codelets/SkeletonCodelets.cpp"}}, "-O3 -I codelets");
+                __state.poplar_context->graph.addCodelets({{"src/codelets/SkeletonCodelets.cpp"}}, "-O3 -I codelets");
                 popops::addCodelets(__state.poplar_context->graph);
             """)
         
@@ -1084,29 +1426,4 @@ DACE_EXPORTED auto defineDataStreams({sdfg_state_name} &__state)
     #     #######
     #     print("TargetCodeGenerator:", self)
     #     print("language", self.language)
-        # print("TargetDispatcher:", self._dispatcher.used_targets)
-
-    # def generate_scope(self,
-    #                    sdfg: SDFG,
-    #                    cfg: ControlFlowRegion,
-    #                    dfg_scope: ScopeSubgraphView,
-    #                    state_id: int,
-    #                    function_stream: CodeIOStream,
-    #                    callsite_stream: CodeIOStream) -> None:
-    #     # Get the first entry node of Map
-    #     entry_node = dfg_scope.source_nodes()[0]
-
-    #     # function_stream.write('extern int __dace_comm_size, __dace_comm_rank;', cfg, state_id, entry_node)
-    #     callsite_stream.write('{', cfg, state_id, entry_node)
-
-    #     # cpp.presynchronize_streams(sdfg, cfg, dfg_scope, state_id, entry_node, callsite_stream)   #TODO: add some other function of own.
-    #     # Should we ?
-    #     # self.generate_node(sdfg, cfg, dfg_scope, state_id, entry_node, function_stream, callsite_stream)
-    #     # generated nested subgraphs
-    #     self._dispatcher.dispatch_subgraph(sdfg,
-    #                                        cfg,
-    #                                        dfg_scope,
-    #                                        state_id,
-    #                                        function_stream,
-    #                                        callsite_stream,
-    #                                        skip_entry_node=True)
+        # print("TargetDispatcher:", self.dispatcher.used_targets)
