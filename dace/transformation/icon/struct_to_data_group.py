@@ -3,22 +3,29 @@
     transformation."""
 
 import copy
-from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.properties import make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.data import Structure, View
-from dace.sdfg.data_group import DataGroup
 import re
 
-def _extract_view_name(view_string: str, struct_name: str) -> str:
-    pattern = rf"^v_{re.escape(struct_name)}_(.+)$"
-    match = re.match(pattern, view_string)
-    if match:
-        return match.group(1)
-    return None
+def _count_initial_v_occurrences(s):
+    count = 0
+    while s.startswith("v_"):
+        count += 1
+        s = s[2:]
+
+    return count
+
+def _remove_trailing_number(s):
+    # Pattern to match '_<int>' at the end of the string
+    return re.sub(r'_\d+$', '', s)
+
+def _has_trailing_number(s):
+    # Check if the string ends with '_<int>'
+    return bool(re.search(r'_\d+$', s))
 
 @make_properties
 class StructToDataGroup(transformation.SingleStateTransformation):
@@ -95,6 +102,31 @@ class StructToDataGroup(transformation.SingleStateTransformation):
 
         return (struct_to_view_pattern, view_to_struct_pattern)
 
+    def _get_view_chain(self, state: SDFGState, sdfg: SDFG, first_view_access: nodes.AccessNode):
+        view_accesses = [first_view_access]
+        current_view_access = first_view_access
+        while True:
+            out_edges = state.out_edges(current_view_access)
+            assert len(out_edges) == 1
+            out_edge = out_edges[0]
+            u, uc, v, vc, memlet = out_edge
+            if isinstance(v, nodes.AccessNode) and isinstance(sdfg.arrays[v.data], View):
+                current_view_access = v
+                view_accesses.append(v)
+            else:
+                return view_accesses
+
+    def _process_edges(self, edge_list, name_hierarchy, take_last=False):
+        assert len(edge_list) == 1
+        edge = edge_list[0]
+        data = edge.data.data
+        tokenized_data = data.split('.')
+        assert len(tokenized_data) == 2 or len(tokenized_data) == 1
+        if not take_last:
+            name_hierarchy += tokenized_data
+        else:
+            name_hierarchy += [tokenized_data[-1]]
+
     def apply(self, state: SDFGState, sdfg: SDFG):
         struct_to_view, view_to_struct = self._get_pattern_type(state, sdfg)
         if not (struct_to_view or view_to_struct):
@@ -107,21 +139,46 @@ class StructToDataGroup(transformation.SingleStateTransformation):
         else: # view_to_struct
             view_access = self.src_access
             struct_access = self.dst_access
-        view_name = view_access.data
-        struct_name = struct_access.data
 
-        extracted_view_name = _extract_view_name(view_name, struct_name)
-        demangled_name = sdfg.get_demangled_data_group_member_name([struct_name, extracted_view_name])
+        view_chain = self._get_view_chain(state, sdfg, view_access)
+        assert len(view_chain) >= 1
+        name_hierarchy = []
+
+        if struct_to_view:
+            struct_to_view_edges = [e for e in state.out_edges(struct_access) if e.dst == view_chain[0]]
+            self._process_edges(edge_list=struct_to_view_edges, name_hierarchy=name_hierarchy)
+
+        for current_view_access in view_chain[:-1]:
+            view_to_next_edges = state.out_edges(current_view_access)
+            self._process_edges(edge_list=view_to_next_edges, name_hierarchy=name_hierarchy, take_last=True)
+
+        if view_to_struct:
+            view_to_struct_edges = [e for e in state.in_edges(struct_access) if e.src == view_chain[-1]]
+            self._process_edges(edge_list=view_to_struct_edges, name_hierarchy=name_hierarchy)
+
+
+        for i in range(len(name_hierarchy)):
+            if _has_trailing_number(name_hierarchy[i]):
+                print("WARNING: TRAILING NUMBER IN:", name_hierarchy[i])
+                name_hierarchy[i] = _remove_trailing_number(name_hierarchy[i])
+
+        demangled_name = sdfg.get_demangled_data_group_member_name(name_hierarchy)
 
         an = nodes.AccessNode(data=demangled_name)
 
-        src, dst = (struct_access, view_access) if struct_to_view else (view_access, struct_access)
-        edges = [e for e in state.out_edges(src) if e.dst == dst]
-        assert len(edges) == 1
+        if struct_to_view:
+            assert len(state.out_edges(view_chain[0])) == 1
+            src_edge = state.out_edges(view_chain[0])[0]
+            assert len(state.out_edges(view_chain[-1])) == 1
+            dst_edge = state.out_edges(view_chain[-1])[0]
+        else: # view_to_struct
+            assert len(state.in_edges(view_chain[0])) == 1
+            src_edge = state.in_edges(view_chain[0])[0]
+            assert len(state.out_edges(view_chain[-1])) == 1
+            dst_edge = state.out_edges(view_chain[-1])[0]
 
-        edge = edges[0]
-        u, uc, v, vc = edge.src, edge.src_conn, edge.dst, edge.dst_conn
-        mc = copy.deepcopy(edge.data)
+        dst_data = dst_edge.data
+        mc = copy.deepcopy(dst_data)
         mc.data = demangled_name
 
         # If Struct -> View -> Dst:
@@ -132,29 +189,18 @@ class StructToDataGroup(transformation.SingleStateTransformation):
         # Then Src (uc) -> (None) \ View \ (None) -> (vc) Struct
         # Becomes Src (uc) -> (None) NewData
         state.add_node(an)
+        # TODO: Fix memlet calculation in recursive data groups
         if struct_to_view:
-            dst_edges = state.out_edges(v)
-            assert len(dst_edges) == 1
-            dst_edge = dst_edges[0]
-            # TODO: Fix memlet calculation in recursive data groups
-            mc = copy.deepcopy(dst_edge.data)
-            mc.data = demangled_name
             state.add_edge(an, None, dst_edge.dst, dst_edge.dst_conn, mc)
         else: # view_to_struct
-            src_edges = state.in_edges(u)
-            assert len(src_edges) == 1
-            src_edge = src_edges[0]
-            # TODO: Fix memlet calculation in recursive data groups
-            mc = copy.deepcopy(src_edge.data)
-            mc.data = demangled_name
             state.add_edge(src_edge.src, src_edge.src_conn, an, None, mc)
 
         # Clean-up
-        state.remove_edge(edge)
-        state.remove_node(view_access)
-        state.remove_node(view_access)
+        for view_node in view_chain:
+            state.remove_node(view_node)
         if (len(state.in_edges(struct_access)) == 0) and (len(state.out_edges(struct_access)) == 0):
             state.remove_node(struct_access)
+
 
     def annotates_memlets():
         return False
