@@ -216,7 +216,7 @@ def test_access_to_nested_transient_dappy():
     KLON = 4
     NBLOCKS = 5
 
-    @dc.program
+    @dc.program(auto_optimize=False)
     def small_wip_dappy(inp: dc.float64[KLEV+1, KLON, NBLOCKS], out: dc.float64[KLEV, KLON, NBLOCKS]):
         for jn in dc.map[0:NBLOCKS]:
             tmp = np.zeros([KLEV+1, KLON])
