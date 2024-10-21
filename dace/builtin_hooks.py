@@ -182,7 +182,7 @@ def instrument(itype: 'InstrumentationType',
 
 @contextmanager
 def instrument_data(ditype: 'DataInstrumentationType',
-                    filter: Optional[Union[str, Callable[[Any], bool]]],
+                    filter: Optional[Union[str, Callable[[Any], bool]]] = None,
                     restore_from: Optional[Union[str, 'InstrumentedDataReport']] = None,
                     verbose: bool = False):
     """
@@ -218,7 +218,9 @@ def instrument_data(ditype: 'DataInstrumentationType',
 
     :param ditype: Data instrumentation type to use.
     :param filter: An optional string with ``*`` and ``?`` wildcards, or function that receives
-                   one parameter, determining whether to instrument the access node or not.
+                   one parameter, determining whether to instrument the access node or not. The absence of a filter
+                   function leads to the entire SDFG's initial state being saved or restored, while a filter string
+                   ``*`` instruments all data containers.
     :param restore_from: An optional parameter that specifies which instrumented data report to load
                          data from. It could be a path to a folder, an ``InstrumentedDataReport`` object,
                          or None to load the latest generated report.
@@ -227,18 +229,21 @@ def instrument_data(ditype: 'DataInstrumentationType',
     import ctypes
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.dtypes import DataInstrumentationType
-    from dace.hooks import on_call, on_compiled_sdfg_call
+    from dace.hooks import on_call, on_compiled_sdfg_init
     from dace.sdfg.nodes import AccessNode
 
     # Create filtering function based on input
-    filter_func = _make_filter_function(filter, with_attr=False)
+    filter_func = _make_filter_function(filter, with_attr=False) if filter is not None else None
 
     class DataInstrumenter:
         @contextmanager
         def __call__(self, sdfg: 'SDFG'):
-            for n, _ in sdfg.all_nodes_recursive():
-                if isinstance(n, AccessNode) and filter_func(n.data):
-                    n.instrument = ditype
+            if filter_func is not None:
+                for n, _ in sdfg.all_nodes_recursive():
+                    if isinstance(n, AccessNode) and filter_func(n.data):
+                        n.instrument = ditype
+            else:
+                sdfg.save_restore_initial_state = ditype
 
             dreports = sdfg.available_data_reports()
 
@@ -282,7 +287,7 @@ def instrument_data(ditype: 'DataInstrumentationType',
                 set_report(csdfg._libhandle, ctypes.c_char_p(os.path.abspath(folder).encode('utf-8')))
                 yield
 
-        with on_compiled_sdfg_call(context_manager=DataRestoreHook()):
+        with on_compiled_sdfg_init(context_manager=DataRestoreHook()):
             with on_call(context_manager=instrumenter):
                 yield instrumenter
     else:
