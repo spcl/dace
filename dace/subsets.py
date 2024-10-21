@@ -953,7 +953,10 @@ class Indices(Subset):
         return Indices([self.indices[i] + mult * off for i, off in enumerate(off)])
 
     def offset_new(self, other, negative, indices=None):
-        assert not indices
+        # Allow full set of `indices` even if we don't ever use it, because some callers pass it like that anyway.
+        assert indices is None or len(other) == len(indices), (f"The argument `indices` is not valid (it should not be "
+                                                               f"set in the first place): self={self}, other={other},"
+                                                               f" negative={negative}, indices={indices}")
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
                 other = Indices(other)
