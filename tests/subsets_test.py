@@ -17,28 +17,28 @@ class TestOffsetNew(unittest.TestCase):
         # No offset
         off = [0, 0]
         rExpect = r0
-        self.assertEqual(rExpect, r0.offset_by(off, False, [0, 1]))
+        self.assertEqual({0: rExpect.ranges[0], 1: rExpect.ranges[1]}, r0.offset_by(off, False, [0, 1]))
         self.assertEqual(rExpect, r0.offset_new(make_a_range_with_min_elements(off), False, [0, 1]))
-        self.assertEqual(rExpect, r0.offset_by(off, True, [0, 1]))
+        self.assertEqual({0: rExpect.ranges[0], 1: rExpect.ranges[1]}, r0.offset_by(off, True, [0, 1]))
         self.assertEqual(rExpect, r0.offset_new(make_a_range_with_min_elements(off), True, [0, 1]))
 
         # Positive offset
         off = [5, 4]
         negative = False
         rExpect = subsets.Range([(10, 10 + n - 1, 1), (9, 9 + m - 1, 1)])
-        self.assertEqual(rExpect, r0.offset_by(off, negative, [0, 1]))
+        self.assertEqual({0: rExpect.ranges[0], 1: rExpect.ranges[1]}, r0.offset_by(off, negative, [0, 1]))
         self.assertEqual(rExpect, r0.offset_new(make_a_range_with_min_elements(off), negative, [0, 1]))
         # Only partially
         rExpect = subsets.Range([(9, 9 + m - 1, 1)])
         partInds = [1]
-        self.assertEqual(rExpect, r0.offset_by(off, negative, partInds))
+        self.assertEqual({1: rExpect.ranges[0]}, r0.offset_by(off, negative, partInds))
         self.assertEqual(rExpect, r0.offset_new(make_a_range_with_min_elements(off), negative, partInds))
 
         # Negative offset
         off = [5, 4]
         negative = True
         rExpect = subsets.Range([(0, n - 1, 1), (1, 1 + m - 1, 1)])
-        self.assertEqual(rExpect, r0.offset_by(off, negative, [0, 1]))
+        self.assertEqual({0: rExpect.ranges[0], 1: rExpect.ranges[1]}, r0.offset_by(off, negative, [0, 1]))
         self.assertEqual(rExpect, r0.offset_new(make_a_range_with_min_elements(off), negative, [0, 1]))
 
     def test_range_offset_partial_indices(self):
@@ -48,12 +48,12 @@ class TestOffsetNew(unittest.TestCase):
 
         partInds = [0]
         rExpect = subsets.Range([(10, 10 + n - 1, 1)])
-        self.assertEqual(rExpect, r0.offset_by(off, False, partInds))
+        self.assertEqual({0: rExpect.ranges[0]}, r0.offset_by(off, False, partInds))
         self.assertEqual(rExpect, r0.offset_new(make_a_range_with_min_elements(off), False, partInds))
 
         partInds = [1]
         rExpect = subsets.Range([(9, 9 + m - 1, 1)])
-        self.assertEqual(rExpect, r0.offset_by(off, False, partInds))
+        self.assertEqual({1: rExpect.ranges[0]}, r0.offset_by(off, False, partInds))
         self.assertEqual(rExpect, r0.offset_new(make_a_range_with_min_elements(off), False, partInds))
 
     def test_range_offset_bad_input(self):

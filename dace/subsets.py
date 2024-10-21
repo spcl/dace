@@ -432,12 +432,14 @@ class Range(Subset):
         return (sum(1 if (re - rb + 1) != 1 else 0 for rb, re, _ in self.ranges) + sum(1 if ts != 1 else 0
                                                                                        for ts in self.tile_sizes))
 
-    def offset_by(self, off: Collection, negative: bool, indices: Collection):
+    def offset_by(self, off: Sequence, negative: bool, indices: Collection):
         assert all(i < len(self.ranges) for i in indices)
         assert all(i < len(off) for i in indices)
         mult = -1 if negative else 1
-        return Range([(self.ranges[i][0] + mult * off[i], self.ranges[i][1] + mult * off[i], self.ranges[i][2])
-                      for i in indices])
+        return {
+            i: (self.ranges[i][0] + mult * off[i], self.ranges[i][1] + mult * off[i], self.ranges[i][2])
+            for i in indices
+        }
 
     def offset_new(self, other, negative, indices=None):
         if not isinstance(other, Subset):
@@ -447,13 +449,14 @@ class Range(Subset):
                 other = Indices([other for _ in self.ranges])
         if indices is None:
             indices = set(range(len(self.ranges)))
-        return self.offset_by(other.min_element(), negative, indices)
+        new_ranges = self.offset_by(other.min_element(), negative, indices)
+        return Range([new_ranges[i] for i in sorted(indices)])
 
     def offset(self, other, negative, indices=None):
         if indices is None:
             indices = set(range(len(self.ranges)))
         new_ranges = self.offset_new(other, negative, indices).ranges
-        for i, r in zip(indices, new_ranges):
+        for i, r in zip(sorted(indices), new_ranges):
             self.ranges[i] = r
 
     def dims(self):
@@ -947,7 +950,7 @@ class Indices(Subset):
     def absolute_strides(self, global_shape):
         return [1] * len(self.indices)
 
-    def offset_by(self, off: Collection, negative: bool):
+    def offset_by(self, off: Sequence, negative: bool):
         assert len(off) <= len(self.indices)
         mult = -1 if negative else 1
         return Indices([self.indices[i] + mult * off for i, off in enumerate(off)])
