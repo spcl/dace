@@ -7,9 +7,9 @@ def copy_a_to_b():
     sdfg = dace.SDFG('copy_a_to_b')
     
     # Add arrays        
-    sdfg.add_array('A', [1], dace.float64)
-    sdfg.add_array('C', [1], dace.float64)
-    
+    sdfg.add_array('A', [1], dace.float64, storage=dace.StorageType.IPU_Memory)
+    sdfg.add_array('C', [1], dace.float64, storage=dace.StorageType.IPU_Memory)
+
     # Add state
     state = sdfg.add_state('compute_state')
     
