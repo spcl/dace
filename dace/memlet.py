@@ -230,7 +230,7 @@ class Memlet(object):
         primarily used for connecting nodes to scopes without transferring 
         data to them. 
         """
-        return (self.data is None and self.src_subset is None and self.dst_subset is None)
+        return (self.data is None and self.subset is None and self.other_subset is None)
 
     @property
     def num_accesses(self):
