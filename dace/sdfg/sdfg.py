@@ -1032,7 +1032,7 @@ class SDFG(ControlFlowRegion):
 
     def call_with_instrumented_data(self, dreport: 'InstrumentedDataReport', *args, **kwargs):
         """
-        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
+        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary.
         Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
 
         :param dreport: The instrumented data report to use upon calling.
@@ -2602,7 +2602,7 @@ class SDFG(ControlFlowRegion):
                                               print_report: Optional[bool] = None,
                                               order_by_transformation: bool = True,
                                               progress: Optional[bool] = None) -> int:
-        """ 
+        """
         This function applies a transformation or a set of (unique) transformations
         until throughout the entire SDFG once. Operates in-place.
 
@@ -2650,7 +2650,9 @@ class SDFG(ControlFlowRegion):
                                   permissive=False,
                                   sequential_innermaps=True,
                                   register_transients=True,
-                                  simplify=True):
+                                  simplify=True,
+                                  host_maps=[],
+                                  host_data=[],):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
 
@@ -2667,7 +2669,9 @@ class SDFG(ControlFlowRegion):
         self.apply_transformations(GPUTransformSDFG,
                                    options=dict(sequential_innermaps=sequential_innermaps,
                                                 register_trans=register_transients,
-                                                simplify=simplify),
+                                                simplify=simplify,
+                                                host_maps=host_maps,
+                                                host_data=host_data),
                                    validate=validate,
                                    validate_all=validate_all,
                                    permissive=permissive,
@@ -2718,7 +2722,7 @@ class SDFG(ControlFlowRegion):
 
     def generate_code(self):
         """ Generates code from this SDFG and returns it.
-        
+
             :return: A list of `CodeObject` objects containing the generated
                       code of different files and languages.
         """

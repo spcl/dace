@@ -161,7 +161,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         return True
 
     def apply(self, _, sdfg: sd.SDFG):
-
         #######################################################
         # Step 0: SDFG metadata
 
@@ -188,7 +187,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                                 break
                         else:
                             input_nodes.append((node.data, node.desc(sdfg)))
-                    if (state.in_degree(node) > 0 and node.data not in output_nodes):
+                    if (state.in_degree(node) > 0 and node.data not in output_nodes and node.data not in self.host_data):
                         output_nodes.append((node.data, node.desc(sdfg)))
 
             # Input nodes may also be nodes with WCR memlets and no identity
@@ -312,6 +311,11 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         #######################################################
         # Step 4: Change all top-level maps and library nodes to GPU schedule
+        def _output_or_input_is_marked_host(entry_node, host_data):
+            for node in [e.src for e in state.in_edges(entry_node)] + [e.dst for e in state.out_edges(entry_node)]:
+                if isinstance(node, nodes.AccessNode) and node.data in host_data:
+                    return True
+            return False
 
         gpu_nodes = set()
         for state in sdfg.nodes():
@@ -319,11 +323,11 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             for node in state.nodes():
                 if sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
-                        if node.guid not in self.host_maps:
+                        if node.guid not in self.host_maps and _output_or_input_is_marked_host(node, self.host_data):
                             node.schedule = dtypes.ScheduleType.GPU_Default
                             gpu_nodes.add((state, node))
                     elif isinstance(node, nodes.EntryNode):
-                        if node.guid not in self.host_maps:
+                        if node.guid not in self.host_maps and _output_or_input_is_marked_host(node, self.host_data):
                             node.schedule = dtypes.ScheduleType.GPU_Device
                             gpu_nodes.add((state, node))
                 elif self.sequential_innermaps:
