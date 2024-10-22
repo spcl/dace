@@ -21,6 +21,7 @@ def test_host_data():
     A, sdfg = create_assign_sdfg()
     sdfg.apply_gpu_transformations(host_data=['A'])
     sdfg.validate()
+    sdfg.save(f"s_gpu1.sdfg")
     assert sdfg.arrays[A.data].storage != dace.dtypes.StorageType.GPU_Global
 
 def test_host_map():
@@ -33,8 +34,28 @@ def test_host_map():
 
     sdfg.apply_gpu_transformations(host_maps=host_maps)
     sdfg.validate()
+    sdfg.save(f"s_gpu2.sdfg")
     assert sdfg.arrays[A.data].storage != dace.dtypes.StorageType.GPU_Global
+
+def test_no_host_map_or_data(pass_empty=False):
+    A, sdfg = create_assign_sdfg()
+    if pass_empty:
+        host_maps = []
+        host_data = []
+        sdfg.apply_gpu_transformations(host_maps=host_maps, host_data=host_data)
+    else:
+        sdfg.apply_gpu_transformations()
+    sdfg.validate()
+    sdfg.save(f"s_gpu3_{pass_empty}.sdfg")
+
+    assert sdfg.arrays[A.data].storage == dace.dtypes.StorageType.GPU_Global
+    for s in sdfg.states():
+        for n in s.nodes():
+            if isinstance(n, dace.nodes.MapEntry):
+                assert n.map.schedule == dace.ScheduleType.GPU_Device
 
 if __name__ == '__main__':
     test_host_data()
     test_host_map()
+    test_no_host_map_or_data(True)
+    test_no_host_map_or_data(False)
