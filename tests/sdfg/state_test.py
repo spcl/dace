@@ -1,6 +1,6 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+from copy import deepcopy
 import dace
-from dace.transformation.helpers import find_sdfg_control_flow
 
 
 def test_read_write_set():
@@ -54,8 +54,8 @@ def test_deepcopy_state():
             arr[i] *= 2
 
     sdfg = double_loop.to_sdfg()
-    find_sdfg_control_flow(sdfg)
-    sdfg.validate()
+    copied_sdfg = deepcopy(sdfg)
+    copied_sdfg.validate()
 
 
 def test_add_mapped_tasklet():

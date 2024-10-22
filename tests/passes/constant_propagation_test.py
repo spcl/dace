@@ -20,6 +20,8 @@ def test_simple_constants():
             A[:] = cval + 4
 
     sdfg = program.to_sdfg()
+    ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    ConstantPropagation().apply_pass(sdfg, {})
 
     assert len(sdfg.symbols) == 0
     for e in sdfg.edges():

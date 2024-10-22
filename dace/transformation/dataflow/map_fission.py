@@ -5,15 +5,17 @@ from copy import deepcopy as dcpy
 from collections import defaultdict
 from dace import sdfg as sd, memlet as mm, subsets, data as dt
 from dace.codegen import control_flow as cf
+from dace.properties import CodeBlock
 from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
 
-@transformation.single_level_sdfg_only
+@transformation.experimental_cfg_block_compatible
 class MapFission(transformation.SingleStateTransformation):
     """ Implements the MapFission transformation.
         Map fission refers to subsuming a map scope into its internal subgraph,
@@ -123,12 +125,15 @@ class MapFission(transformation.SingleStateTransformation):
 
             # Get NestedSDFG control flow components
             nsdfg_node.sdfg.reset_cfg_list()
-            cf_comp = helpers.find_sdfg_control_flow(nsdfg_node.sdfg)
-            if len(cf_comp) == 1:
-                child = list(cf_comp.values())[0][1]
-                conditions = []
-                if isinstance(child, (cf.ForScope, cf.WhileScope, cf.IfScope)):
-                    conditions.append(child.condition if isinstance(child, (cf.ForScope, cf.IfScope)) else child.test)
+            if len(nsdfg_node.sdfg.nodes()) == 1:
+                child = nsdfg_node.sdfg.nodes()[0]
+                conditions: List[CodeBlock] = []
+                if isinstance(child, LoopRegion):
+                    conditions.append(child.loop_condition)
+                elif isinstance(child, ConditionalBlock):
+                    for c, _ in child.branches:
+                        if c is not None:
+                            conditions.append(c)
                 for cond in conditions:
                     if any(p in cond.get_free_symbols() for p in map_node.map.params):
                         return False
@@ -138,7 +143,7 @@ class MapFission(transformation.SingleStateTransformation):
                                 return False
                     if any(p in cond.get_free_symbols() for p in map_node.map.params):
                         return False
-            helpers.nest_sdfg_control_flow(nsdfg_node.sdfg, cf_comp)
+            helpers.nest_sdfg_control_flow(nsdfg_node.sdfg)
 
             subgraphs = list(nsdfg_node.sdfg.nodes())
 

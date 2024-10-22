@@ -5,7 +5,9 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 import numpy as np
 
-from dace.sdfg.utils import inline_control_flow_regions
+from dace.sdfg.sdfg import InterstateEdge
+from dace.sdfg.state import LoopRegion
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
 def test_for_in_map_in_for():
@@ -29,14 +31,14 @@ def test_for_in_map_in_for():
 
     assert len(stree.children) == 1  # for
     fornode = stree.children[0]
-    assert isinstance(fornode, tn.ForScope)
+    assert isinstance(fornode, tn.GeneralLoopScope)
     assert len(fornode.children) == 1  # map
     mapnode = fornode.children[0]
     assert isinstance(mapnode, tn.MapScope)
     assert len(mapnode.children) == 2  # copy, for
     copynode, fornode = mapnode.children
     assert isinstance(copynode, tn.CopyNode)
-    assert isinstance(fornode, tn.ForScope)
+    assert isinstance(fornode, tn.GeneralLoopScope)
     assert len(fornode.children) == 1  # tasklet
     tasklet = fornode.children[0]
     assert isinstance(tasklet, tn.TaskletNode)
@@ -82,7 +84,7 @@ def test_nesting():
     assert len(stree.children) == 4
     offsets = ['', '5', '10', '15']
     for fornode, offset in zip(stree.children, offsets):
-        assert isinstance(fornode, tn.ForScope)
+        assert isinstance(fornode, tn.GeneralLoopScope)
         assert len(fornode.children) == 1  # map
         mapnode = fornode.children[0]
         assert isinstance(mapnode, tn.MapScope)
@@ -130,7 +132,7 @@ def test_nesting_nview():
 
     sdfg = main.to_sdfg()
     stree = as_schedule_tree(sdfg)
-    assert isinstance(stree.children[0], tn.NView)
+    assert any(isinstance(v, tn.NView) for v in stree.children)
 
 
 def test_irreducible_sub_sdfg():

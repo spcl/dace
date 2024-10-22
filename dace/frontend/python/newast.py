@@ -2561,7 +2561,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add conditional region
         cond_block = ConditionalBlock(f'if_{node.lineno}')
-        self.cfg_target.add_node(cond_block)
+        self.cfg_target.add_node(cond_block, ensure_unique_name=True)
         self._on_block_added(cond_block)
 
         if_body = ControlFlowRegion(cond_block.label + '_body', sdfg=self.sdfg)

@@ -21,7 +21,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -1047,20 +1047,19 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)
 
 
-def _get_dominator_and_postdominator(cfg: ControlFlowRegion, accesses: List[Tuple[SDFGState, nodes.AccessNode]]):
+def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState, nodes.AccessNode]]):
     """
     Gets the closest common dominator and post-dominator for a list of states.
     Used for determining allocation of data used in branched states.
     """
-    # Get immediate dominators
-    idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
-    alldoms = cfg_analysis.all_dominators(cfg, idom)
+    alldoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = collections.defaultdict(lambda: set())
+    allpostdoms: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = collections.defaultdict(lambda: set())
+    idom: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]] = {}
+    ipostdom: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]] = {}
+    utils.get_control_flow_block_dominators(sdfg, idom, alldoms, ipostdom, allpostdoms)
 
     states = [a for a, _ in accesses]
     data_name = accesses[0][1].data
-
-    # Get immediate post-dominators
-    ipostdom, allpostdoms = utils.postdominators(cfg, return_alldoms=True)
 
     # All dominators and postdominators include the states themselves
     for state in states:
