@@ -2651,8 +2651,8 @@ class SDFG(ControlFlowRegion):
                                   sequential_innermaps=True,
                                   register_transients=True,
                                   simplify=True,
-                                  host_maps=[],
-                                  host_data=[],):
+                                  host_maps=None,
+                                  host_data=None,):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
 

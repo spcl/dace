@@ -129,10 +129,10 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                                default='')
 
     host_maps = ListProperty(desc='List of map GUIDs, the passed maps are not offloaded to the GPU',
-                             element_type=str)
+                             element_type=str, default=None, allow_none=True)
 
     host_data = ListProperty(desc='List of data names, the passed data are not offloaded to the GPU',
-                             element_type=str)
+                             element_type=str, default=None, allow_none=True)
 
     @staticmethod
     def annotates_memlets():
@@ -161,7 +161,10 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         return True
 
     def _output_or_input_is_marked_host(self, state, entry_node):
-        marked_accesses = [e.data.data for e in state.in_edges(entry_node) + state.out_edges(state.exit_node(entry_node)) if e.data.data is not None and e.data.data in self.host_data]
+        if (self.host_data is None or self.host_data == []) and (self.host_maps is None or self.host_maps == []):
+            return False
+        marked_accesses = [e.data.data for e in state.in_edges(entry_node) + state.out_edges(state.exit_node(entry_node))
+                           if e.data.data is not None and e.data.data in self.host_data]
         return len(marked_accesses) > 0
 
 
@@ -173,6 +176,10 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         input_nodes = []
         output_nodes = []
         global_code_nodes: Dict[sd.SDFGState, nodes.Tasklet] = defaultdict(list)
+        if self.host_maps is None:
+            self.host_maps = []
+        if self.host_data is None:
+            self.host_data = []
 
         # Propagate memlets to ensure that we can find the true array subsets that are written.
         propagate_memlets_sdfg(sdfg)
@@ -184,7 +191,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     accesses = {e.data.data for e in state.in_edges(node) + state.out_edges(state.exit_node(node))
                                 if e.data.data is not None and node.guid in self.host_maps}
                     self.host_data.extend(accesses)
-        print(self.host_data, self.host_maps)
 
         for state in sdfg.nodes():
             sdict = state.scope_dict()
@@ -336,8 +342,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             node.schedule = dtypes.ScheduleType.GPU_Default
                             gpu_nodes.add((state, node))
                     elif isinstance(node, nodes.EntryNode):
-                        print(node.guid not in self.host_maps)
-                        print(not self._output_or_input_is_marked_host(state, node))
+                        #print (node.guid not in self.host_maps)
+                        #print(not self._output_or_input_is_marked_host(state, node))
                         if node.guid not in self.host_maps and not self._output_or_input_is_marked_host(state, node):
                             node.schedule = dtypes.ScheduleType.GPU_Device
                             gpu_nodes.add((state, node))
