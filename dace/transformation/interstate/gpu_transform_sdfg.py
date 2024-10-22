@@ -160,6 +160,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     return False
         return True
 
+    def _output_or_input_is_marked_host(self, state, entry_node):
+        for node in [e.src for e in state.in_edges(entry_node)] + [e.dst for e in state.out_edges(entry_node)]:
+            if isinstance(node, nodes.AccessNode) and node.data in self.host_data:
+                return True
+        return False
+
+
     def apply(self, _, sdfg: sd.SDFG):
         #######################################################
         # Step 0: SDFG metadata
@@ -171,6 +178,14 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         # Propagate memlets to ensure that we can find the true array subsets that are written.
         propagate_memlets_sdfg(sdfg)
+
+        # Input and ouputs of all host_maps need to be marked as host_data
+        for state in sdfg.nodes():
+            for node in state.nodes():
+                if isinstance(node, nodes.EntryNode) and node.guid in self.host_maps:
+                    accesses = set([e.data.data for e in state.in_edges(node) if e.data.data is not None]
+                                   + [e.data.data for e in state.out_edges(state.exit_node(node)) if e.data.data is not None])
+                    self.host_data.extend(accesses)
 
         for state in sdfg.nodes():
             sdict = state.scope_dict()
@@ -311,11 +326,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         #######################################################
         # Step 4: Change all top-level maps and library nodes to GPU schedule
-        def _output_or_input_is_marked_host(entry_node, host_data):
-            for node in [e.src for e in state.in_edges(entry_node)] + [e.dst for e in state.out_edges(entry_node)]:
-                if isinstance(node, nodes.AccessNode) and node.data in host_data:
-                    return True
-            return False
 
         gpu_nodes = set()
         for state in sdfg.nodes():
@@ -323,11 +333,11 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             for node in state.nodes():
                 if sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
-                        if node.guid not in self.host_maps and _output_or_input_is_marked_host(node, self.host_data):
+                        if node.guid not in self.host_maps and self._output_or_input_is_marked_host(state, node):
                             node.schedule = dtypes.ScheduleType.GPU_Default
                             gpu_nodes.add((state, node))
                     elif isinstance(node, nodes.EntryNode):
-                        if node.guid not in self.host_maps and _output_or_input_is_marked_host(node, self.host_data):
+                        if node.guid not in self.host_maps and self._output_or_input_is_marked_host(state, node):
                             node.schedule = dtypes.ScheduleType.GPU_Device
                             gpu_nodes.add((state, node))
                 elif self.sequential_innermaps:

@@ -1,6 +1,6 @@
 import dace
 
-def test_host_map():
+def create_assign_sdfg():
     sdfg = dace.SDFG('single_iteration_map')
     state = sdfg.add_state()
     array_size = 1
@@ -15,10 +15,26 @@ def test_host_map():
     state.add_edge(map_exit, 'OUT__a', A, None, dace.Memlet(f'A[0]'))
     sdfg.validate()
 
+    return A, sdfg
+
+def test_host_data():
+    A, sdfg = create_assign_sdfg()
     sdfg.apply_gpu_transformations(host_data=['A'])
     sdfg.validate()
+    assert sdfg.arrays[A.data].storage != dace.dtypes.StorageType.GPU_Global
 
+def test_host_map():
+    A, sdfg = create_assign_sdfg()
+    host_maps = []
+    for s in sdfg.states():
+        for n in s.nodes():
+            if isinstance(n, dace.nodes.EntryNode):
+                host_maps.append(n.guid)
+
+    sdfg.apply_gpu_transformations(host_maps=host_maps)
+    sdfg.validate()
     assert sdfg.arrays[A.data].storage != dace.dtypes.StorageType.GPU_Global
 
 if __name__ == '__main__':
+    test_host_data()
     test_host_map()
