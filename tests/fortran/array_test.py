@@ -1,22 +1,12 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-from fparser.common.readfortran import FortranStringReader
-from fparser.common.readfortran import FortranFileReader
-from fparser.two.parser import ParserFactory
-import sys, os
 import numpy as np
-import pytest
 
-from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
+from dace import dtypes, symbolic
 from dace.frontend.fortran import fortran_parser
-from fparser.two.symbol_table import SymbolTable
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import AccessNode
 
-import dace.frontend.fortran.ast_components as ast_components
-import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_utils as ast_utils
-import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 from dace.sdfg.state import LoopRegion
 
 

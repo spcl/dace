@@ -14,7 +14,9 @@ from dace.sdfg.replace import replace_datadesc_names, replace_properties_dict
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties
 from dace import data
-from dace.sdfg.state import LoopRegion, StateSubgraphView
+from dace.sdfg.state import LoopRegion, ReturnBlock, StateSubgraphView
+from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
 @make_properties
@@ -134,6 +136,22 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
     def apply(self, outer_state: SDFGState, sdfg: SDFG):
         nsdfg_node = self.nested_sdfg
         nsdfg: SDFG = nsdfg_node.sdfg
+
+        # If the nested SDFG contains returns, ensure they are inlined first.
+        has_return = False
+        for blk in nsdfg.all_control_flow_blocks():
+            if isinstance(blk, ReturnBlock):
+                has_return = True
+        if has_return:
+            inline_pass = InlineControlFlowRegions()
+            inline_pass.no_inline_conditional = False
+            inline_pass.no_inline_named_regions = False
+            inline_pass.no_inline_function_call_regions = False
+            inline_pass.no_inline_loops = False
+            inline_pass.apply_pass(nsdfg, {})
+            # After inlining, try to lift out control flow again, essentially preserving all control flow that can be
+            # preserved while removing the return blocks.
+            ControlFlowRaising().apply_pass(nsdfg, {})
 
         if nsdfg_node.schedule != dtypes.ScheduleType.Default:
             infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
