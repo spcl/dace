@@ -761,13 +761,15 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         read_set = collections.defaultdict(list)
         write_set = collections.defaultdict(list)
 
+        # NOTE: In a previous version a _single_ read (i.e. leaving Memlet) that was
+        #   fully covered by a single write (i.e. an incoming Memlet) was removed from
+        #   the read set and only the write survived. However, this was never fully
+        #   implemented nor correctly implemented and caused problems.
+        #   So this filtering was removed.
+
         for subgraph in utils.concurrent_subgraphs(self):
             subgraph_read_set = collections.defaultdict(list)  # read and write set of this subgraph.
             subgraph_write_set = collections.defaultdict(list)
-            # Traverse in topological order, so data that is written before it
-            # is read is not counted in the read set
-            # NOTE: Each AccessNode is processed individually. Thus, if an array appears multiple
-            #   times in a path, the individual results are combined, without further processing.
             for n in utils.dfs_topological_sort(subgraph, sources=subgraph.source_nodes()):
                 if not isinstance(n, nd.AccessNode):
                     # Read and writes can only be done through access nodes,
@@ -804,18 +806,6 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                         if out_edge.data.src_subset is None
                         else out_edge.data.src_subset
                     )
-
-                # If a memlet reads a particular region of data from the access node and there
-                #  exists a memlet at the same access node that writes to the same region, then
-                #  this read is ignored, and not included in the final read set, but only
-                #  accounted fro in the write set. See also note below.
-                # TODO: Handle the case when multiple disjoint writes would be needed to cover the
-                #   read. E.g. edges write `0:10` and `10:20` but the read happens at `5:15`.
-                for out_edge in list(out_edges):
-                    for in_edge in in_edges:
-                        if in_subsets[in_edge].covers(out_subsets[out_edge]):
-                            out_edges.remove(out_edge)
-                            break
 
                 # Update the read and write sets of the subgraph.
                 if in_edges:
