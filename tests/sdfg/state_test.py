@@ -44,7 +44,9 @@ def test_read_write_set_y_formation():
     state.add_memlet_path(rw_b, task2, dst_conn='B', memlet=dace.Memlet(data='B', subset='0'))
     state.add_memlet_path(task2, write_c, src_conn='C', memlet=dace.Memlet(data='C', subset='0'))
 
-    assert 'B' not in state.read_and_write_sets()[0]
+    read_set, write_set = state.read_and_write_sets()
+    assert {'B', 'A'} == read_set
+    assert {'C', 'B'} == write_set
 
 
 def test_deepcopy_state():
