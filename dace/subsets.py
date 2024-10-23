@@ -1406,9 +1406,10 @@ class SubrangeMapper:
             if src_j is None:
                 return None
 
-            if Range(r.ranges[src_i: src_j]).volume_exact() == 1:
-                # If we are selecting just a single point in this segment, we can just pick the mapping of that point.
-                src_segment, dst_segment = Range(self.src.ranges[src_i: src_j]), Range(self.dst.ranges[dst_i: dst_j])
+            # If we are selecting just a single point in this segment, we can just pick the mapping of that point.
+            src_segment, dst_segment, r_segment = Range(self.src.ranges[src_i: src_j]), Range(
+                self.dst.ranges[dst_i: dst_j]), Range(r.ranges[src_i: src_j])
+            if r_segment.volume_exact() == 1:
                 # Compute the local 1D coordinate of the point on `src`.
                 loc = 0
                 for (idx, _, _), (ridx, _, _), s in zip(reversed(src_segment.ranges),
