@@ -177,12 +177,12 @@ def _make_rna_read_and_write_set_sdfg(diff_in_out: bool) -> dace.SDFG:
         sdfg.add_array("T1", dtype=dace.float64, shape=(2,), transient=False)
 
         A = state.add_access("A")
-        T1_input = state.add_access("T1")
+        T1_output = state.add_access("T1")
         if diff_in_out:
             sdfg.add_array("T2", dtype=dace.float64, shape=(2,), transient=False)
-            T1_output = state.add_access("T2")
+            T1_input = state.add_access("T2")
         else:
-            T1_output = state.add_access("T1")
+            T1_input = state.add_access("T1")
 
         tsklt = state.add_tasklet(
             "comp",
@@ -195,7 +195,7 @@ def _make_rna_read_and_write_set_sdfg(diff_in_out: bool) -> dace.SDFG:
         # An alternative would be to write to a different location here.
         #  Then, the data would be added to the access node.
         state.add_edge(A, None, T1_input, None, dace.Memlet("A[0] -> [0]"))
-        state.add_edge(T1_input, None, tsklt, "__in2", dace.Memlet("T1[0]"))
+        state.add_edge(T1_input, None, tsklt, "__in2", dace.Memlet(T1_input.data + "[0]"))
         state.add_edge(tsklt, "__out", T1_output, None, dace.Memlet(T1_output.data + "[1]"))
         return sdfg
 
@@ -253,6 +253,16 @@ def test_rna_read_and_write_sets_different_storage():
         validate_all=True,
     )
     assert nb_applied > 0
+
+    args = {
+        "A": np.array(np.random.rand(2), dtype=np.float64, copy=True),
+        "T2": np.array(np.random.rand(2), dtype=np.float64, copy=True),
+        "T1": np.zeros(2, dtype=np.float64),
+    }
+    ref = args["A"][0] + args["A"][1]
+    sdfg(**args)
+    res = args["T1"][1]
+    assert np.allclose(res, ref), f"Expected '{ref}' but got '{res}'."
 
 
 if __name__ == '__main__':
