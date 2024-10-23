@@ -159,7 +159,7 @@ class TargetDispatcher(object):
     _state_dispatchers: List[Tuple[Callable, target.TargetCodeGenerator]]
     _generic_state_dispatcher: Optional[target.TargetCodeGenerator]
 
-    _generic_reallocate_dispatcher: Dict[dtypes.StorageType, target.TargetCodeGenerator]
+    _generic_reallocate_dispatchers: Dict[dtypes.StorageType, target.TargetCodeGenerator]
 
     _declared_arrays: DefinedMemlets
     _defined_vars: DefinedMemlets
@@ -362,9 +362,8 @@ class TargetDispatcher(object):
                                       predicate: Optional[Callable] = None) -> None:
 
         if not isinstance(node_storage, dtypes.StorageType): raise TypeError(node_storage, dtypes.StorageType, isinstance(node_storage, dtypes.StorageType))
-
-        dispatcher = (node_storage)
-        self._generic_copy_dispatchers[dispatcher] = func
+        dispatcher = node_storage
+        self._generic_reallocate_dispatchers[dispatcher] = func
         return
 
     def get_state_dispatcher(self, sdfg: SDFG, state: SDFGState) -> target.TargetCodeGenerator:
@@ -635,10 +634,11 @@ class TargetDispatcher(object):
                       output_stream: CodeIOStream) -> None:
         state = cfg.state(state_id)
         target = self.get_reallocate_dispatcher(node, edge, sdfg, state)
+        assert target is not None
         if target is None:
             return
 
-        # Dispatch copy
+        # Dispatch reallocate
         self._used_targets.add(target)
         target.reallocate(sdfg, cfg, dfg, state_id, node, edge, function_stream, output_stream)
 

@@ -122,7 +122,7 @@ class CPUCodeGen(TargetCodeGenerator):
         for src_storage, dst_storage in itertools.product(cpu_storage, cpu_storage):
             dispatcher.register_copy_dispatcher(src_storage, dst_storage, None, self)
 
-        dispatcher.register_reallocate_dispatcher(dtypes.StorageType.CPU_Heap, None, self)
+        dispatcher.register_reallocate_dispatcher(dtypes.StorageType.CPU_Heap, self)
 
     @staticmethod
     def cmake_options():
@@ -666,6 +666,24 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream,
         )
 
+    def reallocate(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        dfg: StateSubgraphView,
+        state_id: int,
+        node: Union[nodes.Tasklet, nodes.AccessNode],
+        edge: Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], mmlt.Memlet],
+        function_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
+    ):
+        callsite_stream.write(
+            f"// Reallocate Called"
+        )
+        dtype = sdfg.arrays[node.data].dtype
+        callsite_stream.write(
+            f"{node.data} = realloc({node.data}, {edge.data.data} * sizeof({dtype}));"
+        )
 
     def _emit_copy(
         self,
@@ -1122,7 +1140,13 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
-                if dst_node != node and not isinstance(dst_node, nodes.Tasklet):
+                if dst_node != node and not isinstance(dst_node, nodes.Tasklet) :
+                    # If it is a size change, reallocate will be called
+                    if edge.dst_conn.endswith("_size"):
+                        result.write("// No Copy as AN -> AN write is to ")
+                        continue
+
+                    result.write("// COPY2")
                     dispatcher.dispatch_copy(
                         node,
                         dst_node,
@@ -1435,6 +1459,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     self._dispatcher.defined_vars.add(edge.dst_conn, defined_type, f"const {ctype}")
 
                 else:
+                    inner_stream.write("// COPY3")
                     self._dispatcher.dispatch_copy(
                         src_node,
                         node,
@@ -2198,6 +2223,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     # Only generate code in case this is the innermost scope
                     # (copies are generated at the inner scope, where both arrays exist)
                     if (scope_contains_scope(sdict, src_node, node) and sdict[src_node] != sdict[node]):
+                        callsite_stream.write("// COPY1")
                         self._dispatcher.dispatch_copy(
                             src_node,
                             node,
