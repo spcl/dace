@@ -78,7 +78,7 @@ class StartStateElimination(transformation.MultiStateTransformation):
         state = self.start_state
 
         # The transformation applies only to nested SDFGs
-        if not graph.parent:
+        if not isinstance(graph, SDFG) or not graph.parent:
             return False
 
         # Only empty states can be eliminated

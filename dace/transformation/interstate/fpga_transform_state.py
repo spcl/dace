@@ -27,7 +27,7 @@ def fpga_update(sdfg: SDFG, state: SDFGState, depth: int):
         if (hasattr(node, "schedule") and node.schedule == dace.dtypes.ScheduleType.Default):
             node.schedule = dace.dtypes.ScheduleType.FPGA_Device
         if isinstance(node, nodes.NestedSDFG):
-            for s in node.sdfg.nodes():
+            for s in node.sdfg.states():
                 fpga_update(node.sdfg, s, depth + 1)
 
 

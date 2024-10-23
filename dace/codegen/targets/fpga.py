@@ -1105,7 +1105,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             self._dispatcher.dispatch_subgraph(sdfg,
                                                cfg,
                                                sg,
-                                               sdfg.node_id(state),
+                                               cfg.node_id(state),
                                                function_stream,
                                                callsite_stream,
                                                skip_entry_node=False)
@@ -1974,7 +1974,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     return False
                 to_search += scope_dict[x]
             elif isinstance(x, dace.sdfg.nodes.NestedSDFG):
-                for state in x.sdfg:
+                for state in x.sdfg.states():
                     if not self._is_innermost(state.nodes(), state.scope_children(), x.sdfg):
                         return False
         return True
