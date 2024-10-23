@@ -1507,9 +1507,14 @@ def _tswds_state(
 
 def _tswds_cf_region(
         sdfg: SDFG,
-        region: ControlFlowRegion,
+        region: AbstractControlFlowRegion,
         symbols: Dict[str, dtypes.typeclass],
         recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+    if isinstance(region, ConditionalBlock):
+        for _, b in region.branches:
+            yield from _tswds_cf_region(sdfg, b, symbols, recursive)
+        return
+
     # Add symbols from inter-state edges along the state machine
     start_region = region.start_block
     visited = set()
@@ -1522,7 +1527,7 @@ def _tswds_cf_region(
             visited.add(edge.src)
             if isinstance(edge.src, SDFGState):
                 yield from _tswds_state(sdfg, edge.src, {}, recursive)
-            elif isinstance(edge.src, ControlFlowRegion):
+            elif isinstance(edge.src, AbstractControlFlowRegion):
                 yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
 
         # Add edge symbols into defined symbols
@@ -1534,14 +1539,14 @@ def _tswds_cf_region(
             visited.add(edge.dst)
             if isinstance(edge.dst, SDFGState):
                 yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
-            elif isinstance(edge.dst, ControlFlowRegion):
+            elif isinstance(edge.dst, AbstractControlFlowRegion):
                 yield from _tswds_cf_region(sdfg, edge.dst, symbols, recursive)
 
     # If there is only one state, the DFS will miss it
     if start_region not in visited:
         if isinstance(start_region, SDFGState):
             yield from _tswds_state(sdfg, start_region, symbols, recursive)
-        elif isinstance(start_region, ControlFlowRegion):
+        elif isinstance(start_region, AbstractControlFlowRegion):
             yield from _tswds_cf_region(sdfg, start_region, symbols, recursive)
 
 

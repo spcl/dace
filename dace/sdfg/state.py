@@ -726,8 +726,12 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     defined_syms[str(sym)] = sym.dtype
 
         # Add inter-state symbols
-        for edge in sdfg.dfs_edges(sdfg.start_state):
+        if isinstance(sdfg.start_block, LoopRegion):
+            update_if_not_none(defined_syms, sdfg.start_block.new_symbols(defined_syms))
+        for edge in sdfg.all_interstate_edges():
             update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
+            if isinstance(edge.dst, LoopRegion):
+                update_if_not_none(defined_syms, edge.dst.new_symbols(defined_syms))
 
         # Add scope symbols all the way to the subgraph
         sdict = state.scope_dict()
@@ -3207,6 +3211,28 @@ class LoopRegion(ControlFlowRegion):
         free_syms |= cond_free_syms
 
         return free_syms, defined_syms, used_before_assignment
+
+    def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
+        """
+        Returns a mapping between the symbol defined by this loop and its type, if it exists.
+        """
+        # Avoid cyclic import
+        from dace.codegen.tools.type_inference import infer_expr_type
+        from dace.transformation.passes.analysis import loop_analysis
+
+        if self.init_statement and self.loop_variable:
+            alltypes = copy.copy(symbols)
+            alltypes.update({k: v.dtype for k, v in self.sdfg.arrays.items()})
+            l_end = loop_analysis.get_loop_end(self)
+            l_start = loop_analysis.get_init_assignment(self)
+            l_step = loop_analysis.get_loop_stride(self)
+            inferred_type = dtypes.result_type_of(infer_expr_type(l_start, alltypes),
+                                                  infer_expr_type(l_step, alltypes),
+                                                  infer_expr_type(l_end, alltypes))
+            init_rhs = loop_analysis.get_init_assignment(self)
+            if self.loop_variable not in symbolic.free_symbols_and_functions(init_rhs):
+                return {self.loop_variable: inferred_type}
+        return {}
 
     def replace_dict(self,
                      repl: Dict[str, str],

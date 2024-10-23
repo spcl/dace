@@ -4,7 +4,9 @@
 from dace import data, memlet, dtypes, sdfg as sd, subsets as sbs, propagate_memlets_sdfg
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import SDFGState
+from dace.sdfg.replace import replace_in_codeblock
+from dace.sdfg.sdfg import memlets_in_ast
+from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import transformation, helpers as xfh
 from dace.properties import Property, make_properties
 from collections import defaultdict
@@ -252,11 +254,23 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 if not found_full_write:
                     input_nodes.append((onodename, onode))
 
+        check_memlets: List[memlet.Memlet] = []
         for edge in sdfg.all_interstate_edges():
-            memlets = edge.data.get_read_memlets(sdfg.arrays)
-            for mem in memlets:
-                if sdfg.arrays[mem.data].storage == dtypes.StorageType.GPU_Global:
-                    data_already_on_gpu[mem.data] = None
+            check_memlets.extend(edge.data.get_read_memlets(sdfg.arrays))
+        for blk in sdfg.all_control_flow_blocks():
+            if isinstance(blk, ConditionalBlock):
+                for c, _ in blk.branches:
+                    if c is not None:
+                        check_memlets.extend(memlets_in_ast(c.code[0], sdfg.arrays))
+            elif isinstance(blk, LoopRegion):
+                check_memlets.extend(memlets_in_ast(blk.loop_condition.code[0], sdfg.arrays))
+                if blk.init_statement:
+                    check_memlets.extend(memlets_in_ast(blk.init_statement.code[0], sdfg.arrays))
+                if blk.update_statement:
+                    check_memlets.extend(memlets_in_ast(blk.update_statement.code[0], sdfg.arrays))
+        for mem in check_memlets:
+            if sdfg.arrays[mem.data].storage == dtypes.StorageType.GPU_Global:
+                data_already_on_gpu[mem.data] = None
 
         # Replace nodes
         for state in sdfg.states():
@@ -473,62 +487,97 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         cloned_data = set(cloned_arrays.keys()).union(gpu_scalars.keys()).union(data_already_on_gpu.keys())
 
-        for state in list(sdfg.states()):
+        def _create_copy_out(arrays_used: Set[str]) -> Dict[str, str]:
+            # Add copy-out nodes
+            name_mapping = {}
+            for nname in arrays_used:
+                # Handle GPU scalars
+                if nname in gpu_scalars:
+                    hostname = gpu_scalars[nname]
+                    if not hostname:
+                        desc = sdfg.arrays[nname].clone()
+                        desc.storage = dtypes.StorageType.CPU_Heap
+                        desc.transient = True
+                        hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
+                        gpu_scalars[nname] = hostname
+                    else:
+                        desc = sdfg.arrays[hostname]
+                    devicename = nname
+                elif nname in data_already_on_gpu:
+                    hostname = data_already_on_gpu[nname]
+                    if not hostname:
+                        desc = sdfg.arrays[nname].clone()
+                        desc.storage = dtypes.StorageType.CPU_Heap
+                        desc.transient = True
+                        hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
+                        data_already_on_gpu[nname] = hostname
+                    else:
+                        desc = sdfg.arrays[hostname]
+                    devicename = nname
+                else:
+                    desc = sdfg.arrays[nname]
+                    hostname = nname
+                    devicename = cloned_arrays[nname]
+
+                src_array = nodes.AccessNode(devicename, debuginfo=desc.debuginfo)
+                dst_array = nodes.AccessNode(hostname, debuginfo=desc.debuginfo)
+                co_state.add_node(src_array)
+                co_state.add_node(dst_array)
+                co_state.add_nedge(src_array, dst_array,
+                                    memlet.Memlet.from_array(dst_array.data, dst_array.desc(sdfg)))
+                name_mapping[devicename] = hostname
+            return name_mapping
+
+        for block in list(sdfg.all_control_flow_blocks()):
             arrays_used = set()
-            for e in state.parent_graph.out_edges(state):
+            for e in block.parent_graph.out_edges(block):
                 # Used arrays = intersection between symbols and cloned data
                 arrays_used.update(set(e.data.free_symbols) & cloned_data)
 
             # Create a state and copy out used arrays
             if len(arrays_used) > 0:
-
-                co_state = state.parent_graph.add_state(state.label + '_icopyout')
+                co_state = block.parent_graph.add_state(block.label + '_icopyout')
 
                 # Reconnect outgoing edges to after interim copyout state
-                for e in state.parent_graph.out_edges(state):
-                    sdutil.change_edge_src(state.parent_graph, state, co_state)
+                for e in block.parent_graph.out_edges(block):
+                    sdutil.change_edge_src(block.parent_graph, block, co_state)
                 # Add unconditional edge to interim state
-                state.parent_graph.add_edge(state, co_state, sd.InterstateEdge())
-
-                # Add copy-out nodes
-                for nname in arrays_used:
-
-                    # Handle GPU scalars
-                    if nname in gpu_scalars:
-                        hostname = gpu_scalars[nname]
-                        if not hostname:
-                            desc = sdfg.arrays[nname].clone()
-                            desc.storage = dtypes.StorageType.CPU_Heap
-                            desc.transient = True
-                            hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
-                            gpu_scalars[nname] = hostname
-                        else:
-                            desc = sdfg.arrays[hostname]
-                        devicename = nname
-                    elif nname in data_already_on_gpu:
-                        hostname = data_already_on_gpu[nname]
-                        if not hostname:
-                            desc = sdfg.arrays[nname].clone()
-                            desc.storage = dtypes.StorageType.CPU_Heap
-                            desc.transient = True
-                            hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
-                            data_already_on_gpu[nname] = hostname
-                        else:
-                            desc = sdfg.arrays[hostname]
-                        devicename = nname
-                    else:
-                        desc = sdfg.arrays[nname]
-                        hostname = nname
-                        devicename = cloned_arrays[nname]
-
-                    src_array = nodes.AccessNode(devicename, debuginfo=desc.debuginfo)
-                    dst_array = nodes.AccessNode(hostname, debuginfo=desc.debuginfo)
-                    co_state.add_node(src_array)
-                    co_state.add_node(dst_array)
-                    co_state.add_nedge(src_array, dst_array,
-                                       memlet.Memlet.from_array(dst_array.data, dst_array.desc(sdfg)))
-                    for e in state.parent_graph.out_edges(co_state):
+                block.parent_graph.add_edge(block, co_state, sd.InterstateEdge())
+                mapping = _create_copy_out(arrays_used)
+                for devicename, hostname in mapping.items():
+                    for e in block.parent_graph.out_edges(co_state):
                         e.data.replace(devicename, hostname, False)
+
+        for block in list(sdfg.all_control_flow_blocks()):
+            arrays_used = set()
+            if isinstance(block, ConditionalBlock):
+                for c, _ in block.branches:
+                    if c is not None:
+                        arrays_used.update(set(c.get_free_symbols()) & cloned_data)
+            elif isinstance(block, LoopRegion):
+                arrays_used.update(set(block.loop_condition.get_free_symbols()) & cloned_data)
+                if block.init_statement:
+                    arrays_used.update(set(block.init_statement.get_free_symbols()) & cloned_data)
+                if block.update_statement:
+                    arrays_used.update(set(block.update_statement.get_free_symbols()) & cloned_data)
+            else:
+                continue
+
+            # Create a state and copy out used arrays
+            if len(arrays_used) > 0:
+                co_state = block.parent_graph.add_state_before(block, block.label + '_icopyout')
+                mapping = _create_copy_out(arrays_used)
+                for devicename, hostname in mapping.items():
+                    if isinstance(block, ConditionalBlock):
+                        for c, _ in block.branches:
+                            if c is not None:
+                                replace_in_codeblock(c, {devicename: hostname})
+                    elif isinstance(block, LoopRegion):
+                        replace_in_codeblock(block.loop_condition, {devicename: hostname})
+                        if block.init_statement:
+                            replace_in_codeblock(block.init_statement, {devicename: hostname})
+                        if block.update_statement:
+                            replace_in_codeblock(block.update_statement, {devicename: hostname})
 
         # Step 9: Simplify
         if not self.simplify:
