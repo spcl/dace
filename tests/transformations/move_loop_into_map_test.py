@@ -150,7 +150,9 @@ class MoveLoopIntoMapTest(unittest.TestCase):
     def test_more_than_a_map(self):
         """
         `out` is read and written indirectly by the MapExit, potentially leading to a RW dependency.
-        However, there is no dependency.
+
+        Note that there is actually no dependency, however, the transformation, because it relies
+        on `SDFGState.read_and_write_sets()` it can not detect this and can thus not be applied.
         """
         sdfg = dace.SDFG('more_than_a_map')
         _, aarr = sdfg.add_array('A', (3, 3), dace.float64)
@@ -175,26 +177,8 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         body.add_nedge(twrite, owrite, dace.Memlet.from_array('out', oarr))
         sdfg.add_loop(None, body, None, '_', '0', '_ < 10', '_ + 1')
 
-        sdfg_args_ref = {
-            "A": np.array(np.random.rand(3, 3), dtype=np.float64),
-            "B": np.array(np.random.rand(3, 3), dtype=np.float64),
-            "out": np.array(np.random.rand(3, 3), dtype=np.float64),
-        }
-        sdfg_args_res = copy.deepcopy(sdfg_args_ref)
-
-        # Perform the reference execution
-        sdfg(**sdfg_args_ref)
-
-        # Apply the transformation and execute the SDFG again.
         count = sdfg.apply_transformations(MoveLoopIntoMap, validate_all=True, validate=True)
-        sdfg(**sdfg_args_res)
-
-        for name in sdfg_args_ref.keys():
-            self.assertTrue(
-                np.allclose(sdfg_args_ref[name], sdfg_args_res[name]),
-                f"Miss match for {name}",
-            )
-        self.assertTrue(count > 0)
+        self.assertTrue(count == 0)
 
     def test_more_than_a_map_1(self):
         """
