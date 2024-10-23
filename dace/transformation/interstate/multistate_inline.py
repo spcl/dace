@@ -15,8 +15,6 @@ from dace.transformation import transformation, helpers
 from dace.properties import make_properties
 from dace import data
 from dace.sdfg.state import LoopRegion, ReturnBlock, StateSubgraphView
-from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
 @make_properties
@@ -143,6 +141,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if isinstance(blk, ReturnBlock):
                 has_return = True
         if has_return:
+            # Avoid cyclic imports
+            from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
+            from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
+
             inline_pass = InlineControlFlowRegions()
             inline_pass.no_inline_conditional = False
             inline_pass.no_inline_named_regions = False
