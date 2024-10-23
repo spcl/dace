@@ -1,4 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import operator
+
 import dace.serialize
 from dace import data, symbolic, dtypes
 import re
@@ -333,6 +335,10 @@ class Range(Subset):
                             (step.expr if isinstance(step, symbolic.SymExpr) else step))
             for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
         ]
+
+    def volume_exact(self) -> int:
+        """ Returns the total number of elements in all dimenssions together. """
+        return reduce(operator.mul, self.size_exact())
 
     def bounding_box_size(self):
         """ Returns the size of a bounding box around this range. """
@@ -894,6 +900,10 @@ class Indices(Subset):
 
     def size_exact(self):
         return self.size()
+
+    def volume_exact(self) -> int:
+        """ Returns the total number of elements in all dimenssions together. """
+        return reduce(operator.mul, self.size_exact())
 
     def min_element(self):
         return self.indices
