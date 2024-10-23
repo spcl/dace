@@ -87,6 +87,7 @@ def test_read_and_write_set_filter():
 
     expected_reads = {
             "A": [sbs.Range.from_string("0, 0")],
+            "B": [sbs.Range.from_string("0")],
     }
     expected_writes = {
             "B": [sbs.Range.from_string("0")],
