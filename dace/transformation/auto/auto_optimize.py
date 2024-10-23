@@ -592,6 +592,7 @@ def auto_optimize(sdfg: SDFG,
 
     # fuse subgraphs greedily
     sdfg.simplify()
+    sdfg.reset_cfg_list()
 
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 

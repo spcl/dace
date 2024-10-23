@@ -64,7 +64,13 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 graph_indices = [i for (i, n) in enumerate(graph.nodes()) if n in subgraph]
                 sdfg_copy = copy.deepcopy(sdfg)
                 sdfg_copy.reset_cfg_list()
-                par_graph_copy = sdfg_copy.cfg_list[graph.parent_graph.cfg_id]
+                par_graph_copy = None
+                for cfr in sdfg_copy.all_control_flow_regions():
+                    if cfr.guid == graph.parent_graph.guid:
+                        par_graph_copy = cfr
+                        break
+                if not par_graph_copy:
+                    return False
                 graph_copy = par_graph_copy.nodes()[graph.block_id]
                 subgraph_copy = SubgraphView(graph_copy, [graph_copy.nodes()[i] for i in graph_indices])
                 expansion.cfg_id = par_graph_copy.cfg_id
