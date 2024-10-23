@@ -228,18 +228,15 @@ def _make_rna_read_and_write_set_sdfg(diff_in_out: bool) -> dace.SDFG:
 
 
 def test_rna_read_and_write_sets_doule_use():
-    """
-    NOTE: Under the current definition of the read/write sets this test will fail.
-    """
-
-    # The output is used also as temporary storage.
+    # The transformation does not apply because we access element `0` of both arrays that we
+    #  pass inside the nested SDFG.
     sdfg = _make_rna_read_and_write_set_sdfg(False)
     nb_applied = sdfg.apply_transformations_repeated(
         [RefineNestedAccess],
         validate=True,
         validate_all=True,
     )
-    assert nb_applied > 0
+    assert nb_applied == 0
 
 
 def test_rna_read_and_write_sets_different_storage():
