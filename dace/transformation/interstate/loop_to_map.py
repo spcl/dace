@@ -394,7 +394,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Create NestedSDFG and add the loop contents to it. Gaher symbols defined in the NestedSDFG.
         fsymbols = set(sdfg.free_symbols)
-        body = graph.add_state('single_state_body', is_start_block=(graph.start_block is self.loop))
+        body = graph.add_state_before(self.loop, 'single_state_body')
         nsdfg = SDFG('loop_body', constants=sdfg.constants_prop, parent=body)
         nsdfg.add_node(self.loop.start_block, is_start_block=True)
         nsymbols = dict()
@@ -554,11 +554,9 @@ class LoopToMap(xf.MultiStateTransformation):
         if not source_nodes and not sink_nodes:
             body.add_nedge(entry, exit, memlet.Memlet())
 
-        # Redirect edges connected to the loop to connect to the body state instead.
+        # Redirect outgoing edges connected to the loop to connect to the body state instead.
         for e in graph.out_edges(self.loop):
             graph.add_edge(body, e.dst, e.data)
-        for e in graph.in_edges(self.loop):
-            graph.add_edge(e.src, body, e.data)
         # Delete the loop and connected edges.
         graph.remove_node(self.loop)
 

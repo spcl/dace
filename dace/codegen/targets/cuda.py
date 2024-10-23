@@ -1434,7 +1434,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     create_grid_barrier = True
 
         self.create_grid_barrier = create_grid_barrier
-        kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.cfg_id, state.block_id, state.node_id(scope_entry))
+        kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, cfg.cfg_id, state.block_id, state.node_id(scope_entry))
 
         # Comprehend grid/block dimensions from scopes
         grid_dims, block_dims, tbmap, dtbmap, _ = self.get_kernel_dimensions(dfg_scope)
@@ -2061,7 +2061,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         assert CUDACodeGen._in_device_code is False
         CUDACodeGen._in_device_code = True
         self._kernel_map = node
-        self._kernel_state = sdfg.node(state_id)
+        self._kernel_state = cfg.node(state_id)
         self._block_dims = block_dims
         self._grid_dims = grid_dims
 

@@ -105,7 +105,7 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         if state.instrument == dtypes.InstrumentationType.GPU_Events:
             idstr = self._idstr(cfg, state, None)
             local_stream.write(self._record_event('e' + idstr, 0), cfg, state_id)
-            local_stream.write(self._report('State %s' % state.label, sdfg, state), cfg, state_id)
+            local_stream.write(self._report('State %s' % state.label, cfg, state), cfg, state_id)
             local_stream.write(self._destroy_event('b' + idstr), cfg, state_id)
             local_stream.write(self._destroy_event('e' + idstr), cfg, state_id)
 
