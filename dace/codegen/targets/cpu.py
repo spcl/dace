@@ -122,6 +122,8 @@ class CPUCodeGen(TargetCodeGenerator):
         for src_storage, dst_storage in itertools.product(cpu_storage, cpu_storage):
             dispatcher.register_copy_dispatcher(src_storage, dst_storage, None, self)
 
+        dispatcher.register_reallocate_dispatcher(dtypes.StorageType.CPU_Heap, None, self)
+
     @staticmethod
     def cmake_options():
         options = []
@@ -399,6 +401,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
+            declaration_stream.write(f"// C")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
             if allocate_nested_data:
                 for k, v in nodedesc.members.items():
@@ -493,9 +496,26 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
-            allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
-                state_id, node)
+            if isinstance(arrsize, symbolic.symbol) and str(arrsize) == "__dace_defer":
+                allocation_stream.write("// Deferred Allocation")
+                allocation_stream.write(
+                    "%s = nullptr;" %
+                    (alloc_name,),
+                    cfg,
+                    state_id,
+                    node
+                )
+            else:
+                allocation_stream.write(
+                    "%s = new %s DACE_ALIGN(64)[%s];\n" %
+                    (alloc_name,
+                     nodedesc.dtype.ctype,
+                     cpp.sym2cpp(arrsize)),
+                    cfg,
+                    state_id,
+                    node
+                )
+
             define_var(name, DefinedType.Pointer, ctypedef)
 
             if node.setzero:
@@ -2155,28 +2175,40 @@ class CPUCodeGen(TargetCodeGenerator):
 
         sdict = state_dfg.scope_dict()
         for edge in state_dfg.in_edges(node):
-            predecessor, _, _, _, memlet = edge
+            predecessor, _, dst, in_connector, memlet = edge
             if memlet.data is None:
                 continue  # If the edge has to be skipped
 
-            # Determines if this path ends here or has a definite source (array) node
-            memlet_path = state_dfg.memlet_path(edge)
-            if memlet_path[-1].dst == node:
-                src_node = memlet_path[0].src
-                # Only generate code in case this is the innermost scope
-                # (copies are generated at the inner scope, where both arrays exist)
-                if (scope_contains_scope(sdict, src_node, node) and sdict[src_node] != sdict[node]):
-                    self._dispatcher.dispatch_copy(
-                        src_node,
-                        node,
-                        edge,
-                        sdfg,
-                        cfg,
-                        dfg,
-                        state_id,
-                        function_stream,
-                        callsite_stream,
-                    )
+            if in_connector == "IN_size":
+                self._dispatcher.dispatch_reallocate(
+                    node,
+                    edge,
+                    sdfg,
+                    cfg,
+                    dfg,
+                    state_id,
+                    function_stream,
+                    callsite_stream,
+                )
+            else:
+                # Determines if this path ends here or has a definite source (array) node
+                memlet_path = state_dfg.memlet_path(edge)
+                if memlet_path[-1].dst == node:
+                    src_node = memlet_path[0].src
+                    # Only generate code in case this is the innermost scope
+                    # (copies are generated at the inner scope, where both arrays exist)
+                    if (scope_contains_scope(sdict, src_node, node) and sdict[src_node] != sdict[node]):
+                        self._dispatcher.dispatch_copy(
+                            src_node,
+                            node,
+                            edge,
+                            sdfg,
+                            cfg,
+                            dfg,
+                            state_id,
+                            function_stream,
+                            callsite_stream,
+                        )
 
         # Process outgoing memlets (array-to-array write should be emitted
         # from the first leading edge out of the array)
