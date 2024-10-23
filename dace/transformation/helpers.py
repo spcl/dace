@@ -133,22 +133,21 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
 
         # Find defined subgraph symbols
-        sdfg_symbols = sdfg.used_symbols(True)
         defined_symbols = set()
         strictly_defined_symbols = set()
         for e in is_edges:
             defined_symbols.update(set(e.data.assignments.keys()))
             for k, v in e.data.assignments.items():
                 try:
-                    if k not in sdfg_symbols and k not in {str(a) for a in symbolic.pystr_to_symbolic(v).args}:
+                    if k not in sdfg.symbols and k not in {str(a) for a in symbolic.pystr_to_symbolic(v).args}:
                         strictly_defined_symbols.add(k)
                 except AttributeError:
                     # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
                     pass
         for b in all_blocks:
             if isinstance(b, LoopRegion) and b.loop_variable is not None and b.loop_variable != '':
-                defined_symbols.update(b.loop_variable)
-                if b.loop_variable not in sdfg_symbols:
+                defined_symbols.add(b.loop_variable)
+                if b.loop_variable not in sdfg.symbols:
                     if b.init_statement:
                         init_assignment = loop_analysis.get_init_assignment(b)
                         if b.loop_variable not in {str(s) for s in symbolic.pystr_to_symbolic(init_assignment).args}:
@@ -220,8 +219,11 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         ndefined_symbols = set()
         out_mapping = {}
         out_state = None
-        for e in nsdfg.edges():
+        for e in nsdfg.all_interstate_edges():
             ndefined_symbols.update(set(e.data.assignments.keys()))
+        for b in all_blocks:
+            if isinstance(b, LoopRegion) and b.loop_variable is not None and b.loop_variable != '' and b.init_statement:
+                ndefined_symbols.add(b.loop_variable)
         if ndefined_symbols:
             out_state = nsdfg.add_state('symbolic_output')
             nsdfg.add_edge(sink_node, out_state, InterstateEdge())
