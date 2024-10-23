@@ -1,13 +1,19 @@
 import unittest
+from typing import Dict
 
+import numpy as np
 from sympy import ceiling
 
-from dace.subsets import Range, Indices
-
 import dace
+from dace.subsets import Range, Indices, SubrangeMapper
+from dace.symbolic import simplify
 
 
-class Volume(unittest.TestCase):
+def eval_range(r: Range, vals: Dict):
+    return Range([(simplify(b).subs(vals), simplify(e).subs(vals), simplify(s).subs(vals)) for b, e, s in r.ranges])
+
+
+class VolumeTest(unittest.TestCase):
     def test_range(self):
         K, N, M = dace.symbol('K', positive=True), dace.symbol('N', positive=True), dace.symbol('M', positive=True)
 
@@ -45,6 +51,69 @@ class Volume(unittest.TestCase):
 
         ind = Indices([0, 2])
         self.assertEqual(1, ind.volume_exact())
+
+
+class RangeRemapperTest(unittest.TestCase):
+    def test_mapping_without_symbols(self):
+        K, N, M = 6, 7, 8
+
+        # A regular cube.
+        src = Range([(0, K - 1, 1), (0, N - 1, 1), (0, M - 1, 1)])
+        # A regular cube with offsets.
+        dst = Range([(1, 1 + K - 1, 1), (2, 2 + N - 1, 1), (3, 3 + M - 1, 1)])
+        # A Mapper
+        sm = SubrangeMapper(src, dst)
+
+        # Pick the entire range.
+        self.assertEqual(dst, sm.map(src))
+        # Pick a point 0, 0, 0.
+        self.assertEqual(Range([(1, 1, 1), (2, 2, 1), (3, 3, 1)]),
+                         sm.map(Range([(0, 0, 1), (0, 0, 1), (0, 0, 1)])))
+        # Pick a point K//2, N//2, M//2.
+        self.assertEqual(Range([(1 + K // 2, 1 + K // 2, 1), (2 + N // 2, 2 + N // 2, 1), (3 + M // 2, 3 + M // 2, 1)]),
+                         sm.map(Range([(K // 2, K // 2, 1), (N // 2, N // 2, 1), (M // 2, M // 2, 1)])))
+        # Pick a point K-1, N-1, M-1.
+        self.assertEqual(Range([(1 + K - 1, 1 + K - 1, 1), (2 + N - 1, 2 + N - 1, 1), (3 + M - 1, 3 + M - 1, 1)]),
+                         sm.map(Range([(K - 1, K - 1, 1), (N - 1, N - 1, 1), (M - 1, M - 1, 1)])))
+        # Pick a quadrant.
+        self.assertEqual(Range([(1, 1 + K // 2, 1), (2, 2 + N // 2, 1), (3, 3 + M // 2, 1)]),
+                         sm.map(Range([(0, K // 2, 1), (0, N // 2, 1), (0, M // 2, 1)])))
+
+    def test_mapping_with_only_offsets(self):
+        K, N, M = dace.symbol('K', positive=True), dace.symbol('N', positive=True), dace.symbol('M', positive=True)
+
+        # A regular cube.
+        src = Range([(0, K - 1, 1), (0, N - 1, 1), (0, M - 1, 1)])
+        # A regular cube with offsets.
+        dst = Range([(1, 1 + K - 1, 1), (2, 2 + N - 1, 1), (3, 3 + M - 1, 1)])
+        # A Mapper
+        sm = SubrangeMapper(src, dst)
+
+        # Pick the entire range.
+        self.assertEqual(dst, sm.map(src))
+
+        # NOTE: I couldn't make SymPy understand that `(K//2) % K == (K//2)` always holds for postive integers `K`.
+        # Hence, the numerical approach.
+        argslist = [{'K': k, 'N': n, 'M': m} for k, n, m in zip(np.random.randint(1, 100, size=20),
+                                                                np.random.randint(1, 100, size=20),
+                                                                np.random.randint(1, 100, size=20))]
+        for args in argslist:
+            # Pick a point K//2, N//2, M//2.
+            want = eval_range(
+                Range([(1 + K // 2, 1 + K // 2, 1), (2 + N // 2, 2 + N // 2, 1), (3 + M // 2, 3 + M // 2, 1)]),
+                args)
+            got = eval_range(
+                sm.map(Range([(K // 2, K // 2, 1), (N // 2, N // 2, 1), (M // 2, M // 2, 1)])),
+                args)
+            self.assertEqual(want, got)
+            # Pick a quadrant.
+            want = eval_range(
+                Range([(1, 1 + K // 2, 1), (2, 2 + N // 2, 1), (3, 3 + M // 2, 1)]),
+                args)
+            got = eval_range(
+                sm.map(Range([(0, K // 2, 1), (0, N // 2, 1), (0, M // 2, 1)])),
+                args)
+            self.assertEqual(want, got)
 
 
 if __name__ == '__main__':
