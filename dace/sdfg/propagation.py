@@ -1432,6 +1432,8 @@ def propagate_subset(memlets: List[Memlet],
         subset = None
         src, dst = md.subset, md.other_subset
         if md._is_data_src is not None:
+            # Ideally, this should always be the case. In practice, it is not always so. So, if the memlet is uninitialized
+            # for some reason, we just explicitly fallback to `subset` and `other_subset` to retain the prior behaviour.
             src, dst = md.src_subset, md.dst_subset
         if use_dst and dst is not None:
             subset = dst
