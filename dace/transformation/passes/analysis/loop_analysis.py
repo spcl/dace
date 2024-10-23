@@ -16,6 +16,8 @@ def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     """
     Parse a loop region to identify the end value of the iteration variable under normal loop termination (no break).
     """
+    if loop.loop_variable is None or loop.loop_variable == '':
+        return None
     end: Optional[symbolic.SymbolicType] = None
     a = sympy.Wild('a')
     condition = symbolic.pystr_to_symbolic(loop.loop_condition.as_string)

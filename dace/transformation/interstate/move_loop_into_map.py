@@ -229,6 +229,8 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
             if helpers.is_symbol_unused(sdfg, s):
                 sdfg.remove_symbol(s)
 
+        sdfg.reset_cfg_list()
+
         from dace.transformation.interstate import RefineNestedAccess
         transformation = RefineNestedAccess()
         transformation.setup_match(sdfg, body.parent_graph.cfg_id, body.block_id,

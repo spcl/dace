@@ -235,13 +235,12 @@ class AccessSets(ppl.Pass):
         # If access nodes were modified, reapply
         return modified & ppl.Modifies.AccessNodes
 
-    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]]:
+    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]:
         """
         :return: A dictionary mapping each control flow block to a tuple of its (read, written) data descriptors.
         """
-        top_result: Dict[int, Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]] = {}
+        result: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            result: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = {}
             arrays: Set[str] = set(sdfg.arrays.keys())
             for block in sdfg.all_control_flow_blocks():
                 readset, writeset = set(), set()
@@ -282,9 +281,7 @@ class AccessSets(ppl.Pass):
                 if fsyms:
                     result[e.src][0].update(fsyms)
                     result[e.dst][0].update(fsyms)
-
-            top_result[sdfg.cfg_id] = result
-        return top_result
+        return result
 
 
 @properties.make_properties
@@ -557,6 +554,8 @@ class ScalarWriteShadowScopes(ppl.Pass):
         """
         top_result: Dict[int, WriteScopeDict] = dict()
 
+        access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = pipeline_results[AccessSets.__name__]
+
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: WriteScopeDict = defaultdict(lambda: defaultdict(lambda: set()))
             idom_dict: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]] = {}
@@ -576,8 +575,6 @@ class ScalarWriteShadowScopes(ppl.Pass):
                     all_doms_transitive[k].add(cfg)
                     all_doms_transitive[k].update(all_doms_transitive[cfg])
 
-            access_sets: Dict[ControlFlowBlock, Tuple[Set[str],
-                                                      Set[str]]] = pipeline_results[AccessSets.__name__][sdfg.cfg_id]
             access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]] = pipeline_results[
                 FindAccessNodes.__name__][sdfg.cfg_id]
 

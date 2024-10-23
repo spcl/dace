@@ -662,6 +662,8 @@ def auto_optimize(sdfg: SDFG,
             print("Specializing the SDFG for symbols", known_symbols)
         sdfg.specialize(known_symbols)
 
+    sdfg.reset_cfg_list()
+
     # Validate at the end
     if validate or validate_all:
         sdfg.validate()

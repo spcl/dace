@@ -11,7 +11,7 @@ from dace.sdfg import graph as gr, nodes
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion, ReturnBlock
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -93,6 +93,11 @@ class LoopToMap(xf.MultiStateTransformation):
         itervar = self.loop.loop_variable
         if start is None or end is None or step is None or itervar is None:
             return False
+
+        # Loops containing break, continue, or returns may not be turned into a map.
+        for blk in self.loop.all_control_flow_blocks():
+            if isinstance(blk, (BreakBlock, ContinueBlock, ReturnBlock)):
+                return False
 
         # We cannot handle symbols read from data containers unless they are scalar.
         for expr in (start, end, step):

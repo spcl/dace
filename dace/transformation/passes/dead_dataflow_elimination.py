@@ -64,9 +64,7 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
         reachable: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = pipeline_results[
             ap.ControlFlowBlockReachability.__name__
         ][region.cfg_id]
-        access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = pipeline_results[
-            ap.AccessSets.__name__
-        ][sdfg.cfg_id]
+        access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = pipeline_results[ap.AccessSets.__name__]
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
         # Traverse region backwards
