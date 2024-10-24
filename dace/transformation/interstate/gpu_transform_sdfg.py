@@ -5,7 +5,7 @@ from dace import data, memlet, dtypes, registry, sdfg as sd, symbolic, subsets a
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation, helpers as xfh
-from dace.properties import Property, make_properties
+from dace.properties import ListProperty, Property, make_properties
 from collections import defaultdict
 from copy import deepcopy as dc
 from sympy import floor
@@ -128,6 +128,12 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                                dtype=str,
                                default='')
 
+    host_maps = ListProperty(desc='List of map GUIDs, the passed maps are not offloaded to the GPU',
+                             element_type=str, default=None, allow_none=True)
+
+    host_data = ListProperty(desc='List of data names, the passed data are not offloaded to the GPU',
+                             element_type=str, default=None, allow_none=True)
+
     @staticmethod
     def annotates_memlets():
         # Skip memlet propagation for now
@@ -154,8 +160,15 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     return False
         return True
 
-    def apply(self, _, sdfg: sd.SDFG):
+    def _output_or_input_is_marked_host(self, state, entry_node):
+        if (self.host_data is None or self.host_data == []) and (self.host_maps is None or self.host_maps == []):
+            return False
+        marked_accesses = [e.data.data for e in state.in_edges(entry_node) + state.out_edges(state.exit_node(entry_node))
+                           if e.data.data is not None and e.data.data in self.host_data]
+        return len(marked_accesses) > 0
 
+
+    def apply(self, _, sdfg: sd.SDFG):
         #######################################################
         # Step 0: SDFG metadata
 
@@ -163,9 +176,21 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         input_nodes = []
         output_nodes = []
         global_code_nodes: Dict[sd.SDFGState, nodes.Tasklet] = defaultdict(list)
+        if self.host_maps is None:
+            self.host_maps = []
+        if self.host_data is None:
+            self.host_data = []
 
         # Propagate memlets to ensure that we can find the true array subsets that are written.
         propagate_memlets_sdfg(sdfg)
+
+        # Input and ouputs of all host_maps need to be marked as host_data
+        for state in sdfg.nodes():
+            for node in state.nodes():
+                if isinstance(node, nodes.EntryNode) and node.guid in self.host_maps:
+                    accesses = {e.data.data for e in state.in_edges(node) + state.out_edges(state.exit_node(node))
+                                if e.data.data is not None and node.guid in self.host_maps}
+                    self.host_data.extend(accesses)
 
         for state in sdfg.nodes():
             sdict = state.scope_dict()
@@ -176,12 +201,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                         # map ranges must stay on host
                         for e in state.out_edges(node):
                             last_edge = state.memlet_path(e)[-1]
-                            if (isinstance(last_edge.dst, nodes.EntryNode) and last_edge.dst_conn
-                                    and not last_edge.dst_conn.startswith('IN_') and sdict[last_edge.dst] is None):
+                            if (isinstance(last_edge.dst, nodes.EntryNode) and ((last_edge.dst_conn
+                                    and not last_edge.dst_conn.startswith('IN_') and sdict[last_edge.dst] is None) or
+                                (last_edge.dst in self.host_maps))):
                                 break
                         else:
                             input_nodes.append((node.data, node.desc(sdfg)))
-                    if (state.in_degree(node) > 0 and node.data not in output_nodes):
+                    if (state.in_degree(node) > 0 and node.data not in output_nodes and node.data not in self.host_data):
                         output_nodes.append((node.data, node.desc(sdfg)))
 
             # Input nodes may also be nodes with WCR memlets and no identity
@@ -312,11 +338,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             for node in state.nodes():
                 if sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
-                        node.schedule = dtypes.ScheduleType.GPU_Default
-                        gpu_nodes.add((state, node))
+                        if node.guid not in self.host_maps and not self._output_or_input_is_marked_host(state, node):
+                            node.schedule = dtypes.ScheduleType.GPU_Default
+                            gpu_nodes.add((state, node))
                     elif isinstance(node, nodes.EntryNode):
-                        node.schedule = dtypes.ScheduleType.GPU_Device
-                        gpu_nodes.add((state, node))
+                        if node.guid not in self.host_maps and not self._output_or_input_is_marked_host(state, node):
+                            node.schedule = dtypes.ScheduleType.GPU_Device
+                            gpu_nodes.add((state, node))
                 elif self.sequential_innermaps:
                     if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
                         node.schedule = dtypes.ScheduleType.Sequential
@@ -423,7 +451,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             continue
 
                         # NOTE: the cloned arrays match too but it's the same storage so we don't care
-                        nodedesc.storage = dtypes.StorageType.GPU_Global
+                        if node.data not in self.host_data:
+                            nodedesc.storage = dtypes.StorageType.GPU_Global
 
                         # Try to move allocation/deallocation out of loops
                         dsyms = set(map(str, nodedesc.free_symbols))
