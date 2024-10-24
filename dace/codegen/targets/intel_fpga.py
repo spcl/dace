@@ -921,7 +921,8 @@ __kernel void \\
                                                     name,
                                                     dtypes.pointer(nodedesc.dtype),
                                                     ancestor=0,
-                                                    device_code=self._in_device_code)
+                                                    device_code=self._in_device_code,
+                                                    use_offset=True)
         else:
             qualifier = ""
             atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
@@ -929,7 +930,8 @@ __kernel void \\
                                                             edge.data,
                                                             name,
                                                             dtypes.pointer(nodedesc.dtype),
-                                                            ancestor=0)
+                                                            ancestor=0,
+                                                            use_offset=True)
         declaration_stream.write(f'{qualifier}{atype} {aname}  = {value};', cfg, state_id, node)
 
     def generate_memlet_definition(self, sdfg, cfg, dfg, state_id, src_node, dst_node, edge, callsite_stream):
