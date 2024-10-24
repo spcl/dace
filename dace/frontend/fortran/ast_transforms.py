@@ -91,6 +91,18 @@ def iter_fields(node: ast_internal_classes.FNode):
         except AttributeError:
             pass
 
+def iter_attributes(node: ast_internal_classes.FNode):
+    """
+    Yield a tuple of ``(fieldname, value)`` for each field in ``node._attributes``
+    that is present on *node*.
+    """
+    if not hasattr(node, "_attributes"):
+        a = 1
+    for field in node._attributes:
+        try:
+            yield field, getattr(node, field)
+        except AttributeError:
+            pass
 
 def iter_child_nodes(node: ast_internal_classes.FNode):
     """
@@ -2397,3 +2409,106 @@ class PointerRemoval(NodeTransformer):
             typedecls=node.typedecls,
             uses=node.uses
         )
+
+class ArgumentPruner(NodeVisitor):
+
+    def __init__(self, funcs):
+
+        #print(program.functions_and_subroutines)
+        self.funcs = funcs
+
+        self.parsed_funcs: Dict[str, List[int]] = {}
+        print(self.funcs)
+
+        #from dace.frontend.fortran.intrinsics import FortranIntrinsics
+        #self.excepted_funcs = [
+        #    "malloc", "pow", "cbrt", "__dace_sign", "tanh", "atan2",
+        #    "__dace_epsilon", *FortranIntrinsics.function_names()
+        #]
+
+        self.used_names = set()
+
+    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
+        self.used_names.add(node.name)
+        #return node
+
+    def generic_visit(self, node: ast_internal_classes.FNode):
+        """Called if no explicit visitor function exists for a node."""
+        for field, value in iter_fields(node):
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast_internal_classes.FNode):
+                        self.visit(item)
+            elif isinstance(value, ast_internal_classes.FNode):
+                self.visit(value)
+
+        for field, value in iter_attributes(node):
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast_internal_classes.FNode):
+                        self.visit(item)
+            elif isinstance(value, ast_internal_classes.FNode):
+                self.visit(value)
+
+    def _visit_function(self, node: ast_internal_classes.FNode):
+
+        print('start func', node.name.name, node.args, id(node))
+
+        old_used_names = self.used_names
+        self.used_names = set()
+        self.visit(node.execution_part)
+
+        print(self.used_names)
+
+        new_args = []
+        removed_args = []
+        for idx, arg in enumerate(node.args):
+
+            if not isinstance(arg, ast_internal_classes.Name_Node):
+                raise NotImplementedError()
+
+            if arg.name not in self.used_names:
+                print(f"Pruning argument {arg.name} of function {node.name.name}")
+                removed_args.append(idx)
+            else:
+                new_args.append(arg)
+        #node.args = new_args
+        self.parsed_funcs[node.name.name] = removed_args
+
+        print('end func', node.name.name, node.args)
+        #self.used_names = set()
+        self.used_names = old_used_names
+
+    def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
+
+        if node.name.name in self.parsed_funcs:
+            to_remove = self.parsed_funcs[node.name.name]
+            for idx in reversed(to_remove):
+                del node.args[idx]
+        else:
+
+            self._visit_function(node)
+
+        #return node
+
+    def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
+
+        if node.name.name in self.parsed_funcs:
+            to_remove = self.parsed_funcs[node.name.name]
+            for idx in reversed(to_remove):
+                del node.args[idx]
+        else:
+
+            self._visit_function(node)
+
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        if node.name.name not in self.parsed_funcs:
+            self._visit_function(self.funcs[node.name.name])
+
+        print('call expr', node.name.name, node.args)
+        to_remove = self.parsed_funcs[node.name.name]
+        for idx in reversed(to_remove):
+            del node.args[idx]
+        print("finished parsing", node.name.name, to_remove, node.args)
+

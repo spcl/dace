@@ -802,6 +802,7 @@ class AST_translator:
         if not ((len(variables_in_call) == len(parameters)) or
                 (len(variables_in_call) == len(parameters) + 1
                  and not isinstance(node.result_type, ast_internal_classes.Void))):
+            print("Subroutine", node.name.name)
             print('Variables in call', len(variables_in_call))
             print('Parameters', len(parameters))
             #for i in variables_in_call:
@@ -1841,11 +1842,9 @@ class AST_translator:
                             pass
                         
                     old_mode=self.transient_mode
-                    print("For ",sdfg_name," old mode is ",old_mode)
+                    #print("For ",sdfg_name," old mode is ",old_mode)
                     self.transient_mode=True
                     for j in node.specification_part.specifications:
-                        
-                    
                         self.declstmt2sdfg(j, new_sdfg)
                     self.transient_mode=old_mode
                    
@@ -2132,7 +2131,7 @@ class AST_translator:
                     sizes.append(sym.pystr_to_symbolic(text))
                     actual_offset_value=node.offsets[node.sizes.index(i)]
                     if isinstance(actual_offset_value,ast_internal_classes.Array_Subscript_Node):
-                        print(node.name,actual_offset_value.name.name)
+                        #print(node.name,actual_offset_value.name.name)
                         raise NotImplementedError("Array subscript in offset not implemented")
                     if isinstance(actual_offset_value,int):
                         actual_offset_value=ast_internal_classes.Int_Literal_Node(value=str(actual_offset_value))
@@ -2165,9 +2164,9 @@ class AST_translator:
             #here we must replace local placeholder sizes that have already made it to tasklets via size and ubound calls
             if sizes is not None:
                 actual_sizes=sdfg.arrays[self.name_mapping[sdfg][node.name]].shape
-                print(node.name,sdfg.name,self.names_of_object_in_parent_sdfg.get(sdfg).get(node.name))
-                print(sdfg.parent_sdfg.name,self.actual_offsets_per_sdfg[sdfg.parent_sdfg].get(self.names_of_object_in_parent_sdfg[sdfg][node.name]))
-                print(sdfg.parent_sdfg.arrays.get(self.name_mapping[sdfg.parent_sdfg].get(self.names_of_object_in_parent_sdfg.get(sdfg).get(node.name))))
+                #print(node.name,sdfg.name,self.names_of_object_in_parent_sdfg.get(sdfg).get(node.name))
+                #print(sdfg.parent_sdfg.name,self.actual_offsets_per_sdfg[sdfg.parent_sdfg].get(self.names_of_object_in_parent_sdfg[sdfg][node.name]))
+                #print(sdfg.parent_sdfg.arrays.get(self.name_mapping[sdfg.parent_sdfg].get(self.names_of_object_in_parent_sdfg.get(sdfg).get(node.name))))
                 if self.actual_offsets_per_sdfg[sdfg.parent_sdfg].get(self.names_of_object_in_parent_sdfg[sdfg][node.name]) is not None:
                     actual_offsets=self.actual_offsets_per_sdfg[sdfg.parent_sdfg][self.names_of_object_in_parent_sdfg[sdfg][node.name]]
                 else:
@@ -2687,6 +2686,10 @@ def create_sdfg_from_string(
     if len(cycles_we_cannot_ignore)>0:
         raise NameError("Structs have cyclic dependencies")
     own_ast.tables = own_ast.symbols
+
+    #program = 
+    print(dir(functions_and_subroutines_builder))
+    ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
 
     ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs, toplevel_subroutine=sdfg_name, normalize_offsets=normalize_offsets)
     sdfg = SDFG(sdfg_name)
@@ -3335,6 +3338,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program.placeholders_offsets=partial_ast.placeholders_offsets
     program.functions_and_subroutines=partial_ast.functions_and_subroutines
     unordered_modules=program.modules
+
+    program = ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
+
     program.modules=[]
     for i in parse_order:
         for j in unordered_modules:
@@ -3352,8 +3358,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            #if j.name.name!="cloudscouter":
-            if j.name.name!="solve_nh":
+            print(j.name.name)
+            if j.name.name!="cloudscouter":
+            #if j.name.name!="solve_nh":
             #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
             #if j.name.name!="velocity_tendencies":
