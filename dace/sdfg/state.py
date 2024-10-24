@@ -2999,7 +2999,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         if block_id < 0 or block_id >= self.number_of_nodes():
             raise ValueError('Invalid state ID')
         self._start_block = block_id
-        self._cached_start_block = self.node(block_id)
+        self._cached_start_block = None
 
 
 @make_properties
