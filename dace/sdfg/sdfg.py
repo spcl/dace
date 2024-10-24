@@ -1708,8 +1708,7 @@ class SDFG(ControlFlowRegion):
                   total_size=None,
                   find_new_name=False,
                   alignment=0,
-                  may_alias=False,
-                  host_data=False) -> Tuple[str, dt.Array]:
+                  may_alias=False) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1737,8 +1736,7 @@ class SDFG(ControlFlowRegion):
                         alignment=alignment,
                         debuginfo=debuginfo,
                         total_size=total_size,
-                        may_alias=may_alias,
-                        host_data=host_data)
+                        may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1877,8 +1875,7 @@ class SDFG(ControlFlowRegion):
                    transient=False,
                    lifetime=dace.dtypes.AllocationLifetime.Scope,
                    debuginfo=None,
-                   find_new_name=False,
-                   host_data=False) -> Tuple[str, dt.Scalar]:
+                   find_new_name=False) -> Tuple[str, dt.Scalar]:
         """ Adds a scalar to the SDFG data descriptor store. """
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
@@ -1889,8 +1886,7 @@ class SDFG(ControlFlowRegion):
             storage=storage,
             transient=transient,
             lifetime=lifetime,
-            debuginfo=debuginfo,
-            host_data=host_data
+            debuginfo=debuginfo
         )
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
