@@ -6,6 +6,7 @@ import sys
 import traceback
 
 from dace.sdfg import SDFG
+from dace.sdfg.state import ControlFlowRegion
 from dace.transformation.optimizer import Optimizer
 
 
@@ -68,8 +69,9 @@ class TransformationTester(Optimizer):
 
                 print('    ' * depth, type(match).__name__, '- ', end='', file=self.stdout)
 
-                tsdfg: SDFG = new_sdfg.cfg_list[match.cfg_id]
-                tgraph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
+                tcfg: ControlFlowRegion = new_sdfg.cfg_list[match.cfg_id]
+                tsdfg = tcfg.sdfg if not isinstance(tcfg, SDFG) else tcfg
+                tgraph = tcfg.node(match.state_id) if match.state_id >= 0 else tcfg
                 match._sdfg = tsdfg
                 match.apply(tgraph, tsdfg)
 

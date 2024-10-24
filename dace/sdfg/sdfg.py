@@ -1327,7 +1327,7 @@ class SDFG(ControlFlowRegion):
         read_set = set()
         write_set = set()
         for state in self.states():
-            for edge in self.in_edges(state):
+            for edge in state.parent_graph.in_edges(state):
                 read_set |= edge.data.free_symbols & self.arrays.keys()
             # Get dictionaries of subsets read and written from each state
             rs, ws = state._read_and_write_sets()
@@ -1483,7 +1483,7 @@ class SDFG(ControlFlowRegion):
         result = {}
         tstate = {}
 
-        for (i, state) in enumerate(self.nodes()):
+        for (i, state) in enumerate(self.states()):
             scope_dict = state.scope_dict()
             for node in state.nodes():
                 if isinstance(node, nd.AccessNode) and node.desc(self).transient:
