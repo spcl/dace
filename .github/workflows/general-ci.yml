@@ -85,6 +85,7 @@ jobs:
         ./tests/polybench_test.sh
         ./tests/xform_test.sh
         coverage combine .; coverage report; coverage xml
+
     - uses: codecov/codecov-action@v4
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
