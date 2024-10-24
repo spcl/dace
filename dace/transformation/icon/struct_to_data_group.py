@@ -4,7 +4,7 @@
 
 import copy
 from dace.sdfg import SDFG, SDFGState
-from dace.properties import make_properties
+from dace.properties import DictProperty, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
@@ -31,6 +31,8 @@ def _has_trailing_number(s):
 class StructToDataGroup(transformation.SingleStateTransformation):
     src_access = transformation.PatternNode(nodes.AccessNode)
     dst_access = transformation.PatternNode(nodes.AccessNode)
+    retdict = dict() #DictProperty(key_type=str, value_type=str)
+    data_connected_to_vsv_struct = dict()
 
     @classmethod
     def expressions(cls):
@@ -192,8 +194,23 @@ class StructToDataGroup(transformation.SingleStateTransformation):
         # TODO: Fix memlet calculation in recursive data groups
         if struct_to_view:
             state.add_edge(an, None, dst_edge.dst, dst_edge.dst_conn, mc)
+
+            if struct_access.guid in self.data_connected_to_vsv_struct:
+                print("A1")
+                self.data_connected_to_vsv_struct[struct_access.guid][1].append(an)
+            else:
+                print("A2")
+                self.data_connected_to_vsv_struct[struct_access.guid] = ([],[an])
+
         else: # view_to_struct
             state.add_edge(src_edge.src, src_edge.src_conn, an, None, mc)
+
+            if struct_access.guid in self.data_connected_to_vsv_struct:
+                print("A1")
+                self.data_connected_to_vsv_struct[struct_access.guid][0].append(an)
+            else:
+                print("A2")
+                self.data_connected_to_vsv_struct[struct_access.guid] = ([an],[])
 
         # Clean-up
         for view_node in view_chain:
@@ -201,6 +218,10 @@ class StructToDataGroup(transformation.SingleStateTransformation):
         if (len(state.in_edges(struct_access)) == 0) and (len(state.out_edges(struct_access)) == 0):
             state.remove_node(struct_access)
 
+        print(self.data_connected_to_vsv_struct)
+
+        self.retdict[view_chain[-1 if struct_to_view else 0].data] = demangled_name
+        return (view_chain[-1 if struct_to_view else 0].data, demangled_name)
 
     def annotates_memlets():
         return False
