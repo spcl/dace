@@ -324,6 +324,7 @@ def test_more_than_a_map_4():
     assert count == 0
 
 
+
 if __name__ == '__main__':
     test_forward_loops_semantic_eq()
     test_backward_loops_semantic_eq()
@@ -337,3 +338,4 @@ if __name__ == '__main__':
     test_more_than_a_map_1()
     test_more_than_a_map_2()
     test_more_than_a_map_3()
+    test_more_than_a_map_4()
