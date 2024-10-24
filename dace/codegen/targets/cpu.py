@@ -395,13 +395,13 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Compute array size
         arrsize = nodedesc.total_size
+        deferred_allocation = any([s for s in nodedesc.shape if str(s).startswith("__dace_defer")])
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
-            declaration_stream.write(f"// C")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
             if allocate_nested_data:
                 for k, v in nodedesc.members.items():
@@ -496,10 +496,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
-            if isinstance(arrsize, symbolic.symbol) and str(arrsize) == "__dace_defer":
-                allocation_stream.write("// Deferred Allocation")
+            if deferred_allocation:
                 allocation_stream.write(
-                    "%s = nullptr;" %
+                    "%s = nullptr; // Deferred Allocation" %
                     (alloc_name,),
                     cfg,
                     state_id,
@@ -677,12 +676,16 @@ class CPUCodeGen(TargetCodeGenerator):
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
     ):
-        callsite_stream.write(
-            f"// Reallocate Called"
+        function_stream.write(
+            "#include <cstdlib>"
         )
-        dtype = sdfg.arrays[node.data].dtype
+        data_name = node.data
+        size_array_name = f"{data_name}_size"
+        data = sdfg.arrays[data_name]
+        dtype = sdfg.arrays[data_name].dtype
+        size_str = " * ".join([f"{size_array_name}[{i}]" for i in range(len(data.shape))])
         callsite_stream.write(
-            f"{node.data} = realloc({node.data}, {edge.data.data} * sizeof({dtype}));"
+            f"{node.data} = static_cast<{dtype} *>(std::realloc(static_cast<void *>({node.data}), {size_str} * sizeof({dtype})));"
         )
 
     def _emit_copy(
@@ -1142,11 +1145,9 @@ class CPUCodeGen(TargetCodeGenerator):
             elif isinstance(node, nodes.AccessNode):
                 if dst_node != node and not isinstance(dst_node, nodes.Tasklet) :
                     # If it is a size change, reallocate will be called
-                    if edge.dst_conn.endswith("_size"):
-                        result.write("// No Copy as AN -> AN write is to ")
+                    if edge.dst_conn is not None and edge.dst_conn.endswith("_size"):
                         continue
 
-                    result.write("// COPY2")
                     dispatcher.dispatch_copy(
                         node,
                         dst_node,
@@ -2223,7 +2224,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     # Only generate code in case this is the innermost scope
                     # (copies are generated at the inner scope, where both arrays exist)
                     if (scope_contains_scope(sdict, src_node, node) and sdict[src_node] != sdict[node]):
-                        callsite_stream.write("// COPY1")
                         self._dispatcher.dispatch_copy(
                             src_node,
                             node,
