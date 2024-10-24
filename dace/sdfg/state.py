@@ -243,7 +243,7 @@ class BlockGraphView(object):
         """
         Determines what data is read and written in this graph.
         Does not include reads to subsets of containers that have previously been written within the same state.
-        
+
         :return: A two-tuple of sets of things denoting ({data read}, {data written}).
         """
         return set(), set()
@@ -745,62 +745,87 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         return defined_syms
 
+
     def _read_and_write_sets(self) -> Tuple[Dict[AnyStr, List[Subset]], Dict[AnyStr, List[Subset]]]:
         """
         Determines what data is read and written in this subgraph, returning
         dictionaries from data containers to all subsets that are read/written.
         """
+        from dace.sdfg import utils  # Avoid cyclic import
+
+        # Ensures that the `{src,dst}_subset` are properly set.
+        #  TODO: find where the problems are
+        for edge in self.edges():
+            edge.data.try_initialize(self.sdfg, self, edge)
+
         read_set = collections.defaultdict(list)
         write_set = collections.defaultdict(list)
-        from dace.sdfg import utils  # Avoid cyclic import
-        subgraphs = utils.concurrent_subgraphs(self)
-        for sg in subgraphs:
-            rs = collections.defaultdict(list)
-            ws = collections.defaultdict(list)
-            # Traverse in topological order, so data that is written before it
-            # is read is not counted in the read set
-            for n in utils.dfs_topological_sort(sg, sources=sg.source_nodes()):
-                if isinstance(n, nd.AccessNode):
-                    in_edges = sg.in_edges(n)
-                    out_edges = sg.out_edges(n)
-                    # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
-                    for out_edge in list(out_edges):
-                        for in_edge in list(in_edges):
-                            if (in_edge.data.data == out_edge.data.data
-                                    and in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
-                                out_edges.remove(out_edge)
-                                break
 
-                    for e in in_edges:
-                        # skip empty memlets
-                        if e.data.is_empty():
-                            continue
-                        if e.dst_conn == "views":
-                            continue
+        # NOTE: In a previous version a _single_ read (i.e. leaving Memlet) that was
+        #   fully covered by a single write (i.e. an incoming Memlet) was removed from
+        #   the read set and only the write survived. However, this was never fully
+        #   implemented nor correctly implemented and caused problems.
+        #   So this filtering was removed.
 
-                        # Store all subsets that have been written
-                        ws[n.data].append(e.data.subset)
-                    for e in out_edges:
-                        # skip empty memlets
-                        if e.data.is_empty():
-                            continue
-                        if e.src_conn == "views":
-                            continue
+        for subgraph in utils.concurrent_subgraphs(self):
+            subgraph_read_set = collections.defaultdict(list)  # read and write set of this subgraph.
+            subgraph_write_set = collections.defaultdict(list)
+            for n in utils.dfs_topological_sort(subgraph, sources=subgraph.source_nodes()):
+                if not isinstance(n, nd.AccessNode):
+                    # Read and writes can only be done through access nodes,
+                    #  so ignore every other node.
+                    continue
 
-                        rs[n.data].append(e.data.subset)
-            # Union all subgraphs, so an array that was excluded from the read
-            # set because it was written first is still included if it is read
-            # in another subgraph
-            for data, accesses in rs.items():
+                # Get a list of all incoming (writes) and outgoing (reads) edges of the
+                #  access node, ignore all empty memlets as they do not carry any data.
+                in_edges = [in_edge for in_edge in subgraph.in_edges(n) if not in_edge.data.is_empty()]
+                out_edges = [out_edge for out_edge in subgraph.out_edges(n) if not out_edge.data.is_empty()]
+
+                # Extract the subsets that describes where we read and write the data
+                #  and store them for the later filtering.
+                # NOTE: In certain cases the corresponding subset might be None, in this case
+                #   we assume that the whole array is written, which is the default behaviour.
+                ac_desc = n.desc(self.sdfg)
+                ac_size = ac_desc.total_size
+                in_subsets = dict()
+                for in_edge in in_edges:
+                    # Ensure that if the destination subset is not given, our assumption, that the
+                    #  whole array is written to, is valid, by testing if the memlet transfers the
+                    #  whole array.
+                    assert (in_edge.data.dst_subset is not None) or (in_edge.data.num_elements() == ac_size)
+                    in_subsets[in_edge] = (
+                            sbs.Range.from_array(ac_desc)
+                            if in_edge.data.dst_subset is None
+                            else in_edge.data.dst_subset
+                    )
+                out_subsets = dict()
+                for out_edge in out_edges:
+                    assert (out_edge.data.src_subset is not None) or (out_edge.data.num_elements() == ac_size)
+                    out_subsets[out_edge] = (
+                        sbs.Range.from_array(ac_desc)
+                        if out_edge.data.src_subset is None
+                        else out_edge.data.src_subset
+                    )
+
+                # Update the read and write sets of the subgraph.
+                if in_edges:
+                    subgraph_write_set[n.data].extend(in_subsets.values())
+                if out_edges:
+                    subgraph_read_set[n.data].extend(out_subsets[out_edge] for out_edge in out_edges)
+
+            # Add the subgraph's read and write set to the final ones.
+            for data, accesses in subgraph_read_set.items():
                 read_set[data] += accesses
-            for data, accesses in ws.items():
+            for data, accesses in subgraph_write_set.items():
                 write_set[data] += accesses
-        return read_set, write_set
+
+        return copy.deepcopy((read_set, write_set))
+
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
         Determines what data is read and written in this subgraph.
-        
+
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
@@ -1677,7 +1702,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     sdfg.add_symbol(sym, infer_expr_type(symval, self.parent.symbols) or dtypes.typeclass(int))
 
         return s
-    
+
     def add_external_nested_sdfg(
         self,
         sdfg: 'dace.sdfg.SDFG',
@@ -2681,7 +2706,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             for b_edge in parent.in_edges(self):
                 parent.add_edge(b_edge.src, self.start_block, b_edge.data)
                 parent.remove_edge(b_edge)
-            
+
             end_state = None
             if len(to_connect) > 0:
                 end_state = parent.add_state(self.label + '_end')
@@ -3348,7 +3373,7 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
 
     def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
         return []
-    
+
     def _used_symbols_internal(self,
                                all_symbols: bool,
                                defined_syms: Optional[Set] = None,
@@ -3390,7 +3415,7 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
         json['branches'] = [(condition.to_json() if condition is not None else None, cfg.to_json())
                             for condition, cfg in self._branches]
         return json
-    
+
     @classmethod
     def from_json(cls, json_obj, context=None):
         context = context or {'sdfg': None, 'parent_graph': None}
@@ -3408,7 +3433,7 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
             else:
                 ret._branches.append((None, ControlFlowRegion.from_json(region, context)))
         return ret
-    
+
     def inline(self) -> Tuple[bool, Any]:
         """
         Inlines the conditional region into its parent control flow region.
