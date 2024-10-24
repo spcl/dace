@@ -124,9 +124,11 @@ class RangeRemapperTest(unittest.TestCase):
         dst = Range([(0, K - 1, 1), (0, N * M - 1, 1)])
         # A Mapper
         sm = SubrangeMapper(src, dst)
+        sm_inv = SubrangeMapper(dst, src)
 
         # Pick the entire range.
         self.assertEqual(dst, sm.map(src))
+        self.assertEqual(src, sm_inv.map(dst))
 
         # NOTE: I couldn't make SymPy understand that `(K//2) % K == (K//2)` always holds for postive integers `K`.
         # Hence, the numerical approach.
@@ -135,12 +137,11 @@ class RangeRemapperTest(unittest.TestCase):
                                                                 np.random.randint(1, 10, size=20))]
         # Pick a point K//2, N//2, M//2.
         for args in argslist:
-            want = eval_range(
-                Range([(K // 2, K // 2, 1), ((N // 2) + (M // 2) * N, (N // 2) + (M // 2) * N, 1)]),
-                args)
-            got = eval_range(
-                sm.map(Range([(K // 2, K // 2, 1), (N // 2, N // 2, 1), (M // 2, M // 2, 1)])),
-                args)
+            orig = Range([(K // 2, K // 2, 1), (N // 2, N // 2, 1), (M // 2, M // 2, 1)])
+            orig_maps_to = Range([(K // 2, K // 2, 1), ((N // 2) + (M // 2) * N, (N // 2) + (M // 2) * N, 1)])
+            want, got = eval_range(orig_maps_to, args), eval_range(sm.map(orig), args)
+            self.assertEqual(want, got)
+            want, got = eval_range(orig, args), eval_range(sm_inv.map(orig_maps_to), args)
             self.assertEqual(want, got)
         # Pick a quadrant.
         for args in argslist:
@@ -148,12 +149,52 @@ class RangeRemapperTest(unittest.TestCase):
             self.assertIsNone(sm.map(Range([(0, K // 2, 1), (0, N // 2, 1), (0, M // 2, 1)])))
         # Pick only points in problematic quadrants, but larger subsets elsewhere.
         for args in argslist:
-            want = eval_range(
-                Range([(0, K // 2, 1), ((N // 2) + (M // 2) * N, (N // 2) + (M // 2) * N, 1)]),
-                args)
-            got = eval_range(
-                sm.map(Range([(0, K // 2, 1), (N // 2, N // 2, 1), (M // 2, M // 2, 1)])),
-                args)
+            orig = Range([(0, K // 2, 1), (N // 2, N // 2, 1), (M // 2, M // 2, 1)])
+            orig_maps_to = Range([(0, K // 2, 1), ((N // 2) + (M // 2) * N, (N // 2) + (M // 2) * N, 1)])
+            want, got = eval_range(orig_maps_to, args), eval_range(sm.map(orig), args)
+            self.assertEqual(want, got)
+            want, got = eval_range(orig, args), eval_range(sm_inv.map(orig_maps_to), args)
+            self.assertEqual(want, got)
+
+    def test_mapping_with_reshaping_unit_dims(self):
+        K, N, M = dace.symbol('K', positive=True), dace.symbol('N', positive=True), dace.symbol('M', positive=True)
+
+        # A regular cube.
+        src = Range([(0, K - 1, 1), (0, N - 1, 1), (0, M - 1, 1), (0, 0, 1)])
+        # A regular cube with different shape.
+        dst = Range([(0, K - 1, 1), (0, N * M - 1, 1), (0, 0, 1), (0, 0, 1)])
+        # A Mapper
+        sm = SubrangeMapper(src, dst)
+        sm_inv = SubrangeMapper(dst, src)
+
+        # Pick the entire range.
+        self.assertEqual(dst, sm.map(src))
+        self.assertEqual(src, sm_inv.map(dst))
+
+        # NOTE: I couldn't make SymPy understand that `(K//2) % K == (K//2)` always holds for postive integers `K`.
+        # Hence, the numerical approach.
+        argslist = [{'K': k, 'N': n, 'M': m} for k, n, m in zip(np.random.randint(1, 10, size=20),
+                                                                np.random.randint(1, 10, size=20),
+                                                                np.random.randint(1, 10, size=20))]
+        # Pick a point K//2, N//2, M//2.
+        for args in argslist:
+            orig = Range([(K // 2, K // 2, 1), (N // 2, N // 2, 1), (M // 2, M // 2, 1), (0, 0, 1)])
+            orig_maps_to = Range([(K // 2, K // 2, 1), ((N // 2) + (M // 2) * N, (N // 2) + (M // 2) * N, 1), (0, 0, 1), (0, 0, 1)])
+            want, got = eval_range(orig_maps_to, args), eval_range(sm.map(orig), args)
+            self.assertEqual(want, got)
+            want, got = eval_range(orig, args), eval_range(sm_inv.map(orig_maps_to), args)
+            self.assertEqual(want, got)
+        # Pick a quadrant.
+        for args in argslist:
+            # But its mapping cannot be expressed as a simple range with offset and stride.
+            self.assertIsNone(sm.map(Range([(0, K // 2, 1), (0, N // 2, 1), (0, M // 2, 1), (0, 0, 1)])))
+        # Pick only points in problematic quadrants, but larger subsets elsewhere.
+        for args in argslist:
+            orig = Range([(0, K // 2, 1), (N // 2, N // 2, 1), (M // 2, M // 2, 1), (0, 0, 1)])
+            orig_maps_to = Range([(0, K // 2, 1), ((N // 2) + (M // 2) * N, (N // 2) + (M // 2) * N, 1), (0, 0, 1), (0, 0, 1)])
+            want, got = eval_range(orig_maps_to, args), eval_range(sm.map(orig), args)
+            self.assertEqual(want, got)
+            want, got = eval_range(orig, args), eval_range(sm_inv.map(orig_maps_to), args)
             self.assertEqual(want, got)
 
 
