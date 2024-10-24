@@ -12,6 +12,7 @@ env:
   CUDA_HOME: /usr/local/cuda
   CUDACXX: nvcc
   MKLROOT: /opt/intel/oneapi/mkl/latest/
+  CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
 jobs:
   test-heterogeneous:
