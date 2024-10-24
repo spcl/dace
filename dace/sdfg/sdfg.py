@@ -1032,7 +1032,7 @@ class SDFG(ControlFlowRegion):
 
     def call_with_instrumented_data(self, dreport: 'InstrumentedDataReport', *args, **kwargs):
         """
-        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
+        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary.
         Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
 
         :param dreport: The instrumented data report to use upon calling.
@@ -1694,21 +1694,28 @@ class SDFG(ControlFlowRegion):
                   may_alias=False) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
 
-        # convert strings to int if possible
+
+        # Every Array also supports reallocation, we need to create a secondary size array
+        # The array size is constant and not changeable, yet the values in the array can change
+
+        # convert strings to int if possible, unless it is not the reserved symbol for deferred allocation
         newshape = []
-        for s in shape:
-            try:
-                newshape.append(int(s))
-            except:
-                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        for i, s in enumerate(shape):
+            if isinstance(s, str) and s == "__dace_defer":
+                newshape.append(dace.symbolic.pystr_to_symbolic(f"{s}_dim{i}"))
+            else:
+                try:
+                    newshape.append(int(s))
+                except:
+                    newshape.append(dace.symbolic.pystr_to_symbolic(s))
         shape = newshape
         strides = strides or None
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.Array(dtype,
-                        shape,
+        desc = dt.Array(dtype=dtype,
+                        shape=shape,
                         storage=storage,
                         location=location,
                         allow_conflicts=allow_conflicts,
@@ -1721,7 +1728,23 @@ class SDFG(ControlFlowRegion):
                         total_size=total_size,
                         may_alias=may_alias)
 
-        return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
+        size_desc = dt.Array(dtype=dace.uint64,
+                            shape=(len(shape),),
+                            storage=storage,
+                            location=location,
+                            allow_conflicts=False,
+                            transient=True,
+                            strides=(1,),
+                            offset=(0,),
+                            lifetime=lifetime,
+                            alignment=alignment,
+                            debuginfo=debuginfo,
+                            total_size=len(shape),
+                            may_alias=False)
+
+        array_name = self.add_datadesc(name, desc, find_new_name=find_new_name)
+        self.add_datadesc(f"{array_name}_size", size_desc, find_new_name=False)
+        return array_name, desc
 
     def add_view(self,
                  name: str,
@@ -2602,7 +2625,7 @@ class SDFG(ControlFlowRegion):
                                               print_report: Optional[bool] = None,
                                               order_by_transformation: bool = True,
                                               progress: Optional[bool] = None) -> int:
-        """ 
+        """
         This function applies a transformation or a set of (unique) transformations
         until throughout the entire SDFG once. Operates in-place.
 
@@ -2718,7 +2741,7 @@ class SDFG(ControlFlowRegion):
 
     def generate_code(self):
         """ Generates code from this SDFG and returns it.
-        
+
             :return: A list of `CodeObject` objects containing the generated
                       code of different files and languages.
         """

@@ -122,6 +122,8 @@ class CPUCodeGen(TargetCodeGenerator):
         for src_storage, dst_storage in itertools.product(cpu_storage, cpu_storage):
             dispatcher.register_copy_dispatcher(src_storage, dst_storage, None, self)
 
+        dispatcher.register_reallocate_dispatcher(dtypes.StorageType.CPU_Heap, self)
+
     @staticmethod
     def cmake_options():
         options = []
@@ -393,6 +395,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Compute array size
         arrsize = nodedesc.total_size
+        deferred_allocation = any([s for s in nodedesc.shape if str(s).startswith("__dace_defer")])
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
@@ -493,9 +496,25 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
-            allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
-                state_id, node)
+            if deferred_allocation:
+                allocation_stream.write(
+                    "%s = nullptr; // Deferred Allocation" %
+                    (alloc_name,),
+                    cfg,
+                    state_id,
+                    node
+                )
+            else:
+                allocation_stream.write(
+                    "%s = new %s DACE_ALIGN(64)[%s];\n" %
+                    (alloc_name,
+                     nodedesc.dtype.ctype,
+                     cpp.sym2cpp(arrsize)),
+                    cfg,
+                    state_id,
+                    node
+                )
+
             define_var(name, DefinedType.Pointer, ctypedef)
 
             if node.setzero:
@@ -646,6 +665,28 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream,
         )
 
+    def reallocate(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        dfg: StateSubgraphView,
+        state_id: int,
+        node: Union[nodes.Tasklet, nodes.AccessNode],
+        edge: Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], mmlt.Memlet],
+        function_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
+    ):
+        function_stream.write(
+            "#include <cstdlib>"
+        )
+        data_name = node.data
+        size_array_name = f"{data_name}_size"
+        data = sdfg.arrays[data_name]
+        dtype = sdfg.arrays[data_name].dtype
+        size_str = " * ".join([f"{size_array_name}[{i}]" for i in range(len(data.shape))])
+        callsite_stream.write(
+            f"{node.data} = static_cast<{dtype} *>(std::realloc(static_cast<void *>({node.data}), {size_str} * sizeof({dtype})));"
+        )
 
     def _emit_copy(
         self,
@@ -1102,7 +1143,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
-                if dst_node != node and not isinstance(dst_node, nodes.Tasklet):
+                if dst_node != node and not isinstance(dst_node, nodes.Tasklet) :
+                    # If it is a size change, reallocate will be called
+                    if edge.dst_conn is not None and edge.dst_conn.endswith("_size"):
+                        continue
+
                     dispatcher.dispatch_copy(
                         node,
                         dst_node,
@@ -1415,6 +1460,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     self._dispatcher.defined_vars.add(edge.dst_conn, defined_type, f"const {ctype}")
 
                 else:
+                    inner_stream.write("// COPY3")
                     self._dispatcher.dispatch_copy(
                         src_node,
                         node,
@@ -2155,28 +2201,40 @@ class CPUCodeGen(TargetCodeGenerator):
 
         sdict = state_dfg.scope_dict()
         for edge in state_dfg.in_edges(node):
-            predecessor, _, _, _, memlet = edge
+            predecessor, _, dst, in_connector, memlet = edge
             if memlet.data is None:
                 continue  # If the edge has to be skipped
 
-            # Determines if this path ends here or has a definite source (array) node
-            memlet_path = state_dfg.memlet_path(edge)
-            if memlet_path[-1].dst == node:
-                src_node = memlet_path[0].src
-                # Only generate code in case this is the innermost scope
-                # (copies are generated at the inner scope, where both arrays exist)
-                if (scope_contains_scope(sdict, src_node, node) and sdict[src_node] != sdict[node]):
-                    self._dispatcher.dispatch_copy(
-                        src_node,
-                        node,
-                        edge,
-                        sdfg,
-                        cfg,
-                        dfg,
-                        state_id,
-                        function_stream,
-                        callsite_stream,
-                    )
+            if in_connector == "IN_size":
+                self._dispatcher.dispatch_reallocate(
+                    node,
+                    edge,
+                    sdfg,
+                    cfg,
+                    dfg,
+                    state_id,
+                    function_stream,
+                    callsite_stream,
+                )
+            else:
+                # Determines if this path ends here or has a definite source (array) node
+                memlet_path = state_dfg.memlet_path(edge)
+                if memlet_path[-1].dst == node:
+                    src_node = memlet_path[0].src
+                    # Only generate code in case this is the innermost scope
+                    # (copies are generated at the inner scope, where both arrays exist)
+                    if (scope_contains_scope(sdict, src_node, node) and sdict[src_node] != sdict[node]):
+                        self._dispatcher.dispatch_copy(
+                            src_node,
+                            node,
+                            edge,
+                            sdfg,
+                            cfg,
+                            dfg,
+                            state_id,
+                            function_stream,
+                            callsite_stream,
+                        )
 
         # Process outgoing memlets (array-to-array write should be emitted
         # from the first leading edge out of the array)
