@@ -1390,8 +1390,8 @@ class SubrangeMapper:
         assert self.src.dims() == r.dims()
         out = []
         src_i, dst_i = 0, 0
-        while src_i < self.src.dims():
-            assert dst_i < self.dst.dims()
+        while src_i < self.src.dims() and dst_i < self.dst.dims():
+            # If we run out only on one side, handle that case after the loop.
 
             # Find the next smallest segments of `src` and `dst` whose volumes matches (and therefore can possibly have
             # a mapping).
@@ -1446,4 +1446,12 @@ class SubrangeMapper:
                 return None
 
             src_i, dst_i = src_j, dst_j
+        if src_i < self.src.dims():
+            src_segment = Range(self.src.ranges[src_i: self.src.dims()])
+            assert src_segment.volume_exact() == 1
+        if dst_i < self.dst.dims():
+            # Take the remaining dst segment which must have a volume of 1 by now.
+            dst_segment = Range(self.dst.ranges[dst_i: self.dst.dims()])
+            assert dst_segment.volume_exact() == 1
+            out.extend(dst_segment.ranges)
         return Range(out)
