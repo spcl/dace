@@ -162,7 +162,7 @@ class RangeRemapperTest(unittest.TestCase):
         # A regular cube.
         src = Range([(0, K - 1, 1), (0, N - 1, 1), (0, M - 1, 1), (0, 0, 1)])
         # A regular cube with different shape.
-        dst = Range([(0, K - 1, 1), (0, N * M - 1, 1), (0, 0, 1), (0, 0, 1)])
+        dst = Range([(0, K - 1, 1), (0, 0, 1), (0, N * M - 1, 1), (0, 0, 1), (0, 0, 1)])
         # A Mapper
         sm = SubrangeMapper(src, dst)
         sm_inv = SubrangeMapper(dst, src)
@@ -179,7 +179,10 @@ class RangeRemapperTest(unittest.TestCase):
         # Pick a point K//2, N//2, M//2.
         for args in argslist:
             orig = Range([(K // 2, K // 2, 1), (N // 2, N // 2, 1), (M // 2, M // 2, 1), (0, 0, 1)])
-            orig_maps_to = Range([(K // 2, K // 2, 1), ((N // 2) + (M // 2) * N, (N // 2) + (M // 2) * N, 1), (0, 0, 1), (0, 0, 1)])
+            orig_maps_to = Range([(K // 2, K // 2, 1),
+                                  (0, 0, 1),
+                                  ((N // 2) + (M // 2) * N, (N // 2) + (M // 2) * N, 1),
+                                  (0, 0, 1), (0, 0, 1)])
             want, got = eval_range(orig_maps_to, args), eval_range(sm.map(orig), args)
             self.assertEqual(want, got)
             want, got = eval_range(orig, args), eval_range(sm_inv.map(orig_maps_to), args)
@@ -191,7 +194,10 @@ class RangeRemapperTest(unittest.TestCase):
         # Pick only points in problematic quadrants, but larger subsets elsewhere.
         for args in argslist:
             orig = Range([(0, K // 2, 1), (N // 2, N // 2, 1), (M // 2, M // 2, 1), (0, 0, 1)])
-            orig_maps_to = Range([(0, K // 2, 1), ((N // 2) + (M // 2) * N, (N // 2) + (M // 2) * N, 1), (0, 0, 1), (0, 0, 1)])
+            orig_maps_to = Range([(0, K // 2, 1),
+                                  (0, 0, 1),
+                                  ((N // 2) + (M // 2) * N, (N // 2) + (M // 2) * N, 1),
+                                  (0, 0, 1), (0, 0, 1)])
             want, got = eval_range(orig_maps_to, args), eval_range(sm.map(orig), args)
             self.assertEqual(want, got)
             want, got = eval_range(orig, args), eval_range(sm_inv.map(orig_maps_to), args)

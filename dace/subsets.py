@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import operator
 import re
 import warnings
 from functools import reduce
@@ -344,8 +343,8 @@ class Range(Subset):
         ]
 
     def volume_exact(self) -> int:
-        """ Returns the total number of elements in all dimenssions together. """
-        return reduce(operator.mul, self.size_exact())
+        """ Returns the total number of elements in all dimensions together. """
+        return reduce(lambda a, b: a * b, self.size_exact())
 
     def bounding_box_size(self):
         """ Returns the size of a bounding box around this range. """
@@ -910,8 +909,8 @@ class Indices(Subset):
         return self.size()
 
     def volume_exact(self) -> int:
-        """ Returns the total number of elements in all dimenssions together. """
-        return reduce(operator.mul, self.size_exact())
+        """ Returns the total number of elements in all dimensions together. """
+        return reduce(lambda a, b: a * b, self.size_exact())
 
     def min_element(self):
         return self.indices
