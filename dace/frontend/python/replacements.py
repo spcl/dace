@@ -322,6 +322,13 @@ def _numpy_full(pv: ProgramVisitor,
         is_data = True
         vtype = sdfg.arrays[fill_value].dtype
     dtype = dtype or vtype
+
+    # Handle one-dimensional inputs
+    try:
+        iter(shape)
+    except TypeError:
+        shape = [shape]
+
     name, _ = sdfg.add_temp_transient(shape, dtype)
 
     if is_data:
