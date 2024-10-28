@@ -12,10 +12,8 @@ nnz = dace.symbol('nnz')
 
 @dace.program(dace.uint32[H + 1], dace.uint32[nnz], dace.float32[nnz], dace.float32[W], dace.float32[H])
 def spmv(A_row, A_col, A_val, x, b):
-
     @dace.mapscope(_[0:H])
     def compute_row(i):
-
         @dace.map(_[A_row[i]:A_row[i + 1]])
         def compute(j):
             a << A_val[j]
@@ -292,8 +290,29 @@ def test_dynamic_map_with_step():
     assert np.allclose(val, ref.data)
 
 
+@pytest.mark.gpu
+def test_dynamic_default_schedule():
+    N = dace.symbol('N')
+
+    @dace.program
+    def tester(a: dace.float32[N, 10]):
+        A = dace.ndarray([N, 10], dtype=dace.float32, storage=dace.StorageType.GPU_Global)
+        A[:] = a
+        for i in dace.map[0:N] @ dace.ScheduleType.GPU_Device:
+            smem = np.empty((10, ), dtype=np.float32) @ dace.StorageType.GPU_Shared
+            smem[:] = 1
+            for j in dace.map[0:10] @ dace.ScheduleType.GPU_ThreadBlock_Dynamic:
+                A[i, j] = i * 10 + smem[j]
+        a[:] = A
+
+    a = np.zeros((65, 10), dtype=np.float32)
+    tester(a)
+    assert np.allclose(a, np.fromfunction(lambda i, j, k: i * 10 + j, (65, 10), dtype=np.float32))
+
+
 if __name__ == '__main__':
     test_dynamic_map()
     test_dynamic_maps()
     test_nested_dynamic_map()
     test_dynamic_map_with_step()
+    test_dynamic_default_schedule()
