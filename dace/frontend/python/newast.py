@@ -1489,19 +1489,19 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 values = str(val).split(':')
                 if len(values) == 1:
-                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.globals, **dyn_inputs}))
+                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.defined, **dyn_inputs}))
                 elif len(values) == 2:
                     result[name] = symbolic.symbol(
                         name,
                         dtypes.result_type_of(infer_expr_type(values[0], {
-                            **self.globals,
+                            **self.defined,
                             **dyn_inputs
                         }), infer_expr_type(values[1], {
-                            **self.globals,
+                            **self.defined,
                             **dyn_inputs
                         })))
                 elif len(values) == 3:
-                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.globals, **dyn_inputs}))
+                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.defined, **dyn_inputs}))
                 else:
                     raise DaceSyntaxError(
                         self, None, "Invalid number of arguments in a range iterator. "
