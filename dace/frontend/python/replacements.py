@@ -4550,6 +4550,11 @@ def _ndarray_astype(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, 
         dtype = dtypes.typeclass(dtype)
     return _datatype_converter(sdfg, state, arr, dtype)[0]
 
+@oprepo.replaces_operator('Array', 'MatMult', otherclass='StorageType')
+def _cast_storage(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, stype: dace.StorageType) -> str:
+    desc = sdfg.arrays[arr]
+    desc.storage = stype
+    return arr
 
 # Replacements that need ufuncs ###############################################
 # TODO: Fix by separating to different modules and importing
