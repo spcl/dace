@@ -3258,18 +3258,23 @@ class ProgramVisitor(ExtNodeVisitor):
             dtype = astutils.evalnode(node.annotation, {**self.globals, **self.defined})
             if isinstance(dtype, data.Data):
                 simple_type = dtype.dtype
+                storage = dtype.storage
             else:
                 simple_type = dtype
+                storage = dtypes.StorageType.Default
             if not isinstance(simple_type, dtypes.typeclass):
                 raise TypeError
         except:
             dtype = None
+            storage = dtypes.StorageType.Default
             type_name = rname(node.annotation)
             warnings.warn('typeclass {} is not supported'.format(type_name))
         if node.value is None and dtype is not None:  # Annotating type without assignment
             self.annotated_types[rname(node.target)] = dtype
             return
-        self._visit_assign(node, node.target, None, dtype=dtype)
+        results = self._visit_assign(node, node.target, None, dtype=dtype)
+        if storage != dtypes.StorageType.Default:
+            self.sdfg.arrays[results[0][0]].storage = storage
 
     def _visit_assign(self, node, node_target, op, dtype=None, is_return=False):
         # Get targets (elts) and results
@@ -3562,6 +3567,8 @@ class ProgramVisitor(ExtNodeVisitor):
             if output_indirection:
                 self.cfg_target.add_edge(self.last_block, output_indirection, dace.sdfg.InterstateEdge())
                 self.last_block = output_indirection
+
+        return results
 
     def visit_AugAssign(self, node: ast.AugAssign):
         self._visit_assign(node, node.target, augassign_ops[type(node.op).__name__])
