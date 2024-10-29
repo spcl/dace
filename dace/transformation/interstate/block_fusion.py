@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, ControlFlowRegion, SDFGState
 from dace.transformation import transformation
 
 
@@ -52,6 +52,9 @@ class BlockFusion(transformation.MultiStateTransformation):
         in_edges = graph.in_edges(self.first_block)
         if out_edges[0].data.assignments:
             if not in_edges:
+                return False
+            # If the first block is a control flow region, no absorbtion is possible.
+            if isinstance(self.first_block, AbstractControlFlowRegion):
                 return False
             # Fail if symbol is set before the block to fuse
             new_assignments = set(out_edges[0].data.assignments.keys())
