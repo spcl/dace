@@ -328,7 +328,10 @@ def test_dynamic_nested_map():
 
     a = np.zeros((10, 11), dtype=np.float32)
     sdfg = dynamic_nested_map.to_sdfg(simplify=False)
-    sdfg(a)
+    for _, _, arr in sdfg.arrays_recursive():
+        if arr.storage in (dace.StorageType.GPU_Shared, dace.StorageType.Default):
+            arr.storage = dace.StorageType.Register
+    sdfg(a, H=10, W=11)
     assert np.allclose(a, np.fromfunction(lambda i, j: i * 10 + j, (10, 11), dtype=np.float32))
 
 
