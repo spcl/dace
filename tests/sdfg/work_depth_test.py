@@ -196,7 +196,7 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
     'multiple_array_sizes': (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
     'unbounded_while_do': (unbounded_while_do, (sp.Symbol('num_execs_0_5') * N, sp.Symbol('num_execs_0_5'))),
     # We get this Max(1, num_execs), since it is a do-while loop, but the num_execs symbol does not capture this.
-    'unbounded_nonnegify': (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_7') * N, 2 * sp.Symbol('num_execs_0_7'))),
+    'unbounded_nonnegify': (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_8') * N, 2 * sp.Symbol('num_execs_0_8'))),
     'break_for_loop': (break_for_loop, (N**2, N)),
     'break_while_loop': (break_while_loop, (sp.Symbol('num_execs_0_7') * N, sp.Symbol('num_execs_0_7'))),
     'sequential_ifs': (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
