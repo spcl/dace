@@ -329,7 +329,7 @@ def test_dynamic_nested_map():
     a = np.zeros((10, 11), dtype=np.float32)
     sdfg = dynamic_nested_map.to_sdfg(simplify=False)
     sdfg(a)
-    assert np.allclose(a, np.fromfunction(lambda i, j, k: i * 10 + j, (10, 11), dtype=np.float32))
+    assert np.allclose(a, np.fromfunction(lambda i, j: i * 10 + j, (10, 11), dtype=np.float32))
 
 
 @pytest.mark.gpu
@@ -344,12 +344,12 @@ def test_dynamic_default_schedule():
             smem = np.empty((10, ), dtype=np.float32) @ dace.StorageType.GPU_Shared
             smem[:] = 1
             for j in dace.map[0:10] @ dace.ScheduleType.GPU_ThreadBlock_Dynamic:
-                A[i, j] = i * 10 + smem[j]
+                A[i, j] = i * 65 + smem[j]
         a[:] = A
 
     a = np.zeros((65, 10), dtype=np.float32)
     tester(a)
-    assert np.allclose(a, np.fromfunction(lambda i, j, k: i * 10 + j, (65, 10), dtype=np.float32))
+    assert np.allclose(a, np.fromfunction(lambda i, j: i * 65 + 1, (65, 10), dtype=np.float32))
 
 
 if __name__ == '__main__':
