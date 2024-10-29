@@ -225,8 +225,8 @@ def test_fusion_with_multiple_indices():
     our_B = deepcopy(B)
     g(A=our_A, B=our_B, K=3, M=4, N=5)
 
+    # Here, the state fusion can apply only with GSLs.
     assert g.apply_transformations_repeated(ConstAssignmentStateFusion) == 0
-    g.simplify()
     assert g.apply_transformations_repeated(ConstAssignmentStateFusion, options={'use_grid_strided_loops': True}) == 2
     g.save(os.path.join('_dacegraphs', '3d-2.sdfg'))
     g.validate()
@@ -294,11 +294,6 @@ def test_does_not_permute_to_fuse():
     g(A=actual_A, B=actual_B, K=3, M=4, N=5)
 
     assert g.apply_transformations_repeated(ConstAssignmentMapFusion) == 0
-    g.save(os.path.join('_dacegraphs', '3d-flip-1.sdfg'))
-    g.validate()
-    our_A = deepcopy(A)
-    our_B = deepcopy(B)
-    g(A=our_A, B=our_B, K=3, M=4, N=5)
 
 
 @dace.program
@@ -322,11 +317,114 @@ def test_does_not_extend_to_fuse():
     g(A=actual_A, B=actual_B, K=3, M=4, N=5)
 
     assert g.apply_transformations_repeated(ConstAssignmentMapFusion) == 0
-    g.save(os.path.join('_dacegraphs', '3d-mixed-1.sdfg'))
+
+
+@dace.program
+def assign_bottom_face_42(A: dace.float32[K, M, N]):
+    for t1, t2 in dace.map[0:M, 0:N]:
+        A[K - 1, t1, t2] = 42
+
+
+@dace.program
+def assign_bottom_face_index_sum(A: dace.float32[K, M, N]):
+    for t1, t2 in dace.map[0:M, 0:N]:
+        A[K - 1, t1, t2] = t1 + t2
+
+
+@dace.program
+def assign_inconsistent_values_1(A: dace.float32[K, M, N]):
+    assign_top_face(A)
+    assign_bottom_face_42(A)
+
+
+@dace.program
+def assign_inconsistent_values_2(A: dace.float32[K, M, N]):
+    assign_top_face(A)
+    assign_bottom_face_index_sum(A)
+
+
+def test_does_not_fuse_with_inconsistent_assignments():
+    """ Negative test """
+    A = np.random.uniform(size=(3, 4, 5)).astype(np.float32)
+
+    # Construct SDFG with the maps on separate states.
+    g = assign_inconsistent_values_1.to_sdfg(simplify=True, validate=True, use_cache=False)
+    g.apply_transformations_repeated(StateFusionExtended, validate_all=True)
+    g.save(os.path.join('_dacegraphs', '3d-inconsistent-0.sdfg'))
     g.validate()
-    our_A = deepcopy(A)
-    our_B = deepcopy(B)
-    g(A=our_A, B=our_B, K=3, M=4, N=5)
+    actual_A = deepcopy(A)
+    g(A=actual_A, K=3, M=4, N=5)
+
+    assert g.apply_transformations_repeated(ConstAssignmentMapFusion) == 0
+
+    # Try another case: Construct SDFG with the maps on separate states.
+    g = assign_inconsistent_values_2.to_sdfg(simplify=True, validate=True, use_cache=False)
+    g.apply_transformations_repeated(StateFusionExtended, validate_all=True)
+    g.save(os.path.join('_dacegraphs', '3d-inconsistent-1.sdfg'))
+    g.validate()
+    actual_A = deepcopy(A)
+    g(A=actual_A, K=3, M=4, N=5)
+
+    assert g.apply_transformations_repeated(ConstAssignmentMapFusion) == 0
+
+
+@dace.program
+def tasklet_between_maps(A: dace.float32[K, M, N]):
+    assign_top_face(A)
+    A[0, 0, 0] = 1
+    assign_bottom_face(A)
+
+
+def test_does_not_fuse_with_unsuitable_dependencies():
+    """ Negative test """
+    A = np.random.uniform(size=(3, 4, 5)).astype(np.float32)
+
+    # Construct SDFG with the maps on separate states.
+    g = tasklet_between_maps.to_sdfg(simplify=True, validate=True, use_cache=False)
+    g.apply_transformations_repeated(StateFusionExtended, validate_all=True)
+    g.save(os.path.join('_dacegraphs', '3d-baddeps-0.sdfg'))
+    g.validate()
+    actual_A = deepcopy(A)
+    g(A=actual_A, K=3, M=4, N=5)
+
+    assert g.apply_transformations_repeated(ConstAssignmentMapFusion) == 0
+
+
+@dace.program
+def assign_top_face_self_copy(A: dace.float32[K, M, N]):
+    for t1, t2 in dace.map[0:M, 0:N]:
+        A[0, t1, t2] = A[0, t1, t2]
+
+
+@dace.program
+def first_map_reads_data(A: dace.float32[K, M, N]):
+    assign_top_face_self_copy(A)
+    assign_bottom_face(A)
+
+
+def test_does_not_fuse_when_the_first_map_reads_anything_at_all():
+    """ Negative test """
+    A = np.random.uniform(size=(3, 4, 5)).astype(np.float32)
+
+    # Construct SDFG with the maps on separate states.
+    g = first_map_reads_data.to_sdfg(simplify=True, validate=True, use_cache=False)
+    g.save(os.path.join('_dacegraphs', '3d-map1-reads-0.sdfg'))
+    g.validate()
+    actual_A = deepcopy(A)
+    g(A=actual_A, K=3, M=4, N=5)
+
+    # The state fusion won't work.
+    assert g.apply_transformations_repeated(ConstAssignmentStateFusion) == 0
+
+    # Fuse the states explicitly anyway.
+    g.apply_transformations_repeated(StateFusionExtended, validate_all=True)
+    g.save(os.path.join('_dacegraphs', '3d-map1-reads-1.sdfg'))
+    g.validate()
+    actual_A = deepcopy(A)
+    g(A=actual_A, K=3, M=4, N=5)
+
+    # The map fusion won't work.
+    assert g.apply_transformations_repeated(ConstAssignmentMapFusion) == 0
 
 
 if __name__ == '__main__':
