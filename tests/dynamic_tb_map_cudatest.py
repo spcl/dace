@@ -291,6 +291,22 @@ def test_dynamic_map_with_step():
 
 
 @pytest.mark.gpu
+def test_dynamic_multidim_map():
+    @dace.program
+    def tester(a: dace.float32[H, W, nnz]):
+        A = dace.ndarray([H, W, nnz], dtype=dace.float32, storage=dace.StorageType.GPU_Global)
+        A[:] = a
+        for i, j in dace.map[0:H, 0:W] @ dace.ScheduleType.GPU_Device:
+            for k in dace.map[0:nnz] @ dace.ScheduleType.GPU_ThreadBlock_Dynamic:
+                A[i, j, k] = i * 110 + j * 11 + k
+        a[:] = A
+
+    a = np.zeros((10, 11, 65), dtype=np.float32)
+    tester(a)
+    assert np.allclose(a, np.fromfunction(lambda i, j, k: i * 110 + j * 11 + k, (10, 11, 65), dtype=np.float32))
+
+
+@pytest.mark.gpu
 def test_dynamic_nested_map():
     @dace.program
     def nested2(A: dace.float32[W], i: dace.int32, j: dace.int32):
@@ -341,5 +357,6 @@ if __name__ == '__main__':
     test_dynamic_maps()
     test_nested_dynamic_map()
     test_dynamic_map_with_step()
+    test_dynamic_multidim_map()
     test_dynamic_nested_map()
     test_dynamic_default_schedule()

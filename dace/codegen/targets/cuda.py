@@ -2070,8 +2070,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
-        # unless thsi is handled by another map down the line
-        if (not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent):
+        # unless this is handled by another map down the line
+        if ((not has_tbmap or has_dtbmap) and node.map.schedule != dtypes.ScheduleType.GPU_Persistent):
             dsym_end = [d + bs - 1 for d, bs in zip(dsym, self._block_dims)]
             minels = krange.min_element()
             maxels = krange.max_element()
@@ -2088,10 +2088,12 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     condition += '%s < %s' % (v, _topy(maxel + 1))
                 if len(condition) > 0:
                     self._kernel_grid_conditions.append(f'if ({condition}) {{')
-                    kernel_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
+                    if not has_dtbmap:
+                        kernel_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
                 else:
                     self._kernel_grid_conditions.append('{')
-                    kernel_stream.write('{', cfg, state_id, scope_entry)
+                    if not has_dtbmap:
+                        kernel_stream.write('{', cfg, state_id, scope_entry)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            cfg,
@@ -2178,10 +2180,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 current_sdfg = current_state.parent
             if not outer_scope:
                 raise ValueError(f'Failed to find the outer scope of {scope_entry}')
-            callsite_stream.write(
-                'if ({} < {}) {{'.format(outer_scope.map.params[0],
-                                         _topy(subsets.Range(outer_scope.map.range[::-1]).max_element()[0] + 1)), cfg,
-                state_id, scope_entry)
+            for cond in self._kernel_grid_conditions:
+                callsite_stream.write(cond, cfg, state_id, scope_entry)
 
             # NOTE: Dynamic map inputs must be defined both outside and inside the dynamic Map schedule.
             # They define inside the schedule the bounds of the any nested Maps.
@@ -2204,8 +2204,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 '__dace_dynmap_begin = {begin};\n'
                 '__dace_dynmap_end = {end};'.format(begin=dynmap_begin, end=dynmap_end), cfg, state_id, scope_entry)
 
-            # close if
-            callsite_stream.write('}', cfg, state_id, scope_entry)
+            # Close kernel grid conditions
+            for _ in self._kernel_grid_conditions:
+                callsite_stream.write('}', cfg, state_id, scope_entry)
 
             callsite_stream.write(
                 'dace::DynamicMap<{fine_grained}, {bsize}>::'
