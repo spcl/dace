@@ -22,8 +22,8 @@ def make_sdfg():
     A = st.add_access('A')
     C = st.add_access('C')
     R = st.add_reduce('lambda x, y: x + y', [1, 2, 3], 0)
-    st.add_memlet_path(A, R, memlet=Memlet(expr='A[0:N, 0, 0, 0:C_in, 0:C_out]'))
-    st.add_memlet_path(R, C, memlet=Memlet(expr='C[0:N, 5, 5, 0:C_out]'))
+    st.add_nedge(A, R, Memlet(expr='A[0:N, 0, 0, 0:C_in, 0:C_out]'))
+    st.add_nedge(R, C, Memlet(expr='C[0:N, 5, 5, 0:C_out]'))
 
     return g, R
 
