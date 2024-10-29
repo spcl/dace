@@ -1,12 +1,27 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 from copy import deepcopy
+from typing import Dict, Collection
 
 import numpy as np
 
 import dace
-from dace import SDFG, InterstateEdge, Memlet
+from dace import SDFG, InterstateEdge, Memlet, SDFGState
 from dace.transformation.interstate import IfExtraction
+
+
+def _add_map_with_connectors(st: SDFGState, name: str, ndrange: Dict[str, str],
+                             en_conn_bases: Collection[str] = None, ex_conn_bases: Collection[str] = None):
+    en, ex = st.add_map(name, ndrange)
+    if en_conn_bases:
+        for c in en_conn_bases:
+            en.add_in_connector(f"IN_{c}")
+            en.add_out_connector(f"OUT_{c}")
+    if ex_conn_bases:
+        for c in ex_conn_bases:
+            ex.add_in_connector(f"IN_{c}")
+            ex.add_out_connector(f"OUT_{c}")
+    return en, ex
 
 
 def make_branched_sdfg_that_does_not_depend_on_loop_var():
@@ -27,7 +42,7 @@ def make_branched_sdfg_that_does_not_depend_on_loop_var():
     subg.add_edge(if2, ift, InterstateEdge())
     t0 = ift.add_tasklet('copy', inputs={}, outputs={'__out'}, code='__out = outval')
     tmp = ift.add_access('tmp')
-    ift.add_memlet_path(t0, tmp, src_conn='__out', memlet=Memlet(expr='tmp[0]'))
+    ift.add_edge(t0, '__out', tmp, None, Memlet(expr='tmp[0]'))
     subg.fill_scope_connectors()
 
     # Then prepare the parent graph.
@@ -35,12 +50,12 @@ def make_branched_sdfg_that_does_not_depend_on_loop_var():
     g.add_array('A', (10,), dace.float32)
     g.add_symbol('flag', dace.bool)
     st0 = g.add_state('outer', is_start_block=True)
-    en, ex = st0.add_map('map', {'i': '0:10'})
+    en, ex = _add_map_with_connectors(st0, 'map', {'i': '0:10'}, [], ['A'])
     body = st0.add_nested_sdfg(subg, None, {}, {'tmp'}, symbol_mapping={'flag': 'flag'})
     A = st0.add_access('A')
-    st0.add_memlet_path(en, body, memlet=Memlet())
-    st0.add_memlet_path(body, ex, src_conn='tmp', dst_conn='IN_A', memlet=Memlet(expr='A[i]'))
-    st0.add_memlet_path(ex, A, src_conn='OUT_A', memlet=Memlet(expr='A[0:10]'))
+    st0.add_nedge(en, body, Memlet())
+    st0.add_edge(body, 'tmp', ex, 'IN_A', Memlet(expr='A[i]'))
+    st0.add_edge(ex, 'OUT_A', A, None, Memlet(expr='A[0:10]'))
     g.fill_scope_connectors()
 
     return g
@@ -86,7 +101,7 @@ def make_branched_sdfg_that_has_intermediate_branchlike_structure():
     subg.add_edge(if7, ift, InterstateEdge())
     t0 = ift.add_tasklet('copy', inputs={}, outputs={'__out'}, code='__out = outval')
     tmp = ift.add_access('tmp')
-    ift.add_memlet_path(t0, tmp, src_conn='__out', memlet=Memlet(expr='tmp[0]'))
+    ift.add_edge(t0, '__out', tmp, None, Memlet(expr='tmp[0]'))
     subg.fill_scope_connectors()
 
     # Then prepare the parent graph.
@@ -94,12 +109,12 @@ def make_branched_sdfg_that_has_intermediate_branchlike_structure():
     g.add_array('A', (10,), dace.float32)
     g.add_symbol('flag', dace.bool)
     st0 = g.add_state('outer', is_start_block=True)
-    en, ex = st0.add_map('map', {'i': '0:10'})
+    en, ex = _add_map_with_connectors(st0, 'map', {'i': '0:10'}, [], ['A'])
     body = st0.add_nested_sdfg(subg, None, {}, {'tmp'}, symbol_mapping={'flag': 'flag'})
     A = st0.add_access('A')
-    st0.add_memlet_path(en, body, memlet=Memlet())
-    st0.add_memlet_path(body, ex, src_conn='tmp', dst_conn='IN_A', memlet=Memlet(expr='A[i]'))
-    st0.add_memlet_path(ex, A, src_conn='OUT_A', memlet=Memlet(expr='A[0:10]'))
+    st0.add_nedge(en, body, Memlet())
+    st0.add_edge(body, 'tmp', ex, 'IN_A', Memlet(expr='A[i]'))
+    st0.add_edge(ex, 'OUT_A', A, None, Memlet(expr='A[0:10]'))
     g.fill_scope_connectors()
 
     return g
@@ -123,19 +138,19 @@ def make_branched_sdfg_that_depends_on_loop_var():
     subg.add_edge(if2, ift, InterstateEdge())
     t0 = ift.add_tasklet('copy', inputs={}, outputs={'__out'}, code='__out = outval')
     tmp = ift.add_access('tmp')
-    ift.add_memlet_path(t0, tmp, src_conn='__out', memlet=Memlet(expr='tmp[0]'))
+    ift.add_edge(t0, '__out', tmp, None, Memlet(expr='tmp[0]'))
     subg.fill_scope_connectors()
 
     # Then prepare the parent graph.
     g = SDFG('prog')
     g.add_array('A', (10,), dace.float32)
     st0 = g.add_state('outer', is_start_block=True)
-    en, ex = st0.add_map('map', {'i': '0:10'})
+    en, ex = _add_map_with_connectors(st0, 'map', {'i': '0:10'}, [], ['A'])
     body = st0.add_nested_sdfg(subg, None, {}, {'tmp'})
     A = st0.add_access('A')
-    st0.add_memlet_path(en, body, memlet=Memlet())
-    st0.add_memlet_path(body, ex, src_conn='tmp', dst_conn='IN_A', memlet=Memlet(expr='A[i]'))
-    st0.add_memlet_path(ex, A, src_conn='OUT_A', memlet=Memlet(expr='A[0:10]'))
+    st0.add_nedge(en, body, Memlet())
+    st0.add_edge(body, 'tmp', ex, 'IN_A', Memlet(expr='A[i]'))
+    st0.add_edge(ex, 'OUT_A', A, None, Memlet(expr='A[0:10]'))
     g.fill_scope_connectors()
 
     return g
