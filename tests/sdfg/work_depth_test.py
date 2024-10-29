@@ -227,6 +227,8 @@ def test_work_depth(test_name):
     inliner.no_inline_function_call_regions = False
     inliner.no_inline_named_regions = False
     inliner.apply_pass(sdfg, {})
+    for sd in sdfg.all_sdfgs_recursive():
+        sd.using_experimental_blocks = False
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
     res = w_d_map[get_uuid(sdfg)]
@@ -283,6 +285,8 @@ def test_avg_par(test_name: str):
     inliner.no_inline_function_call_regions = False
     inliner.no_inline_named_regions = False
     inliner.apply_pass(sdfg, {})
+    for sd in sdfg.all_sdfgs_recursive():
+        sd.using_experimental_blocks = False
 
     analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
     res = w_d_map[get_uuid(sdfg)][0] / w_d_map[get_uuid(sdfg)][1]
