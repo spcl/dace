@@ -396,7 +396,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     symbols = symbols or {}
     initialized_transients = (initialized_transients if initialized_transients is not None else {'__pystate'})
     references = references or set()
-    scope = state.scope_dict()
 
     # Obtain whether we are already in an accelerator context
     if not hasattr(context, 'in_gpu'):
@@ -425,6 +424,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
     if state.has_cycles():
         raise InvalidSDFGError('State should be acyclic but contains cycles', sdfg, state_id)
+
+    scope = state.scope_dict()
 
     for nid, node in enumerate(state.nodes()):
         # Reference check
