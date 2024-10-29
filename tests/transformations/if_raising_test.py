@@ -27,7 +27,7 @@ def make_branched_sdfg_with_raisable_if():
     g.add_symbol('flag', dace.bool)
 
     # Do something in the guard state.
-    t = st0.add_tasklet('write_0', {}, {'__out'}, '__out = 0')
+    t = st0.add_tasklet('write_0', {}, {'__out'}, '__out = -1')
     A = st0.add_access('A')
     st0.add_memlet_path(t, A, src_conn='__out', memlet=Memlet(expr='A[0]'))
 
