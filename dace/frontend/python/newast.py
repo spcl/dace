@@ -4630,10 +4630,16 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('call_%d' % node.lineno)
         self.last_block.set_default_lineinfo(self.current_lineinfo)
 
-        if found_ufunc:
-            result = func(self, node, self.sdfg, self.last_block, ufunc_name, args, keywords)
-        else:
-            result = func(self, self.sdfg, self.last_block, *args, **keywords)
+        try:
+            if found_ufunc:
+                result = func(self, node, self.sdfg, self.last_block, ufunc_name, args, keywords)
+            else:
+                result = func(self, self.sdfg, self.last_block, *args, **keywords)
+        except DaceSyntaxError as ex:
+            # Attach source information to exception
+            if ex.node is None:
+                ex.node = node
+            raise
 
         self.last_block.set_default_lineinfo(None)
 
