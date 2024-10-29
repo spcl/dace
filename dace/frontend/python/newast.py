@@ -4871,9 +4871,9 @@ class ProgramVisitor(ExtNodeVisitor):
             if func is not None:
                 # A new state is likely needed here, e.g., for transposition (ndarray.T)
                 self._add_state('%s_%d' % (type(node).__name__, node.lineno))
-                self.last_state.set_default_lineinfo(self.current_lineinfo)
+                self.last_block.set_default_lineinfo(self.current_lineinfo)
                 result = func(self, self.sdfg, self.last_block, result)
-                self.last_state.set_default_lineinfo(None)
+                self.last_block.set_default_lineinfo(None)
                 return result
 
         # Otherwise, try to find compile-time attribute (such as shape)
