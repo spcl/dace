@@ -496,6 +496,10 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
+                # Initialize size array
+                size_str = ",".join(["0" if cpp.sym2cpp(dim).startswith("__dace_defer") else cpp.sym2cpp(dim) for dim in nodedesc.shape])
+                size_nodedesc = sdfg.arrays[f"{name}_size"]
+                declaration_stream.write(f'{size_nodedesc.dtype.ctype} {name}_size[{size_nodedesc.shape[0]}]{{{size_str}}};\n', cfg, state_id, node)
             if deferred_allocation:
                 allocation_stream.write(
                     "%s = nullptr; // Deferred Allocation" %
@@ -515,7 +519,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     node
                 )
 
+
             define_var(name, DefinedType.Pointer, ctypedef)
+            define_var(name + "_size", DefinedType.Pointer, size_nodedesc.dtype.ctype)
 
             if node.setzero:
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
@@ -671,7 +677,8 @@ class CPUCodeGen(TargetCodeGenerator):
         cfg: ControlFlowRegion,
         dfg: StateSubgraphView,
         state_id: int,
-        node: Union[nodes.Tasklet, nodes.AccessNode],
+        src_node: nodes.AccessNode,
+        dst_node: nodes.AccessNode,
         edge: Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], mmlt.Memlet],
         function_stream: CodeIOStream,
         callsite_stream: CodeIOStream,
@@ -679,13 +686,26 @@ class CPUCodeGen(TargetCodeGenerator):
         function_stream.write(
             "#include <cstdlib>"
         )
-        data_name = node.data
+        data_name = dst_node.data
         size_array_name = f"{data_name}_size"
+        new_size_array_name = src_node.data
+
         data = sdfg.arrays[data_name]
+        new_size_array = sdfg.arrays[new_size_array_name]
         dtype = sdfg.arrays[data_name].dtype
+
+        # Only consider the offsets with __dace_defer in original dim
+        mask_array = [str(dim).startswith("__dace_defer") for dim in data.shape]
+        for i, mask in enumerate(mask_array):
+            if mask:
+                callsite_stream.write(
+                    f"{size_array_name}[{i}] = {new_size_array_name}[{i}];"
+                )
+
+        # Call realloc only after no __dace_defer is left in size_array ?
         size_str = " * ".join([f"{size_array_name}[{i}]" for i in range(len(data.shape))])
         callsite_stream.write(
-            f"{node.data} = static_cast<{dtype} *>(std::realloc(static_cast<void *>({node.data}), {size_str} * sizeof({dtype})));"
+            f"{dst_node.data} = static_cast<{dtype} *>(std::realloc(static_cast<void *>({dst_node.data}), {size_str} * sizeof({dtype})));"
         )
 
     def _emit_copy(
@@ -1145,7 +1165,7 @@ class CPUCodeGen(TargetCodeGenerator):
             elif isinstance(node, nodes.AccessNode):
                 if dst_node != node and not isinstance(dst_node, nodes.Tasklet) :
                     # If it is a size change, reallocate will be called
-                    if edge.dst_conn is not None and edge.dst_conn.endswith("_size"):
+                    if edge.dst_conn is not None and edge.dst_conn == "IN_size":
                         continue
 
                     dispatcher.dispatch_copy(
@@ -1460,7 +1480,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     self._dispatcher.defined_vars.add(edge.dst_conn, defined_type, f"const {ctype}")
 
                 else:
-                    inner_stream.write("// COPY3")
                     self._dispatcher.dispatch_copy(
                         src_node,
                         node,
@@ -2205,22 +2224,23 @@ class CPUCodeGen(TargetCodeGenerator):
             if memlet.data is None:
                 continue  # If the edge has to be skipped
 
-            if in_connector == "IN_size":
-                self._dispatcher.dispatch_reallocate(
-                    node,
-                    edge,
-                    sdfg,
-                    cfg,
-                    dfg,
-                    state_id,
-                    function_stream,
-                    callsite_stream,
-                )
-            else:
-                # Determines if this path ends here or has a definite source (array) node
-                memlet_path = state_dfg.memlet_path(edge)
-                if memlet_path[-1].dst == node:
-                    src_node = memlet_path[0].src
+            # Determines if this path ends here or has a definite source (array) node
+            memlet_path = state_dfg.memlet_path(edge)
+            if memlet_path[-1].dst == node:
+                src_node = memlet_path[0].src
+                if in_connector == "IN_size":
+                    self._dispatcher.dispatch_reallocate(
+                        src_node,
+                        node,
+                        edge,
+                        sdfg,
+                        cfg,
+                        dfg,
+                        state_id,
+                        function_stream,
+                        callsite_stream,
+                    )
+                else:
                     # Only generate code in case this is the innermost scope
                     # (copies are generated at the inner scope, where both arrays exist)
                     if (scope_contains_scope(sdict, src_node, node) and sdict[src_node] != sdict[node]):

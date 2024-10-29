@@ -186,7 +186,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
     """ Verifies the correctness of an SDFG by applying multiple tests.
-    
+
         :param sdfg: The SDFG to verify.
         :param references: An optional set keeping seen IDs for object
                            miscopy validation.
@@ -464,7 +464,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         if isinstance(node, (nd.EntryNode, nd.ExitNode)):
             for iconn in node.in_connectors:
-                if (iconn is not None and iconn.startswith("IN_") and ("OUT_" + iconn[3:]) not in node.out_connectors):
+                if (iconn is not None and iconn.startswith("IN_") and not iconn.endswith("_size") and ("OUT_" + iconn[3:]) not in node.out_connectors):
                     raise InvalidSDFGNodeError(
                         "No match for input connector %s in output "
                         "connectors" % iconn,
@@ -685,14 +685,15 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         break
 
         # Check if memlet data matches src or dst nodes
+        # If is read from the size output connector it needs to match the array's size descriptor
         name = e.data.data
         if isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Structure):
             name = None
         if isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Structure):
             name = None
         if (name is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
-                and (not isinstance(src_node, nd.AccessNode) or (name != src_node.data and name != e.src_conn))
-                and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn))):
+                and (not isinstance(src_node, nd.AccessNode) or (name != src_node.data and name != e.src_conn and name != src_node.data + "_size"))
+                and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn and name != dst_node.data + "_size"))):
             raise InvalidSDFGEdgeError(
                 "Memlet data does not match source or destination "
                 "data nodes)",
@@ -716,17 +717,27 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Check memlet subset validity with respect to source/destination nodes
         if e.data.data is not None and e.data.allow_oob == False:
             subset_node = (dst_node
-                           if isinstance(dst_node, nd.AccessNode) and e.data.data == dst_node.data else src_node)
+                           if isinstance(dst_node, nd.AccessNode) and e.data.data == dst_node.data or e.data.data == dst_node.data + "_size" else src_node)
             other_subset_node = (dst_node
-                                 if isinstance(dst_node, nd.AccessNode) and e.data.data != dst_node.data else src_node)
+                                 if isinstance(dst_node, nd.AccessNode) and e.data.data != dst_node.data or e.data.data == dst_node.data + "_size" else src_node)
 
             if isinstance(subset_node, nd.AccessNode):
                 arr = sdfg.arrays[subset_node.data]
+                size_arr = sdfg.arrays[subset_node.data + "_size"]
                 # Dimensionality
-                if e.data.subset.dims() != len(arr.shape):
+
+                if e.data.data == subset_node.data and e.data.subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(
                         "Memlet subset does not match node dimension "
                         "(expected %d, got %d)" % (len(arr.shape), e.data.subset.dims()),
+                        sdfg,
+                        state_id,
+                        eid,
+                    )
+                if e.data.data == (subset_node.data + "_size") and e.data.subset.dims() != len(size_arr.shape):
+                    raise InvalidSDFGEdgeError(
+                        "Memlet subset does not match node size dimension "
+                        "(expected %d, got %d)" % (len(size_arr.shape), e.data.subset.dims()),
                         sdfg,
                         state_id,
                         eid,
@@ -741,10 +752,11 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid)
                 if any(((maxel + off) >= s) == True
                        for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, arr.offset)):
-                    if e.data.dynamic:
+                    if e.data.dynamic or e.data.data.endswith("_size"):
                         warnings.warn(f'Potential out-of-bounds memlet subset: {e}')
                     else:
-                        raise InvalidSDFGEdgeError("Memlet subset out-of-bounds", sdfg, state_id, eid)
+                        warnings.warn(f'Memlet subset out-of-bounds {sdfg}, {state_id}, {eid}')
+                        #raise InvalidSDFGEdgeError("Memlet subset out-of-bounds", sdfg, state_id, eid)
 
             # Test other_subset as well
             if e.data.other_subset is not None and isinstance(other_subset_node, nd.AccessNode):

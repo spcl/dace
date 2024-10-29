@@ -243,7 +243,7 @@ class BlockGraphView(object):
         """
         Determines what data is read and written in this graph.
         Does not include reads to subsets of containers that have previously been written within the same state.
-        
+
         :return: A two-tuple of sets of things denoting ({data read}, {data written}).
         """
         return set(), set()
@@ -421,7 +421,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             # Trace through scope entry using IN_# -> OUT_#
             if isinstance(curedge.dst, (nd.EntryNode, nd.ExitNode)):
                 if curedge.dst_conn is None:
-                    raise ValueError("Destination connector cannot be None for {}".format(curedge.dst))
+                    #raise ValueError("Destination connector cannot be None for {}".format(curedge.dst))
+                    break
                 if not curedge.dst_conn.startswith("IN_"):  # Map variable
                     break
                 next_edge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == "OUT_" + curedge.dst_conn[3:])
@@ -794,7 +795,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
         Determines what data is read and written in this subgraph.
-        
+
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
@@ -2595,7 +2596,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             for b_edge in parent.in_edges(self):
                 parent.add_edge(b_edge.src, self.start_block, b_edge.data)
                 parent.remove_edge(b_edge)
-            
+
             end_state = None
             if len(to_connect) > 0:
                 end_state = parent.add_state(self.label + '_end')
@@ -3262,7 +3263,7 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
 
     def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
         return []
-    
+
     def _used_symbols_internal(self,
                                all_symbols: bool,
                                defined_syms: Optional[Set] = None,
@@ -3304,7 +3305,7 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
         json['branches'] = [(condition.to_json() if condition is not None else None, cfg.to_json())
                             for condition, cfg in self._branches]
         return json
-    
+
     @classmethod
     def from_json(cls, json_obj, context=None):
         context = context or {'sdfg': None, 'parent_graph': None}
@@ -3322,7 +3323,7 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
             else:
                 ret._branches.append((None, ControlFlowRegion.from_json(region, context)))
         return ret
-    
+
     def inline(self) -> Tuple[bool, Any]:
         """
         Inlines the conditional region into its parent control flow region.

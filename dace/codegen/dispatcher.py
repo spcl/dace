@@ -629,7 +629,7 @@ class TargetDispatcher(object):
         self._used_targets.add(target)
         target.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)
 
-    def dispatch_reallocate(self, node: nodes.Node, edge: MultiConnectorEdge[Memlet], sdfg: SDFG,
+    def dispatch_reallocate(self, src_node: nodes.Node, node: nodes.Node, edge: MultiConnectorEdge[Memlet], sdfg: SDFG,
                       cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, function_stream: CodeIOStream,
                       output_stream: CodeIOStream) -> None:
         state = cfg.state(state_id)
@@ -640,7 +640,7 @@ class TargetDispatcher(object):
 
         # Dispatch reallocate
         self._used_targets.add(target)
-        target.reallocate(sdfg, cfg, dfg, state_id, node, edge, function_stream, output_stream)
+        target.reallocate(sdfg, cfg, dfg, state_id, src_node, node, edge, function_stream, output_stream)
 
 
     # Dispatches definition code for a memlet that is outgoing from a tasklet
