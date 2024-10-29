@@ -30,12 +30,12 @@ def test_blockallreduce():
     result1 = csdfg(A=A, M=30, N=30)
     del csdfg
 
-    sdfg_id = 0
+    cfg_id = 0
     state_id = 0
     subgraph = {ReduceExpansion.reduce: graph.node_id(reduce_node)}
     # expand first
     transform = ReduceExpansion()
-    transform.setup_match(sdfg, sdfg_id, state_id, subgraph, 0)
+    transform.setup_match(sdfg, cfg_id, state_id, subgraph, 0)
     transform.reduce_implementation = 'CUDA (block allreduce)'
     transform.apply(sdfg.node(0), sdfg)
     csdfg = sdfg.compile()
@@ -45,8 +45,6 @@ def test_blockallreduce():
     print(np.linalg.norm(result1))
     print(np.linalg.norm(result2))
     assert np.allclose(result1, result2)
-
-    print("PASS")
 
 
 if __name__ == '__main__':

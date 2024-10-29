@@ -2,6 +2,7 @@
 """
 API for SDFG analysis and manipulation Passes, as well as Pipelines that contain multiple dependent passes.
 """
+import warnings
 from dace import properties, serialize
 from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 
@@ -28,7 +29,8 @@ class Modifies(Flag):
     Memlets = auto()  #: Memlets' existence, contents, or properties were modified
     Nodes = AccessNodes | Scopes | Tasklets | NestedSDFGs  #: Modification of any dataflow node (contained in an SDFG state) was made
     Edges = InterstateEdges | Memlets  #: Any edge (memlet or inter-state) was modified
-    Everything = Descriptors | Symbols | States | InterstateEdges | Nodes | Memlets  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
+    CFG = States | InterstateEdges #: A CFG (any level) was modified (connectivity or number of control flow blocks, but not their contents)
+    Everything = Descriptors | Symbols | CFG | Nodes | Memlets  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
 
 
 @properties.make_properties
@@ -492,9 +494,35 @@ class Pipeline(Pass):
         :param state: The pipeline results state.
         :return: The pass return value.
         """
+        if sdfg.root_sdfg.using_experimental_blocks:
+            if (not hasattr(p, '__experimental_cfg_block_compatible__') or
+                p.__experimental_cfg_block_compatible__ == False):
+                warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
+                              'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
+                              'ensure the top level SDFG does not have `SDFG.using_experimental_blocks` set to ' +
+                              'True. If ' + p.__class__.__name__ + ' is compatible with experimental blocks, ' +
+                              'please annotate it with the class decorator ' +
+                              '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                              'for more information.')
+                return None
+
         return p.apply_pass(sdfg, state)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if sdfg.root_sdfg.using_experimental_blocks:
+            if (not hasattr(self, '__experimental_cfg_block_compatible__') or
+                self.__experimental_cfg_block_compatible__ == False):
+                warnings.warn('Pipeline ' + self.__class__.__name__ + ' is being skipped due to incompatibility with ' +
+                              'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
+                              'ensure the top level SDFG does not have `SDFG.using_experimental_blocks` set to ' +
+                              'True. If ' + self.__class__.__name__ + ' is compatible with experimental blocks, ' +
+                              'please annotate it with the class decorator ' +
+                              '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                              '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
+                              'for more information.')
+                return None
+
         state = pipeline_results
         retval = {}
         self._modified = Modifies.Nothing

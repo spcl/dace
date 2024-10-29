@@ -25,18 +25,18 @@ class NodeCycle:
 UUID_SEPARATOR = '/'
 
 
-def ids_to_string(sdfg_id, state_id=-1, node_id=-1, edge_id=-1):
-    return (str(sdfg_id) + UUID_SEPARATOR + str(state_id) + UUID_SEPARATOR + str(node_id) + UUID_SEPARATOR +
+def ids_to_string(cfg_id, state_id=-1, node_id=-1, edge_id=-1):
+    return (str(cfg_id) + UUID_SEPARATOR + str(state_id) + UUID_SEPARATOR + str(node_id) + UUID_SEPARATOR +
             str(edge_id))
 
 
 def get_uuid(element, state=None):
     if isinstance(element, SDFG):
-        return ids_to_string(element.sdfg_id)
+        return ids_to_string(element.cfg_id)
     elif isinstance(element, SDFGState):
-        return ids_to_string(element.parent.sdfg_id, element.parent.node_id(element))
+        return ids_to_string(element.parent.cfg_id, element.parent.node_id(element))
     elif isinstance(element, nodes.Node):
-        return ids_to_string(state.parent.sdfg_id, state.parent.node_id(state), state.node_id(element))
+        return ids_to_string(state.parent.cfg_id, state.parent.node_id(state), state.node_id(element))
     else:
         return ids_to_string(-1)
 
@@ -214,6 +214,10 @@ def get_backedges(graph: nx.DiGraph,
         return backedges
 
 
+class LoopExtractionError(Exception):
+    pass
+
+
 def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
     """
     Detects loops in a SDFG. For each loop, it identifies (node, oNode, exit).
@@ -241,15 +245,15 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
 
     # sanity check:
     if sdfg_nx.in_degree(artificial_end_node) == 0:
-        raise ValueError('No end node could be determined in the SDFG')
+        raise LoopExtractionError('No end node could be determined in the SDFG')
 
     # compute dominators and backedges
     iDoms = nx.immediate_dominators(sdfg_nx, start)
-    allDom, domTree = get_domtree(sdfg_nx, start, iDoms)
+    allDom, _ = get_domtree(sdfg_nx, start, iDoms)
 
     reversed_sdfg_nx = sdfg_nx.reverse()
     iPostDoms = nx.immediate_dominators(reversed_sdfg_nx, artificial_end_node)
-    allPostDoms, postDomTree = get_domtree(reversed_sdfg_nx, artificial_end_node, iPostDoms)
+    _, postDomTree = get_domtree(reversed_sdfg_nx, artificial_end_node, iPostDoms)
 
     backedges = get_backedges(sdfg_nx, start)
     backedgesDstDict = {}
@@ -297,7 +301,7 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
                         exitCandidates.add(succ)
 
                 if len(exitCandidates) == 0:
-                    raise ValueError('failed to find any exit nodes')
+                    raise LoopExtractionError('failed to find any exit nodes')
                 elif len(exitCandidates) > 1:
                     # Find the exit candidate that sits highest up in the
                     # postdominator tree (i.e., has the lowest level).
@@ -323,7 +327,7 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
                     if len(minSet) > 0:
                         exitCandidates = minSet
                     else:
-                        raise ValueError('failed to find exit minSet')
+                        raise LoopExtractionError('failed to find exit minSet')
 
                 # now we have a triple (node, oNode, exitCandidates)
                 nodes_oNodes_exits.append((node, oNode, exitCandidates))

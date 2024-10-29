@@ -12,7 +12,7 @@ import numpy as np
 import sympy as sp
 
 from dace import data as dt, dtypes, hooks, symbolic
-from dace.codegen import exceptions as cgx, common
+from dace.codegen import exceptions as cgx
 from dace.config import Config
 from dace.frontend import operations
 
@@ -158,6 +158,8 @@ def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
     """
     if hasattr(array, 'data_ptr'):
         return array.data_ptr()
+    if isinstance(array, ctypes.Array):
+        return ctypes.addressof(array)
 
     if storage == dtypes.StorageType.GPU_Global:
         try:
@@ -172,7 +174,11 @@ def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
 
 
 class CompiledSDFG(object):
-    """ A compiled SDFG object that can be called through Python. """
+    """ A compiled SDFG object that can be called through Python. 
+
+    Todo:
+        Scalar return values are not handled properly, this is a code gen issue.
+    """
 
     def __init__(self, sdfg, lib: ReloadableDLL, argnames: List[str] = None):
         from dace.sdfg import SDFG
@@ -363,6 +369,7 @@ class CompiledSDFG(object):
                     f'An error was detected after running "{self._sdfg.name}": {self._get_error_text(res)}')
 
     def _get_error_text(self, result: Union[str, int]) -> str:
+        from dace.codegen import common  # Circular import
         if self.has_gpu_code:
             if isinstance(result, int):
                 result = common.get_gpu_runtime().get_error_string(result)
@@ -422,6 +429,7 @@ class CompiledSDFG(object):
 
         :note: You may use `_construct_args()` to generate the processed arguments.
         """
+        from dace.codegen import common  # Circular import
         try:
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
@@ -508,13 +516,15 @@ class CompiledSDFG(object):
                     if atype.optional is False:  # If array cannot be None
                         raise TypeError(f'Passing a None value to a non-optional array in argument "{a}"')
                     # Otherwise, None values are passed as null pointers below
+                elif isinstance(arg, ctypes._Pointer):
+                    pass
                 else:
                     raise TypeError(f'Passing an object (type {type(arg).__name__}) to an array in argument "{a}"')
             elif is_array and not is_dtArray:
                 # GPU scalars and return values are pointers, so this is fine
                 if atype.storage != dtypes.StorageType.GPU_Global and not a.startswith('__return'):
                     raise TypeError(f'Passing an array to a scalar (type {atype.dtype.ctype}) in argument "{a}"')
-            elif (is_dtArray and is_ndarray and not isinstance(atype, dt.StructArray)
+            elif (is_dtArray and is_ndarray and not isinstance(atype, dt.ContainerArray)
                   and atype.dtype.as_numpy_dtype() != arg.dtype):
                 # Make exception for vector types
                 if (isinstance(atype.dtype, dtypes.vector) and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):
@@ -565,14 +575,14 @@ class CompiledSDFG(object):
         arg_ctypes = tuple(at.dtype.as_ctypes() for at in argtypes)
 
         constants = self.sdfg.constants
-        callparams = tuple((arg, actype, atype, aname)
+        callparams = tuple((actype(arg.get()) if isinstance(arg, symbolic.symbol) else arg, actype, atype, aname)
                            for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames)
                            if not (symbolic.issymbolic(arg) and (hasattr(arg, 'name') and arg.name in constants)))
 
         symbols = self._free_symbols
         initargs = tuple(
-            actype(arg) if not isinstance(arg, ctypes._SimpleCData) else arg for arg, actype, atype, aname in callparams
-            if aname in symbols)
+            actype(arg) if not isinstance(arg, (ctypes._SimpleCData, ctypes._Pointer)) else arg
+            for arg, actype, atype, aname in callparams if aname in symbols)
 
         try:
             # Replace arrays with their base host/device pointers
@@ -581,7 +591,7 @@ class CompiledSDFG(object):
                 if dtypes.is_array(arg):
                     newargs[i] = ctypes.c_void_p(_array_interface_ptr(
                         arg, atype.storage))  # `c_void_p` is subclass of `ctypes._SimpleCData`.
-                elif not isinstance(arg, (ctypes._SimpleCData)):
+                elif not isinstance(arg, (ctypes._SimpleCData, ctypes._Pointer)):
                     newargs[i] = actype(arg)
                 else:
                     newargs[i] = arg
@@ -671,6 +681,7 @@ class CompiledSDFG(object):
 
     def _convert_return_values(self):
         # Return the values as they would be from a Python function
+        # NOTE: Currently it is not possible to return a scalar value, see `tests/sdfg/scalar_return.py`
         if self._return_arrays is None or len(self._return_arrays) == 0:
             return None
         elif len(self._return_arrays) == 1:

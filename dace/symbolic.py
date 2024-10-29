@@ -5,11 +5,12 @@ import sympy
 import pickle
 import re
 from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, Union
-import warnings
 import numpy
 
 import sympy.abc
 import sympy.printing.str
+
+import packaging.version as packaging_version
 
 from dace import dtypes
 
@@ -21,6 +22,19 @@ _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 # Since version 1.9, the values of this dictionary are None. In the dictionary
 # below, we recreate it to be as in versions < 1.9.
 _sympy_clash = {k: v if v else getattr(sympy.abc, k) for k, v in sympy.abc._clash.items()}
+
+
+# SymPy 1.13 changes the behavior of `==` such that floats with different precisions
+# are always different.
+# For DaCe, mostly the comparison of value (ignoring precision) is relevant which
+# can be done with `equal_valued`. However, `equal_valued` was only introduced in
+# SymPy 1.12, so we fall back to `==` in that case (which ignores precision in those versions).
+# For convenience, we provide this functionality in our own SymPy layer.
+if packaging_version.Version(sympy.__version__) < packaging_version.Version("1.12"):
+    def equal_valued(x, y):
+        return x == y
+else:
+    equal_valued = sympy.core.numbers.equal_valued
 
 
 class symbol(sympy.Symbol):
@@ -701,10 +715,18 @@ class Attr(sympy.Function):
 
     @property
     def free_symbols(self):
-        return {sympy.Symbol(str(self))}
+        # NOTE: The following handles the case where the attribute is an array access, e.g., "indptr[i]"
+        if isinstance(self.args[1], sympy.Function):
+            attribute = str(self.args[1].func)
+        else:
+            attribute = str(self.args[1])
+        return {sympy.Symbol(f"{self.args[0]}.{attribute}")}
 
     def __str__(self):
         return f'{self.args[0]}.{self.args[1]}'
+    
+    def _subs(self, *args, **kwargs):
+        return Attr(self.args[0].subs(*args, **kwargs), self.args[1].subs(*args, **kwargs))
 
 
 def sympy_intdiv_fix(expr):
@@ -1116,7 +1138,18 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) == 'OR':
             return f'(({self._print(expr.args[0])}) or ({self._print(expr.args[1])}))'
         if str(expr.func) == 'Attr':
-            return f'{self._print(expr.args[0])}.{self._print(expr.args[1])}'
+            # TODO: We want to check that args[0] is a Structure.
+            #       However, this is information is not currently passed from the code generator.
+            if self.cpp_mode:
+                sep = '->'
+            else:
+                sep = '.'
+            if isinstance(expr.args[1], sympy.Function):
+                attribute = f'{self._print(expr.args[1].func)}[{",".join(map(self._print, expr.args[1].args))}]'
+            else:
+                attribute = self._print(expr.args[1])
+            return f'{self._print(expr.args[0])}{sep}{attribute}'
+            # return f'{self._print(expr.args[0])}.{self._print(expr.args[1])}'
         return super()._print_Function(expr)
 
     def _print_Mod(self, expr):
