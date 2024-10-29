@@ -2215,7 +2215,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 'auto {param}) {{'.format(fine_grained=('true' if Config.get_bool(
                     'compiler', 'cuda', 'dynamic_map_fine_grained') else 'false'),
                                           bsize=total_block_size,
-                                          kmapIdx=outer_scope.map.params[0],
+                                          kmapIdx=outer_scope.map.params[-1],
                                           param=dynmap_var), cfg, state_id, scope_entry)
 
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):

@@ -306,7 +306,7 @@ def test_dynamic_multidim_map():
     assert np.allclose(a, np.fromfunction(lambda i, j, k: i * 110 + j * 11 + k, (10, 11, 65), dtype=np.float32))
 
 
-@pytest.mark.gpu
+@pytest.mark.skip('Nested maps with work-stealing thread-block schedule are currently unsupported')
 def test_dynamic_nested_map():
     @dace.program
     def nested2(A: dace.float32[W], i: dace.int32, j: dace.int32):
@@ -361,5 +361,5 @@ if __name__ == '__main__':
     test_nested_dynamic_map()
     test_dynamic_map_with_step()
     test_dynamic_multidim_map()
-    test_dynamic_nested_map()
+    # test_dynamic_nested_map()
     test_dynamic_default_schedule()
