@@ -36,9 +36,9 @@ tunes the data layout of arrays.
 
 The following resources are available to help you optimize your SDFG:
 
-  * Using transformations: `Using and Creating Transformations <https://nbviewer.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb>`_
-  * Creating optimized schedules that can match optimized libraries: `Matrix multiplication CPU and GPU optimization example <https://github.com/spcl/dace/blob/master/samples/optimization/matmul.py>`_
-  * Auto-tuning and instrumentation: `Tuning data layouts sample <https://github.com/spcl/dace/blob/master/samples/optimization/tuning.py>`_
+  * Using transformations: `Using and Creating Transformations <https://nbviewer.org/github/spcl/dace/blob/main/tutorials/transformations.ipynb>`_
+  * Creating optimized schedules that can match optimized libraries: `Matrix multiplication CPU and GPU optimization example <https://github.com/spcl/dace/blob/main/samples/optimization/matmul.py>`_
+  * Auto-tuning and instrumentation: `Tuning data layouts sample <https://github.com/spcl/dace/blob/main/samples/optimization/tuning.py>`_
 
 The following subsections provide more information on the different types of optimization methods:
 
