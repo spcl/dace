@@ -2,12 +2,28 @@
 
 from functools import reduce
 from operator import mul
+from typing import Dict, Collection
 
 import dace
 from dace import SDFG, Memlet
 from dace.codegen.targets import cpp
+from dace.sdfg.state import SDFGState
 from dace.subsets import Range
 from dace.transformation.dataflow import RedundantArray
+
+
+def _add_map_with_connectors(st: SDFGState, name: str, ndrange: Dict[str, str],
+                             en_conn_bases: Collection[str] = None, ex_conn_bases: Collection[str] = None):
+    en, ex = st.add_map(name, ndrange)
+    if en_conn_bases:
+        for c in en_conn_bases:
+            en.add_in_connector(f"IN_{c}")
+            en.add_out_connector(f"OUT_{c}")
+    if ex_conn_bases:
+        for c in ex_conn_bases:
+            ex.add_in_connector(f"IN_{c}")
+            ex.add_out_connector(f"OUT_{c}")
+    return en, ex
 
 
 def test_reshape_strides_multidim_array_all_dims_unit():
@@ -159,15 +175,15 @@ def redundant_array_crashes_codegen_test_original_graph():
     # Make a single map that copies A[i, j] to a transient "scalar" b, then copies that out to a transient array
     # c[i, j], then finally back to A[i, j] again.
     A = st.add_access('A')
-    en, ex = st.add_map('m0', {'i': '0:1', 'j': '0:1'})
-    st.add_memlet_path(A, en, dst_conn='IN_A', memlet=Memlet(expr='A[0:1, 0:1]'))
+    en, ex = _add_map_with_connectors(st, 'm0', {'i': '0:1', 'j': '0:1'}, ['A'], ['A'])
+    st.add_edge(A, None, en, 'IN_A', Memlet(expr='A[0:1, 0:1]'))
     b = st.add_access('b')
-    st.add_memlet_path(en, b, src_conn='OUT_A', memlet=Memlet(expr='A[i, j] -> b[0]'))
+    st.add_edge(en, 'OUT_A', b, None, Memlet(expr='A[i, j] -> b[0]'))
     c = st.add_access('c')
-    st.add_memlet_path(b, c, memlet=Memlet(expr='b[0] -> c[i, j]'))
-    st.add_memlet_path(c, ex, dst_conn='IN_A', memlet=Memlet(expr='c[i, j] -> A[i, j]'))
+    st.add_nedge(b, c, Memlet(expr='b[0] -> c[i, j]'))
+    st.add_edge(c, None, ex, 'IN_A', Memlet(expr='c[i, j] -> A[i, j]'))
     A = st.add_access('A')
-    st.add_memlet_path(ex, A, src_conn='OUT_A', memlet=Memlet(expr='A[0:1, 0:1]'))
+    st.add_edge(ex, 'OUT_A', A, None, Memlet(expr='A[0:1, 0:1]'))
     st0.fill_scope_connectors()
 
     g.validate()
