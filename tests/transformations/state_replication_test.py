@@ -31,15 +31,15 @@ def make_branched_sdfg_with_replicable_branch_terminal():
     # Do something on the branches.
     t = st1.add_tasklet('write_1', {}, {'__out'}, '__out = 1')
     A = st1.add_access('A')
-    st1.add_memlet_path(t, A, src_conn='__out', memlet=Memlet(expr='A[0]'))
+    st1.add_edge(t, '__out', A, None, Memlet(expr='A[0]'))
     t = st2.add_tasklet('write_2', {}, {'__out'}, '__out = 2')
     A = st2.add_access('A')
-    st2.add_memlet_path(t, A, src_conn='__out', memlet=Memlet(expr='A[0]'))
+    st2.add_edge(t, '__out', A, None, Memlet(expr='A[0]'))
 
     # Do something in the terminal state.
     t = st3.add_tasklet('write_0', {}, {'__out'}, '__out = 3')
     A = st3.add_access('A')
-    st3.add_memlet_path(t, A, src_conn='__out', memlet=Memlet(expr='A[1]'))
+    st3.add_edge(t, '__out', A, None, Memlet(expr='A[1]'))
 
     # Connect the states.
     g.add_edge(st0, st1, InterstateEdge(condition='(flag)'))
@@ -100,7 +100,7 @@ def make_sdfg_with_loop():
     g.add_loop(st0, st1, st2, 'i', '0', 'i < 10', 'i + 1')
     t = st1.add_tasklet('write_1', {}, {'__out'}, '__out = i')
     A = st1.add_access('A')
-    st1.add_memlet_path(t, A, src_conn='__out', memlet=Memlet(expr='A[0]'))
+    st1.add_edge(t, '__out', A, None, Memlet(expr='A[0]'))
 
     return g
 

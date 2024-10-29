@@ -29,15 +29,15 @@ def make_branched_sdfg_with_raisable_if():
     # Do something in the guard state.
     t = st0.add_tasklet('write_0', {}, {'__out'}, '__out = -1')
     A = st0.add_access('A')
-    st0.add_memlet_path(t, A, src_conn='__out', memlet=Memlet(expr='A[0]'))
+    st0.add_edge(t, '__out', A, None, Memlet(expr='A[0]'))
 
     # Do something on the branches.
     t = st1.add_tasklet('write_1', {}, {'__out'}, '__out = 1')
     A = st1.add_access('A')
-    st1.add_memlet_path(t, A, src_conn='__out', memlet=Memlet(expr='A[0]'))
+    st1.add_edge(t, '__out', A, None, Memlet(expr='A[0]'))
     t = st2.add_tasklet('write_2', {}, {'__out'}, '__out = 2')
     A = st2.add_access('A')
-    st2.add_memlet_path(t, A, src_conn='__out', memlet=Memlet(expr='A[0]'))
+    st2.add_edge(t, '__out', A, None, Memlet(expr='A[0]'))
 
     # Connect the states.
     g.add_edge(st0, st1, InterstateEdge(condition='(flag)'))
@@ -106,15 +106,15 @@ def make_branched_sdfg_with_unraisable_if():
     # Do something in the guard state.
     t = st0.add_tasklet('write_0', {}, {'__out'}, '__out = 0')
     A = st0.add_access('A')
-    st0.add_memlet_path(t, A, src_conn='__out', memlet=Memlet(expr='A[0]'))
+    st0.add_edge(t, '__out', A, None, Memlet(expr='A[0]'))
 
     # Do something on the branches.
     t = st1.add_tasklet('write_1', {}, {'__out'}, '__out = 1')
     A = st1.add_access('A')
-    st1.add_memlet_path(t, A, src_conn='__out', memlet=Memlet(expr='A[0]'))
+    st1.add_edge(t, '__out', A, None, Memlet(expr='A[0]'))
     t = st2.add_tasklet('write_2', {}, {'__out'}, '__out = 2')
     A = st2.add_access('A')
-    st2.add_memlet_path(t, A, src_conn='__out', memlet=Memlet(expr='A[0]'))
+    st2.add_edge(t, '__out', A, None, Memlet(expr='A[0]'))
 
     # Connect the states.
     g.add_edge(st0, st1, InterstateEdge(condition='(A[0] == 0)'))
