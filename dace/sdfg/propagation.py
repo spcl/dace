@@ -675,8 +675,8 @@ def _annotate_loop_ranges(sdfg: 'SDFG', unannotated_cycle_states):
 
                 loop_states = sdutils.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard)
                 for v in loop_states:
-                    v.ranges[itervar] = subsets.Range([rng])
-                guard.ranges[itervar] = subsets.Range([rng])
+                    v.ranges[str(itervar)] = subsets.Range([rng])
+                guard.ranges[str(itervar)] = subsets.Range([rng])
                 condition_edges[guard] = sdfg.edges_between(guard, begin)[0]
                 guard.is_loop_guard = True
                 guard.itvar = itervar
@@ -743,6 +743,15 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
                                          unbounded loop its states will have the same number of symbolic executions.
     :note: This operates on the SDFG in-place.
     """
+
+    if sdfg.using_experimental_blocks:
+        # Avoid cyclic imports
+        from dace.transformation.pass_pipeline import Pipeline
+        from dace.transformation.passes.analysis import StatePropagation
+
+        state_prop_pipeline = Pipeline([StatePropagation()])
+        state_prop_pipeline.apply_pass(sdfg, {})
+        return
 
     # We import here to avoid cyclic imports.
     from dace.sdfg import InterstateEdge

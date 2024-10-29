@@ -1157,6 +1157,12 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     pre_conditions = DictProperty(key_type=str, value_type=list, desc='Pre-conditions for this block')
     post_conditions = DictProperty(key_type=str, value_type=list, desc='Post-conditions for this block')
     invariant_conditions = DictProperty(key_type=str, value_type=list, desc='Invariant conditions for this block')
+    ranges = DictProperty(key_type=str, value_type=Range, default={},
+                          desc='Variable ranges across this block, typically within loops')
+
+    executions = SymbolicProperty(default=0,
+                                  desc="The number of times this block gets executed (0 stands for unbounded)")
+    dynamic_executions = Property(dtype=bool, default=True, desc="The number of executions of this block is dynamic")
 
     _label: str
 
@@ -1290,17 +1296,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                                      default=dtypes.DataInstrumentationType.No_Instrumentation)
     symbol_instrument_condition = CodeProperty(desc="Condition under which to trigger the symbol instrumentation",
                                                default=CodeBlock("1", language=dtypes.Language.CPP))
-
-    executions = SymbolicProperty(default=0,
-                                  desc="The number of times this state gets "
-                                  "executed (0 stands for unbounded)")
-    dynamic_executions = Property(dtype=bool, default=True, desc="The number of executions of this state "
-                                  "is dynamic")
-
-    ranges = DictProperty(key_type=symbolic.symbol,
-                          value_type=Range,
-                          default={},
-                          desc='Variable ranges, typically within loops')
 
     location = DictProperty(key_type=str,
                             value_type=symbolic.pystr_to_symbolic,

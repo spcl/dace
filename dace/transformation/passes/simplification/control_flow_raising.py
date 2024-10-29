@@ -62,6 +62,7 @@ class ControlFlowRaising(ppl.Pass):
                         if oe.dst is merge_block:
                             # Empty branch.
                             branch.add_state('noop')
+                            graph.remove_edge(oe)
                             continue
 
                         branch_nodes = set(dfs_conditional(graph, [oe.dst], lambda _, x: x is not merge_block))
@@ -87,7 +88,10 @@ class ControlFlowRaising(ppl.Pass):
             region.remove_node(dummy_exit)
 
         n_cond_regions_post = len([x for x in sdfg.all_control_flow_blocks() if isinstance(x, ConditionalBlock)])
-        return n_cond_regions_post - n_cond_regions_pre
+        lifted = n_cond_regions_post - n_cond_regions_pre
+        if lifted:
+            sdfg.root_sdfg.using_experimental_blocks = True
+        return lifted
 
     def apply_pass(self, top_sdfg: SDFG, _) -> Optional[Tuple[int, int]]:
         lifted_loops = 0

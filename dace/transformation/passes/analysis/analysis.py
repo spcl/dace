@@ -1,14 +1,17 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-from collections import defaultdict
+from collections import defaultdict, deque
+
+import sympy
 
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt, symbolic
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd
 from dace.sdfg.analysis import cfg as cfg_analysis
-from typing import Dict, Set, Tuple, Any, Optional, Union
+from typing import Dict, Iterable, List, Set, Tuple, Any, Optional, Union
 import networkx as nx
 from networkx.algorithms import shortest_paths as nxsp
 
@@ -754,3 +757,163 @@ class DeriveSDFGConstraints(ppl.Pass):
         invariants: Dict[str, Set[str]] = {}
         self._derive_parameter_datasize_constraints(sdfg, invariants)
         return {}, invariants, {}
+
+
+@transformation.experimental_cfg_block_compatible
+class StatePropagation(ppl.ControlFlowRegionPass):
+    """
+    Analyze a control flow region to determine the number of times each block inside of it is executed in the form of a
+    symbolic expression, or a concrete number where possible.
+    Each control flow block is marked with a symbolic expression for the number of executions, and a boolean flag to
+    indicate whether the number of executions is dynamic or not. A combination of dynamic being set to true and the
+    number of executions being 0 indicates that the number of executions is dynamically unbounded.
+    Additionally, the pass annotates each block with a `ranges` property, which indicates for loop variables defined
+    at that block what range of values the variable may take on.
+    Note: This path directly annotates the graph.
+    This pass supersedes `dace.sdfg.propagation.propagate_states` and is based on its algorithm, with significant
+    simplifications thanks to the use of control flow regions.
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def __init__(self):
+        super().__init__()
+        self.top_down = True
+        self.apply_to_conditionals = True
+
+    def depends_on(self):
+        return {ControlFlowBlockReachability}
+
+    def _propagate_in_cfg(self, cfg: ControlFlowRegion, reachable: Dict[ControlFlowBlock, Set[ControlFlowBlock]],
+                          starting_executions: int, starting_dynamic_executions: bool):
+        visited_blocks: Set[ControlFlowBlock] = set()
+        traversal_q: deque[Tuple[ControlFlowBlock, int, bool, List[str]]] = deque()
+        traversal_q.append((cfg.start_block, starting_executions, starting_dynamic_executions, []))
+        while traversal_q:
+            (block, proposed_executions, proposed_dynamic, itvar_stack) = traversal_q.pop()
+            out_edges = cfg.out_edges(block)
+            if block in visited_blocks:
+                # This block has already been visited, meaning there are multiple paths towards this block.
+                if proposed_executions == 0 and proposed_dynamic:
+                    block.executions = 0
+                    block.dynamic_executions = True
+                else:
+                    block.executions = sympy.Max(block.executions, proposed_executions).doit()
+                    block.dynamic_executions = (block.dynamic_executions or proposed_dynamic)
+            elif proposed_dynamic and proposed_executions == 0:
+                # We're propagating a dynamic unbounded number of executions, which always gets propagated
+                # unconditionally. Propagate to all children.
+                visited_blocks.add(block)
+                block.executions = proposed_executions
+                block.dynamic_executions = proposed_dynamic
+                # This gets pushed through to all children unconditionally.
+                if len(out_edges) > 0:
+                    for oedge in out_edges:
+                        traversal_q.append((oedge.dst, proposed_executions, proposed_dynamic, itvar_stack))
+            else:
+                # If the state hasn't been visited yet and we're not propagating a dynamic unbounded number of
+                # executions, we calculate the number of executions for the next state(s) and continue propagating.
+                visited_blocks.add(block)
+                block.executions = proposed_executions
+                block.dynamic_executions = proposed_dynamic
+                if len(out_edges) == 1:
+                    # Continue with the only child state.
+                    if not out_edges[0].data.is_unconditional():
+                        # If the transition to the child state is based on a condition, this state could be an implicit
+                        # exit state. The child state's number of executions is thus only given as an upper bound and
+                        # marked as dynamic.
+                        proposed_dynamic = True
+                    traversal_q.append((out_edges[0].dst, proposed_executions, proposed_dynamic, itvar_stack))
+                elif len(out_edges) > 1:
+                    # Conditional split
+                    for oedge in out_edges:
+                        traversal_q.append((oedge.dst, block.executions, True, itvar_stack))
+
+        # Check if the CFG contains any cycles. Any cycles left in the graph (after control flow raising) are
+        # irreducible control flow and thus lead to a dynamically unbounded number of executions. Mark any block
+        # inside and reachable from any block inside the cycle as dynamically unbounded, irrespectively of what it was
+        # marked as before.
+        cycles: Iterable[Iterable[ControlFlowBlock]] = cfg.find_cycles()
+        for cycle in cycles:
+            for blk in cycle:
+                blk.executions = 0
+                blk.dynamic_executions = True
+                for reached in reachable[blk]:
+                    reached.executions = 0
+                    blk.dynamic_executions = True
+
+    def apply(self, region, pipeline_results) -> None:
+        if isinstance(region, ConditionalBlock):
+            # In a conditional block, each branch is executed up to as many times as the conditional block itself is.
+            # TODO(later): We may be able to derive ranges here based on the branch conditions too.
+            for _, b in region.branches:
+                b.executions = region.executions
+                b.dynamic_executions = True
+                b.ranges = region.ranges
+        else:
+            if isinstance(region, SDFG):
+                # The root SDFG is executed exactly once, any other, nested SDFG is executed as many times as the parent
+                # state is.
+                if region is region.root_sdfg:
+                    region.executions = 1
+                    region.dynamic_executions = False
+                elif region.parent:
+                    region.executions = region.parent.executions
+                    region.dynamic_executions = region.parent.dynamic_executions
+
+            # Clear existing annotations.
+            for blk in region.nodes():
+                blk.executions = 0
+                blk.dynamic_executions = True
+                blk.ranges = region.ranges
+
+            # Determine the number of executions for the start block within this region. In the case of loops, this
+            # is dependent on the number of loop iterations - where they can be determined. Where they may not be
+            # determined, the number of iterations is assumed to be dynamically unbounded. For any other control flow
+            # region, the start block is executed as many times as the region itself is.
+            starting_execs = region.executions
+            starting_dynamic = region.dynamic_executions
+            if isinstance(region, LoopRegion):
+                # If inside a loop, add range information if possible.
+                start = loop_analysis.get_init_assignment(region)
+                stop = loop_analysis.get_loop_end(region)
+                stride = loop_analysis.get_loop_stride(region)
+                if start is not None and stop is not None and stride is not None and region.loop_variable:
+                    # This inequality needs to be checked exactly like this due to constraints in sympy/symbolic
+                    # expressions, do not simplify!
+                    if (stride < 0) == True:
+                        rng = (stop, start, -stride)
+                    else:
+                        rng = (start, stop, stride)
+                    for blk in region.nodes():
+                        blk.ranges[str(region.loop_variable)] = Range([rng])
+
+                    # Get surrounding iteration variables for the case of nested loops.
+                    itvar_stack = []
+                    par = region.parent_graph
+                    while par is not None and not isinstance(par, SDFG):
+                        if isinstance(par, LoopRegion) and par.loop_variable:
+                            itvar_stack.append(par.loop_variable)
+                        par = par.parent_graph
+
+                    # Calculate the number of loop executions.
+                    # This resolves ranges based on the order of iteration variables from surrounding loops.
+                    loop_executions = sympy.ceiling(((stop + 1) - start) / stride)
+                    for outer_itvar_string in itvar_stack:
+                        outer_range = region.ranges[outer_itvar_string]
+                        outer_start = outer_range[0][0]
+                        outer_stop = outer_range[0][1]
+                        outer_stride = outer_range[0][2]
+                        outer_itvar = symbolic.pystr_to_symbolic(outer_itvar_string)
+                        exec_repl = loop_executions.subs({outer_itvar: (outer_itvar * outer_stride + outer_start)})
+                        sum_rng = (outer_itvar, 0, sympy.ceiling((outer_stop - outer_start) / outer_stride))
+                        loop_executions = sympy.Sum(exec_repl, sum_rng)
+                    starting_execs = loop_executions.doit()
+                    starting_dynamic = region.dynamic_executions
+                else:
+                    starting_execs = 0
+                    starting_dynamic = True
+
+            # Propagate the number of executions.
+            self._propagate_in_cfg(region, pipeline_results[ControlFlowBlockReachability.__name__][region.cfg_id],
+                                   starting_execs, starting_dynamic)

@@ -16,6 +16,7 @@ from dace.sdfg import nodes, propagation, utils
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
+from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 from dace import data
@@ -1285,6 +1286,9 @@ class NestSDFG(transformation.MultiStateTransformation):
 
         for e in nested_sdfg.edges():
             defined_syms |= set(e.data.new_symbols(sdfg, {}).keys())
+        for blk in nested_sdfg.all_control_flow_blocks():
+            if isinstance(blk, LoopRegion):
+                defined_syms |= set(blk.new_symbols({}).keys())
 
         defined_syms |= set(nested_sdfg.constants.keys())
 
