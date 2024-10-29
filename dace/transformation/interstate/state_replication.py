@@ -31,11 +31,11 @@ class StateReplication(transformation.MultiStateTransformation):
             return False
         if self.target_state.is_empty() and len(out_edges) < 2:
             # No point replicating an empty state that does not branch out again.
-            # TODO: But _why_ are we focusing on "branching out again"?
             return False
 
-        # Make sure this is not a loop guard.
-        # TODO: But _why_?
+        # Make sure this is not a loop guard. Application on loops results in the addition of useless states (but the
+        # SDFG is still correct). This will not get rid of the loop, meaning that apply_transformations_repeated will
+        # never halt.
         if len(out_edges) == 2:
             detect = DetectLoop()
             detect.loop_guard = self.target_state

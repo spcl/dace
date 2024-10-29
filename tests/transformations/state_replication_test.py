@@ -89,5 +89,30 @@ def test_replicable_branch_terminal():
     assert all(np.equal(wantA_2, gotA_2))
 
 
+def make_sdfg_with_loop():
+    g = SDFG('prog')
+    g.add_symbol('i', dace.int32)
+    g.add_array('A', (1,), dace.float32)
+    st0 = g.add_state('head', is_start_block=True)
+    st1 = g.add_state('body', is_start_block=True)
+    st2 = g.add_state('tail', is_start_block=True)
+
+    g.add_loop(st0, st1, st2, 'i', '0', 'i < 10', 'i + 1')
+    t = st1.add_tasklet('write_1', {}, {'__out'}, '__out = i')
+    A = st1.add_access('A')
+    st1.add_memlet_path(t, A, src_conn='__out', memlet=Memlet(expr='A[0]'))
+
+    return g
+
+
+def test_does_not_replicate_loop_terminal_guard():
+    g = make_sdfg_with_loop()
+    g.save(os.path.join('_dacegraphs', 'loop-0.sdfg'))
+    g.validate()
+    g.compile()
+
+    assert g.apply_transformations_repeated([StateReplication]) == 0
+
+
 if __name__ == '__main__':
     test_replicable_branch_terminal()
