@@ -935,6 +935,9 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         for stmt in reversed(self.with_statements):
             if until_loop_end and not isinstance(stmt, (ast.With, ast.AsyncWith)):
                 break
+            elif not until_loop_end and isinstance(stmt, (ast.For, ast.While)):
+                break
+
             for mgrname, mgr in reversed(self.context_managers[stmt]):
                 # Call __exit__ (without exception management all three arguments are set to None)
                 exit_call = ast.copy_location(ast.parse(f'{mgrname}.__exit__(None, None, None)').body[0], stmt)
@@ -987,7 +990,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         # Avoid parsing "with dace.tasklet"
         try:
             evald = astutils.evalnode(node.items[0].context_expr, self.globals)
-            if evald is dace.tasklet or isinstance(evald, dace.tasklet):
+            if evald is dace.tasklet or evald is dace.named or isinstance(evald, (dace.tasklet, dace.named)):
                 return self.generic_visit(node)
         except SyntaxError:
             pass

@@ -6,11 +6,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from dace import SDFG, SDFGState, data, properties, Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
 
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class ReferenceToView(ppl.Pass):
     """
     Replaces Reference data descriptors that are only set to one source with views.
@@ -165,21 +166,28 @@ class ReferenceToView(ppl.Pass):
                 affected_nodes = set()
                 for e in state.in_edges_by_connector(node, 'set'):
                     # This is a reference set edge. Consider scope and neighbors and remove set
-                    edges_to_remove.add(e)
-                    affected_nodes.add(e.src)
-                    affected_nodes.add(e.dst)
+                    if state.out_degree(e.dst) == 0:
+                        edges_to_remove.add(e)
+                        affected_nodes.add(e.src)
+                        affected_nodes.add(e.dst)
 
-                    # If source node does not have any other neighbors, it can be removed
-                    if all(ee is e or ee.data.is_empty() for ee in state.all_edges(e.src)):
-                        nodes_to_remove.add(e.src)
-                    # If set reference does not have any other neighbors, it can be removed
-                    if all(ee is e or ee.data.is_empty() for ee in state.all_edges(node)):
-                        nodes_to_remove.add(node)
+                        # If source node does not have any other neighbors, it can be removed
+                        if all(ee is e or ee.data.is_empty() for ee in state.all_edges(e.src)):
+                            nodes_to_remove.add(e.src)
+                        # If set reference does not have any other neighbors, it can be removed
+                        if all(ee is e or ee.data.is_empty() for ee in state.all_edges(node)):
+                            nodes_to_remove.add(node)
 
-                    # If in a scope, ensure reference node will not be disconnected
-                    scope = state.entry_node(node)
-                    if scope is not None and node not in nodes_to_remove:
-                        edges_to_add.append((scope, None, node, None, Memlet()))
+                        # If in a scope, ensure reference node will not be disconnected
+                        scope = state.entry_node(node)
+                        if scope is not None and node not in nodes_to_remove:
+                            edges_to_add.append((scope, None, node, None, Memlet()))
+                    else:  # Node has other neighbors, modify edge to become an empty memlet instead
+                        e.dst_conn = None
+                        e.dst.remove_in_connector('set')
+                        e.data = Memlet()
+
+
 
                 # Modify the state graph as necessary
                 for e in edges_to_remove:
