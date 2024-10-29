@@ -152,6 +152,45 @@ class DoWhileScope(ControlFlowScope):
 
 
 @dataclass
+class GeneralLoopScope(ControlFlowScope):
+    """
+    General loop scope (representing a loop region).
+    """
+    header: cf.GeneralLoopScope
+
+    def as_string(self, indent: int = 0):
+        loop = self.header.loop
+        if loop.update_statement and loop.init_statement and loop.loop_variable:
+            if loop.inverted:
+                if loop.update_before_condition:
+                    pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
+                    header = indent * INDENTATION + 'do:\n'
+                    pre_footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
+                    footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
+                else:
+                    pre_header = indent * INDENTATION + f'{loop.init_statement.as_string}\n'
+                    header = indent * INDENTATION + 'while True:\n'
+                    pre_footer = (indent + 1) * INDENTATION + f'if (not {loop.loop_condition.as_string}):\n'
+                    pre_footer += (indent + 2) * INDENTATION + 'break\n'
+                    footer = (indent + 1) * INDENTATION + f'{loop.update_statement.as_string}\n'
+                return pre_header + header + super().as_string(indent) + '\n' + pre_footer + footer
+            else:
+                result = (indent * INDENTATION +
+                          f'for {loop.init_statement.as_string}; ' +
+                          f'{loop.loop_condition.as_string}; ' +
+                          f'{loop.update_statement.as_string}:\n')
+                return result + super().as_string(indent)
+        else:
+            if loop.inverted:
+                header = indent * INDENTATION + 'do:\n'
+                footer = indent * INDENTATION + f'while {loop.loop_condition.as_string}'
+                return header + super().as_string(indent) + '\n' + footer
+            else:
+                result = indent * INDENTATION + f'while {loop.loop_condition.as_string}:\n'
+                return result + super().as_string(indent)
+
+
+@dataclass
 class IfScope(ControlFlowScope):
     """
     If branch scope.

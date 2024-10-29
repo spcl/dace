@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from dace import SDFG, SDFGState, data, properties
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, RedundantSecondArray, RedundantWriteSlice,
                                           SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
 from dace.transformation.passes import analysis as ap
@@ -13,6 +13,7 @@ from dace.transformation.transformation import SingleStateTransformation
 
 
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class ArrayElimination(ppl.Pass):
     """
     Merges and removes arrays and their corresponding accesses. This includes redundant array copies, unnecessary views,
@@ -47,7 +48,7 @@ class ArrayElimination(ppl.Pass):
 
         # Traverse SDFG backwards
         try:
-            state_order = list(cfg.stateorder_topological_sort(sdfg))
+            state_order = list(cfg.blockorder_topological_sort(sdfg))
         except KeyError:
             return None
         for state in reversed(state_order):

@@ -33,6 +33,14 @@ If multiple thread-block maps are present, the maximum of their parameters will 
 smaller map will have an ``if`` condition predicating a subset of the threads to work. This enables optimizing programs
 via thread/warp specialization.
 
+**Multi-Dimensional Maps**: If a Map scope is multi-dimensional, the code generator will map the order of the block and grid dimensions
+to the _reversed_ order of the map dimensions. This means that the last map dimension (which would correspond to, e.g., the most internal loop
+in CPU schedules) is ``{block,thread}Idx.x``. Any dimension of the Map scope beyond the third dimension will by default be linearized into
+``{block,thread}Idx.z``. This can sometimes result in slower code, as recovering the index in the kernel code involves delinearization,
+which uses modulo operations. For example, the Map scope ``for i, j, k, l in dace.map[0:N, 0:M, 0:K, 0:L]`` will result in ``threadIdx.x``
+mapping to ``l``, ``threadIdx.y`` to ``k``, and ``threadIdx.z``'s range will span ``N * M`` and map ``threadIdx.z % M`` to ``j`` and 
+``threadIdx.z / M`` to ``i``.
+
 Some examples of Example of an SDFG **without** a GPU thread-block map and its generated code:
 
 .. raw:: html
@@ -162,7 +170,7 @@ Optimizing GPU SDFGs
 
 When optimizing GPU SDFGs, there are a few things to keep in mind. Below is a non-exhaustive list of common GPU optimization
 practices and how DaCe helps achieve them. To see some of these optimizations in action, check out the ``optimize_for_gpu``
-function in the `Matrix Multiplication optimization example <https://github.com/spcl/dace/blob/master/samples/optimization/matmul.py>`_.
+function in the `Matrix Multiplication optimization example <https://github.com/spcl/dace/blob/main/samples/optimization/matmul.py>`_.
 
     * **Minimize host<->GPU transfers**: It is important to keep as much data as possible on the GPU across the application.
       This is especially true for data that is accessed frequently, such as data that is used in a loop.
@@ -226,7 +234,7 @@ function in the `Matrix Multiplication optimization example <https://github.com/
 
     * **Specialized hardware**: Specialized hardware, such as NVIDIA Tensor Cores or AMD's matrix instructions, can
       significantly improve performance. DaCe will not automatically emit such instructions, but you can use such operations
-      in your code. See the `Tensor Core code sample <https://github.com/spcl/dace/blob/master/samples/codegen/tensor_cores.py>`_ 
+      in your code. See the `Tensor Core code sample <https://github.com/spcl/dace/blob/main/samples/codegen/tensor_cores.py>`_ 
       to see how to make use of such units.
 
     * **Advanced GPU Map schedules**: DaCe provides two additional built-in map schedules: :class:`~dace.dtypes.ScheduleType.GPU_ThreadBlock_Dynamic`

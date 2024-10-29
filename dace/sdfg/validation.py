@@ -5,14 +5,14 @@ from dace.dtypes import DebugInfo
 import os
 from typing import TYPE_CHECKING, Dict, List, Set
 import warnings
-from dace import dtypes, subsets
-from dace import symbolic
+from dace import dtypes, subsets, symbolic
 
 if TYPE_CHECKING:
     import dace
     from dace.sdfg import SDFG
     from dace.sdfg import graph as gr
     from dace.memlet import Memlet
+    from dace.sdfg.state import ControlFlowRegion
 
 ###########################################
 # Validation
@@ -28,13 +28,13 @@ def validate(graph: 'dace.sdfg.graph.SubgraphView'):
         validate_state(graph)
 
 
-def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
-                                 region: 'dace.sdfg.state.ControlFlowRegion',
+def validate_control_flow_region(sdfg: 'SDFG',
+                                 region: 'ControlFlowRegion',
                                  initialized_transients: Set[str],
                                  symbols: dict,
                                  references: Set[int] = None,
                                  **context: bool):
-    from dace.sdfg import SDFGState
+    from dace.sdfg.state import SDFGState, ControlFlowRegion, ConditionalBlock
     from dace.sdfg.scope import is_in_scope
 
     if len(region.source_nodes()) > 1 and region.start_block is None:
@@ -70,7 +70,7 @@ def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
             if isinstance(edge.src, SDFGState):
                 validate_state(edge.src, region.node_id(edge.src), sdfg, symbols, initialized_transients, references,
                                **context)
-            else:
+            elif isinstance(edge.src, ControlFlowRegion):
                 validate_control_flow_region(sdfg, edge.src, initialized_transients, symbols, references, **context)
 
         ##########################################
@@ -108,6 +108,16 @@ def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
                         f'Trying to read an inaccessible data container "{container}" '
                         f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
+        # Check for race conditions on edge assignments
+        for aname, aval in edge.data.assignments.items():
+            syms = symbolic.free_symbols_and_functions(aval)
+            also_assigned = (syms & edge.data.assignments.keys()) - {aname}
+            if also_assigned:
+                eid = region.edge_id(edge)
+                raise InvalidSDFGInterstateEdgeError(f'Race condition: inter-state assignment {aname} = {aval} uses '
+                                                     f'variables {also_assigned}, which are also modified in the same '
+                                                     'edge.', sdfg, eid)
+
         # Add edge symbols into defined symbols
         symbols.update(issyms)
 
@@ -118,7 +128,11 @@ def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
             if isinstance(edge.dst, SDFGState):
                 validate_state(edge.dst, region.node_id(edge.dst), sdfg, symbols, initialized_transients, references,
                                **context)
-            else:
+            elif isinstance(edge.dst, ConditionalBlock):
+                for _, r in edge.dst.branches:
+                    if r is not None:
+                        validate_control_flow_region(sdfg, r, initialized_transients, symbols, references, **context)
+            elif isinstance(edge.dst, ControlFlowRegion):
                 validate_control_flow_region(sdfg, edge.dst, initialized_transients, symbols, references, **context)
     # End of block DFS
 
@@ -127,7 +141,7 @@ def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
         if isinstance(start_block, SDFGState):
             validate_state(start_block, region.node_id(start_block), sdfg, symbols, initialized_transients, references,
                            **context)
-        else:
+        elif isinstance(start_block, ControlFlowRegion):
             validate_control_flow_region(sdfg, start_block, initialized_transients, symbols, references, **context)
 
     # Validate all inter-state edges (including self-loops not found by DFS)
@@ -184,6 +198,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         on failure.
     """
     # Avoid import loop
+    from dace import data as dt
     from dace.codegen.targets import fpga
     from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
 
@@ -201,9 +216,38 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         if not dtypes.validate_name(sdfg.name):
             raise InvalidSDFGError("Invalid name", sdfg, None)
 
-        all_blocks = set(sdfg.all_control_flow_blocks())
-        if len(all_blocks) != len(set([s.label for s in all_blocks])):
-            raise InvalidSDFGError('Found multiple blocks with the same name', sdfg, None)
+        for cfg in sdfg.all_control_flow_regions():
+            blocks = cfg.nodes()
+            if len(blocks) != len(set([s.label for s in blocks])):
+                raise InvalidSDFGError('Found multiple blocks with the same name in ' + cfg.name, sdfg, None)
+
+        # Check the names of data descriptors and co.
+        seen_names: Set[str] = set()
+        for obj_names in [
+                sdfg.arrays.keys(), sdfg.symbols.keys(), sdfg._rdistrarrays.keys(), sdfg._subarrays.keys()
+        ]:
+            if not seen_names.isdisjoint(obj_names):
+                raise InvalidSDFGError(
+                    f'Found duplicated names: "{seen_names.intersection(obj_names)}". Please ensure '
+                    'that the names of symbols, data descriptors, subarrays and rdistarrays are unique.', sdfg, None)
+            seen_names.update(obj_names)
+
+        # Ensure that there is a mentioning of constants in either the array or symbol.
+        for const_name, (const_type, _) in sdfg.constants_prop.items():
+            if const_name in sdfg.arrays:
+                if const_type != sdfg.arrays[const_name].dtype:
+                    # This should actually be an error, but there is a lots of code that depends on it.
+                    warnings.warn(
+                        f'Mismatch between constant and data descriptor of "{const_name}", '
+                        f'expected to find "{const_type}" but found "{sdfg.arrays[const_name]}".')
+            elif const_name in sdfg.symbols:
+                if const_type != sdfg.symbols[const_name]:
+                    # This should actually be an error, but there is a lots of code that depends on it.
+                    warnings.warn(
+                        f'Mismatch between constant and symobl type of "{const_name}", '
+                        f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
+            else:
+                warnings.warn(f'Found constant "{const_name}" that does not refer to an array or a symbol.')
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():
@@ -212,6 +256,11 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     f'Duplicate data descriptor object detected: "{name}". Please copy objects '
                     'rather than using multiple references to the same one', sdfg, None)
             references.add(id(desc))
+
+            # Because of how the code generator works Scalars can not be return values.
+            #  TODO: Remove this limitation as the CompiledSDFG contains logic for that.
+            if isinstance(desc, dt.Scalar) and name.startswith("__return") and not desc.transient:
+                raise InvalidSDFGError(f'Can not use scalar "{name}" as return value.', sdfg, None)
 
             # Validate array names
             if name is not None and not dtypes.validate_name(name):

@@ -42,9 +42,9 @@ def _cart_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dims: Shape
     state.add_node(tasklet)
 
     # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
-    _, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True)
-    wnode = state.add_write(pgrid_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(pgrid_name, scal))
+    scal_name, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True, find_new_name=True)
+    wnode = state.add_write(scal_name)
+    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(scal_name, scal))
 
     return pgrid_name
 
@@ -97,9 +97,9 @@ def _cart_sub(pv: 'ProgramVisitor',
     state.add_node(tasklet)
 
     # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
-    _, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True)
-    wnode = state.add_write(pgrid_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(pgrid_name, scal))
+    scal_name, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True, find_new_name=True)
+    wnode = state.add_write(scal_name)
+    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(scal_name, scal))
 
     return pgrid_name
 
@@ -196,7 +196,7 @@ def _intracomm_bcast(pv: 'ProgramVisitor',
     if comm_obj == MPI.COMM_WORLD:
         return _bcast(pv, sdfg, state, buffer, root)
     # NOTE: Highly experimental
-    sdfg.add_scalar(comm_name, dace.int32)
+    scal_name, _ = sdfg.add_scalar(comm_name, dace.int32, find_new_name=True)
     return _bcast(pv, sdfg, state, buffer, root, fcomm=comm_name)
 
 
@@ -941,9 +941,9 @@ def _subarray(pv: ProgramVisitor,
         state.add_node(tasklet)
 
         # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
-        _, scal = sdfg.add_scalar(subarray_name, dace.int32, transient=True)
-        wnode = state.add_write(subarray_name)
-        state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(subarray_name, scal))
+        scal_name, scal = sdfg.add_scalar(subarray_name, dace.int32, transient=True, find_new_name=True)
+        wnode = state.add_write(scal_name)
+        state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(scal_name, scal))
 
     return subarray_name
 
@@ -1078,9 +1078,9 @@ def _redistribute(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: s
         f'int* {rdistrarray_name}_self_size;'
     ])
     state.add_node(tasklet)
-    _, scal = sdfg.add_scalar(rdistrarray_name, dace.int32, transient=True)
-    wnode = state.add_write(rdistrarray_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(rdistrarray_name, scal))
+    scal_name, scal = sdfg.add_scalar(rdistrarray_name, dace.int32, transient=True, find_new_name=True)
+    wnode = state.add_write(scal_name)
+    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(scal_name, scal))
 
     libnode = Redistribute('_Redistribute_', rdistrarray_name)
 

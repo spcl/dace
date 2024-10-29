@@ -8,7 +8,7 @@ import itertools
 import warnings
 from functools import reduce
 from numbers import Number, Integral
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union, TYPE_CHECKING
 
 import dace
 from dace.codegen.tools import type_inference
@@ -28,7 +28,10 @@ import sympy as sp
 
 Size = Union[int, dace.symbolic.symbol]
 Shape = Sequence[Size]
-ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
+if TYPE_CHECKING:
+    from dace.frontend.python.newast import ProgramVisitor
+else:
+    ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 
 
 def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
@@ -453,7 +456,7 @@ def _numpy_flip(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis
     # acpy, _ = sdfg.add_temp_transient(desc.shape, desc.dtype, desc.storage)
     # vnode = state.add_read(view)
     # anode = state.add_read(acpy)
-    # state.add_edge(vnode, None, anode, None, Memlet(f'{view}[{sset}] -> {dset}'))
+    # state.add_edge(vnode, None, anode, None, Memlet(f'{view}[{sset}] -> [{dset}]'))
 
     arr_copy, _ = sdfg.add_temp_transient_like(desc)
     inpidx = ','.join([f'__i{i}' for i in range(ndim)])
@@ -586,7 +589,7 @@ def _arange(pv: ProgramVisitor,
         else:
             shape = (symbolic.int_ceil(stop - start, step), )
     else:
-        shape = (np.ceil((stop - start) / step), )
+        shape = (np.int64(np.ceil((stop - start) / step)), )
 
     # Infer dtype from input arguments
     if dtype is None:
@@ -596,7 +599,6 @@ def _arange(pv: ProgramVisitor,
     # if like is not None:
     #     outname, outarr = sdfg.add_temp_transient_like(sdfg.arrays[like])
     #     outarr.shape = shape
-
     if not isinstance(dtype, dtypes.typeclass):
         dtype = dtypes.dtype_to_typeclass(dtype)
     outname, outarr = sdfg.add_temp_transient(shape, dtype)
@@ -1119,8 +1121,8 @@ def _pymax(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Numbe
     for i, b in enumerate(args):
         if i > 0:
             pv._add_state('__min2_%d' % i)
-            pv.last_state.set_default_lineinfo(pv.current_lineinfo)
-            current_state = pv.last_state
+            pv.last_block.set_default_lineinfo(pv.current_lineinfo)
+            current_state = pv.last_block
         left_arg = _minmax2(pv, sdfg, current_state, left_arg, b, ismin=False)
     return left_arg
 
@@ -1134,8 +1136,8 @@ def _pymin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Numbe
     for i, b in enumerate(args):
         if i > 0:
             pv._add_state('__min2_%d' % i)
-            pv.last_state.set_default_lineinfo(pv.current_lineinfo)
-            current_state = pv.last_state
+            pv.last_block.set_default_lineinfo(pv.current_lineinfo)
+            current_state = pv.last_block
         left_arg = _minmax2(pv, sdfg, current_state, left_arg, b)
     return left_arg
 
@@ -3519,7 +3521,7 @@ def _create_subgraph(visitor: ProgramVisitor,
                     cond_state.add_nedge(r, w, dace.Memlet("{}[0]".format(r)))
                 true_state = sdfg.add_state(label=cond_state.label + '_true')
                 state = true_state
-                visitor.last_state = state
+                visitor.last_block = state
                 cond = name
                 cond_else = 'not ({})'.format(cond)
                 sdfg.add_edge(cond_state, true_state, dace.InterstateEdge(cond))
@@ -3538,7 +3540,7 @@ def _create_subgraph(visitor: ProgramVisitor,
                                dace.Memlet.from_array(arg, sdfg.arrays[arg]))
         if has_where and isinstance(where, str) and where in sdfg.arrays.keys():
             visitor._add_state(label=cond_state.label + '_true')
-            sdfg.add_edge(cond_state, visitor.last_state, dace.InterstateEdge(cond_else))
+            sdfg.add_edge(cond_state, visitor.last_block, dace.InterstateEdge(cond_else))
     else:
         # Map needed
         if has_where:
@@ -4090,7 +4092,7 @@ def implement_ufunc_accumulate(visitor: ProgramVisitor, ast_node: ast.Call, sdfg
     init_state = nested_sdfg.add_state(label="init")
     r = init_state.add_read(inpconn)
     w = init_state.add_write(outconn)
-    init_state.add_nedge(r, w, dace.Memlet("{a}[{i}] -> {oi}".format(a=inpconn, i='0', oi='0')))
+    init_state.add_nedge(r, w, dace.Memlet("{a}[{i}] -> [{oi}]".format(a=inpconn, i='0', oi='0')))
 
     body_state = nested_sdfg.add_state(label="body")
     r1 = body_state.add_read(inpconn)
@@ -4304,22 +4306,34 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
 
     desc = sdfg.arrays[arr]
 
-    # Change size of array based on the differences in bytes
-    bytemult = desc.dtype.bytes / dtype.bytes
-    bytediv = dtype.bytes / desc.dtype.bytes
+    orig_bytes = desc.dtype.bytes
+    view_bytes = dtype.bytes
+
+    if view_bytes < orig_bytes and orig_bytes % view_bytes != 0:
+        raise ValueError("When changing to a smaller dtype, its size must be a divisor of "
+                         "the size of original dtype")
+
     contigdim = next(i for i, s in enumerate(desc.strides) if s == 1)
 
     # For cases that can be recognized, if contiguous dimension is too small
     # raise an exception similar to numpy
-    if (not issymbolic(desc.shape[contigdim], sdfg.constants) and bytemult < 1
-            and desc.shape[contigdim] % bytediv != 0):
+    if (not issymbolic(desc.shape[contigdim], sdfg.constants) and orig_bytes < view_bytes
+            and desc.shape[contigdim] * orig_bytes % view_bytes != 0):
         raise ValueError('When changing to a larger dtype, its size must be a divisor of '
                          'the total size in bytes of the last axis of the array.')
 
     # Create new shape and strides for view
+    # NOTE: we change sizes by using `(old_size * orig_bytes) // view_bytes`
+    # Thus, the changed size will be an integer due to integer division.
+    # If the division created a fraction, the view wouldn't be valid in the first place.
+    # So, we assume the division will always yield an integer, and, hence,
+    # the integer division is correct.
+    # Also, keep in mind that `old_size * (orig_bytes // view_bytes)` is different.
+    # E.g., if `orig_bytes == 1 and view_bytes == 2`: `old_size * (1 // 2) == old_size * 0`.
     newshape = list(desc.shape)
-    newstrides = [s * bytemult if i != contigdim else s for i, s in enumerate(desc.strides)]
-    newshape[contigdim] *= bytemult
+    newstrides = [(s * orig_bytes) // view_bytes if i != contigdim else s for i, s in enumerate(desc.strides)]
+    # don't use `*=`, because it will break the bracket
+    newshape[contigdim] = (newshape[contigdim] * orig_bytes) // view_bytes
 
     newarr, _ = sdfg.add_view(arr,
                               newshape,
@@ -4327,13 +4341,13 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
                               storage=desc.storage,
                               strides=newstrides,
                               allow_conflicts=desc.allow_conflicts,
-                              total_size=desc.total_size * bytemult,
+                              total_size=(desc.total_size * orig_bytes) // view_bytes,
                               may_alias=desc.may_alias,
                               alignment=desc.alignment,
                               find_new_name=True)
 
     # Register view with DaCe program visitor
-    # NOTE: We do not create here a Memlet of the form `A[subset] -> osubset`
+    # NOTE: We do not create here a Memlet of the form `A[subset] -> [osubset]`
     # because the View can be of a different dtype. Adding `other_subset` in
     # such cases will trigger validation error.
     pv.views[newarr] = (arr, Memlet.from_array(arr, desc))

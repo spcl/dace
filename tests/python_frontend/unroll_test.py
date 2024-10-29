@@ -169,6 +169,52 @@ def test_tuple_elements_enumerate():
     assert np.allclose(a, np.array([1, 2, 3]))
 
 
+def test_list_global_enumerate():
+    tracer_variables = ["vapor", "rain", "nope"]
+
+    @dace.program
+    def enumerate_parsing(
+        A,
+        tracers: dace.compiletime,  # Dict[str, np.float64]
+    ):
+        for i, q in enumerate(tracer_variables[0:2]):
+            tracers[q][:] = A  # type:ignore
+
+    a = np.ones([3])
+    q = {
+        "vapor": np.zeros([3]),
+        "rain": np.zeros([3]),
+        "nope": np.zeros([3]),
+    }
+    enumerate_parsing(a, q)
+    assert np.allclose(q["vapor"], np.array([1, 1, 1]))
+    assert np.allclose(q["rain"], np.array([1, 1, 1]))
+    assert np.allclose(q["nope"], np.array([0, 0, 0]))
+
+
+def test_tuple_global_enumerate():
+    tracer_variables = ("vapor", "rain", "nope")
+
+    @dace.program
+    def enumerate_parsing(
+        A,
+        tracers: dace.compiletime,  # Dict[str, np.float64]
+    ):
+        for i, q in enumerate(tracer_variables[0:2]):
+            tracers[q][:] = A  # type:ignore
+
+    a = np.ones([3])
+    q = {
+        "vapor": np.zeros([3]),
+        "rain": np.zeros([3]),
+        "nope": np.zeros([3]),
+    }
+    enumerate_parsing(a, q)
+    assert np.allclose(q["vapor"], np.array([1, 1, 1]))
+    assert np.allclose(q["rain"], np.array([1, 1, 1]))
+    assert np.allclose(q["nope"], np.array([0, 0, 0]))
+
+
 def test_tuple_elements_zip():
     a1 = [2, 3, 4]
     a2 = (4, 5, 6)

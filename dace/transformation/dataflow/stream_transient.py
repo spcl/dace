@@ -6,7 +6,6 @@ import copy
 from dace.symbolic import symstr
 import warnings
 
-from numpy.core.numeric import outer
 from dace import data, dtypes, registry, symbolic, subsets
 from dace.frontend.operations import detect_reduction_type
 from dace.properties import SymbolicProperty, make_properties, Property
@@ -189,15 +188,13 @@ class AccumulateTransient(transformation.SingleStateTransformation):
             warnings.warn('AccumulateTransient did not properly initialize ' 'newly-created transient!')
             return
 
-        sdfg_state: SDFGState = sdfg.node(self.state_id)
-
-        map_entry = sdfg_state.entry_node(map_exit)
+        map_entry = graph.entry_node(map_exit)
 
         nested_sdfg: NestedSDFG = nest_state_subgraph(sdfg=sdfg,
-                                                      state=sdfg_state,
+                                                      state=graph,
                                                       subgraph=SubgraphView(
-                                                          sdfg_state, {map_entry, map_exit}
-                                                          | sdfg_state.all_nodes_between(map_entry, map_exit)))
+                                                          graph, {map_entry, map_exit}
+                                                          | graph.all_nodes_between(map_entry, map_exit)))
 
         nested_sdfg_state: SDFGState = nested_sdfg.sdfg.nodes()[0]
 

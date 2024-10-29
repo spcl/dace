@@ -8,11 +8,13 @@ from dace import sdfg as sd, symbolic
 from dace.properties import Property, make_properties
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
+from dace.sdfg.state import ControlFlowRegion
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from dace.transformation import transformation as xf
 
 @make_properties
+@xf.experimental_cfg_block_compatible
 class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
     """ Unrolls a state machine for-loop into multiple states """
 
@@ -28,9 +30,7 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
-        guard = self.loop_guard
-        begin = self.loop_begin
-        found = find_for_loop(graph, guard, begin)
+        found = self.loop_information()
 
         # If loop cannot be detected, fail
         if not found:
@@ -45,26 +45,25 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
             return False
         return True
 
-    def apply(self, _, sdfg):
+    def apply(self, graph: ControlFlowRegion, sdfg):
         # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
         begin: sd.SDFGState = self.loop_begin
         after_state: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride, together with the last
         # state(s) before the loop and the last loop state.
-        itervar, rng, loop_struct = find_for_loop(sdfg, guard, begin)
+        itervar, rng, loop_struct = self.loop_information()
 
         # Loop must be fully unrollable for now.
         if self.count != 0:
             raise NotImplementedError  # TODO(later)
 
         # Get loop states
-        loop_states = list(sdutil.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard))
+        loop_states = self.loop_body()
         first_id = loop_states.index(begin)
         last_state = loop_struct[1]
         last_id = loop_states.index(last_state)
-        loop_subgraph = gr.SubgraphView(sdfg, loop_states)
+        loop_subgraph = gr.SubgraphView(graph, loop_states)
 
         try:
             start, end, stride = (r for r in rng)
@@ -84,22 +83,23 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
 
             # Connect iterations with unconditional edges
             if len(unrolled_states) > 0:
-                sdfg.add_edge(unrolled_states[-1][1], new_states[first_id], sd.InterstateEdge())
+                graph.add_edge(unrolled_states[-1][1], new_states[first_id], sd.InterstateEdge())
 
             unrolled_states.append((new_states[first_id], new_states[last_id]))
 
         # Get any assignments that might be on the edge to the after state
-        after_assignments = (sdfg.edges_between(guard, after_state)[0].data.assignments)
+        after_assignments = self.loop_exit_edge().data.assignments
 
         # Connect new states to before and after states without conditions
         if unrolled_states:
             before_states = loop_struct[0]
             for before_state in before_states:
-                sdfg.add_edge(before_state, unrolled_states[0][0], sd.InterstateEdge())
-            sdfg.add_edge(unrolled_states[-1][1], after_state, sd.InterstateEdge(assignments=after_assignments))
+                graph.add_edge(before_state, unrolled_states[0][0], sd.InterstateEdge())
+            graph.add_edge(unrolled_states[-1][1], after_state, sd.InterstateEdge(assignments=after_assignments))
 
         # Remove old states from SDFG
-        sdfg.remove_nodes_from([guard] + loop_states)
+        guard_or_latch = self.loop_meta_states()
+        graph.remove_nodes_from(guard_or_latch + loop_states)
 
     def instantiate_loop(
         self,
@@ -119,6 +119,7 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
             state.label = state.label + '_' + itervar + '_' + (state_suffix if state_suffix is not None else str(value))
             state.replace(itervar, value)
 
+        graph = loop_states[0].parent_graph
         # Add subgraph to original SDFG
         for edge in loop_subgraph.edges():
             src = new_states[loop_states.index(edge.src)]
@@ -126,9 +127,9 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
 
             # Replace conditions in subgraph edges
             data: sd.InterstateEdge = copy.deepcopy(edge.data)
-            if data.condition:
+            if not data.is_unconditional():
                 ASTFindReplace({itervar: str(value)}).visit(data.condition)
 
-            sdfg.add_edge(src, dst, data)
+            graph.add_edge(src, dst, data)
 
         return new_states
