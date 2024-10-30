@@ -1342,7 +1342,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # MPI-related stuff
         result.update({
-            k: self.sdfg.process_grids[v]
+            v: self.sdfg.process_grids[v]
             for k, v in self.variables.items() if v in self.sdfg.process_grids
         })
         try:
