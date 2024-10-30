@@ -9,6 +9,7 @@ import functools
 import itertools
 import math
 import numbers
+import re
 import sys
 import warnings
 
@@ -568,7 +569,14 @@ def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed
     if packed_veclen > 1:
         index /= packed_veclen
 
-    return sym2cpp(index)
+    size_desc_name = d.size_desc_name
+    if not (size_desc_name is None):
+        access_str_with_deferred_vars = sym2cpp(index)
+        pattern = r'__dace_defer_dim(\d+)'
+        access_str = re.sub(pattern, size_desc_name + r'[\1]', access_str_with_deferred_vars)
+        return access_str
+    else:
+        return sym2cpp(index)
 
 
 def cpp_array_expr(sdfg,
@@ -585,7 +593,8 @@ def cpp_array_expr(sdfg,
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
+    desc : dace.Data = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
+    desc_name = memlet.data
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
@@ -737,7 +746,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
     Detects whether a write-conflict-resolving edge can be emitted without
     using atomics or critical sections, returning the node or SDFG that caused
     the decision.
-    
+
     :return: None if the conflict is nonatomic, otherwise returns the scope entry
              node or SDFG that caused the decision to be made.
     """

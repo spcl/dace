@@ -498,8 +498,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
                 # Initialize size array
                 size_str = ",".join(["0" if cpp.sym2cpp(dim).startswith("__dace_defer") else cpp.sym2cpp(dim) for dim in nodedesc.shape])
-                size_nodedesc = sdfg.arrays[f"{name}_size"]
-                declaration_stream.write(f'{size_nodedesc.dtype.ctype} {name}_size[{size_nodedesc.shape[0]}]{{{size_str}}};\n', cfg, state_id, node)
+                size_desc_name = nodedesc.size_desc_name
+                size_nodedesc = sdfg.arrays[size_desc_name]
+                declaration_stream.write(f'{size_nodedesc.dtype.ctype} {size_desc_name}[{size_nodedesc.shape[0]}]{{{size_str}}};\n', cfg, state_id, node)
             if deferred_allocation:
                 allocation_stream.write(
                     "%s = nullptr; // Deferred Allocation" %
@@ -521,7 +522,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
 
             define_var(name, DefinedType.Pointer, ctypedef)
-            define_var(name + "_size", DefinedType.Pointer, size_nodedesc.dtype.ctype)
+            if not declared:
+                define_var(size_desc_name, DefinedType.Pointer, size_nodedesc.dtype.ctype)
 
             if node.setzero:
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
@@ -687,10 +689,11 @@ class CPUCodeGen(TargetCodeGenerator):
             "#include <cstdlib>"
         )
         data_name = dst_node.data
-        size_array_name = f"{data_name}_size"
         new_size_array_name = src_node.data
 
         data = sdfg.arrays[data_name]
+        size_array_name = data.size_desc_name
+
         new_size_array = sdfg.arrays[new_size_array_name]
         dtype = sdfg.arrays[data_name].dtype
 

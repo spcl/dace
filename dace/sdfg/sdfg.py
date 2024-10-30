@@ -1714,20 +1714,6 @@ class SDFG(ControlFlowRegion):
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.Array(dtype=dtype,
-                        shape=shape,
-                        storage=storage,
-                        location=location,
-                        allow_conflicts=allow_conflicts,
-                        transient=transient,
-                        strides=strides,
-                        offset=offset,
-                        lifetime=lifetime,
-                        alignment=alignment,
-                        debuginfo=debuginfo,
-                        total_size=total_size,
-                        may_alias=may_alias)
-
         size_desc = dt.Array(dtype=dace.uint64,
                             shape=(len(shape),),
                             storage=storage,
@@ -1740,10 +1726,30 @@ class SDFG(ControlFlowRegion):
                             alignment=alignment,
                             debuginfo=debuginfo,
                             total_size=len(shape),
-                            may_alias=False)
+                            may_alias=False,
+                            size_desc_name=None)
+
+        desc = dt.Array(dtype=dtype,
+                        shape=shape,
+                        storage=storage,
+                        location=location,
+                        allow_conflicts=allow_conflicts,
+                        transient=transient,
+                        strides=strides,
+                        offset=offset,
+                        lifetime=lifetime,
+                        alignment=alignment,
+                        debuginfo=debuginfo,
+                        total_size=total_size,
+                        may_alias=may_alias,
+                        size_desc_name=None)
 
         array_name = self.add_datadesc(name, desc, find_new_name=find_new_name)
-        self.add_datadesc(f"{array_name}_size", size_desc, find_new_name=False)
+        size_desc_name = f"{array_name}_size"
+        self.add_datadesc(size_desc_name, size_desc, find_new_name=False)
+        # In case find_new_name and a new name is returned
+        # we need to update the size descriptor name of the array
+        desc.size_desc_name = size_desc_name
         return array_name, desc
 
     def add_view(self,
