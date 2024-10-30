@@ -34,11 +34,6 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: b
                     blocking the current thread.
     :param verbose: Be verbose.
     """
-    try:
-        import jinja2
-    except (ImportError, ModuleNotFoundError):
-        raise ImportError('SDFG.view() requires jinja2, please install by running `pip install jinja2`')
-
     # If vscode is open, try to open it inside vscode
     if filename is None:
         if (
@@ -51,6 +46,11 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: b
             os.system(f'code {filename}')
             os.close(fd)
             return
+
+    try:
+        import jinja2
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError('SDFG.view() requires jinja2, please install by running `pip install jinja2`')
 
     if type(sdfg) is dace.SDFG:
         sdfg = dace.serialize.dumps(sdfg.to_json())
