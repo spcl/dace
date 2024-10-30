@@ -242,7 +242,7 @@ def _consolidate_empty_dependencies(graph: SDFGState, first_entry: MapEntry, sec
     # Finally, these nodes should be depended on by _both_ maps.
     for en in [first_entry, second_entry]:
         for n in alt_table.values():
-            graph.add_memlet_path(n, en, memlet=Memlet())
+            graph.add_nedge(n, en, Memlet())
 
 
 def _consolidate_written_nodes(graph: SDFGState, first_exit: MapExit, second_exit: MapExit):
@@ -275,15 +275,11 @@ def _consolidate_written_nodes(graph: SDFGState, first_exit: MapExit, second_exi
         for e in graph.in_edges(n):
             assert e.src in [first_exit, second_exit]
             assert e.dst_conn is None
-            graph.add_memlet_path(e.src, surviving_nodes[e.dst.data],
-                                  src_conn=e.src_conn, dst_conn=e.dst_conn,
-                                  memlet=Memlet.from_memlet(e.data))
+            graph.add_edge(e.src, e.src_conn, surviving_nodes[e.dst.data], e.dst_conn, Memlet.from_memlet(e.data))
             graph.remove_edge(e)
         for e in graph.out_edges(n):
             assert e.src_conn is None
-            graph.add_memlet_path(surviving_nodes[e.src.data], e.dst,
-                                  src_conn=e.src_conn, dst_conn=e.dst_conn,
-                                  memlet=Memlet.from_memlet(e.data))
+            graph.add_edge(surviving_nodes[e.src.data], e.src_conn, e.dst, e.dst_conn, Memlet.from_memlet(e.data))
             graph.remove_edge(e)
     # Finally, cleanup the orphan nodes.
     for n in all_written_nodes:
@@ -301,26 +297,18 @@ def _consume_map_exactly(graph: SDFGState, dst: Tuple[MapEntry, MapExit], src: T
     assert all(e.data.is_empty() for e in graph.in_edges(src_en))
     cmap = _add_equivalent_connectors(dst_en, src_en)
     for e in graph.in_edges(src_en):
-        graph.add_memlet_path(e.src, dst_en,
-                              src_conn=e.src_conn, dst_conn=cmap.get(e.dst_conn),
-                              memlet=Memlet.from_memlet(e.data))
+        graph.add_edge(e.src, e.src_conn, dst_en, cmap.get(e.dst_conn), Memlet.from_memlet(e.data))
         graph.remove_edge(e)
     for e in graph.out_edges(src_en):
-        graph.add_memlet_path(dst_en, e.dst,
-                              src_conn=cmap.get(e.src_conn), dst_conn=e.dst_conn,
-                              memlet=Memlet.from_memlet(e.data))
+        graph.add_edge(dst_en, cmap.get(e.src_conn), e.dst, e.dst_conn, Memlet.from_memlet(e.data))
         graph.remove_edge(e)
 
     cmap = _add_equivalent_connectors(dst_ex, src_ex)
     for e in graph.in_edges(src_ex):
-        graph.add_memlet_path(e.src, dst_ex,
-                              src_conn=e.src_conn, dst_conn=cmap.get(e.dst_conn),
-                              memlet=Memlet.from_memlet(e.data))
+        graph.add_edge(e.src, e.src_conn, dst_ex, cmap.get(e.dst_conn), Memlet.from_memlet(e.data))
         graph.remove_edge(e)
     for e in graph.out_edges(src_ex):
-        graph.add_memlet_path(dst_ex, e.dst,
-                              src_conn=cmap.get(e.src_conn), dst_conn=e.dst_conn,
-                              memlet=Memlet.from_memlet(e.data))
+        graph.add_edge(dst_ex, cmap.get(e.src_conn), e.dst, e.dst_conn, Memlet.from_memlet(e.data))
         graph.remove_edge(e)
 
     graph.remove_node(src_en)
@@ -355,28 +343,20 @@ def _consume_map_with_grid_strided_loop(graph: SDFGState, dst: Tuple[MapEntry, M
     assert all(e.data.is_empty() for e in graph.in_edges(en))
     cmap = _add_equivalent_connectors(dst_en, en)
     for e in graph.in_edges(en):
-        graph.add_memlet_path(e.src, dst_en,
-                              src_conn=e.src_conn, dst_conn=cmap.get(e.dst_conn),
-                              memlet=Memlet.from_memlet(e.data))
-        graph.add_memlet_path(dst_en, e.dst,
-                              src_conn=cmap.get(e.src_conn), dst_conn=e.dst_conn,
-                              memlet=Memlet.from_memlet(e.data))
+        graph.add_edge(e.src, e.src_conn, dst_en, cmap.get(e.dst_conn), Memlet.from_memlet(e.data))
+        graph.add_edge(dst_en, cmap.get(e.src_conn), e.dst, e.dst_conn, Memlet.from_memlet(e.data))
         graph.remove_edge(e)
 
     cmap = _add_equivalent_connectors(dst_ex, ex)
     for e in graph.out_edges(ex):
-        graph.add_memlet_path(e.src, dst_ex,
-                              src_conn=e.src_conn,
-                              dst_conn=_connector_counterpart(cmap.get(e.src_conn)),
-                              memlet=Memlet.from_memlet(e.data))
-        graph.add_memlet_path(dst_ex, e.dst,
-                              src_conn=cmap.get(e.src_conn), dst_conn=e.dst_conn,
-                              memlet=Memlet.from_memlet(e.data))
+        graph.add_edge(e.src, e.src_conn, dst_ex, _connector_counterpart(cmap.get(e.src_conn)),
+                       Memlet.from_memlet(e.data))
+        graph.add_edge(dst_ex, cmap.get(e.src_conn), e.dst, e.dst_conn, Memlet.from_memlet(e.data))
         graph.remove_edge(e)
     if len(graph.in_edges(en)) == 0:
-        graph.add_memlet_path(dst_en, en, memlet=Memlet())
+        graph.add_nedge(dst_en, en, Memlet())
     if len(graph.out_edges(ex)) == 0:
-        graph.add_memlet_path(ex, dst_ex, memlet=Memlet())
+        graph.add_nedge(ex, dst_ex, Memlet())
 
 
 def _fused_range(r1: Range, r2: Range) -> Optional[Range]:

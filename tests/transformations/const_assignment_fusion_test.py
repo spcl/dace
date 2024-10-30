@@ -425,8 +425,7 @@ def test_does_not_fuse_when_the_first_map_reads_anything_at_all():
     g.apply_transformations_repeated(StateFusionExtended, validate_all=True)
     g.save(os.path.join('_dacegraphs', '3d-map1-reads-1.sdfg'))
     g.validate()
-    actual_A = deepcopy(A)
-    g(A=actual_A, K=3, M=4, N=5)
+    g.compile()
 
     # The map fusion won't work.
     assert g.apply_transformations_repeated(ConstAssignmentMapFusion) == 0
