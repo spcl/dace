@@ -230,7 +230,7 @@ class Memlet(object):
         primarily used for connecting nodes to scopes without transferring 
         data to them. 
         """
-        return (self.data is None and self.src_subset is None and self.dst_subset is None)
+        return (self.data is None and self.subset is None and self.other_subset is None)
 
     @property
     def num_accesses(self):
@@ -561,20 +561,18 @@ class Memlet(object):
                 view_edge = True
 
         if not view_edge:
-            if self.src_subset:
-                result |= self.src_subset.free_symbols
-
-            if self.dst_subset:
-                result |= self.dst_subset.free_symbols
+            if self.subset:
+                result |= self.subset.free_symbols
+            if self.other_subset:
+                result |= self.other_subset.free_symbols
         else:
             # View edges do not require the end of the range nor strides
-            if self.src_subset:
-                for rb, _, _ in self.src_subset.ndrange():
+            if self.subset:
+                for rb, _, _ in self.subset.ndrange():
                     if symbolic.issymbolic(rb):
                         result |= set(map(str, rb.free_symbols))
-
-            if self.dst_subset:
-                for rb, _, _ in self.dst_subset.ndrange():
+            if self.other_subset:
+                for rb, _, _ in self.other_subset.ndrange():
                     if symbolic.issymbolic(rb):
                         result |= set(map(str, rb.free_symbols))
 

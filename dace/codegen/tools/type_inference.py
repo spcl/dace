@@ -9,7 +9,7 @@
 
 import numpy as np
 import ast
-from dace import dtypes
+from dace import data, dtypes
 from dace import symbolic
 from dace.codegen import cppunparse
 from dace.symbolic import symbol, SymExpr, symstr
@@ -285,6 +285,8 @@ def _Name(t, symbols, inferred_symbols):
             if isinstance(inferred_type, np.dtype):
                 inferred_type = dtypes.typeclass(inferred_type.type)
             elif isinstance(inferred_type, symbolic.symbol):
+                inferred_type = inferred_type.dtype
+            elif isinstance(inferred_type, data.Data):
                 inferred_type = inferred_type.dtype
         elif t_id in inferred_symbols:
             inferred_type = inferred_symbols[t_id]

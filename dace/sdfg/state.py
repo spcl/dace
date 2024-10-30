@@ -849,6 +849,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         for node in self.nodes():
             if isinstance(node, nd.AccessNode):
                 descs[node.data] = node.desc(sdfg)
+                # NOTE: In case of multiple nodes of the same data this will
+                #   override previously found nodes.
                 descs_with_nodes[node.data] = node
                 if isinstance(node.desc(sdfg), dt.Scalar):
                     scalars_with_nodes.add(node.data)
@@ -865,19 +867,57 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     else:
                         data_args[node.data] = desc
 
-        # Add data arguments from memlets, if do not appear in any of the nodes
-        # (i.e., originate externally)
+        # Add data arguments from memlets, if do not appear in any of the nodes (i.e., originate externally)
+        #  TODO: Investigate is scanning the adjacent edges of the input and output connectors is better.
         for edge in self.edges():
-            if edge.data.data is not None and edge.data.data not in descs:
-                desc = sdfg.arrays[edge.data.data]
-                if isinstance(desc, dt.Scalar):
-                    # Ignore code->code edges.
-                    if (isinstance(edge.src, nd.CodeNode) and isinstance(edge.dst, nd.CodeNode)):
-                        continue
+            if edge.data.is_empty():
+                continue
 
-                    scalar_args[edge.data.data] = desc
+            elif edge.data.data not in descs:
+                # The edge reads data from the outside, and the Memlet is directly indicating what is read.
+                if (isinstance(edge.src, nd.CodeNode) and isinstance(edge.dst, nd.CodeNode)):
+                    continue    # Ignore code->code edges.
+                additional_descs = {edge.data.data: sdfg.arrays[edge.data.data]}
+
+            elif isinstance(edge.dst, (nd.AccessNode, nd.CodeNode)) and isinstance(edge.src, nd.EntryNode):
+                # Special case from the above; An AccessNode reads data from the Outside, but
+                #  the Memlet references the data on the inside. Thus we have to follow the data
+                #  to where it originates from.
+                # NOTE: We have to use a memlet path, because we have to go "against the flow"
+                #   Furthermore, in a valid SDFG the data will only come from one source anyway.
+                top_source_edge = self.graph.memlet_path(edge)[0]
+                if not isinstance(top_source_edge.src, nd.AccessNode):
+                    continue
+                additional_descs = (
+                        {top_source_edge.src.data: top_source_edge.src.desc(sdfg)}
+                        if top_source_edge.src.data not in descs
+                        else {}
+                )
+
+            elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
+                # Same case as above, but for outgoing Memlets.
+                # NOTE: We have to use a memlet tree here, because the data could potentially
+                #   go to multiple sources. We have to do it this way, because if we would call
+                #   `memlet_tree()` here, then we would just get the edge back.
+                additional_descs = {}
+                connector_to_look = "OUT_" + edge.dst_conn[3:]
+                for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
+                    if (
+                        (not oedge.data.is_empty()) and (oedge.data.data not in descs)
+                        and (oedge.data.data not in additional_descs)
+                    ):
+                        additional_descs[oedge.data.data] = sdfg.arrays[oedge.data.data]
+
+            else:
+                # Case is ignored.
+                continue
+
+            # Now processing the list of newly found data.
+            for aname, additional_desc in additional_descs.items():
+                if isinstance(additional_desc, dt.Scalar):
+                    scalar_args[aname] = additional_desc
                 else:
-                    data_args[edge.data.data] = desc
+                    data_args[aname] = additional_desc
 
         # Loop over locally-used data descriptors
         for name, desc in descs.items():
