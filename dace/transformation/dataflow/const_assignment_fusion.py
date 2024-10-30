@@ -436,28 +436,28 @@ class ConstAssignmentMapFusion(MapFusion):
     def _no_dependency_pattern(self, graph: SDFGState) -> bool:
         """Decide if the two maps are independent of each other."""
         first_entry, first_exit, second_entry, second_exit = self._map_nodes(graph)
+        all_in_edges = list(chain(graph.in_edges(first_entry), graph.in_edges(second_entry)))
+        all_out_edges = list(chain(graph.out_edges(first_exit), graph.out_edges(second_exit)))
+
+        # The analysis is too difficult to continue (so just reject independence to err on the side of caution), when...
         if graph.scope_dict()[first_entry] != graph.scope_dict()[second_entry]:
+            # ... the two maps are not even on the same scope (so analysing the connectivity is difficult).
             return False
-        if not all(isinstance(n, AccessNode) for n in graph.all_nodes_between(first_exit, second_entry)):
+        if not all(isinstance(n, AccessNode) for n in chain(graph.all_nodes_between(first_exit, second_entry),
+                                                            graph.all_nodes_between(second_exit, first_entry))):
+            # ... there are non-AccessNodes between the two maps (also difficult to analyse).
             return False
-        if not all(isinstance(n, AccessNode) for n in graph.all_nodes_between(second_exit, first_entry)):
+        if any(not isinstance(e.src, (MapExit, AccessNode)) for e in all_in_edges):
+            # ... either map has incoming edges from a node that is not an AccessNode or a MapExit (also difficult).
             return False
-        if any(not e.data.is_empty()
-               for e in chain(graph.in_edges(first_entry), graph.in_edges(second_entry))):
+        if any(not isinstance(e.dst, (MapEntry, AccessNode)) for e in all_out_edges):
+            # ... either map has outgoing edges to a node that is not an AccessNode or a MapEntry (also difficult).
             return False
-        if any(not isinstance(e.src, (MapEntry, AccessNode))
-               for e in chain(graph.in_edges(first_entry), graph.in_edges(second_entry))):
+
+        if any(not e.data.is_empty() for e in all_in_edges):
+            # If any of the maps are reading anything, then it isn't independent.
             return False
-        if not (all(isinstance(e.src, AccessNode)
-                    for e in chain(graph.in_edges(first_entry), graph.in_edges(second_entry)))
-                or all(isinstance(e.src, MapEntry)
-                       for e in chain(graph.in_edges(first_entry), graph.in_edges(second_entry)))):
-            return False
-        if not (all(isinstance(e.dst, AccessNode)
-                    for e in chain(graph.out_edges(first_exit), graph.out_edges(second_exit)))
-                or all(isinstance(e.dst, MapExit)
-                       for e in chain(graph.out_edges(first_exit), graph.out_edges(second_exit)))):
-            return False
+
         return True
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:

@@ -297,7 +297,9 @@ def assign_mixed_dims_sdfg():
 
     st0 = g.add_state('st0')
     _add_face_assignment_map(st0, 'face', [('j', M), ('k', N)], [(0, 0)], 1, 'A')
-    _add_face_assignment_map(st0, 'edge', [('k', N)], [(0, 0), (1, 0)], 2, 'B')
+    st1 = g.add_state('st1')
+    _add_face_assignment_map(st1, 'edge', [('k', N)], [(0, 0), (1, 0)], 2, 'B')
+    g.add_edge(st0, st1, InterstateEdge())
 
     return g
 
@@ -310,7 +312,12 @@ def test_does_not_extend_to_fuse():
     g.validate()
     g.compile()
 
-    # Will not fuse if the number of dimensions are different.
+    # Has multiple states, but will not fuse them if the number of dimensions are different.
+    assert g.apply_transformations_repeated(ConstAssignmentStateFusion) == 0
+    # We can fuse them manually.
+    assert g.apply_transformations_repeated(StateFusionExtended) == 1
+    g.save(os.path.join('_dacegraphs', '3d-mixed-1.sdfg'))
+    # But still won't fuse them maps.
     assert g.apply_transformations_repeated(ConstAssignmentMapFusion) == 0
 
 
@@ -320,7 +327,9 @@ def assign_inconsistent_values_different_constants_sdfg():
 
     st0 = g.add_state('st0')
     _add_face_assignment_map(st0, 'face', [('j', M), ('k', N)], [(0, 0)], 1, 'A')
-    _add_face_assignment_map(st0, 'face', [('j', M), ('k', N)], [(0, K - 1)], 42, 'A')
+    st1 = g.add_state('st1')
+    _add_face_assignment_map(st1, 'face', [('j', M), ('k', N)], [(0, K - 1)], 42, 'A')
+    g.add_edge(st0, st1, InterstateEdge())
 
     return g
 
@@ -331,8 +340,10 @@ def assign_inconsistent_values_non_constant_sdfg():
 
     st0 = g.add_state('st0')
     _add_face_assignment_map(st0, 'face', [('j', M), ('k', N)], [(0, 0)], 1, 'A')
-    _, _, t = _add_face_assignment_map(st0, 'face', [('j', M), ('k', N)], [(0, K - 1)], 1, 'A')
+    st1 = g.add_state('st1')
+    _, _, t = _add_face_assignment_map(st1, 'face', [('j', M), ('k', N)], [(0, K - 1)], 1, 'A')
     t.code = CodeBlock('__out = j + k')
+    g.add_edge(st0, st1, InterstateEdge())
 
     return g
 
@@ -341,19 +352,31 @@ def test_does_not_fuse_with_inconsistent_assignments():
     """ Negative test """
     # Construct SDFG with the maps on separate states.
     g = assign_inconsistent_values_different_constants_sdfg()
-    g.save(os.path.join('_dacegraphs', '3d-inconsistent-0.sdfg'))
+    g.save(os.path.join('_dacegraphs', '3d-inconsistent-0a.sdfg'))
     g.validate()
     g.compile()
 
+    # Has multiple states, but won't fuse them.
+    assert g.apply_transformations_repeated(ConstAssignmentStateFusion) == 0
+    # We can fuse them manually.
+    assert g.apply_transformations_repeated(StateFusionExtended) == 1
+    g.save(os.path.join('_dacegraphs', '3d-inconsistent-1a.sdfg'))
+    # But still won't fuse them maps.
     assert g.apply_transformations_repeated(ConstAssignmentMapFusion) == 0
 
     # Try another case.
     # Construct SDFG with the maps on separate states.
     g = assign_inconsistent_values_non_constant_sdfg()
-    g.save(os.path.join('_dacegraphs', '3d-inconsistent-1.sdfg'))
+    g.save(os.path.join('_dacegraphs', '3d-inconsistent-0b.sdfg'))
     g.validate()
     g.compile()
 
+    # Has multiple states, but won't fuse them.
+    assert g.apply_transformations_repeated(ConstAssignmentStateFusion) == 0
+    # We can fuse them manually.
+    assert g.apply_transformations_repeated(StateFusionExtended) == 1
+    g.save(os.path.join('_dacegraphs', '3d-inconsistent-1b.sdfg'))
+    # But still won't fuse them maps.
     assert g.apply_transformations_repeated(ConstAssignmentMapFusion) == 0
 
 
@@ -431,6 +454,59 @@ def test_does_not_fuse_when_the_first_map_reads_anything_at_all():
     assert g.apply_transformations_repeated(ConstAssignmentMapFusion) == 0
 
 
+def sdfg_where_first_state_has_multiple_toplevel_maps():
+    g = SDFG('prog')
+    g.add_array('A', (M, N), dace.float32)
+
+    st0 = g.add_state('st0')
+    _add_face_assignment_map(st0, 'top', [('j', N)], [(0, 0)], 1, 'A')
+    _add_face_assignment_map(st0, 'bottom', [('j', N)], [(0, M - 1)], 1, 'A')
+
+    st1 = g.add_state('st1')
+    _add_face_assignment_map(st1, 'left', [('i', M)], [(1, 0)], 1, 'A')
+
+    g.add_edge(st0, st1, InterstateEdge())
+
+    return g
+
+
+def test_does_not_fuse_when_the_first_state_has_multiple_toplevel_maps():
+    """ Negative test """
+    A = np.random.uniform(size=(3, 4, 5)).astype(np.float32)
+
+    # Construct SDFG with the maps on separate states.
+    g = sdfg_where_first_state_has_multiple_toplevel_maps()
+    g.save(os.path.join('_dacegraphs', '3d-multimap-state-0.sdfg'))
+    g.validate()
+    g.compile()
+
+    # Get the reference data.
+    actual_A = deepcopy(A)
+    g(A=actual_A, K=3, M=4, N=5)
+
+    # The state fusion won't work.
+    assert g.apply_transformations_repeated(ConstAssignmentStateFusion) == 0
+
+    # Fuse the states explicitly anyway.
+    g.apply_transformations_repeated(StateFusionExtended, validate_all=True)
+    g.save(os.path.join('_dacegraphs', '3d-multimap-state-1.sdfg'))
+    g.validate()
+    g.compile()
+
+    # But now, the fusion will work!
+    assert g.apply_transformations_repeated(ConstAssignmentMapFusion) == 1
+    g.save(os.path.join('_dacegraphs', '3d-multimap-state-2.sdfg'))
+    g.validate()
+    g.compile()
+
+    # Get our data.
+    our_A = deepcopy(A)
+    g(A=our_A, K=3, M=4, N=5)
+
+    # Verify numerically.
+    assert np.allclose(our_A, actual_A)
+
+
 if __name__ == '__main__':
     test_within_state_fusion()
     test_interstate_fusion()
@@ -442,3 +518,4 @@ if __name__ == '__main__':
     test_does_not_fuse_with_inconsistent_assignments()
     test_does_not_fuse_with_unsuitable_dependencies()
     test_does_not_fuse_when_the_first_map_reads_anything_at_all()
+    test_does_not_fuse_when_the_first_state_has_multiple_toplevel_maps()
