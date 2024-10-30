@@ -9,7 +9,7 @@ This includes standard Python code (loops, functions, context managers, etc.), b
 and (most) functions. 
 
 .. note::
-    For more examples, see the `Getting Started <https://nbviewer.org/github/spcl/dace/blob/master/tutorials/getting_started.ipynb>`_
+    For more examples, see the `Getting Started <https://nbviewer.org/github/spcl/dace/blob/main/tutorials/getting_started.ipynb>`_
     Jupyter Notebook tutorial.
 
 Usage
@@ -349,7 +349,7 @@ Explicit Dataflow Mode
 
 
 The DaCe Python frontend allows users to write SDFG tasklets and memlets directly in Python code.
-For more example uses, see the `Explicit Dataflow <https://nbviewer.org/github/spcl/dace/blob/master/tutorials/explicit.ipynb>`_
+For more example uses, see the `Explicit Dataflow <https://nbviewer.org/github/spcl/dace/blob/main/tutorials/explicit.ipynb>`_
 tutorial.
 
 Memlets

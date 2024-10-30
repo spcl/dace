@@ -2,16 +2,17 @@ name: Heterogeneous Tests
 
 on:
   push:
-    branches: [ master, ci-fix ]
+    branches: [ main, ci-fix ]
   pull_request:
-    branches: [ master, ci-fix ]
+    branches: [ main, ci-fix ]
   merge_group:
-    branches: [ master, ci-fix ]
+    branches: [ main, ci-fix ]
 
 env:
   CUDA_HOME: /usr/local/cuda
   CUDACXX: nvcc
   MKLROOT: /opt/intel/oneapi/mkl/latest/
+  CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
 jobs:
   test-heterogeneous:
