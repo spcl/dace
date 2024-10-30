@@ -11,7 +11,6 @@ from dace.libraries.blas import blas_helpers
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments
 from dace.sdfg import nodes, utils as sdutils
-import numpy as np
 import warnings
 
 
@@ -823,8 +822,8 @@ class ExpandGemvPBLAS(ExpandTransformation):
 
         @dace.program
         def _gemNv_pblas(_A: dtype[m, n], _x: dtype[n], _y: dtype[m]):
-            lA = np.empty((m // Px, n // Py), dtype=_A.dtype)
-            lx = np.empty((n // Px, ), dtype=_x.dtype)
+            lA = dace.empty((m // Px, n // Py), dtype=_A.dtype)
+            lx = dace.empty((n // Px, ), dtype=_x.dtype)
             dace.comm.BCScatter(_A, lA, (m // Px, n // Py))
             dace.comm.BCScatter(_x, lx, (n // Px, 1))
             ly = distr.MatMult(lA, lx, (m, n))
@@ -832,8 +831,8 @@ class ExpandGemvPBLAS(ExpandTransformation):
 
         @dace.program
         def _gemTv_pblas(_A: dtype[m, n], _x: dtype[m], _y: dtype[n]):
-            lA = np.empty((m // Px, n // Py), dtype=_A.dtype)
-            lx = np.empty((m // Px, ), dtype=_x.dtype)
+            lA = dace.empty((m // Px, n // Py), dtype=_A.dtype)
+            lx = dace.empty((m // Px, ), dtype=_x.dtype)
             dace.comm.BCScatter(_A, lA, (m // Px, n // Py))
             dace.comm.BCScatter(_x, lx, (m // Px, 1))
             ly = distr.MatMult(lx, lA, (m, n))

@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass
 import json
-import numpy as np
+from statistics import median, mean
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 from io import StringIO
@@ -237,10 +237,10 @@ class InstrumentationReport(object):
 
             string += row_format.format(indent + label + ':', '', '', '', '', width=colw)
             string += row_format.format(indent,
-                                        '%.3f' % np.min(runtimes),
-                                        '%.3f' % np.mean(runtimes),
-                                        '%.3f' % np.median(runtimes),
-                                        '%.3f' % np.max(runtimes),
+                                        '%.3f' % min(runtimes),
+                                        '%.3f' % mean(runtimes),
+                                        '%.3f' % median(runtimes),
+                                        '%.3f' % max(runtimes),
                                         width=colw)
 
         return string, sdfg, state
@@ -295,10 +295,10 @@ class InstrumentationReport(object):
 
             string += row_format.format(indent + "|" + label + ':', '', '', '', '', width=colw)
             string += row_format.format(indent,
-                                        np.min(values),
-                                        '%.2f' % np.mean(values),
-                                        '%.2f' % np.median(values),
-                                        np.max(values),
+                                        min(values),
+                                        '%.2f' % mean(values),
+                                        '%.2f' % median(values),
+                                        max(values),
                                         width=colw)
 
         return string, sdfg, state
@@ -310,15 +310,14 @@ class InstrumentationReport(object):
             runtimes = events[event]
             result.extend(runtimes)
 
-        result = np.array(result)
         if self._sortcat == 'min':
-            return np.min(result)
+            return min(result)
         elif self._sortcat == 'max':
-            return np.max(result)
+            return max(result)
         elif self._sortcat == 'mean':
-            return np.mean(result)
+            return mean(result)
         else:  # if self._sortcat == 'median':
-            return np.median(result)
+            return median(result)
 
     def __str__(self):
         COLW = 15
@@ -407,10 +406,9 @@ class InstrumentationReport(object):
                 for name, times in events.items():
                     for tid, runtimes in times.items():
                         sdfg, state, node = element
-                        nptimes = np.array(runtimes)
                         cnt = len(runtimes)
-                        mint, meant, mediant, maxt = np.min(nptimes), np.mean(nptimes), np.median(nptimes), np.max(
-                            nptimes)
+                        mint, meant, mediant, maxt = min(runtimes), mean(runtimes), median(runtimes), max(
+                            runtimes)
                         durations_csv.write(f'{name},{sdfg},{state},{node},{tid},{cnt},{mint},{meant},{mediant},{maxt}\n')
 
         # Create counters CSV
@@ -422,9 +420,8 @@ class InstrumentationReport(object):
                     for ctrname, ctrvalues in counters.items():
                         for tid, values in ctrvalues.items():
                             sdfg, state, node = element
-                            npval = np.array(values)
                             cnt = len(values)
-                            mint, meant, mediant, maxt = np.min(npval), np.mean(npval), np.median(npval), np.max(npval)
+                            mint, meant, mediant, maxt = min(values), mean(values), median(values), max(values)
                             counters_csv.write(
                                 f'{ctrname},{name},{sdfg},{state},{node},{tid},{cnt},{mint},{meant},{mediant},{maxt}\n')
 

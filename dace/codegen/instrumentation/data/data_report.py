@@ -7,8 +7,6 @@ import os
 from dace import dtypes, SDFG
 from dace.data import ArrayLike, Number  # Type hint
 
-import numpy as np
-
 
 @dataclass
 class InstrumentedDataReport:
@@ -82,6 +80,11 @@ class InstrumentedDataReport:
 
         :return: A 2-tuple of (original buffer, array view)
         """
+        try:
+            import numpy as np
+        except (ImportError, ModuleNotFoundError):
+            raise ImportError('Using data instrumentation reports requires numpy to be installed.')
+
         with open(filename, 'rb') as fp:
             # Recreate runtime shape and strides from buffer
             ndims, = struct.unpack('i', fp.read(4))
@@ -95,10 +98,15 @@ class InstrumentedDataReport:
             view = np.ndarray(shape, npdtype, buffer=nparr, strides=strides)
         return nparr, view
 
-    def _read_symbol_file(self, filename: str, npdtype: np.dtype) -> Number:
+    def _read_symbol_file(self, filename: str, dtype) -> Number:
+        try:
+            import numpy as np
+        except (ImportError, ModuleNotFoundError):
+            raise ImportError('Using data instrumentation reports requires numpy to be installed.')
+
         with open(filename, 'rb') as fp:
-            npclass = getattr(np, str(npdtype))
-            byteval = fp.read(npdtype.itemsize)
+            npclass = getattr(np, str(dtype))
+            byteval = fp.read(dtype.itemsize)
             val = npclass(byteval)
         return val
 
@@ -167,6 +175,11 @@ class InstrumentedDataReport:
         
         :see: dace.dtypes.DataInstrumentationType.Restore
         """
+        try:
+            import numpy as np
+        except (ImportError, ModuleNotFoundError):
+            raise ImportError('Using data instrumentation reports requires numpy to be installed.')
+
         for (k, i), loaded in self.loaded_values.items():
             if isinstance(loaded, np.ndarray):
                 dtype_bytes = loaded.dtype.itemsize

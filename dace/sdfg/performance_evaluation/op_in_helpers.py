@@ -8,7 +8,6 @@ from dace.data import Array
 import sympy as sp
 from collections import deque
 from scipy.optimize import curve_fit
-import numpy as np
 from dace import symbol
 
 
@@ -132,6 +131,11 @@ class AccessStack:
 
 
 def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, element, name):
+    try:
+        import numpy as np
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError("Plotting performance results requires numpy")
+
     plt = None
     try:
         import matplotlib.pyplot as plt_import
@@ -199,6 +203,11 @@ def compute_mape(f, test_x, test_y, test_set_size):
 
 
 def r_squared(pred, y):
+    try:
+        import numpy as np
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError("This operation requires numpy to be installed")
+        
     if np.sum(np.square(y - y.mean())) <= 0.0001:
         return 1
     return 1 - np.sum(np.square(y - pred)) / np.sum(np.square(y - y.mean()))
@@ -206,6 +215,11 @@ def r_squared(pred, y):
 
 def find_best_model(x, y, I, J, symbol_name):
     """ Find the best model out of all combinations of (i, j) from I and J via leave-one-out cross validation. """
+    try:
+        import numpy as np
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError("This operation requires numpy to be installed")
+
     min_error = None
     for i in I:
         for j in J:
@@ -272,6 +286,11 @@ def fit_curve(x, y, symbol_name):
     :param y: The dependent values.
     :param symbol_name: The name of the SDFG symbol.
     """
+    try:
+        import numpy as np
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError("This operation requires numpy to be installed")
+
     x = np.array(x).astype(np.int32)
     y = np.array(y).astype(np.float64)
 

@@ -11,30 +11,25 @@ from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.cpp import sym2cpp
 from dace import dtypes, memlet as mm
-from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
+from dace.sdfg import graph, state
 from dace.sdfg.scope import is_in_scope
-import itertools
 from dace.codegen.targets.sve import util as util
-from typing import List
 import copy
 from six import StringIO
 import dace.codegen.targets.sve.unparse
-from dace import registry, symbolic, dtypes
+from dace import registry, dtypes
 from dace.codegen.targets import cpp as cpp
 from dace.frontend.operations import detect_reduction_type
-import dace.symbolic
 from dace.codegen.targets.cpp import sym2cpp
-from dace.sdfg import utils as sdutil
 from dace.codegen.dispatcher import DefinedType
 import copy
-import numpy as np
 from dace.codegen.targets.cpp import is_write_conflicted
 from dace import data as data
 from dace.frontend.operations import detect_reduction_type
 import dace.codegen.targets
 
 
-@dace.registry.autoregister_params(name='sve')
+@registry.autoregister_params(name='sve')
 class SVECodeGen(TargetCodeGenerator):
     target_name = 'sve'
     title = 'Arm SVE'
@@ -192,9 +187,9 @@ class SVECodeGen(TargetCodeGenerator):
 
                     # long long issue casting
                     ptr_cast = ''
-                    if dst_type.type == np.int64:
+                    if dst_type == dtypes.int64:
                         ptr_cast = '(int64_t*) '
-                    elif dst_type.type == np.uint64:
+                    elif dst_type == dtypes.uint64:
                         ptr_cast = '(uint64_t*) '
 
                     # Regular load and gather share the first arguments
@@ -320,9 +315,9 @@ class SVECodeGen(TargetCodeGenerator):
 
                     # long long fix
                     ptr_cast = ''
-                    if src_type.type == np.int64:
+                    if src_type == dtypes.int64:
                         ptr_cast = '(int64_t*) '
-                    elif src_type.type == np.uint64:
+                    elif src_type == dtypes.uint64:
                         ptr_cast = '(uint64_t*) '
 
                     store_args = '{}, {}'.format(

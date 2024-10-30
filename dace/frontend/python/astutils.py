@@ -7,12 +7,11 @@ from collections import OrderedDict
 from io import StringIO
 import inspect
 import numbers
-import numpy
 import sympy
 import sys
 from typing import Any, Dict, List, Optional, Set, Union
 
-from dace import dtypes, symbolic
+from dace import dtypes, symbolic, numpy_wrapper as numpy
 
 
 if sys.version_info >= (3, 8):

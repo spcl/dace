@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from timeit import default_timer as timer
 import time
 import ast
-import numpy as np
+from statistics import median
 import sympy
 import os
 import sys
@@ -85,7 +85,7 @@ class CompiledSDFGProfiler:
 
         start_time = int(time.time())
 
-        times = np.ndarray(self.repetitions + 1, dtype=np.float64)
+        times = [0.0] * (self.repetitions + 1)
         times[0] = timer()
 
         for i in iterator:
@@ -95,7 +95,7 @@ class CompiledSDFGProfiler:
             times[i] = timer()
 
         # compute pairwise differences and convert to milliseconds
-        diffs = np.diff(times) * 1e3
+        diffs = [(times[i + 1] - times[i])*1e3 for i in range(len(times) - 1)]
 
         # Add entries to the instrumentation report
         self.report.name = self.report.name or start_time
@@ -110,7 +110,7 @@ class CompiledSDFGProfiler:
 
         # Print profiling results
         if self.print_results:
-            time_msecs = np.median(diffs)
+            time_msecs = median(diffs)
             print(compiled_sdfg.sdfg.name, time_msecs, 'ms')
 
         # Save every call separately

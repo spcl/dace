@@ -5,7 +5,6 @@ import copy
 from dataclasses import dataclass
 import inspect
 import numbers
-import numpy
 import re
 import sympy
 import sys
@@ -18,6 +17,11 @@ from dace.config import Config
 from dace.sdfg import SDFG
 from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
+
+try:
+    import numpy
+except (ImportError, ModuleNotFoundError):
+    numpy = None
 
 
 if sys.version_info < (3, 8):
@@ -146,17 +150,17 @@ class RewriteSympyEquality(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_Constant(self, node):
-        if isinstance(node.value, numpy.bool_):
+        if numpy is not None and isinstance(node.value, numpy.bool_):
             node.value = bool(node.value)
-        elif isinstance(node.value, numpy.number):
+        elif numpy is not None and isinstance(node.value, numpy.number):
             node.value = node.value.item()
         return self.generic_visit(node)
 
     # Compatibility for Python 3.7
     def visit_Num(self, node):
-        if isinstance(node.n, numpy.bool_):
+        if numpy is not None and isinstance(node.n, numpy.bool_):
             node.n = bool(node.n)
-        elif isinstance(node.n, numpy.number):
+        elif numpy is not None and isinstance(node.n, numpy.number):
             node.n = node.n.item()
         return self.generic_visit(node)
 
@@ -308,7 +312,7 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
             return True
 
     # NumPy ufuncs
-    if (isinstance(callobj, numpy.ufunc) or isinstance(parent_object, numpy.ufunc)):
+    if numpy is not None and (isinstance(callobj, numpy.ufunc) or isinstance(parent_object, numpy.ufunc)):
         return True
 
     # Functions

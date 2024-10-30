@@ -1,17 +1,16 @@
 import os
-import json
-import pickle
-import tempfile
 import math
 import dace
 import itertools
-import numpy as np
 
 from typing import Dict
 
-from dace.codegen.instrumentation.data import data_report
-
 def measure(sdfg, dreport=None, repetitions = 30, print_report : bool = False):
+    try:
+        import numpy as np
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError("This operation requires numpy to be installed")
+
     arguments = {}
  
     for cstate in sdfg.nodes():
@@ -112,6 +111,11 @@ def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeou
     return runtime
 
 def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queue) -> float:
+    try:
+        import numpy as np
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError("This operation requires numpy to be installed")
+
     cutout = dace.SDFG.from_json(cutout_json)
     
     arguments = {}

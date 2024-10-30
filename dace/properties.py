@@ -8,7 +8,6 @@ import json
 import pydoc
 import re
 import sympy as sp
-import numpy as np
 import dace.subsets as sbs
 import dace
 import dace.serialize
@@ -17,12 +16,16 @@ from dace.dtypes import DebugInfo, typeclass
 from numbers import Integral, Number
 from typing import List, Set, Type, Union, TypeVar, Generic
 
+try:
+    import numpy as np
+except (ImportError, ModuleNotFoundError):
+    np = None
+
 T = TypeVar('T')
 
 ###############################################################################
 # External interface to guarantee correct usage
 ###############################################################################
-
 
 ###############################################################################
 # Property base implementation
@@ -54,7 +57,7 @@ class Property(Generic[T]):
             indirected=False,  # This property belongs to a different class
             category='General',
             desc="",
-            serialize_if=lambda _: True): # By default serialize always
+            serialize_if=lambda _: True):  # By default serialize always
 
         self._getter = getter
         self._setter = setter
@@ -153,7 +156,7 @@ class Property(Generic[T]):
             raise ValueError("None not allowed for property {} in class {}".format(self.attr_name, type(obj).__name__))
 
         # Accept all DaCe/numpy typeclasses as Python native types
-        if isinstance(val, np.number):
+        if np is not None and isinstance(val, np.number):
             val = val.item()
 
         # Edge cases for integer and float types
@@ -171,9 +174,8 @@ class Property(Generic[T]):
                 type(val).__name__, self.attr_name, self.dtype.__name__))
         # If the value has not yet been set, we cannot pass it to the enum
         # function. Fail silently if this happens
-        if self.choices is not None \
-                and isinstance(self.choices,(list, tuple, set)) \
-                and (val is not None or not self.allow_none):
+        if self.choices is not None and isinstance(self.choices,
+                                                   (list, tuple, set)) and (val is not None or not self.allow_none):
             if val not in self.choices:
                 raise ValueError("Value {} not present in choices: {}".format(val, self.choices))
         setattr(obj, "_" + self.attr_name, val)
@@ -844,7 +846,7 @@ class SetProperty(Property):
     def __set__(self, obj, val):
         if val is None:
             return super(SetProperty, self).__set__(obj, val)
-        
+
         # Check for uniqueness
         if isinstance(val, (frozenset, set)):
             pass
@@ -1096,7 +1098,8 @@ class SubsetProperty(Property):
     def __set__(self, obj, val):
         if isinstance(val, str):
             val = self.from_string(val)
-        if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices) and not isinstance(val, sbs.SubsetUnion)):
+        if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices)
+                and not isinstance(val, sbs.SubsetUnion)):
             raise TypeError("Subset property must be either Range or Indices: got {}".format(type(val).__name__))
         super(SubsetProperty, self).__set__(obj, val)
 
@@ -1140,7 +1143,9 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if (val is not None and not isinstance(val, (sp.Expr, Number, np.bool_, str))):
+        if (val is not None
+                and not (isinstance(val, (sp.Expr, Number, str)) 
+                         or (np is not None and isinstance(val, np.bool_)))):
             raise TypeError(f"Property {self.attr_name} must be a literal "
                             f"or symbolic expression, got: {type(val)}")
         if isinstance(val, (Number, str)):

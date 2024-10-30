@@ -1,14 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import ast
 import collections
 import functools
 import itertools
 import operator
-import re
 
 import dace
-from dace import data as dt, subsets as sbs
-import numpy as np
+from dace import data as dt
 from .subscript_converter import SubscriptConverter
 from ._common import *
 
@@ -77,12 +74,12 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
         # to the center
         init_sizes = [(buffer_sizes[key] - vector_lengths[key] - val[2]) // vector_length
                       for key, val in buffer_accesses.items()]
-        init_size_max = int(np.max(init_sizes))
+        init_size_max = int(max(init_sizes))
 
         parameters = [f"_i{i}" for i in range(len(shape))]
 
         # Dimensions we need to iterate over
-        iterator_mask = np.array([s != 0 and s != 1 for s in shape], dtype=bool)
+        iterator_mask = [s != 0 and s != 1 for s in shape]
         iterators = make_iterators(tuple(s for s, m in zip(shape_vectorized, iterator_mask) if m),
                                    parameters=tuple(s for s, m in zip(parameters, iterator_mask) if m))
 

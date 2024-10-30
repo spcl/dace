@@ -23,7 +23,11 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFG, SDFGState
 from dace.symbolic import pystr_to_symbolic, issymbolic, inequal_symbols
 
-import numpy as np
+try:
+    import numpy as np
+except (ImportError, ModuleNotFoundError):
+    np = None
+
 import sympy as sp
 
 Size = Union[int, dace.symbolic.symbol]
@@ -272,6 +276,7 @@ def eye(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=
     return name
 
 
+@oprepo.replaces('dace.empty')
 @oprepo.replaces('numpy.empty')
 def _numpy_empty(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass):
     """ Creates an unitialized array of the specificied shape and dtype. """
@@ -2294,7 +2299,10 @@ UfuncInput = Union[str, Number, sp.Basic]
 UfuncOutput = Union[str, None]
 
 # TODO: Add all ufuncs in subsequent PR's.
-ufuncs = dict(
+def ufuncs():
+    if np is None:
+        return {}
+    return dict(
     add=dict(name="_numpy_add_",
              operator="Add",
              inputs=["__in1", "__in2"],
@@ -2930,7 +2938,7 @@ def _get_ufunc_impl(visitor: ProgramVisitor, ast_node: ast.Call, ufunc_name: str
     """
 
     try:
-        return ufuncs[ufunc_name]
+        return ufuncs()[ufunc_name]
     except KeyError:
         raise mem_parser.DaceSyntaxError(visitor, ast_node,
                                          "Missing implementation for NumPy ufunc {f}.".format(f=ufunc_name))
@@ -4465,8 +4473,10 @@ def _make_datatype_converter(typeclass: str):
         dtype = dace.bool
     elif typeclass in {"int", "float", "complex"}:
         dtype = dtypes.dtype_to_typeclass(eval(typeclass))
+    elif np is not None:
+        dtype = dtypes.dtype_to_typeclass(getattr(np, typeclass))
     else:
-        dtype = dtypes.dtype_to_typeclass(eval("np.{}".format(typeclass)))
+        dtype = getattr(dtypes, typeclass)
 
     @oprepo.replaces(typeclass)
     @oprepo.replaces("dace.{}".format(typeclass))

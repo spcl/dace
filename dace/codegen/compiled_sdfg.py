@@ -8,7 +8,11 @@ import subprocess
 from typing import Any, Callable, Dict, List, Tuple, Optional, Type, Union
 import warnings
 
-import numpy as np
+try:
+    import numpy as np
+except (ImportError, ModuleNotFoundError):
+    np = None
+
 import sympy as sp
 
 from dace import data as dt, dtypes, hooks, symbolic
@@ -189,6 +193,11 @@ class CompiledSDFG(object):
         self._lastargs = ()
         self.do_not_execute = False
 
+        try:
+            import numpy
+        except (ImportError, ModuleNotFoundError):
+            raise ImportError('Calling CompiledSDFG objects requires numpy for array marshalling.')
+
         lib.load()  # Explicitly load the library
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
         self._init.restype = ctypes.c_void_p
@@ -199,9 +208,9 @@ class CompiledSDFG(object):
         # Cache SDFG return values
         self._create_new_arrays: bool = True
         self._return_syms: Dict[str, Any] = None
-        self._retarray_shapes: List[Tuple[str, np.dtype, dtypes.StorageType, Tuple[int], Tuple[int], int]] = []
+        self._retarray_shapes: List[Tuple[str, dtypes.StorageType, Tuple[int], Tuple[int], int]] = []
         self._retarray_is_scalar: List[bool] = []
-        self._return_arrays: List[np.ndarray] = []
+        self._return_arrays: List[dt.ArrayLike] = []
         self._callback_retval_references: List[Any] = []  # Avoids garbage-collecting callback return values
 
         # Cache SDFG argument properties

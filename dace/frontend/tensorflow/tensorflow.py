@@ -3,7 +3,6 @@
 # TODO: This code should undergo major refactoring
 
 from functools import partial
-import numpy as np
 import os
 import pickle
 import re
@@ -25,6 +24,11 @@ try:
 except ImportError:
     raise ImportError("Cannot use Tensorflow frontend without Tensorflow, " +
                       "please install: https://www.tensorflow.org/install/")
+
+try:
+    import numpy as np
+except (ImportError, ModuleNotFoundError):
+    raise ImportError('The Tensorflow frontend requires numpy. Please install numpy.')
 
 from tensorflow.python.framework import tensor_util
 
@@ -62,7 +66,7 @@ def _tensortype(tensor: tf.Tensor):
         raise TypeError("Type %s is not a valid numpy type" % str(tensor.dtype))
 
     if tensor.dtype.is_bool:
-        return np.int32
+        return dtypes.int32
 
     return tensor.dtype.as_numpy_dtype
 

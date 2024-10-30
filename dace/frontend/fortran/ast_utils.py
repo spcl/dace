@@ -1,13 +1,9 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from fparser.api import parse
-import os
 import sys
-from fparser.common.readfortran import FortranStringReader, FortranFileReader
 
 #dace imports
 from dace import subsets
-from dace.data import Scalar
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace import Memlet
 from dace.sdfg.nodes import Tasklet
@@ -15,9 +11,6 @@ from dace import dtypes
 from dace import symbolic as sym
 from dace import DebugInfo as di
 from dace import Language as lang
-from dace.properties import CodeBlock
-from numpy import finfo as finf
-from numpy import float64 as fl
 
 from dace.frontend.fortran import ast_internal_classes
 from typing import List, Set
@@ -207,7 +200,7 @@ class TaskletWriter:
     def call2string(self, node: ast_internal_classes.Call_Expr_Node):
         # This is a replacement for the epsilon function in fortran
         if node.name.name == "__dace_epsilon":
-            return str(finf(fl).eps)
+            return str(sys.float_info.epsilon)
         if node.name.name == "pow":
             return " ( " + self.write_code(node.args[0]) + " ** " + self.write_code(node.args[1]) + "  ) "
         return_str = self.write_code(node.name) + "(" + self.write_code(node.args[0])

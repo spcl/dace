@@ -11,7 +11,6 @@ from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_
                                               to_cublas_computetype)
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen_gemm_opts)
 from .. import environments
-import numpy as np
 import warnings
 
 
@@ -19,7 +18,7 @@ def _is_complex(dtype):
     if hasattr(dtype, "is_complex") and callable(dtype.is_complex):
         return dtype.is_complex()
     else:
-        return dtype in [np.complex64, np.complex128]
+        return dtype in [dtypes.complex64, dtypes.complex128]
 
 
 def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
@@ -52,7 +51,7 @@ class ExpandGemmPure(ExpandTransformation):
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
-        dtype_c = dace.dtype_to_typeclass(np.result_type(dtype_a, dtype_b).type)
+        dtype_c = dtypes.result_type_of(dtype_a, dtype_b)
 
         if node.transA:
             trans_shape_a = list(reversed(shape_a))
@@ -477,8 +476,8 @@ class ExpandGemmPBLAS(ExpandTransformation):
 
         @dace.program
         def _gemm_pblas(_a: dtype[M, K], _b: dtype[K, N], _c: dtype[M, N]):
-            lA = np.empty((M // Px, K // Py), dtype=_a.dtype)
-            lB = np.empty((K // Px, N // Py), dtype=_b.dtype)
+            lA = dace.empty((M // Px, K // Py), dtype=_a.dtype)
+            lB = dace.empty((K // Px, N // Py), dtype=_b.dtype)
             dace.comm.BCScatter(_a, lA, (M // Px, K // Py))
             dace.comm.BCScatter(_b, lB, (K // Px, N // Py))
             lC = distr.MatMult(lA, lB, (M, N, K))
@@ -518,7 +517,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
-        dtype_c = dace.dtype_to_typeclass(np.result_type(dtype_a, dtype_b).type)
+        dtype_c = dace.dtype_to_typeclass(dtypes.result_type_of(dtype_a, dtype_b).type)
         shape_c = (shape_a[0], shape_b[1])
         if node.transA:
             raise NotImplementedError("GEMM FPGA expansion not implemented for transposed A.")

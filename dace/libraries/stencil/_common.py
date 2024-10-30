@@ -3,11 +3,11 @@ import ast
 import collections
 import copy
 import functools
-import numpy as np
 import operator
 from typing import Dict, List, Tuple
 
 import dace
+from dace import dtypes
 from dace.frontend.python import astutils
 from dace.codegen.targets.cpp import sym2cpp
 from .subscript_converter import SubscriptConverter
@@ -217,11 +217,7 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc, ite
                 elif btype == "shrink":
                     # We don't need to do anything here, it's up to the
                     # user to not use the junk output
-                    if np.issubdtype(dtype.type, np.floating):
-                        boundary_val = np.finfo(dtype.type).min
-                    else:
-                        # If not a float, assume it's some kind of integer
-                        boundary_val = np.iinfo(dtype.type).min
+                    boundary_val = dtypes.min_value(dtype)
                     # Add this to the output condition
                     oob_cond |= cond_global
                 else:

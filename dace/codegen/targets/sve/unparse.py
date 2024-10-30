@@ -16,7 +16,6 @@ import dace.frontend.python.astutils as astutils
 from dace.codegen.targets.sve.type_compatibility import assert_type_compatibility
 import copy
 import collections
-import numpy as np
 from dace import data as data
 from dace.frontend.operations import detect_reduction_type
 from dace.codegen.targets.cpp import is_write_conflicted, cpp_ptr_expr, DefinedType, sym2cpp
@@ -142,9 +141,9 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 # Expecting a pointer
                 if inf.base_type.type == expect.base_type.type:
                     # No cast required, expect for `long long` fix
-                    if expect.base_type.type == np.int64:
+                    if expect.base_type == dtypes.int64:
                         self.write('(int_64_t*) ')
-                    if expect.base_type.type == np.uint64:
+                    if expect.base_type == dtypes.uint64:
                         self.write('(uint_64_t*) ')
                     self.dispatch(tree)
                 else:
@@ -156,7 +155,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # Unparsing a scalar
             if isinstance(expect, dtypes.vector):
                 # Expecting a vector: duplicate the scalar
-                if expect.type in [np.bool_, bool]:
+                if expect in [dtypes.bool_, dtypes.bool]:
                     # Special case for duplicating boolean into predicate
                     suffix = f'b{self.pred_bits}'
                     #self.write(f'svptrue_{suffix}()')
@@ -177,9 +176,9 @@ class SVEUnparser(cppunparse.CPPUnparser):
                     cast_ctype = expect.ctype
 
                 # Special casting for `long long`
-                if expect.type == np.int64:
+                if expect == dtypes.int64:
                     cast_ctype = 'int64_t'
-                elif expect.type == np.uint64:
+                elif expect == dtypes.uint64:
                     cast_ctype = 'uint64_t'
 
                 if cast_ctype:
@@ -272,9 +271,9 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         # Casting in case of `long long`
         stream_type = copy.copy(stream_type)
-        if stream_type.type == np.int64:
+        if stream_type == dtypes.int64:
             stream_type.ctype = 'int64_t'
-        elif stream_type.type == np.uint64:
+        elif stream_type == dtypes.uint64:
             stream_type.ctype = 'uint64_t'
 
         # Create a temporary array on the heap, where we will copy the SVE register contents to
@@ -293,9 +292,9 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         ptr_cast = ''
         # Special casting for int64_t back to `long long`
-        if stream_type.type == np.int64:
+        if stream_type == dtypes.int64:
             ptr_cast = '(long long*) '
-        elif stream_type.type == np.uint64:
+        elif stream_type == dtypes.uint64:
             ptr_cast = '(unsigned long long*) '
 
         # Push the temporary array onto the stream using DaCe's push
@@ -338,9 +337,9 @@ class SVEUnparser(cppunparse.CPPUnparser):
             ptr_cast = ''
             src_type = edge.src.out_connectors[edge.src_conn]
 
-            if src_type.type == np.int64:
+            if src_type == dtypes.int64:
                 ptr_cast = '(int64_t*) '
-            elif src_type.type == np.uint64:
+            elif src_type == dtypes.uint64:
                 ptr_cast = '(uint64_t*) '
 
             store_args = '{}, {}'.format(

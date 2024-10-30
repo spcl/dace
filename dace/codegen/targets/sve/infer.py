@@ -3,7 +3,6 @@
     Inference: This module patches certain dispatchers in the `type_inference.py`, to better suit SVE.
 """
 import dace.codegen.targets.sve.util
-import numpy as np
 import ast
 from dace import dtypes
 from dace.codegen import cppunparse

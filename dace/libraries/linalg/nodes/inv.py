@@ -4,7 +4,6 @@ import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-import numpy as np
 from dace import Memlet
 from dace.libraries.lapack.nodes import Getrf, Getri, Getrs
 from dace.transformation.transformation import ExpandTransformation
@@ -242,11 +241,18 @@ class Inv(dace.sdfg.nodes.LibraryNode):
         shape2 = squeezed2.size()
         if shape1[0] != shape1[1]:
             raise ValueError("linalg.inv only supported on square matrices")
-        if not np.array_equal(shape1, shape2):
+        
+        try:
+            import numpy
+        except (ImportError, ModuleNotFoundError):
+            raise ImportError('Using this library node requires numpy to be installed.')
+
+        # TODO: Get rid of numpy dependency here
+        if not numpy.array_equal(shape1, shape2):
             raise ValueError("Squeezed shape of input and output must be the same")
 
-        strides1 = np.array(desc_ain.strides)[dims1].tolist()
-        strides2 = np.array(desc_aout.strides)[dims2].tolist()
+        strides1 = numpy.array(desc_ain.strides)[dims1].tolist()
+        strides2 = numpy.array(desc_aout.strides)[dims2].tolist()
         if strides2[-1] != 1:
             raise ValueError("Matrices with column strides greater than 1 are unsupported")
 

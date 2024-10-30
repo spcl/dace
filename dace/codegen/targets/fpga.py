@@ -5,7 +5,6 @@ import collections
 import itertools
 import re
 import warnings
-import numpy as np
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 import copy
 
@@ -2111,9 +2110,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             else:
                                 end_type = None
                             if end_type is not None:
-                                if np.dtype(end_type.dtype.type) > np.dtype('uint32'):
+                                if end_type.bytes > 4:  # type is wider than uint32
                                     loop_var_type = end_type.ctype
-                                elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
+                                elif type(end_type).__name__.startswith('u'):  # Unsigned types
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
                         raise UnboundLocalError('Pipeline scopes require '

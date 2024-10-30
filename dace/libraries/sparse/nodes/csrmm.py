@@ -10,14 +10,12 @@ from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access, dtype_to_cudadatatype,
                                               to_cublas_computetype)
 from dace.libraries.sparse import environments
-import numpy as np
-
 
 def _is_complex(dtype):
     if hasattr(dtype, "is_complex") and callable(dtype.is_complex):
         return dtype.is_complex()
     else:
-        return dtype in [np.complex64, np.complex128]
+        return dtype in [dtypes.complex64, dtypes.complex128]
 
 
 def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:

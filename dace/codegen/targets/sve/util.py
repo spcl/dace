@@ -3,7 +3,6 @@
     Utility functions for SVE: Contains many datatype mappings (Python to SVE) and frequently used functions.
 """
 
-import numpy as np
 import dace
 import dace.dtypes as dtypes
 import ast
@@ -11,30 +10,6 @@ import dace.codegen.targets
 from dace.codegen.targets.sve import infer as infer
 import collections
 import itertools
-import numpy
-
-# Translation of types to C++ types
-_SVE_CTYPES = {
-    None: "void",
-    int: "dace::int32",
-    float: "dace::float64",
-    complex: "dace::complex64",
-    bool: "dace::bool_",
-    numpy.bool_: "dace::bool_",
-    numpy.int8: "dace::int8",
-    numpy.int16: "dace::int16",
-    numpy.int32: "dace::int32",
-    numpy.int64: "dace::int64",
-    numpy.uint8: "dace::uint8",
-    numpy.uint16: "dace::uint16",
-    numpy.uint32: "dace::uint32",
-    numpy.uint64: "dace::uint64",
-    numpy.float16: "dace::float16",
-    numpy.float32: "dace::float32",
-    numpy.float64: "dace::float64",
-    numpy.complex64: "dace::complex64",
-    numpy.complex128: "dace::complex128",
-}
 
 # Used as the unknown SVE vector size in the graph
 SVE_LEN = dace.symbol('__dace_sve_len')
@@ -111,17 +86,6 @@ UN_OP_TO_SVE = {ast.USub: 'svneg', ast.Not: 'svnot'}
 TYPE_TO_SVE_SUFFIX = {
     int: 's32',
     float: 'f32',
-    np.int8: 's8',
-    np.int16: 's16',
-    np.int32: 's32',
-    np.int64: 's64',
-    np.uint8: 'u8',
-    np.uint16: 'u16',
-    np.uint32: 'u32',
-    np.uint64: 'u64',
-    np.float16: 'f16',
-    np.float32: 'f32',
-    np.float64: 'f64',
     dace.int8: 's8',
     dace.int16: 's16',
     dace.int32: 's32',
@@ -140,17 +104,6 @@ SVE_SUFFIX_TO_TYPE = dict((v, k) for k, v in TYPE_TO_SVE_SUFFIX.items())
 TYPE_TO_SVE = {
     int: 'svint32_t',
     float: 'svfloat32_t',
-    np.int8: 'svint8_t',
-    np.int16: 'svint16_t',
-    np.int32: 'svint32_t',
-    np.int64: 'svint64_t',
-    np.uint8: 'svuint8_t',
-    np.uint16: 'svuint16_t',
-    np.uint32: 'svuint32_t',
-    np.uint64: 'svuint64_t',
-    np.float16: 'svfloat16_t',
-    np.float32: 'svfloat32_t',
-    np.float64: 'svfloat64_t',
     dace.int8: 'svint8_t',
     dace.int16: 'svint16_t',
     dace.int32: 'svint32_t',

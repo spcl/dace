@@ -4,7 +4,6 @@ import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-import numpy as np
 
 from dace import Memlet
 from dace.libraries.lapack import Getrf, Getrs
@@ -195,12 +194,19 @@ class Solve(dace.sdfg.nodes.LibraryNode):
             raise ValueError("linalg.solve only supported with first input a " "square matrix")
         if shape_ain[-1] != shape_bin[0]:
             raise ValueError("A column must be equal to B rows")
-        if not np.array_equal(shape_bin, shape_out):
+        
+        try:
+            import numpy
+        except (ImportError, ModuleNotFoundError):
+            raise ImportError('Using this library node requires numpy to be installed.')
+
+        # TODO: Get rid of numpy dependency here
+        if not numpy.array_equal(shape_bin, shape_out):
             raise ValueError("Squeezed shape of second input and output must be the same")
 
-        strides_ain = np.array(desc_ain.strides)[dims_ain].tolist()
-        strides_bin = np.array(desc_bin.strides)[dims_bin].tolist()
-        strides_out = np.array(desc_out.strides)[dims_out].tolist()
+        strides_ain = numpy.array(desc_ain.strides)[dims_ain].tolist()
+        strides_bin = numpy.array(desc_bin.strides)[dims_bin].tolist()
+        strides_out = numpy.array(desc_out.strides)[dims_out].tolist()
         if strides_ain[-1] != 1:
             raise ValueError("Matrices with column strides greater than 1 are unsupported")
 

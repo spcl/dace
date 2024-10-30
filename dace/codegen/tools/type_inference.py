@@ -7,7 +7,6 @@
     This module is inspired by astunparse: https://github.com/simonpercivall/astunparse
 """
 
-import numpy as np
 import ast
 from dace import data, dtypes
 from dace import symbolic
@@ -18,6 +17,11 @@ import sys
 import dace.frontend.python.astutils
 import inspect
 from typing import Union
+
+try:
+    import numpy
+except (ImportError, ModuleNotFoundError):
+    numpy = None
 
 
 def infer_types(code, symbols=None):
@@ -269,7 +273,7 @@ def _JoinedStr(t, symbols, inferred_symbols):
 
 def _Name(t, symbols, inferred_symbols):
     if t.id in cppunparse._py2c_reserved:
-        return dtypes.typeclass(np.result_type(t.id))
+        return cppunparse._py2c_reserved_types[t.id]
     else:
         # check if this name is a python type, it is in defined_symbols or in local symbols.
         # If yes, take the type
@@ -277,12 +281,12 @@ def _Name(t, symbols, inferred_symbols):
 
         # if this is a statement generated from a tasklet with a dynamic memlet, it could have a leading * (pointer)
         t_id = t.id[1:] if t.id.startswith('*') else t.id
-        if t_id.strip("()") in cppunparse._py2c_typeconversion:
-            inferred_type = cppunparse._py2c_typeconversion[t_id.strip("()")]
+        if t_id.strip("()") in cppunparse.py2c_typeconversion:
+            inferred_type = cppunparse.py2c_typeconversion[t_id.strip("()")]
         elif t_id in symbols:
             # defined symbols could have dtypes, in case convert it to typeclass
             inferred_type = symbols[t_id]
-            if isinstance(inferred_type, np.dtype):
+            if numpy is not None and isinstance(inferred_type, numpy.dtype):
                 inferred_type = dtypes.typeclass(inferred_type.type)
             elif isinstance(inferred_type, symbolic.symbol):
                 inferred_type = inferred_type.dtype
@@ -293,8 +297,15 @@ def _Name(t, symbols, inferred_symbols):
         return inferred_type
 
 
+def _get_constant_type(value):
+    if numpy is not None:
+        return dtypes.result_type_of(dtypes.typeclass(type(value)), dtypes.typeclass(numpy.min_scalar_type(value).name))
+    else:
+        return dtypes.typeclass(type(value))
+
+
 def _NameConstant(t, symbols, inferred_symbols):
-    return dtypes.result_type_of(dtypes.typeclass(type(t.value)), dtypes.typeclass(np.min_scalar_type(t.value).name))
+    return _get_constant_type(t.value)
 
 
 def _Constant(t, symbols, inferred_symbols):
@@ -303,13 +314,13 @@ def _Constant(t, symbols, inferred_symbols):
         return dtypes.pointer(dtypes.int8)
 
     # Numeric value
-    return dtypes.result_type_of(dtypes.typeclass(type(t.value)), dtypes.typeclass(np.min_scalar_type(t.value).name))
+    return _get_constant_type(t.value)
 
 
 def _Num(t, symbols, inferred_symbols):
     # get the minimum between the minimum type needed to represent this number and the corresponding default data types
     # e.g., if num=1, then it will be represented by using the default integer type (int32 if C data types are used)
-    return dtypes.result_type_of(dtypes.typeclass(type(t.n)), dtypes.typeclass(np.min_scalar_type(t.n).name))
+    return _get_constant_type(t.n)
 
 
 def _IfExp(t, symbols, inferred_symbols):
@@ -340,20 +351,20 @@ def _BinOp(t, symbols, inferred_symbols):
         return dtypes.result_type_of(type_left, type_right)
     # Special case for integer power
     elif t.op.__class__.__name__ == 'Pow':
-        if (sys.version_info >= (3, 8) and isinstance(t.right, ast.Constant) and
-                int(t.right.value) == t.right.value and t.right.value >= 0):
+        if (sys.version_info >= (3, 8) and isinstance(t.right, ast.Constant) and int(t.right.value) == t.right.value
+                and t.right.value >= 0):
             if t.right.value != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)
                 for i in range(int(t.right.n) - 1):
                     _dispatch(t.left, symbols, inferred_symbols)
-            return dtypes.result_type_of(type_left, dtypes.typeclass(np.uint32))
-        elif (sys.version_info < (3, 8) and isinstance(t.right, ast.Num) and
-                int(t.right.n) == t.right.n and t.right.n >= 0):
+            return dtypes.result_type_of(type_left, dtypes.uint32)
+        elif (sys.version_info < (3, 8) and isinstance(t.right, ast.Num) and int(t.right.n) == t.right.n
+              and t.right.n >= 0):
             if t.right.n != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)
                 for i in range(int(t.right.n) - 1):
                     _dispatch(t.left, symbols, inferred_symbols)
-            return dtypes.result_type_of(type_left, dtypes.typeclass(np.uint32))
+            return dtypes.result_type_of(type_left, dtypes.uint32)
         else:
             type_left = _dispatch(t.left, symbols, inferred_symbols)
             type_right = _dispatch(t.right, symbols, inferred_symbols)
@@ -407,7 +418,7 @@ def _infer_dtype(t: Union[ast.Name, ast.Attribute]):
     dtype = getattr(dtypes, dtype_str, False)
     if isinstance(dtype, dtypes.typeclass):
         return dtype
-    if isinstance(dtype, np.dtype):
+    if numpy is not None and isinstance(dtype, numpy.dtype):
         return dtypes.typeclass(dtype.type)
 
     return None
@@ -415,8 +426,8 @@ def _infer_dtype(t: Union[ast.Name, ast.Attribute]):
 
 def _Attribute(t, symbols, inferred_symbols):
     inferred_type = _dispatch(t.value, symbols, inferred_symbols)
-    if (isinstance(inferred_type, dtypes.pointer) and isinstance(inferred_type.base_type, dtypes.struct) and
-            t.attr in inferred_type.base_type.fields):
+    if (isinstance(inferred_type, dtypes.pointer) and isinstance(inferred_type.base_type, dtypes.struct)
+            and t.attr in inferred_type.base_type.fields):
         return inferred_type.base_type.fields[t.attr]
     return inferred_type
 
@@ -450,12 +461,12 @@ def _Call(t, symbols, inferred_symbols):
 
     if name in ('abs', 'log'):
         return arg_types[0]
-    if name in ('min', 'max'): # binary math operations that do not exist in the math module
+    if name in ('min', 'max'):  # binary math operations that do not exist in the math module
         return dtypes.result_type_of(arg_types[0], *arg_types)
     if name in ('round', ):
-        return dtypes.typeclass(int)   
+        return dtypes.typeclass(int)
 
-    # dtypes (dace.int32, np.float64) can be used as functions
+    # dtypes (dace.int32, numpy.float64) can be used as functions
     inf_type = _infer_dtype(t)
     if inf_type:
         return inf_type
@@ -477,7 +488,7 @@ def _Subscript(t, symbols, inferred_symbols):
 
     # A vector as subscript of a pointer returns a vector of the base type
     if isinstance(value_type, dtypes.pointer) and isinstance(slice_type, dtypes.vector):
-        if not np.issubdtype(slice_type.type, np.integer):
+        if numpy is not None and not numpy.issubdtype(slice_type.type, numpy.integer):
             raise SyntaxError('Subscript must be some integer type')
         return dtypes.vector(value_type.base_type, slice_type.veclen)
 

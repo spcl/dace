@@ -3,7 +3,6 @@ import dace
 import tempfile
 import math
 import copy
-import numpy as np
 
 from typing import Generator, Dict, List, Tuple
 from collections import Counter

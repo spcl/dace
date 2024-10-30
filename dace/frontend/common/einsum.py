@@ -5,8 +5,6 @@ from itertools import chain
 from string import ascii_letters
 from typing import Dict, List, Optional
 
-import numpy as np
-
 import dace
 from dace import dtypes, subsets, symbolic
 from dace.sdfg.nodes import AccessNode
@@ -182,16 +180,21 @@ def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
                                    beta=beta)[0]
 
 
-def _build_einsum_views(tensors: str, dimension_dict: dict) -> List[np.ndarray]:
+def _build_einsum_views(tensors: str, dimension_dict: dict):
     """
     Function taken and adjusted from opt_einsum package version 3.3.0 following unexpected removal in vesion 3.4.0.
     Reference: https://github.com/dgasmith/opt_einsum/blob/v3.3.0/opt_einsum/helpers.py#L18
     """
+    try:
+        import numpy
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError('Using opt_einsum requires numpy to be installed.')
+
     views = []
     terms = tensors.split('->')[0].split(',')
     for term in terms:
         dims = [dimension_dict[x] for x in term]
-        views.append(np.random.rand(*dims))
+        views.append(numpy.random.rand(*dims))
     return views
 
 

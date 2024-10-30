@@ -3,7 +3,6 @@
 from typing import Union
 import dace
 import itertools
-import numpy as np
 import sympy as sp
 
 from dace.memlet import Memlet
@@ -864,7 +863,7 @@ class SnitchCodeGen(TargetCodeGenerator):
                 continue
 
             # ignore non double dtype
-            if not desc.dtype.as_numpy_dtype() == np.float64:
+            if desc.dtype != dtypes.float64:
                 continue
 
             # get acces type: read and write

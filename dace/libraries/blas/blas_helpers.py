@@ -1,7 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import numpy as np
 from dace import dtypes, data
-from dace.data import Array
 from typing import Any, Dict, Tuple
 
 
@@ -9,15 +7,15 @@ def to_blastype(dtype):
     """ Returns a BLAS character that corresponds to the input type.
         Used in MKL/CUBLAS calls. """
 
-    if dtype == np.float16:
+    if dtype == dtypes.float16:
         return 'H'
-    elif dtype == np.float32:
+    elif dtype == dtypes.float32:
         return 'S'
-    elif dtype == np.float64:
+    elif dtype == dtypes.float64:
         return 'D'
-    elif dtype == np.complex64:
+    elif dtype == dtypes.complex64:
         return 'C'
-    elif dtype == np.complex128:
+    elif dtype == dtypes.complex128:
         return 'Z'
     else:
         raise TypeError('Type %s not supported in BLAS operations' % dtype.__name__)

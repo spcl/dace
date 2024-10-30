@@ -9,7 +9,6 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace import data as dt, memlet as mm, subsets as sbs
 import dace
 import copy
-import numpy as np
 
 import dace.library
 import dace.properties

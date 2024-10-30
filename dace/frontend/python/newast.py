@@ -35,7 +35,11 @@ from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, Contro
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
-import numpy
+try:
+    import numpy
+except (ImportError, ModuleNotFoundError):
+    numpy = None
+
 import sympy
 
 # register replacements in oprepo
@@ -3454,7 +3458,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                     boolarr = arr
                             elif arr in self.sdfg.constants:
                                 desc = self.sdfg.constants[arr]
-                                if desc.dtype == numpy.bool_:
+                                if type(desc.dtype).__name__ == 'bool_':
                                     boolarr = arr
                             else:
                                 raise IndexError(f'Array index "{arr}" undefined')
@@ -3463,13 +3467,20 @@ class ProgramVisitor(ExtNodeVisitor):
                                     raise NotImplementedError('Multi-dimensional index arrays not yet supported')
                                 indirect_indices[i] = arr
                         elif isinstance(arr, (list, tuple)):
-                            carr = numpy.array(arr, dtype=dtypes.typeclass(int).type)
+                            if numpy is not None:
+                                carr = numpy.array(arr, dtype=dtypes.typeclass(int).type)
+                                shape = carr.shape
+                                dtype = carr.dtype.type
+                            else:
+                                carr = arr
+                                shape = (len(arr), )
+                                dtype = type(arr[0])
                             cname = self.sdfg.find_new_constant(f'__ind{i}_{true_name}')
                             self.sdfg.add_constant(cname, carr)
                             # Add constant to descriptor repository
-                            self.sdfg.add_array(cname, carr.shape, dtypes.dtype_to_typeclass(carr.dtype.type),
+                            self.sdfg.add_array(cname, shape, dtypes.dtype_to_typeclass(dtype),
                                                 transient=True)
-                            if numpy.array(arr).dtype == numpy.bool_:
+                            if dtype == bool or (numpy is not None and dtype == numpy.bool_):
                                 boolarr = cname
                             else:
                                 indirect_indices[i] = cname
@@ -4228,11 +4239,16 @@ class ProgramVisitor(ExtNodeVisitor):
                     else:
                         allargs.append(parsed_arg)
                 else:
+                    if numpy is not None:
+                        numeric_types = (Number, numpy.number, type(None))
+                    else:
+                        numeric_types = (Number, type(None))
+
                     if isinstance(parsed_arg, StringLiteral):
                         # Special case for strings
                         parsed_arg = f'"{astutils.escape_string(parsed_arg.value)}"'
                         atype = data.Scalar(dtypes.string)
-                    elif isinstance(parsed_arg, (Number, numpy.number, type(None))):
+                    elif isinstance(parsed_arg, numeric_types):
                         atype = data.create_datadescriptor(type(parsed_arg))
                     else:
                         atype = data.create_datadescriptor(parsed_arg)
@@ -4485,7 +4501,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if self._has_sdfg(fcall):
                     func = fcall
                     funcname = fcall.name
-                elif isinstance(fobj, numpy.ufunc):
+                elif numpy is not None and isinstance(fobj, numpy.ufunc):
                     modname = 'numpy'
                     funcname = f'numpy.{fobj.__name__}'
                 # Try to evaluate function directly
@@ -4540,14 +4556,14 @@ class ProgramVisitor(ExtNodeVisitor):
             name = funcname[len(modname) + 1:]
             npfuncname = until(name, '.')
             func = getattr(self.globals[modname], npfuncname)
-            if isinstance(func, numpy.ufunc):
+            if numpy is not None and isinstance(func, numpy.ufunc):
                 ufunc_name = npfuncname
                 if len(funcname) > len(modname) + len(npfuncname) + 1:
                     method_name = funcname[len(modname) + len(npfuncname) + 2:]
                 else:
                     method_name = None
                 func = oprepo.Replacements.get_ufunc(method_name)
-                if ufunc_name in replacements.ufuncs.keys() and func:
+                if ufunc_name in replacements.ufuncs().keys() and func:
                     found_ufunc = True
 
         # Check if this is a method called on an object
@@ -4921,7 +4937,7 @@ class ProgramVisitor(ExtNodeVisitor):
             elif isinstance(operand, str) and operand in self.scope_arrays:
                 result.append((operand, type(self.scope_arrays[operand])))
             elif isinstance(operand, tuple(dtypes.dtype_to_typeclass().keys())):
-                if isinstance(operand, (bool, numpy.bool_)):
+                if isinstance(operand, bool) or (numpy is not None and isinstance(operand, numpy.bool_)):
                     result.append((operand, 'BoolConstant'))
                 else:
                     result.append((operand, 'NumConstant'))
@@ -5124,7 +5140,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     return sym
             return scalar
 
-        if isinstance(s, (Number, bool, numpy.bool_, sympy.Basic)):
+        if isinstance(s, (Number, bool, sympy.Basic)) or (numpy is not None and isinstance(s, numpy.bool_)):
             res = s
         elif isinstance(s, ast.Constant):  # 1D index (since Python 3.9)
             # Special case for Python slice objects
@@ -5272,7 +5288,7 @@ class ProgramVisitor(ExtNodeVisitor):
         for i, r in enumerate(result):
             if isinstance(r, ast.AST):
                 newnode = r
-            elif isinstance(r, (Number, numpy.bool_)):
+            elif isinstance(r, Number) or (numpy is not None and isinstance(r, numpy.bool_)):
                 # Compatibility check since Python changed their AST nodes
                 if sys.version_info >= (3, 8):
                     newnode = ast.Constant(value=r, kind='')
@@ -5346,11 +5362,15 @@ class ProgramVisitor(ExtNodeVisitor):
                 shape = desc.shape
             else:  # Literal list or tuple, add as constant and use shape
                 arrname = [v if isinstance(v, Number) else self._parse_value(v) for v in arrname]
-                carr = numpy.array(arrname, dtype=dtypes.typeclass(int).type)
+                if numpy is not None:
+                    carr = numpy.array(arrname, dtype=dtypes.typeclass(int).type)
+                    shape = carr.shape
+                else:
+                    carr = arrname
+                    shape = (len(carr), )
                 cname = self.sdfg.find_new_constant(f'__ind{i}_{aname}')
                 self.sdfg.add_constant(cname, carr)
                 constant_indices[i] = cname
-                shape = carr.shape
 
             if output_shape is not None and tuple(shape) != output_shape:
                 raise IndexError(f'Mismatch in array index shapes in access of '

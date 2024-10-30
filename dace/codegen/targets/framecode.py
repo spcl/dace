@@ -5,7 +5,6 @@ import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
 import networkx as nx
-import numpy as np
 
 import dace
 from dace import config, data, dtypes
@@ -116,11 +115,20 @@ class DaCeCodeGenerator(object):
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, data.Array):
                 const_str = "constexpr " + csttype.dtype.ctype + " " + cstname + "[" + str(cstval.size) + "] = {"
-                it = np.nditer(cstval, order='C')
-                for i in range(cstval.size - 1):
-                    const_str += str(it[0]) + ", "
-                    it.iternext()
-                const_str += str(it[0]) + "};\n"
+                try:
+                    # If the constant is a multidimensional numpy array
+                    import numpy as np
+                    it = np.nditer(cstval, order='C')
+                    for i in range(cstval.size - 1):
+                        const_str += str(it[0]) + ", "
+                        it.iternext()
+                    const_str += str(it[0]) + "};\n"
+                except (ImportError, ModuleNotFoundError):
+                    it = iter(cstval)
+                    for v in it:
+                        const_str += str(v) + ", "
+                    const_str = const_str[:-2] + "};\n"
+
                 callsite_stream.write(const_str, sdfg)
             else:
                 callsite_stream.write("constexpr %s %s = %s;\n" % (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)

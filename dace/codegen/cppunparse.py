@@ -75,9 +75,6 @@ import inspect
 import six
 import sys
 import ast
-import numpy as np
-import os
-import tokenize
 import warnings
 
 import sympy
@@ -109,13 +106,15 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
 _py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "inf": "INFINITY", "nan": "NAN"}
+_py2c_reserved_types = {"True": dtypes.bool_, "False": dtypes.bool_, "None": dtypes.pointer(dtypes.typeclass(None)),
+                        "inf": dtypes.float64, "nan": dtypes.float64}
 
-_py2c_typeconversion = {
-    "uint": dace.dtypes.typeclass(np.uint32),
-    "int": dace.dtypes.typeclass(int),
-    "float": dace.dtypes.typeclass(float),
-    "float64": dace.dtypes.typeclass(np.float64),
-    "str": dace.dtypes.pointer(dace.dtypes.int8)
+py2c_typeconversion = {
+    "uint": dtypes.uint32,
+    "int": dtypes.typeclass(int),
+    "float": dtypes.typeclass(float),
+    "float64": dtypes.float64,
+    "str": dtypes.pointer(dtypes.int8)
 }
 
 
@@ -562,7 +561,7 @@ class CPPUnparser:
         if value is True or value is False or value is None:
             self.write(_py2c_nameconst[value])
         else:
-            if isinstance(value, (Number, np.bool_)):
+            if isinstance(value, Number) or type(value).__name__ == 'bool_':
                 self._Num(t)
             elif isinstance(value, tuple):
                 self.write("(")

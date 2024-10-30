@@ -1,11 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import aenum
 import json
-import numpy as np
 import warnings
 import dace.dtypes
 from dace import config
 
+try:
+    import numpy
+except (ImportError, ModuleNotFoundError):
+    numpy = None
 
 class SerializableObject(object):
 
@@ -36,10 +39,13 @@ class NumpySerializer:
         if json_obj['type'] != 'ndarray':
             raise TypeError('Object is not a numpy ndarray')
 
-        if 'dtype' in json_obj:
-            return np.array(json_obj['data'], dtype=json_obj['dtype'])
+        if numpy is None:
+            raise ImportError('Deserializing a numpy object requires numpy to be installed')
 
-        return np.array(json_obj['data'])
+        if 'dtype' in json_obj:
+            return numpy.array(json_obj['data'], dtype=json_obj['dtype'])
+
+        return numpy.array(json_obj['data'])
 
     @staticmethod
     def to_json(obj):
@@ -102,7 +108,7 @@ def to_json(obj):
     elif type(obj) in {bool, int, float, list, dict, str}:
         # Some types are natively understood by JSON
         return obj
-    elif isinstance(obj, np.ndarray):
+    elif numpy is not None and isinstance(obj, numpy.ndarray):
         # Special case for external structures (numpy arrays)
         return NumpySerializer.to_json(obj)
     elif isinstance(obj, aenum.Enum):

@@ -4,7 +4,6 @@ import functools
 import copy
 import itertools
 from six import StringIO
-import numpy as np
 
 import dace
 from dace import registry, dtypes, symbolic
@@ -1268,11 +1267,19 @@ __kernel void \\
                     # First time, define it
                     self.generated_constants.add(cstname)
                     const_str += " = {"
-                    it = np.nditer(cstval, order='C')
-                    for i in range(cstval.size - 1):
-                        const_str += str(it[0]) + ", "
-                        it.iternext()
-                    const_str += str(it[0]) + "};\n"
+                    try:
+                        # If the constant is a multidimensional numpy array
+                        import numpy as np
+                        it = np.nditer(cstval, order='C')
+                        for i in range(cstval.size - 1):
+                            const_str += str(it[0]) + ", "
+                            it.iternext()
+                        const_str += str(it[0]) + "};\n"
+                    except (ImportError, ModuleNotFoundError):
+                        it = iter(cstval)
+                        for v in it:
+                            const_str += str(v) + ", "
+                        const_str = const_str[:-2] + "};\n"
                 else:
                     # only define
                     const_str = "extern " + const_str + ";\n"

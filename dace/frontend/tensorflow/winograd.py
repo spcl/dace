@@ -1,10 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import numpy as np
 import re
 from dace.memlet import Memlet
 from dace import dtypes
 from math import ceil
+
+try:
+    import numpy as np
+except (ImportError, ModuleNotFoundError):
+    raise ImportError('The Tensorflow frontend requires numpy to function properly. Please install numpy.')
 
 
 def add_cublas_cusolver(sdfg: dace.SDFG):

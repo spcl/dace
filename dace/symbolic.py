@@ -5,7 +5,11 @@ import sympy
 import pickle
 import re
 from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, Union
-import numpy
+
+try:
+    import numpy
+except (ImportError, ModuleNotFoundError):
+    numpy = None
 
 import sympy.abc
 import sympy.printing.str
@@ -57,8 +61,8 @@ class symbol(sympy.Symbol):
             raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
 
         dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
-        is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
-        if 'integer' in assumptions or not numpy.any(is_integer):
+        is_integer = [issubclass(k, int) or (numpy is not None and issubclass(k, numpy.integer)) for k in dkeys]
+        if 'integer' in assumptions or not any(is_integer):
             # Using __xnew__ as the regular __new__ is cached, which leads
             # to modifying different references of symbols with the same name.
             self = sympy.Symbol.__xnew__(cls, name, **assumptions)
@@ -320,7 +324,7 @@ def symlist(values):
 
 
 def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str],
-                                                                 Union[int, float]]) -> Union[int, float, numpy.number]:
+                                                                 Union[int, float]]) -> Union[int, float]:
     """
     Evaluates an expression to a constant based on a mapping from symbols
     to values.
@@ -337,7 +341,7 @@ def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, s
         return evaluate(expr.expr, symbols)
     if issymbolic(expr, set(map(str, symbols.keys()))):
         raise TypeError(f'Symbolic expression "{expr}" cannot be evaluated to a constant')
-    if isinstance(expr, (int, float, numpy.number)):
+    if isinstance(expr, (int, float)) or (numpy is not None and isinstance(expr, numpy.number)):
         return expr
 
     # Evaluate all symbols
@@ -557,11 +561,13 @@ def sympy_numeric_fix(expr):
             # will throw OverflowError (which we want).
             # `int(1.8e308) == expr` evaluates unfortunately to True
             # because Python has variable-bit integers.
-            if numpy.int64(expr) == expr:
+            if numpy is not None and numpy.int64(expr) == expr:
+                return int(expr)
+            elif numpy is None and int(expr) == expr:
                 return int(expr)
         except OverflowError:
             try:
-                if numpy.float64(expr) == expr:
+                if numpy is not None and numpy.float64(expr) == expr:
                     return expr
             except OverflowError:
                 if expr > 0:

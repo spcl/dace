@@ -3,9 +3,6 @@
 Helper functions for memory movements
 """
 
-import numpy as np
-
-
 # ---------- ----------
 # NUMPY
 # ---------- ----------
@@ -16,6 +13,11 @@ def aligned_ndarray(arr, alignment=64):
     
     Based on https://stackoverflow.com/a/20293172/6489142
     """
+    try:
+        import numpy as np
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError('Using aligned_ndarray requires numpy to be installed.')
+
     if (arr.ctypes.data % alignment) == 0:
         return arr
 

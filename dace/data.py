@@ -9,8 +9,12 @@ from collections import OrderedDict
 from numbers import Number
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
-import numpy
 import sympy as sp
+
+try:
+    import numpy
+except (ImportError, ModuleNotFoundError):
+    numpy = None
 
 try:
     from numpy.typing import ArrayLike
@@ -70,6 +74,8 @@ def create_datadescriptor(obj, no_custom_desc=False):
         except ImportError:
             raise ValueError("Attempted to convert a torch.Tensor, but torch could not be imported")
     elif dtypes.is_array(obj) and (hasattr(obj, '__array_interface__') or hasattr(obj, '__cuda_array_interface__')):
+        if numpy is None:
+            raise ImportError('Creating a data descriptor from an array-like object currently requires numpy')
         if dtypes.is_gpu_array(obj):
             interface = obj.__cuda_array_interface__
             storage = dtypes.StorageType.GPU_Global
@@ -98,6 +104,9 @@ def create_datadescriptor(obj, no_custom_desc=False):
                      strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
                      storage=storage)
     elif isinstance(obj, (list, tuple)):
+        if numpy is None:
+            raise ImportError('Creating a data descriptor from an list-like object currently requires numpy')
+
         # Lists and tuples are cast to numpy
         obj = numpy.array(obj)
 
@@ -118,9 +127,9 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return Scalar(obj)
     elif (obj is int or obj is float or obj is complex or obj is bool or obj is None):
         return Scalar(dtypes.typeclass(obj))
-    elif isinstance(obj, type) and issubclass(obj, numpy.number):
+    elif isinstance(obj, type) and (numpy is not None and issubclass(obj, numpy.number)):
         return Scalar(dtypes.typeclass(obj))
-    elif isinstance(obj, (Number, numpy.number, numpy.bool_)):
+    elif isinstance(obj, Number) or (numpy is not None and isinstance(obj, (numpy.number, numpy.bool_))):
         return Scalar(dtypes.typeclass(type(obj)))
     elif obj is type(None):
         # NoneType is void *
@@ -398,7 +407,7 @@ class Structure(Data):
             elif isinstance(v, (sp.Basic, symbolic.SymExpr)):
                 symbols |= v.free_symbols
                 fields_and_types[k] = symbolic.symtype(v)
-            elif isinstance(v, (int, numpy.integer)):
+            elif isinstance(v, int) or (numpy is not None and isinstance(v, numpy.integer)):
                 fields_and_types[k] = dtypes.typeclass(type(v))
             else:
                 raise TypeError(f"Attribute {k}'s value {v} has unsupported type: {type(v)}")
@@ -2135,7 +2144,10 @@ def make_array_from_descriptor(descriptor: Array,
                     with symbolic sizes.
     :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides.
     """
-    import numpy as np
+    try:
+        import numpy as np
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError('Creating an array from a descriptor requires numpy to be installed.')
 
     symbols = symbols or {}
 
@@ -2198,7 +2210,10 @@ def make_reference_from_descriptor(descriptor: Array,
     :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides, sharing memory
              with the pointer specified in ``original_array``.
     """
-    import numpy as np
+    try:
+        import numpy as np
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError('Creating an reference from a descriptor requires numpy to be installed.')
     symbols = symbols or {}
 
     original_array: int = ctypes.cast(original_array, ctypes.c_void_p).value

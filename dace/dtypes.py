@@ -3,7 +3,6 @@
 import ctypes
 import aenum
 import inspect
-import numpy
 import re
 from collections import OrderedDict
 from functools import wraps
@@ -11,6 +10,11 @@ from typing import Any
 from dace.config import Config
 from dace.registry import extensible_enum, undefined_safe_enum
 
+try:
+    import numpy
+except (ImportError, ModuleNotFoundError):
+    # If numpy is not installed, use wrappers for the types
+    from dace import numpy_wrapper as numpy
 
 @undefined_safe_enum
 @extensible_enum
@@ -912,7 +916,10 @@ class compiletime:
 ####### Utility function ##############
 def ptrtonumpy(ptr, inner_ctype, shape):
     import ctypes
-    import numpy as np
+    try:
+        import numpy as np
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError('Converting pointers to numpy arrays requires numpy to be installed.')
     return np.ctypeslib.as_array(ctypes.cast(ctypes.c_void_p(ptr), ctypes.POINTER(inner_ctype)), shape)
 
 

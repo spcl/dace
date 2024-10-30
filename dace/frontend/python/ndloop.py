@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ A single generator that creates an N-dimensional for loop in Python. """
 import itertools
-import numpy as np
 from typing import List, Tuple, Union
 
 # Python 3 compatibility for xrange
