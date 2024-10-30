@@ -2470,7 +2470,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 # Delinearize third dimension if necessary
                 if i == 2 and len(brange) > 3:
-                    block_expr = '(threadIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, kdims[3:], 1))
+                    block_expr = '((threadIdx.z / (%s)) / (%s))' % (_topy(functools.reduce(sympy.Mul, kdims[3:], 1)), brange[0][-1])
                 else:
                     block_expr = '(threadIdx.%s / (%s))' % (_named_idx(i), brange[-i - 1][-1])
 
@@ -2518,7 +2518,6 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
                 else:
                     callsite_stream.write('{', cfg, state_id, scope_entry)
-            callsite_stream.write('{', cfg, state_id, scope_entry)
 
         # Generate all index arguments for warp
         if scope_map.schedule == dtypes.ScheduleType.GPU_Warp:
@@ -2535,13 +2534,17 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 varname = scope_map.params[-i - 1]
 
                 # Delinearize third dimension if necessary
+
                 if i == 2 and len(brange) > 3:
-                    block_expr = '(threadIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, kdims[3:], 1))
+                    b, e, s = brange[0]
+                    block_expr = f'((threadIdx.z / ({_topy(functools.reduce(sympy.Mul, kdims[3:], 1))}) % ({(e+1-b)})))'
                 else:
-                    block_expr = 'threadIdx.%s' % _named_idx(i)
+                    b, e, s = brange[-i - 1]
+                    block_expr = f'(threadIdx.{_named_idx(i)} % ({(e+1-b)/s}))'
 
                 expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
-                callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
+                print("EXPR2:", block_expr, tidx[i])
+                callsite_stream.write(f'int {varname} = {expr};', cfg, state_id, scope_entry)
                 self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
 
             # Generate conditions for this warp's execution using min and max
@@ -2697,7 +2700,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 if self._kernel_grid_conditions:
                     self._kernel_grid_conditions.pop()
 
-        elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+        elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock: # or node.map.schedule == dtypes.ScheduleType.GPU_Warp
             # Close block invocation conditions
             for i in range(len(node.map.params)):
                 callsite_stream.write('}//t18', cfg, state_id, node)
@@ -2712,12 +2715,15 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         self._cpu_codegen._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def _get_thread_id(self) -> str:
-        result = 'threadIdx.x'
+        result = "ewe" #'threadIdx.x'
         if self._block_dims[1] != 1:
-            result += f' + ({sym2cpp(self._block_dims[0])}) * threadIdx.y'
+            result += "uwu" #+= f' + ({sym2cpp(self._block_dims[0])}) * threadIdx.y'
         if self._block_dims[2] != 1:
-            result += f' + ({sym2cpp(self._block_dims[0] * self._block_dims[1])}) * threadIdx.z'
+            result +=  "owo" #f' + ({sym2cpp(self._block_dims[0] * self._block_dims[1])}) * threadIdx.z'
         return result
+
+    def _get_lane_id(self) -> str:
+        return f'(({self._get_thread_id()}) % warpSize)'
 
     def _get_warp_id(self) -> str:
         return f'(({self._get_thread_id()}) / warpSize)'

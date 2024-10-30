@@ -99,7 +99,7 @@ class Subset(object):
                 return False
 
             return True
-        
+
     def covers_precise(self, other):
         """ Returns True if self contains all the elements in other. """
 
@@ -727,7 +727,7 @@ class Range(Subset):
     def squeeze(self, ignore_indices: Optional[List[int]] = None, offset: bool = True) -> List[int]:
         """
         Removes size-1 ranges from the subset and returns a list of dimensions that remain.
-        
+
         For example, ``[i:i+10, j]`` will change the range to ``[i:i+10]`` and return ``[0]``.
         If ``offset`` is True, the subset will become ``[0:10]``.
 
@@ -763,7 +763,7 @@ class Range(Subset):
 
     def unsqueeze(self, axes: Sequence[int]) -> List[int]:
         """ Adds 0:1 ranges to the subset, in the indices contained in axes.
-        
+
         The method is mostly used to restore subsets that had their length-1
         ranges removed (i.e., squeezed subsets). Hence, the method is
         called 'unsqueeze'.
@@ -1036,7 +1036,7 @@ class Indices(Subset):
 
     def unsqueeze(self, axes: Sequence[int]) -> List[int]:
         """ Adds zeroes to the subset, in the indices contained in axes.
-        
+
         The method is mostly used to restore subsets that had their
         zero-indices removed (i.e., squeezed subsets). Hence, the method is
         called 'unsqueeze'.
@@ -1102,7 +1102,7 @@ class SubsetUnion(Subset):
             self.subset_list = [subset]
 
     def covers(self, other):
-        """ 
+        """
         Returns True if this SubsetUnion covers another subset (using a bounding box).
         If other is another SubsetUnion then self and other will
         only return true if self is other. If other is a different type of subset
@@ -1118,13 +1118,13 @@ class SubsetUnion(Subset):
             return False
         else:
             return any(s.covers(other) for s in self.subset_list)
-        
+
     def covers_precise(self, other):
-        """ 
+        """
         Returns True if this SubsetUnion covers another
         subset. If other is another SubsetUnion then self and other will
         only return true if self is other. If other is a different type of subset
-        true is returned when one of the subsets in self is equal to other 
+        true is returned when one of the subsets in self is equal to other
         """
 
         if isinstance(other, SubsetUnion):
@@ -1144,7 +1144,7 @@ class SubsetUnion(Subset):
                 string += " "
             string += subset.__str__()
         return string
-    
+
     def dims(self):
         if not self.subset_list:
             return 0
@@ -1168,7 +1168,7 @@ class SubsetUnion(Subset):
         for subset in self.subset_list:
             result |= subset.free_symbols
         return result
-    
+
     def replace(self, repl_dict):
         for subset in self.subset_list:
             subset.replace(repl_dict)
@@ -1182,15 +1182,15 @@ class SubsetUnion(Subset):
                     min = subset.num_elements()
             except:
                 continue
-            
+
         return min
 
 
 
 def _union_special_cases(arb: symbolic.SymbolicType, brb: symbolic.SymbolicType, are: symbolic.SymbolicType,
                          bre: symbolic.SymbolicType):
-    """ 
-    Special cases of subset unions. If case found, returns pair of 
+    """
+    Special cases of subset unions. If case found, returns pair of
     (min,max), otherwise returns None.
     """
     if are + 1 == brb:
@@ -1257,7 +1257,7 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
     """ Compute the union of two Subset objects.
         If the subsets are not of the same type, degenerates to bounding-box
         union.
-        
+
         :param subset_a: The first subset.
         :param subset_b: The second subset.
         :return: A Subset object whose size is at least the union of the two
@@ -1293,7 +1293,7 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
 
 
 def list_union(subset_a: Subset, subset_b: Subset) -> Subset:
-    """ 
+    """
     Returns the union of two Subset lists.
 
     :param subset_a: The first subset.
