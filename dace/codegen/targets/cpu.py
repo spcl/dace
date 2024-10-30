@@ -747,6 +747,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 state_id,
                 [src_node, dst_node],
             )
+            stream.write(
+                "//u1"
+            )
             return
         elif isinstance(src_node, nodes.Tasklet):
             # Copy out of tasklet
@@ -755,6 +758,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 cfg,
                 state_id,
                 [src_node, dst_node],
+            )
+            stream.write(
+                "//u2"
             )
             return
         else:  # Copy array-to-array
