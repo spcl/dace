@@ -417,9 +417,8 @@ def test_does_not_fuse_when_the_first_map_reads_anything_at_all():
     g.validate()
     g.compile()
 
-    # TODO:Fix.
     # The state fusion won't work.
-    # assert g.apply_transformations_repeated(ConstAssignmentStateFusion) == 0
+    assert g.apply_transformations_repeated(ConstAssignmentStateFusion) == 0
 
     # Fuse the states explicitly anyway.
     g.apply_transformations_repeated(StateFusionExtended, validate_all=True)

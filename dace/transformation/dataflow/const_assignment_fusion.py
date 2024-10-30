@@ -579,7 +579,7 @@ class ConstAssignmentStateFusion(StateFusionExtended):
             if not en_ex:
                 return False
             en, ex = en_ex
-            if any(not e.data.is_empty for e in st.in_edges(en)):
+            if any(not e.data.is_empty() for e in st.in_edges(en)):
                 return False
             is_const_assignment, further_assignments = _consistent_const_assignment_table(st, en, ex)
             if not is_const_assignment:
