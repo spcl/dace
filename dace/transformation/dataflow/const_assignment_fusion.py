@@ -8,7 +8,7 @@ from dace import transformation, SDFGState, SDFG, Memlet, ScheduleType, subsets
 from dace.properties import make_properties, Property
 from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.nodes import Tasklet, ExitNode, MapEntry, MapExit, NestedSDFG, Node, EntryNode, AccessNode
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, StateSubgraphView
 from dace.subsets import Range
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.interstate import StateFusionExtended
@@ -512,11 +512,9 @@ class ConstAssignmentMapFusion(MapFusion):
         assert is_const_assignment
 
         # Rename in case loop variables are named differently.
-        param_map = {p2: p1 for p1, p2 in zip(first_entry.map.params, second_entry.map.params)}
-        for t in graph.all_nodes_between(second_entry, second_exit):
-            for e in graph.out_edges(t):
-                e.data.subset.replace(param_map)
-        second_entry.map.params = first_entry.map.params
+        nodes_to_update = {n for n in graph.all_nodes_between(second_entry, second_exit)} | {second_entry, second_exit}
+        view = StateSubgraphView(graph, list(nodes_to_update))
+        view.replace_dict({p2: p1 for p1, p2 in zip(first_entry.map.params, second_entry.map.params)})
 
         # Consolidate the incoming dependencies of the two maps.
         _consolidate_empty_dependencies(graph, first_entry, second_entry)
