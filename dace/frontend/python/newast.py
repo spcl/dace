@@ -1342,7 +1342,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # MPI-related stuff
         result.update({
-            k: self.sdfg.process_grids[v]
+            v: self.sdfg.process_grids[v]
             for k, v in self.variables.items() if v in self.sdfg.process_grids
         })
         try:
@@ -4461,7 +4461,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 func = node.func.value
 
         if func is None:
-            funcname = rname(node)
+            func_result = self.visit(node.func)
+            if isinstance(func_result, str):
+                if isinstance(node.func, ast.Attribute):
+                    funcname = f'{func_result}.{node.func.attr}'
+                else:
+                    funcname = func_result
+            else:
+                funcname = rname(node)
             # Check if the function exists as an SDFG in a different module
             modname = until(funcname, '.')
             if ('.' in funcname and len(modname) > 0 and modname in self.globals
@@ -4576,7 +4583,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 arg = self.scope_vars[modname]
             else:
                 # Fallback to (name, object)
-                arg = (modname, self.defined[modname])
+                arg = modname
             args.append(arg)
         # Otherwise, try to find a default implementation for the SDFG
         elif not found_ufunc:
@@ -4795,10 +4802,16 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.sdfg.add_symbol(result.name, result.dtype)
             return result
 
+        if name in self.closure.callbacks:
+            return name
+
         if name in self.sdfg.arrays:
             return name
 
         if name in self.sdfg.symbols:
+            return name
+
+        if name in __builtins__:
             return name
 
         if name not in self.scope_vars:
@@ -4845,33 +4858,43 @@ class ProgramVisitor(ExtNodeVisitor):
         return self.visit_Constant(node)
 
     def visit_Attribute(self, node: ast.Attribute):
-        # If visiting an attribute, return attribute value if it's of an array or global
-        name = until(astutils.unparse(node), '.')
-        result = self._visitname(name, node)
+        result = self.visit(node.value)
+        if isinstance(result, (tuple, list, dict)):
+            if len(result) > 1:
+                raise DaceSyntaxError(
+                    self, node.value, f'{type(result)} object cannot use attributes. Try storing the '
+                    'object to a different variable first (e.g., ``a = result; a.attribute``')
+            else:
+                result = result[0]
+
         tmpname = f"{result}.{astutils.unparse(node.attr)}"
         if tmpname in self.sdfg.arrays:
             return tmpname
+
         if isinstance(result, str) and result in self.sdfg.arrays:
             arr = self.sdfg.arrays[result]
         elif isinstance(result, str) and result in self.scope_arrays:
             arr = self.scope_arrays[result]
         else:
-            return result
+            arr = None
 
         # Try to find sub-SDFG attribute
-        func = oprepo.Replacements.get_attribute(type(arr), node.attr)
-        if func is not None:
-            # A new state is likely needed here, e.g., for transposition (ndarray.T)
-            self._add_state('%s_%d' % (type(node).__name__, node.lineno))
-            self.last_block.set_default_lineinfo(self.current_lineinfo)
-            result = func(self, self.sdfg, self.last_block, result)
-            self.last_block.set_default_lineinfo(None)
-            return result
+        if arr is not None:
+            func = oprepo.Replacements.get_attribute(type(arr), node.attr)
+            if func is not None:
+                # A new state is likely needed here, e.g., for transposition (ndarray.T)
+                self._add_state('%s_%d' % (type(node).__name__, node.lineno))
+                self.last_block.set_default_lineinfo(self.current_lineinfo)
+                result = func(self, self.sdfg, self.last_block, result)
+                self.last_block.set_default_lineinfo(None)
+                return result
 
         # Otherwise, try to find compile-time attribute (such as shape)
         try:
-            return getattr(arr, node.attr)
-        except KeyError:
+            if arr is not None:
+                return getattr(arr, node.attr)
+            return getattr(result, node.attr)
+        except (AttributeError, KeyError):
             return result
 
     def visit_List(self, node: ast.List):
