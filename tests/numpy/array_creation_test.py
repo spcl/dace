@@ -1,7 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.frontend.python.common import DaceSyntaxError
 import numpy as np
 from common import compare_numpy_output
+import pytest
 
 # M = dace.symbol('M')
 # N = dace.symbol('N')
@@ -190,7 +192,7 @@ def test_linspace_6():
 def program_strides_0():
     A = dace.ndarray((2, 2), dtype=dace.int32, strides=(2, 1))
     for i, j in dace.map[0:2, 0:2]:
-            A[i, j] = i * 2 + j
+        A[i, j] = i * 2 + j
     return A
 
 
@@ -204,7 +206,7 @@ def test_strides_0():
 def program_strides_1():
     A = dace.ndarray((2, 2), dtype=dace.int32, strides=(4, 2))
     for i, j in dace.map[0:2, 0:2]:
-            A[i, j] = i * 2 + j
+        A[i, j] = i * 2 + j
     return A
 
 
@@ -218,7 +220,7 @@ def test_strides_1():
 def program_strides_2():
     A = dace.ndarray((2, 2), dtype=dace.int32, strides=(1, 2))
     for i, j in dace.map[0:2, 0:2]:
-            A[i, j] = i * 2 + j
+        A[i, j] = i * 2 + j
     return A
 
 
@@ -232,7 +234,7 @@ def test_strides_2():
 def program_strides_3():
     A = dace.ndarray((2, 2), dtype=dace.int32, strides=(2, 4))
     for i, j in dace.map[0:2, 0:2]:
-            A[i, j] = i * 2 + j
+        A[i, j] = i * 2 + j
     return A
 
 
@@ -240,6 +242,42 @@ def test_strides_3():
     A = program_strides_3()
     assert A.strides == (8, 16)
     assert np.allclose(A, [[0, 1], [2, 3]])
+
+
+def test_zeros_symbolic_size_scalar():
+    K = dace.symbol('K')
+
+    @dace.program
+    def zeros_symbolic_size():
+        return np.zeros((K), dtype=np.uint32)
+
+    out = zeros_symbolic_size(K=10)
+    assert (list(out.shape) == [10])
+    assert (out.dtype == np.uint32)
+
+
+def test_ones_scalar_size_scalar():
+
+    @dace.program
+    def ones_scalar_size(k: dace.int32):
+        a = np.ones(k, dtype=np.uint32)
+        return np.sum(a)
+
+    with pytest.raises(DaceSyntaxError):
+        out = ones_scalar_size(20)
+        assert out == 20
+
+
+def test_ones_scalar_size():
+
+    @dace.program
+    def ones_scalar_size(k: dace.int32):
+        a = np.ones((k, k), dtype=np.uint32)
+        return np.sum(a)
+
+    with pytest.raises(DaceSyntaxError):
+        out = ones_scalar_size(20)
+        assert out == 20 * 20
 
 
 if __name__ == "__main__":
@@ -275,3 +313,6 @@ if __name__ == "__main__":
     test_strides_1()
     test_strides_2()
     test_strides_3()
+    test_zeros_symbolic_size_scalar()
+    test_ones_scalar_size_scalar()
+    test_ones_scalar_size()

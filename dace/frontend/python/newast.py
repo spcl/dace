@@ -1489,19 +1489,19 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 values = str(val).split(':')
                 if len(values) == 1:
-                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.globals, **dyn_inputs}))
+                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.defined, **dyn_inputs}))
                 elif len(values) == 2:
                     result[name] = symbolic.symbol(
                         name,
                         dtypes.result_type_of(infer_expr_type(values[0], {
-                            **self.globals,
+                            **self.defined,
                             **dyn_inputs
                         }), infer_expr_type(values[1], {
-                            **self.globals,
+                            **self.defined,
                             **dyn_inputs
                         })))
                 elif len(values) == 3:
-                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.globals, **dyn_inputs}))
+                    result[name] = symbolic.symbol(name, infer_expr_type(values[0], {**self.defined, **dyn_inputs}))
                 else:
                     raise DaceSyntaxError(
                         self, None, "Invalid number of arguments in a range iterator. "
@@ -3258,18 +3258,23 @@ class ProgramVisitor(ExtNodeVisitor):
             dtype = astutils.evalnode(node.annotation, {**self.globals, **self.defined})
             if isinstance(dtype, data.Data):
                 simple_type = dtype.dtype
+                storage = dtype.storage
             else:
                 simple_type = dtype
+                storage = dtypes.StorageType.Default
             if not isinstance(simple_type, dtypes.typeclass):
                 raise TypeError
         except:
             dtype = None
+            storage = dtypes.StorageType.Default
             type_name = rname(node.annotation)
             warnings.warn('typeclass {} is not supported'.format(type_name))
         if node.value is None and dtype is not None:  # Annotating type without assignment
             self.annotated_types[rname(node.target)] = dtype
             return
-        self._visit_assign(node, node.target, None, dtype=dtype)
+        results = self._visit_assign(node, node.target, None, dtype=dtype)
+        if storage != dtypes.StorageType.Default:
+            self.sdfg.arrays[results[0][0]].storage = storage
 
     def _visit_assign(self, node, node_target, op, dtype=None, is_return=False):
         # Get targets (elts) and results
@@ -3562,6 +3567,8 @@ class ProgramVisitor(ExtNodeVisitor):
             if output_indirection:
                 self.cfg_target.add_edge(self.last_block, output_indirection, dace.sdfg.InterstateEdge())
                 self.last_block = output_indirection
+
+        return results
 
     def visit_AugAssign(self, node: ast.AugAssign):
         self._visit_assign(node, node.target, augassign_ops[type(node.op).__name__])
@@ -4630,10 +4637,16 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('call_%d' % node.lineno)
         self.last_block.set_default_lineinfo(self.current_lineinfo)
 
-        if found_ufunc:
-            result = func(self, node, self.sdfg, self.last_block, ufunc_name, args, keywords)
-        else:
-            result = func(self, self.sdfg, self.last_block, *args, **keywords)
+        try:
+            if found_ufunc:
+                result = func(self, node, self.sdfg, self.last_block, ufunc_name, args, keywords)
+            else:
+                result = func(self, self.sdfg, self.last_block, *args, **keywords)
+        except DaceSyntaxError as ex:
+            # Attach source information to exception
+            if ex.node is None:
+                ex.node = node
+            raise
 
         self.last_block.set_default_lineinfo(None)
 
