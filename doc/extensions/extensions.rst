@@ -17,10 +17,10 @@ The three key mechanisms of extensibility are class inheritance, :ref:`replaceme
 
 For more examples of how to extend DaCe, see the following resources:
 
-   * Library nodes: `Einsum specialization library node <https://github.com/spcl/dace/blob/master/dace/libraries/blas/nodes/einsum.py>`_
-   * Transformations: `Using and Creating Transformations <https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb>`_
-   * Code generators: `Extending the Code Generator <https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/codegen.ipynb>`_
-   * Frontend extensions (enumerations and replacements): `Tensor Core code sample <https://github.com/spcl/dace/blob/master/samples/codegen/tensor_cores.py>`_
+   * Library nodes: `Einsum specialization library node <https://github.com/spcl/dace/blob/main/dace/libraries/blas/nodes/einsum.py>`_
+   * Transformations: `Using and Creating Transformations <https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/transformations.ipynb>`_
+   * Code generators: `Extending the Code Generator <https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/codegen.ipynb>`_
+   * Frontend extensions (enumerations and replacements): `Tensor Core code sample <https://github.com/spcl/dace/blob/main/samples/codegen/tensor_cores.py>`_
 
 .. .. toctree
 ..    :maxdepth: 1

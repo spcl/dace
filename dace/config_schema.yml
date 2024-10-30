@@ -919,6 +919,13 @@ required:
                 description: >
                     Check for undefined symbols in memlets during SDFG validation.
 
+            check_race_conditions:
+                type: bool
+                default: false
+                title: Check race conditions
+                description: >
+                    Check for potential race conditions during validation.
+
     #############################################
     # Features for unit testing
 
