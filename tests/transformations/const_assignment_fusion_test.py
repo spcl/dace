@@ -272,8 +272,9 @@ def assign_bounary_3d_with_flip_sdfg():
 
     st0 = g.add_state('st0')
     _add_face_assignment_map(st0, 'face', [('j', M), ('k', N)], [(0, 0)], 1, 'A')
-    _, _, t = _add_face_assignment_map(st0, 'face', [('k', N), ('j', M)], [(0, K - 1)], 1, 'A')
-    t.code = CodeBlock('A[0, j, k] = 1')
+    en, _, _ = _add_face_assignment_map(st0, 'face', [('j', M), ('k', N)], [(0, K - 1)], 1, 'A')
+    en.map.range = Range(reversed(en.map.range.ranges))
+    en.map.params = list(reversed(en.map.params))
 
     return g
 
