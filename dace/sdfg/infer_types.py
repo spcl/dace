@@ -181,8 +181,11 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
             if not desc.transient and scope.parent_sdfg is not None:
                 desc.storage = _get_storage_from_parent(aname, scope)
             elif ((desc.transient or scope.parent_sdfg is None) and desc.storage == dtypes.StorageType.Default):
-                # Indeterminate storage type, set to register
-                desc.storage = dtypes.StorageType.Register
+                # Indeterminate storage type, set to register, or CPU Heap for structures.
+                if isinstance(desc, data.Structure):
+                    desc.storage = dtypes.StorageType.CPU_Heap
+                else:
+                    desc.storage = dtypes.StorageType.Register
         return
 
     # Setup arguments
