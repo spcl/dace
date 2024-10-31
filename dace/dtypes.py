@@ -1,10 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
-from __future__ import print_function
 import ctypes
 import aenum
 import inspect
-import itertools
 import numpy
 import re
 from collections import OrderedDict
