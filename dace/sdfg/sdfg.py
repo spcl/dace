@@ -1464,8 +1464,11 @@ class SDFG(ControlFlowRegion):
     var sdfg_{uid} = {sdfg};
 </script>
 <script>
-    WebSDFV.getInstance().init();
-    WebSDFV.getInstance().setSDFG(checkCompatLoad(parse_sdfg(sdfg_{uid})), null, false, "contents_{uid}");
+    new SDFGRenderer(
+        checkCompatLoad(parse_sdfg(sdfg_{uid})),
+        document.getElementById("contents_{uid}"),
+        undefined, null, null, false, null, null
+    );
 </script>""".format(
             # Dumping to a string so that Jupyter Javascript can parse it
             # recursively
