@@ -29,7 +29,7 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
         cast_value = complex(value)
 
         return "dace.{type}({real}, {imag})".format(
-            type=dace.dtype_to_typeclass(dtype).to_string(),
+            type=dtype.to_string(),
             real=cast_value.real,
             imag=cast_value.imag,
         )
