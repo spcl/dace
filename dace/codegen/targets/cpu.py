@@ -1902,7 +1902,7 @@ class CPUCodeGen(TargetCodeGenerator):
         result.write(map_header, cfg, state_id, node)
 
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
-            result.write('{\n', cfg, state_id, node)
+            result.write('{//o1\n', cfg, state_id, node)
 
             # Find if bounds are used within the scope
             scope = state_dfg.scope_subgraph(node, False, False)

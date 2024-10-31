@@ -1719,7 +1719,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
         if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
-            callsite_stream.write('{', cfg, state_id, scope_entry)
+            callsite_stream.write('{//fo1', cfg, state_id, scope_entry)
 
         # Synchronize all events leading to dynamic map range connectors
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
@@ -2179,7 +2179,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
-        callsite_stream.write('{', cfg, state_id, scope_entry)
+        callsite_stream.write('{//o1', cfg, state_id, scope_entry)
 
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             if self.backend == 'hip':
@@ -2435,15 +2435,15 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                     # Emit condition in code
                     if len(condition) > 0:
-                        self._kernel_grid_conditions.append(f'if ({condition}) {{')
-                        callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
+                        self._kernel_grid_conditions.append(f'if ({condition}) {{//eo00')
+                        callsite_stream.write('if (%s) {//eo01' % condition, cfg, state_id, scope_entry)
                     else:
-                        self._kernel_grid_conditions.append('{')
-                        callsite_stream.write('{', cfg, state_id, scope_entry)
+                        self._kernel_grid_conditions.append('{//eo1')
+                        callsite_stream.write('{//eo2', cfg, state_id, scope_entry)
 
         else:
             for dim in range(len(scope_map.range)):
-                callsite_stream.write('{', cfg, state_id, scope_entry)
+                callsite_stream.write('{//do3', cfg, state_id, scope_entry)
 
         # Emit internal array allocation (deallocation handled at MapExit)
         self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
@@ -2470,9 +2470,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 # Delinearize third dimension if necessary
                 if i == 2 and len(brange) > 3:
-                    block_expr = '((threadIdx.z / (%s)) / (%s))' % (_topy(functools.reduce(sympy.Mul, kdims[3:], 1)), brange[0][-1])
+                    block_expr = '((threadIdx.z / (%s)) / (%s))' % (_topy(functools.reduce(sympy.Mul, kdims[3:], 1)), brange[i][-1])
                 else:
-                    block_expr = '(threadIdx.%s / (%s))' % (_named_idx(i), brange[-i - 1][-1])
+                    block_expr = '(threadIdx.%s / (%s))' % (_named_idx(i), brange[i][-1])
 
                 print("EXPR:", block_expr, tidx[i])
                 expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
@@ -2515,10 +2515,11 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 # Emit condition in code
                 if len(condition) > 0:
-                    callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
+                    callsite_stream.write('if (%s) {//tbo1' % condition, cfg, state_id, scope_entry)
                 else:
-                    callsite_stream.write('{', cfg, state_id, scope_entry)
+                    callsite_stream.write('{//tbo2', cfg, state_id, scope_entry)
 
+            callsite_stream.write('{//tbo3', cfg, state_id, scope_entry)
         # Generate all index arguments for warp
         if scope_map.schedule == dtypes.ScheduleType.GPU_Warp:
             brange = subsets.Range(scope_map.range[::-1])
@@ -2536,10 +2537,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 # Delinearize third dimension if necessary
 
                 if i == 2 and len(brange) > 3:
-                    b, e, s = brange[0]
+                    b, e, s = brange[i]
                     block_expr = f'((threadIdx.z / ({_topy(functools.reduce(sympy.Mul, kdims[3:], 1))}) % ({(e+1-b)})))'
                 else:
-                    b, e, s = brange[-i - 1]
+                    b, e, s = brange[i]
                     block_expr = f'(threadIdx.{_named_idx(i)} % ({(e+1-b)/s}))'
 
                 expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
@@ -2557,7 +2558,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             if len(brange) > 3:
                 raise Exception("TODO NOT SUPPORTED")
 
-            callsite_stream.write('{', cfg, state_id, scope_entry)
+            # Emit condition in code
+            if len(condition) > 0:
+                callsite_stream.write('if (%s) {//wo1' % condition, cfg, state_id, scope_entry)
+            else:
+                callsite_stream.write('{//wo2', cfg, state_id, scope_entry)
+
+            callsite_stream.write('{//wo3', cfg, state_id, scope_entry)
         ##########################################################
 
         # need to handle subgraphs appropriately if they contain
@@ -2700,10 +2707,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 if self._kernel_grid_conditions:
                     self._kernel_grid_conditions.pop()
 
-        elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock: # or node.map.schedule == dtypes.ScheduleType.GPU_Warp
+        elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
             # Close block invocation conditions
             for i in range(len(node.map.params)):
                 callsite_stream.write('}//t18', cfg, state_id, node)
+
+        elif node.map.schedule == dtypes.ScheduleType.GPU_Warp:
+                callsite_stream.write('}//t19', cfg, state_id, node)
+
 
         elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             # Close lambda function
@@ -2715,11 +2726,11 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         self._cpu_codegen._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def _get_thread_id(self) -> str:
-        result = "ewe" #'threadIdx.x'
+        result = 'threadIdx.x'
         if self._block_dims[1] != 1:
-            result += "uwu" #+= f' + ({sym2cpp(self._block_dims[0])}) * threadIdx.y'
+            result += f' + ({sym2cpp(self._block_dims[0])}) * threadIdx.y'
         if self._block_dims[2] != 1:
-            result +=  "owo" #f' + ({sym2cpp(self._block_dims[0] * self._block_dims[1])}) * threadIdx.z'
+            result += f' + ({sym2cpp(self._block_dims[0] * self._block_dims[1])}) * threadIdx.z'
         return result
 
     def _get_lane_id(self) -> str:
