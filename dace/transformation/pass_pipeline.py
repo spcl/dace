@@ -240,7 +240,7 @@ class StatePass(Pass):
         """
         result = {}
         for sd in sdfg.all_sdfgs_recursive():
-            for state in sd.nodes():
+            for state in sd.states():
                 retval = self.apply(state, pipeline_results)
                 if retval is not None:
                     result[state] = retval
