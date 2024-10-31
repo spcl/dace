@@ -217,7 +217,7 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc, ite
                 elif btype == "shrink":
                     # We don't need to do anything here, it's up to the
                     # user to not use the junk output
-                    boundary_val = dtypes.min_value(dtype)
+                    boundary_val = dtypes.min_value(dtype.base_type)
                     # Add this to the output condition
                     oob_cond |= cond_global
                 else:
