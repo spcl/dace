@@ -34,7 +34,7 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
             imag=cast_value.imag,
         )
     else:
-        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
+        return "dace.{}({})".format(dtype.to_string(), value)
 
 
 @dace.library.expansion
