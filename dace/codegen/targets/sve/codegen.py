@@ -154,14 +154,14 @@ class SVECodeGen(TargetCodeGenerator):
             src_type = edge.src.out_connectors[edge.src_conn]
             if util.is_vector(src_type) and util.is_vector(dst_type):
                 # Directly read from shared vector register
-                code.write(f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = {edge.data.data};')
+                code.write(f'{util.TYPE_TO_SVE[dst_type.base_type]} {dst_name} = {edge.data.data};')
             elif util.is_scalar(src_type) and util.is_scalar(dst_type):
                 # Directly read from shared scalar register
                 code.write(f'{dst_type} {dst_name} = {edge.data.data};')
             elif util.is_scalar(src_type) and util.is_vector(dst_type):
                 # Scalar broadcast from shared scalar register
                 code.write(
-                    f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = svdup_{util.TYPE_TO_SVE_SUFFIX[dst_type.type]}({edge.data.data});'
+                    f'{util.TYPE_TO_SVE[dst_type.base_type]} {dst_name} = svdup_{util.TYPE_TO_SVE_SUFFIX[dst_type.base_type]}({edge.data.data});'
                 )
             else:
                 raise util.NotSupportedError('Unsupported Code->Code edge')
@@ -183,13 +183,13 @@ class SVECodeGen(TargetCodeGenerator):
                     stride = edge.data.get_stride(sdfg, map)
 
                     # First part of the declaration is `type name`
-                    load_lhs = '{} {}'.format(util.TYPE_TO_SVE[dst_type.type], dst_name)
+                    load_lhs = '{} {}'.format(util.TYPE_TO_SVE[dst_type.base_type], dst_name)
 
                     # long long issue casting
                     ptr_cast = ''
-                    if dst_type == dtypes.int64:
+                    if dst_type.base_type == dtypes.int64:
                         ptr_cast = '(int64_t*) '
-                    elif dst_type == dtypes.uint64:
+                    elif dst_type.base_type == dtypes.uint64:
                         ptr_cast = '(uint64_t*) '
 
                     # Regular load and gather share the first arguments
@@ -212,14 +212,14 @@ class SVECodeGen(TargetCodeGenerator):
                 src_type = desc.dtype
                 if util.is_vector(src_type) and util.is_vector(dst_type):
                     # Directly read from shared vector register
-                    code.write(f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = {edge.data.data};')
+                    code.write(f'{util.TYPE_TO_SVE[dst_type.base_type]} {dst_name} = {edge.data.data};')
                 elif util.is_scalar(src_type) and util.is_scalar(dst_type):
                     # Directly read from shared scalar register
                     code.write(f'{dst_type} {dst_name} = {edge.data.data};')
                 elif util.is_scalar(src_type) and util.is_vector(dst_type):
                     # Scalar broadcast from shared scalar register
                     code.write(
-                        f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = svdup_{util.TYPE_TO_SVE_SUFFIX[dst_type.type]}({edge.data.data});'
+                        f'{util.TYPE_TO_SVE[dst_type.base_type]} {dst_name} = svdup_{util.TYPE_TO_SVE_SUFFIX[dst_type.base_type]}({edge.data.data});'
                     )
                 else:
                     raise util.NotSupportedError('Unsupported Scalar->Code edge')
@@ -259,7 +259,7 @@ class SVECodeGen(TargetCodeGenerator):
         # Create temporary registers
         ctype = None
         if util.is_vector(src_type):
-            ctype = util.TYPE_TO_SVE[src_type.type]
+            ctype = util.TYPE_TO_SVE[src_type.base_type]
         elif util.is_scalar(src_type):
             ctype = src_type.ctype
         else:
@@ -295,7 +295,7 @@ class SVECodeGen(TargetCodeGenerator):
                 code.write(f'{edge.data.data} = {src_name};')
             elif util.is_scalar(src_type) and util.is_vector(dst_type):
                 # Scalar broadcast to shared vector register
-                code.write(f'{edge.data.data} = svdup_{util.TYPE_TO_SVE_SUFFIX[dst_type.type]}({src_name});')
+                code.write(f'{edge.data.data} = svdup_{util.TYPE_TO_SVE_SUFFIX[dst_type]}({src_name});')
             else:
                 raise util.NotSupportedError('Unsupported Code->Code edge')
         elif isinstance(dst_node, nodes.AccessNode):
@@ -315,9 +315,9 @@ class SVECodeGen(TargetCodeGenerator):
 
                     # long long fix
                     ptr_cast = ''
-                    if src_type == dtypes.int64:
+                    if src_type.base_type == dtypes.int64:
                         ptr_cast = '(int64_t*) '
-                    elif src_type == dtypes.uint64:
+                    elif src_type.base_type == dtypes.uint64:
                         ptr_cast = '(uint64_t*) '
 
                     store_args = '{}, {}'.format(
@@ -368,7 +368,7 @@ class SVECodeGen(TargetCodeGenerator):
                        nodedesc: data.Data, global_stream: CodeIOStream, declaration_stream: CodeIOStream,
                        allocation_stream: CodeIOStream) -> None:
         if nodedesc.storage == dtypes.StorageType.SVE_Register:
-            sve_type = util.TYPE_TO_SVE[nodedesc.dtype]
+            sve_type = util.TYPE_TO_SVE[nodedesc.dtype.base_type]
             self.dispatcher.defined_vars.add(node.data, DefinedType.Scalar, sve_type)
             return
 

@@ -4,6 +4,7 @@ import dace
 import dace.dtypes
 from tests.codegen.sve.common import get_code
 import pytest
+import math
 from dace.codegen.targets.sve.type_compatibility import IncompatibleTypeError
 
 N = dace.symbol('N')

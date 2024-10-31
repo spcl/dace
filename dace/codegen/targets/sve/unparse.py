@@ -155,14 +155,14 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # Unparsing a scalar
             if isinstance(expect, dtypes.vector):
                 # Expecting a vector: duplicate the scalar
-                if expect in [dtypes.bool_, dtypes.bool]:
+                if expect.base_type in [dtypes.bool_, dtypes.bool]:
                     # Special case for duplicating boolean into predicate
                     suffix = f'b{self.pred_bits}'
                     #self.write(f'svptrue_{suffix}()')
                     self.dispatch_expect(tree, expect.base_type)
                     self.write(f' ? svptrue_{suffix}() : svpfalse_b()')
                 else:
-                    self.write(f'svdup_{util.TYPE_TO_SVE_SUFFIX[expect.type]}(')
+                    self.write(f'svdup_{util.TYPE_TO_SVE_SUFFIX[expect.base_type]}(')
                     self.dispatch_expect(tree, expect.base_type)
                     self.write(')')
 
@@ -271,9 +271,9 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         # Casting in case of `long long`
         stream_type = copy.copy(stream_type)
-        if stream_type == dtypes.int64:
+        if stream_type == dtypes.int64 or getattr(stream_type, 'base_type', False) == dtypes.int64:
             stream_type.ctype = 'int64_t'
-        elif stream_type == dtypes.uint64:
+        elif stream_type == dtypes.uint64 or getattr(stream_type, 'base_type', False) == dtypes.uint64:
             stream_type.ctype = 'uint64_t'
 
         # Create a temporary array on the heap, where we will copy the SVE register contents to
@@ -337,9 +337,9 @@ class SVEUnparser(cppunparse.CPPUnparser):
             ptr_cast = ''
             src_type = edge.src.out_connectors[edge.src_conn]
 
-            if src_type == dtypes.int64:
+            if src_type.base_type == dtypes.int64:
                 ptr_cast = '(int64_t*) '
-            elif src_type == dtypes.uint64:
+            elif src_type.base_type == dtypes.uint64:
                 ptr_cast = '(uint64_t*) '
 
             store_args = '{}, {}'.format(
@@ -396,7 +396,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
             lhs_type = rhs_type
             if isinstance(rhs_type, dtypes.vector):
                 # SVE register is possible (declare it as svXXX_t)
-                self.fill(util.TYPE_TO_SVE[rhs_type.type])
+                self.fill(util.TYPE_TO_SVE[rhs_type.base_type])
                 self.write(' ')
                 # Define the new symbol as vector
                 self.defined_symbols.update({target.id: rhs_type})

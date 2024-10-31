@@ -137,7 +137,9 @@ def get_internal_symbols() -> dict:
     res = {}
 
     for func, type in itertools.product(FUSED_OPERATION_TO_SVE, TYPE_TO_SVE_SUFFIX):
-        res[f'{func}_{TYPE_TO_SVE_SUFFIX[type.type if isinstance(type, dace.dtypes.typeclass) else type]}'] = dtypes.vector(
+        if type == dace.vector:
+            continue
+        res[f'{func}_{TYPE_TO_SVE_SUFFIX[type]}'] = dtypes.vector(
             type if isinstance(type, dtypes.typeclass) else dtypes.typeclass(type), SVE_LEN)
     return res
 

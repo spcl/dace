@@ -64,12 +64,12 @@ class SVEVectorization(transformation.SingleStateTransformation):
             for conn in node.in_connectors:
                 t = inferred[(node, conn, True)]
                 bit_widths.add(util.get_base_type(t).bytes)
-                if not t.type in sve.util.TYPE_TO_SVE:
+                if not t.base_type in sve.util.TYPE_TO_SVE:
                     return False
             for conn in node.out_connectors:
                 t = inferred[(node, conn, False)]
                 bit_widths.add(util.get_base_type(t).bytes)
-                if not t.type in sve.util.TYPE_TO_SVE:
+                if not t.base_type in sve.util.TYPE_TO_SVE:
                     return False
 
         # Multiple different bit widths occuring (messes up the predicates)
