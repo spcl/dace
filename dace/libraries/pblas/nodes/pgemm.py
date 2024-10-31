@@ -14,7 +14,7 @@ class ExpandPgemmMKLMPICH(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         a, b, c, desca, descb, gdescc, ldesc = node.validate(parent_sdfg, parent_state)
         dtype = a.dtype.base_type
-        lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
+        lapack_dtype_str = blas_helpers.to_blastype(dtype).lower()
 
         code = f"""
             const {dtype.ctype} zero = 0.0E+0, one = 1.0E+0;
@@ -75,7 +75,7 @@ class ExpandPgemmReferenceMPICH(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         a, b, c, desca, descb, gdescc, ldesc = node.validate(parent_sdfg, parent_state)
         dtype = a.dtype.base_type
-        lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
+        lapack_dtype_str = blas_helpers.to_blastype(dtype).lower()
 
         code = f"""
             {dtype.ctype} zero = 0.0E+0, one = 1.0E+0;

@@ -49,8 +49,8 @@ class ExpandGemmPure(ExpandTransformation):
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
          cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
-        dtype_a = outer_array_a.dtype.type
-        dtype_b = outer_array_b.dtype.type
+        dtype_a = outer_array_a.dtype
+        dtype_b = outer_array_b.dtype
         dtype_c = dtypes.result_type_of(dtype_a, dtype_b)
 
         if node.transA:
@@ -160,7 +160,7 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
         node.validate(sdfg, state)
         (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
-        func = to_blastype(dtype.type).lower() + 'gemm'
+        func = to_blastype(dtype).lower() + 'gemm'
         alpha = f'{dtype.ctype}({node.alpha})'
         beta = f'{dtype.ctype}({node.beta})'
 
@@ -245,7 +245,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                          for desc in (adesc, bdesc, cdesc))
 
         dtype = adesc.dtype.base_type
-        func = cls.funcname(to_blastype(dtype.type))
+        func = cls.funcname(to_blastype(dtype))
         if dtype == dace.float16:
             cdtype = '__half'
             factort = 'Half'
@@ -515,9 +515,9 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
          (edge_c, outer_array_c, shape_c, strides_c)) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
-        dtype_a = outer_array_a.dtype.type
-        dtype_b = outer_array_b.dtype.type
-        dtype_c = dace.dtype_to_typeclass(dtypes.result_type_of(dtype_a, dtype_b).type)
+        dtype_a = outer_array_a.dtype
+        dtype_b = outer_array_b.dtype
+        dtype_c = dtypes.result_type_of(dtype_a, dtype_b)
         shape_c = (shape_a[0], shape_b[1])
         if node.transA:
             raise NotImplementedError("GEMM FPGA expansion not implemented for transposed A.")

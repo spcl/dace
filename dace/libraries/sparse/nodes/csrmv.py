@@ -11,29 +11,6 @@ from dace.libraries.blas.blas_helpers import (to_blastype, check_access, to_cubl
 from dace.libraries.sparse import environments
 
 
-def _is_complex(dtype):
-    if hasattr(dtype, "is_complex") and callable(dtype.is_complex):
-        return dtype.is_complex()
-    else:
-        return dtype in [dtypes.complex64, dtypes.complex128]
-
-
-def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
-    if _is_complex(dtype) and _is_complex(type(value)):
-        raise ValueError("Cannot use complex beta with non-complex array")
-
-    if _is_complex(dtype):
-        cast_value = complex(value)
-
-        return "dace.{type}({real}, {imag})".format(
-            type=dace.dtype_to_typeclass(dtype).to_string(),
-            real=cast_value.real,
-            imag=cast_value.imag,
-        )
-    else:
-        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
-
-
 def _get_csrmv_operands(node: dace.sdfg.nodes.LibraryNode,
                         state: SDFGState,
                         sdfg: SDFG,
@@ -245,7 +222,7 @@ class ExpandCSRMVMKL(ExpandTransformation):
         bdesc = operands['_b'][1]
 
         dtype = avals.dtype.base_type
-        func = f"mkl_sparse_{to_blastype(dtype.type).lower()}"
+        func = f"mkl_sparse_{to_blastype(dtype).lower()}"
         alpha = f'{dtype.ctype}({node.alpha})'
         beta = f'{dtype.ctype}({node.beta})'
 

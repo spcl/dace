@@ -95,7 +95,7 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
         cdesc: dt.Array = sdfg.arrays[state.out_edges(node)[0].data.data]
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type
-        func = to_blastype(dtype.type).lower() + 'gemm'
+        func = to_blastype(dtype).lower() + 'gemm'
         if dtype == dace.float32:
             alpha = "1.0f"
             beta = "0.0f"
@@ -164,7 +164,7 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type
-        func = to_blastype(dtype.type).lower() + 'gemm'
+        func = to_blastype(dtype).lower() + 'gemm'
         if dtype == dace.float32:
             alpha = "1.0f"
             beta = "0.0f"
@@ -234,7 +234,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
                          for desc in (adesc, bdesc, cdesc))
 
         dtype = cdesc.dtype.base_type
-        func = '%sgemm' % to_blastype(dtype.type)
+        func = '%sgemm' % to_blastype(dtype)
         if dtype == dace.float16:
             cdtype = '__half'
             factort = 'Half'

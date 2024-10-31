@@ -74,7 +74,7 @@ class InstrumentedDataReport:
         """ Returns the array names available in this data report. """
         return self.files.keys()
 
-    def _read_array_file(self, filename: str, npdtype: np.dtype) -> Tuple[ArrayLike, ArrayLike]:
+    def _read_array_file(self, filename: str, npdtype) -> Tuple[ArrayLike, ArrayLike]:
         """
         Reads a formatted instrumented data file. 
 

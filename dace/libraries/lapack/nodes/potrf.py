@@ -32,7 +32,7 @@ class ExpandPotrfOpenBLAS(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (desc_x, stride_x, rows_x, cols_x), desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
-        lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
+        lapack_dtype = blas_helpers.to_blastype(dtype).lower()
         if desc_x.dtype.veclen > 1:
             raise (NotImplementedError)
 

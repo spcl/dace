@@ -14,7 +14,7 @@ class ExpandPgemvMKLMPICH(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         a, b, c, desca, descb, gdescc, ldesc = node.validate(parent_sdfg, parent_state)
         dtype = a.dtype.base_type
-        lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
+        lapack_dtype_str = blas_helpers.to_blastype(dtype).lower()
 
         # NOTE: MKL ScaLAPACK is using column-major order
         transa = 'N' if node.transa == 'T' else 'T'
@@ -78,7 +78,7 @@ class ExpandPgemvReferenceMPICH(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         a, b, c, desca, descb, gdescc, ldesc = node.validate(parent_sdfg, parent_state)
         dtype = a.dtype.base_type
-        lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
+        lapack_dtype_str = blas_helpers.to_blastype(dtype).lower()
 
         # NOTE: MKL ScaLAPACK is using column-major order
         transa = 'N' if node.transa == 'T' else 'T'

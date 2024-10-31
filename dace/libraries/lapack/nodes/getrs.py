@@ -34,7 +34,7 @@ class ExpandGetrsOpenBLAS(ExpandTransformation):
         (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs,
                                              cols_rhs), desc_ipiv, desc_res = node.validate(parent_sdfg, parent_state)
         dtype = desc_a.dtype.base_type
-        lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
+        lapack_dtype = blas_helpers.to_blastype(dtype).lower()
         cast = ""
         if lapack_dtype == 'c':
             cast = "(lapack_complex_float*)"
@@ -63,7 +63,7 @@ class ExpandGetrsMKL(ExpandTransformation):
         (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs,
                                              cols_rhs), desc_ipiv, desc_res = node.validate(parent_sdfg, parent_state)
         dtype = desc_a.dtype.base_type
-        lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
+        lapack_dtype = blas_helpers.to_blastype(dtype).lower()
         cast = ""
         if lapack_dtype == 'c':
             cast = "(MKL_Complex8*)"

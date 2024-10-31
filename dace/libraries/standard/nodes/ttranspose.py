@@ -64,7 +64,7 @@ class ExpandHPTT(ExpandTransformation):
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
         axes = ','.join([symstr(a) for a in node.axes])
         shape = ','.join([symstr(s) for s in inp_tensor.shape])
-        dchar = blas_helpers.to_blastype(inp_tensor.dtype.type).lower()
+        dchar = blas_helpers.to_blastype(inp_tensor.dtype).lower()
         if dchar not in ('s', 'd', 'c', 'z'):
             raise TypeError("HPTT supports only single and double (and corresponding complex) FP datatypes")
         alpha = symstr(node.alpha)
