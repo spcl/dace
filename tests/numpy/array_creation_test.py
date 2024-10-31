@@ -152,6 +152,42 @@ def test_arange_6():
     return np.arange(2.5, 10, 3)
 
 
+@compare_numpy_output()
+def test_linspace_1():
+    return np.linspace(2.5, 10, num=3)
+
+
+@compare_numpy_output()
+def test_linspace_2():
+    space, step = np.linspace(2.5, 10, num=3, retstep=True)
+    return space, step
+
+
+@compare_numpy_output()
+def test_linspace_3():
+    a = np.array([1, 2, 3])
+    return np.linspace(a, 5, num=10)
+
+
+@compare_numpy_output()
+def test_linspace_4():
+    a = np.array([[1, 2, 3], [4, 5, 6]])
+    space, step = np.linspace(a, 10, endpoint=False, retstep=True)
+    return space, step
+
+
+@compare_numpy_output()
+def test_linspace_5():
+    a = np.array([[1, 2, 3], [4, 5, 6]])
+    b = np.array([[5], [10]])
+    return np.linspace(a, b, endpoint=False, axis=1)
+
+
+@compare_numpy_output()
+def test_linspace_6():
+    return np.linspace(-5, 5.5, dtype=np.float32)
+
+
 @dace.program
 def program_strides_0():
     A = dace.ndarray((2, 2), dtype=dace.int32, strides=(2, 1))
@@ -267,6 +303,12 @@ if __name__ == "__main__":
     test_arange_4()
     test_arange_5()
     test_arange_6()
+    test_linspace_1()
+    test_linspace_2()
+    test_linspace_3()
+    test_linspace_4()
+    test_linspace_5()
+    test_linspace_6()
     test_strides_0()
     test_strides_1()
     test_strides_2()
