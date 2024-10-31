@@ -1,5 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace import subsets as sbs
 from dace.transformation.helpers import find_sdfg_control_flow
 
 
@@ -19,7 +20,9 @@ def test_read_write_set():
     state.add_memlet_path(rw_b, task2, dst_conn='B', memlet=dace.Memlet('B[2]'))
     state.add_memlet_path(task2, write_c, src_conn='C', memlet=dace.Memlet('C[2]'))
 
-    assert 'B' not in state.read_and_write_sets()[0]
+    read_set, write_set = state.read_and_write_sets()
+    assert {'B', 'A'} == read_set
+    assert {'C', 'B'} == write_set
 
 
 def test_read_write_set_y_formation():
@@ -41,7 +44,10 @@ def test_read_write_set_y_formation():
     state.add_memlet_path(rw_b, task2, dst_conn='B', memlet=dace.Memlet(data='B', subset='0'))
     state.add_memlet_path(task2, write_c, src_conn='C', memlet=dace.Memlet(data='C', subset='0'))
 
-    assert 'B' not in state.read_and_write_sets()[0]
+    read_set, write_set = state.read_and_write_sets()
+    assert {'B', 'A'} == read_set
+    assert {'C', 'B'} == write_set
+
 
 def test_deepcopy_state():
     N = dace.symbol('N')
@@ -56,6 +62,87 @@ def test_deepcopy_state():
     sdfg = double_loop.to_sdfg()
     find_sdfg_control_flow(sdfg)
     sdfg.validate()
+
+
+def test_read_and_write_set_filter():
+    sdfg = dace.SDFG('graph')
+    state = sdfg.add_state('state')
+    sdfg.add_array('A', [2, 2], dace.float64)
+    sdfg.add_scalar('B', dace.float64)
+    sdfg.add_array('C', [2, 2], dace.float64)
+    A, B, C = (state.add_access(name) for name in ('A', 'B', 'C'))
+
+    state.add_nedge(
+            A,
+            B,
+            dace.Memlet("B[0] -> [0, 0]"),
+    )
+    state.add_nedge(
+            B,
+            C,
+            dace.Memlet("C[1, 1] -> [0]"),
+    )
+    state.add_nedge(
+            B,
+            C,
+            dace.Memlet("B[0] -> [0, 0]"),
+    )
+    sdfg.validate()
+
+    expected_reads = {
+            "A": [sbs.Range.from_string("0, 0")],
+            "B": [sbs.Range.from_string("0")],
+    }
+    expected_writes = {
+            "B": [sbs.Range.from_string("0")],
+            "C": [sbs.Range.from_string("0, 0"), sbs.Range.from_string("1, 1")],
+    }
+    read_set, write_set = state._read_and_write_sets()
+
+    for expected_sets, computed_sets in [(expected_reads, read_set), (expected_writes, write_set)]:
+        assert expected_sets.keys() == computed_sets.keys(), f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        for access_data in expected_sets.keys():
+            for exp in expected_sets[access_data]:
+                found_match = False
+                for res in computed_sets[access_data]:
+                    if res == exp:
+                        found_match = True
+                        break
+                assert found_match, f"Could not find the subset '{exp}' only got '{computed_sets}'"
+
+
+def test_read_and_write_set_selection():
+    sdfg = dace.SDFG('graph')
+    state = sdfg.add_state('state')
+    sdfg.add_array('A', [2, 2], dace.float64)
+    sdfg.add_scalar('B', dace.float64)
+    A, B = (state.add_access(name) for name in ('A', 'B'))
+
+    state.add_nedge(
+            A,
+            B,
+            dace.Memlet("A[0, 0]"),
+    )
+    sdfg.validate()
+
+    expected_reads = {
+            "A": [sbs.Range.from_string("0, 0")],
+    }
+    expected_writes = {
+            "B": [sbs.Range.from_string("0")],
+    }
+    read_set, write_set = state._read_and_write_sets()
+
+    for expected_sets, computed_sets in [(expected_reads, read_set), (expected_writes, write_set)]:
+        assert expected_sets.keys() == computed_sets.keys(), f"Expected the set to contain '{expected_sets.keys()}' but got '{computed_sets.keys()}'."
+        for access_data in expected_sets.keys():
+            for exp in expected_sets[access_data]:
+                found_match = False
+                for res in computed_sets[access_data]:
+                    if res == exp:
+                        found_match = True
+                        break
+                assert found_match, f"Could not find the subset '{exp}' only got '{computed_sets}'"
 
 
 def test_add_mapped_tasklet():
@@ -82,6 +169,8 @@ def test_add_mapped_tasklet():
 
 
 if __name__ == '__main__':
+    test_read_and_write_set_selection()
+    test_read_and_write_set_filter()
     test_read_write_set()
     test_read_write_set_y_formation()
     test_deepcopy_state()

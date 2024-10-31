@@ -1,20 +1,11 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Subgraph Transformation Helper API """
-from dace import dtypes, registry, symbolic, subsets
-from dace.sdfg import nodes, utils
-from dace.memlet import Memlet
-from dace.sdfg import replace, SDFG, SDFGState
-from dace.properties import make_properties, Property
-from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace import subsets
+from dace.sdfg import nodes
 from dace.sdfg.graph import SubgraphView
 
-from collections import defaultdict
 import copy
-from typing import List, Union, Dict, Tuple, Set
-
-import dace.libraries.standard as stdlib
-
-import itertools
+from typing import List, Dict, Set
 
 # ****************
 # Helper functions

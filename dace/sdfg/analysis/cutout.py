@@ -349,7 +349,8 @@ class SDFGCutout(SDFG):
     def multistate_cutout(cls,
                           *states: SDFGState,
                           make_side_effects_global: bool = True,
-                          preserve_guids: bool = False) -> Union['SDFGCutout', SDFG]:
+                          preserve_guids: bool = False,
+                          override_start_block: Optional[ControlFlowBlock] = None) -> Union['SDFGCutout', SDFG]:
         """
         Cut out a multi-state subgraph from an SDFG to run separately for localized testing or optimization.
 
@@ -367,6 +368,9 @@ class SDFGCutout(SDFG):
         :param preserve_guids: If True, ensures that the GUIDs of graph elements contained in the cutout remain
                                identical to the ones in their original graph. If False, new GUIDs will be generated.
                                False by default - if make_copy is False, this has no effect by extension.
+        :param override_start_block: If set, explicitly force a given control flow block to be the start block. If left
+                                     None (default), the start block is automatically determined based on domination
+                                     relationships in the original graph.
         :return: The created SDFGCutout or the original SDFG where no smaller cutout could be obtained.
         """
         def create_element(x: Union[ControlFlowBlock, InterstateEdge]) -> Union[ControlFlowBlock, InterstateEdge]:
@@ -382,10 +386,13 @@ class SDFGCutout(SDFG):
         # Determine the start state and ensure there IS a unique start state. If there is no unique start state, keep
         # adding states from the predecessor frontier in the state machine until a unique start state can be determined.
         start_state: Optional[SDFGState] = None
-        for state in cutout_states:
-            if state == sdfg.start_state:
-                start_state = state
-                break
+        if override_start_block is not None:
+            start_state = override_start_block
+        else:
+            for state in cutout_states:
+                if state == sdfg.start_state:
+                    start_state = state
+                    break
 
         if start_state is None:
             bfs_queue: Deque[Tuple[Set[SDFGState], Set[Edge[InterstateEdge]]]] = deque()
