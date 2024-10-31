@@ -227,8 +227,19 @@ class SDFGCutout(SDFG):
             memlet = edge.data
             if memlet.data in cutout.arrays:
                 continue
-            new_desc = sdfg.arrays[memlet.data].clone()
-            cutout.add_datadesc(memlet.data, new_desc)
+            dataname = memlet.data
+            if '.' in dataname:
+                # This is an access to a struct memeber, which typically happens for the memlets between an access node
+                # pointing to a struct (or view thereof), and a view pointing to the member. Assert that this is indeed
+                # the case (i.e., only one '.' is found in the name of the data being accessed), and if so, clone the
+                # struct (or struct view) data descriptor instad.
+                parts = dataname.split('.')
+                if len(parts) == 2:
+                    dataname = parts[0]
+                else:
+                    raise RuntimeError('Attempting to add invalid multi-nested data ' + memlet.data + ' to a cutout')
+            new_desc = sdfg.arrays[dataname].clone()
+            cutout.add_datadesc(dataname, new_desc)
 
         # Add a single state with the extended subgraph
         new_state = cutout.add_state(state.label, is_start_state=True)
