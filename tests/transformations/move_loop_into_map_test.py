@@ -2,6 +2,7 @@
 import dace
 from dace.transformation.interstate import MoveLoopIntoMap
 import unittest
+import copy
 import numpy as np
 
 I = dace.symbol("I")
@@ -147,7 +148,12 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         self.assertTrue(np.allclose(val, ref))
 
     def test_more_than_a_map(self):
-        """ `out` is read and written indirectly by the MapExit, potentially leading to a RW dependency. """
+        """
+        `out` is read and written indirectly by the MapExit, potentially leading to a RW dependency.
+
+        Note that there is actually no dependency, however, the transformation, because it relies
+        on `SDFGState.read_and_write_sets()` it can not detect this and can thus not be applied.
+        """
         sdfg = dace.SDFG('more_than_a_map')
         _, aarr = sdfg.add_array('A', (3, 3), dace.float64)
         _, barr = sdfg.add_array('B', (3, 3), dace.float64)
@@ -167,11 +173,12 @@ class MoveLoopIntoMapTest(unittest.TestCase):
                                 external_edges=True,
                                 input_nodes=dict(out=oread, B=bread),
                                 output_nodes=dict(tmp=twrite))
-        body.add_nedge(aread, oread, dace.Memlet.from_array('A', aarr))
+        body.add_nedge(aread, oread, dace.Memlet.from_array('A', oarr))
         body.add_nedge(twrite, owrite, dace.Memlet.from_array('out', oarr))
         sdfg.add_loop(None, body, None, '_', '0', '_ < 10', '_ + 1')
-        count = sdfg.apply_transformations(MoveLoopIntoMap)
-        self.assertFalse(count > 0)
+
+        count = sdfg.apply_transformations(MoveLoopIntoMap, validate_all=True, validate=True)
+        self.assertTrue(count == 0)
 
     def test_more_than_a_map_1(self):
         """
@@ -267,6 +274,55 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         body.add_nedge(aread2, owrite2, dace.Memlet.from_array('out', oarr))
         sdfg.add_loop(None, body, None, '_', '0', '_ < 10', '_ + 1')
         count = sdfg.apply_transformations(MoveLoopIntoMap)
+        self.assertFalse(count > 0)
+
+    def test_more_than_a_map_4(self):
+        """
+        The test is very similar to `test_more_than_a_map()`. But a memlet is different
+        which leads to a RW dependency, which blocks the transformation.
+        """
+        sdfg = dace.SDFG('more_than_a_map')
+        _, aarr = sdfg.add_array('A', (3, 3), dace.float64)
+        _, barr = sdfg.add_array('B', (3, 3), dace.float64)
+        _, oarr = sdfg.add_array('out', (3, 3), dace.float64)
+        _, tarr = sdfg.add_array('tmp', (3, 3), dace.float64, transient=True)
+        body = sdfg.add_state('map_state')
+        aread = body.add_access('A')
+        oread = body.add_access('out')
+        bread = body.add_access('B')
+        twrite = body.add_access('tmp')
+        owrite = body.add_access('out')
+        body.add_mapped_tasklet('op',
+                                dict(i='0:3', j='0:3'),
+                                dict(__in1=dace.Memlet('out[i, j]'), __in2=dace.Memlet('B[i, j]')),
+                                '__out = __in1 - __in2',
+                                dict(__out=dace.Memlet('tmp[i, j]')),
+                                external_edges=True,
+                                input_nodes=dict(out=oread, B=bread),
+                                output_nodes=dict(tmp=twrite))
+        body.add_nedge(aread, oread, dace.Memlet('A[Mod(_, 3), 0:3] -> [Mod(_ + 1, 3), 0:3]', aarr))
+        body.add_nedge(twrite, owrite, dace.Memlet.from_array('out', oarr))
+        sdfg.add_loop(None, body, None, '_', '0', '_ < 10', '_ + 1')
+
+        sdfg_args_ref = {
+            "A": np.array(np.random.rand(3, 3), dtype=np.float64),
+            "B": np.array(np.random.rand(3, 3), dtype=np.float64),
+            "out": np.array(np.random.rand(3, 3), dtype=np.float64),
+        }
+        sdfg_args_res = copy.deepcopy(sdfg_args_ref)
+
+        # Perform the reference execution
+        sdfg(**sdfg_args_ref)
+
+        # Apply the transformation and execute the SDFG again.
+        count = sdfg.apply_transformations(MoveLoopIntoMap, validate_all=True, validate=True)
+        sdfg(**sdfg_args_res)
+
+        for name in sdfg_args_ref.keys():
+            self.assertTrue(
+                np.allclose(sdfg_args_ref[name], sdfg_args_res[name]),
+                f"Miss match for {name}",
+            )
         self.assertFalse(count > 0)
 
 

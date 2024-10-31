@@ -92,14 +92,15 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
             desc = sdfg.arrays[arg_name]
             if not hasattr(desc, 'shape') or not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_values = list(desc.shape) + list(getattr(desc, 'strides', []))
+            symbolic_values = list(desc.shape) + list(getattr(desc, 'strides', [])) + list(getattr(desc, 'offset', []))
             given_values = list(arg_val.shape)
             given_strides = []
             if hasattr(arg_val, 'strides'):
                 # NumPy arrays use bytes in strides
                 factor = getattr(arg_val, 'itemsize', 1)
                 given_strides = [s // factor for s in arg_val.strides]
-            given_values += given_strides
+            given_offset = [o for o in arg_val.offset] if hasattr(arg_val, 'offset') else []
+            given_values += given_strides + given_offset
 
             for sym_dim, real_dim in zip(symbolic_values, given_values):
                 repldict = {}
@@ -494,9 +495,12 @@ class DaceProgram(pycommon.SDFGConvertible):
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
 
         if not self.use_experimental_cfg_blocks:
-            sdutils.inline_loop_blocks(sdfg)
-            sdutils.inline_control_flow_regions(sdfg)
+            for nsdfg in sdfg.all_sdfgs_recursive():
+                sdutils.inline_conditional_blocks(nsdfg)
+                sdutils.inline_control_flow_regions(nsdfg)
         sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
+
+        sdfg.reset_cfg_list()
 
         # Apply simplification pass automatically
         if not cached and (simplify == True or

@@ -20,7 +20,9 @@ def test_read_write_set():
     state.add_memlet_path(rw_b, task2, dst_conn='B', memlet=dace.Memlet('B[2]'))
     state.add_memlet_path(task2, write_c, src_conn='C', memlet=dace.Memlet('C[2]'))
 
-    assert 'B' not in state.read_and_write_sets()[0]
+    read_set, write_set = state.read_and_write_sets()
+    assert {'B', 'A'} == read_set
+    assert {'C', 'B'} == write_set
 
 
 def test_read_write_set_y_formation():
@@ -42,7 +44,9 @@ def test_read_write_set_y_formation():
     state.add_memlet_path(rw_b, task2, dst_conn='B', memlet=dace.Memlet(data='B', subset='0'))
     state.add_memlet_path(task2, write_c, src_conn='C', memlet=dace.Memlet(data='C', subset='0'))
 
-    assert 'B' not in state.read_and_write_sets()[0]
+    read_set, write_set = state.read_and_write_sets()
+    assert {'B', 'A'} == read_set
+    assert {'C', 'B'} == write_set
 
 
 def test_deepcopy_state():
@@ -71,30 +75,25 @@ def test_read_and_write_set_filter():
     state.add_nedge(
             A,
             B,
-            dace.Memlet("B[0] -> 0, 0"),
+            dace.Memlet("B[0] -> [0, 0]"),
     )
     state.add_nedge(
             B,
             C,
-            # If the Memlet would be `B[0] -> 1, 1` it would then be filtered out.
-            #   This is an intentional behaviour for compatibility.
-            dace.Memlet("C[1, 1] -> 0"),
+            dace.Memlet("C[1, 1] -> [0]"),
     )
     state.add_nedge(
             B,
             C,
-            dace.Memlet("B[0] -> 0, 0"),
+            dace.Memlet("B[0] -> [0, 0]"),
     )
     sdfg.validate()
 
     expected_reads = {
             "A": [sbs.Range.from_string("0, 0")],
-            # See comment in `state._read_and_write_sets()` why "B" is here
-            #   it should actually not, but it is a bug.
             "B": [sbs.Range.from_string("0")],
     }
     expected_writes = {
-            # However, this should always be here.
             "B": [sbs.Range.from_string("0")],
             "C": [sbs.Range.from_string("0, 0"), sbs.Range.from_string("1, 1")],
     }
@@ -170,9 +169,9 @@ def test_add_mapped_tasklet():
 
 
 if __name__ == '__main__':
+    test_read_and_write_set_selection()
+    test_read_and_write_set_filter()
     test_read_write_set()
     test_read_write_set_y_formation()
     test_deepcopy_state()
     test_add_mapped_tasklet()
-    test_read_and_write_set_selection()
-    test_read_and_write_set_filter()

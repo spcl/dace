@@ -96,6 +96,10 @@ class ProcessGrid(object):
             raise ValueError('Color must have only logical true (1) or false (0) values.')
         return True
 
+    @property
+    def dtype(self):
+        return type(self)
+
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
         retdict = {"type": type(self).__name__, "attributes": attrs}
