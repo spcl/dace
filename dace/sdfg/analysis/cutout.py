@@ -13,7 +13,7 @@ from dace import data, DataInstrumentationType
 from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateEdge
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge, MultiConnectorEdge
-from dace.sdfg.state import StateSubgraphView, SubgraphView
+from dace.sdfg.state import ControlFlowBlock, StateSubgraphView, SubgraphView
 from dace.transformation.transformation import (MultiStateTransformation,
                                                 PatternTransformation,
                                                 SubgraphTransformation,
@@ -111,8 +111,8 @@ class SDFGCutout(SDFG):
         return cutout_json
 
     @classmethod
-    def from_json(cls, json_obj, context_info=None):
-        return super(SDFGCutout, cls).from_json(json_obj, context_info)
+    def from_json(cls, json_obj, context=None):
+        return super(SDFGCutout, cls).from_json(json_obj, context)
 
     @classmethod
     def from_transformation(
@@ -322,7 +322,7 @@ class SDFGCutout(SDFG):
     def multistate_cutout(cls,
                           *states: SDFGState,
                           make_side_effects_global: bool = True,
-                          override_start_state: Optional[SDFGState] = None) -> Union['SDFGCutout', SDFG]:
+                          override_start_block: Optional[ControlFlowBlock] = None) -> Union['SDFGCutout', SDFG]:
         """
         Cut out a multi-state subgraph from an SDFG to run separately for localized testing or optimization.
 
@@ -337,6 +337,9 @@ class SDFGCutout(SDFG):
         :param make_side_effects_global: If True, all transient data containers which are read inside the cutout but may
                                         be written to _before_ the cutout, or any data containers which are written to
                                         inside the cutout but may be read _after_ the cutout, are made global.
+        :param override_start_block: If set, explicitly force a given control flow block to be the start block. If left
+                                     None (default), the start block is automatically determined based on domination
+                                     relationships in the original graph.
         :return: The created SDFGCutout or the original SDFG where no smaller cutout could be obtained.
         """
         create_element = copy.deepcopy
@@ -351,8 +354,8 @@ class SDFGCutout(SDFG):
         # Determine the start state and ensure there IS a unique start state. If there is no unique start state, keep
         # adding states from the predecessor frontier in the state machine until a unique start state can be determined.
         start_state: Optional[SDFGState] = None
-        if override_start_state is not None:
-            start_state = override_start_state
+        if override_start_block is not None:
+            start_state = override_start_block
         else:
             for state in cutout_states:
                 if state == sdfg.start_state:

@@ -527,6 +527,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         elif isinstance(value, symbolic.symbol):
             # Symbols resolve to the symbol name
             newnode = ast.Name(id=value.name, ctx=ast.Load())
+        elif isinstance(value, sympy.Basic):  # Symbolic or constant expression
+            newnode = ast.parse(symbolic.symstr(value)).body[0].value
         elif isinstance(value, ast.Name):
             newnode = ast.Name(id=value.id, ctx=ast.Load())
         elif (dtypes.isconstant(value) or isinstance(value, (StringLiteral, SDFG)) or hasattr(value, '__sdfg__')):
@@ -752,7 +754,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 return self.generic_visit(node)
 
             # Then query for the right value
-            if isinstance(node.value, ast.Dict):
+            if isinstance(node.value, ast.Dict): # Dict
                 for k, v in zip(node.value.keys, node.value.values):
                     try:
                         gkey = astutils.evalnode(k, self.globals)
@@ -760,8 +762,20 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                         continue
                     if gkey == gslice:
                         return self._visit_potential_constant(v, True)
-            else:  # List or Tuple
-                return self._visit_potential_constant(node.value.elts[gslice], True)
+            elif isinstance(node.value, (ast.List, ast.Tuple)):  # List & Tuple
+                # Loop over the list if slicing makes it a list
+                if isinstance(node.value.elts[gslice], List):
+                    visited_list = astutils.copy_tree(node.value)
+                    visited_list.elts.clear()
+                    for v in node.value.elts[gslice]:
+                        visited_cst = self._visit_potential_constant(v, True)
+                        visited_list.elts.append(visited_cst)
+                    node.value = visited_list
+                    return node
+                else:
+                    return self._visit_potential_constant(node.value.elts[gslice], True)
+            else: # Catch-all
+                return self._visit_potential_constant(node, True)
 
         return self._visit_potential_constant(node, True)
 
@@ -923,6 +937,9 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         for stmt in reversed(self.with_statements):
             if until_loop_end and not isinstance(stmt, (ast.With, ast.AsyncWith)):
                 break
+            elif not until_loop_end and isinstance(stmt, (ast.For, ast.While)):
+                break
+
             for mgrname, mgr in reversed(self.context_managers[stmt]):
                 # Call __exit__ (without exception management all three arguments are set to None)
                 exit_call = ast.copy_location(ast.parse(f'{mgrname}.__exit__(None, None, None)').body[0], stmt)
@@ -975,7 +992,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         # Avoid parsing "with dace.tasklet"
         try:
             evald = astutils.evalnode(node.items[0].context_expr, self.globals)
-            if evald is dace.tasklet or isinstance(evald, dace.tasklet):
+            if evald is dace.tasklet or evald is dace.named or isinstance(evald, (dace.tasklet, dace.named)):
                 return self.generic_visit(node)
         except SyntaxError:
             pass

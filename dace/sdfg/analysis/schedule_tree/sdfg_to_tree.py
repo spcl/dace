@@ -116,7 +116,7 @@ def dealias_sdfg(sdfg: SDFG):
                         elif e.data.data == dst_data:
                             e.data.data = new_dst_memlet.data
 
-                for e in nsdfg.edges():
+                for e in nsdfg.all_interstate_edges():
                     repl_dict = dict()
                     syms = e.data.read_symbols()
                     for memlet in e.data.get_read_memlets(nsdfg.arrays):
@@ -276,7 +276,7 @@ def remove_name_collisions(sdfg: SDFG):
 
     for nsdfg in sdfg.all_sdfgs_recursive():
         # Rename duplicate states
-        for state in nsdfg.nodes():
+        for state in nsdfg.states():
             if state.label in state_names_seen:
                 state.label = data.find_new_name(state.label, state_names_seen)
             state_names_seen.add(state.label)
@@ -668,12 +668,12 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                 # Use the sub-nodes directly
                 result = subnodes
 
-        elif isinstance(node, cf.SingleState):
+        elif isinstance(node, cf.BasicCFBlock):
             result = state_schedule_tree(node.state)
 
             # Add interstate assignments unrelated to structured control flow
             if parent is not None:
-                for e in sdfg.out_edges(node.state):
+                for e in node.state.parent_graph.out_edges(node.state):
                     edge_body = []
 
                     if e not in parent.assignments_to_ignore:
@@ -691,6 +691,26 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                                 edge_body.append(tn.BreakNode())
                             elif e in parent.gotos_to_continue:
                                 edge_body.append(tn.ContinueNode())
+                    else:
+                        # If the next state is not the expected target (loop-back edge, next state),
+                        # emit goto
+                        expected_transition = False
+                        if isinstance(parent, (cf.ForScope, cf.WhileScope)) and e.dst is parent.guard:
+                            expected_transition = True
+                        elif isinstance(parent, cf.DoWhileScope) and e.dst is parent.body[0]:
+                            expected_transition = True
+                        else:
+                            next_block = cf.find_next_block(node)
+                            # Next state in block or first state in next CF block
+                            if next_block is not None:
+                                if isinstance(next_block, cf.GeneralLoopScope):  # Special case for control flow regions
+                                    if e.dst is next_block.loop:
+                                        expected_transition = True
+                                elif next_block.first_block is e.dst:
+                                    expected_transition = True
+
+                        if not expected_transition and e not in parent.gotos_to_ignore:
+                            edge_body.append(tn.GotoNode(target=e.dst.label))
 
                     if e not in parent.gotos_to_ignore and not e.data.is_unconditional():
                         if sdfg.out_degree(node.state) == 1 and parent.sequential:
@@ -722,12 +742,14 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
             result.append(tn.WhileScope(header=node, children=totree(node.body)))
         elif isinstance(node, cf.DoWhileScope):
             result.append(tn.DoWhileScope(header=node, children=totree(node.body)))
+        elif isinstance(node, cf.GeneralLoopScope):
+            result.append(tn.GeneralLoopScope(header=node, children=totree(node.body)))
         else:
             # e.g., "SwitchCaseScope"
             raise tn.UnsupportedScopeException(type(node).__name__)
 
-        if node.first_state is not None:
-            result = [tn.StateLabel(state=node.first_state)] + result
+        if node.first_block is not None:
+            result = [tn.StateLabel(state=node.first_block)] + result
 
         return result
 

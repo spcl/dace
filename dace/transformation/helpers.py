@@ -4,6 +4,7 @@ import copy
 import itertools
 from networkx import MultiDiGraph
 
+from dace.sdfg.state import ControlFlowRegion
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
 from typing import Dict, List, Optional, Tuple, Set, Union
@@ -31,6 +32,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
 
     # Nest states
     states = subgraph.nodes()
+    return_state = None
     if len(states) > 1:
 
         if start is not None:
@@ -107,7 +109,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                     # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
                     pass
 
-        new_state = sdfg.add_state('nested_sdfg_parent')
+        return_state = new_state = sdfg.add_state('nested_sdfg_parent')
         nsdfg = SDFG("nested_sdfg", constants=sdfg.constants_prop, parent=new_state)
         nsdfg.add_node(source_node, is_start_state=True)
         nsdfg.add_nodes_from([s for s in states if s is not source_node])
@@ -184,9 +186,9 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
             new_state = extra_state
 
     else:
-        new_state = states[0]
+        return_state = states[0]
 
-    return new_state
+    return return_state
 
 
 def _copy_state(sdfg: SDFG,
@@ -271,7 +273,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
     components = {}
     visited = {}  # Dict[SDFGState, bool]: True if SDFGState in Scope (non-SingleState)
     for i, child in enumerate(cft.children):
-        if isinstance(child, cf.SingleState):
+        if isinstance(child, cf.BasicCFBlock):
             if child.state in visited:
                 continue
             components[child.state] = (set([child.state]), child)
@@ -300,7 +302,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     del components[guard]
                     del visited[guard]
 
-            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.SingleState)
+            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.BasicCFBlock)
                     and cft.children[i + 1].state is fexit):
                 fexit_copy = _copy_state(sdfg, fexit, True, states)
                 fexit.remove_nodes_from(fexit.nodes())
@@ -310,7 +312,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             components[guard] = (states, child)
             visited.update({s: True for s in states})
         elif isinstance(child, (cf.IfScope, cf.IfElseChain)):
-            guard = child.branch_state
+            guard = child.branch_block
             ifexit = ipostdom[guard]
 
             states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
@@ -326,7 +328,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     del components[guard]
                     del visited[guard]
 
-            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.SingleState)
+            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.BasicCFBlock)
                     and cft.children[i + 1].state is ifexit):
                 ifexit_copy = _copy_state(sdfg, ifexit, True, states)
                 ifexit.remove_nodes_from(ifexit.nodes())
@@ -378,7 +380,7 @@ def nest_state_subgraph(sdfg: SDFG,
                          SDFG.
         :raise ValueError: The subgraph is contained in more than one scope.
     """
-    if state.parent != sdfg:
+    if state.sdfg != sdfg:
         raise KeyError('State does not belong to given SDFG')
     if subgraph is not state and subgraph.graph is not state:
         raise KeyError('Subgraph does not belong to given state')
@@ -432,7 +434,7 @@ def nest_state_subgraph(sdfg: SDFG,
     # top-level graph)
     data_in_subgraph = set(n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
     # Find other occurrences in SDFG
-    other_nodes = set(n.data for s in sdfg.nodes() for n in s.nodes()
+    other_nodes = set(n.data for s in sdfg.states() for n in s.nodes()
                       if isinstance(n, nodes.AccessNode) and n not in subgraph.nodes())
     subgraph_transients = set()
     for data in data_in_subgraph:
@@ -645,10 +647,12 @@ def nest_state_subgraph(sdfg: SDFG,
         if state.in_degree(edge.dst) + state.out_degree(edge.dst) == 0:
             state.remove_node(edge.dst)
 
+    sdfg.reset_cfg_list()
+
     return nested_sdfg
 
 
-def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
+def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
     """
     Given a subgraph, adds a new SDFG state before the state that contains it,
     removes the subgraph from the original state, and connects the two states.
@@ -658,7 +662,7 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str]
     """
 
     state: SDFGState = subgraph.graph
-    newstate = sdfg.add_state_before(state, label=label)
+    newstate = state.parent_graph.add_state_before(state, label=label)
 
     # Save edges before removing nodes
     orig_edges = subgraph.edges()
@@ -688,30 +692,25 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str]
     return newstate
 
 
-def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: Optional[str] = None) -> SDFGState:
+def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str] = None) -> SDFGState:
     """
     """
-    newstate = sdfg.add_state_after(state, label=label)
+    newstate = state.parent_graph.add_state_after(state, label=label)
 
     # Bookkeeping
     nodes_to_move = set([node])
+    boundary_nodes = set()
     orig_edges = set()
 
     # Collect predecessors
     if not isinstance(node, nodes.AccessNode):
         for edge in state.in_edges(node):
-            nodes_to_move.add(edge.src)
-            orig_edges.add(edge)
-
-            if isinstance(edge.src, nodes.AccessNode) and isinstance(sdfg.arrays[edge.src.data], data.View):
-                for view_node in get_all_view_nodes(state, edge.src)[:-1]:
-                    view_edge = get_view_edge(state, view_node)
-                    nodes_to_move.add(view_edge.src)
-                    orig_edges.add(view_edge)
-
+            for e in state.memlet_path(edge):
+                nodes_to_move.add(e.src)
+                orig_edges.add(e)
 
     # Collect nodes_to_move
-    for edge in state.bfs_edges(node):
+    for edge in state.edge_bfs(node):
         nodes_to_move.add(edge.dst)
         orig_edges.add(edge)
 
@@ -725,39 +724,35 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
                     orig_edges.add(e)
 
     # Define boundary nodes
-    boundary_nodes = set()
-    for n in nodes_to_move:
-        if isinstance(n, nodes.AccessNode):
-            for iedge in state.in_edges(n):
+    for node in set(nodes_to_move):
+        if isinstance(node, nodes.AccessNode):
+            for iedge in state.in_edges(node):
                 if iedge.src not in nodes_to_move:
-                    boundary_nodes.add(n)
+                    boundary_nodes.add(node)
                     break
 
-            for oedge in state.out_edges(n):
+            if node in boundary_nodes:
+                continue
+
+            for oedge in state.out_edges(node):
                 if oedge.dst not in nodes_to_move:
-                    boundary_nodes.add(n)
+                    boundary_nodes.add(node)
                     break
 
     # Duplicate boundary nodes
     new_nodes = {}
-    for n in boundary_nodes:
-        node_ = copy.deepcopy(n)
+    for node in boundary_nodes:
+        node_ = copy.deepcopy(node)
         state.add_node(node_)
-        new_nodes[n] = node_
-
-        if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], data.View):
-            for view_node in get_all_view_nodes(state, n):
-                node_ = copy.deepcopy(view_node)
-                state.add_node(node_)
-                new_nodes[view_node] = node_
+        new_nodes[node] = node_
 
     for edge in state.edges():
-        if edge.src in new_nodes and edge.dst in new_nodes:
+        if edge.src in boundary_nodes and edge.dst in boundary_nodes:
             state.add_edge(new_nodes[edge.src], edge.src_conn, new_nodes[edge.dst], edge.dst_conn,
                            copy.deepcopy(edge.data))
-        elif edge.src in new_nodes:
+        elif edge.src in boundary_nodes:
             state.add_edge(new_nodes[edge.src], edge.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
-        elif edge.dst in new_nodes:
+        elif edge.dst in boundary_nodes:
             state.add_edge(edge.src, edge.src_conn, new_nodes[edge.dst], edge.dst_conn, copy.deepcopy(edge.data))
 
     # Move nodes
@@ -940,16 +935,10 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     return ScopeSubgraphView(state, new_nodes, new_entry)
 
 
-def offset_map(sdfg: SDFG,
-               state: SDFGState,
-               entry: nodes.MapEntry,
-               dim: int,
-               offset: symbolic.SymbolicType,
-               negative: bool = True):
+def offset_map(state: SDFGState, entry: nodes.MapEntry, dim: int, offset: symbolic.SymbolicType, negative: bool = True):
     """
     Offsets a map parameter and its contents by a value.
 
-    :param sdfg: The SDFG in which the map resides.
     :param state: The state in which the map resides.
     :param entry: The map entry node.
     :param dim: The map dimension to offset.
@@ -966,20 +955,21 @@ def offset_map(sdfg: SDFG,
         subgraph.replace(param, f'({param} - {offset})')
 
 
-def split_interstate_edges(sdfg: SDFG) -> None:
+def split_interstate_edges(cfg: ControlFlowRegion) -> None:
     """
-    Splits all inter-state edges into edges with conditions and edges with
-    assignments. This procedure helps in nested loop detection.
+    Splits all inter-state edges into edges with conditions and edges with assignments.
+    This procedure helps in nested loop detection.
 
-    :param sdfg: The SDFG to split
-    :note: Operates in-place on the SDFG.
+    :param cfg: The control flow graph to split
+    :note: Operates in-place on the graph.
     """
-    for e in sdfg.edges():
-        if e.data.assignments and not e.data.is_unconditional():
-            tmpstate = sdfg.add_state()
-            sdfg.add_edge(e.src, tmpstate, InterstateEdge(condition=e.data.condition))
-            sdfg.add_edge(tmpstate, e.dst, InterstateEdge(assignments=e.data.assignments))
-            sdfg.remove_edge(e)
+    for cfg in cfg.all_control_flow_regions():
+        for e in cfg.edges():
+            if e.data.assignments and not e.data.is_unconditional():
+                tmpstate = cfg.add_state()
+                cfg.add_edge(e.src, tmpstate, InterstateEdge(condition=e.data.condition))
+                cfg.add_edge(tmpstate, e.dst, InterstateEdge(assignments=e.data.assignments))
+                cfg.remove_edge(e)
 
 
 def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
@@ -1277,6 +1267,17 @@ def gpu_map_has_explicit_threadblocks(state: SDFGState, entry: nodes.EntryNode) 
     return False
 
 
+def gpu_map_has_explicit_dyn_threadblocks(state: SDFGState, entry: nodes.EntryNode) -> bool:
+    """
+    Returns True if GPU_Device map has explicit thread-block maps nested within.
+    """
+    internal_maps = get_internal_scopes(state, entry)
+    if any(m.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic for _, m in internal_maps):
+        return True
+
+    return False
+
+
 def reconnect_edge_through_map(
         state: SDFGState, edge: graph.MultiConnectorEdge[Memlet], new_node: Union[nodes.EntryNode, nodes.ExitNode],
         keep_src: bool) -> Tuple[graph.MultiConnectorEdge[Memlet], graph.MultiConnectorEdge[Memlet]]:
@@ -1404,7 +1405,7 @@ def replace_code_to_code_edges(sdfg: SDFG):
 
     :param sdfg: The SDFG to process.
     """
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         for edge in state.edges():
             if not isinstance(edge.src, nodes.CodeNode) or not isinstance(edge.dst, nodes.CodeNode):
                 continue

@@ -35,6 +35,7 @@ class Node(object):
     out_connectors = DictProperty(key_type=str,
                                   value_type=dtypes.typeclass,
                                   desc="A set of output connectors for this node.")
+    guid = Property(dtype=str, allow_none=False)
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -45,6 +46,8 @@ class Node(object):
 
         self.in_connectors = in_connectors or {}
         self.out_connectors = out_connectors or {}
+
+        self.guid = graph.generate_element_id(self)
 
     def __str__(self):
         if hasattr(self, 'label'):
@@ -253,12 +256,15 @@ class AccessNode(Node):
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
+
+        node._guid = graph.generate_element_id(node)
+
         return node
 
     @property
     def label(self):
         return self.data
-    
+
     @property
     def root_data(self):
         return self.data.split('.')[0]
@@ -270,7 +276,7 @@ class AccessNode(Node):
         if isinstance(sdfg, (dace.sdfg.SDFGState, dace.sdfg.ScopeSubgraphView)):
             sdfg = sdfg.parent
         return sdfg.arrays[self.data]
-    
+
     def root_desc(self, sdfg):
         from dace.sdfg import SDFGState, ScopeSubgraphView
         if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
@@ -575,6 +581,9 @@ class NestedSDFG(CodeNode):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
+            # Skip GUID.
+            if k in ('guid',):
+                continue
             setattr(result, k, dcpy(v, memo))
         if result._sdfg is not None:
             result._sdfg.parent_nsdfg_node = result
@@ -611,6 +620,7 @@ class NestedSDFG(CodeNode):
             internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
             keys_to_use &= internally_used_symbols
 
+        # Translate the internal symbols back to their external counterparts.
         free_syms |= set().union(*(map(str,
                                        pystr_to_symbolic(v).free_symbols) for k, v in self.symbol_mapping.items()
                                    if k in keys_to_use))
@@ -655,6 +665,10 @@ class NestedSDFG(CodeNode):
 
         connectors = self.in_connectors.keys() | self.out_connectors.keys()
         for conn in connectors:
+            if conn in self.sdfg.symbols:
+                raise ValueError(
+                    f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
+                    'To pass symbols use "symbol_mapping".')
             if conn not in self.sdfg.arrays:
                 raise NameError(
                     f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
@@ -726,7 +740,7 @@ class ExitNode(Node):
 @dace.serialize.serializable
 class MapEntry(EntryNode):
     """ Node that opens a Map scope.
-        
+
         :see: Map
     """
 
@@ -789,10 +803,8 @@ class MapEntry(EntryNode):
         for p, rng in zip(self._map.params, self._map.range):
             result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
 
-        # Add dynamic inputs
+        # Handle the dynamic map ranges.
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
-
-        # Try to get connector type from connector
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
@@ -803,7 +815,7 @@ class MapEntry(EntryNode):
 @dace.serialize.serializable
 class MapExit(ExitNode):
     """ Node that closes a Map scope.
-        
+
         :see: Map
     """
 
@@ -874,6 +886,9 @@ class Map(object):
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
+    unroll_factor = Property(dtype=int, allow_none=True, default=0,
+                             desc="How much iterations should be unrolled."
+                             " To prevent unrolling, set this value to 1.")
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
@@ -885,36 +900,28 @@ class Map(object):
     omp_num_threads = Property(dtype=int,
                                default=0,
                                desc="Number of OpenMP threads executing the Map",
-                               optional=True,
-                               optional_condition=lambda m: m.schedule in
-                               (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+                               serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
     omp_schedule = EnumProperty(dtype=dtypes.OMPScheduleType,
                                 default=dtypes.OMPScheduleType.Default,
                                 desc="OpenMP schedule {static, dynamic, guided}",
-                                optional=True,
-                                optional_condition=lambda m: m.schedule in
-                                (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+                                serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
     omp_chunk_size = Property(dtype=int,
                               default=0,
                               desc="OpenMP schedule chunk size",
-                              optional=True,
-                              optional_condition=lambda m: m.schedule in
-                              (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+                              serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,
                                   allow_none=True,
                                   desc="GPU kernel block size",
-                                  optional=True,
-                                  optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_launch_bounds = Property(dtype=str,
                                  default="0",
                                  desc="GPU kernel launch bounds. A value of -1 disables the statement, 0 (default) "
                                  "enables the statement if block size is not symbolic, and any other value "
                                  "(including tuples) sets it explicitly.",
-                                 optional=True,
-                                 optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+                                 serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     def __init__(self,
                  label,
@@ -931,7 +938,7 @@ class Map(object):
         self.label = label
         self.schedule = schedule
         self.unroll = unroll
-        self.collapse = 1
+        self.collapse = collapse
         self.params = params
         self.range = ndrange
         self.debuginfo = debuginfo
@@ -947,7 +954,12 @@ class Map(object):
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
-            raise NameError('Invalid map name "%s"' % self.label)
+            raise NameError(f'Invalid map name "{self.label}"')
+        if self.get_param_num() == 0:
+            raise ValueError('There must be at least one parameter in a map.')
+        if self.get_param_num() != self.range.dims():
+            raise ValueError(f'There are {self.get_param_num()} parameters but the range'
+                             f' has {self.range.dims()} dimensions.')
 
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
@@ -963,7 +975,7 @@ MapEntry = indirect_properties(Map, lambda obj: obj.map)(MapEntry)
 @dace.serialize.serializable
 class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
-        
+
         :see: Consume
     """
 
@@ -1044,7 +1056,7 @@ class ConsumeEntry(EntryNode):
 @dace.serialize.serializable
 class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
-        
+
         :see: Consume
     """
 

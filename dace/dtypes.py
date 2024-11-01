@@ -1,10 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
-from __future__ import print_function
 import ctypes
 import aenum
 import inspect
-import itertools
 import numpy
 import re
 from collections import OrderedDict
@@ -85,6 +83,12 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock_Dynamic,
     ScheduleType.GPU_Persistent,
+]
+
+# A subset of CPU schedule types
+CPU_SCHEDULES = [
+    ScheduleType.CPU_Multicore,
+    ScheduleType.CPU_Persistent,
 ]
 
 # A subset of on-GPU storage types
@@ -1217,6 +1221,7 @@ int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
 int64 = typeclass(numpy.int64)
+uintp = typeclass(numpy.uintp)
 uint8 = typeclass(numpy.uint8)
 uint16 = typeclass(numpy.uint16)
 uint32 = typeclass(numpy.uint32)

@@ -23,6 +23,7 @@ def offset(memlet_subset_ranges, value):
     return (memlet_subset_ranges[0] + value, memlet_subset_ranges[1] + value, memlet_subset_ranges[2])
 
 
+@transformation.single_level_sdfg_only
 class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
     """
     Moves a loop around a map into the map
@@ -34,12 +35,10 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             return False
 
         # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
         body: sd.SDFGState = self.loop_begin
-        after: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride
-        loop_info = find_for_loop(sdfg, guard, body)
+        loop_info = self.loop_information()
         if not loop_info:
             return False
         itervar, (start, end, step), (_, body_end) = loop_info
@@ -156,11 +155,10 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
 
     def apply(self, _, sdfg: sd.SDFG):
         # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
         body: sd.SDFGState = self.loop_begin
 
         # Obtain iteration variable, range, and stride
-        itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
+        itervar, (start, end, step), _ = self.loop_information()
 
         forward_loop = step > 0
 
@@ -193,26 +191,31 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             else:
                 guard_body_edge = e
 
-        for body_inedge in sdfg.in_edges(body):
-            if body_inedge.src is guard:
-                guard_body_edge.data.assignments.update(body_inedge.data.assignments)
-            sdfg.remove_edge(body_inedge)
-        for body_outedge in sdfg.out_edges(body):
-            sdfg.remove_edge(body_outedge)
-        for guard_inedge in sdfg.in_edges(guard):
-            before_guard_edge.data.assignments.update(guard_inedge.data.assignments)
-            guard_inedge.data.assignments = {}
-            sdfg.add_edge(guard_inedge.src, body, guard_inedge.data)
-            sdfg.remove_edge(guard_inedge)
-        for guard_outedge in sdfg.out_edges(guard):
-            if guard_outedge.dst is body:
-                guard_body_edge.data.assignments.update(guard_outedge.data.assignments)
-            else:
-                guard_after_edge.data.assignments.update(guard_outedge.data.assignments)
-            guard_outedge.data.condition = CodeBlock("1")
-            sdfg.add_edge(body, guard_outedge.dst, guard_outedge.data)
-            sdfg.remove_edge(guard_outedge)
-        sdfg.remove_node(guard)
+        if self.expr_index <= 1:
+            guard = self.loop_guard
+            for body_inedge in sdfg.in_edges(body):
+                if body_inedge.src is guard:
+                    guard_body_edge.data.assignments.update(body_inedge.data.assignments)
+                sdfg.remove_edge(body_inedge)
+            for body_outedge in sdfg.out_edges(body):
+                sdfg.remove_edge(body_outedge)
+            for guard_inedge in sdfg.in_edges(guard):
+                before_guard_edge.data.assignments.update(guard_inedge.data.assignments)
+                guard_inedge.data.assignments = {}
+                sdfg.add_edge(guard_inedge.src, body, guard_inedge.data)
+                sdfg.remove_edge(guard_inedge)
+            for guard_outedge in sdfg.out_edges(guard):
+                if guard_outedge.dst is body:
+                    guard_body_edge.data.assignments.update(guard_outedge.data.assignments)
+                else:
+                    guard_after_edge.data.assignments.update(guard_outedge.data.assignments)
+                guard_outedge.data.condition = CodeBlock("1")
+                sdfg.add_edge(body, guard_outedge.dst, guard_outedge.data)
+                sdfg.remove_edge(guard_outedge)
+            sdfg.remove_node(guard)
+        else:  # Rotated or self loops
+            raise NotImplementedError('MoveLoopIntoMap not implemented for rotated and self-loops')
+
         if itervar in nsdfg.symbol_mapping:
             del nsdfg.symbol_mapping[itervar]
         if itervar in sdfg.symbols:

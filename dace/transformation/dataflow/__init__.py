@@ -5,14 +5,13 @@
 from .mapreduce import MapReduceFusion, MapWCRFusion
 from .map_expansion import MapExpansion
 from .map_collapse import MapCollapse
-from .map_for_loop import MapToForLoop
+from .map_for_loop import MapToForLoop, MapToForLoopRegion
 from .map_interchange import MapInterchange
 from .map_dim_shuffle import MapDimShuffle
 from .map_fusion import MapFusion
 from .map_fission import MapFission
 from .map_unroll import MapUnroll
 from .trivial_map_elimination import TrivialMapElimination
-from .trivial_map_range_elimination import TrivialMapRangeElimination
 from .otf_map_fusion import OTFMapFusion
 
 # Data movement
@@ -39,7 +38,7 @@ from .redundant_array_copying import (RedundantArrayCopyingIn, RedundantArrayCop
                                       RedundantArrayCopying3)
 from .merge_arrays import InMergeArrays, OutMergeArrays, MergeSourceSinkArrays
 from .prune_connectors import PruneConnectors, PruneSymbols
-from .wcr_conversion import AugAssignToWCR
+from .wcr_conversion import AugAssignToWCR, WCRToAugAssign
 from .tasklet_fusion import TaskletFusion
 from .trivial_tasklet_elimination import TrivialTaskletElimination
 

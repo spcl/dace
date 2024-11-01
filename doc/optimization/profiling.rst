@@ -5,7 +5,7 @@ Profiling and Instrumentation
 
 .. note::
 
-  For more information and examples, see the `Benchmarking and Instrumentation <https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/benchmarking.ipynb>`_ tutorial.
+  For more information and examples, see the `Benchmarking and Instrumentation <https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/benchmarking.ipynb>`_ tutorial.
 
 Simple profiling
 ----------------
@@ -120,7 +120,7 @@ There are more instrumentation types available, such as fine-grained GPU kernel 
 Instrumentation can also collect performance counters on CPUs and GPUs using `LIKWID <https://github.com/RRZE-HPC/likwid>`_.
 The :class:`~dace.dtypes.InstrumentationType.LIKWID_Counters` instrumentation type can be configured to collect
 a wide variety of performance counters on CPUs and GPUs. An example use can be found in the
-`LIKWID instrumentation code sample <https://github.com/spcl/dace/blob/master/samples/instrumentation/matmul_likwid.py>`_.
+`LIKWID instrumentation code sample <https://github.com/spcl/dace/blob/main/samples/instrumentation/matmul_likwid.py>`_.
 
 
 Instrumentation file format
