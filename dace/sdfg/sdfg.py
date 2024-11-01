@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
 
-from dace.sdfg.data_group import DataGroup
+from dace.sdfg.container_group import ContainerGroup, ContainerGroupFlatteningMode
 
 class NestedDict(dict):
 
@@ -411,7 +411,7 @@ class SDFG(ControlFlowRegion):
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_nested_arrays_from_json)
-    data_groups = Property(dtype=NestedDict,
+    container_groups = Property(dtype=NestedDict,
                            desc="Data group descriptors for this SDFG",
                            to_json=_arrays_to_json,
                            from_json=_nested_arrays_from_json)
@@ -494,7 +494,7 @@ class SDFG(ControlFlowRegion):
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
-        self.data_groups = NestedDict()
+        self.container_groups = NestedDict()
         self.arg_names = []
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -1742,11 +1742,11 @@ class SDFG(ControlFlowRegion):
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
-    def add_data_group(self,
+    def add_container_group(self,
                        name: str,
-                       find_new_name: bool = False) -> Tuple[str, DataGroup]:
-        dg_desc = DataGroup(name)
-        return self.add_data_group_desc(name, dg_desc, find_new_name=find_new_name), dg_desc
+                       find_new_name: bool = False) -> Tuple[str, ContainerGroup]:
+        dg_desc = ContainerGroup(name)
+        return self.add_container_group_desc(name, dg_desc, find_new_name=find_new_name), dg_desc
 
     def add_view(self,
                  name: str,
@@ -2034,7 +2034,7 @@ class SDFG(ControlFlowRegion):
 
         return name
 
-    def add_data_group_desc(self, name: str, data_group_desc: DataGroup, find_new_name=False) -> str:
+    def add_container_group_desc(self, name: str, container_group_desc: ContainerGroup, find_new_name=False) -> str:
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
 
@@ -2065,8 +2065,8 @@ class SDFG(ControlFlowRegion):
                     sdfg.add_symbol(sym.name, sym.dtype)
 
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
-        self.data_groups[name] = data_group_desc
-        _add_symbols(self, data_group_desc)
+        self.container_groups[name] = container_group_desc
+        _add_symbols(self, container_group_desc)
 
         return name
 
@@ -2819,43 +2819,43 @@ class SDFG(ControlFlowRegion):
         self.root_sdfg.using_experimental_blocks = found_experimental_block
         return found_experimental_block
 
-    def register_data_group_members(self):
-        for _, dg in self.data_groups.items():
-            self._register_data_group_members(data_group=dg, prefix_name='')
+    def register_container_group_members(self):
+        for _, dg in self.container_groups.items():
+            self._register_container_group_members(container_group=dg, prefix_name='')
         print(self._arrays)
 
-    def _register_data_group_members(self, data_group: DataGroup, prefix_name: str):
-        for name, member in data_group.members.items():
-            dg_prefix = prefix_name + f'__datagroup_{data_group.name}'
-            if isinstance(member, DataGroup):
-                self._register_data_group_members(data_group=member, prefix_name=dg_prefix)
+    def _register_container_group_members(self, container_group: ContainerGroup, prefix_name: str):
+        for name, member in container_group.members.items():
+            dg_prefix = prefix_name + f'__ContainerGroup_{container_group.name}'
+            if isinstance(member, ContainerGroup):
+                self._register_container_group_members(container_group=member, prefix_name=dg_prefix)
             else:
                 member_demangled_name = dg_prefix + f'__member_{name}'
                 self.add_datadesc(name=member_demangled_name, datadesc=member, find_new_name=False)
 
-    def get_demangled_data_group_member_name(self, name_hierarchy: List[Type[str]]):
+    def get_demangled_container_group_member_name(self, name_hierarchy: List[Type[str]]):
         current_dg = None
         demangled_name = ''
         for i, name in enumerate(name_hierarchy):
             if current_dg is None:
-                current_dg = self.data_groups[name]
-                demangled_name += f"__datagroup_{current_dg.name}"
+                current_dg = self.container_groups[name]
+                demangled_name += f"__ContainerGroup_{current_dg.name}"
             elif name in current_dg.members:
-                if isinstance(current_dg.members[name], DataGroup):
+                if isinstance(current_dg.members[name], ContainerGroup):
                     current_dg = current_dg.members[name]
-                    demangled_name += f"__datagroup_{current_dg.name}"
+                    demangled_name += f"__ContainerGroup_{current_dg.name}"
                 else:
                     assert isinstance(current_dg.members[name], dace.data.Data)
                     assert i == len(name_hierarchy) - 1
                     demangled_name += f"__member_{name}"
                     return demangled_name
             else:
-                raise Exception(f'Name Hierarchy {name_hierarchy} Not in DataGroups')
-        raise Exception(f'Name Hierarchy {name_hierarchy} Not in DataGroups')
+                raise Exception(f'Name Hierarchy {name_hierarchy} Not in ContainerGroups')
+        raise Exception(f'Name Hierarchy {name_hierarchy} Not in ContainerGroups')
 
-    def generate_data_groups_from_structs(self):
+    def generate_container_groups_from_structs(self, flattening_mode : ContainerGroupFlatteningMode):
         for arr_name, arr in self._arrays.items():
             if isinstance(arr, dt.Structure):
                 dg_name = arr_name
-                dg = DataGroup.from_struct(name=dg_name, structure=arr)
-                self.data_groups[dg_name] = dg
+                dg = ContainerGroup.from_struct(name=dg_name, structure=arr, flattening_mode=flattening_mode)
+                self.container_groups[dg_name] = dg
