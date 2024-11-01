@@ -161,7 +161,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         return True
 
     def _get_marked_inputs_and_outputs(self, state, entry_node) -> list:
-        if (self.host_data is None or self.host_data == []) and (self.host_maps is None or self.host_maps == []):
+        if not self.host_data and not self.host_maps:
             return []
         marked_sources = [state.memlet_tree(e).root().edge.src for e in state.in_edges(entry_node)]
         marked_sources = [sdutil.get_view_node(state, node) if isinstance(node, data.View) else node for node in marked_sources]
@@ -172,7 +172,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
     def _output_or_input_is_marked_host(self, state, entry_node) -> bool:
         marked_accesses = self._get_marked_inputs_and_outputs(state, entry_node)
-        return (len(marked_accesses) > 0)
+        return len(marked_accesses) > 0
 
 
     def apply(self, _, sdfg: sd.SDFG):
