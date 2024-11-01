@@ -8,7 +8,7 @@ import copy
 
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
-from dace.transformation.dataflow import MapFusionSerial, MapFusionParallel, MapExpansion
+from dace.transformation.dataflow import MapFusion, MapExpansion
 
 
 def count_node(sdfg: SDFG, node_type):
@@ -33,7 +33,7 @@ def apply_fusion(
     """
     num_maps_before = count_node(sdfg, nodes.MapEntry)
     org_sdfg = copy.deepcopy(sdfg)
-    sdfg.apply_transformations_repeated(MapFusionSerial, validate=True, validate_all=True)
+    sdfg.apply_transformations_repeated(MapFusion, validate=True, validate_all=True)
     num_maps_after = count_node(sdfg, nodes.MapEntry)
 
     has_processed = False
@@ -496,7 +496,7 @@ def test_interstate_fusion():
     ref_C = A + 30
     ref_D = A + 26
 
-    assert sdfg.apply_transformations_repeated(MapFusionSerial, validate=True, validate_all=True) == 1
+    assert sdfg.apply_transformations_repeated(MapFusion, validate=True, validate_all=True) == 1
     assert sdfg.number_of_nodes() == 2
     assert len([node for node in state1.data_nodes() if node.data == "B"]) == 1
 
@@ -504,79 +504,6 @@ def test_interstate_fusion():
 
     assert np.allclose(C, ref_C)
     assert np.allclose(D, ref_D)
-
-
-def test_parallel_fusion_simple():
-    N1, N2 = 10, 20
-
-    def _make_sdfg():
-        sdfg = dace.SDFG("simple_parallel_map")
-        state = sdfg.add_state("state", is_start_block=True)
-        for name in ("A", "B", "out1", "out2"):
-            sdfg.add_array(name, shape=(N1, N2), transient=False, dtype=dace.float64)
-        sdfg.add_scalar("dmr", dtype=dace.float64, transient=False)
-        A, B, dmr, out1, out2 = (state.add_access(name) for name in ("A", "B", "dmr", "out1", "out2"))
-
-        _, map1_entry, _ = state.add_mapped_tasklet(
-                "map_with_dynamic_range",
-                map_ranges={"__i0": f"0:{N1}", "__i1": f"0:{N2}"},
-                inputs={"__in0": dace.Memlet("A[__i0, __i1]")},
-                code="__out = __in0 + dynamic_range_value",
-                outputs={"__out": dace.Memlet("out1[__i0, __i1]")},
-                input_nodes={"A": A},
-                output_nodes={"out1": out1},
-                external_edges=True,
-        )
-        state.add_edge(
-                dmr,
-                None,
-                map1_entry,
-                "dynamic_range_value",
-                dace.Memlet("dmr[0]"),
-        )
-        map1_entry.add_in_connector("dynamic_range_value")
-
-        _, map2_entry, _ = state.add_mapped_tasklet(
-                "map_without_dynamic_range",
-                map_ranges={"__i2": f"0:{N1}", "__i3": f"0:{N2}"},
-                inputs={
-                    "__in0": dace.Memlet("A[__i2, __i3]"),
-                    "__in1": dace.Memlet("B[__i2, __i3]")
-                },
-                code="__out = __in0 + __in1",
-                outputs={"__out": dace.Memlet("out2[__i2, __i3]")},
-                input_nodes={"A": A, "B": B},
-                output_nodes={"out2": out2},
-                external_edges=True,
-        )
-        sdfg.validate()
-        return sdfg, map1_entry, map2_entry
-
-    for mode in range(2):
-        A = np.random.rand(N1, N2)
-        B = np.random.rand(N1, N2)
-        dmr = 3.1415
-        out1 = np.zeros_like(A)
-        out2 = np.zeros_like(B)
-        res1 = A + dmr
-        res2 = A + B
-
-        sdfg, map1_entry, map2_entry = _make_sdfg()
-
-        if mode:
-            map1_entry, map2_entry = map2_entry, map1_entry
-
-        MapFusionParallel.apply_to(
-                sdfg,
-                map_entry_1=map1_entry,
-                map_entry_2=map2_entry,
-                verify=True,
-        )
-        assert count_node(sdfg, dace.sdfg.nodes.MapEntry) == 1
-
-        sdfg(A=A, B=B, dmr=dmr, out1=out1, out2=out2)
-        assert np.allclose(out1, res1)
-        assert np.allclose(out2, res2)
 
 
 def test_fuse_indirect_accesses():
@@ -730,7 +657,70 @@ def test_offset_correction_empty():
     apply_fusion(sdfg, removed_maps=0)
 
 
+def test_different_access():
+
+    def exptected(A, B):
+        N, M = A.shape
+        return (A + 1) + B[1:(N+1), 2:(M+2)]
+
+    def _make_sdfg(N: int, M: int) -> dace.SDFG:
+        sdfg = dace.SDFG("test_different_access")
+        names = ["A", "B", "__tmp", "__return"]
+        def_shape = (N, M)
+        sshape = {"B": (N+1, M+2), "__tmp": (N+1, M+1)}
+        for name in names:
+            sdfg.add_array(
+                    name,
+                    shape=sshape.get(name, def_shape),
+                    dtype=dace.float64,
+                    transient=False,
+            )
+        sdfg.arrays["__tmp"].transient = True
+
+        state = sdfg.add_state(is_start_block=True)
+        A, B, _tmp, _return = (state.add_access(name) for name in names)
+
+        state.add_mapped_tasklet(
+                "comp1",
+                map_ranges={"__i0": f"0:{N}", "__i1": f"0:{M}"},
+                inputs={"__in": dace.Memlet("A[__i0, __i1]")},
+                code="__out = __in + 1.0",
+                outputs={"__out": dace.Memlet("__tmp[__i0 + 1, __i1 + 1]")},
+                input_nodes={A},
+                output_nodes={_tmp},
+                external_edges=True,
+        )
+        state.add_mapped_tasklet(
+                "comp2",
+                map_ranges={"__i0": f"0:{N}", "__i1": f"0:{M}"},
+                inputs={
+                    "__in1": dace.Memlet("__tmp[__i0 + 1, __i1 + 1]"),
+                    "__in2": dace.Memlet("B[__i0 + 1, __i1 + 2]"),
+                },
+                code="__out = __in1 + __in2",
+                outputs={"__out": dace.Memlet("__return[__i0, __i1]")},
+                input_nodes={_tmp, B},
+                output_nodes={_return},
+                external_edges=True,
+        )
+
+        sdfg.validate()
+        return sdfg
+
+    N, M = 14, 17
+    sdfg = _make_sdfg(N, M)
+    apply_fusion(sdfg, final_maps=1)
+
+    A = np.array(np.random.rand(N, M), dtype=np.float64, copy=True)
+    B = np.array(np.random.rand(N + 1, M + 2), dtype=np.float64, copy=True)
+
+    ref = exptected(A, B)
+    res = sdfg(A=A, B=B)
+    assert np.allclose(ref, res)
+
+
 if __name__ == '__main__':
+    test_different_access()
     test_indirect_accesses()
     test_fusion_shared()
     test_fusion_with_transient()
