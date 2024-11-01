@@ -170,7 +170,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
     def _output_or_input_is_marked_host(self, state, entry_node) -> bool:
         marked_accesses = self._get_marked_inputs_and_outputs(state, entry_node)
-        return (len(marked_accesses) > 0)
+        return len(marked_accesses) > 0
 
 
     def apply(self, _, sdfg: sd.SDFG):
