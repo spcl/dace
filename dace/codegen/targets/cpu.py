@@ -1408,7 +1408,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     # Read variable from shared storage
                     defined_type, _ = self._dispatcher.defined_vars.get(shared_data_name)
                     if defined_type in (DefinedType.Scalar, DefinedType.Pointer):
-                        assign_str = (f"const {ctype} {edge.dst_conn} = {shared_data_name};")
+                        #assign_str = (f"const {ctype} {edge.dst_conn} = {shared_data_name};")
+                        raise Exception("TODO")
                     else:
                         assign_str = (f"const {ctype} &{edge.dst_conn} = {shared_data_name};")
                     inner_stream.write(assign_str, cfg, state_id, [edge.src, edge.dst])
@@ -1445,11 +1446,34 @@ class CPUCodeGen(TargetCodeGenerator):
                 if edge.src_conn in tasklet_out_connectors:  # Disallow duplicates
                     continue
 
+                storage_type = sdfg.arrays[memlet.data].storage
+                ctype = node.out_connectors[edge.src_conn].ctype
+                if storage_type in [dtypes.StorageType.GPU_WMMA_Frag_A,
+                                    dtypes.StorageType.GPU_WMMA_Frag_B,
+                                    dtypes.StorageType.GPU_WMMA_Frag_C]:
+                    d = memlet.data
+                    nodedesc = sdfg.arrays[memlet.data]
+                    if storage_type == dtypes.StorageType.GPU_WMMA_Frag_A:
+                        M_dim = nodedesc.shape[0]
+                        N_dim = sdfg.constants[d + "_N"]
+                        K_dim = nodedesc.shape[1]
+                        ctype = f"nvcuda::wmma::fragment<nvcuda::wmma::matrix_a, {M_dim}, {N_dim}, {K_dim}, {nodedesc.dtype.ctype}, nvcuda::wmma::row_major>& {d}"
+                    elif storage_type == dtypes.StorageType.GPU_WMMA_Frag_B:
+                        M_dim = sdfg.constants[d + "_M"]
+                        N_dim = nodedesc.shape[1]
+                        K_dim = nodedesc.shape[0]
+                        ctype = f"nvcuda::wmma::fragment<nvcuda::wmma::matrix_b, {M_dim}, {N_dim}, {K_dim}, {nodedesc.dtype.ctype}, nvcuda::wmma::row_major>& {d}"
+                    elif storage_type == dtypes.StorageType.GPU_WMMA_Frag_C:
+                        M_dim = nodedesc.shape[0]
+                        N_dim = nodedesc.shape[1]
+                        K_dim =  sdfg.constants[d + "_K"]
+                        ctype = f"nvcuda::wmma::fragment<nvcuda::wmma::accumulator, {M_dim}, {N_dim}, {K_dim}, {nodedesc.dtype.ctype}>& {d}"
+
                 self._dispatcher.dispatch_output_definition(node, dst_node, edge, sdfg, cfg, dfg, state_id,
                                                             function_stream, inner_stream)
 
                 # Also define variables in the C++ unparser scope
-                self._locals.define(edge.src_conn, -1, self._ldepth + 1, node.out_connectors[edge.src_conn].ctype)
+                self._locals.define(edge.src_conn, -1, self._ldepth + 1, ctype)
                 tasklet_out_connectors.add(edge.src_conn)
 
         for edge in state_dfg.out_edges(node):
@@ -1553,11 +1577,35 @@ class CPUCodeGen(TargetCodeGenerator):
                           src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[mmlt.Memlet],
                           function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         cdtype = src_node.out_connectors[edge.src_conn]
+        storage_type = sdfg.arrays[edge.data.data].storage
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
             pass
+        elif storage_type in [dtypes.StorageType.GPU_WMMA_Frag_A,
+                                dtypes.StorageType.GPU_WMMA_Frag_B,
+                                dtypes.StorageType.GPU_WMMA_Frag_C]:
+            ctype = ""
+            d = edge.data.data
+            nodedesc = sdfg.arrays[d]
+            if storage_type == dtypes.StorageType.GPU_WMMA_Frag_A:
+                M_dim = nodedesc.shape[0]
+                N_dim = sdfg.constants[d + "_N"]
+                K_dim = nodedesc.shape[1]
+                ctype = f"nvcuda::wmma::fragment<nvcuda::wmma::matrix_a, {M_dim}, {N_dim}, {K_dim}, {nodedesc.dtype.ctype}, nvcuda::wmma::row_major>& "
+                callsite_stream.write(f'{ctype} {edge.src_conn} = {d};', cfg, state_id, src_node)
+            elif storage_type == dtypes.StorageType.GPU_WMMA_Frag_B:
+                M_dim = sdfg.constants[d + "_M"]
+                N_dim = nodedesc.shape[1]
+                K_dim = nodedesc.shape[0]
+                ctype = f"nvcuda::wmma::fragment<nvcuda::wmma::matrix_b, {M_dim}, {N_dim}, {K_dim}, {nodedesc.dtype.ctype}, nvcuda::wmma::row_major>& "
+                callsite_stream.write(f'{ctype} {edge.src_conn} = {d};', cfg, state_id, src_node)
+            elif storage_type == dtypes.StorageType.GPU_WMMA_Frag_C:
+                M_dim = nodedesc.shape[0]
+                N_dim = nodedesc.shape[1]
+                K_dim =  sdfg.constants[d + "_K"]
+                ctype = f"nvcuda::wmma::fragment<nvcuda::wmma::accumulator, {M_dim}, {N_dim}, {K_dim}, {nodedesc.dtype.ctype}>& "
+                callsite_stream.write(f'{ctype} {edge.src_conn} = {d};', cfg, state_id, src_node)
         elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
             desc = sdfg.arrays[edge.data.data]
-
             # If reference set, do not emit initial assignment
             is_refset = isinstance(desc, data.Reference) and state_dfg.memlet_path(edge)[-1].dst_conn == 'set'
 

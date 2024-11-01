@@ -20,7 +20,7 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 @registry.extensible_enum
 class DefinedType(aenum.AutoNumberEnum):
     """ Data types for `DefinedMemlets`.
-    
+
         :see: DefinedMemlets
     """
     Pointer = ()  # Pointer
@@ -189,7 +189,7 @@ class TargetDispatcher(object):
     @property
     def declared_arrays(self) -> DefinedMemlets:
         """ Returns a list of declared variables.
-        
+
             This is used for variables that must have their declaration and
             allocation separate. It includes all such variables that have been
             declared by the dispatcher.
@@ -199,7 +199,7 @@ class TargetDispatcher(object):
     @property
     def defined_vars(self) -> DefinedMemlets:
         """ Returns a list of defined variables.
-        
+
             This includes all variables defined by the dispatcher.
         """
         return self._defined_vars
@@ -525,6 +525,7 @@ class TargetDispatcher(object):
         memory copy operation.
         """
         src_is_data, dst_is_data = False, False
+        print("GET_COPY_DISPATCHER",src_node, dst_node, type(src_node), type(dst_node))
 
         if isinstance(src_node, nodes.CodeNode):
             src_storage = dtypes.StorageType.Register
@@ -534,6 +535,8 @@ class TargetDispatcher(object):
 
         if isinstance(dst_node, (nodes.CodeNode, nodes.EntryNode)):
             dst_storage = dtypes.StorageType.Register
+        elif isinstance(dst_node, nodes.ExitNode):
+            return None
         else:
             dst_storage = dst_node.desc(sdfg).storage
             dst_is_data = True
@@ -560,6 +563,7 @@ class TargetDispatcher(object):
         else:
             dst_schedule = None
 
+        print("GET_COPY_DISPATCHER", src_storage, dst_storage, src_is_data, dst_is_data)
         if (src_storage, dst_storage, dst_schedule) in self._copy_dispatchers:
             disp = (src_storage, dst_storage, dst_schedule)
         elif (src_storage, dst_storage, None) in self._copy_dispatchers:

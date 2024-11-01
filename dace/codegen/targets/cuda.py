@@ -110,11 +110,19 @@ class CUDACodeGen(TargetCodeGenerator):
         gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned]
         dispatcher.register_array_dispatcher(gpu_storage, self)
         dispatcher.register_array_dispatcher(dtypes.StorageType.CPU_Pinned, self)
+        dispatcher.register_array_dispatcher(dtypes.StorageType.GPU_WMMA_Frag_A, self)
+        dispatcher.register_array_dispatcher(dtypes.StorageType.GPU_WMMA_Frag_B, self)
+        dispatcher.register_array_dispatcher(dtypes.StorageType.GPU_WMMA_Frag_C, self)
 
         for storage in gpu_storage:
             for other_storage in dtypes.StorageType:
                 dispatcher.register_copy_dispatcher(storage, other_storage, None, self)
                 dispatcher.register_copy_dispatcher(other_storage, storage, None, self)
+
+        for wmma_storage in [dtypes.StorageType.GPU_WMMA_Frag_A, dtypes.StorageType.GPU_WMMA_Frag_B, dtypes.StorageType.GPU_WMMA_Frag_C]:
+            for register in [dtypes.StorageType.Register]:
+                dispatcher.register_copy_dispatcher(wmma_storage, register, None, self)
+                dispatcher.register_copy_dispatcher(register, wmma_storage, None, self)
 
         # Register illegal copies
         cpu_unpinned_storage = [dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal]
@@ -345,6 +353,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._codeobject.code = """
 #include <{backend_header}>
 #include <dace/dace.h>
+#include <mma.h>
 
 {file_header}
 
@@ -543,6 +552,15 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
             raise NotImplementedError('Dynamic shared memory unsupported')
         elif nodedesc.storage == dtypes.StorageType.Register:
             raise ValueError('Dynamic allocation of registers not allowed')
+        elif nodedesc.storage == dtypes.StorageType.GPU_WMMA_Frag_A:
+            print("ALLOC", '%s %s;\n' % (ctypedef, dataname))
+            result_decl.write('%s %s;\n' % (ctypedef, dataname))
+            self._dispatcher.declared_arrays.add(dataname, DefinedType.Pointer, ctypedef)
+            raise Exception("UWU")
+        elif nodedesc.storage == dtypes.StorageType.GPU_WMMA_Frag_B:
+            raise NotImplementedError("CUDA: Unimplemented storage type " + str(nodedesc.storage))
+        elif nodedesc.storage == dtypes.StorageType.GPU_WMMA_Frag_C:
+            raise NotImplementedError("CUDA: Unimplemented storage type " + str(nodedesc.storage))
         else:
             raise NotImplementedError("CUDA: Unimplemented storage type " + str(nodedesc.storage))
 
@@ -642,6 +660,36 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
             szstr = ' = {0}' if node.setzero else ''
             result_decl.write("%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize), szstr))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
+        elif nodedesc.storage == dtypes.StorageType.GPU_WMMA_Frag_A:
+            M_dim = nodedesc.shape[0]
+            N_dim = sdfg.constants[node.data + "_N"]
+            K_dim = nodedesc.shape[1]
+            wstr = f"nvcuda::wmma::fragment<nvcuda::wmma::matrix_a, {M_dim}, {N_dim}, {K_dim}, {nodedesc.dtype.ctype}, nvcuda::wmma::row_major> {dataname};\n"
+            print("DECL", wstr)
+            result_decl.write(wstr)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
+            if node.setzero:
+               result_decl.write(f"nvcuda::wmma::fill_fragment({dataname}, 0.0f);")
+        elif nodedesc.storage == dtypes.StorageType.GPU_WMMA_Frag_B:
+            M_dim = sdfg.constants[node.data + "_M"]
+            N_dim = nodedesc.shape[1]
+            K_dim = nodedesc.shape[0]
+            wstr = f"nvcuda::wmma::fragment<nvcuda::wmma::matrix_b, {M_dim}, {N_dim}, {K_dim}, {nodedesc.dtype.ctype}, nvcuda::wmma::row_major> {dataname};\n"
+            print("DECL", wstr)
+            result_decl.write(wstr)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
+            if node.setzero:
+               result_decl.write(f"nvcuda::wmma::fill_fragment({dataname}, 0.0f);")
+        elif nodedesc.storage == dtypes.StorageType.GPU_WMMA_Frag_C:
+            M_dim = nodedesc.shape[0]
+            N_dim = nodedesc.shape[1]
+            K_dim =  sdfg.constants[node.data + "_K"]
+            wstr = f"nvcuda::wmma::fragment<nvcuda::wmma::accumulator, {M_dim}, {N_dim}, {K_dim}, {nodedesc.dtype.ctype}> {dataname};\n"
+            print("DECL", wstr)
+            result_decl.write(wstr)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
+            if node.setzero:
+               result_decl.write(f"nvcuda::wmma::fill_fragment({dataname}, 0.0f);")
         else:
             raise NotImplementedError("CUDA: Unimplemented storage type " + str(nodedesc.storage))
 
@@ -748,6 +796,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
              nodedesc.storage == dtypes.StorageType.Register:
             pass  # Do nothing
+        elif nodedesc.storage == dtypes.StorageType.GPU_WMMA_Frag_A or \
+             nodedesc.storage == dtypes.StorageType.GPU_WMMA_Frag_B or \
+             nodedesc.storage == dtypes.StorageType.GPU_WMMA_Frag_C:
+            pass
         else:
             raise NotImplementedError
 
@@ -904,6 +956,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.CPU_Pinned
         ]
         gpu_storage_types = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]
+        gpu_wmma_storage_types = [dtypes.StorageType.GPU_WMMA_Frag_A,
+                                  dtypes.StorageType.GPU_WMMA_Frag_B,
+                                  dtypes.StorageType.GPU_WMMA_Frag_C]
+        print("_EC")
 
         copy_shape = memlet.subset.bounding_box_size()
         copy_shape = [symbolic.overapproximate(s) for s in copy_shape]
@@ -1182,6 +1238,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # Per-thread load (same as CPU copies)
             else:
                 self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+        elif (src_storage in gpu_wmma_storage_types and dst_storage in gpu_wmma_storage_types):
+            assert src_storage == dst_storage
+            callsite_stream.write(f"auto &{edge.dst_conn} = {src_node.data};")
+        elif ((src_storage in gpu_wmma_storage_types and dst_storage not in gpu_wmma_storage_types) or
+               (src_storage not in gpu_wmma_storage_types and dst_storage in gpu_wmma_storage_types)):
+            raise Exception("GPU -> WMMA storage should only be moved using library nodes")
         else:
             self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
 
@@ -1189,15 +1251,29 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
                     memlet: Memlet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         state = cfg.state(state_id)
+        print("CM", src_node, dst_node, type(src_node), type(dst_node))
         if isinstance(src_node, nodes.Tasklet):
-            src_storage = dtypes.StorageType.Register
-            src_parent = state.entry_node(src_node)
-            dst_schedule = None if src_parent is None else src_parent.map.schedule
+            print("MS, COPY1:", sdfg.arrays[memlet.data.data].storage)
+            if sdfg.arrays[memlet.data.data].storage in [dtypes.StorageType.GPU_WMMA_Frag_A,
+                dtypes.StorageType.GPU_WMMA_Frag_B,
+                dtypes.StorageType.GPU_WMMA_Frag_C]:
+                dst_storage = sdfg.arrays[memlet.data.data].storage
+                raise Exception("UWU")
+            else:
+                src_storage = dtypes.StorageType.Register
+                src_parent = state.entry_node(src_node)
+                dst_schedule = None if src_parent is None else src_parent.map.schedule
         else:
             src_storage = src_node.desc(sdfg).storage
 
         if isinstance(dst_node, nodes.Tasklet):
-            dst_storage = dtypes.StorageType.Register
+            print("MS, COPY2:", sdfg.arrays[memlet.data.data].storage)
+            if sdfg.arrays[memlet.data.data].storage in [dtypes.StorageType.GPU_WMMA_Frag_A,
+                dtypes.StorageType.GPU_WMMA_Frag_B,
+                dtypes.StorageType.GPU_WMMA_Frag_C]:
+                dst_storage = sdfg.arrays[memlet.data.data].storage
+            else:
+                dst_storage = dtypes.StorageType.Register
         else:
             dst_storage = dst_node.desc(sdfg).storage
 

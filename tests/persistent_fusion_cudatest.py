@@ -291,6 +291,7 @@ def test_persistent_fusion():
     transform.apply(sdfg)
 
     sdfg.validate()
+    sdfg.save("persistent_fusion.sdfg")
 
     V = 1024
     E = 2048
@@ -357,7 +358,7 @@ def test_persistent_fusion_interstate():
     func.f(aref, B)
 
     sdfg(A=A, B=B, N=N)
-    
+
     assert np.allclose(A, aref)
 
 
