@@ -161,7 +161,8 @@ class DeadDataflowElimination(ppl.Pass):
                                         except astutils.NameFound:
                                             # then add the hint expression
                                             type_string = "bool_" if ctype.dtype == dtypes.bool else ctype.to_string()
-                                            leaf.src.code.code = ast.parse(f'{leaf.src_conn}: dace.{type_string}\n').body + leaf.src.code.code
+                                            leaf.src.code.code = ast.parse(
+                                                f'{leaf.src_conn}: dace.{type_string}\n').body + leaf.src.code.code
                                 else:
                                     raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
                                                               'tasklet due to its code language.')
