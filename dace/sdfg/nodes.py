@@ -55,6 +55,22 @@ class Node(object):
         else:
             return type(self).__name__
 
+    def clone(self, keep_guid = False) -> 'Node':
+        new_elem = dcpy(self)
+        if keep_guid:
+            new_elem.guid = self.guid
+        return new_elem
+
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k == 'guid': # Skip ID
+                continue
+            setattr(result, k, dcpy(v, memo))
+        return result
+
     def validate(self, sdfg, state):
         pass
 

@@ -209,6 +209,22 @@ class InterstateEdge(object):
             super().__setattr__('_uncond', None)
         return super().__setattr__(name, value)
 
+    def clone(self, keep_guid = False) -> 'InterstateEdge':
+        new_elem = copy.deepcopy(self)
+        if keep_guid:
+            new_elem.guid = self.guid
+        return new_elem
+
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k == 'guid': # Skip ID
+                continue
+            setattr(result, k, copy.deepcopy(v, memo))
+        return result
+
     @staticmethod
     def _convert_assignment(assignment) -> str:
         if isinstance(assignment, ast.AST):
