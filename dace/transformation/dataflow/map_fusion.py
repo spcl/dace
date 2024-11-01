@@ -2,7 +2,7 @@
 """Implements the serial map fusing transformation."""
 
 import copy
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, Iterable
 
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
