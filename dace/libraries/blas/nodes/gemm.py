@@ -17,8 +17,9 @@ import warnings
 def _is_complex(dtype):
     if hasattr(dtype, "is_complex") and callable(dtype.is_complex):
         return dtype.is_complex()
-    else:
-        return dtype in [dtypes.complex64, dtypes.complex128]
+    if not isinstance(dtype, dtypes.typeclass):
+        dtype = dace.dtype_to_typeclass(dtype)
+    return dtype in [dtypes.complex64, dtypes.complex128]
 
 
 def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
