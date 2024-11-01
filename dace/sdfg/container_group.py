@@ -10,9 +10,11 @@ from enum import Enum
 import numpy
 import sympy
 
+
 class ContainerGroupFlatteningMode(Enum):
     ArrayOfStructs = 1
     StructsOfArrays = 2
+
 
 def _members_to_json(members):
     if members is None:
@@ -86,8 +88,37 @@ class ContainerGroup:
     def __str__(self):
         return self.__repr__()
 
+    def _add_members(self, name, structure, acc_shape):
+        # If not a structure, then we have a leaf node
+        for member_name, member in structure.members.items():
+            if isinstance(member, data.Structure):
+                # Recursively convert nested Structures
+                self.add_member(
+                    name=f"{member_name}",
+                    member=self.from_struct(name=f"{member_name}", structure=member),
+                )
+                self._add_members(name=f"{member_name}",
+                                  member=self.from_struct(name=f"{member_name}", structure=member),)
+            elif isinstance(member, (data.Array, data.Scalar)):
+                # Append the previous shape and add the member
+                self.add_member(member_name, member, shape=acc_shape)
+            elif isinstance(
+                member, (sympy.Basic, symbolic.SymExpr, int, numpy.integer)
+            ):
+                # Convert other types to Scalar
+                self.add_member(member_name, data.Scalar(symbolic.symtype(member)))
+            else:
+                raise TypeError(f"Unsupported member type in Structure: {type(member)}")
+
+    def _soa_from_struct(self, name, structure, acc_shape):
+        self._add_members(name, structure, acc_shape=None)
+
     @classmethod
-    def from_struct(cls, name: str, structure: data.Structure, flattening_mode: ContainerGroupFlatteningMode) -> "ContainerGroup":
+    def from_struct(
+        cls,
+        name: str,
+        structure: data.Structure
+    ) -> "ContainerGroup":
         dg = cls(name)
 
         for member_name, member in structure.members.items():
@@ -95,9 +126,7 @@ class ContainerGroup:
                 # Recursively convert nested Structures
                 dg.add_member(
                     name=f"{member_name}",
-                    member=cls.from_struct(
-                        name=f"{member_name}", structure=member
-                    )
+                    member=cls.from_struct(name=f"{member_name}", structure=member),
                 )
             elif isinstance(member, (data.Array, data.Scalar)):
                 # Directly add Arrays and Scalars

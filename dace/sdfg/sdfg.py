@@ -2819,19 +2819,38 @@ class SDFG(ControlFlowRegion):
         self.root_sdfg.using_experimental_blocks = found_experimental_block
         return found_experimental_block
 
-    def register_container_group_members(self):
+    def register_container_group_members(self, flattening_mode):
         for _, dg in self.container_groups.items():
-            self._register_container_group_members(container_group=dg, prefix_name='')
+            self._register_container_group_members(flattening_mode=flattening_mode, container_group=dg, prefix_name='')
         print(self._arrays)
 
-    def _register_container_group_members(self, container_group: ContainerGroup, prefix_name: str):
-        for name, member in container_group.members.items():
-            dg_prefix = prefix_name + f'__ContainerGroup_{container_group.name}'
-            if isinstance(member, ContainerGroup):
-                self._register_container_group_members(container_group=member, prefix_name=dg_prefix)
-            else:
-                member_demangled_name = dg_prefix + f'__member_{name}'
-                self.add_datadesc(name=member_demangled_name, datadesc=member, find_new_name=False)
+    def _register_container_group_members(self, flattening_mode, container_group: ContainerGroup, prefix_name: str, acc_shape: tuple):
+        # Let's say we have an struct of CSR arrays length = L1.
+        # CSR is a srtuct of 3 arrays = L2.1, L2.2, L2.3.
+
+        # If we flatten as Array-of-Structs then we will have an array of form:
+        # [L1 * (L2.1 + L2.2 + L2.3)]
+
+        # If we have a 3rd level then (L2.1 is a struct and has L3.1 and L.32):
+        # [L1 * (L2.1 * (L3.1 + L3.2) + L2.2 + L2.3)]
+
+        # If we flatten as Structs-of-Arrays then we will have an array of form:
+        # [L1][L2.1], [L1][L2.2], [L1][L2.3]
+
+        # If we have a 3rd level (L2.1 is a struct and has L3.1 and L.32):
+        # [L1][L2.1][L3.1], [L1][L2.1][L3.2], [L1][L2.2], [L1][L2.3]
+        if flattening_mode == ContainerGroupFlatteningMode.StructsOfArrays:
+            for name, member in container_group.members.items():
+                dg_prefix = prefix_name + f'__ContainerGroup_{container_group.name}'
+                if isinstance(member, ContainerGroup):
+                    self._register_container_group_members(container_group=member, prefix_name=dg_prefix, acc_shape=acc_shape)
+                else:
+                    member_demangled_name = dg_prefix + f'__member_{name}'
+                    self.add_datadesc(name=member_demangled_name, datadesc=member, find_new_name=False)
+        elif flattening_mode == ContainerGroupFlatteningMode.ArrayOfStructs:
+            raise Exception("TODO")
+        else:
+            raise Exception("Unsupported Flattening Mode")
 
     def get_demangled_container_group_member_name(self, name_hierarchy: List[Type[str]]):
         current_dg = None
@@ -2857,5 +2876,5 @@ class SDFG(ControlFlowRegion):
         for arr_name, arr in self._arrays.items():
             if isinstance(arr, dt.Structure):
                 dg_name = arr_name
-                dg = ContainerGroup.from_struct(name=dg_name, structure=arr, flattening_mode=flattening_mode)
+                dg = ContainerGroup.from_struct(name=dg_name, structure=arr)
                 self.container_groups[dg_name] = dg
