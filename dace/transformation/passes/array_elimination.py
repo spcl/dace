@@ -66,6 +66,9 @@ class ArrayElimination(ppl.Pass):
             removed_nodes = self.merge_access_nodes(state, access_nodes, lambda n: state.in_degree(n) == 0)
             removed_nodes |= self.merge_access_nodes(state, access_nodes, lambda n: state.out_degree(n) == 0)
 
+            # Merge extraneous dependency edges (empty memlets)
+            removed_nodes |= self.merge_unnecessary_dependency_edges(state)
+
             # Update access nodes with merged nodes
             access_nodes = {k: [n for n in v if n not in removed_nodes] for k, v in access_nodes.items()}
 
@@ -98,6 +101,34 @@ class ArrayElimination(ppl.Pass):
 
     def report(self, pass_retval: Set[str]) -> str:
         return f'Eliminated {len(pass_retval)} arrays: {pass_retval}.'
+
+    def merge_unnecessary_dependency_edges(self, state: SDFGState):
+        """
+        Merges two access nodes connected by an empty memlet.
+        """
+        removed_nodes: Set[nodes.AccessNode] = set()
+        for e in state.edges():
+            if not e.data.is_empty():
+                continue
+            if not isinstance(e.src, nodes.AccessNode) or not isinstance(e.dst, nodes.AccessNode):
+                continue
+            if e.src.data != e.dst.data:
+                continue
+
+            # Reconnect edges to first node
+            first_node, node = e.src, e.dst
+            for edge in state.all_edges(node):
+                if edge is e:
+                    continue
+                if edge.dst is node:
+                    state.add_edge(edge.src, edge.src_conn, first_node, edge.dst_conn, edge.data)
+                else:
+                    state.add_edge(first_node, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
+            # Remove merged node and associated edges
+            state.remove_node(node)
+            removed_nodes.add(node)
+
+        return removed_nodes
 
     def merge_access_nodes(self, state: SDFGState, access_nodes: Dict[str, List[nodes.AccessNode]],
                            condition: Callable[[nodes.AccessNode], bool]):

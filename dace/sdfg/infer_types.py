@@ -35,15 +35,15 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
         allocated_as_scalar = True
 
     if node.out_connectors[cname].type is not None:
-        return node.out_connectors[cname].type
+        return node.out_connectors[cname]
 
     # If nested SDFG, try to use internal array type
     if isinstance(node, nodes.NestedSDFG):
-        scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
+        scalar = (isinstance(node.sdfg.arrays[cname], (data.Scalar, data.Structure)) and allocated_as_scalar)
         dtype = node.sdfg.arrays[cname].dtype
         ctype = (dtype if scalar else dtypes.pointer(dtype))
     elif e.data.data is not None:  # Obtain type from memlet
-        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
+        scalar |= isinstance(sdfg.arrays[e.data.data], (data.Scalar, data.Structure))
         if isinstance(node, nodes.LibraryNode):
             scalar &= allocated_as_scalar
         dtype = sdfg.arrays[e.data.data].dtype
@@ -84,7 +84,7 @@ def infer_connector_types(sdfg: SDFG):
                         dtype = node.sdfg.arrays[cname].dtype
                         ctype = (dtype if scalar or struct else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
-                        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
+                        scalar |= isinstance(sdfg.arrays[e.data.data], (data.Scalar, data.Structure))
                         if isinstance(node, nodes.LibraryNode):
                             scalar &= allocated_as_scalar
                         dtype = sdfg.arrays[e.data.data].dtype
@@ -177,7 +177,7 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
         # Take care of remaining scalars without access nodes
         for aname, desc in scope.arrays.items():
             # If not transient in a nested SDFG, take storage from parent, regardless of current type
-            if not desc.transient and scope.parent_sdfg is not None:
+            if not desc.transient and scope.parent_sdfg is not None and desc.lifetime != dtypes.AllocationLifetime.Global:
                 desc.storage = _get_storage_from_parent(aname, scope)
             elif ((desc.transient or scope.parent_sdfg is None) and desc.storage == dtypes.StorageType.Default):
                 # Indeterminate storage type, set to register
@@ -358,7 +358,7 @@ def _set_default_storage_in_scope(state: SDFGState, parent_node: Optional[nodes.
             continue
         desc = node.desc(sdfg)
         # If not transient in a nested SDFG, take storage from parent, regardless of current type
-        if not desc.transient and sdfg.parent is not None:
+        if not desc.transient and sdfg.parent is not None and desc.lifetime != dtypes.AllocationLifetime.Global:
             desc.storage = _get_storage_from_parent(node.data, sdfg)
         elif desc.storage == dtypes.StorageType.Default:
             desc.storage = child_storage
@@ -368,7 +368,7 @@ def _set_default_storage_in_scope(state: SDFGState, parent_node: Optional[nodes.
         if not edge.data.is_empty():
             desc = sdfg.arrays[edge.data.data]
             # If not transient in a nested SDFG, take storage from parent, regardless of current type
-            if not desc.transient and sdfg.parent is not None:
+            if not desc.transient and sdfg.parent is not None and desc.lifetime != dtypes.AllocationLifetime.Global:
                 desc.storage = _get_storage_from_parent(edge.data.data, sdfg)
             elif desc.storage == dtypes.StorageType.Default:
                 desc.storage = child_storage

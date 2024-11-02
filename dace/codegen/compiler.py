@@ -59,8 +59,13 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str,
 
         # Save the file only if it changed (keeps old timestamps and saves
         # build time)
+        if isinstance(clean_code, str):
+            ft = "w"
+        else:
+            ft = "wb"
+
         if not identical_file_exists(code_path, clean_code):
-            with open(code_path, "w") as code_file:
+            with open(code_path, ft) as code_file:
                 code_file.write(clean_code)
 
         if code_object.linkable == True:
@@ -213,7 +218,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
         # Clean CMake directory and try once more
         if Config.get_bool('debugprint'):
             print('Cleaning CMake build folder and retrying...')
-        shutil.rmtree(build_folder)
+        shutil.rmtree(build_folder, ignore_errors=True)
         os.makedirs(build_folder)
         try:
             _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
@@ -349,9 +354,14 @@ def identical_file_exists(filename: str, file_contents: str):
     if not os.path.isfile(filename):
         return False
 
+    if isinstance(file_contents, str):
+        ft = 'r'
+    else:
+        ft = 'rb'
+
     # Read file in blocks and compare strings
     block_size = 65536
-    with open(filename, 'r') as fp:
+    with open(filename, ft) as fp:
         file_buffer = fp.read(block_size)
         while len(file_buffer) > 0:
             block = file_contents[:block_size]

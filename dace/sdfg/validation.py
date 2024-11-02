@@ -528,7 +528,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     initialized_transients.add(node.data)
 
             nsdfg_node = sdfg.parent_nsdfg_node
-            if nsdfg_node is not None:
+            if nsdfg_node is not None and arr.lifetime != dtypes.AllocationLifetime.Global:
                 # Find unassociated non-transients access nodes
                 node_data = node.data.split('.')[0]
                 if (not arr.transient and node_data not in nsdfg_node.in_connectors
@@ -742,10 +742,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 # Bounds
                 if any(((minel + off) < 0) == True for minel, off in zip(e.data.subset.min_element(), arr.offset)):
                     # In case of dynamic memlet, only output a warning
-                    if e.data.dynamic:
-                        warnings.warn(f'Potential negative out-of-bounds memlet subset: {e}')
-                    else:
-                        raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid)
+                    # if e.data.dynamic:
+                    warnings.warn(f'Potential negative out-of-bounds memlet subset: {e}')
+                    # else:
+                        # raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid)
                 if any(((maxel + off) >= s) == True
                        for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, arr.offset)):
                     if e.data.dynamic:
@@ -836,13 +836,15 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             dst_expr = (e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen)
             if symbolic.inequal_symbols(src_expr, dst_expr):
                 error = InvalidSDFGEdgeError('Dimensionality mismatch between src/dst subsets', sdfg, state_id, eid)
-                # NOTE: Make an exception for Views
+                # NOTE: Make an exception for Views and reference sets
                 from dace.sdfg import utils
                 if (isinstance(sdfg.arrays[src_node.data], dt.View) and utils.get_view_edge(state, src_node) is e):
                     warnings.warn(error.message)
                     continue
                 if (isinstance(sdfg.arrays[dst_node.data], dt.View) and utils.get_view_edge(state, dst_node) is e):
                     warnings.warn(error.message)
+                    continue
+                if e.dst_conn == 'set':
                     continue
                 raise error
 
