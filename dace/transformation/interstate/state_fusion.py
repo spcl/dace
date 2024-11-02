@@ -306,6 +306,15 @@ class StateFusion(transformation.MultiStateTransformation):
             resulting_ccs: List[CCDesc] = StateFusion.find_fused_components(first_cc_input, first_cc_output,
                                                                             second_cc_input, second_cc_output)
 
+            if len(resulting_ccs) > 1:
+                # Side-effect tasklets cannot be fused if could lead to data races
+                for node in first_state.nodes():
+                    if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
+                        return False
+                for node in second_state.nodes():
+                    if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
+                        return False
+
             # Check for data races
             for fused_cc in resulting_ccs:
                 # Write-Write hazard - data is output of both first and second
