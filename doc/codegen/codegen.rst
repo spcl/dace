@@ -32,8 +32,8 @@ There are many features that are enabled by generating code from SDFGs:
 
 .. note::
 
-    You can also extend the code generator with new backends externally, see the `Customizing Code Generation tutorial <https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/codegen.ipynb>`_ 
-    and the `Tensor Core sample <https://github.com/spcl/dace/blob/master/samples/codegen/tensor_cores.py>`_ for more information.
+    You can also extend the code generator with new backends externally, see the `Customizing Code Generation tutorial <https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/codegen.ipynb>`_ 
+    and the `Tensor Core sample <https://github.com/spcl/dace/blob/main/samples/codegen/tensor_cores.py>`_ for more information.
 
 
 After the code is generated, ``compiler.py`` will invoke CMake on the build folder (e.g., ``.dacecache/<program>/build``)
@@ -145,7 +145,7 @@ necessary headers. The runtime is used for:
     match Python interfaces. This is especially useful to generate matching code when calling functions such as ``range``
     inside Tasklets.
 
-The folder also contains other files and helper functions, refer to its contents `on GitHub <https://github.com/spcl/dace/tree/master/dace/runtime/include/dace>`_ 
+The folder also contains other files and helper functions, refer to its contents `on GitHub <https://github.com/spcl/dace/tree/main/dace/runtime/include/dace>`_ 
 for more information.
 
 

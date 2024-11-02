@@ -3,7 +3,7 @@
 [![FPGA Tests](https://github.com/spcl/dace/actions/workflows/fpga-ci.yml/badge.svg)](https://github.com/spcl/dace/actions/workflows/fpga-ci.yml)
 [![Documentation Status](https://readthedocs.org/projects/spcldace/badge/?version=latest)](https://spcldace.readthedocs.io/en/latest/?badge=latest)
 [![PyPI version](https://badge.fury.io/py/dace.svg)](https://badge.fury.io/py/dace)
-[![codecov](https://codecov.io/gh/spcl/dace/branch/master/graph/badge.svg)](https://codecov.io/gh/spcl/dace)
+[![codecov](https://codecov.io/gh/spcl/dace/branch/main/graph/badge.svg)](https://codecov.io/gh/spcl/dace)
 
 
 ![D](dace.svg)aCe - Data-Centric Parallel Programming
@@ -11,7 +11,7 @@
 
 _Decoupling domain science from performance optimization._
 
-DaCe is a [fast](https://nbviewer.org/github/spcl/dace/blob/master/tutorials/benchmarking.ipynb) parallel programming
+DaCe is a [fast](https://nbviewer.org/github/spcl/dace/blob/main/tutorials/benchmarking.ipynb) parallel programming
 framework that takes code in Python/NumPy and other programming languages, and maps it to high-performance 
 **CPU, GPU, and FPGA** programs, which can be optimized to achieve state-of-the-art. Internally, DaCe 
 uses the Stateful DataFlow multiGraph (SDFG) *data-centric intermediate 
@@ -61,13 +61,13 @@ be used in any C ABI compatible language (C/C++, FORTRAN, etc.).
 
 For more information on how to use DaCe, see the [samples](samples) or tutorials below:
 
-* [Getting Started](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/getting_started.ipynb)
-* [Benchmarks, Instrumentation, and Performance Comparison with Other Python Compilers](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/benchmarking.ipynb)
-* [Explicit Dataflow in Python](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/explicit.ipynb)
-* [NumPy API Reference](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/numpy_frontend.ipynb)
-* [SDFG API](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/sdfg_api.ipynb)
-* [Using and Creating Transformations](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb)
-* [Extending the Code Generator](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/codegen.ipynb)
+* [Getting Started](https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/getting_started.ipynb)
+* [Benchmarks, Instrumentation, and Performance Comparison with Other Python Compilers](https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/benchmarking.ipynb)
+* [Explicit Dataflow in Python](https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/explicit.ipynb)
+* [NumPy API Reference](https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/numpy_frontend.ipynb)
+* [SDFG API](https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/sdfg_api.ipynb)
+* [Using and Creating Transformations](https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/transformations.ipynb)
+* [Extending the Code Generator](https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/codegen.ipynb)
 
 Publication
 -----------

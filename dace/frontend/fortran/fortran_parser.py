@@ -536,8 +536,8 @@ class AST_translator:
                                                     for i, s in zip(all_indices, array.shape)])
                             smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
 
-                            memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
-                            memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
+                            memlet = Memlet(f'{array_name}[{subset}]->[{smallsubset}]')
+                            memlet2 = Memlet(f'{viewname}[{smallsubset}]->[{subset}]')
                             wv = None
                             rv = None
                             if local_name.name in read_names:

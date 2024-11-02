@@ -766,13 +766,13 @@ class SDFG(ControlFlowRegion):
             if name in self.symbols:
                 raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
             #if name in self.arrays:
-            #    raise FileExistsError(f'Can not create symbol "{name}", the name is used by a data descriptor.')
+            #    raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
             if name in self._subarrays:
-                raise FileExistsError(f'Can not create symbol "{name}", the name is used by a subarray.')
+                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a subarray.')
             if name in self._rdistrarrays:
-                raise FileExistsError(f'Can not create symbol "{name}", the name is used by a RedistrArray.')
+                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a RedistrArray.')
             if name in self._pgrids:
-                raise FileExistsError(f'Can not create symbol "{name}", the name is used by a ProcessGrid.')
+                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a ProcessGrid.')
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
         self.symbols[name] = stype
@@ -954,7 +954,11 @@ class SDFG(ControlFlowRegion):
         Clears the instrumentation report folder of this SDFG.
         """
         path = os.path.join(self.build_folder, 'perf')
-        for fname in os.listdir(path):
+        try:
+            files = os.listdir(path)
+        except FileNotFoundError:
+            return
+        for fname in files:
             if not fname.startswith('report-'):
                 continue
             os.unlink(os.path.join(path, fname))
@@ -1467,9 +1471,11 @@ class SDFG(ControlFlowRegion):
     var sdfg_{uid} = {sdfg};
 </script>
 <script>
-    var sdfv_{uid} = new SDFV();
-    var renderer_{uid} = new SDFGRenderer(sdfv_{uid}, parse_sdfg(sdfg_{uid}),
-        document.getElementById('contents_{uid}'));
+    new SDFGRenderer(
+        checkCompatLoad(parse_sdfg(sdfg_{uid})),
+        document.getElementById("contents_{uid}"),
+        undefined, null, null, false, null, null
+    );
 </script>""".format(
             # Dumping to a string so that Jupyter Javascript can parse it
             # recursively
@@ -2298,8 +2304,8 @@ class SDFG(ControlFlowRegion):
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
             if self.name != sdfg.name:
-                warnings.warn('SDFG "%s" is already loaded by another object, '
-                              'recompiling under a different name.' % self.name)
+                warnings.warn(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
+                              f"name '{sdfg.name}'.")
 
             try:
                 # Fill in scope entry/exit connectors

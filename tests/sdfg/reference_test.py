@@ -160,7 +160,7 @@ def _create_scoped_sdfg():
     inp = state.add_read('B')
     t = state.add_tasklet('doit', {'r'}, {'w'}, 'w = r + 1')
     out = state.add_write('A')
-    state.add_memlet_path(inp, me, ref, memlet=dace.Memlet('B[1, i] -> i'))
+    state.add_memlet_path(inp, me, ref, memlet=dace.Memlet('B[1, i] -> [i]'))
     state.add_edge(ref, None, t, 'r', dace.Memlet('ref[i]'))
     state.add_edge_pair(mx, t, out, internal_connector='w', internal_memlet=dace.Memlet('A[10, i]'))
 
@@ -251,7 +251,7 @@ def _create_loop_nonfree_symbols_sdfg():
     sdfg.add_loop(istate, state, after, 'i', '0', 'i < 20', 'i + 1')
 
     # Reference set inside loop
-    state.add_edge(state.add_read('A'), None, state.add_write('ref'), 'set', dace.Memlet('A[i] -> 0'))
+    state.add_edge(state.add_read('A'), None, state.add_write('ref'), 'set', dace.Memlet('A[i] -> [0]'))
 
     # Use outisde loop
     t = after.add_tasklet('setone', {}, {'out'}, 'out = 1')
@@ -520,7 +520,7 @@ def test_reference_loop_nonfree():
     assert len(sources) == 1  # There is only one SDFG
     sources = sources[0]
     assert len(sources) == 1
-    assert sources['ref'] == {dace.Memlet('A[i] -> 0')}
+    assert sources['ref'] == {dace.Memlet('A[i] -> [0]')}
 
     # Test loop-to-map - should fail to apply
     from dace.transformation.interstate import LoopToMap

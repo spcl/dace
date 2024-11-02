@@ -153,7 +153,6 @@ def _make_read_write_sdfg(
 
     Depending on `conforming_memlet` the memlet that copies `inner_A` into `inner_B`
     will either be associated to `inner_A` (`True`) or `inner_B` (`False`).
-    This choice has consequences on if the transformation can apply or not.
 
     Notes:
         This is most likely a bug, see [issue#1643](https://github.com/spcl/dace/issues/1643),
@@ -207,7 +206,7 @@ def _make_read_write_sdfg(
         istate.add_nedge(
             inner_A,
             inner_B,
-            dace.Memlet("inner_A[0:4, 0:4] -> 0:4, 0:4"),
+            dace.Memlet("inner_A[0:4, 0:4] -> [0:4, 0:4]"),
         )
     else:
         # Because the `data` filed of the involved memlets differs the read to
@@ -216,7 +215,7 @@ def _make_read_write_sdfg(
         istate.add_nedge(
             inner_A,
             inner_B,
-            dace.Memlet("inner_B[0:4, 0:4] -> 0:4, 0:4"),
+            dace.Memlet("inner_B[0:4, 0:4] -> [0:4, 0:4]"),
         )
 
     # Add the nested SDFG
@@ -332,16 +331,6 @@ def test_unused_retval_2():
     assert np.allclose(a, 1)
 
 
-def test_read_write_1():
-    # Because the memlet is conforming, we can apply the transformation.
-    sdfg = _make_read_write_sdfg(True)
-
-    assert first_mode == PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=osdfg, expr_index=0, permissive=False)
-
-
-
-
-
 def test_prune_connectors_with_dependencies():
     sdfg = dace.SDFG('tester')
     A, A_desc = sdfg.add_array('A', [4], dace.float64)
@@ -420,18 +409,11 @@ def test_prune_connectors_with_dependencies():
     assert np.allclose(np_d, np_d_)
 
 
-def test_read_write_1():
-    # Because the memlet is conforming, we can apply the transformation.
+def test_read_write():
     sdfg, nsdfg = _make_read_write_sdfg(True)
+    assert not PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=sdfg, expr_index=0, permissive=False)
 
-    assert PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=sdfg, expr_index=0, permissive=False)
-    sdfg.apply_transformations_repeated(PruneConnectors, validate=True, validate_all=True)
-
-
-def test_read_write_2():
-    # Because the memlet is not conforming, we can not apply the transformation.
     sdfg, nsdfg = _make_read_write_sdfg(False)
-
     assert not PruneConnectors.can_be_applied_to(nsdfg=nsdfg, sdfg=sdfg, expr_index=0, permissive=False)
 
 

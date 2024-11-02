@@ -170,7 +170,7 @@ Optimizing GPU SDFGs
 
 When optimizing GPU SDFGs, there are a few things to keep in mind. Below is a non-exhaustive list of common GPU optimization
 practices and how DaCe helps achieve them. To see some of these optimizations in action, check out the ``optimize_for_gpu``
-function in the `Matrix Multiplication optimization example <https://github.com/spcl/dace/blob/master/samples/optimization/matmul.py>`_.
+function in the `Matrix Multiplication optimization example <https://github.com/spcl/dace/blob/main/samples/optimization/matmul.py>`_.
 
     * **Minimize host<->GPU transfers**: It is important to keep as much data as possible on the GPU across the application.
       This is especially true for data that is accessed frequently, such as data that is used in a loop.
@@ -234,7 +234,7 @@ function in the `Matrix Multiplication optimization example <https://github.com/
 
     * **Specialized hardware**: Specialized hardware, such as NVIDIA Tensor Cores or AMD's matrix instructions, can
       significantly improve performance. DaCe will not automatically emit such instructions, but you can use such operations
-      in your code. See the `Tensor Core code sample <https://github.com/spcl/dace/blob/master/samples/codegen/tensor_cores.py>`_ 
+      in your code. See the `Tensor Core code sample <https://github.com/spcl/dace/blob/main/samples/codegen/tensor_cores.py>`_ 
       to see how to make use of such units.
 
     * **Advanced GPU Map schedules**: DaCe provides two additional built-in map schedules: :class:`~dace.dtypes.ScheduleType.GPU_ThreadBlock_Dynamic`

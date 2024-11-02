@@ -29,7 +29,8 @@ class Modifies(Flag):
     Memlets = auto()  #: Memlets' existence, contents, or properties were modified
     Nodes = AccessNodes | Scopes | Tasklets | NestedSDFGs  #: Modification of any dataflow node (contained in an SDFG state) was made
     Edges = InterstateEdges | Memlets  #: Any edge (memlet or inter-state) was modified
-    Everything = Descriptors | Symbols | States | InterstateEdges | Nodes | Memlets  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
+    CFG = States | InterstateEdges #: A CFG (any level) was modified (connectivity or number of control flow blocks, but not their contents)
+    Everything = Descriptors | Symbols | CFG | Nodes | Memlets  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
 
 
 @properties.make_properties
