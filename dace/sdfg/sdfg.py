@@ -2265,7 +2265,7 @@ class SDFG(ControlFlowRegion):
             :param validate: If True, validates the SDFG prior to generating
                              code.
             :param additional_code_obj: If not None, use these objects in the compilation process.
-            :param return_program_handle: If False, does not load the generated libaray.
+            :param return_program_handle: If False, does not load the generated library.
             :return: A callable CompiledSDFG object, or None if ``return_program_handle=False``.
         """
 
