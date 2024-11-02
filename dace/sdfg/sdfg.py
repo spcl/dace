@@ -2256,7 +2256,7 @@ class SDFG(ControlFlowRegion):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True, additional_code_obj=None,
+    def compile(self, output_file=None, validate=True,
                 return_program_handle=True) -> 'CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
 
@@ -2264,7 +2264,6 @@ class SDFG(ControlFlowRegion):
                                 the specified path.
             :param validate: If True, validates the SDFG prior to generating
                              code.
-            :param additional_code_obj: If not None, use these objects in the compilation process.
             :param return_program_handle: If False, does not load the generated library.
             :return: A callable CompiledSDFG object, or None if ``return_program_handle=False``.
         """
