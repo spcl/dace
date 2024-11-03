@@ -105,7 +105,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 intermediate_data.add(dst.data)
 
                 # If array is used anywhere else in this state.
-                num_occurrences = len([n for n in sdfg.data_nodes() if n.data == dst.data])
+                num_occurrences = len([n for n in graph.data_nodes() if n.data == dst.data])
                 if num_occurrences > 1:
                     return False
             else:
@@ -283,11 +283,13 @@ class MapFusion(transformation.SingleStateTransformation):
             intermediate_nodes.add(dst)
             assert isinstance(dst, nodes.AccessNode)
 
-        # Check if an access node refers to non transient memory, or transient
+        # Check if an access node refers to non-transient memory, or transient
         # is used at another location (cannot erase)
         do_not_erase = set()
         for node in intermediate_nodes:
             if sdfg.arrays[node.data].transient is False:
+                do_not_erase.add(node)
+            elif len([n for n in sdfg.data_nodes() if n.data == node.data]) > 1:
                 do_not_erase.add(node)
             else:
                 for edge in graph.in_edges(node):

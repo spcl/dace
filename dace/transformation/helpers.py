@@ -7,7 +7,7 @@ from networkx import MultiDiGraph
 from dace.sdfg.state import ControlFlowRegion
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
-from typing import Dict, List, Optional, Tuple, Set, Union
+from typing import Dict, List, Optional, Tuple, Set, Union, Iterable
 
 from dace import data, dtypes, symbolic
 from dace.codegen import control_flow as cf
@@ -275,7 +275,7 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
         if isinstance(child, cf.BasicCFBlock):
             if child.state in visited:
                 continue
-            components[child.state] = (set([child.state]), child)
+            components[child.state] = ({child.state}, child)
             visited[child.state] = False
         elif isinstance(child, (cf.ForScope, cf.WhileScope)):
             guard = child.guard
@@ -1027,11 +1027,11 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
     return False
 
 
-def find_contiguous_subsets(subset_list: List[subsets.Subset], dim: int = None) -> Set[subsets.Subset]:
+def find_contiguous_subsets(subset_list: Iterable[subsets.Subset], dim: int = None) -> Set[subsets.Subset]:
     """ 
     Finds the set of largest contiguous subsets in a list of subsets. 
 
-    :param subsets: Iterable of subset objects.
+    :param subset_list: Iterable of subset objects.
     :param dim: Check for contiguity only for the specified dimension.
     :return: A list of contiguous subsets.
     """
