@@ -1293,7 +1293,7 @@ def dtype_to_typeclass(dtype=None):
 bool = bool_
 
 TYPECLASS_TO_STRING = {
-    bool: "dace::bool",
+    bool: "dace::bool_",
     bool_: "dace::bool_",
     uint8: "dace::uint8",
     uint16: "dace::uint16",
