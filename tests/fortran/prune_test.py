@@ -96,8 +96,52 @@ def test_fortran_frontend_prune_complex():
     assert (a[1] == 42 + 3.14)
     assert (a[2] == 40)
 
+def test_fortran_frontend_prune_actual_param():
+    # Test we do not remove a variable that is passed along
+    # but not used in the function.
+    test_string = """
+                    PROGRAM init_test
+                    implicit none
+                    double precision d(4)
+                    double precision dx(1)
+                    double precision dy(1)
+                    CALL test_function(dy, d, dx)
+                    end
+
+                    SUBROUTINE test_function(dy, d, dx)
+
+                    double precision d(4)
+                    double precision dx(1)
+                    double precision dy(1)
+
+                    CALL test_function_another(d, dx)
+                    CALL test_function_another(d, dy)
+
+                    END SUBROUTINE test_function
+
+                    SUBROUTINE test_function_another(dx, dz)
+
+                    double precision dx(4)
+                    double precision dz(1)
+
+                    dx(3) = dx(3) - 1
+
+                    END SUBROUTINE test_function_another
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "init_test", False)
+    print('a', flush=True)
+    sdfg.simplify(verbose=True)
+    a = np.full([4], 42, order="F", dtype=np.float64)
+    print(a)
+    sdfg(d=a,outside_init=0)
+    print(a)
+    assert (a[0] == 42)
+    assert (a[1] == 42)
+    assert (a[2] == 40)
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_prune_simple()
+    test_fortran_frontend_prune_simple()
     test_fortran_frontend_prune_complex()
+    test_fortran_frontend_prune_actual_param()
