@@ -555,7 +555,11 @@ class CPPUnparser:
             if result.find("b'") >= 0:
                 self.write(result)
             else:
-                self.write(result.replace('\'', '\"'))
+                towrite = result
+                if result.startswith("'"):
+                    towrite = result[1:-1].replace('"', '\\"')
+                    towrite = f'"{towrite}"'
+                self.write(towrite)
 
     def _Constant(self, t):
         value = t.value
@@ -1187,6 +1191,8 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         return cppunparse(ast.parse(symbolic.symstr(code, cpp_mode=True)),
                           expr_semicolon,
                           defined_symbols=defined_symbols)
+    elif isinstance(code, int):
+        return str(code)
     elif code.__class__.__name__ == 'function':
         try:
             code_str = inspect.getsource(code)
