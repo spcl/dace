@@ -231,6 +231,7 @@ class AST_translator:
         startpoint=None,
         sdfg_path=None,
         toplevel_subroutine: Optional[str] = None,
+        subroutine_used_names: Optional[Set[str]] = None,
         normalize_offsets = False
     ):
         """
@@ -275,6 +276,7 @@ class AST_translator:
         #self.iblocks=ast.iblocks
         self.replace_names = {}
         self.toplevel_subroutine = toplevel_subroutine
+        self.subroutine_used_names = subroutine_used_names
         self.normalize_offsets = normalize_offsets
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
@@ -407,6 +409,10 @@ class AST_translator:
                             for k in j.vardecl:
                                 self.module_vars.append((k.name, i.name))
             if i.specification_part is not None:                                
+
+              # this works with CloudSC
+              # unsure about ICON
+              self.transient_mode=False
               for j in i.specification_part.symbols:
                 self.translate(j, sdfg)
                 if  isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node):
@@ -419,6 +425,9 @@ class AST_translator:
                 self.translate(j, sdfg)
                 for k in j.vardecl:
                     self.module_vars.append((k.name, i.name))
+        # this works with CloudSC
+        # unsure about ICON
+        self.transient_mode=True
         ast_utils.add_simple_state_to_sdfg(self, sdfg, "GlobalDefEnd")            
         if node.main_program is not None:
 
@@ -444,7 +453,9 @@ class AST_translator:
             else:
 
                 if self.startpoint.specification_part is not None:
-                    self.transient_mode=True
+                    # this works with CloudSC
+                    # unsure about ICON
+                    self.transient_mode=False
 
                     for i in self.startpoint.specification_part.typedecls:
                         self.translate(i, sdfg)
@@ -462,7 +473,16 @@ class AST_translator:
                                 continue
                             add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name,decl.name,self.placeholders,self.placeholders_offsets,sdfg.arrays[self.name_mapping[sdfg][decl.name]],self.replace_names,self.actual_offsets_per_sdfg[sdfg])
 
-                self.transient_mode=True    
+                # this works with CloudSC
+                # unsure about ICON
+                arg_names = [ast_utils.get_name(i) for i in self.startpoint.args]
+                for arr_name, arr in sdfg.arrays.items():
+
+                    if arr.transient and arr_name in arg_names:
+                        print(f"Changing the transient status to false of {arr_name} because it's a function argument")
+                        arr.transient = False
+
+                self.transient_mode=True
                 self.translate(self.startpoint.execution_part.execution, sdfg)   
 
     def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG):
@@ -773,6 +793,8 @@ class AST_translator:
 
         if node.execution_part is None:
             return
+
+        print("TRANSLATE SUBROUTINE", node.name.name)
 
         # First get the list of read and written variables
         inputnodefinder = ast_transforms.FindInputs()
@@ -2091,6 +2113,23 @@ class AST_translator:
                             if name in self.local_not_transient_because_assign[sdfg.name]:
                                 is_arg=False
                         break
+
+        # if this is a variable declared in the module,
+        # then we will not add it unless it is used by the functions.
+        # It would be sufficient to check the main entry function,
+        # since it must pass this variable through call
+        # to other functions.
+        # However, I am not completely sure how to determine which function is the main one.
+        #
+        # we ignore the variable that is not used at all in all functions
+        # this is a module variaable that can be removed
+        if not is_arg:
+            if self.subroutine_used_names is not None:
+
+                if node.name not in self.subroutine_used_names:
+                    print(f"Ignoring module variable {node.name} because it is not used in the the top level subroutine")
+                    return
+
         if is_arg:
             transient=False
         else:
@@ -3339,7 +3378,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program.functions_and_subroutines=partial_ast.functions_and_subroutines
     unordered_modules=program.modules
 
-    program = ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
+    arg_pruner = ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes)
+    arg_pruner.visit(program)
 
     program.modules=[]
     for i in parse_order:
@@ -3348,8 +3388,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 program.modules.append(j)
     for j in unordered_modules:
         if j.name.name==top_level_ast:
-            program.modules.append(j)            
-    
+            program.modules.append(j)
+
+    toplevel_subroutine = "cloudscouter"
+
     for i in program.modules:
         for path in source_list:
             
@@ -3358,8 +3400,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            print(j.name.name)
-            if j.name.name!="cloudscouter":
+            print("subroutine", j.name.name)
+            if j.name.name != toplevel_subroutine:
             #if j.name.name!="solve_nh":
             #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
@@ -3371,15 +3413,20 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
             print(f"Building SDFG {j.name.name}")
             startpoint = j
-            ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=False,startpoint=startpoint,sdfg_path=icon_sdfgs_dir, normalize_offsets=normalize_offsets)
+            ast2sdfg = AST_translator(
+                program, __file__,
+                multiple_sdfgs=False,
+                startpoint=startpoint,
+                sdfg_path=icon_sdfgs_dir,
+                #toplevel_subroutine_arg_names=arg_pruner.visited_funcs[toplevel_subroutine],
+                subroutine_used_names=arg_pruner.used_in_all_functions,
+                normalize_offsets=normalize_offsets
+            )
             sdfg = SDFG(j.name.name)
             ast2sdfg.actual_offsets_per_sdfg[sdfg]={}
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg
-            
             ast2sdfg.translate(program, sdfg)
-            
-
 
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"),compress=True)
             # for sd in sdfg.all_sdfgs_recursive():
