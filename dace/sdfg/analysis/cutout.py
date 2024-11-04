@@ -202,7 +202,10 @@ class SDFGCutout(SDFG):
             nodes = _reduce_in_configuration(state, nodes, use_alibi_nodes, symbols_map)
 
         def clone_f(x: Union[Memlet, InterstateEdge, nd.Node, ControlFlowBlock]):
-            return x.clone(keep_guid=preserve_guids)
+            ret = copy.deepcopy(x)
+            if preserve_guids:
+                ret.guid = x.guid
+            return ret
 
         create_element = clone_f if make_copy else (lambda x: x)
         sdfg = state.parent
@@ -374,7 +377,10 @@ class SDFGCutout(SDFG):
         :return: The created SDFGCutout or the original SDFG where no smaller cutout could be obtained.
         """
         def create_element(x: Union[ControlFlowBlock, InterstateEdge]) -> Union[ControlFlowBlock, InterstateEdge]:
-            return x.clone(keep_guid=preserve_guids)
+            ret = copy.deepcopy(x)
+            if preserve_guids:
+                ret.guid = x.guid
+            return ret
 
         # Check that all states are inside the same SDFG.
         sdfg = list(states)[0].parent

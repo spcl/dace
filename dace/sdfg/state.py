@@ -1248,12 +1248,6 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     def __repr__(self) -> str:
         return f'ControlFlowBlock ({self.label})'
 
-    def clone(self, keep_guid = False) -> 'ControlFlowBlock':
-        new_block = copy.deepcopy(self)
-        if keep_guid:
-            new_block.guid = self.guid
-        return new_block
-
     def __deepcopy__(self, memo):
         cls = self.__class__
         result = cls.__new__(cls)
