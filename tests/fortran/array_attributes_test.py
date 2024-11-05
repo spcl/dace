@@ -46,7 +46,7 @@ def test_fortran_frontend_array_attribute_no_offset_symbol():
     test_string = """
                     PROGRAM index_offset_test
                     implicit none
-                    integer :: arrsize
+                    integer, parameter :: arrsize = 5
                     double precision, dimension(arrsize) :: d
                     CALL index_test_function(d,arrsize)
                     end
@@ -159,8 +159,8 @@ def test_fortran_frontend_array_attribute_offset_symbol2():
     test_string = """
                     PROGRAM index_offset_test
                     implicit none
-                    integer :: arrsize
-                    integer :: arrsize2
+                    integer, parameter :: arrsize = 5
+                    integer, parameter :: arrsize2 = 5
                     double precision, dimension(arrsize:arrsize2) :: d
                     CALL index_test_function(d, arrsize, arrsize2)
                     end
@@ -239,8 +239,8 @@ def test_fortran_frontend_array_offset_symbol():
     test_string = """
                     PROGRAM index_offset_test
                     implicit none
-                    integer :: arrsize
-                    integer :: arrsize2
+                    integer, parameter :: arrsize = 5
+                    integer, parameter :: arrsize2 = 5
                     double precision :: d(arrsize:arrsize2)
                     CALL index_test_function(d, arrsize, arrsize2)
                     end
