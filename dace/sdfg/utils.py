@@ -630,9 +630,13 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
         e = curedge.edge
         state.remove_edge(e)
         if inwards:
-            neighbors = [] if not e.src_conn else [neighbor for neighbor in state.out_edges_by_connector(e.src, e.src_conn)]
+            neighbors = [] if not e.src_conn else [
+                neighbor for neighbor in state.out_edges_by_connector(e.src, e.src_conn)
+            ]
         else:
-            neighbors = [] if not e.dst_conn else [neighbor for neighbor in state.in_edges_by_connector(e.dst, e.dst_conn)]
+            neighbors = [] if not e.dst_conn else [
+                neighbor for neighbor in state.in_edges_by_connector(e.dst, e.dst_conn)
+            ]
         if len(neighbors) > 0:  # There are still edges connected, leave as-is
             break
 
@@ -797,6 +801,33 @@ def get_all_view_nodes(state: SDFGState, view: nd.AccessNode) -> List[nd.AccessN
     return result
 
 
+def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiConnectorEdge[mm.Memlet]]:
+    """
+    Given a view access node, returns a list of viewed access nodes as edges
+    if existent, else None
+    """
+    sdfg = state.parent
+    node = view
+    desc = sdfg.arrays[node.data]
+    result = []
+    while isinstance(desc, dt.View):
+        edge = get_view_edge(state, node)
+        if edge is None:
+            break
+        old_node = node
+        if edge.dst is view:
+            node = edge.src
+        else:
+            node = edge.dst
+        if node is old_node:
+            break
+        if not isinstance(node, nd.AccessNode):
+            break
+        desc = sdfg.arrays[node.data]
+        result.append(edge)
+    return result
+
+
 def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
     """
     Given a view access node, returns the
@@ -819,8 +850,18 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     # If there is one edge (in/out) that leads (via memlet path) to an access
     # node, and the other side (out/in) has a different number of edges.
     if len(in_edges) == 1 and len(out_edges) != 1:
+        # If the edge is not leading to an access node, fail
+        mpath = state.memlet_path(in_edges[0])
+        if not isinstance(mpath[0].src, nd.AccessNode):
+            return None
+
         return in_edges[0]
     if len(out_edges) == 1 and len(in_edges) != 1:
+        # If the edge is not leading to an access node, fail
+        mpath = state.memlet_path(out_edges[0])
+        if not isinstance(mpath[-1].dst, nd.AccessNode):
+            return None
+
         return out_edges[0]
     if len(out_edges) == len(in_edges) and len(out_edges) != 1:
         return None
@@ -844,7 +885,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return out_edge
     if not src_is_data and not dst_is_data:
         return None
-    
+
     # Check if there is a 'views' connector
     if in_edge.dst_conn and in_edge.dst_conn == 'views':
         return in_edge
@@ -1229,7 +1270,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                         progress = True
                         pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
 
-                    if u in skip_nodes or v in skip_nodes:
+                    if (u in skip_nodes or v in skip_nodes or not isinstance(v, SDFGState)
+                            or not isinstance(u, SDFGState)):
                         continue
 
                     if isinstance(u, SDFGState) and isinstance(v, SDFGState):
@@ -1275,8 +1317,10 @@ def inline_control_flow_regions(sdfg: SDFG, types: Optional[List[Type[AbstractCo
         blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, AbstractControlFlowRegion)]
     count = 0
 
-    for _block in optional_progressbar(reversed(blocks), title='Inlining control flow regions',
-                                       n=len(blocks), progress=progress):
+    for _block in optional_progressbar(reversed(blocks),
+                                       title='Inlining control flow regions',
+                                       n=len(blocks),
+                                       progress=progress):
         block: ControlFlowRegion = _block
         # Control flow regions where the parent is a conditional block are not inlined.
         if block.parent_graph and type(block.parent_graph) == ConditionalBlock:

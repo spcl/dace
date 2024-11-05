@@ -55,6 +55,16 @@ class Node(object):
         else:
             return type(self).__name__
 
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k == 'guid': # Skip ID
+                continue
+            setattr(result, k, dcpy(v, memo))
+        return result
+
     def validate(self, sdfg, state):
         pass
 

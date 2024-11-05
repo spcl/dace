@@ -264,6 +264,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for loc, code in nsdfg.exit_code.items():
             sdfg.append_exit_code(code.code, loc)
 
+        # Callbacks and other types
+        sdfg._callback_mapping.update(nsdfg.callback_mapping)
+
         # Environments
         for node in nstate.nodes():
             if isinstance(node, nodes.CodeNode):
