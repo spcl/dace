@@ -191,7 +191,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
     """ Verifies the correctness of an SDFG by applying multiple tests.
-    
+
         :param sdfg: The SDFG to verify.
         :param references: An optional set keeping seen IDs for object
                            miscopy validation.
@@ -697,9 +697,20 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             name = None
         if isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Structure):
             name = None
+        # Special case: if the name is the size array of the src_node, then it is ok, checked with the "size_desc_name"
+        src_size_access = isinstance(src_node, nd.AccessNode) and name == sdfg.arrays[src_node.data].size_desc_name
+        dst_size_access = isinstance(dst_node, nd.AccessNode) and name == sdfg.arrays[dst_node.data].size_desc_name
+        if src_size_access and dst_size_access:
+            raise InvalidSDFGEdgeError(
+                "Reading from the size connector and writing to the size connector at the same time of same data is not valid",
+                sdfg,
+                state_id,
+                eid,
+            )
         if (name is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
-                and (not isinstance(src_node, nd.AccessNode) or (name != src_node.data and name != e.src_conn))
-                and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn))):
+                and (not isinstance(src_node, nd.AccessNode) or (name != src_node.data and name != e.src_conn and not src_size_access))
+                and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn and not dst_size_access))
+            ):
             raise InvalidSDFGEdgeError(
                 "Memlet data does not match source or destination "
                 "data nodes)",
@@ -728,7 +739,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                                  if isinstance(dst_node, nd.AccessNode) and e.data.data != dst_node.data else src_node)
 
             if isinstance(subset_node, nd.AccessNode):
-                arr = sdfg.arrays[subset_node.data]
+                if src_size_access:
+                    arr = sdfg.arrays[sdfg.arrays[src_node.data].size_desc_name]
+                elif dst_size_access:
+                    arr = sdfg.arrays[sdfg.arrays[dst_node.data].size_desc_name]
+                else:
+                    arr = sdfg.arrays[subset_node.data]
                 # Dimensionality
                 if e.data.subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(
