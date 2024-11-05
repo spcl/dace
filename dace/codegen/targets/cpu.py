@@ -1164,7 +1164,26 @@ class CPUCodeGen(TargetCodeGenerator):
                             write_expr = f"*({ptr_str} + {array_expr}) = {in_local_name};"
                         else:
                             desc_dtype = desc.dtype
-                            expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
+                            # If the storage type if CPU_Heap or GPU_Global then it might be requiring deferred allocation
+                            # We can check if the array requires sepcial access using A_size[0] (CPU) or __A_dim0_size (GPU0)
+                            # by going through the shape and checking for symbols starting with __dace_defer
+                            def check_dace_defer(elements):
+                                for elem in elements:
+                                    if isinstance(elem, symbolic.symbol) and str(elem).startswith("__dace_defer"):
+                                        return True
+                                return False
+                            deferred_size_names = None
+                            if check_dace_defer(desc.shape):
+                                if desc.storage == dtypes.StorageType.GPU_Global or desc.storage == dtypes.StorageType.CPU_Heap:
+                                    deferred_size_names = []
+                                    for i, elem in enumerate(desc.shape):
+                                        if str(elem).startswith("__dace_defer"):
+                                            deferred_size_names.append(f"__{memlet.data}_dim{i}_size" if desc.storage == dtypes.StorageType.GPU_Global else f"{desc.size_desc_name}[{i}]")
+                                        else:
+                                            deferred_size_names.append(elem)
+                                else:
+                                    raise Exception("Deferred Allocation only supported on array storages of type GPU_Global or CPU_Heap")
+                            expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame, deferred_size_names=deferred_size_names)
                             write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
 
                     # Write out
