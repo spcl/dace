@@ -1270,8 +1270,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                         progress = True
                         pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
 
-                    if (u in skip_nodes or v in skip_nodes or not isinstance(v, SDFGState)
-                            or not isinstance(u, SDFGState)):
+                    if u in skip_nodes or v in skip_nodes:
                         continue
 
                     if isinstance(u, SDFGState) and isinstance(v, SDFGState):
