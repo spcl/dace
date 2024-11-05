@@ -983,9 +983,10 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
     # To prevent variables-redefinition, build dictionary with all the previously defined symbols
     defined_symbols = state_dfg.symbols_defined_at(node)
 
-    defined_symbols.update(
-        {k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
-         for k, v in sdfg.constants.items()})
+    defined_symbols.update({
+        k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+        for k, v in sdfg.constants.items()
+    })
 
     for connector, (memlet, _, _, conntype) in memlets.items():
         if connector is not None:
@@ -1279,8 +1280,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             if memlet.data in self.sdfg.arrays and self.sdfg.arrays[memlet.data].dtype == dtype:
                 return self.generic_visit(node)
             return ast.parse(f"{name}[0]").body[0].value
-        elif (self.allow_casts and (defined_type in (DefinedType.Stream, DefinedType.StreamArray))
-              and memlet.dynamic):
+        elif (self.allow_casts and (defined_type in (DefinedType.Stream, DefinedType.StreamArray)) and memlet.dynamic):
             return ast.parse(f"{name}.pop()").body[0].value
         else:
             return self.generic_visit(node)
@@ -1314,8 +1314,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 evaluated_constant = symbolic.evaluate(unparsed, self.constants)
                 evaluated = symbolic.symstr(evaluated_constant, cpp_mode=True)
                 value = ast.parse(evaluated).body[0].value
-                if isinstance(evaluated_node, numbers.Number) and evaluated_node != (
-                        value.value if sys.version_info >= (3, 8) else value.n):
+                if isinstance(evaluated_node, numbers.Number) and evaluated_node != (value.value if sys.version_info
+                                                                                     >= (3, 8) else value.n):
                     raise TypeError
                 node.right = ast.parse(evaluated).body[0].value
             except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
@@ -1368,8 +1368,8 @@ class StructInitializer(ExtNodeTransformer):
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
-def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
-                           node: nodes.Node, callsite_stream: CodeIOStream):
+def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
+                           callsite_stream: CodeIOStream):
     state_dfg: SDFGState = cfg.nodes()[state_id]
     if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(sdfg, state_dfg, node):
         return
