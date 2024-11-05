@@ -1143,7 +1143,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(elts, strides))
 
         if len(strides) != 1:
-            raise SyntaxError('Missing dimensions in expression (expected %d, got one)' % len(strides))
+            raise SyntaxError('Missing dimensions in expression (expected one, got %d)' % len(strides))
 
         try:
             return symbolic.pystr_to_symbolic(unparse(visited_slice)) * strides[0]

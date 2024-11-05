@@ -516,7 +516,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                       # Streams do not need to be initialized
                       and not isinstance(arr, dt.Stream)):
                     if node.setzero == False:
-                        warnings.warn('WARNING: Use of uninitialized transient "%s" in state %s' %
+                        warnings.warn('WARNING: Use of uninitialized transient "%s" in state "%s"' %
                                       (node.data, state.label))
 
                 # Register initialized transients
