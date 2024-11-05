@@ -246,7 +246,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                         f'Mismatch between constant and data descriptor of "{const_name}", '
                         f'expected to find "{const_type}" but found "{sdfg.arrays[const_name]}".')
             elif const_name in sdfg.symbols:
-                if const_type != sdfg.symbols[const_name]:
+                if const_type.dtype != sdfg.symbols[const_name]:
                     # This should actually be an error, but there is a lots of code that depends on it.
                     warnings.warn(
                         f'Mismatch between constant and symobl type of "{const_name}", '

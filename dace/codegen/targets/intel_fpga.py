@@ -169,15 +169,16 @@ DACE_EXPORTED int __dace_exit_intel_fpga({sdfg_state_name} *__state) {{
                                    "cpp",
                                    IntelFPGACodeGen,
                                    "Intel FPGA",
-                                   target_type="host")
+                                   target_type="host",
+                                   sdfg=self._global_sdfg)
 
         kernel_code_objs = [
-            CodeObject(kernel_name, code, "cl", IntelFPGACodeGen, "Intel FPGA", target_type="device")
+            CodeObject(kernel_name, code, "cl", IntelFPGACodeGen, "Intel FPGA", target_type="device", sdfg=self._global_sdfg)
             for (kernel_name, code, _) in self._kernel_codes
         ]
         # add the util header if present
         other_code_objs = [
-            CodeObject(file_name, code.getvalue(), "cl", IntelFPGACodeGen, "Intel FPGA", target_type="device")
+            CodeObject(file_name, code.getvalue(), "cl", IntelFPGACodeGen, "Intel FPGA", target_type="device", sdfg=self._global_sdfg)
             for (file_name, code) in self._other_codes.items()
         ]
 
@@ -299,8 +300,8 @@ DACE_EXPORTED int __dace_exit_intel_fpga({sdfg_state_name} *__state) {{
             return "__global volatile  {}* restrict {}".format(vec_type, var_name)
         elif isinstance(data, dace.data.Stream):
             return None  # Streams are global objects
-        else:
-            return data.as_arg(with_types=True, name=var_name)
+        else: # Scalar or structure
+            return f'{data.dtype.ocltype} {var_name}'
 
     @staticmethod
     def generate_unroll_loop_pre(kernel_stream, factor, sdfg, cfg, state_id, node):
@@ -733,7 +734,7 @@ __kernel void \\
         arguments = [f'{atype} {aname}' for atype, aname, _ in memlet_references]
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         arguments += [
-            f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
+            f'{node.sdfg.symbols[aname].ocltype} {aname}' for aname in sorted(node.symbol_mapping.keys())
             if aname in fsyms and aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
@@ -908,7 +909,7 @@ __kernel void \\
             # derive the declaration/definition
 
             qualifier = "__global volatile "
-            atype = dtypes.pointer(nodedesc.dtype).ctype + " restrict"
+            atype = dtypes.pointer(nodedesc.dtype).ocltype + " restrict"
             aname = ptrname
             viewed_desc = sdfg.arrays[edge.data.data]
             eptr = cpp.ptr(edge.data.data, viewed_desc, sdfg, self._frame)
@@ -1261,7 +1262,7 @@ __kernel void \\
 
         for cstname, (csttype, cstval) in sdfg.constants_prop.items():
             if isinstance(csttype, dace.data.Array):
-                const_str = "__constant " + csttype.dtype.ctype + \
+                const_str = "__constant " + csttype.dtype.ocltype + \
                             " " + cstname + "[" + str(cstval.size) + "]"
 
                 if cstname not in self.generated_constants:
