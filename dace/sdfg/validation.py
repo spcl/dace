@@ -700,6 +700,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Special case: if the name is the size array of the src_node, then it is ok, checked with the "size_desc_name"
         src_size_access = isinstance(src_node, nd.AccessNode) and name == sdfg.arrays[src_node.data].size_desc_name
         dst_size_access = isinstance(dst_node, nd.AccessNode) and name == sdfg.arrays[dst_node.data].size_desc_name
+        sdict = state.scope_dict()
         if src_size_access and dst_size_access:
             raise InvalidSDFGEdgeError(
                 "Reading from the size connector and writing to the size connector at the same time of same data is not valid",
@@ -707,6 +708,22 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 state_id,
                 eid,
             )
+        if dst_size_access and sdict[dst_node] is not None:
+            raise InvalidSDFGEdgeError(
+                "Reallocating data (writing to the size connector) within a scope is not valid",
+                sdfg,
+                state_id,
+                eid,
+            )
+        if dst_size_access:
+            dst_arr = sdfg.arrays[dst_node.data]
+            if dst_arr.storage != dace.dtypes.StorageType.GPU_Global or dst_arr.storage != dace.dtypes.StorageType.CPU_Heap:
+                raise InvalidSDFGEdgeError(
+                    "Reallocating data (writing to the size connector) within a scope is not valid",
+                    sdfg,
+                    state_id,
+                    eid,
+                )
         if (name is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
                 and (not isinstance(src_node, nd.AccessNode) or (name != src_node.data and name != e.src_conn and not src_size_access))
                 and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn and not dst_size_access))
