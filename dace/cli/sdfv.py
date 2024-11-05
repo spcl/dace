@@ -13,7 +13,6 @@ import threading
 
 import dace
 import tempfile
-import jinja2
 
 
 def partialclass(cls, *args, **kwds):
@@ -44,9 +43,18 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: b
         ):
             fd, filename = tempfile.mkstemp(suffix='.sdfg')
             sdfg.save(filename)
-            os.system(f'code {filename}')
+            if platform.system() == 'Darwin':
+                # Special case for MacOS
+                os.system(f'open {filename}')
+            else:
+                os.system(f'code {filename}')
             os.close(fd)
             return
+
+    try:
+        import jinja2
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError('SDFG.view() requires jinja2, please install by running `pip install jinja2`')
 
     if type(sdfg) is dace.SDFG:
         sdfg = dace.serialize.dumps(sdfg.to_json())
