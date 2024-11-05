@@ -1,22 +1,8 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from fparser.common.readfortran import FortranStringReader
-from fparser.common.readfortran import FortranFileReader
-from fparser.two.parser import ParserFactory
-import sys, os
 import numpy as np
-import pytest
 
-
-from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
 from dace.frontend.fortran import fortran_parser
-from fparser.two.symbol_table import SymbolTable
-from dace.sdfg import utils as sdutil
-
-import dace.frontend.fortran.ast_components as ast_components
-import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_utils as ast_utils
-import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
 
 def test_fortran_frontend_real_kind_selector():
@@ -24,23 +10,25 @@ def test_fortran_frontend_real_kind_selector():
     Tests that the size intrinsics are correctly parsed and translated to DaCe.
     """
     test_string = """
-                    PROGRAM real_kind_selector_test
-                    implicit none
-                    INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13,300)
-                    INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
-                    REAL(KIND=JPRB) d(4)
-                    CALL real_kind_selector_test_function(d)
-                    end
+program real_kind_selector_test
+  implicit none
+  integer, parameter :: JPRB = selected_real_kind(13, 300)
+  real(KIND=JPRB) d(4)
+  call real_kind_selector_test_function(d)
+end
 
-                    SUBROUTINE real_kind_selector_test_function(d)
-                    REAL(KIND=JPRB) d(4)
-                    INTEGER(KIND=JPIM) i
+subroutine real_kind_selector_test_function(d)
+  implicit none
+  integer, parameter :: JPRB = selected_real_kind(13, 300)
+  integer, parameter :: JPIM = selected_int_kind(9)
+  real(KIND=JPRB) d(4)
+  integer(KIND=JPIM) i
 
-                    i=7
-                    d(2)=5.5+i
-                    
-                    END SUBROUTINE real_kind_selector_test_function
-                    """
+  i = 7
+  d(2) = 5.5 + i
+
+end subroutine real_kind_selector_test_function
+"""
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "real_kind_selector_test")
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
@@ -129,30 +117,30 @@ def test_fortran_frontend_function_statement1():
     """
     Tests that the function statement are correctly removed recursively.
     """
-    
+
     test_string = """
-                    PROGRAM function_statement1_test
-                    implicit none
-                    double precision d(3,4,5)
-                    CALL function_statement1_test_function(d)
-                    end
+program function_statement1_test
+  implicit none
+  double precision d(3, 4, 5)
+  call function_statement1_test_function(d)
+end
 
-                    SUBROUTINE function_statement1_test_function(d)
-                   double precision d(3,4,5)
-                   double precision :: PTARE,RTT(2),FOEDELTA,FOELDCP
-                   double precision :: RALVDCP(2),RALSDCP(2),RES
+subroutine function_statement1_test_function(d)
+  double precision d(3, 4, 5)
+  double precision :: PTARE, RTT(2), FOEDELTA, FOELDCP
+  double precision :: RALVDCP(2), RALSDCP(2), RES
 
-                    FOEDELTA (PTARE) = MAX (0.0,SIGN(1.0,PTARE-RTT(1)))
-                    FOELDCP ( PTARE ) = FOEDELTA(PTARE)*RALVDCP(1) + (1.0-FOEDELTA(PTARE))*RALSDCP(1)
+  FOEDELTA(PTARE) = max(0.0, sign(1.d0, PTARE - RTT(1)))
+  FOELDCP(PTARE) = FOEDELTA(PTARE)*RALVDCP(1) + (1.0 - FOEDELTA(PTARE))*RALSDCP(1)
 
-                    RTT(1)=4.5
-                    RALVDCP(1)=4.9
-                    RALSDCP(1)=5.1
-                    d(1,1,1)=FOELDCP(3.0)
-                    RES=FOELDCP(3.0)
-                   d(1,1,2)=RES                 
-                   END SUBROUTINE function_statement1_test_function
-                    """
+  RTT(1) = 4.5
+  RALVDCP(1) = 4.9
+  RALSDCP(1) = 5.1
+  d(1, 1, 1) = FOELDCP(3.d0)
+  RES = FOELDCP(3.d0)
+  d(1, 1, 2) = RES
+end subroutine function_statement1_test_function
+"""
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "function_statement1_test")
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
