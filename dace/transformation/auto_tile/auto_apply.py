@@ -627,7 +627,8 @@ def auto_apply(
         filename = f"{sdfg_name}_report/{sdfg_name}_{ii}.report"
         ii += 1
 
-    file = open(filename, "w")
+    if write_kernel_report_to_file:
+        file = open(filename, "w")
 
     """
     file_name = f"{sdfg_name}_auto_tiled_perf_results.json"
