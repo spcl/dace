@@ -94,6 +94,5 @@ def test_fortran_frontend_bit_size_symbolic():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_bit_size()
-    #test_fortran_frontend_bit_size_symbolic()
+    test_fortran_frontend_bit_size_symbolic()
