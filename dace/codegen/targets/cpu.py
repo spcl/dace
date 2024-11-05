@@ -338,6 +338,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
             declaration_stream.write(f'{nodedesc.dtype.ctype} *{name} = nullptr;\n', cfg, state_id, node)
             self._dispatcher.declared_arrays.add(name, DefinedType.Pointer, ctypedef)
+
+            size_arr_name = sdfg.arrays[name].size_desc_name
+            size_arr_desc = sdfg.arrays[size_arr_name]
+            size_ctypedef = dtypes.pointer(size_arr_desc.dtype).ctype
+
+            self._dispatcher.declared_arrays.add(size_arr_name, DefinedType.Pointer, size_ctypedef)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Define pointer once
@@ -387,6 +393,8 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             # Check if array is already declared
             declared = self._dispatcher.declared_arrays.has(name)
+
+        print("D1", nodedesc, declared)
 
         define_var = self._dispatcher.defined_vars.add
         if top_lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
@@ -520,7 +528,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     node
                 )
 
-
+            print(nodedesc, declared)
             define_var(name, DefinedType.Pointer, ctypedef)
             if not declared:
                 define_var(size_desc_name, DefinedType.Pointer, size_nodedesc.dtype.ctype)
