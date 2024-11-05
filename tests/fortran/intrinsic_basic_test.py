@@ -42,9 +42,9 @@ def test_fortran_frontend_bit_size_symbolic():
     test_string = """
                     PROGRAM intrinsic_math_test_bit_size
                     implicit none
-                    integer :: arrsize
-                    integer :: arrsize2
-                    integer :: arrsize3
+                    integer, parameter :: arrsize = 2
+                    integer, parameter :: arrsize2 = 3
+                    integer, parameter :: arrsize3 = 4
                     integer :: res(arrsize)
                     integer :: res2(arrsize, arrsize2, arrsize3)
                     integer :: res3(arrsize+arrsize2, arrsize2 * 5, arrsize3 + arrsize2*arrsize)
