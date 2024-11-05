@@ -213,7 +213,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
         # Clean CMake directory and try once more
         if Config.get_bool('debugprint'):
             print('Cleaning CMake build folder and retrying...')
-        shutil.rmtree(build_folder)
+        shutil.rmtree(build_folder, ignore_errors=True)
         os.makedirs(build_folder)
         try:
             _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)

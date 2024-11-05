@@ -555,7 +555,11 @@ class CPPUnparser:
             if result.find("b'") >= 0:
                 self.write(result)
             else:
-                self.write(result.replace('\'', '\"'))
+                towrite = result
+                if result.startswith("'"):
+                    towrite = result[1:-1].replace('"', '\\"')
+                    towrite = f'"{towrite}"'
+                self.write(towrite)
 
     def _Constant(self, t):
         value = t.value
@@ -749,6 +753,8 @@ class CPPUnparser:
         # For complex values, use ``dtype_to_typeclass``
         if isinstance(t_n, complex):
             dtype = dtypes.dtype_to_typeclass(complex)
+            repr_n = f'{dtype}({t_n.real}, {t_n.imag})'
+
 
         # Handle large integer values
         if isinstance(t_n, int):
@@ -765,10 +771,8 @@ class CPPUnparser:
             elif bits >= 64:
                 warnings.warn(f'Value wider than 64 bits encountered in expression ({t_n}), emitting as-is')
 
-        if repr_n.endswith("j"):
-            self.write("%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
-        else:
-            self.write(repr_n.replace("inf", INFSTR))
+        repr_n = repr_n.replace("inf", INFSTR)
+        self.write(repr_n)
 
     def _List(self, t):
         raise NotImplementedError('Invalid C++')
@@ -1187,6 +1191,8 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         return cppunparse(ast.parse(symbolic.symstr(code, cpp_mode=True)),
                           expr_semicolon,
                           defined_symbols=defined_symbols)
+    elif isinstance(code, int):
+        return str(code)
     elif code.__class__.__name__ == 'function':
         try:
             code_str = inspect.getsource(code)
