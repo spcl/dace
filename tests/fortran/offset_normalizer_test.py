@@ -55,8 +55,8 @@ def test_fortran_frontend_offset_normalizer_1d_symbol():
     test_string = """
                     PROGRAM index_offset_test
                     implicit none
-                    integer :: arrsize
-                    integer :: arrsize2
+                    integer, parameter :: arrsize = 5
+                    integer, parameter :: arrsize2 = 5
                     double precision :: d(arrsize:arrsize2)
                     CALL index_test_function(d, arrsize, arrsize2)
                     end
@@ -164,10 +164,10 @@ def test_fortran_frontend_offset_normalizer_2d_symbol():
     test_string = """
                     PROGRAM index_offset_test
                     implicit none
-                    integer :: arrsize
-                    integer :: arrsize2
-                    integer :: arrsize3
-                    integer :: arrsize4
+                    integer, parameter :: arrsize = 3
+                    integer, parameter :: arrsize2 = 4
+                    integer, parameter :: arrsize3 = 5
+                    integer, parameter :: arrsize4 = 6
                     double precision, dimension(arrsize:arrsize2,arrsize3:arrsize4) :: d
                     CALL index_test_function(d, arrsize, arrsize2, arrsize3, arrsize4)
                     end
@@ -290,10 +290,10 @@ def test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol():
     test_string = """
                     PROGRAM index_offset_test
                     implicit none
-                    integer :: arrsize
-                    integer :: arrsize2
-                    integer :: arrsize3
-                    integer :: arrsize4
+                    integer, parameter :: arrsize = 3
+                    integer, parameter :: arrsize2 = 4
+                    integer, parameter :: arrsize3 = 5
+                    integer, parameter :: arrsize4 = 6
                     double precision, dimension(arrsize:arrsize2,arrsize3:arrsize4) :: d
                     CALL index_test_function(d, arrsize, arrsize2, arrsize3, arrsize4)
                     end
