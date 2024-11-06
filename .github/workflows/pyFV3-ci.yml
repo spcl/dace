@@ -53,11 +53,11 @@ jobs:
           cd pyFV3
           mkdir -p test_data
           cd test_data
-          wget https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.D_SW.tar.gz
+          wget --retry-connrefused https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.D_SW.tar.gz
           tar -xzvf 8.1.3_c12_6ranks_standard.D_SW.tar.gz
-          wget https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.RiemSolver3.tar.gz
+          wget --retry-connrefused https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.RiemSolver3.tar.gz
           tar -xzvf 8.1.3_c12_6ranks_standard.RiemSolver3.tar.gz
-          wget https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.Remapping.tar.gz
+          wget --retry-connrefused https://portal.nccs.nasa.gov/datashare/astg/smt/pace-regression-data/8.1.3_c12_6ranks_standard.Remapping.tar.gz
           tar -xzvf 8.1.3_c12_6ranks_standard.Remapping.tar.gz
           cd ../..
       # Clean up caches between run for stale un-expanded SDFG to trip the build system (NDSL side issue)
