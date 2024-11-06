@@ -2365,6 +2365,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         # Any extra transients stored in global memory on the FPGA must now be
         # allocated and passed to the kernel
+
         for arr_node in nested_global_transients:
             self._dispatcher.dispatch_allocate(sdfg, cfg, state, None, arr_node, arr_node.desc(sdfg), None,
                                                host_code_stream)

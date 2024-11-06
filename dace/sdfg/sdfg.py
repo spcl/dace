@@ -1716,8 +1716,8 @@ class SDFG(ControlFlowRegion):
 
         size_desc = dt.Array(dtype=dace.uint64,
                             shape=(len(shape),),
-                            storage=storage,
-                            location=location,
+                            storage=dtypes.StorageType.Default,
+                            location=None,
                             allow_conflicts=False,
                             transient=True,
                             strides=(1,),

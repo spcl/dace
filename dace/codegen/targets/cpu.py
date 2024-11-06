@@ -319,6 +319,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         name = node.root_data
         ptrname = cpp.ptr(name, nodedesc, sdfg, self._frame)
+        print("D2", name, nodedesc)
 
         if nodedesc.transient is False:
             return
@@ -365,7 +366,6 @@ class CPUCodeGen(TargetCodeGenerator):
                        allocate_nested_data: bool = True) -> None:
         alloc_name = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         name = alloc_name
-
         tokens = node.data.split('.')
         top_desc = sdfg.arrays[tokens[0]]
         # NOTE: Assuming here that all Structure members share transient/storage/lifetime properties.
@@ -374,8 +374,10 @@ class CPUCodeGen(TargetCodeGenerator):
         top_storage = top_desc.storage
         top_lifetime = top_desc.lifetime
 
+
         if top_transient is False:
             return
+
 
         # Check if array is already allocated
         if self._dispatcher.defined_vars.has(name):
@@ -393,8 +395,6 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             # Check if array is already declared
             declared = self._dispatcher.declared_arrays.has(name)
-
-        print("D1", nodedesc, declared)
 
         define_var = self._dispatcher.defined_vars.add
         if top_lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
@@ -488,6 +488,7 @@ class CPUCodeGen(TargetCodeGenerator):
                   ((symbolic.issymbolic(arrsize, sdfg.constants)) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
 
+
             if nodedesc.storage == dtypes.StorageType.Register:
 
                 if symbolic.issymbolic(arrsize, sdfg.constants):
@@ -528,7 +529,6 @@ class CPUCodeGen(TargetCodeGenerator):
                     node
                 )
 
-            print(nodedesc, declared)
             define_var(name, DefinedType.Pointer, ctypedef)
             if not declared:
                 define_var(size_desc_name, DefinedType.Pointer, size_nodedesc.dtype.ctype)
@@ -2264,6 +2264,7 @@ class CPUCodeGen(TargetCodeGenerator):
             memlet_path = state_dfg.memlet_path(edge)
             if memlet_path[-1].dst == node:
                 src_node = memlet_path[0].src
+
                 if in_connector == "IN_size":
                     self._dispatcher.dispatch_reallocate(
                         src_node,
