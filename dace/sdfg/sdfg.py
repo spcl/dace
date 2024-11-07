@@ -508,7 +508,7 @@ class SDFG(ControlFlowRegion):
         self._temp_transients = 0
 
         # Helper fields to avoid code generation and compilation
-        self.regenerate_code = True
+        self._regenerate_code = True
         self._recompile = True
 
         # Grid-distribution-related fields
@@ -802,6 +802,14 @@ class SDFG(ControlFlowRegion):
     @start_state.setter
     def start_state(self, state_id):
         self.start_block = state_id
+
+    @property
+    def regenerate_code(self):
+        return self._regenerate_code
+
+    @regenerate_code.setter
+    def regenerate_code(self, value):
+        self._regenerate_code = value
 
     def set_global_code(self, cpp_code: str, location: str = 'frame'):
         """
