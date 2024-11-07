@@ -1,8 +1,6 @@
 // Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
-#ifndef __CCE_KT_TEST__
-
 #include "acl/acl.h"
 
 #define DACE_ACL_CHECK(x)                                               \
@@ -37,5 +35,3 @@ using dace::math::heaviside;
 using dace::math::log;
 using dace::math::log10;
 using dace::math::tanh;
-
-#endif

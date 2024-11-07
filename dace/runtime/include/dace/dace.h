@@ -43,8 +43,8 @@
 
 #include "fpga_common.h"
 
-#if defined(DACE_ASCEND)
-#include "ascendc/common.h"
+#ifdef DACE_ASCEND
+#include "ascendc/ascendccommon.h"
 #endif
 
 #endif  // __DACE_RUNTIME_H

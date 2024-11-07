@@ -268,8 +268,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
     @staticmethod
     def cmake_options():
-        options = []
-        # TODO: Pass CMake
+        options = ['-DDACE_ENABLE_ASCEND=ON']
         return options
 
     def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
