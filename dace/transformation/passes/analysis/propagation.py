@@ -317,8 +317,6 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                     oedge.data.volume = 0
                     oedge.data.dynamic = True
 
-        # TODO: After propagating, we may need to adjust data container sizes in nested SDFGs?
-
     def _propagate_state(self, state: SDFGState) -> None:
         # Ensure memlets around nested SDFGs are propagated correctly.
         for nd in state.nodes():
@@ -326,6 +324,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                 self._propagate_nsdfg(state.sdfg, state, nd)
 
         # Propagate memlets through the scopes, bottom up, starting at the scope leaves.
+        # TODO: Make sure this propagation happens without overapproximation, i.e., using SubsetUnions.
         self._propagate_scope(state, state.scope_leaves())
 
         # Gather all writes and reads inside this state now to determine the state-wide reads and writes.
@@ -353,7 +352,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                         elif isinstance(desc, dt.Scalar) or (isinstance(desc, dt.Array) and desc.total_size == 1):
                             read_subset = Range([(0, 0, 1)] * len(desc.shape))
                         else:
-                            raise RuntimeError('Invalid memlet range detected in StateDataDependence analysis')
+                            raise RuntimeError('Invalid memlet range detected in MemletPropagation')
                     else:
                         read_subset = oedge.data.src_subset or oedge.data.subset
                     covered = False
@@ -368,47 +367,61 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         state._possible_writes = {}
         for data in writes:
             subset = None
+            is_dynamic = False
             for memlet, _ in writes[data]:
+                is_dynamic |= memlet.dynamic
                 if subset is None:
                     subset = SubsetUnion(memlet.dst_subset or memlet.subset)
                 else:
                     subset.union(memlet.dst_subset or memlet.subset)
-            state._certain_writes[data] = Memlet(data=data, subset=subset)
-            state._possible_writes[data] = state._certain_writes[data]
+            new_memlet = Memlet(data=data, subset=subset)
+            new_memlet.dynamic = is_dynamic
+            state._certain_writes[data] = new_memlet
+            state._possible_writes[data] = new_memlet
 
         state._certain_reads = {}
         state._possible_reads = {}
         for data in not_covered_reads:
             subset = None
+            is_dynamic = False
             for memlet in not_covered_reads[data]:
+                is_dynamic |= memlet.dynamic
                 if subset is None:
                     subset = SubsetUnion(memlet.dst_subset or memlet.subset)
                 else:
                     subset.union(memlet.dst_subset or memlet.subset)
-            state._certain_reads[data] = Memlet(data=data, subset=subset)
-            state._possible_reads[data] = state._certain_reads[data]
+            new_memlet = Memlet(data=data, subset=subset)
+            new_memlet.dynamic = is_dynamic
+            state._certain_reads[data] = new_memlet
+            state._possible_reads[data] = new_memlet
 
     def _propagate_conditional(self, conditional: ConditionalBlock) -> None:
         # The union of all reads between all conditions and branches gives the set of _possible_ reads, while the
         # intersection gives the set of _guaranteed_ reads. The first condition can also be counted as a guaranteed
         # read. The same applies for writes, except that conditions do not contain writes.
-        def add_memlet(memlet: Memlet, subsets_dict: Dict[str, SubsetUnion], use_intersection: bool = False):
-            if memlet.data not in subsets_dict:
-                subsets_dict[memlet.data] = SubsetUnion(memlet.src_subset or memlet.subset)
+
+        def add_memlet(memlet: Memlet, mlt_dict: Dict[str, Memlet], use_intersection: bool = False):
+            if memlet.data not in mlt_dict:
+                mlt_dict[memlet.data] = Memlet(data=memlet.data, subset=(memlet.src_subset or memlet.subset))
             else:
                 if use_intersection:
-                    isect = subsets_dict[memlet.data].intersection(memlet.src_subset or memlet.subset)
+                    isect = mlt_dict[memlet.data].subset.intersection(memlet.src_subset or memlet.subset)
                     if isect is not None:
-                        subsets_dict[memlet.data] = isect
+                        mlt_dict[memlet.data].subset = isect
                     else:
-                        subsets_dict[memlet.data] = SubsetUnion([])
+                        mlt_dict[memlet.data].subset = SubsetUnion([])
                 else:
-                    subsets_dict[memlet.data].union(memlet.src_subset or memlet.subset)
+                    mlt_subset = mlt_dict[memlet.data].subset
+                    if not isinstance(mlt_subset, SubsetUnion):
+                        mlt_subset = SubsetUnion([mlt_subset])
+                    mlt_subset.union(memlet.src_subset or memlet.subset)
+                    mlt_dict[memlet.data].subset = mlt_subset
+            mlt_dict[memlet.data].dynamic |= memlet.dynamic
 
-        possible_reads: Dict[str, SubsetUnion] = {}
-        certain_reads: Dict[str, SubsetUnion] = {}
-        possible_writes: Dict[str, SubsetUnion] = {}
-        certain_writes: Dict[str, SubsetUnion] = {}
+        conditional._possible_reads = {}
+        conditional._certain_reads = {}
+        conditional._possible_writes = {}
+        conditional._certain_writes = {}
 
         # Gather the union of possible reads and writes. At the same time, determine if there is an else branch present.
         has_else = False
@@ -416,20 +429,20 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
             if cond is not None:
                 read_memlets = memlets_in_ast(cond.code[0], conditional.sdfg.arrays)
                 for read_memlet in read_memlets:
-                    add_memlet(read_memlet, possible_reads)
+                    add_memlet(read_memlet, conditional._possible_reads)
             else:
                 has_else = True
             for read_data in branch._possible_reads:
                 read_memlet = branch._possible_reads[read_data]
-                add_memlet(read_memlet, possible_reads)
+                add_memlet(read_memlet, conditional._possible_reads)
             for write_data in branch._possible_writes:
                 write_memlet = branch._possible_writes[write_data]
-                add_memlet(write_memlet, possible_writes)
+                add_memlet(write_memlet, conditional._possible_writes)
 
         # If there is no else branch or only one branch exists, there are no certain reads or writes.
         if len(conditional.branches) > 1 and has_else:
             # Gather the certain reads (= Intersection of certain reads for each branch)
-            for container in possible_reads.keys():
+            for container in conditional._possible_reads.keys():
                 candidate_memlets = []
                 skip = False
                 for cond, branch in conditional.branches:
@@ -449,9 +462,9 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                 if skip:
                     continue
                 for cand_memlet in candidate_memlets:
-                    add_memlet(cand_memlet, certain_reads, use_intersection=True)
+                    add_memlet(cand_memlet, conditional._certain_reads, use_intersection=True)
             # Gather the certain writes (= Intersection of certain writes for each branch)
-            for container in possible_writes.keys():
+            for container in conditional._possible_writes.keys():
                 candidate_memlets = []
                 skip = False
                 for _, branch in conditional.branches:
@@ -463,27 +476,14 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                 if skip:
                     continue
                 for cand_memlet in candidate_memlets:
-                    add_memlet(cand_memlet, certain_writes, use_intersection=True)
+                    add_memlet(cand_memlet, conditional._certain_writes, use_intersection=True)
 
         # Ensure the first condition's reads are part of the certain reads.
         first_cond = conditional.branches[0][0]
         if first_cond is not None:
             read_memlets = memlets_in_ast(first_cond.code[0], conditional.sdfg.arrays)
             for read_memlet in read_memlets:
-                add_memlet(read_memlet, certain_reads)
-
-        conditional._certain_writes = {}
-        conditional._certain_reads = {}
-        conditional._possible_writes = {}
-        conditional._possible_reads = {}
-        for cont, subs in possible_reads.items():
-            conditional._possible_reads[cont] = Memlet(data=cont, subset=subs)
-        for cont, subs in possible_writes.items():
-            conditional._possible_writes[cont] = Memlet(data=cont, subset=subs)
-        for cont, subs in certain_reads.items():
-            conditional._certain_reads[cont] = Memlet(data=cont, subset=subs)
-        for cont, subs in certain_writes.items():
-            conditional._certain_writes[cont] = Memlet(data=cont, subset=subs)
+                add_memlet(read_memlet, conditional._certain_reads)
 
     def _propagate_loop(self, loop: LoopRegion) -> None:
         self._propagate_cfg(loop)
