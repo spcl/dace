@@ -34,14 +34,15 @@ set(DACE_INTELFPGA_ENABLE_DEBUGGING OFF CACHE STRING "Enable debugging.")
 
 # AscendC specifif
 set(DACE_ASCEND_INSTALL_PATH $ENV{ASCEND_HOME_PATH})
-set(DACE_ASCEND_CANN_PACKAGE_PATH ${ASCEND_INSTALL_PATH} CACHE STRING "ASCEND CANN package installation directory")
+set(DACE_ASCEND_CANN_PACKAGE_PATH ${DACE_ASCEND_INSTALL_PATH} CACHE STRING "ASCEND CANN package installation directory")
 set(DACE_ASCEND_RUN_MODE "ONBOARD" CACHE STRING "Choose the run mode: ONBOARD ro SIMULATOR.")
-set(DACE_ASCEND_RUN_MODE ${RUN_MODE})
+set(DACE_ASCEND_RUN_MODE ${DACE_ASCEND_RUN_MODE})
 set(DACE_ASCEND_SOC_VERSION "ascend910" CACHE STRING "Choose SoC Version")
-set(DACE_ASCEND_PRODUCT_TYPE ${SOC_VERSION})
+set(DACE_ASCEND_PRODUCT_TYPE ${DACE_ASCEND_SOC_VERSION})
 set(DACE_ASCEND_CORE_TYPE "AiCore")
-set(DACE_ASCEND_CCE_CMAKE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules)
-list(APPEND CMAKE_MODULE_PATH ${CCE_CMAKE_PATH})
+set(DACE_ASCEND_CCE_CMAKE_PATH ${CMAKE_SOURCE_DIR}/targets/ascendc)
+list(APPEND CMAKE_MODULE_PATH ${DACE_ASCEND_CCE_CMAKE_PATH})
+message(WARNING ${CMAKE_SOURCE_DIR}/targets/ascendc)
 
 # Target detection
 set(DACE_ENABLE_MPI OFF)
@@ -108,10 +109,11 @@ foreach(DACE_FILE ${DACE_FILES})
     endif()
   elseif(${DACE_FILE_TARGET} STREQUAL "ascendc")
     set(DACE_ENABLE_ASCEND ON)
-    if(DACE_FILE_EXT MATCHES ".cpp")
+    if(DACE_FILE_EXT MATCHES ".cce")
       set(DACE_ASCEND_FILES ${DACE_ASCEND_FILES} ${DACE_FILE})
+    elseif(DACE_FILE_EXT MATCHES ".cpp")
+      set(DACE_HOST_FILES ${DACE_HOST_FILES} ${DACE_FILE})
     endif()
-    message(FATAL_ERRPR "FILE TARGET" ${DACE_FILE_TARGET})
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
   endif()
@@ -282,6 +284,32 @@ if (DACE_ENABLE_RTL AND DACE_ENABLE_XILINX)
 endif()
 if (DACE_ENABLE_ASCEND)
   add_definitions(-DDACE_ASCEND)
+  enable_language(CCE)
+
+  # Necessary to find tikicpulib
+  list(APPEND CMAKE_PREFIX_PATH "${DACE_ASCEND_INSTALL_PATH}/tools/tikicpulib/lib/cmake")
+  find_package(tikicpulib REQUIRED)
+  include_directories(${DACE_ASCEND_INSTALL_PATH}/acllib/include)
+  link_libraries(
+    tikicpulib::${DACE_ASCEND_PRODUCT_TYPE}
+    ascendcl
+  )
+  add_library(dace_ascendc_kernels SHARED
+    ${DACE_ASCEND_FILES}
+  )
+  target_compile_definitions(dace_ascendc_kernels PRIVATE
+    TILING_KEY_VAR=0
+  )
+  target_compile_options(dace_ascendc_kernels PRIVATE
+    -O2
+    -std=c++17
+  )
+  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_link_options(dace_ascendc_kernels PRIVATE
+      -Wl,--as-needed
+    )
+  endif()
+  list(APPEND DACE_LIBS dace_ascendc_kernels)
 endif()
 
 # Create HIP object files

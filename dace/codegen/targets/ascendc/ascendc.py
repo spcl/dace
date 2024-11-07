@@ -100,7 +100,7 @@ class AscendCCodeGen(TargetCodeGenerator):
     def preprocess(self, sdfg: SDFG) -> None:
         # Find Ascend<->Ascend strided copies that cannot be represented by a single copy command
         # TODO
-        self.language = 'cpp'
+        self.language = 'cce'
         self._codeobject = CodeObject(sdfg.name + '_' + 'ascendc',
                                       '',
                                       self.language,

@@ -22,16 +22,10 @@ struct Context {
   Context(int nstreams, int nevents)
       : num_streams(nstreams),
         num_events(nevents),
-        streams(new gpuStream_t[nstreams]) {}
+        streams(new aclrtStream[nstreams]) {}
 
   ~Context() { delete[] streams; }
 };
 
 }  // namespace ascendc
 }  // namespace dace
-
-using dace::math::exp;
-using dace::math::heaviside;
-using dace::math::log;
-using dace::math::log10;
-using dace::math::tanh;

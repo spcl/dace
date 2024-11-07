@@ -14,12 +14,12 @@ configure_file(${CMAKE_CURRENT_LIST_DIR}/CMakeCCECompiler.cmake.in
     @ONLY
 )
 
-message(STATUS "ASCEND_PRODUCT_TYPE:\n" "  ${ASCEND_PRODUCT_TYPE}")
-message(STATUS "ASCEND_CORE_TYPE:\n" "  ${ASCEND_CORE_TYPE}")
-message(STATUS "ASCEND_INSTALL_PATH:\n" "  ${ASCEND_INSTALL_PATH}")
+message(STATUS "DACE_ASCEND_PRODUCT_TYPE:\n" "  ${DACE_ASCEND_PRODUCT_TYPE}")
+message(STATUS "DACE_ASCEND_CORE_TYPE:\n" "  ${DACE_ASCEND_CORE_TYPE}")
+message(STATUS "DACE_ASCEND_INSTALL_PATH:\n" "  ${DACE_ASCEND_INSTALL_PATH}")
 
-if(DEFINED ASCEND_INSTALL_PATH)
-    set(_CMAKE_ASCEND_INSTALL_PATH ${ASCEND_INSTALL_PATH})
+if(DEFINED DACE_ASCEND_INSTALL_PATH)
+    set(_CMAKE_ASCEND_INSTALL_PATH ${DACE_ASCEND_INSTALL_PATH})
 else()
     message(FATAL_ERROR
         "no, installation path found, should passing -DASCEND_INSTALL_PATH=<PATH_TO_ASCEND_INSTALLATION> in cmake"
@@ -28,34 +28,34 @@ else()
 endif()
 
 
-if(DEFINED ASCEND_PRODUCT_TYPE)
+if(DEFINED DACE_ASCEND_PRODUCT_TYPE)
     set(_CMAKE_CCE_COMMON_COMPILE_OPTIONS "--cce-auto-sync")
-    if(ASCEND_PRODUCT_TYPE STREQUAL "")
+    if(DACE_ASCEND_PRODUCT_TYPE STREQUAL "")
         message(FATAL_ERROR "ASCEND_PRODUCT_TYPE must be non-empty if set.")
-    elseif(ASCEND_PRODUCT_TYPE AND NOT ASCEND_PRODUCT_TYPE MATCHES "^ascend[0-9][0-9][0-9][a-zA-Z]?[1-9]?$")
+    elseif(DACE_ASCEND_PRODUCT_TYPE AND NOT DACE_ASCEND_PRODUCT_TYPE MATCHES "^ascend[0-9][0-9][0-9][a-zA-Z]?[1-9]?$")
         message(FATAL_ERROR
-            "ASCEND_PRODUCT_TYPE: ${ASCEND_PRODUCT_TYPE}\n"
+            "DACE_ASCEND_PRODUCT_TYPE: ${DACE_ASCEND_PRODUCT_TYPE}\n"
             "is not one of the following: ascend910, ascend310p, ascend910B1"
         )
-    elseif(ASCEND_PRODUCT_TYPE STREQUAL "ascend910")
-        if (ASCEND_CORE_TYPE STREQUAL "AiCore")
+    elseif(DACE_ASCEND_PRODUCT_TYPE STREQUAL "ascend910")
+        if (DACE_ASCEND_CORE_TYPE STREQUAL "AiCore")
             set(_CMAKE_COMPILE_AS_CCE_FLAG "--cce-aicore-arch=dav-c100")
         else()
             message(FATAL_ERROR, "only AiCore inside")
         endif()
         set(_CMAKE_CCE_COMPILE_OPTIONS)
-    elseif(ASCEND_PRODUCT_TYPE STREQUAL "ascend310p")
-        if (ASCEND_CORE_TYPE STREQUAL "AiCore")
+    elseif(DACE_ASCEND_PRODUCT_TYPE STREQUAL "ascend310p")
+        if (DACE_ASCEND_CORE_TYPE STREQUAL "AiCore")
             set(_CMAKE_COMPILE_AS_CCE_FLAG "--cce-aicore-arch=dav-m200")
-        elseif(ASCEND_CORE_TYPE STREQUAL "VectorCore")
+        elseif(DACE_ASCEND_CORE_TYPE STREQUAL "VectorCore")
             set(_CMAKE_COMPILE_AS_CCE_FLAG "--cce-aicore-arch=dav-m200-vec")
         endif()
         set(_CMAKE_CCE_COMPILE_OPTIONS
             "-mllvm -cce-aicore-function-stack-size=16000 -mllvm -cce-aicore-fp-ceiling=2 -mllvm -cce-aicore-record-overflow=false")
-    elseif(ASCEND_PRODUCT_TYPE STREQUAL "ascend910B1")
-        if (ASCEND_CORE_TYPE STREQUAL "AiCore")
+    elseif(DACE_ASCEND_PRODUCT_TYPE STREQUAL "ascend910B1")
+        if (DACE_ASCEND_CORE_TYPE STREQUAL "AiCore")
             set(_CMAKE_COMPILE_AS_CCE_FLAG "--cce-aicore-arch=dav-c220-cube")
-        elseif(ASCEND_CORE_TYPE STREQUAL "VectorCore")
+        elseif(DACE_ASCEND_CORE_TYPE STREQUAL "VectorCore")
             set(_CMAKE_COMPILE_AS_CCE_FLAG "--cce-aicore-arch=dav-c220-vec")
         endif()
         set(_CMAKE_CCE_COMPILE_OPTIONS
@@ -64,7 +64,8 @@ if(DEFINED ASCEND_PRODUCT_TYPE)
     endif()
 endif()
 
-product_dir(${ASCEND_PRODUCT_TYPE} PRODUCT_UPPER)
+product_dir(${DACE_ASCEND_PRODUCT_TYPE} PRODUCT_UPPER)
+
 set(_CMAKE_CCE_HOST_IMPLICIT_LINK_DIRECTORIES
     ${_CMAKE_ASCEND_INSTALL_PATH}/runtime/lib64
     ${_CMAKE_ASCEND_INSTALL_PATH}/tools/simulator/${PRODUCT_UPPER}/lib
@@ -73,11 +74,11 @@ set(_CMAKE_CCE_HOST_IMPLICIT_LINK_DIRECTORIES
 
 # link library
 set(_CMAKE_CCE_HOST_IMPLICIT_LINK_LIBRARIES stdc++)
-if(ASCEND_RUN_MODE STREQUAL "ONBOARD")
+if(DACE_ASCEND_RUN_MODE STREQUAL "ONBOARD")
     list(APPEND _CMAKE_CCE_HOST_IMPLICIT_LINK_LIBRARIES runtime)
-elseif(ASCEND_RUN_MODE STREQUAL "SIMULATOR")
+elseif(DACE_ASCEND_RUN_MODE STREQUAL "SIMULATOR")
     list(APPEND _CMAKE_CCE_HOST_IMPLICIT_LINK_DIRECTORIES )
-    if(ASCEND_PRODUCT_TYPE STREQUAL "ascend910")
+    if(DACE_ASCEND_PRODUCT_TYPE STREQUAL "ascend910")
         list(APPEND _CMAKE_CCE_HOST_IMPLICIT_LINK_LIBRARIES pem_davinci)
     endif()
     list(APPEND _CMAKE_CCE_HOST_IMPLICIT_LINK_LIBRARIES runtime_camodel)
