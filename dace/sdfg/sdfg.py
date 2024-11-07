@@ -1079,8 +1079,8 @@ class SDFG(ControlFlowRegion):
         etc.) or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
     
         It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
-        erasing an empty if branch, or merging two consecutive for-loops. The SDFG can then be reconstructed via the 
-        ``as_sdfg`` method or the ``from_schedule_tree`` function in ``dace.sdfg.analysis.schedule_tree.tree_to_sdfg``.
+        erasing an empty if branch, or merging two consecutive for-loops.
+
         :param in_place: If True, the SDFG is modified in-place. Otherwise, a copy is made. Note that the SDFG might
                          not be usable after the conversion if ``in_place`` is True!
         :return: A schedule tree representing the given SDFG.
