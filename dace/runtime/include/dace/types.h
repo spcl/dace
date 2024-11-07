@@ -7,7 +7,7 @@
 
 #ifdef _MSC_VER
     //#define DACE_ALIGN(N) __declspec( align(N) )
-    #define DACE_ALIGN(N) 
+    #define DACE_ALIGN(N)
     #undef __in
     #undef __inout
     #undef __out
@@ -62,6 +62,23 @@
 #endif
 
 
+#if !defined(__CUDACC__) && !defined(__HIPCC__) && !defined(__CCE_KT_TEST__)
+namespace dace {
+    struct half {
+        // source: https://stackoverflow.com/a/26779139/15853075
+        half(float f) {
+            uint32_t x = *((uint32_t*)&f);
+            h = ((x>>16)&0x8000)|((((x&0x7f800000)-0x38000000)>>13)&0x7c00)|((x>>13)&0x03ff);
+        }
+        operator float() {
+            float f = ((h&0x8000)<<16) | (((h&0x7c00)+0x1C000)<<13) | ((h&0x03FF)<<13);
+            return f;
+        }
+        uint16_t h;
+    };
+};
+#endif
+
 
 namespace dace
 {
@@ -86,18 +103,6 @@ namespace dace
     #else
     typedef std::complex<float> complex64;
     typedef std::complex<double> complex128;
-    struct half {
-        // source: https://stackoverflow.com/a/26779139/15853075
-        half(float f) {
-            uint32_t x = *((uint32_t*)&f);
-            h = ((x>>16)&0x8000)|((((x&0x7f800000)-0x38000000)>>13)&0x7c00)|((x>>13)&0x03ff);
-        }
-        operator float() {
-            float f = ((h&0x8000)<<16) | (((h&0x7c00)+0x1C000)<<13) | ((h&0x03FF)<<13);
-            return f;
-        }
-        uint16_t h;
-    };
     typedef half float16;
     #endif
 
@@ -109,7 +114,7 @@ namespace dace
     template <int DIM, int... OTHER_DIMS>
     struct TotalNDSize
     {
-	enum 
+	enum
 	{
 	    value = DIM * TotalNDSize<OTHER_DIMS...>::value,
 	};
@@ -118,7 +123,7 @@ namespace dace
     template <int DIM>
     struct TotalNDSize<DIM>
     {
-	enum 
+	enum
 	{
 	    value = DIM,
 	};
