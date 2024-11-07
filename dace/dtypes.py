@@ -83,6 +83,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     Snitch_Multicore = ()
     FPGA_Multi_Pumped = ()  #: Used for double pumping
     Ascend_Device = ()
+    Ascend_AiCoreGroup = ()
     Ascend_AiCore = ()
 
 # A subset of GPU schedule types
@@ -113,6 +114,7 @@ FPGA_STORAGES = [
 
 ASCEND_SCHEDULES = [
     ScheduleType.Ascend_Device,
+    ScheduleType.Ascend_AiCoreGroup,
     ScheduleType.Ascend_AiCore
 ]
 
