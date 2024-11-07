@@ -30,7 +30,7 @@ def test_fortran_frontend_parent():
 
     ast, functions = fortran_parser.create_ast_from_string(test_string, "array_access_test")
     ast_transforms.ParentScopeAssigner().visit(ast)
-    visitor = ast_transforms.ScopeVarsDeclarations()
+    visitor = ast_transforms.ScopeVarsDeclarations(ast)
     visitor.visit(ast)
 
     for var in ['d', 'arr', 'arr3']:
