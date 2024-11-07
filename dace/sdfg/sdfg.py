@@ -507,7 +507,7 @@ class SDFG(ControlFlowRegion):
         self._temp_transients = 0
 
         # Helper fields to avoid code generation and compilation
-        self._regenerate_code = True
+        self.regenerate_code = True
         self._recompile = True
 
         # Grid-distribution-related fields
@@ -2293,7 +2293,7 @@ class SDFG(ControlFlowRegion):
         ############################
         # DaCe Compilation Process #
 
-        if self._regenerate_code or not os.path.isdir(build_folder):
+        if self.regenerate_code or not os.path.isdir(build_folder):
             # Clone SDFG as the other modules may modify its contents
             sdfg = copy.deepcopy(self)
             # Fix the build folder name on the copied SDFG to avoid it changing
