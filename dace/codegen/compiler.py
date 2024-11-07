@@ -144,6 +144,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     # Get absolute paths and targets for all source files
     files = []
     targets = {}  # {target name: target class}
+
     for target_name, target_type, file_name in file_list:
         if target_type:
             path = os.path.join(target_name, target_type, file_name)
