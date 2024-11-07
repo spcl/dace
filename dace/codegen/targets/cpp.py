@@ -737,7 +737,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
     Detects whether a write-conflict-resolving edge can be emitted without
     using atomics or critical sections, returning the node or SDFG that caused
     the decision.
-    
+
     :return: None if the conflict is nonatomic, otherwise returns the scope entry
              node or SDFG that caused the decision to be made.
     """
@@ -1484,3 +1484,7 @@ DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_strea
                         [e.src, e.dst],
                     )
                 # Otherwise, no synchronization necessary
+
+
+def synchronize_acl_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
+    pass
