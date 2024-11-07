@@ -91,6 +91,7 @@ subroutine loop1_test_function(d)
   logical :: d(3, 4, 5), ZFAC(10)
   integer :: a, JK, JL, JM
   integer, parameter :: KLEV = 10, N = 10, NCLV = 3
+  integer :: tmp
 
   double precision :: RLMIN, ZVQX(NCLV)
   logical :: LLCOOLJ, LLFALL(NCLV)
@@ -101,16 +102,27 @@ subroutine loop1_test_function(d)
     if (ZVQX(JM) > 0.0) LLFALL(JM) = .true. ! falling species
   end do
 
-  d(1, 1, 1) = LLFALL(1)
-  d(1, 1, 2) = LLFALL(2)
+  do I = 1, 3
+    do J = 1, 4
+      do K = 1, 5
+        tmp = I+J+K-3
+        tmp = mod(tmp, 2)
+        if (tmp == 1) then
+          d(I, J, K) = LLFALL(2)
+        else
+          d(I, J, K) = LLFALL(1)
+        end if
+      end do
+    end do
+  end do
 end subroutine loop1_test_function
 """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "loop1_test")
     sdfg.simplify(verbose=True)
-    d = np.full([3, 4, 5], np.True_, order="F", dtype=np.bool_)
+    d = np.full([3, 4, 5], 42, order="F", dtype=np.int32)
     sdfg(d=d)
-    assert (d[0, 0, 0] == 0)
-    assert (d[0, 0, 1] == 1)
+    # Verify the checkerboard pattern.
+    assert all(bool(v) == ((i+j+k) % 2 == 1) for (i, j, k), v in np.ndenumerate(d))
 
 
 def test_fortran_frontend_function_statement1():
