@@ -2254,16 +2254,19 @@ class SDFG(ControlFlowRegion):
         for k, v in symbols.items():
             self.add_constant(str(k), v)
 
-    def is_loaded(self) -> bool:
+    def is_loaded(self, name=None) -> bool:
         """
         Returns True if the SDFG binary is already loaded in the current
         process.
+
+        :param name: Optional binary name to use instead of the SDFG name.
         """
         # Avoid import loops
         from dace.codegen import compiled_sdfg as cs, compiler
 
-        binary_filename = compiler.get_binary_name(self.build_folder, self.name)
-        dll = cs.ReloadableDLL(binary_filename, self.name)
+        name = name or self.name
+        binary_filename = compiler.get_binary_name(self.build_folder, name)
+        dll = cs.ReloadableDLL(binary_filename, name)
         return dll.is_loaded()
 
     def compile(self, output_file=None, validate=True,
@@ -2293,6 +2296,7 @@ class SDFG(ControlFlowRegion):
         ############################
         # DaCe Compilation Process #
 
+        binary_name = self.name
         if self._regenerate_code or not os.path.isdir(build_folder):
             # Clone SDFG as the other modules may modify its contents
             sdfg = copy.deepcopy(self)
@@ -2302,12 +2306,12 @@ class SDFG(ControlFlowRegion):
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
-            while sdfg.is_loaded():
-                sdfg.name = f'{self.name}_{index}'
+            while sdfg.is_loaded(binary_name):
+                binary_name = f'{self.name}_{index}'
                 index += 1
-            if self.name != sdfg.name:
+            if self.name != binary_name:
                 warnings.warn(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
-                              f"name '{sdfg.name}'.")
+                              f"name '{binary_name}'.")
 
             try:
                 # Fill in scope entry/exit connectors
@@ -2329,7 +2333,7 @@ class SDFG(ControlFlowRegion):
             sdfg = self
 
         # Compile the code and get the shared library path
-        shared_library = compiler.configure_and_compile(program_folder, sdfg.name)
+        shared_library = compiler.configure_and_compile(program_folder, binary_name)
 
         # If provided, save output to path or filename
         if output_file is not None:
