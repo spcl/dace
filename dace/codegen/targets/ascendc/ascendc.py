@@ -528,7 +528,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
                 callsite_stream.write(
                     'DACE_ACL_CHECK(aclrtMemcpy(%s, %s, %s, ACL_MEMCPY_%s_TO_%s));\n' %
-                    (dst_expr, src_expr, copysize, src_location, dst_location),
+                    (dst_expr, src_expr, copysize, src_location.upper(), dst_location.upper()),
                     cfg, state_id, [src_node, dst_node])
                 node_dtype = dst_node.desc(sdfg).dtype
                 if issubclass(node_dtype.type, ctypes.Structure):
