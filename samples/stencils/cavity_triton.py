@@ -256,7 +256,7 @@ def cavity_flow_explicit(
             f"un:\n{un.numpy()}\nvn:\n{vn.numpy()}\n u:\n {u.numpy()}\nv:\n {v.numpy()}\n"
         )
         
-        
+import numba
 
 def cavity_flow_explicit_tiled_fused(
     nt: dace.int32,

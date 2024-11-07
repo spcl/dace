@@ -48,7 +48,13 @@ from dace.transformation.dataflow import (
 # Other imports
 import itertools
 import numpy as np
+import torch
 import tqdm
+
+
+# fix random seed
+np.random.seed(0)
+torch.manual_seed(0)
 
 ############################################################################
 # Tensor core code generator
@@ -379,14 +385,14 @@ def extend_dace():
     TargetCodeGenerator.register(TensorCoreCodegen, name="tensorcore")
 
 
-############################################################################
+#####################################################################'#######
 # Sample code that uses tensor cores
 
 N = dace.symbol("N")
 
-TILE_M = 64
-TILE_N = 64
-TILE_K = 64
+TILE_M = 256
+TILE_N = 128
+TILE_K = 32
 
 NUM_WARPS = TILE_M // TC_SIZE_M
 NUM_ACCUMULATORS = TILE_N // TC_SIZE_N
@@ -420,6 +426,16 @@ def hgemm_tiled(
         # - per warp: TC_SIZE x TC_SIZE x (TILE_N // TC_SIZE)
         # - per thread:
         # TC_SIZE x TC_SIZE x (TILE_N // TC_SIZE) // 32
+        atile = dace.ndarray(
+            [TC_SIZE_M, TC_SIZE_K],
+            dtype=dace.float16,
+            storage=dace.StorageType.TensorCore_A,
+        )
+        btile = dace.ndarray(
+            [TC_SIZE_K, TC_SIZE_N],
+            dtype=dace.float16,
+            storage=dace.StorageType.TensorCore_B,
+        )
         ctile = dace.ndarray(
             [NUM_ACCUMULATORS, TC_SIZE_M, TC_SIZE_N],
             dtype=dace.float32,
@@ -446,22 +462,19 @@ def hgemm_tiled(
                 # we have 8 warps per threadblock, 32 threads per warp
                 # now I am a warp w in the threadblock.x = tile_i, threadblock.y = tile_j
 
-                for TC_frag_offset in (
-                    dace.map[0:TILE_N:TC_SIZE_N] @ dace.ScheduleType.Sequential
-                ):  # Warp map
+                # for TC_frag_offset in (
+                #     dace.map[0 * TC_SIZE_N : TILE_N : TC_SIZE_N]
+                #     @ dace.ScheduleType.Sequential
+                # ):  # Warp map
+                for tc_index, TC_frag_offset in enumerate(range(0, TILE_N, TC_SIZE_N)):
+                    # for tc_index in range(4):
+                    # TC_frag_offset = tc_index * TC_SIZE_N
+                    #     dace.map[1*TC_SIZE_N:TILE_N:TC_SIZE_N] @ dace.ScheduleType.Sequential
+                    # ):  # Warp map
+                    access_offset = TC_frag_offset
                     for k_step in (
                         dace.map[0:TILE_K:TC_SIZE_K] @ dace.ScheduleType.Sequential
                     ):
-                        atile = dace.ndarray(
-                            [TC_SIZE_M, TC_SIZE_K],
-                            dtype=dace.float16,
-                            storage=dace.StorageType.TensorCore_A,
-                        )
-                        btile = dace.ndarray(
-                            [TC_SIZE_K, TC_SIZE_N],
-                            dtype=dace.float16,
-                            storage=dace.StorageType.TensorCore_B,
-                        )
                         atile[:] = a_shmem[
                             w_index * TC_SIZE_M : (w_index + 1) * TC_SIZE_M,
                             k_step : k_step + TC_SIZE_K,
@@ -470,7 +483,8 @@ def hgemm_tiled(
                             k_step : k_step + TC_SIZE_K,
                             TC_frag_offset : TC_frag_offset + TC_SIZE_N,
                         ]
-                        wmma(atile, btile, ctile[TC_frag_offset // TC_SIZE_N])
+                        # wmma(atile, btile, ctile[TC_frag_offset // TC_SIZE_N])
+                        wmma(atile, btile, ctile[tc_index])
 
         # finally, store it back to global memory
         for w_index, thread_index in (
@@ -479,6 +493,12 @@ def hgemm_tiled(
             for TC_frag_offset in (
                 dace.map[0:TILE_N:TC_SIZE_N] @ dace.ScheduleType.Sequential
             ):  # Warp map
+                #     C[
+                #     tile_i_offset
+                #     + w_index * TC_SIZE_M : tile_i_offset
+                #     + (w_index + 1) * TC_SIZE_M,
+                #     tile_j_offset + TC_frag_offset : tile_j_offset + TC_frag_offset + TC_SIZE_N,
+                # ] = ctile[0]
                 C[
                     tile_i_offset
                     + w_index * TC_SIZE_M : tile_i_offset
@@ -487,7 +507,10 @@ def hgemm_tiled(
                     + TC_frag_offset : tile_j_offset
                     + TC_frag_offset
                     + TC_SIZE_N,
-                ] = ctile[TC_frag_offset // TC_SIZE_N]
+                ] = (
+                    # ctile[0]
+                    ctile[TC_frag_offset // TC_SIZE_N]
+                )
 
 
 @dace.program
@@ -547,8 +570,10 @@ def hgemm_tiled_double_buffered(
         )
 
         for step_k_offset in dace.map[TILE_K:N:TILE_K] @ dace.ScheduleType.Sequential:
-            buffer_index = (step_k_offset // TILE_K) % 2
-            load_index = 1 - buffer_index
+            # buffer_index = (step_k_offset // TILE_K) % 2
+            # load_index = 1 - buffer_index
+            buffer_index = 0
+            load_index = 0
             # load A and B tiles into shared mem
             a_shmem[buffer_index, :] = A[
                 tile_i_offset : tile_i_offset + TILE_M,
@@ -565,9 +590,16 @@ def hgemm_tiled_double_buffered(
                 # we have 8 warps per threadblock, 32 threads per warp
                 # now I am a warp w in the threadblock.x = tile_i, threadblock.y = tile_j
 
-                for TC_frag_offset in (
-                    dace.map[0:TILE_N:TC_SIZE_N] @ dace.ScheduleType.Sequential
-                ):  # Warp map
+                # for TC_frag_offset in (
+                #     dace.map[0 * TC_SIZE_N : TILE_N : TC_SIZE_N]
+                #     @ dace.ScheduleType.Sequential
+                # ):  # Warp map
+                for tc_index, TC_frag_offset in enumerate(range(0, TILE_N, TC_SIZE_N)):
+                    # for tc_index in range(4):
+                    # TC_frag_offset = tc_index * TC_SIZE_N
+                    #     dace.map[1*TC_SIZE_N:TILE_N:TC_SIZE_N] @ dace.ScheduleType.Sequential
+                    # ):  # Warp map
+                    access_offset = TC_frag_offset
                     for k_step in (
                         dace.map[0:TILE_K:TC_SIZE_K] @ dace.ScheduleType.Sequential
                     ):
@@ -581,7 +613,8 @@ def hgemm_tiled_double_buffered(
                             k_step : k_step + TC_SIZE_K,
                             TC_frag_offset : TC_frag_offset + TC_SIZE_N,
                         ]
-                        wmma(atile, btile, ctile[TC_frag_offset // TC_SIZE_N])
+                        # wmma(atile, btile, ctile[TC_frag_offset // TC_SIZE_N])
+                        wmma(atile, btile, ctile[tc_index])
 
         # finally, store it back to global memory
         for w_index, thread_index in (
@@ -618,11 +651,10 @@ def hgemm_tiled_double_buffered(
 
 ############################################################################
 # Main function
-import torch
 import time
 
 
-def benchmark_matmul(matmul_func, M, N, K, num_iterations=100):
+def benchmark_matmul(matmul_func, M, N, K, num_iterations=100, name="DaCe"):
     # Create random matrices
     A = torch.randn(M, K, dtype=torch.float16, device="cuda")
     B = torch.randn(K, N, dtype=torch.float16, device="cuda")
@@ -654,7 +686,9 @@ def benchmark_matmul(matmul_func, M, N, K, num_iterations=100):
     # Calculate FLOPs
     flops = 2 * M * N * K
     tflops = (flops * num_iterations) / (total_runtime * 1e12)
-    print(f"Total runtime: {avg_runtime:.4f} s, performance: {tflops:.2f} TFLOP/s")
+    print(
+        f"Benchmarking {name}. Total runtime: {avg_runtime:.4f} s, performance: {tflops:.2f} TFLOP/s"
+    )
     return total_runtime, avg_runtime, tflops
 
 
@@ -666,62 +700,91 @@ else:
 if __name__ == "__main__":
     extend_dace()
 
-    N = 4096
+    Ns = [4096]  # [256, 512, 1024, 2048, 4096, 8192]
     # Prerequisite for sample: CUDA compute capability >= 70
     dace.Config.set("compiler", "cuda", "cuda_arch", value="80")
 
-    A = torch.randn(N, N, dtype=torch.float16, device=device)
-    B = torch.randn(N, N, dtype=torch.float16, device=device)
-    C = torch.randn(N, N, dtype=torch.float32, device=device)
+    for N in Ns:
+        A = torch.randn(N, N, dtype=torch.float16, device=device)
+        B = torch.randn(N, N, dtype=torch.float16, device=device)
+        C = torch.randn(N, N, dtype=torch.float32, device=device)
 
-    # A = torch.ones(N, N, dtype=torch.float16, device=device)
-    # B = torch.ones(N, N, dtype=torch.float16, device=device)
-    # C = torch.ones(N, N, dtype=torch.float32, device=device)
+        # A = torch.ones(N, N, dtype=torch.float16, device=device)
+        # B = torch.ones(N, N, dtype=torch.float16, device=device)
+        # C = torch.ones(N, N, dtype=torch.float32, device=device)
 
-    dace_matmul: dace.SDFG = hgemm_tiled_double_buffered.to_sdfg(simplify=True)
+        dace_matmul: dace.SDFG = hgemm_tiled.to_sdfg(simplify=True)
+        dace_matmul._regenerate_code = False
+        # dace_matmul: dace.SDFG = hgemm_tiled_double_buffered.to_sdfg(simplify=True)
 
-    # Transform the code to run on the GPU, while ensuring that the warp map
-    # in the example runs within a single thread-block.
-    # dace_matmul.apply_transformations(
-    #     GPUTransformSDFG, options=dict(sequential_innermaps=False, register_trans=False)
-    # )
+        # Transform the code to run on the GPU, while ensuring that the warp map
+        # in the example runs within a single thread-block.
+        # dace_matmul.apply_transformations(
+        #     GPUTransformSDFG, options=dict(sequential_innermaps=False, register_trans=False)
+        # )
 
-    # dace_matmul.view()
+        # dace_matmul.view()
 
-    # exit()
+        # exit()
 
-    # smem_a = dace_matmul.arrays["a_shmem"]
-    # smem_b = dace_matmul.arrays["b_shmem"]
+        # smem_a = dace_matmul.arrays["a_shmem"]
+        # smem_b = dace_matmul.arrays["b_shmem"]
 
-    # def find_node_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
-    #     return next(node for node in sdfg.data_nodes() if node.data == pname)
+        # def find_node_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
+        #     return next(node for node in sdfg.data_nodes() if node.data == pname)
 
-    # ktile = find_map_by_param(dace_matmul, "step_k_offset")
-    # smem_a = find_node_by_param(dace_matmul, "a_shmem")
-    # smem_b = find_node_by_param(dace_matmul, "b_shmem")
+        # ktile = find_map_by_param(dace_matmul, "step_k_offset")
+        # smem_a = find_node_by_param(dace_matmul, "a_shmem")
+        # smem_b = find_node_by_param(dace_matmul, "b_shmem")
 
-    # DoubleBuffering.apply_to(dace_matmul, map_entry=ktile, transient=smem_a)
-    # DoubleBuffering.apply_to(dace_matmul, map_entry=ktile, transient=smem_b)
+        # DoubleBuffering.apply_to(dace_matmul, map_entry=ktile, transient=smem_a)
+        # DoubleBuffering.apply_to(dace_matmul, map_entry=ktile, transient=smem_b)
 
-    compiled = dace_matmul.compile()
-    # print(f"\n\ntype of dace: {type(dace_matmul)}\n\n")
+        compiled = dace_matmul.compile()
+        # print(f"\n\ntype of dace: {type(dace_matmul)}\n\n")
 
-    # torch.cuda.synchronize()
+        # torch.cuda.synchronize()
+        print(f"N: {N}, TILE_M: {TILE_M}, TILE_N: {TILE_N}, TILE_K: {TILE_K}")
+        iters = 2
+        # print("")
+        benchmark_matmul(compiled, N, N, N, num_iterations=iters, name="DaCe")
 
-    iters = 2
-    # print("")
-    benchmark_matmul(compiled, N, N, N, num_iterations=iters)
+        benchmark_matmul(torch.matmul, N, N, N, num_iterations=iters, name="torch")
 
-    benchmark_matmul(torch.matmul, N, N, N, num_iterations=iters)
+    # N = 256
+    # compiled(A=A, B=B, C=C, N=N)
 
-    compiled(A=A, B=B, C=C, N=N)
+    # C_ref = A @ B
 
-    C_ref = A @ B
+    # diff = torch.linalg.norm(A @ B - C) / (N * N)
+    # if diff > 0.001:
+    #     if N <= 128:
+    #         import sys
 
-    if N <= 64:
-        print(f"DaCe matmul:\n{C}")
-        print(f"Reference matmul:\n{C_ref}")
+    #         np.set_printoptions(
+    #             precision=3, suppress=True, linewidth=3000, threshold=sys.maxsize
+    #         )
 
-    diff = torch.linalg.norm(A @ B - C) / (N * N)
-    print("Difference:", diff)
-    exit(1 if diff > 1e-3 else 0)
+    #         # set numpy printoptions to full linewidth. Currently, C print format is as follows:
+    #         #             [[-8.164  8.766 -6.466 ...  0.     0.     0.   ]
+    #         #  [-4.277 -3.639  0.875 ...  0.     0.     0.   ]
+    #         #  [ 9.489 -1.763 -2.317 ...  0.     0.     0.   ]
+    #         #  ...
+    #         #  [ 4.217 -2.018 -2.782 ...  0.     0.     0.   ]
+    #         #  [-0.455 -3.837  0.513 ...  0.     0.     0.   ]
+    #         #  [ 4.589  3.24   3.137 ...  0.     0.     0.   ]]
+    #         # We don't want truncated format with ..., we want to print the full array.
+    #         C_np = C.detach().cpu().numpy()
+    #         C_ref_np = C_ref.detach().cpu().numpy()
+    #         # print(f"\nnumpy precision set. Type: {type(C_np)}\n")
+    #         # print(f"DaCe matmul:\n{C_np}")
+    #         # print(f"Reference matmul:\n{C_ref_np}")
+
+    #         for i in range(0, N, TC_SIZE_M):
+    #             line = ""
+    #             for j in range(0, N, TC_SIZE_N):
+    #                 line += f"{C_np[i,j]:.3f}\t{C_ref_np[i,j]:.3f}\t\t\t"
+    #             print(line)
+    #             # print(f"Reference matmul[{i}:{i+N//2},{j}://`{j+N//2}]:\n{C_ref[i:i+N//2,j:j+N//2]}")
+    # print("Difference with ref:", diff)
+    # exit(1 if diff > 1e-3 else 0)
