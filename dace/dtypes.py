@@ -286,6 +286,26 @@ _OCL_TYPES = {
     numpy.complex128: "complex double",
 }
 
+_CTYPES_TO_OCLTYPES = {
+    "void": "void",
+    "int": "int",
+    "float": "float",
+    "double": "double",
+    "dace::complex64": "complex float",
+    "dace::complex128": "complex double",
+    "bool": "bool",
+    "char": "char",
+    "short": "short",
+    "int": "int",
+    "int64_t": "long",
+    "uint8_t": "uchar",
+    "uint16_t": "ushort",
+    "uint32_t": "uint",
+    "dace::uint": "uint",
+    "uint64_t": "ulong",
+    "dace::float16": "half",
+}
+
 # Translation of types to OpenCL vector types
 _OCL_VECTOR_TYPES = {
     numpy.int8: "char",

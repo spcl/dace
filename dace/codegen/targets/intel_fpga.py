@@ -571,8 +571,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             arg = self.make_kernel_argument(p, pname, is_output, True)
 
             if arg is not None:
-                #change c type long long to opencl type long
-                arg = arg.replace("long long", "long")
+                #change c type to opencl type
+                if arg in dtypes._CTYPES_TO_OCLTYPES:
+                    arg = dtypes._CTYPES_TO_OCLTYPES[arg]
 
                 kernel_args_opencl.append(arg)
                 kernel_args_host.append(p.as_arg(True, name=pname))
@@ -770,8 +771,9 @@ __kernel void \\
             ptrname = cpp.ptr(in_memlet.data, desc, sdfg, self._frame)
             defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
 
-            #change c type long long to opencl type long
-            defined_ctype = defined_ctype.replace("long long", "long")
+            #change c type to opencl type
+            if defined_ctype in dtypes._CTYPES_TO_OCLTYPES:
+                defined_ctype = dtypes._CTYPES_TO_OCLTYPES[defined_ctype]
 
             if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                       or desc.storage == dtypes.StorageType.FPGA_Local):
@@ -823,9 +825,9 @@ __kernel void \\
                 ptrname = cpp.ptr(out_memlet.data, desc, sdfg, self._frame)
                 defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
 
-                #change c type long long to opencl type long
-                if defined_ctype.__contains__("long long"):
-                    defined_ctype = defined_ctype.replace("long long", "long")
+                #change c type to opencl type
+                if defined_ctype in dtypes._CTYPES_TO_OCLTYPES:
+                    defined_ctype = dtypes._CTYPES_TO_OCLTYPES[defined_ctype]
 
                 if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                           or desc.storage == dtypes.StorageType.FPGA_Local):
