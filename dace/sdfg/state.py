@@ -23,8 +23,8 @@ from dace import symbolic
 from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty,
                              SymbolicProperty, CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge,
-                             generate_element_id)
+from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
+                             OrderedDiGraph, Edge, generate_element_id)
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
@@ -1210,6 +1210,11 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     _sdfg: Optional['SDFG'] = None
     _parent_graph: Optional['ControlFlowRegion'] = None
 
+    _certain_reads: Dict[str, mm.Memlet]
+    _possible_reads: Dict[str, mm.Memlet]
+    _certain_writes: Dict[str, mm.Memlet]
+    _possible_writes: Dict[str, mm.Memlet]
+
     def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None, parent: Optional['ControlFlowRegion'] = None):
         super(ControlFlowBlock, self).__init__()
         self._label = label
@@ -1220,6 +1225,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.pre_conditions = {}
         self.post_conditions = {}
         self.invariant_conditions = {}
+        self._certain_reads = dict()
+        self._possible_reads = dict()
+        self._certain_writes = dict()
+        self._possible_writes = dict()
 
         self.guid = generate_element_id(self)
 

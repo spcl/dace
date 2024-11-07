@@ -747,7 +747,7 @@ def propagate_states(sdfg: 'SDFG', concretize_dynamic_unbounded: bool = False) -
     if sdfg.using_experimental_blocks:
         # Avoid cyclic imports
         from dace.transformation.pass_pipeline import Pipeline
-        from dace.transformation.passes.analysis import StatePropagation
+        from dace.transformation.passes.analysis.propagation import StatePropagation
 
         state_prop_pipeline = Pipeline([StatePropagation()])
         state_prop_pipeline.apply_pass(sdfg, {})
