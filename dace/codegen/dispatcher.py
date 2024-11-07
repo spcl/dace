@@ -4,6 +4,7 @@ Contains the DaCe code generator target dispatcher, which is responsible for
 flexible code generation with multiple backends by dispatching certain
 functionality to registered code generators based on user-defined predicates.
 """
+import dace
 from dace.codegen.prettycode import CodeIOStream
 import aenum
 from dace import config, data as dt, dtypes, nodes, registry
@@ -20,7 +21,7 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 @registry.extensible_enum
 class DefinedType(aenum.AutoNumberEnum):
     """ Data types for `DefinedMemlets`.
-    
+
         :see: DefinedMemlets
     """
     Pointer = ()  # Pointer
@@ -182,14 +183,13 @@ class TargetDispatcher(object):
         self._generic_node_dispatcher = None
         self._state_dispatchers = []
         self._generic_state_dispatcher = None
-
         self._declared_arrays = DefinedMemlets()
         self._defined_vars = DefinedMemlets()
 
     @property
     def declared_arrays(self) -> DefinedMemlets:
         """ Returns a list of declared variables.
-        
+
             This is used for variables that must have their declaration and
             allocation separate. It includes all such variables that have been
             declared by the dispatcher.
@@ -199,7 +199,7 @@ class TargetDispatcher(object):
     @property
     def defined_vars(self) -> DefinedMemlets:
         """ Returns a list of defined variables.
-        
+
             This includes all variables defined by the dispatcher.
         """
         return self._defined_vars
@@ -470,6 +470,9 @@ class TargetDispatcher(object):
     def get_array_dispatcher(self, storage: dtypes.StorageType) -> target.TargetCodeGenerator:
         return self._array_dispatchers[storage]
 
+    def get_templated_type_dispatcher(self, data, storage):
+        return self._templated_type_dispatchers[(data, storage)]
+
     def dispatch_allocate(self,
                           sdfg: SDFG,
                           cfg: ControlFlowRegion,
@@ -625,3 +628,13 @@ class TargetDispatcher(object):
         # Dispatch
         self._used_targets.add(target)
         target.define_out_memlet(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)
+
+
+    def dispatch_templated_type_definition(self, data, storage):
+        target = self.get_templated_type_dispatcher(data, storage)
+        if target is None:
+            raise ValueError(
+                f'Could not dispatch copy code generator for {data}, {storage}')
+
+        self._used_targets.add(target)
+        return target._get_templated_type(data, storage), target._get_access_type(data, storage)

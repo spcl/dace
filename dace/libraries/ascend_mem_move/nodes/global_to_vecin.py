@@ -21,9 +21,9 @@ class GlobalToVECIN(CodeLibraryNode):
         assert len(outputs) == 1
         glb_vec = next(iter(outputs), None)
         frag_vec = next(iter(inputs), None)
-        code = f"AscendC::LocalTensor<half> {frag_vec}_local = in_queue_{frag_vec}.AllocTensor<half> ();" + \
-               f"DataCopy({frag_vec}, {glb_vec}, {self.load_length}) ;" + \
-               f"in_queue_{frag_vec}.EnQue({frag_vec});"
+        code = f"AscendC::LocalTensor<half> {frag_vec}_local = in_queue_{frag_vec}.AllocTensor<half>();\n" + \
+               f"DataCopy({frag_vec}, {glb_vec}, {self.load_length});\n" + \
+               f"in_queue_{frag_vec}.EnQue({frag_vec});\n"
         return code
 
     def generate_required_member_definition(self):

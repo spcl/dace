@@ -30,15 +30,15 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 from dace.transformation import helpers as xfh
 from dace.transformation.passes import analysis as ap
+from dace.sdfg.validation import validate_memlet_data
+from dace import data
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
     from dace.codegen.targets.cpu import CPUCodeGen
 
-
 def prod(iterable):
     return functools.reduce(sympy.Mul, iterable, 1)
-
 
 def _expr(val):
     if isinstance(val, symbolic.SymExpr):
@@ -51,6 +51,38 @@ class AscendCCodeGen(TargetCodeGenerator):
     target_name = 'ascendc'
     title = 'AscendC'
     _in_device_code = False
+
+    _c_type_to_ascend_decl_type = {
+        (dtypes.float16, dtypes.StorageType.Ascend_Global, dtypes.StorageType.Register): "GM_HALF",
+        (dtypes.float32, dtypes.StorageType.Ascend_Global, dtypes.StorageType.Register): "GM_FLOAT",
+        (dtypes.float16, dtypes.StorageType.Ascend_VECIN,  dtypes.StorageType.Register): "AscendC::LocalTensor<dace::float16>",
+        (dtypes.float32, dtypes.StorageType.Ascend_VECIN,  dtypes.StorageType.Register): "AscendC::LocalTensor<dace::float32>",
+        (dtypes.float16, dtypes.StorageType.Ascend_VECOUT,  dtypes.StorageType.Register): "AscendC::LocalTensor<dace::float16>",
+        (dtypes.float32, dtypes.StorageType.Ascend_VECOUT,  dtypes.StorageType.Register): "AscendC::LocalTensor<dace::float32>",
+        (dtypes.float16, dtypes.StorageType.Register, dtypes.StorageType.Ascend_Global): "GM_HALF",
+        (dtypes.float32, dtypes.StorageType.Register, dtypes.StorageType.Ascend_Global): "GM_FLOAT",
+    }
+    _access_type = {
+        "GM_HALF": "*",
+        "GM_FLOAT": "*",
+        "AscendC::LocalTensor<dace::float16>": "&",
+        "AscendC::LocalTensor<dace::float32>": "&"
+    }
+    _storage_to_ascendc_que_name = {
+        dtypes.StorageType.Ascend_VECIN: "VECIN",
+        dtypes.StorageType.Ascend_VECOUT: "VECOUT"
+    }
+
+    def _get_access_type(self, type_str):
+        return self._access_type.get(type_str, "")
+
+    def _get_ascendc_type(self, data: data.Data, storage: dtypes.StorageType):
+        print("Data", data, type(data))
+        print("Data2", data.dtype, ", ", data.dtype.ctype, ", ", data.storage, ", ", storage)
+        return self._c_type_to_ascend_decl_type[(data.dtype, data.storage, storage)]
+
+    def _get_templated_type(self, data: data.Data, storage: dtypes.StorageType):
+        return self._get_ascendc_type(data, storage), self._get_access_type(self._get_ascendc_type(data, storage))
 
     def __init__(self, frame_codegen: 'DaCeCodeGenerator', sdfg: SDFG):
         self._frame = frame_codegen
@@ -92,7 +124,6 @@ class AscendCCodeGen(TargetCodeGenerator):
             for other_storage in [dtypes.StorageType.CPU_Heap, dtypes.StorageType.Register]:
                 dispatcher.register_copy_dispatcher(storage, other_storage, None, self)
                 dispatcher.register_copy_dispatcher(other_storage, storage, None, self)
-
 
         # TODO: illegal copies
 
@@ -164,6 +195,9 @@ class AscendCCodeGen(TargetCodeGenerator):
 
 DACE_EXPORTED int __dace_init_acl({sdfg_state_name} *__state{params});
 DACE_EXPORTED int __dace_exit_acl({sdfg_state_name} *__state);
+
+#define GM_HALF __gm__ half *__restrict__
+#define GM_FLOAT __gm__ float *__restrict__
 
 {other_globalcode}
 
@@ -304,7 +338,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         else:
             raise NotImplementedError("CUDA: Unimplemented storage type " + str(nodedesc.storage))
 
-        declaration_stream.write(result_decl.getvalue(), cfg, state_id, node)
+        declaration_stream.write(result_decl.getvalue() + "//8", cfg, state_id, node)
 
     def allocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                        node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
@@ -583,7 +617,116 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         elif (src_storage in ascend_storage_types and dst_storage in ascend_storage_types):
             raise NotImplementedError("TODO")
         else:
-            self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+            print(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+            print("DSC", src_storage, "; ", dst_storage)
+            self.copy_memory_as_ref(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+
+    def copy_memory_as_ref(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        dfg: StateSubgraphView,
+        state_id: int,
+        src_node: Union[nodes.Tasklet, nodes.AccessNode],
+        dst_node: Union[nodes.Tasklet, nodes.AccessNode],
+        edge: Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], dace.memlet.Memlet],
+        function_stream: CodeIOStream,
+        callsite_stream: CodeIOStream,
+    ) -> None:
+        assert(isinstance(src_node, nodes.Tasklet) or isinstance(dst_node, nodes.Tasklet))
+
+        if isinstance(src_node, nodes.Tasklet):
+            src_storage = dtypes.StorageType.Register
+            try:
+                src_parent = dfg.entry_node(src_node)
+            except KeyError:
+                src_parent = None
+            dst_schedule = None if src_parent is None else src_parent.map.schedule
+        else:
+            src_storage = src_node.desc(sdfg).storage
+
+        if isinstance(dst_node, nodes.Tasklet):
+            dst_storage = dtypes.StorageType.Register
+        else:
+            dst_storage = dst_node.desc(sdfg).storage
+
+        try:
+            dst_parent = dfg.entry_node(dst_node)
+        except KeyError:
+            dst_parent = None
+        dst_schedule = None if dst_parent is None else dst_parent.map.schedule
+
+        state_dfg = cfg.node(state_id)
+
+        # Emit actual copy
+        self._emit_copy_as_ref(
+            sdfg,
+            cfg,
+            state_id,
+            src_node,
+            src_storage,
+            dst_node,
+            dst_storage,
+            dst_schedule,
+            edge,
+            state_dfg,
+            callsite_stream,
+        )
+
+
+    def _emit_copy_as_ref(
+        self,
+        sdfg: SDFG,
+        cfg: ControlFlowRegion,
+        state_id: int,
+        src_node: nodes.Node,
+        src_storage: dtypes.StorageType,
+        dst_node: nodes.Node,
+        dst_storage: dtypes.StorageType,
+        dst_schedule: dtypes.ScheduleType,
+        edge: Tuple[nodes.Node, Optional[str], nodes.Node, Optional[str], dace.memlet.Memlet],
+        dfg: StateSubgraphView,
+        stream: CodeIOStream,
+    ) -> None:
+        u, uconn, v, vconn, memlet = edge
+        orig_vconn = vconn
+        assert(isinstance(dst_node, nodes.Tasklet) or isinstance(src_node, nodes.Tasklet))
+
+        # Determine memlet directionality
+        if isinstance(src_node, nodes.AccessNode) and validate_memlet_data(memlet.data, src_node.data):
+            write = True
+        elif isinstance(dst_node, nodes.AccessNode) and validate_memlet_data(memlet.data, dst_node.data):
+            write = False
+        elif isinstance(src_node, nodes.CodeNode) and isinstance(dst_node, nodes.CodeNode):
+            # Code->Code copy (not read nor write)
+            raise RuntimeError("Copying between code nodes is only supported as part of the participating nodes")
+        elif uconn is None and vconn is None and memlet.data is None and dst_schedule == dtypes.ScheduleType.Sequential:
+            # Sequential dependency edge
+            return
+        else:
+            raise LookupError("Memlet does not point to any of the nodes")
+
+
+        if isinstance(dst_node, nodes.Tasklet):
+            ascend_type = self._get_ascendc_type(sdfg.arrays[edge.data.data], dst_storage)
+            # Copy into tasklet
+            mem_def = self._cpu_codegen.memlet_definition(sdfg, memlet, False, vconn, dst_node.in_connectors[vconn])
+            tokens = mem_def.split()
+            const = ""
+            if "const " in tokens:
+                const = "const"
+            access_str = mem_def.split("=")[-1]
+            access_type = self._get_access_type(ascend_type)
+            stream.write(
+                f"{const}{ascend_type}{access_type} {vconn} = {access_str} // Type wrapped 1",
+                cfg,
+                state_id,
+                [src_node, dst_node],
+            )
+            return
+        elif isinstance(src_node, nodes.Tasklet):
+            raise Exception("TODO: Impl")
+            return
 
     def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                     src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
@@ -611,12 +754,34 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
     def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
                           src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet],
                           function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
-        self._cpu_codegen.define_out_memlet(sdfg, cfg, state_dfg, state_id, src_node, dst_node, edge, function_stream,
-                                            callsite_stream)
+        #LocalTensor<half> a1Local = inQueueA1.AllocTensor<half>();
+        cdtype = src_node.out_connectors[edge.src_conn]
+        desc = sdfg.arrays[edge.data.data]
+        print("DDD", desc, type(desc))
+        ascend_type = self._get_ascendc_type(desc, dtypes.StorageType.Register)
+        access_type = self._get_access_type(ascend_type)
+        assert(isinstance(cdtype, dtypes.pointer))
+        print("Define out memlet", ascend_type, access_type)
+
+        # If reference set, do not emit initial assignment
+        is_refset = isinstance(desc, data.Reference) and state_dfg.memlet_path(edge)[-1].dst_conn == 'set'
+
+        if not is_refset and not isinstance(desc.dtype, dtypes.pointer):
+            ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
+            is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                                            dtypes.AllocationLifetime.External)
+            defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
+            callsite_stream.write(f'{ascend_type}{access_type} {edge.src_conn} = {base_ptr}; // Type wrapped 2', cfg, state_id, src_node)
+        else:
+            raise Exception("UWU TODO")
+            callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', cfg, state_id, src_node)
+
 
     def process_out_memlets(self, *args, **kwargs):
         # Call CPU implementation with this code generator as callback
-        self._cpu_codegen.process_out_memlets(*args, codegen=self, **kwargs)
+        #self._cpu_codegen.process_out_memlets(*args, codegen=self, **kwargs)
+        raise Exception("hmm?")
 
     def _begin_streams(self, sdfg, state):
         result = set()
@@ -844,6 +1009,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                              for k, v in prototype_kernel_args.items()]
 
         kernel_stream = CodeIOStream()
+        self._kernel_stream = kernel_stream
         self.generate_kernel_scope(sdfg, cfg, dfg_scope, state_id, scope_entry.map, kernel_name, grid_dims, block_dims,
                                    tbmap, dtbmap, kernel_args_typed, self._globalcode, kernel_stream)
 
@@ -1167,11 +1333,32 @@ void __dace_runkernel_{fname}({fargs})
                               kernel_map: nodes.Map, kernel_name: str, grid_dims: list, block_dims: list,
                               has_tbmap: bool, has_dtbmap: bool, kernel_params: list, function_stream: CodeIOStream,
                               kernel_stream: CodeIOStream) -> None:
+
+
+        kernel_stream.write("AscendC::TPipe pipe;")
+
+        state = sdfg.find_state(state_id)
+        used_arr_set = set()
+        # TODO: extend this to track multiple uses
+        # TODO: only accesses within the kernel
+        for node in state.nodes():
+            if isinstance(node, nodes.AccessNode):
+                used_arr_set.add((node.data, sdfg.arrays[node.data]))
+        for edge in state.edges():
+            mem = edge.data
+            arr = sdfg.arrays[mem.data]
+            used_arr_set.add((mem.data, arr))
+        for name, arr in used_arr_set:
+            if arr.storage in [dtypes.StorageType.Ascend_VECIN]:
+                que_name = self._storage_to_ascendc_que_name[arr.storage]
+                kernel_stream.write(f"AscendC::TQue<AscendC::QuePosition::{que_name}, 1> inQueue_{name};")
+            if arr.storage in [dtypes.StorageType.Ascend_VECOUT]:
+                que_name = self._storage_to_ascendc_que_name[arr.storage]
+                kernel_stream.write(f"AscendC::TQue<AscendC::QuePosition::{que_name}, 1> outQueue_{name};")
+        #raise Exception(used_arr_set)
+
         node = dfg_scope.source_nodes()[0]
-
-
         kernel_stream.write('{', cfg, state_id, node)
-
         # Add more opening braces for scope exit to close
         for dim in range(len(node.map.range) - 1):
             kernel_stream.write('{', cfg, state_id, node)
@@ -1500,12 +1687,17 @@ void __dace_runkernel_{fname}({fargs})
         if self._in_device_code:
             # If location dictionary prescribes that the code should run on a certain group of threads/blocks,
             # add condition
-            generated_preamble_scopes += self._generate_condition_from_location('ascend_thread', self._get_thread_id(),
-                                                                                node, callsite_stream)
+            #generated_preamble_scopes += self._generate_condition_from_location('ascend_thread', self._get_thread_id(),
+            #                                                                    node, callsite_stream)
             #generated_preamble_scopes += self._generate_condition_from_location('gpu_warp', self._get_warp_id(), node,
             #                                                                    callsite_stream)
             #generated_preamble_scopes += self._generate_condition_from_location('gpu_block', self._get_block_id(), node,
             #                                                                    callsite_stream)
+            pass
+
+        self._kernel_stream.write("//uwu1")
+        function_stream.write("//uwu2")
+        callsite_stream.write("//uwu3")
 
         # Call standard tasklet generation
         old_codegen = self._cpu_codegen.calling_codegen

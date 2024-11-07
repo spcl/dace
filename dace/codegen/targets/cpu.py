@@ -492,7 +492,7 @@ class CPUCodeGen(TargetCodeGenerator):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
             if not declared:
-                declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
+                declaration_stream.write(f'{nodedesc.dtype.ctype} *{name}; // 8\n', cfg, state_id, node)
             allocation_stream.write(
                 "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
                 state_id, node)
@@ -645,7 +645,6 @@ class CPUCodeGen(TargetCodeGenerator):
             state_dfg,
             callsite_stream,
         )
-
 
     def _emit_copy(
         self,
@@ -1002,7 +1001,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                                                   dfg.node_id(dst_node), edge.src_conn)
 
                 result.write(
-                    "%s = %s;" % (shared_data_name, edge.src_conn),
+                    "%s = std::move(%s); // 4" % (shared_data_name, edge.src_conn),
                     cfg,
                     state_id,
                     [edge.src, edge.dst],
@@ -1098,7 +1097,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
 
                     # Write out
-                    result.write(write_expr, cfg, state_id, node)
+                    result.write(write_expr + "// 5", cfg, state_id, node)
 
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
@@ -1386,7 +1385,6 @@ class CPUCodeGen(TargetCodeGenerator):
                                           after_memlets_stream)
 
         self._dispatcher.defined_vars.enter_scope(node)
-
         arrays = set()
         for edge in state_dfg.in_edges(node):
             u = edge.src
@@ -1407,14 +1405,20 @@ class CPUCodeGen(TargetCodeGenerator):
 
                     # Read variable from shared storage
                     defined_type, _ = self._dispatcher.defined_vars.get(shared_data_name)
-                    if defined_type in (DefinedType.Scalar, DefinedType.Pointer):
+                    access_type = ""
+                    if hasattr(self.calling_codegen, '_get_templated_type') and \
+                        callable(getattr(self.calling_codegen, '_get_templated_type')):
+                        data_type, access_type = self.calling_codegen._get_templated_type(sdfg.arrays[memlet.data], dtypes.StorageType.Register)
+                        assign_str = (f"const {data_type} {access_type} {edge.dst_conn} = {shared_data_name}; // 3.2")
+                    elif defined_type in (DefinedType.Scalar, DefinedType.Pointer):
                         assign_str = (f"const {ctype} {edge.dst_conn} = {shared_data_name};")
                     else:
                         assign_str = (f"const {ctype} &{edge.dst_conn} = {shared_data_name};")
-                    inner_stream.write(assign_str, cfg, state_id, [edge.src, edge.dst])
+                    inner_stream.write(assign_str + "// 3", cfg, state_id, [edge.src, edge.dst])
                     self._dispatcher.defined_vars.add(edge.dst_conn, defined_type, f"const {ctype}")
 
                 else:
+
                     self._dispatcher.dispatch_copy(
                         src_node,
                         node,
@@ -1430,7 +1434,6 @@ class CPUCodeGen(TargetCodeGenerator):
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.dst_conn, -1, self._ldepth + 1, ctype)
                 arrays.add(edge.dst_conn)
-
         # Use outgoing edges to preallocate output local vars
         # in two stages: first we preallocate for data<->code cases,
         # followed by code<->code
@@ -1451,6 +1454,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1, node.out_connectors[edge.src_conn].ctype)
                 tasklet_out_connectors.add(edge.src_conn)
+
 
         for edge in state_dfg.out_edges(node):
             # Special case: code->code
@@ -1476,7 +1480,14 @@ class CPUCodeGen(TargetCodeGenerator):
                                                             dfg.node_id(dst_node), edge.src_conn)
 
                 # Allocate variable type
-                code = "%s %s;" % (ctype, local_name)
+                data_type = ctype
+                _data = sdfg.arrays[local_name]
+                access_type = ""
+                if hasattr(self.calling_codegen, '_get_templated_type') and \
+                    callable(getattr(self.calling_codegen, '_get_templated_type')):
+                    data_type, access_type = self.calling_codegen._get_templated_type(_data, dtypes.StorageType.Register)
+
+                code = "%s %s;" % (data_type, local_name)
                 outer_stream_begin.write(code, cfg, state_id, [edge.src, dst_node])
                 if (isinstance(arg_type, data.Scalar) or isinstance(arg_type, dtypes.typeclass)):
                     self._dispatcher.defined_vars.add(local_name, DefinedType.Scalar, ctype, ancestor=1)
@@ -1490,11 +1501,21 @@ class CPUCodeGen(TargetCodeGenerator):
                 else:
                     raise TypeError("Unrecognized argument type: {}".format(type(arg_type).__name__))
 
-                inner_stream.write("%s %s;" % (ctype, edge.src_conn), cfg, state_id, [edge.src, edge.dst])
+
+                # AscendC code-gen requires wrapping of the type relevant for dataflow in
+                # templates
+
+                access_type = ""
+                if hasattr(self.calling_codegen, '_get_templated_type') and \
+                    callable(getattr(self.calling_codegen, '_get_templated_type')):
+                    data_type, access_type = self.calling_codegen._get_templated_type(_data, dtypes.StorageType.Register)
+
+                inner_stream.write("%s %s; // 9" % (data_type, edge.src_conn), cfg, state_id, [edge.src, edge.dst])
                 tasklet_out_connectors.add(edge.src_conn)
                 self._dispatcher.defined_vars.add(edge.src_conn, DefinedType.Scalar, ctype)
                 self._locals.define(edge.src_conn, -1, self._ldepth + 1, ctype)
                 locals_defined = True
+
 
         # Emit post-memlet tasklet preamble code
         callsite_stream.write(after_memlets_stream.getvalue())
@@ -1528,18 +1549,15 @@ class CPUCodeGen(TargetCodeGenerator):
             True,
             function_stream,
         )
-
         # Instrumentation: Post-tasklet
         if instr is not None:
             instr.on_node_end(sdfg, state_dfg, node, outer_stream_end, inner_stream, function_stream)
-
         callsite_stream.write(outer_stream_begin.getvalue(), cfg, state_id, node)
         callsite_stream.write('{', cfg, state_id, node)
         callsite_stream.write(inner_stream.getvalue(), cfg, state_id, node)
         callsite_stream.write(after_memlets_stream.getvalue())
         callsite_stream.write('}', cfg, state_id, node)
         callsite_stream.write(outer_stream_end.getvalue(), cfg, state_id, node)
-
         self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
 
@@ -1567,11 +1585,11 @@ class CPUCodeGen(TargetCodeGenerator):
                                               dtypes.AllocationLifetime.External)
                 defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
-                callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
+                callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr}; // 7', cfg, state_id, src_node)
             else:
-                callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', cfg, state_id, src_node)
+                callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)}; // 7', cfg, state_id, src_node)
         else:
-            callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', cfg, state_id, src_node)
+            callsite_stream.write(f'{cdtype.ctype} {edge.src_conn}; // 7', cfg, state_id, src_node)
 
     def generate_nsdfg_header(self, sdfg, cfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
