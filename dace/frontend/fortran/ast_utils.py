@@ -1,31 +1,22 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from fparser.api import parse
-import os
-import sys
-from fparser.common.readfortran import FortranStringReader, FortranFileReader
+from typing import List, Set
 
-from dace.frontend.fortran import ast_components
-
-#dace imports
-from dace import subsets
-from dace.data import Scalar
-from dace.sdfg import SDFG, SDFGState, InterstateEdge
-from dace import Memlet
-from dace.sdfg.nodes import Tasklet
-from dace import dtypes
-from dace import data as dat
-from dace import symbolic as sym
-from dace import DebugInfo as di
-from dace import Language as lang
-from dace.properties import CodeBlock
+import networkx as nx
 from numpy import finfo as finf
 from numpy import float64 as fl
 
+from dace import DebugInfo as di
+from dace import Language as lang
+from dace import Memlet
+from dace import data as dat
+from dace import dtypes
+# dace imports
+from dace import subsets
+from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes
-from typing import List, Set
-import networkx as nx
-from dace.frontend.fortran import ast_transforms
+from dace.sdfg import SDFG, SDFGState, InterstateEdge
+from dace.sdfg.nodes import Tasklet
 
 fortrantypes2dacetypes = {
     "DOUBLE": dtypes.float64,
@@ -697,32 +688,6 @@ class ProcessedWriter(TaskletWriter):
         else:
             return self.name2string(node)
 
-
-
-class UseModuleLister:
-    def __init__(self):
-        self.list_of_modules = []
-        self.objects_in_use={}
-
-    def get_used_modules(self, node):
-        if node is None:
-            return
-        if not hasattr(node, "children"):
-            return
-        for i in node.children:
-            if i.__class__.__name__ == "Use_Stmt":
-                if i.children[0] is not None:
-                    if i.children[0].string.lower()=="intrinsic":
-                        continue
-                for j in i.children:
-                    if j.__class__.__name__ == "Name":
-                        self.list_of_modules.append(j.string)
-                        for k in i.children:
-                            if k.__class__.__name__ == "Only_List":
-                                self.objects_in_use[j.string] = k
-
-            else:
-                self.get_used_modules(i)
 
 
 class Context:

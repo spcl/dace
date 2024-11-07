@@ -1,13 +1,12 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-from fparser.two import Fortran2008 as f08
+from typing import Any, List, Optional, Type, TypeVar, Union, overload, TYPE_CHECKING
+
 from fparser.two import Fortran2003 as f03
+from fparser.two import Fortran2008 as f08
 from fparser.two import symbol_table
 
-import copy
 from dace.frontend.fortran import ast_internal_classes
-from dace.frontend.fortran.ast_internal_classes import FNode, Name_Node
-from typing import Any, List, Optional, Tuple, Type, TypeVar, Union, overload, TYPE_CHECKING
-
+from dace.frontend.fortran.ast_internal_classes import Name_Node
 
 if TYPE_CHECKING:
     from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -206,7 +205,6 @@ class InternalFortranAst:
             "Assignment_Stmt": self.assignment_stmt,
             "Pointer_Assignment_Stmt": self.pointer_assignment_stmt,
             "Where_Stmt": self.where_stmt,
-            "Forall_Stmt": self.forall_stmt,
             "Where_Construct": self.where_construct,
             "Where_Construct_Stmt": self.where_construct_stmt,
             "Masked_Elsewhere_Stmt": self.masked_elsewhere_stmt,
@@ -239,7 +237,6 @@ class InternalFortranAst:
             "End_Interface_Stmt": self.end_interface_stmt,
             "Generic_Spec": self.generic_spec,
             "Name": self.name,
-            "Rename": self.rename,
             "Type_Name": self.type_name,
             "Specification_Part": self.specification_part,
             "Intrinsic_Type_Spec": self.intrinsic_type_spec,
