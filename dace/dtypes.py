@@ -404,6 +404,8 @@ class typeclass(object):
             wrapped_type = numpy.bool_
         elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
             typename = 'bool'
+        elif wrapped_type is type(None):
+            wrapped_type = None
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C

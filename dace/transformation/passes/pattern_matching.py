@@ -124,6 +124,7 @@ class PatternMatchAndApply(ppl.Pass):
 
             # Set previous pipeline results
             match._pipeline_results = pipeline_results
+            match.permissive = self.permissive
 
             result = match.apply(graph, tcfg.sdfg)
             applied_transformations[type(match).__name__].append(result)
@@ -177,6 +178,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
 
         # Set previous pipeline results
         match._pipeline_results = pipeline_results
+        match.permissive = self.permissive
 
         if self.validate_all:
             match_name = match.print_match(tcfg)

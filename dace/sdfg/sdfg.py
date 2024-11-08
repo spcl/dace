@@ -208,6 +208,16 @@ class InterstateEdge(object):
             super().__setattr__('_uncond', None)
         return super().__setattr__(name, value)
 
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k == 'guid': # Skip ID
+                continue
+            setattr(result, k, copy.deepcopy(v, memo))
+        return result
+
     @staticmethod
     def _convert_assignment(assignment) -> str:
         if isinstance(assignment, ast.AST):
@@ -1475,9 +1485,11 @@ class SDFG(ControlFlowRegion):
     var sdfg_{uid} = {sdfg};
 </script>
 <script>
-    var sdfv_{uid} = new SDFV();
-    var renderer_{uid} = new SDFGRenderer(sdfv_{uid}, parse_sdfg(sdfg_{uid}),
-        document.getElementById('contents_{uid}'));
+    new SDFGRenderer(
+        checkCompatLoad(parse_sdfg(sdfg_{uid})),
+        document.getElementById("contents_{uid}"),
+        undefined, null, null, false, null, null
+    );
 </script>""".format(
             # Dumping to a string so that Jupyter Javascript can parse it
             # recursively
@@ -2265,14 +2277,16 @@ class SDFG(ControlFlowRegion):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True) -> 'CompiledSDFG':
+    def compile(self, output_file=None, validate=True,
+                return_program_handle=True) -> 'CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
 
             :param output_file: If not None, copies the output library file to
                                 the specified path.
             :param validate: If True, validates the SDFG prior to generating
                              code.
-            :return: A callable CompiledSDFG object.
+            :param return_program_handle: If False, does not load the generated library.
+            :return: A callable CompiledSDFG object, or None if ``return_program_handle=False``.
         """
 
         # Importing these outside creates an import loop
@@ -2335,7 +2349,8 @@ class SDFG(ControlFlowRegion):
             shutil.copyfile(shared_library, output_file)
 
         # Get the function handle
-        return compiler.get_program_handle(shared_library, sdfg)
+        if return_program_handle:
+            return compiler.get_program_handle(shared_library, sdfg)
 
     def argument_typecheck(self, args, kwargs, types_only=False):
         """ Checks if arguments and keyword arguments match the SDFG

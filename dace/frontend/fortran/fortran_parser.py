@@ -2767,8 +2767,12 @@ def create_sdfg_from_fortran_file(source_string: str, use_experimental_cfg_block
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.SignToIf().visit(program)
-    program = ast_transforms.ArrayToLoop().visit(program)
-    program = ast_transforms.SumToLoop().visit(program)
+    program = ast_transforms.ArrayToLoop(program).visit(program)
+
+    for transformation in own_ast.fortran_intrinsics():
+        transformation.initialize(program)
+        program = transformation.visit(program)
+
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
