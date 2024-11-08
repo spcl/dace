@@ -708,3 +708,4 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         nnode.sdfg.parent_nsdfg_node = nnode
                         nnode.sdfg.parent = nstate
                         nnode.sdfg.parent_sdfg = nsdfg
+

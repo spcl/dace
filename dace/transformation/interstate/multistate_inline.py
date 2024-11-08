@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Inline multi-state SDFGs. """
 
+
 from copy import deepcopy as dc
 import itertools
 from typing import Dict, List
@@ -322,3 +323,4 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         sdfg._cfg_list = sdfg.reset_cfg_list()
 
         return nsdfg.nodes()
+

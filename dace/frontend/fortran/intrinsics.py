@@ -2,12 +2,18 @@
 from abc import abstractmethod
 import copy
 import math
+import sys
 from collections import namedtuple
 from typing import Any, List, Optional, Set, Tuple, Type
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, ScopeVarsDeclarations, par_Decl_Range_Finder, mywalk
+
+from dace.libraries.blas.nodes.dot import dot_libnode
+from dace.sdfg.graph import OrderedDiGraph
+from dace.transformation import transformation as xf
+from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil
 
 FASTNode = Any
 
@@ -20,7 +26,7 @@ class IntrinsicTransformation:
 
     @staticmethod
     @abstractmethod
-    def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line) -> ast_internal_classes.FNode:
+    def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line ,symbols:list) -> ast_internal_classes.FNode:
         pass
 
     @staticmethod
@@ -296,12 +302,17 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
 
         # supports syntax func(arr)
         if isinstance(arg, ast_internal_classes.Name_Node):
-            array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
+            # TODO: missing line number here!
+            array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent, line_number=42)
             array_node.name = arg
 
             # If we access SUM(arr) where arr has many dimensions,
             # We need to create a ParDecl_Node for each dimension
-            dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
+            #array_sizes = self.scope_vars.get_var(node.parent, arg.name).sizes
+            array_sizes = self.get_var_declaration(node.parent, arg.name).sizes
+            if array_sizes is None:
+                return None
+            dims = len(array_sizes)
             array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
 
             return array_node
@@ -309,6 +320,8 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
         # supports syntax func(arr(:))
         if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
             return arg
+
+        return None
 
     def _parse_binary_op(self, node: ast_internal_classes.Call_Expr_Node, arg: ast_internal_classes.BinOp_Node) -> Tuple[
             ast_internal_classes.Array_Subscript_Node,
@@ -333,7 +346,7 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
 
         """
         if not isinstance(arg, ast_internal_classes.BinOp_Node):
-            return False
+            return (None, None, None)
 
         first_array = self._parse_array(node, arg.lval)
         second_array = self._parse_array(node, arg.rval)
@@ -487,9 +500,9 @@ class SumProduct(LoopBasedReplacementTransformation):
         """
             For both SUM and PRODUCT, the result type depends on the input variable.
         """
-        input_type = self.scope_vars.get_var(var.parent, self.argument_variable.name.name)
+        input_type = self.get_var_declaration(var.parent, self.argument_variable.name.name)
 
-        var_decl = self.scope_vars.get_var(var.parent, var.name)
+        var_decl = self.get_var_declaration(var.parent, var.name)
         var.type = input_type.type
         var_decl.type = input_type.type
 
@@ -601,7 +614,7 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
             Theoretically, we should return LOGICAL for ANY and ALL,
             but we no longer use booleans on DaCe side.
         """
-        var_decl = self.scope_vars.get_var(var.parent, var.name)
+        var_decl = self.get_var_declaration(var.parent, var.name)
         var.type = "INTEGER"
         var_decl.type = "INTEGER"
 
@@ -804,9 +817,9 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
             For both MINVAL and MAXVAL, the result type depends on the input variable.
         """
 
-        input_type = self.scope_vars.get_var(var.parent, self.argument_variable.name.name)
+        input_type = self.get_var_declaration(var.parent, self.argument_variable.name.name)
 
-        var_decl = self.scope_vars.get_var(var.parent, var.name)
+        var_decl = self.get_var_declaration(var.parent, var.name)
         var.type = input_type.type
         var_decl.type = input_type.type
 
@@ -871,7 +884,7 @@ class MinVal(LoopBasedReplacement):
 
         def _result_init_value(self, array: ast_internal_classes.Array_Subscript_Node):
 
-            var_decl = self.scope_vars.get_var(array.parent, array.name.name)
+            var_decl = self.get_var_declaration(array.parent, array.name.name)
 
             # TODO: this should be used as a call to HUGE
             fortran_type = var_decl.type
@@ -903,7 +916,7 @@ class MaxVal(LoopBasedReplacement):
 
         def _result_init_value(self, array: ast_internal_classes.Array_Subscript_Node):
 
-            var_decl = self.scope_vars.get_var(array.parent, array.name.name)
+            var_decl = self.get_var_declaration(array.parent, array.name.name)
 
             # TODO: this should be used as a call to HUGE
             fortran_type = var_decl.type
@@ -957,11 +970,19 @@ class Merge(LoopBasedReplacement):
 
             # First argument is always an array
             self.first_array = self._parse_array(node, node.args[0])
-            assert self.first_array is not None
-
+                
             # Second argument is always an array
             self.second_array = self._parse_array(node, node.args[1])
-            assert self.second_array is not None
+
+            # weird overload of MERGE - passing two scalars
+            if self.first_array is None and self.second_array is None:
+                self.uses_scalars = True
+                self.first_array = node.args[0]
+                self.second_array = node.args[1]
+                self.mask_cond = node.args[2]
+                return
+            else:
+                self.uses_scalars = False
 
             # Last argument is either an array or a binary op
             arg = node.args[2]
@@ -981,6 +1002,10 @@ class Merge(LoopBasedReplacement):
                 self.mask_first_array, self.mask_second_array, self.mask_cond = self._parse_binary_op(node, arg)
 
         def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+
+            if self.uses_scalars:
+                self.destination_array = node.lval
+                return
 
             self.destination_array = self._parse_array(exec_node, node.lval)
 
@@ -1290,10 +1315,10 @@ class FortranIntrinsics:
     ]
 
     def __init__(self):
-        self._transformations_to_run = set()
+        self._transformations_to_run = {}
 
-    def transformations(self) -> Set[Type[NodeTransformer]]:
-        return self._transformations_to_run
+    def transformations(self) -> List[NodeTransformer]:
+        return list(self._transformations_to_run.values())
 
     @staticmethod
     def function_names() -> List[str]:
@@ -1338,7 +1363,7 @@ class FortranIntrinsics:
 
         return ast_internal_classes.Name_Node(name=self.IMPLEMENTATIONS_AST[func_name].replaced_name(func_name))
 
-    def replace_function_reference(self, name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line):
+    def replace_function_reference(self, name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line,symbols: dict):
 
         func_types = {
             "__dace_sign": "DOUBLE",
@@ -1356,3 +1381,4 @@ class FortranIntrinsics:
                 name=name, type="VOID",
                 args=args.args, line_number=line
             )
+
