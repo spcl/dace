@@ -19,9 +19,9 @@ class GlobalToVECIN(CodeLibraryNode):
     def generate_code(self, inputs, outputs):
         assert len(inputs) == 1
         assert len(outputs) == 1
-        glb_vec = next(iter(outputs), None)
-        frag_vec = next(iter(inputs), None)
-        code = f"AscendC::LocalTensor<half> {frag_vec}_local = in_queue_{frag_vec}.AllocTensor<half>();\n" + \
+        glb_vec = next(iter(inputs), None)
+        frag_vec = next(iter(outputs), None)
+        code = f"AscendC::LocalTensor<dace::float16> {frag_vec} = in_queue_{frag_vec}.AllocTensor<dace::float16>();\n" + \
                f"DataCopy({frag_vec}, {glb_vec}, {self.load_length});\n" + \
                f"in_queue_{frag_vec}.EnQue({frag_vec});\n"
         return code

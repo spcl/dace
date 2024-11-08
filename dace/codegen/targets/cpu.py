@@ -1408,7 +1408,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     access_type = ""
                     if hasattr(self.calling_codegen, '_get_templated_type') and \
                         callable(getattr(self.calling_codegen, '_get_templated_type')):
-                        data_type, access_type = self.calling_codegen._get_templated_type(sdfg.arrays[memlet.data], dtypes.StorageType.Register)
+                        data_type, access_type = self.calling_codegen._get_templated_type(sdfg.arrays[memlet.data], sdfg.arrays[memlet.data].storage)
                         assign_str = (f"const {data_type} {access_type} {edge.dst_conn} = {shared_data_name}; // 3.2")
                     elif defined_type in (DefinedType.Scalar, DefinedType.Pointer):
                         assign_str = (f"const {ctype} {edge.dst_conn} = {shared_data_name};")
@@ -1485,7 +1485,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 access_type = ""
                 if hasattr(self.calling_codegen, '_get_templated_type') and \
                     callable(getattr(self.calling_codegen, '_get_templated_type')):
-                    data_type, access_type = self.calling_codegen._get_templated_type(_data, dtypes.StorageType.Register)
+                    data_type, access_type = self.calling_codegen._get_templated_type(_data, _data.storage)
 
                 code = "%s %s;" % (data_type, local_name)
                 outer_stream_begin.write(code, cfg, state_id, [edge.src, dst_node])
@@ -1508,7 +1508,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 access_type = ""
                 if hasattr(self.calling_codegen, '_get_templated_type') and \
                     callable(getattr(self.calling_codegen, '_get_templated_type')):
-                    data_type, access_type = self.calling_codegen._get_templated_type(_data, dtypes.StorageType.Register)
+                    data_type, access_type = self.calling_codegen._get_templated_type(_data, _data.storage)
 
                 inner_stream.write("%s %s; // 9" % (data_type, edge.src_conn), cfg, state_id, [edge.src, edge.dst])
                 tasklet_out_connectors.add(edge.src_conn)
