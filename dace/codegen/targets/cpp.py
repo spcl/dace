@@ -1339,6 +1339,10 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         attrname = rname(node)
         module_name = attrname[:attrname.rfind(".")]
         func_name = attrname[attrname.rfind(".") + 1:]
+        if module_name == 'dace' and isinstance(getattr(dace, func_name, False), dtypes.typeclass):
+            # A type definition
+            dtype: dtypes.typeclass = getattr(dace, func_name)
+            return ast.copy_location(ast.Name(id=dtype.ctype, ctx=ast.Load), node)
         if module_name in dtypes._ALLOWED_MODULES:
             cppmodname = dtypes._ALLOWED_MODULES[module_name]
             return ast.copy_location(ast.Name(id=(cppmodname + func_name), ctx=ast.Load), node)
