@@ -494,7 +494,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name}; // 8\n', cfg, state_id, node)
             allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
+                "%s =  std::aligned_alloc(64, %s * sizeof(%s));\n" % (alloc_name, cpp.sym2cpp(arrsize), nodedesc.dtype.ctype), cfg,
                 state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
