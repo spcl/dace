@@ -137,7 +137,7 @@ class MapExpansion(pm.SingleStateTransformation):
             graph.remove_edge(edge)
 
         if graph.in_degree(map_entry) == 0 or all(
-            e.dst_conn is None or not edge.dst_conn.startswith("IN_")
+            e.dst_conn is None or not e.dst_conn.startswith("IN_")
             for e in graph.in_edges(map_entry)
         ):
             graph.add_memlet_path(map_entry, *entries, memlet=dace.Memlet())
