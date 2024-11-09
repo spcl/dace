@@ -741,9 +741,10 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                 copysize += " * sizeof(%s)" % dtype.ctype
 
                 callsite_stream.write(
-                    "DACE_ACL_CHECK(aclrtMemcpy(%s, %s, %s, ACL_MEMCPY_%s_TO_%s));\n"
+                    "DACE_ACL_CHECK(aclrtMemcpy(%s, %s, %s, %s, ACL_MEMCPY_%s_TO_%s));\n"
                     % (
                         dst_expr,
+                        copysize,
                         src_expr,
                         copysize,
                         src_location.upper(),
@@ -754,45 +755,6 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                     [src_node, dst_node],
                 )
                 node_dtype = dst_node.desc(sdfg).dtype
-                if issubclass(node_dtype.type, ctypes.Structure):
-                    callsite_stream.write(
-                        "for (size_t __idx = 0; __idx < {arrlen}; ++__idx) "
-                        "{{".format(arrlen=array_length)
-                    )
-                    # TODO: Study further when tackling Structures on GPU.
-                    for field_name, field_type in node_dtype._typeclass.fields.items():
-                        if isinstance(field_type, dtypes.pointer):
-                            tclass = field_type.type
-
-                            length = node_dtype._typeclass._length[field_name]
-                            size = "sizeof({})*{}[__idx].{}".format(
-                                dtypes._CTYPES[tclass], str(src_node), length
-                            )
-                            callsite_stream.write(
-                                "DACE_ACL_CHECK(aclrtMalloc(&{dst}[__idx].{fname}, "
-                                "{sz}, ACL_MEM_MALLOC_HUGE_FIRST));".format(
-                                    dst=str(dst_node),
-                                    fname=field_name,
-                                    sz=size,
-                                )
-                            )
-                            callsite_stream.write(
-                                "DACE_ACL_CHECK(aclrtMemcpyAsync({dst}[__idx].{fname}, "
-                                "{src}[__idx].{fname}, {sz}, "
-                                "aclrtMemcpy{sloc}To{dloc}, {stream}));".format(
-                                    dst=str(dst_node),
-                                    src=str(src_node),
-                                    fname=field_name,
-                                    sz=size,
-                                    sloc=src_location,
-                                    dloc=dst_location,
-                                    stream=cudastream,
-                                ),
-                                cfg,
-                                state_id,
-                                [src_node, dst_node],
-                            )
-                    callsite_stream.write("}")
             elif dims == 1 and ((src_strides[-1] != 1 or dst_strides[-1] != 1)):
                 raise NotImplementedError("TODO")
             elif dims == 2:
@@ -1613,7 +1575,7 @@ void __dace_runkernel_{fname}({fargs})
             )
 
         def add_cast(argname, cast_pattern="uint8_t*"):
-            return f"static_cast<{'const ' if argname in self.const_params else ''}{cast_pattern}>({argname})"
+            return f"reinterpret_cast<{'const ' if argname in self.const_params else ''}{cast_pattern}>({argname})"
 
 
         callsite_stream.write(
