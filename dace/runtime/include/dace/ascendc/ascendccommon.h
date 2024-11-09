@@ -2,6 +2,10 @@
 #pragma once
 
 #include "acl/acl.h"
+#include "types.h"
+
+#define GM_HALF __gm__ dace::float16* __restrict__
+#define GM_FLOAT __gm__ dace::float32* __restrict__
 
 #define DACE_ACL_CHECK(x)                                               \
   do {                                                                  \
