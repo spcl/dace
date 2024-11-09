@@ -587,7 +587,7 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write(
                 """#pragma omp parallel
                 {{
-                    std::fre({name});
+                    std::free({name});
                 }}""".format(name=alloc_name),
                 cfg,
                 state_id,
