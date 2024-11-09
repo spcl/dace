@@ -512,7 +512,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise NotImplementedError('Start offset unsupported for registers')
             if node.setzero:
                 declaration_stream.write(
-                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                    "%s alignas(64) %s[%s]{0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
                     cfg,
                     state_id,
                     node,
@@ -520,7 +520,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 define_var(name, DefinedType.Pointer, ctypedef)
                 return
             declaration_stream.write(
-                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                "%s alignas(64) %s[%s];\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
                 cfg,
                 state_id,
                 node,
@@ -544,7 +544,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 """
                 #pragma omp parallel
                 {{
-                    {name} = new {ctype} DACE_ALIGN(64)[{arrsize}];""".format(ctype=nodedesc.dtype.ctype,
+                    {name} = ({ctype}*)std::aligned_alloc(64, {arrsize} * sizeof({ctype}));""".format(ctype=nodedesc.dtype.ctype,
                                                                               name=alloc_name,
                                                                               arrsize=cpp.sym2cpp(arrsize)),
                 cfg,
@@ -581,13 +581,13 @@ class CPUCodeGen(TargetCodeGenerator):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
-            callsite_stream.write("delete[] %s;\n" % alloc_name, cfg, state_id, node)
+            callsite_stream.write("std::free(%s);\n" % alloc_name, cfg, state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             callsite_stream.write(
                 """#pragma omp parallel
                 {{
-                    delete[] {name};
+                    std::free({name});
                 }}""".format(name=alloc_name),
                 cfg,
                 state_id,
