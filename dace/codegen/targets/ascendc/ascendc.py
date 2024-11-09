@@ -264,7 +264,7 @@ int __dace_init_acl({sdfg_state_name} *__state{params}) {{
     DACE_ACL_CHECK(aclrtFree(dev_X));
 
 
-    __state->acl_context = new dace::acl::Context({nstreams}, {nevents});
+    __state->acl_context = new dace::ascendc::Context({nstreams}, {nevents});
 
     // Create acl streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
@@ -284,19 +284,19 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
     {exitcode}
 
     // Synchronize and check for CUDA errors
-    int __err = static_cast<int>(__state->gpu_context->lasterror);
+    int __err = static_cast<int>(__state->acl_context->lasterror);
     if (__err == 0)
         __err = static_cast<int>(aclrtDeviceSynchronize());
 
     // Destroy aclrt streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_ACL_CHECK(aclrtStreamDestroy(__state->gpu_context->internal_streams[i]));
+        DACE_ACL_CHECK(aclrtStreamDestroy(__state->acl_context->internal_streams[i]));
     }}
-    for(int i = 0; i < {nevents}; ++i) {{
-        DACE_ACL_CHECK(aclrtEventDestroy(__state->gpu_context->events[i]));
-    }}
+    //for(int i = 0; i < {nevents}; ++i) {{
+    //    DACE_ACL_CHECK(aclrtEventDestroy(__state->acl_context->events[i]));
+    //}}
 
-    delete __state->gpu_context;
+    delete __state->acl_context;
     return __err;
 }}
 
@@ -683,7 +683,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                         syncwith[e.dst._acl_stream] = e._cuda_event
 
                 if cudastream != "nullptr":
-                    cudastream = "__state->gpu_context->streams[%d]" % cudastream
+                    cudastream = "__state->acl_context->streams[%d]" % cudastream
 
             if memlet.wcr is not None:
                 raise NotImplementedError(
@@ -1908,9 +1908,6 @@ void __dace_runkernel_{fname}({fargs})
         function_stream: CodeIOStream,
         kernel_stream: CodeIOStream,
     ) -> None:
-
-        kernel_stream.write("AscendC::TPipe pipe;")
-
         state = sdfg.find_state(state_id)
         self._used_arr_set = set()
         # TODO: extend this to track multiple uses
@@ -1981,7 +1978,7 @@ void __dace_runkernel_{fname}({fargs})
                         ranges: subsets.Range = e.data.subset
                         assert ranges.dims() == 1
                         kernel_stream.write(
-                            f"pipe.InitBuffer(inQueue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
+                            f"pipe.InitBuffer(outQueue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
                         )
                         break
                 else:
@@ -2164,7 +2161,7 @@ void __dace_runkernel_{fname}({fargs})
             for i in range(min(len(brange), 3)):
                 varname = scope_map.params[-i - 1]
 
-                block_expr = "AscendC::getBlockIdx()"
+                block_expr = "AscendC::GetBlockIdx()"
 
                 expr = _topy(tidx[i]).replace("__DAPT%d" % i, block_expr)
                 callsite_stream.write("// AiCore Group Map")
@@ -2234,7 +2231,7 @@ void __dace_runkernel_{fname}({fargs})
                     if name in self.const_params:
                         const = "const "
                     callsite_stream.write(
-                        f"{name}_GM.SetGlobalBuffer(static_cast<{const}__gm__ {arr.dtype.ctype}*>(&{name}[{beg}]), {access_range.num_elements()});"
+                        f"{name}_GM.SetGlobalBuffer(reinterpret_cast<{const}__gm__ {arr.dtype.ctype}*>(&{name}[{beg}]), {access_range.num_elements()});"
                     )
 
         ##########################################################
