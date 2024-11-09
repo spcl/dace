@@ -156,7 +156,6 @@ def test_augassign_no_wcr2():
     assert (np.allclose(A, ref))
 
 
-@pytest.mark.skip
 def test_augassign_wcr4():
     
     with dace.config.set_temporary('frontend', 'avoid_wcr', value=False):

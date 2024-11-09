@@ -480,7 +480,7 @@ def test_branched_allocation(mode):
     sdfg.compile()
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Dynamic array resize is not yet supported')
 def test_scope_multisize():
     """ An array that needs to be allocated multiple times with different sizes. """
     sdfg = dace.SDFG('test')

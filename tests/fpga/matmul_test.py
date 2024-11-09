@@ -162,7 +162,6 @@ def test_gemm_vectorized():
     return sdfg
 
 
-@pytest.mark.skip
 @xilinx_test(assert_ii_1=True)
 def test_gemm_vectorized_decoupled():
     # Test with vectorization
@@ -201,7 +200,6 @@ def test_gemm_size_not_multiples_of():
     return sdfg
 
 
-@pytest.mark.skip
 @xilinx_test()
 def test_gemm_size_not_multiples_of_decoupled():
     # Test with matrix sizes that are not a multiple of #PEs and Tile sizes
@@ -249,5 +247,7 @@ if __name__ == "__main__":
     test_naive_matmul_fpga(None)
     test_systolic_matmul_fpga(None)
     test_gemm_vectorized(None)
+    test_gemm_vectorized_decoupled(None)
     test_gemm_size_not_multiples_of(None)
+    test_gemm_size_not_multiples_of_decoupled(None)
     test_matmul_np(None)

@@ -76,7 +76,6 @@ def test_none_arg():
     assert np.allclose(field, 1.0)
 
 
-@pytest.mark.skip
 def test_maybe_none_scalar_arg():
     @dace.program
     def some_func(field, a_scalar):
@@ -134,7 +133,7 @@ if __name__ == '__main__':
     # test_none_or_field_assignment_globalarr()
     # test_none_or_field_assignment_arr()
     test_none_arg()
-    # test_maybe_none_scalar_arg()
+    test_maybe_none_scalar_arg()
     test_default_arg()
     test_kwarg_none()
     test_conditional_print()

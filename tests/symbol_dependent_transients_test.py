@@ -154,7 +154,7 @@ def test_symbol_dependent_pinned_array():
     assert (np.allclose(B, B_ref))
 
 
-@pytest.mark.skip  # @pytest.mark.gpu
+@pytest.mark.skip('Invalid address accessed in kernel')  # @pytest.mark.gpu
 def test_symbol_dependent_gpu_view():
     # NOTE: This test cannot produce the correct result since the input
     # data of the reduction are not contiguous and cub:reduce doesn't support
@@ -173,7 +173,7 @@ def test_symbol_dependent_gpu_view():
     assert (np.allclose(B, B_ref))
 
 
-@pytest.mark.skip
+@pytest.mark.skip('FPGA compiler error')
 def test_symbol_dependent_fpga_global_array():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
