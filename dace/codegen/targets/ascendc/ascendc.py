@@ -252,23 +252,28 @@ class AscendCCodeGen(TargetCodeGenerator):
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_acl({sdfg_state_name} *__state{params});
-DACE_EXPORTED int __dace_exit_acl({sdfg_state_name} *__state);
+DACE_EXPORTED int __dace_init_ascendc({sdfg_state_name} *__state{params});
+DACE_EXPORTED int __dace_exit_ascendc({sdfg_state_name} *__state);
 
 {other_globalcode}
 
-int __dace_init_acl({sdfg_state_name} *__state{params}) {{
+int __dace_init_ascendc({sdfg_state_name} *__state{params}) {{
+    __state->acl_context = new dace::ascendc::Context({nstreams}, {nevents});
+    DACE_ACL_CHECK(aclInit({{}}));
+    DACE_ACL_CHECK(aclrtSetDevice(0));
+    DACE_ACL_CHECK(aclrtCreateContext(&__state->acl_context->aclrt_context, 0));
+
     // Initialize acl before we run the application
     float *dev_X;
     DACE_ACL_CHECK(aclrtMalloc((void **) &dev_X, 1, ACL_MEM_MALLOC_HUGE_FIRST));
     DACE_ACL_CHECK(aclrtFree(dev_X));
 
 
-    __state->acl_context = new dace::ascendc::Context({nstreams}, {nevents});
+
 
     // Create acl streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_ACL_CHECK(aclrtStreamCreateWithFlags(&__state->acl_context->internal_streams[i], aclrtStreamNonBlocking));
+        DACE_ACL_CHECK(aclrtCreateStream(&__state->acl_context->internal_streams[i]));
         __state->acl_context->streams[i] = __state->acl_context->internal_streams[i]; // Allow for externals to modify streams
     }}
     //for(int i = 0; i < {nevents}; ++i) {{
@@ -280,24 +285,18 @@ int __dace_init_acl({sdfg_state_name} *__state{params}) {{
     return 0;
 }}
 
-int __dace_exit_cuda({sdfg_state_name} *__state) {{
+int __dace_exit_ascendc({sdfg_state_name} *__state) {{
     {exitcode}
-
-    // Synchronize and check for CUDA errors
-    int __err = static_cast<int>(__state->acl_context->lasterror);
-    if (__err == 0)
-        __err = static_cast<int>(aclrtDeviceSynchronize());
-
     // Destroy aclrt streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_ACL_CHECK(aclrtStreamDestroy(__state->acl_context->internal_streams[i]));
+        DACE_ACL_CHECK(aclrtDestroyStream(__state->acl_context->internal_streams[i]));
     }}
     //for(int i = 0; i < {nevents}; ++i) {{
-    //    DACE_ACL_CHECK(aclrtEventDestroy(__state->acl_context->events[i]));
+    //    DACE_ACL_CHECK(aclrtDestroyEvent(__state->acl_context->events[i]));
     //}}
 
     delete __state->acl_context;
-    return __err;
+    return 0;
 }}
 
 DACE_EXPORTED bool __dace_acl_set_stream({sdfg_state_name} *__state, int streamid, aclrtStream stream)
@@ -779,14 +778,17 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             name = memlet.data
             nodedesc = sdfg.arrays[name]
             if vconn:
-                dst_name = vconn
+                # Rm. IN_
+                dst_name = vconn[3:]
             elif isinstance(v, nodes.AccessNode):
                 dst_name = v.data
             subset: subsets.Range = memlet.subset
             if uconn:
-                src_name = uconn
+                # Rm. OUT_
+                src_name = uconn[4:]
             elif isinstance(u, nodes.AccessNode):
                 src_name = u.data
+            #src_name = name
             assert len(subset.string_list()) == 1
             beg, end, step = subset.ranges[0]
             assert step == 1
@@ -802,7 +804,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                     f"{dst_name} = inQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
                 )
                 callsite_stream.write(
-                    f"DataCopy({dst_name}, {dst_name}_GM[{beg}], {length});"
+                    f"DataCopy({dst_name}, {name}_GM[{beg}], {length});"
                 )
                 callsite_stream.write(f"inQueue_{dst_name}.EnQue({dst_name});\n")
             elif (
@@ -831,9 +833,9 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                     f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
                 )
                 callsite_stream.write(
-                    f"DataCopy({dst_name}_GM[{beg}], {src_name}, {len});"
+                    f"DataCopy({name}_GM[{beg}], {src_name}, {length});"
                 )
-                callsite_stream.write(f"outQueueZ.FreeTensor({src_name});")
+                callsite_stream.write(f"outQueue_{src_name}.FreeTensor({src_name});")
             else:
                 raise NotImplementedError(
                     f"Unimplemented copy type: {src_storage} -> {dst_storage}"
@@ -977,13 +979,10 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                 sdfg, memlet, False, vconn, dst_node.in_connectors[vconn]
             )
             tokens = mem_def.split()
-            const = ""
-            if "const " in tokens:
-                const = "const"
             access_str = mem_def.split("=")[-1]
             access_type = self._get_access_type(ascend_type)
             stream.write(
-                f"{const}{ascend_type}{access_type} {vconn} = {access_str} // Type wrapped 1",
+                f"{ascend_type}{access_type} {vconn} = {access_str} // Type wrapped 1",
                 cfg,
                 state_id,
                 [src_node, dst_node],
@@ -1174,7 +1173,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
                 for stream in streams_to_sync:
                     callsite_stream.write(
-                        "//TODO stream \n DACE_ACL_CHECK(aclrtDeviceSynchronize());"
+                        "//TODO stream \n DACE_ACL_CHECK(aclrtSynchronizeDevice());"
                     )
 
             # After synchronizing streams, generate state footer normally
@@ -1419,12 +1418,13 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
             prototype_kernel_args[aname] = arg
 
+        # No const-args allowed
         kernel_args_typed = [
-            ("const " if k in self.const_params else "") + "GM_ADDR " + k
+            "GM_ADDR " + k
             for k, v in prototype_kernel_args.items()
         ]
         kernel_args_entry_typed = [
-            ("const " if k in self.const_params else "") + "uint8_t* " + k
+            "uint8_t* " + k
             for k, v in prototype_kernel_args.items()
         ]
 
@@ -1452,7 +1452,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
         # Write kernel prototype
         self._localcode.write(
-            "void %s(%s) {\n"
+            "__global__ __aicore__ void %s(%s) {\n"
             % (kernel_name, ", ".join(kernel_args_typed + extra_kernel_args_typed)),
             sdfg,
             state_id,
@@ -1482,6 +1482,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
 void __dace_runkernel_{fname}({fargs})
 {{
+#ifndef __CCE_KT_TEST__
 """.format(
                 fname=kernel_name,
                 fargs=", ".join(
@@ -1514,7 +1515,7 @@ void __dace_runkernel_{fname}({fargs})
         def replace_input_name(arg, cast_pattern="uint8_t*"):
             new_arg = re.sub(
                 r"\bconst " + re.escape(cast_pattern) + r"(\w+)",
-                r"static_cast<const " + re.escape(cast_pattern) + r">(\1)",
+                r"static_cast<" + re.escape(cast_pattern) + r">(\1)",
                 arg,
             )
             if new_arg == arg:
@@ -1528,19 +1529,20 @@ void __dace_runkernel_{fname}({fargs})
 
         kargs = str(
             ", ".join(
-                [replace_input_name(a, "GM_ADDR") for a in kernel_args_typed]
-                + [replace_input_name(a, "GM_ADDR") for a in extra_call_args_typed]
+                [f"reinterpret_cast<GM_ADDR>({a})" for a in kernel_args]
+                + [f"reinterpret_cast<GM_ADDR>({a})" for a in extra_call_args]
             )
         )  # join makes them into a tuple of strings somehow if one of them is empty
         # The types here can contain GM_ADDR, they are passed as uint8_t*, we need to cast them
 
         self._localcode.write(
             f"""
-            {kernel_name}<<<blockDim, nullptr, nullptr>>>({kargs});
+            {kernel_name}<<<32, nullptr, nullptr>>>({kargs});
             """
         )
 
         self._emit_sync(self._localcode)
+        self._localcode.write("#endif")
 
         # Close the runkernel function
         self._localcode.write("}")
@@ -1575,7 +1577,7 @@ void __dace_runkernel_{fname}({fargs})
             )
 
         def add_cast(argname, cast_pattern="uint8_t*"):
-            return f"reinterpret_cast<{'const ' if argname in self.const_params else ''}{cast_pattern}>({argname})"
+            return f"reinterpret_cast<{cast_pattern}>({argname})"
 
 
         callsite_stream.write(
@@ -1978,7 +1980,7 @@ void __dace_runkernel_{fname}({fargs})
                         ranges: subsets.Range = e.data.subset
                         assert ranges.dims() == 1
                         kernel_stream.write(
-                            f"pipe.InitBuffer(outQueue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
+                            f"pipe.InitBuffer(inQueue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
                         )
                         break
                 else:
@@ -1987,7 +1989,7 @@ void __dace_runkernel_{fname}({fargs})
                             ranges: subsets.Range = e.data.subset
                             assert ranges.dims() == 1
                             kernel_stream.write(
-                                f"pipe.InitBuffer(inQueue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
+                                f"pipe.InitBuffer(outQueue_{name}, 1, {ranges.num_elements()} * sizeof({arr.dtype.ctype}));"
                             )
                             break
                         else:
@@ -2231,7 +2233,7 @@ void __dace_runkernel_{fname}({fargs})
                     if name in self.const_params:
                         const = "const "
                     callsite_stream.write(
-                        f"{name}_GM.SetGlobalBuffer(reinterpret_cast<{const}__gm__ {arr.dtype.ctype}*>(&{name}[{beg}]), {access_range.num_elements()});"
+                        f"{name}_GM.SetGlobalBuffer(reinterpret_cast<__gm__ {arr.dtype.ctype}*>(&{name}[{beg}]), {access_range.num_elements()});"
                     )
 
         ##########################################################

@@ -27,7 +27,7 @@ struct Context {
   Context(int nstreams, int nevents)
       : num_streams(nstreams),
         num_events(nevents),
-        streams(new aclrtStream[nstreams])
+        streams(new aclrtStream[nstreams]),
         internal_streams(new aclrtStream[nstreams]) {}
 
   ~Context() { delete[] streams; }
