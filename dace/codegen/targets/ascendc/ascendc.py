@@ -804,7 +804,10 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                     f"{dst_name} = inQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
                 )
                 callsite_stream.write(
-                    f"DataCopy({dst_name}, {name}_GM[{beg}], {length});"
+                    f"{name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});"
+                )
+                callsite_stream.write(
+                    f"DataCopy({dst_name}, {name}_GM, {length});"
                 )
                 callsite_stream.write(f"inQueue_{dst_name}.EnQue({dst_name});\n")
             elif (
@@ -817,6 +820,9 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                 )
                 callsite_stream.write(
                     f"{dst_name} = outQueue_{dst_name}.AllocTensor<{nodedesc.dtype.ctype}>();"
+                )
+                callsite_stream.write(
+                    f"{dst_name} = {src_name};"
                 )
                 callsite_stream.write(
                     f"outQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});"
@@ -833,7 +839,10 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                     f"{src_name} = outQueue_{src_name}.DeQue<{nodedesc.dtype.ctype}>();"
                 )
                 callsite_stream.write(
-                    f"DataCopy({name}_GM[{beg}], {src_name}, {length});"
+                    f"{name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {length});"
+                )
+                callsite_stream.write(
+                    f"DataCopy({name}_GM, {src_name}, {length});"
                 )
                 callsite_stream.write(f"outQueue_{src_name}.FreeTensor({src_name});")
             else:
@@ -1927,6 +1936,7 @@ void __dace_runkernel_{fname}({fargs})
         for name, arr in self._used_arr_set:
             if arr.storage in [dtypes.StorageType.Ascend_Global]:
                 kernel_stream.write(f"AscendC::GlobalTensor<{arr.dtype}> {name}_GM;")
+                kernel_stream.write(f"__gm__ {arr.dtype.ctype}* {name}_typed = reinterpret_cast<__gm__ {arr.dtype.ctype}*>({name});")
 
         kernel_stream.write("\n")
         kernel_stream.write(f"// Initialization of Pipe and Queues")
@@ -2213,6 +2223,7 @@ void __dace_runkernel_{fname}({fargs})
                     callsite_stream.write("{", cfg, state_id, scope_entry)
 
             # Set Global Buffers
+            """
             callsite_stream.write("// Set Global Buffers")
             for e in state.out_edges(scope_entry) + state.out_edges(scope_exit):
                 name = e.data.data
@@ -2233,8 +2244,9 @@ void __dace_runkernel_{fname}({fargs})
                     if name in self.const_params:
                         const = "const "
                     callsite_stream.write(
-                        f"{name}_GM.SetGlobalBuffer(reinterpret_cast<__gm__ {arr.dtype.ctype}*>(&{name}[{beg}]), {access_range.num_elements()});"
+                        f"{name}_GM.SetGlobalBuffer(&{name}_typed[{beg}], {access_range.num_elements()});"
                     )
+            """
 
         ##########################################################
 
