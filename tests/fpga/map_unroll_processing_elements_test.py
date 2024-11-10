@@ -9,6 +9,7 @@ import pytest
 from dace.config import set_temporary
 
 
+@pytest.mark.skip('Xilinx HLS fails due to unresolved phi nodes')
 @xilinx_test(assert_ii_1=False)
 def test_map_unroll_processing_elements():
     # Grab the systolic GEMM implementation the samples directory
