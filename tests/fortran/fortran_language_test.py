@@ -79,38 +79,50 @@ def test_fortran_frontend_loop1():
     """
     Tests that the loop construct is correctly parsed and translated to DaCe.
     """
-    
+
     test_string = """
-                    PROGRAM loop1_test
-                    implicit none
-                    double precision d(3,4,5)
-                    CALL loop1_test_function(d)
-                    end
+program loop1_test
+  implicit none
+  logical :: d(3, 4, 5)
+  call loop1_test_function(d)
+end
 
-                    SUBROUTINE loop1_test_function(d)
-                   double precision d(3,4,5),ZFAC(10)
-                   INTEGER :: a, JK, JL,JM
-                   INTEGER, PARAMETER :: KLEV=10, N=10,NCLV=3
+subroutine loop1_test_function(d)
+  logical :: d(3, 4, 5), ZFAC(10)
+  integer :: a, JK, JL, JM
+  integer, parameter :: KLEV = 10, N = 10, NCLV = 3
+  integer :: tmp
 
-                   double precision :: RLMIN,ZVQX(NCLV)
-                   LOGICAL :: LLCOOLJ,LLFALL(NCLV)
-                   LLFALL(:)= .FALSE.
-                   ZVQX(:)= 0.0
-                   ZVQX(2)= 1.0
-                   DO JM=1,NCLV
-                    IF (ZVQX(JM)>0.0) LLFALL(JM)=.TRUE. ! falling species
-                   ENDDO
+  double precision :: RLMIN, ZVQX(NCLV)
+  logical :: LLCOOLJ, LLFALL(NCLV)
+  LLFALL(:) = .false.
+  ZVQX(:) = 0.0
+  ZVQX(2) = 1.0
+  do JM = 1, NCLV
+    if (ZVQX(JM) > 0.0) LLFALL(JM) = .true. ! falling species
+  end do
 
-                   d(1,1,1)=LLFALL(1)
-                   d(1,1,2)=LLFALL(2)                 
-                   END SUBROUTINE loop1_test_function
-                    """
+  do I = 1, 3
+    do J = 1, 4
+      do K = 1, 5
+        tmp = I+J+K-3
+        tmp = mod(tmp, 2)
+        if (tmp == 1) then
+          d(I, J, K) = LLFALL(2)
+        else
+          d(I, J, K) = LLFALL(1)
+        end if
+      end do
+    end do
+  end do
+end subroutine loop1_test_function
+"""
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "loop1_test")
     sdfg.simplify(verbose=True)
-    d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
+    d = np.full([3, 4, 5], 42, order="F", dtype=np.int32)
     sdfg(d=d)
-    assert (d[0, 0, 0] == 0)
-    assert (d[0, 0, 1] == 1)
+    # Verify the checkerboard pattern.
+    assert all(bool(v) == ((i+j+k) % 2 == 1) for (i, j, k), v in np.ndenumerate(d))
 
 
 def test_fortran_frontend_function_statement1():
@@ -184,7 +196,7 @@ def test_fortran_frontend_pow2():
     """
     Tests that the power intrinsic is correctly parsed and translated to DaCe (this time it's p sqrt p).
     """
-    
+
     test_string = """
                     PROGRAM pow2_test
                     implicit none
@@ -241,7 +253,6 @@ def test_fortran_frontend_sign1():
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_real_kind_selector()
     test_fortran_frontend_if1()
     test_fortran_frontend_loop1()
