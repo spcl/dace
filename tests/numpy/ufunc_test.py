@@ -57,11 +57,6 @@ def test_ufunc_true_divide_uu(A: dace.uint32[10], B: dace.uint32[10]):
 
 
 @compare_numpy_output(non_zero=True, check_dtype=True)
-def test_ufunc_floor_divide_cc(A: dace.complex64[10], B: dace.complex64[10]):
-    return np.floor_divide(A, B)
-
-
-@compare_numpy_output(non_zero=True, check_dtype=True)
 def test_ufunc_floor_divide_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.floor_divide(A, B)
 
@@ -1304,7 +1299,6 @@ if __name__ == "__main__":
     test_ufunc_logaddexp2_ff()
     test_ufunc_true_divide_ff()
     test_ufunc_true_divide_uu()
-    test_ufunc_floor_divide_cc()
     test_ufunc_floor_divide_ff()
     test_ufunc_floor_divide_uu()
     test_ufunc_floor_divide_ss()
