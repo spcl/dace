@@ -62,7 +62,7 @@ def tuple_retval_sdfg() -> dace.SDFG:
     return sdfg
 
 
-@pytest.mark.skip("Scalar return is not implement.")
+@pytest.mark.skip("Scalar return is not implemented")
 def test_scalar_return():
 
     sdfg = single_retval_sdfg()
@@ -75,7 +75,7 @@ def test_scalar_return():
     assert A[3] == res
 
 
-@pytest.mark.skip("Scalar return is not implement.")
+@pytest.mark.skip("Scalar return is not implemented")
 def test_scalar_return_tuple():
 
     sdfg = tuple_retval_sdfg()

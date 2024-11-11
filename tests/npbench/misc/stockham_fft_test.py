@@ -155,12 +155,12 @@ def run_stockham_fft(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-@pytest.mark.skip(reason="Error in expansion")
+@pytest.mark.skip(reason="Assertion error in read_and_write_sets")
 def test_cpu():
     run_stockham_fft(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Runtime error")
+@pytest.mark.skip(reason="Assertion error in read_and_write_sets")
 @pytest.mark.gpu
 def test_gpu():
     run_stockham_fft(dace.dtypes.DeviceType.GPU)
