@@ -151,18 +151,18 @@ def run_mandelbrot2(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-@pytest.mark.skip(reason="Parsing error")
+@pytest.mark.skip(reason="Parsing error (see issue #1139)")
 def test_cpu():
     run_mandelbrot2(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Parsing error")
+@pytest.mark.skip(reason="Parsing error (see issue #1139)")
 @pytest.mark.gpu
 def test_gpu():
     run_mandelbrot2(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Parsing error")
+@pytest.mark.skip(reason="Parsing error (see issue #1139)")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_mandelbrot2(dace.dtypes.DeviceType.FPGA)
