@@ -984,14 +984,9 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                 sdfg.arrays[edge.data.data], src_storage
             )
             # Copy into tasklet
-            mem_def = self._cpu_codegen.memlet_definition(
-                sdfg, memlet, False, vconn, dst_node.in_connectors[vconn]
-            )
-            tokens = mem_def.split()
-            access_str = mem_def.split("=")[-1]
             access_type = self._get_access_type(ascend_type)
             stream.write(
-                f"{ascend_type}{access_type} {vconn} = {access_str} // Type wrapped 1",
+                f"{ascend_type}{access_type} {vconn} = {memlet.data}; // Type wrapped 1",
                 cfg,
                 state_id,
                 [src_node, dst_node],
@@ -1081,11 +1076,8 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             defined_type, _ = self._dispatcher.defined_vars.get(
                 ptrname, is_global=is_global
             )
-            base_ptr = cpp.cpp_ptr_expr(
-                sdfg, edge.data, defined_type, codegen=self._frame
-            )
             callsite_stream.write(
-                f"{ascend_type}{access_type} {edge.src_conn} = {base_ptr}; // Type wrapped 2",
+                f"{ascend_type}{access_type} {edge.src_conn} = {edge.data.data}; // Type wrapped 2",
                 cfg,
                 state_id,
                 src_node,
@@ -2477,6 +2469,19 @@ void __dace_runkernel_{fname}({fargs})
             #                                                                    callsite_stream)
             pass
 
+        state = sdfg.state(state_id)
+        for iconn, ctype in node.in_connectors.items():
+            in_edges = state.in_edges_by_connector(node, iconn)
+            for in_edge in in_edges:
+                callsite_stream.write(f"{in_edge.data.data} = inQueue_{in_edge.data.data}.DeQue<{sdfg.arrays[in_edge.data.data].dtype.ctype}>();")
+
+
+        for oconn, ctype in node.out_connectors.items():
+            out_edges = state.out_edges_by_connector(node, oconn)
+            for out_edge in out_edges:
+                callsite_stream.write(f"{out_edge.data.data} = outQueue_{out_edge.data.data}.AllocTensor<{sdfg.arrays[out_edge.data.data].dtype.ctype}>();")
+
+
         # Call standard tasklet generation
         old_codegen = self._cpu_codegen.calling_codegen
         self._cpu_codegen.calling_codegen = self
@@ -2489,6 +2494,12 @@ void __dace_runkernel_{fname}({fargs})
             # Generate appropriate postamble
             for i in range(generated_preamble_scopes):
                 callsite_stream.write("}", cfg, state_id, node)
+
+        for oconn, ctype in node.out_connectors.items():
+            out_edges = state.out_edges_by_connector(node, oconn)
+            for out_edge in out_edges:
+                callsite_stream.write(f"outQueue_{out_edge.data.data}.EnQue<{sdfg.arrays[out_edge.data.data].dtype.ctype}>({out_edge.data.data});")
+
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
