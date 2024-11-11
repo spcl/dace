@@ -69,6 +69,9 @@ class UnOp_Node(FNode):
     )
     _fields = ('lval', )
 
+class Exit_Node(FNode):
+    _attributes = ()
+    _fields = ()
 
 class Main_Program_Node(FNode):
     _attributes = ("name", )

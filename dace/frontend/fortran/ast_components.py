@@ -295,6 +295,13 @@ class InternalFortranAst:
             "Case_Value_Range_List": self.case_value_range_list,
             "Procedure_Designator": self.procedure_designator,
             "Specific_Binding": self.specific_binding,
+            "Enum_Def_Stmt": self.enum_def_stmt,
+            "Enumerator_Def_Stmt": self.enumerator_def_stmt,
+            "Enumerator_List": self.enumerator_list,
+            "End_Enum_Stmt": self.end_enum_stmt,
+            "Exit_Stmt": self.exit_stmt,
+            "Enum_Def": self.enum_def,
+
             #"Component_Decl_List": self.component_decl_list,
             #"Component_Decl": self.component_decl,
         }
@@ -388,6 +395,29 @@ class InternalFortranAst:
 
     def access_stmt(self, node: FASTNode):
         return None
+    
+    def enum_def_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        return children
+    
+    def enumerator_def_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        return children
+    
+    def enumerator_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return children
+    
+    def end_enum_stmt(self, node: FASTNode):
+        return None
+    
+    def enum_def(self, node: FASTNode):
+        children = self.create_children(node)
+        return children
+    
+    def exit_stmt(self, node: FASTNode):
+        line = get_line(node)
+        return ast_internal_classes.Exit_Node(line_number=line)
     
     def deferred_shape_spec(self, node: FASTNode):
         return ast_internal_classes.Defer_Shape_Node()

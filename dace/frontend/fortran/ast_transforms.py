@@ -2488,8 +2488,8 @@ class ArgumentPruner(NodeVisitor):
         self.used_in_all_functions: Set[str] = set()
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
-        if node.name not in self.used_names:
-            print(f"Used name {node.name}")
+        #if node.name not in self.used_names:
+        #    print(f"Used name {node.name}")
         self.used_names.add(node.name)
 
     def visit_Var_Decl_Node(self, node: ast_internal_classes.Var_Decl_Node):
@@ -2534,20 +2534,20 @@ class ArgumentPruner(NodeVisitor):
                 raise NotImplementedError()
 
             if arg.name not in self.used_names:
-                print(f"Pruning argument {arg.name} of function {node.name.name}")
+                #print(f"Pruning argument {arg.name} of function {node.name.name}")
                 removed_args.append(idx)
             else:
-                print(f"Leaving used argument {arg.name} of function {node.name.name}")
+                #print(f"Leaving used argument {arg.name} of function {node.name.name}")
                 new_args.append(arg)
         self.parsed_funcs[node.name.name] = removed_args
 
         declarations_to_remove = set()
         for x in self.declaration_names:
             if x not in self.used_names:
-                print(f"Marking removal variable {x}")
+                #print(f"Marking removal variable {x}")
                 declarations_to_remove.add(x)
-            else:
-                print(f"Keeping used variable {x}")
+            #else:
+                #print(f"Keeping used variable {x}")
 
         for decl_stmt_node in node.specification_part.specifications:
 
@@ -2558,10 +2558,10 @@ class ArgumentPruner(NodeVisitor):
                     raise NotImplementedError()
 
                 if decl.name not in declarations_to_remove:
-                    print(f"Readding declared variable {decl.name}")
+                    #print(f"Readding declared variable {decl.name}")
                     newdecl.append(decl)
-                else:
-                    print(f"Pruning unused but declared variable {decl.name}")
+                #else:
+                #    print(f"Pruning unused but declared variable {decl.name}")
             decl_stmt_node.vardecl = newdecl
 
         self.used_in_all_functions.update(self.used_names)
@@ -2574,7 +2574,7 @@ class ArgumentPruner(NodeVisitor):
 
         to_remove = self.parsed_funcs[node.name.name]
         for idx in reversed(to_remove):
-            print(f"Prune argument {node.args[idx].name} in {node.name.name}")
+            #print(f"Prune argument {node.args[idx].name} in {node.name.name}")
             del node.args[idx]
 
     def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):

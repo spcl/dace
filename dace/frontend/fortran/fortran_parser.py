@@ -796,6 +796,8 @@ class AST_translator:
 
         if node.execution_part is None:
             return
+        if len(node.execution_part.execution)==0:
+            return
 
         print("TRANSLATE SUBROUTINE", node.name.name)
 
@@ -906,6 +908,7 @@ class AST_translator:
             sdfg_name = self.name_mapping.get(sdfg).get(ast_utils.get_name(variable_in_call))
             globalsdfg_name = self.name_mapping.get(self.globalsdfg).get(ast_utils.get_name(variable_in_call))
             matched = False
+            view_ranges={}
             for array_name, array in all_arrays.items():
 
                 if array_name in [sdfg_name]:
@@ -1485,10 +1488,18 @@ class AST_translator:
                                         mysize = mysize * array.shape[indices]
                                         index_list.append(None)
                                     else:
-                                        raise NotImplementedError("Index in ParDecl should be ALL")
+                                        start=i.range[0]
+                                        stop=i.range[1]
+                                        text_start = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders,placeholders_offsets=self.placeholders_offsets,rename_dict=self.replace_names).write_code(start)
+                                        text_stop = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders,placeholders_offsets=self.placeholders_offsets,rename_dict=self.replace_names).write_code(stop)
+                                        symb_size=sym.pystr_to_symbolic(text_stop+ " - ( " + text_start + " )")
+                                        shape.append(symb_size)
+                                        mysize = mysize * symb_size
+                                        index_list.append([sym.pystr_to_symbolic(text_start),sym.pystr_to_symbolic(text_stop)])
+                                        #raise NotImplementedError("Index in ParDecl should be ALL")
                                 else:
                                     text = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders,placeholders_offsets=self.placeholders_offsets,rename_dict=self.replace_names).write_code(i)
-                                    index_list.append(sym.pystr_to_symbolic(text))
+                                    index_list.append([sym.pystr_to_symbolic(text),sym.pystr_to_symbolic(text)])
                                     strides.pop(indices - changed_indices)
                                     offsets.pop(indices - changed_indices)
                                     changed_indices += 1
@@ -1519,7 +1530,8 @@ class AST_translator:
                             if not (shape == () or shape == (1, ) or shape == [] or shape == [1]):
                                 offsets_zero = []
                                 for index in offsets:
-                                    offsets_zero.append(0)
+                                    
+                                        offsets_zero.append(0)
                                 viewname, view = sdfg.add_view(array_name + "_view_" + str(self.views),
                                                             shape,
                                                             array.dtype,
@@ -1530,10 +1542,10 @@ class AST_translator:
 
                                 all_indices = [None] * (len(array.shape) - len(index_list)) + index_list
                                 if self.normalize_offsets:
-                                    subset = subsets.Range([(i, i, 1) if i is not None else (0, s-1, 1)
+                                    subset = subsets.Range([(i[0]-1, i[1]-1, 1) if i is not None else (0, s-1, 1)
                                                             for i, s in zip(all_indices, array.shape)])
                                 else:
-                                    subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1)
+                                    subset = subsets.Range([(i[0], i[1], 1) if i is not None else (1, s, 1)
                                                             for i, s in zip(all_indices, array.shape)])
                                 smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
 
@@ -3452,7 +3464,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
             #if j.name.name!="cloudscouter":
-            if j.name.name!="tspectralplanck_init":
+            if j.name.name!="cum_cloud_cover_exp_exp":
             #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
             #if j.name.name!="velocity_tendencies":
