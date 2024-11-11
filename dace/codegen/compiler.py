@@ -164,7 +164,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     # Start forming CMake command
     dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cmake_command = [
-        "cmake",
+        "cmake-3.18.1",
         "-A x64" if os.name == 'nt' else "",  # Windows-specific flag
         '"' + os.path.join(dace_path, "codegen") + '"',
         "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
