@@ -168,6 +168,63 @@ class NodeTransformer(NodeVisitor):
         return node
 
 
+class Flatten_Classes(NodeTransformer):
+
+    def __init__(self, classes: List[ast_internal_classes.Derived_Type_Def_Node]):
+        self.classes=classes
+        self.current_class=None
+
+    def visit_Derived_Type_Def_Node(self, node: ast_internal_classes.Derived_Type_Def_Node):
+        self.current_class=node
+        return_node=self.generic_visit(node)
+        #self.current_class=None
+        return return_node
+    
+    def visit_Module_Node(self, node: ast_internal_classes.Module_Node):
+        self.current_class=None
+        return self.generic_visit(node)
+
+    def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
+        new_node=self.generic_visit(node)
+        if self.current_class is not None:
+            for i in self.classes:
+              if i.is_class is True:  
+                if i.name.name==self.current_class.name.name:
+                    for j in i.procedure_part.procedures:
+                        if j.name.name==node.name.name:
+                            return ast_internal_classes.Subroutine_Subprogram_Node(
+                                name=ast_internal_classes.Name_Node(name=i.name.name+"_"+node.name.name,type=node.type),
+                                args=new_node.args,
+                                specification_part=new_node.specification_part,
+                                execution_part=new_node.execution_part,
+                                mandatory_args_count=new_node.mandatory_args_count,
+                                optional_args_count=new_node.optional_args_count,
+                                elemental=new_node.elemental,
+                                line_number=new_node.line_number)
+                        elif j.args[2] is not None:
+                            if j.args[2].name==node.name.name:
+                                
+                                return ast_internal_classes.Subroutine_Subprogram_Node(
+                                    name=ast_internal_classes.Name_Node(name=i.name.name+"_"+j.name.name,type=node.type),
+                                    args=new_node.args,
+                                    specification_part=new_node.specification_part,
+                                    execution_part=new_node.execution_part,
+                                    mandatory_args_count=new_node.mandatory_args_count,
+                                    optional_args_count=new_node.optional_args_count,
+                                    elemental=new_node.elemental,
+                                    line_number=new_node.line_number)
+        return new_node
+
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+        if self.current_class is not None:
+            for i in self.classes:
+              if i.is_class is True:
+                if i.name.name==self.current_class.name.name:
+                    for j in i.procedure_part.procedures:
+                        if j.name.name==node.name.name:
+                            return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name=i.name.name+"_"+node.name.name,type=node.type,args=node.args,line_number=node.line_number),args=node.args,type=node.type,line_number=node.line_number)
+        return self.generic_visit(node)    
+
 class FindFunctionAndSubroutines(NodeVisitor):
     """
     Finds all function and subroutine names in the AST
@@ -388,8 +445,15 @@ class StructLister(NodeVisitor):
         self.names= []
 
     def visit_Derived_Type_Def_Node(self, node: ast_internal_classes.Derived_Type_Def_Node):
-        self.structs.append(node)
         self.names.append(node.name.name)
+        if node.procedure_part is not None:
+            if len(node.procedure_part.procedures)>0:
+                node.is_class=True
+                self.structs.append(node)
+                return
+        node.is_class=False    
+        self.structs.append(node)
+        
 
 class StructDependencyLister(NodeVisitor):
     def __init__(self, names=None):
@@ -610,7 +674,7 @@ class CallToArray(NodeTransformer):
             raise ValueError("Call_Expr_Node name is None")
             return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
 
-        if node.name.name in self.excepted_funcs or node.name in self.funcs.names or node.name.name in self.funcs.iblocks:
+        if node.name.name in self.excepted_funcs or node.name.name in [i.name for i in self.funcs.names] or node.name.name in self.funcs.iblocks:
             processed_args = []
             for i in node.args:
                 arg = CallToArray(self.funcs).visit(i)

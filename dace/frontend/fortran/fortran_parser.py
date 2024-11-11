@@ -312,6 +312,8 @@ class AST_translator:
                 if type=="VOID":
                     return ast_utils.fortrantypes2dacetypes["DOUBLE"]
                     raise ValueError("Unknown type " + type)
+                else: 
+                    raise ValueError("Unknown type " + type)
 
     def get_name_mapping_in_context(self, sdfg: SDFG):
         """
@@ -625,7 +627,8 @@ class AST_translator:
 
     def write2sdfg(self, node: ast_internal_classes.Write_Stmt_Node, sdfg: SDFG):
         #TODO implement
-        raise NotImplementedError("Fortran write statements are not implemented yet")
+        print("Uh oh")
+        #raise NotImplementedError("Fortran write statements are not implemented yet")
 
     def ifstmt2sdfg(self, node: ast_internal_classes.If_Stmt_Node, sdfg: SDFG):
         """
@@ -2785,10 +2788,10 @@ def recursive_ast_improver(ast,
         if i not in exclude_list:
             exclude_list.append(i)
         #if i not in dep_graph.nodes:
-        dep_graph.add_node(i,info_list=fandsl)
+        dep_graph.add_node(i.lower(),info_list=fandsl)
     for i in used_modules:
         if i not in dep_graph.nodes:
-            dep_graph.add_node(i)
+            dep_graph.add_node(i.lower())
         weight = None
         if i in objects_in_modules:
             weight=[]
@@ -2796,7 +2799,7 @@ def recursive_ast_improver(ast,
             for j in objects_in_modules[i].children:
                 weight.append(j)
 
-        dep_graph.add_edge(parent_module, i, obj_list=weight)
+        dep_graph.add_edge(parent_module.lower(), i.lower(), obj_list=weight)
 
     #print("It's turtles all the way down: ", len(exclude_list))
     modules_to_parse = []
@@ -2807,15 +2810,16 @@ def recursive_ast_improver(ast,
     added_modules = []
     for i in modules_to_parse:
         found = False
-        name=i
+        name=i.lower()
         if i=="mo_restart_nml_and_att": 
             name="mo_restart_nmls_and_atts"
-        if i=="yomhook":
+        if name=="yomhook":
             name="yomhook_dummy"    
         for j in source_list:
             if name in j:
                 fname = j.split("/")
                 fname = fname[len(fname) - 1]
+                fname = fname.lower()
                 if fname == name + ".f90" or fname == name + ".F90":
                     found = True
                     next_file = j
@@ -2829,10 +2833,12 @@ def recursive_ast_improver(ast,
             continue
         if isinstance(source_list,dict):
             reader = fsr(source_list[next_file])
+            
             next_ast = parser(reader)
             
         else:
             next_reader = ffr(file_candidate=next_file, include_dirs=include_list, source_only=source_list)
+            
             next_ast = parser(next_reader)
 
         next_ast = recursive_ast_improver(next_ast,
@@ -2864,6 +2870,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     """
     parser = pf().create(std="f2008")
     reader = ffr(file_candidate=source_string, include_dirs=include_list, source_only=source_list)
+    
     ast = parser(reader)
     exclude_list = []
     missing_modules = []
@@ -2952,42 +2959,44 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if deps is None:   
                 continue
             for k in deps:
-                if k.string not in parse_list[i]:
-                    parse_list[i].append(k.string)
+                if k.string.lower() not in parse_list[i]:
+                    parse_list[i].append(k.string.lower())
             
             
             if res is not None:
                 for jj in parse_list[i]:
 
-                    if jj in res.list_of_functions:
-                        if jj not in fands_list:
-                            fands_list.append(jj)
-                    if jj in res.list_of_subroutines:
-                        if jj not in fands_list:
-                            fands_list.append(jj)
-                    if jj in res.list_of_types:
-                        if jj not in type_list:
-                            type_list.append(jj)        
+                    if jj.lower() in res.list_of_functions:
+                        if jj.lower() not in fands_list:
+                            fands_list.append(jj.lower())
+                    if jj.lower() in res.list_of_subroutines:
+                        if jj.lower() not in fands_list:
+                            fands_list.append(jj.lower())
+                    if jj.lower() in res.list_of_types:
+                        if jj.lower() not in type_list:
+                            type_list.append(jj.lower())        
         print("Module " + i + " used names: " + str(parse_list[i]))
         if len(fands_list)>0:
             print("Module " + i + " used fands: " + str(fands_list))
             print("ACtually used: "+str(actually_used_in_module[i]))
         for j in actually_used_in_module[i]:
             if res is not None:
-                if j in res.list_of_functions:
+                if j.lower() in res.list_of_functions:
 
-                    if j not in fands_list:
-                        fands_list.append(j)
+                    if j.lower() not in fands_list:
+                        fands_list.append(j.lower())
 
-                if j in res.list_of_subroutines:
-                    if j not in fands_list:
-                        fands_list.append(j)  
-                if j in res.list_of_types:
-                    if j not in type_list:
-                        type_list.append(j)        
+                if j.lower() in res.list_of_subroutines:
+                    if j.lower() not in fands_list:
+                        fands_list.append(j.lower())  
+                if j.lower() in res.list_of_types:
+                    if j.lower() not in type_list:
+                        type_list.append(j.lower())        
 
         what_to_parse_list[i]=fands_list  
         type_to_parse_list[i]=type_list   
+    if len(parse_order)==0:
+        raise ValueError("No top-level function found")
     top_level_ast = parse_order.pop()
     changes=True
     new_children=[]
@@ -3015,9 +3024,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     for i in ast.children:
     
-        if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
+        if i.children[0].children[1].string.lower() not in parse_order and i.children[0].children[1].string.lower()!=top_level_ast:
             print("Module " + i.children[0].children[1].string + " not needing parsing")
-        elif  i.children[0].children[1].string==top_level_ast:
+        elif  i.children[0].children[1].string.lower()==top_level_ast:
             new_children.append(i)
         else:
             types=[]
@@ -3031,9 +3040,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                         entity_decls=[]
                         for k in j.children[2].children:
                             if k.__class__.__name__=="Entity_Decl":
-                                if k.children[0].string in actually_used_in_module[i.children[0].children[1].string]:
+                                if k.children[0].string in actually_used_in_module[i.children[0].children[1].string.lower()]:
                                     entity_decls.append(k)
-                                elif rename_dict[i.children[0].children[1].string].get(k.children[0].string) in actually_used_in_module[i.children[0].children[1].string]:
+                                elif rename_dict[i.children[0].children[1].string.lower()].get(k.children[0].string) in actually_used_in_module[i.children[0].children[1].string.lower()]:
                                     entity_decls.append(k)    
                         if entity_decls==[]:
                             continue            
@@ -3046,7 +3055,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                             j.children[2].children.append(k)            
                         new_spec_children.append(j)
                 elif j.__class__.__name__=="Derived_Type_Def":
-                    if j.children[0].children[1].string in type_to_parse_list[i.children[0].children[1].string]:
+                    if j.children[0].children[1].string.lower() in type_to_parse_list[i.children[0].children[1].string.lower()]:
                         new_spec_children.append(j)
                 else:
                     new_spec_children.append(j)
@@ -3056,11 +3065,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if i.children[2].__class__.__name__=="End_Module_Stmt":
                 new_children.append(i)
                 continue
-            if i.children[0].children[1].string!=top_level_ast:
+            if i.children[0].children[1].string.lower()!=top_level_ast:
                 for j in i.children[2].children:
                     if j.__class__.__name__!="Contains_Stmt":
 
-                        if j.children[0].children[1].string in what_to_parse_list[i.children[0].children[1].string]:
+                        if j.children[0].children[1].string.lower() in what_to_parse_list[i.children[0].children[1].string.lower()]:
                             subroutinesandfunctions.append(j)        
                 i.children[2].children.clear()
                 for j in subroutinesandfunctions:
@@ -3192,8 +3201,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 struct_dep_graph.add_node(j)
             struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
 
+    program = ast_transforms.Flatten_Classes(structs_lister.structs).visit(program)
     program.structures = ast_transforms.Structures(structs_lister.structs)
-
+    
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     listnames=[i.name for i in functions_and_subroutines_builder.names]
@@ -3344,16 +3354,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         if j.name.name==top_level_ast:
             program.modules.append(j)            
     
-    for i in program.modules:
-        for path in source_list:
-            
-            if path.lower().find(i.name.name.lower())!=-1:
-                mypath=path
-                break
-        #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
-        for j in i.subroutine_definitions:
+    for j in program.subroutine_definitions:
             #if j.name.name!="cloudscouter":
-            if j.name.name!="solve_nh":
+            if j.name.name!="tspectralplanck_calc":
             #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
             #if j.name.name!="velocity_tendencies":
@@ -3375,37 +3378,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
 
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"),compress=True)
-            # for sd in sdfg.all_sdfgs_recursive():
-            #     free_symbols = sd.free_symbols
-            #     for i in ['__f2dace_OA_iblk_d_0_s_4140', '__f2dace_OA_iidx_d_1_s_4138', '__f2dace_OA_iidx_d_2_s_4139', '__f2dace_OA_iblk_d_2_s_4142', '__f2dace_OA_iblk_d_1_s_4141', '__f2dace_OA_iidx_d_0_s_4137','__f2dace_A_iidx_d_1_s_5395', '__f2dace_A_iblk_d_0_s_5397', '__f2dace_A_iidx_d_2_s_5396', '__f2dace_A_iblk_d_1_s_5398', '__f2dace_A_iblk_d_2_s_5399', '__f2dace_A_iidx_d_0_s_5394','__f2dace_A_iidx_d_0_s_4137', '__f2dace_A_iblk_d_2_s_4142', '__f2dace_A_iblk_d_0_s_4140', '__f2dace_A_iidx_d_1_s_4138', '__f2dace_A_iidx_d_2_s_4139', '__f2dace_A_iblk_d_1_s_4141','__f2dace_OA_opt_out2_d_1_s_8111', '__f2dace_A_opt_out2_d_0_s_8110', '__f2dace_OA_opt_out2_d_2_s_8112', '__f2dace_OA_opt_out2_d_0_s_8110', '__f2dace_A_opt_out2_d_2_s_8112', '__f2dace_A_opt_out2_d_1_s_8111','__f2dace_A_opt_out2_d_1_s_8111', '__f2dace_A_ieidx_d_2_s_8121', '__f2dace_OA_opt_out2_d_1_s_8111', '__f2dace_A_ieblk_d_1_s_8123', '__f2dace_A_inidx_d_1_s_8114', '__f2dace_A_inblk_d_2_s_8118', '__f2dace_A_ieidx_d_0_s_8119', '__f2dace_A_opt_out2_d_2_s_8112', '__f2dace_A_ieidx_d_1_s_8120', '__f2dace_OA_opt_out2_d_0_s_8110', '__f2dace_A_inblk_d_0_s_8116', '__f2dace_OA_opt_out2_d_2_s_8112', '__f2dace_A_ieblk_d_2_s_8124', '__f2dace_A_inblk_d_1_s_8117', '__f2dace_A_ieblk_d_0_s_8122', '__f2dace_A_opt_out2_d_0_s_8110', '__f2dace_A_inidx_d_2_s_8115', '__f2dace_A_inidx_d_0_s_8113','__f2dace_A_iidx_d_1_s_8159', '__f2dace_A_iidx_d_0_s_8158', '__f2dace_A_iblk_d_0_s_8161', '__f2dace_A_iblk_d_1_s_8162', '__f2dace_A_iblk_d_2_s_8163', '__f2dace_A_iidx_d_2_s_8160','__f2dace_A_iblk_d_0_s_6698', '__f2dace_A_iblk_d_1_s_6699', '__f2dace_A_iidx_d_2_s_6697', '__f2dace_A_iidx_d_1_s_6696', '__f2dace_A_iblk_d_2_s_6700', '__f2dace_A_iidx_d_0_s_6695','__f2dace_A_incidx_d_2_s_8055', '__f2dace_A_iqblk_d_0_s_8044', '__f2dace_A_incblk_d_1_s_8057', '__f2dace_A_iqblk_d_1_s_8045', '__f2dace_A_iqidx_d_2_s_8043', '__f2dace_A_icidx_d_2_s_8031', '__f2dace_A_ivblk_d_2_s_8052', '__f2dace_A_incidx_d_0_s_8053', '__f2dace_A_icidx_d_0_s_8029', '__f2dace_A_incblk_d_2_s_8058', '__f2dace_A_incblk_d_0_s_8056', '__f2dace_A_ividx_d_2_s_8049', '__f2dace_A_icblk_d_0_s_8032', '__f2dace_A_ieidx_d_0_s_8035', '__f2dace_A_ivblk_d_0_s_8050', '__f2dace_A_ieidx_d_1_s_8036', '__f2dace_A_icidx_d_1_s_8030', '__f2dace_A_incidx_d_1_s_8054', '__f2dace_A_iqidx_d_0_s_8041', '__f2dace_A_icblk_d_2_s_8034', '__f2dace_A_ieblk_d_0_s_8038', '__f2dace_A_ividx_d_0_s_8047', '__f2dace_A_ieblk_d_2_s_8040', '__f2dace_A_ividx_d_1_s_8048', '__f2dace_A_icblk_d_1_s_8033', '__f2dace_A_iqidx_d_1_s_8042', '__f2dace_A_ieblk_d_1_s_8039', '__f2dace_A_iqblk_d_2_s_8046', '__f2dace_A_ieidx_d_2_s_8037', '__f2dace_A_ivblk_d_1_s_8051']:
-            #         #print("I want to remove:", i)
-            #         if(i in sd.symbols):
-            #             sd.symbols.pop(i)
-            #             print("Removed from symbols ",i)
-            #             if sd.parent_nsdfg_node is not None:
-            #                 if i in sd.parent_nsdfg_node.symbol_mapping:
-            #                     print("Removed from symbol mapping ",i)
-            #                     sd.parent_nsdfg_node.symbol_mapping.pop(i)
+
             sdfg.apply_transformations(IntrinsicSDFGTransformation)    
 
-            # for sd in sdfg.all_sdfgs_recursive():
-            #     free_symbols = sd.free_symbols
-            #     for i in free_symbols:
-            #         #print("I want to remove:", i)
-            #         if(i in sd.symbols):
-            #             sd.symbols.pop(i)
-            #             #print("Removed from symbols ",i)
-            #             if sd.parent_nsdfg_node is not None:
-            #                 if i in sd.parent_nsdfg_node.symbol_mapping:
-            #                     #print("Removed from symbol mapping ",i)
-            #                     sd.parent_nsdfg_node.symbol_mapping.pop(i)
-            #try:
-            
-            #    sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
-            #except:
-            #    print("Intrinsics failed for ", sdfg.name)    
-            #    continue
-            
             try:
                 sdfg.expand_library_nodes()
             except:
@@ -3414,21 +3389,63 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             
             sdfg.validate()
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated_f.sdfgz"),compress=True)
-            #try:    
+   
             sdfg.simplify(verbose=True)
             print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_f.sdfgz"),compress=True)
-            #except Exception as e:
-            #    print("Simplification failed for ", sdfg.name)    
-            #    print(e)
-            #    continue
-            #sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfg"))
-            #try:  
+
             print(f'Compiling SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
             sdfg.compile()
-            #except Exception as e:
-            #    print("Compilation failed for ", sdfg.name)
-            #    print(e)
-            #    continue
+
+    for i in program.modules:
+        for path in source_list:
+            
+            if path.lower().find(i.name.name.lower())!=-1:
+                mypath=path
+                break
+        #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
+        for j in i.subroutine_definitions:
+            #if j.name.name!="cloudscouter":
+            if j.name.name!="tspectralplanck_init":
+            #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
+            #if j.name.name!="rot_vertex_ri":
+            #if j.name.name!="velocity_tendencies":
+            #if j.name.name!="cells2verts_scalar_ri":
+            #if j.name.name!="get_indices_c":
+                continue
+            if j.execution_part is None:
+                continue
+            print(f"Building SDFG {j.name.name}")
+            startpoint = j
+            ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=False,startpoint=startpoint,sdfg_path=icon_sdfgs_dir, normalize_offsets=normalize_offsets)
+            sdfg = SDFG(j.name.name)
+            ast2sdfg.actual_offsets_per_sdfg[sdfg]={}
+            ast2sdfg.top_level = program
+            ast2sdfg.globalsdfg = sdfg
+            
+            ast2sdfg.translate(program, sdfg)
+            
+
+
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"),compress=True)
+
+            sdfg.apply_transformations(IntrinsicSDFGTransformation)    
+
+            try:
+                sdfg.expand_library_nodes()
+            except:
+                print("Expansion failed for ", sdfg.name)    
+                continue
+            
+            sdfg.validate()
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated_f.sdfgz"),compress=True)
+   
+            sdfg.simplify(verbose=True)
+            print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_f.sdfgz"),compress=True)
+
+            print(f'Compiling SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
+            sdfg.compile()
+
 
     #return sdfg

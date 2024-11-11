@@ -291,10 +291,18 @@ class InternalFortranAst:
             "End_Type_Stmt": self.end_type_stmt,
             "Data_Ref": self.data_ref,
             "Cycle_Stmt": self.cycle_stmt,
+            "Deferred_Shape_Spec": self.deferred_shape_spec,
+            "Deferred_Shape_Spec_List": self.deferred_shape_spec_list,
+            "Component_Initialization": self.component_initialization,
+            "Case_Selector": self.case_selector,
+            "Case_Value_Range_List": self.case_value_range_list,
+            "Procedure_Designator": self.procedure_designator,
+            "Specific_Binding": self.specific_binding,
             #"Component_Decl_List": self.component_decl_list,
             #"Component_Decl": self.component_decl,
         }
         self.type_arbitrary_array_variable_count = 0
+
 
     def fortran_intrinsics(self) -> "FortranIntrinsics":
         return self.intrinsic_handler
@@ -323,6 +331,7 @@ class InternalFortranAst:
     def cycle_stmt(self, node: FASTNode):
         line = get_line(node)
         return ast_internal_classes.Continue_Node( line_number=line)
+    
 
     def create_ast(self, node=None):
         """
@@ -382,11 +391,27 @@ class InternalFortranAst:
     
     def access_stmt(self, node: FASTNode):
         return None
+    
+    def deferred_shape_spec(self, node: FASTNode):
+        return ast_internal_classes.Defer_Shape_Node()
+
+    def deferred_shape_spec_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return children
+        
+    def component_initialization(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Component_Initialization_Node(init=children[1])
+
+    def procedure_designator(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Procedure_Separator_Node(parent_ref=children[0],part_ref=children[2])
 
     def derived_type_def(self, node: FASTNode):
         children = self.create_children(node)
         name = children[0].name
         component_part = get_child(children, ast_internal_classes.Component_Part_Node)
+        procedure_part = get_child(children, ast_internal_classes.Bound_Procedures_Node)
         from dace.frontend.fortran.ast_transforms import PartialRenameVar
         if component_part is not None:
             component_part=PartialRenameVar(oldname="__f2dace_A", newname="__f2dace_SA").visit(component_part)
@@ -405,7 +430,7 @@ class InternalFortranAst:
                 else:
                     new_placeholder_offsets[k]=self.placeholders_offsets[k]
             self.placeholders_offsets=new_placeholder_offsets            
-        return ast_internal_classes.Derived_Type_Def_Node(name=name, component_part=component_part)
+        return ast_internal_classes.Derived_Type_Def_Node(name=name, component_part=component_part, procedure_part=procedure_part)
 
     def derived_type_stmt(self, node: FASTNode):
         children = self.create_children(node)
@@ -432,13 +457,13 @@ class InternalFortranAst:
         return ast_internal_classes.Component_Decl_Node(name=name)
 
     def write_stmt(self, node: FASTNode):
-        children=[]
-        if node.children[0] is not None:
-            children = self.create_children(node.children[0])
-        if node.children[1] is not None:
-            children = self.create_children(node.children[1])    
+        #children=[]
+        #if node.children[0] is not None:
+        #    children = self.create_children(node.children[0])
+        #if node.children[1] is not None:
+        #    children = self.create_children(node.children[1])    
         line = get_line(node)
-        return ast_internal_classes.Write_Stmt_Node(args=children, line_number=line)
+        return ast_internal_classes.Write_Stmt_Node(args=node.string, line_number=line)
 
     def program(self, node: FASTNode):
         children = self.create_children(node)
@@ -859,8 +884,8 @@ class InternalFortranAst:
         elif isinstance(type_of_node, f03.Declaration_Type_Spec):
             if type_of_node.items[0].lower() == "class":
                 basetype = "CLASS"
-                
-                derived_type = False
+                basetype = type_of_node.items[1].string
+                derived_type = True
             else:
                 derived_type = True
                 basetype = type_of_node.items[1].string
@@ -886,6 +911,8 @@ class InternalFortranAst:
                             if self.symbols[kind].value == "8":
                                 basetype = "REAL8"
                           elif basetype == "INTEGER":
+                            while hasattr(self.symbols[kind], "name"):
+                                kind = self.symbols[kind].name
                             if self.symbols[kind].value == "4":
                                 basetype = "INTEGER"
                           else:
@@ -1018,6 +1045,11 @@ class InternalFortranAst:
                     raise ValueError("Initialization must have an expression")
                 raw_init = initialization.children[1]
                 init = self.create_ast(raw_init)
+            else:
+                comp_init = get_children(var, "Component_Initialization")
+                if len(comp_init) == 1:
+                    raw_init = comp_init[0].children[1]
+                    init = self.create_ast(raw_init)
             #if size_later:
             #    size.append(len(init)) 
             if testtype!="INTEGER": symbol=False    
@@ -1323,13 +1355,88 @@ class InternalFortranAst:
         return node
 
     def case_construct(self, node: FASTNode):
-        return Name_Node(name="Error!")
+        children = self.create_children(node)
+        cond_start = children[0]
+        cond_end= children[1] 
+        body = []
+        body_else = []
+        else_mode = False
+        line = get_line(node)
+        if line is None:
+            line = "Unknown:TODO"
+        cond=ast_internal_classes.BinOp_Node(op=cond_end.op[0],lval=cond_start,rval=cond_end.cond[0],line_number=line)
+        for j in range(1,len(cond_end.op)):
+            cond_add=ast_internal_classes.BinOp_Node(op=cond_end.op[j],lval=cond_start,rval=cond_end.cond[j],line_number=line)
+            cond=ast_internal_classes.BinOp_Node(op=".AND.",lval=cond,rval=cond_add,line_number=line)    
+
+        toplevelIf = ast_internal_classes.If_Stmt_Node(cond=cond, line_number=line)
+        currentIf = toplevelIf
+        for i in children[2:-1]:
+            if i is None:
+                continue
+            if isinstance(i, ast_internal_classes.Case_Cond_Node):
+                cond=ast_internal_classes.BinOp_Node(op=i.op[0],lval=cond_start,rval=i.cond[0],line_number=line)    
+                for j in range(1,len(i.op)):
+                    cond_add=ast_internal_classes.BinOp_Node(op=i.op[j],lval=cond_start,rval=i.cond[j],line_number=line)
+                    cond=ast_internal_classes.BinOp_Node(op=".AND.",lval=cond,rval=cond_add,line_number=line)    
+
+                newif = ast_internal_classes.If_Stmt_Node(cond=cond, line_number=line)
+                currentIf.body = ast_internal_classes.Execution_Part_Node(execution=body)
+                currentIf.body_else = ast_internal_classes.Execution_Part_Node(execution=[newif])
+                currentIf = newif
+                body = []
+                continue
+            if isinstance(i, str) and i=="__default__":
+                else_mode = True
+                continue
+            if else_mode:
+                body_else.append(i)
+            else:
+                
+                body.append(i)
+        currentIf.body = ast_internal_classes.Execution_Part_Node(execution=body)
+        currentIf.body_else = ast_internal_classes.Execution_Part_Node(execution=body_else)
+        return toplevelIf
 
     def select_case_stmt(self, node: FASTNode):
-        return Name_Node(name="Error!")
+        children = self.create_children(node)
+        if len(children)!=1:
+            raise ValueError("CASE should have only 1 child")
+        return children[0]
 
     def case_stmt(self, node: FASTNode):
-        return Name_Node(name="Error!")
+        children = self.create_children(node)
+        children=[i for i in children if i is not None]
+        if len(children)==1:
+            return children[0]
+        elif len(children)==0:
+            return "__default__"
+        else:
+            raise ValueError("Can't parse case statement")
+        
+    def case_selector(self, node:FASTNode):
+        children = self.create_children(node)
+        if len(children)==1:
+            if children[0] is None:
+                return None
+            returns=ast_internal_classes.Case_Cond_Node(op=[],cond=[])
+            
+            for i in children[0]:
+                returns.op.append(i[0])
+                returns.cond.append(i[1])
+            return returns
+        else:
+            raise ValueError("Can't parse case selector")
+
+    def case_value_range_list(self, node:FASTNode):        
+        children = self.create_children(node)
+        if len(children)==1:
+            return [[".EQ.", children[0]]]
+        if len(children)==2:
+            return [[".EQ.", children[0]],[".EQ.", children[1]]]
+        
+        else:
+            raise ValueError("Can't parse case range list")
 
     def end_select_stmt(self, node: FASTNode):
         return node
@@ -1387,9 +1494,15 @@ class InternalFortranAst:
 
     def procedure_declaration_stmt(self, node: FASTNode):
         return node
+    
+    def specific_binding(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Specific_Binding_Node(name=children[3], args=children[0:2]+[children[4]])
+
 
     def type_bound_procedure_part(self, node: FASTNode):
-        return node
+        children = self.create_children(node)
+        return ast_internal_classes.Bound_Procedures_Node(procedures= children[1:])
 
     def contains_stmt(self, node: FASTNode):
         return node
@@ -1397,11 +1510,19 @@ class InternalFortranAst:
     def call_stmt(self, node: FASTNode):
         children = self.create_children(node)
         name = get_child(children, ast_internal_classes.Name_Node)
+        arg_addition = None
+        if name is None:
+            proc_ref = get_child(children, ast_internal_classes.Procedure_Separator_Node)   
+            name = proc_ref.part_ref
+            arg_addition = proc_ref.parent_ref
+            
         args = get_child(children, ast_internal_classes.Arg_List_Node)
         if args==None:
             ret_args = []
         else:
             ret_args = args.args  
+        if arg_addition is not None:
+            ret_args.insert(0,arg_addition)
         line_number = get_line(node)     
         #if node.item is None:
         #    line_number = 42

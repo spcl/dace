@@ -330,7 +330,7 @@ class Derived_Type_Stmt_Node(FNode):
 
 class Derived_Type_Def_Node(FNode):
     _attributes = ('name', )
-    _fields = ('component_part', )
+    _fields = ('component_part','procedure_part' )
 
 
 class Component_Part_Node(FNode):
@@ -395,11 +395,33 @@ class If_Stmt_Node(FNode):
         'body_else',
     )
 
+class Defer_Shape_Node(FNode):
+    _attributes = ()
+    _fields = ()    
+
+class Component_Initialization_Node(FNode):
+    _attributes = ()
+    _fields = ('init')
+
+class Case_Cond_Node(FNode):
+    _fields = ('cond', 'op')
+    _attributes = ()    
 
 class Else_Separator_Node(FNode):
     _attributes = ()
     _fields = ()
 
+class Procedure_Separator_Node(FNode):
+    _attributes = ()
+    _fields = ('parent_ref', 'part_ref')
+
+class Bound_Procedures_Node(FNode):
+    _attributes = ()
+    _fields = ('procedures')
+
+class Specific_Binding_Node(FNode):
+    _attributes = ()
+    _fields = ('name', 'args')    
 
 class Parenthesis_Expr_Node(FNode):
     _attributes = ()
