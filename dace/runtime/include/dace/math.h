@@ -512,31 +512,39 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        template<typename T, typename U>
+        template<
+            typename T,
+            typename U,
+            typename = std::enable_if_t<!(std::is_integral<T>::value && std::is_integral<U>::value)>
+        >
         DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
             return std::pow(a, b);
         }
 
 #ifndef DACE_XILINX
-        static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
-        {
-            if (b < 0) return 0;
-            int result = 1;
-            for (int i = 0; i < b; ++i)
-                result *= a;
-            return result;
-        }
+        template<typename T>
+        using IntPowReturnType_t = std::conditional_t<std::is_unsigned<T>::value, unsigned long long int, long long int>;
 
-        static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
-                                       const unsigned int& b)
+        template<typename T1, typename T2>
+        static DACE_CONSTEXPR DACE_HDFI
+        std::enable_if_t<std::is_integral<T1>::value && std::is_integral<T2>::value, IntPowReturnType_t<T1> >
+        pow(const T1& a, const T2& b)
         {
-            unsigned int result = 1;
-            for (unsigned int i = 0; i < b; ++i)
+            /* TODO: The return value is always an integer, this is different from the behaviour of `std::pow` that
+             *  always return a float. We should probably patch the code generator to generate `ipow` calls if all
+             *  arguments are integers. */
+            if(std::is_signed<T2>::value && (b < 0))
+                return 0;
+            using IterationBound_t = typename std::make_unsigned<T2>::type;
+            IntPowReturnType_t<T1> result = 1;
+            const IterationBound_t stop = b;
+            for (IterationBound_t i = 0; i < stop; ++i)
                 result *= a;
             return result;
-        }
+	};
 #endif
+
 
         template<typename T>
         DACE_HDFI T ipow(const T& a, const unsigned int& b) {
