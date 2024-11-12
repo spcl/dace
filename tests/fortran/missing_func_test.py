@@ -94,7 +94,7 @@ def test_fortran_frontend_missing_func():
     """
     sources={}
     sources["missing_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "missing_test",sources=sources)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "missing_test", True, sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)

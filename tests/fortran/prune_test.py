@@ -85,7 +85,7 @@ def test_fortran_frontend_prune_complex():
                     END SUBROUTINE test_function_another
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "init_test", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "init_test", True)
     print('a', flush=True)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
@@ -129,7 +129,7 @@ def test_fortran_frontend_prune_actual_param():
                     END SUBROUTINE test_function_another
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "init_test", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "init_test", True)
     print('a', flush=True)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)

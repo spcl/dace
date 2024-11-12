@@ -42,7 +42,7 @@ def test_fortran_frontend_long_tasklet():
                     """
     sources={}
     sources["long_tasklet_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "long_tasklet_test",sources=sources)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "long_tasklet_test", True, sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5], 42, order="F", dtype=np.float64)
     sdfg(d=a)
