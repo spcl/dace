@@ -255,7 +255,7 @@ class ConstantPropagation(ppl.Pass):
         else:
             # No else branch is present, so it is possible that no branch is executed. In this case the out constants
             # are the intersection between the in constants and the post constants.
-            out_consts = in_consts
+            out_consts = in_consts.copy()
             for k, v in post_consts.items():
                 if k not in out_consts:
                     out_consts[k] = _UnknownValue
@@ -364,14 +364,6 @@ class ConstantPropagation(ppl.Pass):
                         if reassignments and (used_in_assignments - reassignments):
                             assignments[aname] = _UnknownValue
 
-                if isinstance(block, LoopRegion):
-                    # Any constants before a loop that may be overwritten inside the loop cannot be assumed as constants
-                    # for the loop itself.
-                    assigned_in_loop = self._assignments_in_loop(block)
-                    for k in assignments.keys():
-                        if k in assigned_in_loop:
-                            assignments[k] = _UnknownValue
-
                 if block not in in_const_dict:
                     in_const_dict[block] = {}
                 if assignments:
@@ -385,9 +377,9 @@ class ConstantPropagation(ppl.Pass):
                                                             post_const_dict, out_const_dict)
                 else:
                     # Simple case, no change in constants through this block (states and other basic blocks).
-                    pre_const_dict[block] = in_const_dict[block]
-                    post_const_dict[block] = in_const_dict[block]
-                    out_const_dict[block] = in_const_dict[block]
+                    pre_const_dict[block] = in_const_dict[block].copy()
+                    post_const_dict[block] = in_const_dict[block].copy()
+                    out_const_dict[block] = in_const_dict[block].copy()
 
         # For all sink nodes, compute the overlapping set of constants between them, making sure all constants in the
         # resulting intersection are actually constants (i.e., all blocks see the same constant value for them). This
