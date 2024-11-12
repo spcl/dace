@@ -514,6 +514,10 @@ namespace dace
 #endif
 
 
+/* If `DACE_XILINX` is defined then `pow` only returns floats, even if their arguments
+ *  are integer. If it is not defined, then if all arguments of `pow` are integers
+ *  the return value will also be an integer, currently it is always the largest supported by the platform.
+ *  This is the original behaviour prior to [PR#1748](https://github.com/spcl/dace/pull/1748). */
 #if defined(DACE_XILINX)
 
         template<
@@ -526,9 +530,7 @@ namespace dace
         }
 
 #else
-        /* If `DACE_XILINX` is not defined, there is a specialization for `pow`
-         *  which only operates on integers. This allows it to use in `new[]`
-         *  expressions. */
+
         template<
             typename T,
             typename U,
@@ -542,7 +544,7 @@ namespace dace
 
         //TODO: Should this always be the largest integer?
         template<typename T>
-        using IntPowReturnType_t = std::conditional_t<std::is_unsigned<T>::value, unsigned long long int, long long int>;
+        using IntPowReturnType_t = std::conditional_t<std::is_unsigned<T>::value, uintmax, intmax>;
 
 
        /* TODO: The return value is always an integer, this is different from the behaviour of `std::pow` that
