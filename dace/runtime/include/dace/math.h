@@ -573,13 +573,18 @@ namespace dace
 	};
 #endif
 
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T ipow(const T& a, const unsigned int& b) {
+        template<
+            typename T,
+            typename U,
+            typename = std::enable_if_t<(std::is_integral<U>::value && std::is_unsigned<U>::value)>
+        >
+        DACE_CONSTEXPR DACE_HDFI T ipow(const T& a, const U b)
+        {
             if(b == 0) {
                 return T(1);
             };
             T result = a;
-            for (unsigned int i = 1; i < b; ++i)
+            for (U i = 1; i < b; ++i)
                 result *= a;
             return result;
         }
