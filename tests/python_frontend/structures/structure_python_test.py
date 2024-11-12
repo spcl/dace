@@ -182,7 +182,7 @@ def test_rgf():
     assert np.allclose(B.lower, B_lower)
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Compiler error (const conversion)')
 @pytest.mark.gpu
 def test_read_structure_gpu():
 

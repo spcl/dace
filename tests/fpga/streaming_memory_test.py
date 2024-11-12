@@ -380,7 +380,7 @@ def test_streaming_and_composition():
     return sdfg
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_vec_add_1():
     # Make SDFG
     sdfg: dace.SDFG = vecadd_1_streaming.to_sdfg()
@@ -408,7 +408,7 @@ def test_mem_buffer_vec_add_1():
     return sdfg
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_vec_add_1_symbolic():
     # Make SDFG
     sdfg: dace.SDFG = vecadd_1_streaming_symbol.to_sdfg()
@@ -495,55 +495,55 @@ def mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0, np_ty
     return sdfg
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 # def test_mem_buffer_vec_add_float16():
 #     return mem_buffer_vec_add_types(dace.float16, dace.float16, dace.float16, np.float16, np.float16, np.float16)
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_vec_add_float32():
     return mem_buffer_vec_add_types(dace.float32, dace.float32, dace.float32, np.float32, np.float32, np.float32)
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_vec_add_float64():
     return mem_buffer_vec_add_types(dace.float64, dace.float64, dace.float64, np.float64, np.float64, np.float64)
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_vec_add_int8():
     return mem_buffer_vec_add_types(dace.int8, dace.int8, dace.int8, np.int8, np.int8, np.int8)
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_vec_add_int16():
     return mem_buffer_vec_add_types(dace.int16, dace.int16, dace.int16, np.int16, np.int16, np.int16)
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_vec_add_int32():
     return mem_buffer_vec_add_types(dace.int32, dace.int32, dace.int32, np.int32, np.int32, np.int32)
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_vec_add_int64():
     return mem_buffer_vec_add_types(dace.int64, dace.int64, dace.int64, np.int64, np.int64, np.int64)
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_vec_add_complex64():
     return mem_buffer_vec_add_types(dace.complex64, dace.complex64, dace.complex64, np.complex64, np.complex64,
                                     np.complex64)
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_vec_add_complex128():
     return mem_buffer_vec_add_types(dace.complex128, dace.complex128, dace.complex128, np.complex128, np.complex128,
                                     np.complex128)
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 # def test_mem_buffer_vec_add_mixed_float():
 #     return mem_buffer_vec_add_types(dace.float16, dace.float32, dace.float64, np.float16, np.float32, np.float64)
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_vec_add_mixed_int():
     return mem_buffer_vec_add_types(dace.int16, dace.int32, dace.int64, np.int16, np.int32, np.int64)
 
@@ -575,7 +575,7 @@ def test_mem_buffer_mat_add():
     return sdfg
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_mat_add_symbol():
     # Make SDFG
     sdfg: dace.SDFG = matadd_streaming_symbol.to_sdfg()
@@ -602,7 +602,7 @@ def test_mem_buffer_mat_add_symbol():
     return sdfg
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_tensor_add():
     # Make SDFG
     sdfg: dace.SDFG = tensoradd_streaming.to_sdfg()
@@ -688,7 +688,7 @@ def test_mem_buffer_multistream_with_deps():
     return sdfg
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_mat_mul():
     # Make SDFG
     sdfg: dace.SDFG = matmul_streaming.to_sdfg()
@@ -799,7 +799,7 @@ def test_mem_buffer_not_applicable():
     return []
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_atax():
 
     A = np.random.rand(M, N).astype(np.float32)
@@ -843,7 +843,7 @@ def test_mem_buffer_atax():
     return sdfg
 
 
-@pytest.mark.skip(reason="Save time")
+@pytest.mark.long
 def test_mem_buffer_bicg():
 
     A = np.random.rand(N, M).astype(np.float32)

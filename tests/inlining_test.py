@@ -43,7 +43,7 @@ def test():
     myprogram.compile(dace.float32[W, H], dace.float32[H, W], dace.int32)
 
 
-@pytest.mark.skip
+@pytest.mark.skip('CI failure that cannot be reproduced outside CI')
 def test_regression_reshape_unsqueeze():
     nsdfg = dace.SDFG("nested_reshape_node")
     nstate = nsdfg.add_state()
@@ -464,7 +464,7 @@ def test_inlining_view_input():
 
 if __name__ == "__main__":
     test()
-    # Skipped to to bug that cannot be reproduced
+    # Skipped due to bug that cannot be reproduced outside CI
     # test_regression_reshape_unsqueeze()
     test_empty_memlets()
     test_multistate_inline()

@@ -759,7 +759,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         if sdfg is not None:
             # Set regenerate and recompile flags
-            sdfg._regenerate_code = self.regenerate_code
+            sdfg.regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
 
         return sdfg, self._cache.make_key(argtypes, given_args, self.closure_array_keys, self.closure_constant_keys,
@@ -927,7 +927,7 @@ class DaceProgram(pycommon.SDFGConvertible):
             # TODO: Add to parsed SDFG cache
 
             # Set regenerate and recompile flags
-            sdfg._regenerate_code = self.regenerate_code
+            sdfg.regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
 
         return sdfg, cached
