@@ -1,8 +1,12 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
-
-from typing import List, Set
+from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple
 
 import networkx as nx
+from fparser.two.Fortran2003 import Module_Stmt, Name, Interface_Block, Subroutine_Stmt, Specification_Part, Module, \
+    Derived_Type_Def, Function_Stmt, Interface_Stmt, Function_Body, Type_Name, Rename, Entity_Decl, Kind_Selector, \
+    Intrinsic_Type_Spec, Declaration_Type_Spec, Use_Stmt
+from fparser.two.Fortran2008 import Type_Declaration_Stmt, Procedure_Stmt
+from fparser.two.utils import Base
 from numpy import finfo as finf
 from numpy import float64 as fl
 
@@ -29,14 +33,13 @@ fortrantypes2dacetypes = {
 }
 
 
-def eliminate_dependencies(dep_graph: nx.digraph.DiGraph):
+def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict]:
     simple_graph = nx.DiGraph()
-    simplify_order = (list(nx.topological_sort(dep_graph)))
+    simplify_order = list(nx.topological_sort(dep_graph))
     actually_used_in_module = {}
     for i in simplify_order:
-
         res = dep_graph.nodes.get(i).get("info_list")
-        if simple_graph.has_node(i) == True:
+        if simple_graph.has_node(i):
             simple_graph.add_node(i, info_list=res)
         out_edges = dep_graph.out_edges(i)
         in_edges = dep_graph.in_edges(i)
@@ -52,9 +55,9 @@ def eliminate_dependencies(dep_graph: nx.digraph.DiGraph):
             in_names_local = []
             if in_names_local_obj is not None:
                 for k in in_names_local_obj:
-                    if k.__class__.__name__ == "Name":
+                    if isinstance(k, Name):
                         in_names_local.append(k.string)
-                    elif k.__class__.__name__ == "Rename":
+                    elif isinstance(k, Rename):
                         in_names_local.append(k.children[2].string)
                         in_names_local.append(k.children[1].string)
             if in_names_local is not None:
@@ -66,9 +69,9 @@ def eliminate_dependencies(dep_graph: nx.digraph.DiGraph):
             out_names_local = []
             if out_names_local_obj is not None:
                 for k in out_names_local_obj:
-                    if k.__class__.__name__ == "Name":
+                    if isinstance(k, Name):
                         out_names_local.append(k.string)
-                    elif k.__class__.__name__ == "Rename":
+                    elif isinstance(k, Rename):
                         out_names_local.append(k.children[1].string)
                         out_names_local.append(k.children[2].string)
 
@@ -81,26 +84,23 @@ def eliminate_dependencies(dep_graph: nx.digraph.DiGraph):
             actually_used.append(name)
         changed = True
         if res is not None:
-            while (changed):
+            while changed:
                 changed = False
                 for used_name in actually_used:
                     for var in res.list_of_module_vars:
                         for ii in var.children:
-
                             # Support scenario where an imported symbol appears in kind selector
                             # Example: REAL(KIND=JPRB) :: R2ES
                             # Where JPRB is imported from another module.
-                            if ii.__class__.__name__ == "Intrinsic_Type_Spec":
-
+                            if isinstance(ii, Intrinsic_Type_Spec):
                                 for iii in ii.children:
-                                    if iii.__class__.__name__ == "Kind_Selector":
+                                    if isinstance(iii, Kind_Selector):
                                         name_to_check = iii.children[1].string
                                         if name_to_check not in actually_used:
                                             actually_used.append(name_to_check)
-
-                            if ii.__class__.__name__ == "Entity_Decl_List":
+                            elif ii.__class__.__name__ == "Entity_Decl_List":
                                 for iii in ii.children:
-                                    if iii.__class__.__name__ == "Entity_Decl":
+                                    if isinstance(iii, Entity_Decl):
                                         name_to_check = iii.children[0].string
                                         for type_name in res.list_of_types:
                                             for used_in_type in res.names_in_types[type_name]:
@@ -115,16 +115,14 @@ def eliminate_dependencies(dep_graph: nx.digraph.DiGraph):
 
                                         if iii.children[0].string == used_name:
                                             for j in var.children:
-                                                # print("USED: "+ used_name)
-                                                nl = NameLister()
-                                                nl.get_names(iii)
-                                                for nameininit in nl.list_of_names:
+                                                list_of_names = list_descendent_names(iii)
+                                                for nameininit in list_of_names:
                                                     if nameininit not in actually_used:
                                                         actually_used.append(nameininit)
                                                         changed = True
-                                                if j.__class__.__name__ == "Declaration_Type_Spec":
+                                                if isinstance(j, Declaration_Type_Spec):
                                                     for k in j.children:
-                                                        if k.__class__.__name__ == "Type_Name":
+                                                        if isinstance(k, Type_Name):
                                                             if k.string not in actually_used:
                                                                 actually_used.append(k.string)
                                                                 changed = True
@@ -165,7 +163,7 @@ def eliminate_dependencies(dep_graph: nx.digraph.DiGraph):
                                 actually_used.append(j)
                 else:
                     changed = True
-                    while (changed):
+                    while changed:
                         changed = False
                         for tname in res.list_of_types:
                             if tname in in_names or tname in actually_used:
@@ -221,10 +219,9 @@ def eliminate_dependencies(dep_graph: nx.digraph.DiGraph):
             out_names_local = []
             if out_names_local_obj is not None:
                 for k in out_names_local_obj:
-                    if k.__class__.__name__ == "Name":
+                    if isinstance(k, Name):
                         out_names_local.append(k.string)
-                    elif k.__class__.__name__ == "Rename":
-
+                    elif isinstance(k, Rename):
                         out_names_local.append(k.children[1].string)
                         out_names_local.append(k.children[2].string)
 
@@ -234,21 +231,21 @@ def eliminate_dependencies(dep_graph: nx.digraph.DiGraph):
             for k in out_names_local:
                 if k not in not_used:
                     for kk in out_names_local_obj:
-                        if kk.__class__.__name__ == "Name":
+                        if isinstance(kk, Name):
                             if kk.string == k:
                                 new_out_names_local.append(kk)
                                 break
-                        elif kk.__class__.__name__ == "Rename":
+                        elif isinstance(kk, Rename):
                             if kk.children[1].string == k:
                                 new_out_names_local.append(kk)
                                 break
             if len(new_out_names_local) > 0:
-                if simple_graph.has_node(i) == False:
+                if not simple_graph.has_node(i):
                     if i != simplify_order[0]:
                         continue
                     else:
                         simple_graph.add_node(i, info_list=res)
-                if simple_graph.has_node(j[1]) == False:
+                if not simple_graph.has_node(j[1]):
                     simple_graph.add_node(j[1])
                 simple_graph.add_edge(i, j[1], obj_list=new_out_names_local)
         actually_used_in_module[i] = actually_used
@@ -741,32 +738,6 @@ class ModuleMap(dict):
         return super().__setitem__(k, v)
 
 
-class UseModuleLister:
-    def __init__(self):
-        self.list_of_modules = []
-        self.objects_in_use = {}
-
-    def get_used_modules(self, node):
-        if node is None:
-            return
-        if not hasattr(node, "children"):
-            return
-        for i in node.children:
-            if i.__class__.__name__ == "Use_Stmt":
-                if i.children[0] is not None:
-                    if i.children[0].string.lower() == "intrinsic":
-                        continue
-                for j in i.children:
-                    if j.__class__.__name__ == "Name":
-                        self.list_of_modules.append(j.string)
-                        for k in i.children:
-                            if k.__class__.__name__ == "Only_List":
-                                self.objects_in_use[j.string] = k
-
-            else:
-                self.get_used_modules(i)
-
-
 class FunctionSubroutineLister:
     def __init__(self):
         self.list_of_functions = []
@@ -776,126 +747,118 @@ class FunctionSubroutineLister:
         self.list_of_types = []
         self.names_in_types = {}
         self.list_of_module_vars = []
-        self.interface_blocks = {}
+        self.interface_blocks: Dict[str, List[Name]] = {}
 
-    def get_functions_and_subroutines(self, node):
-        if node is None:
-            return
-        if not hasattr(node, "children"):
-            return
+    def get_functions_and_subroutines(self, node: Base):
         for i in node.children:
-            if i.__class__.__name__ == "Subroutine_Stmt":
-                for j in i.children:
-                    if j.__class__.__name__ == "Name":
-                        nl = NameLister()
-                        nl.get_names(node)
-                        tnl = TypeNameLister()
-                        tnl.get_typenames(node)
-                        self.names_in_subroutines[j.string] = nl.list_of_names
-                        self.names_in_subroutines[j.string] += tnl.list_of_typenames
-                        self.list_of_subroutines.append(j.string)
-            elif i.__class__.__name__ == "Type_Declaration_Stmt":
-                if node.__class__.__name__ == "Specification_Part":
-                    if node.parent.__class__.__name__ == "Module":
-                        self.list_of_module_vars.append(i)
-
-
-            elif i.__class__.__name__ == "Derived_Type_Def":
+            if isinstance(i, Subroutine_Stmt):
+                subr_name = singular(children_of_type(i, Name)).string
+                self.names_in_subroutines[subr_name] = list_descendent_names(node)
+                self.names_in_subroutines[subr_name] += list_descendent_typenames(node)
+                self.list_of_subroutines.append(subr_name)
+            elif isinstance(i, Type_Declaration_Stmt):
+                if isinstance(node, Specification_Part) and isinstance(node.parent, Module):
+                    self.list_of_module_vars.append(i)
+            elif isinstance(i, Derived_Type_Def):
                 name = i.children[0].children[1].string
-                nl = NameLister()
-                nl.get_names(i)
-                tnl = TypeNameLister()
-                tnl.get_typenames(i)
-                self.names_in_types[name] = nl.list_of_names
-                self.names_in_types[name] += tnl.list_of_typenames
+                self.names_in_types[name] = list_descendent_names(i)
+                self.names_in_types[name] += list_descendent_typenames(i)
                 self.list_of_types.append(name)
-            elif i.__class__.__name__ == "Function_Stmt":
-                for j in i.children:
-                    if j.__class__.__name__ == "Name":
-                        nl = NameLister()
-                        nl.get_names(node)
-                        tnl = TypeNameLister()
-                        tnl.get_typenames(node)
-                        self.names_in_functions[j.string] = nl.list_of_names
-                        self.names_in_functions[j.string] += tnl.list_of_typenames
-                        self.list_of_functions.append(j.string)
-            elif i.__class__.__name__ == "Interface_Block":
+            elif isinstance(i, Function_Stmt):
+                fn_name = singular(children_of_type(i, Name)).string
+                self.names_in_functions[fn_name] = list_descendent_names(node)
+                self.names_in_functions[fn_name] += list_descendent_typenames(node)
+                self.list_of_functions.append(fn_name)
+            elif isinstance(i, Interface_Block):
                 name = None
                 functions = []
                 for j in i.children:
-
-                    if j.__class__.__name__ == "Interface_Stmt":
-                        nl = NameLister()
-                        nl.get_names(j)
-                        if len(nl.list_of_names) == 1:
-                            name = nl.list_of_names[0]
-
-                    if j.__class__.__name__ == "Procedure_Stmt":
+                    if isinstance(j, Interface_Stmt):
+                        list_of_names = list_descendent_names(j)
+                        if len(list_of_names) == 1:
+                            name = list_of_names[0]
+                    elif isinstance(j, Function_Body):
+                        fn_stmt = singular(children_of_type(j, Function_Stmt))
+                        fn_name = singular(children_of_type(fn_stmt, Name))
+                        if fn_name not in functions:
+                            functions.append(fn_name)
+                    elif isinstance(j, Procedure_Stmt):
                         for k in j.children:
                             if k.__class__.__name__ == "Procedure_Name_List":
-
-                                for n in k.children:
-                                    if n.__class__.__name__ == "Name":
-                                        if n not in functions:
-                                            functions.append(n)
-
-                if name is not None and len(functions) > 0:
-                    self.interface_blocks[name] = functions
-
-            else:
+                                for n in children_of_type(k, Name):
+                                    if n not in functions:
+                                        functions.append(n)
+                if len(functions) > 0:
+                    if name is None:
+                        # Anonymous interface can show up multiple times.
+                        name = ''
+                        if name not in self.interface_blocks:
+                            self.interface_blocks[name] = []
+                        self.interface_blocks[name].extend(functions)
+                    else:
+                        assert name not in self.interface_blocks
+                        self.interface_blocks[name] = functions
+            elif isinstance(i, Base):
                 self.get_functions_and_subroutines(i)
 
 
-class TypeNameLister:
-    def __init__(self):
-        self.list_of_typenames = []
+def list_descendent_typenames(node: Base) -> List[str]:
+    def _list_descendent_typenames(_node: Base, _list_of_names: List[str]) -> List[str]:
+        for c in _node.children:
+            if isinstance(c, Type_Name):
+                if c.string not in _list_of_names:
+                    _list_of_names.append(c.string)
+            elif isinstance(c, Base):
+                _list_descendent_typenames(c, _list_of_names)
+        return _list_of_names
 
-    def get_typenames(self, node):
-        if node is None:
-            return
-        if not hasattr(node, "children"):
-            return
-        for i in node.children:
-            if i.__class__.__name__ == "Type_Name":
-                if i.string not in self.list_of_typenames:
-                    self.list_of_typenames.append(i.string)
-            else:
-                self.get_typenames(i)
+    return _list_descendent_typenames(node, [])
 
 
-class NameLister:
-    def __init__(self):
-        self.list_of_names = []
+def list_descendent_names(node: Base) -> List[str]:
+    def _list_descendent_names(_node: Base, _list_of_names: List[str]) -> List[str]:
+        for c in _node.children:
+            if isinstance(c, Name):
+                if c.string not in _list_of_names:
+                    _list_of_names.append(c.string)
+            elif isinstance(c, Base):
+                _list_descendent_names(c, _list_of_names)
+        return _list_of_names
 
-    def get_names(self, node):
-        if node is None:
-            return
-        if not hasattr(node, "children"):
-            return
-        for i in node.children:
-            if i.__class__.__name__ == "Name":
-                if i.string not in self.list_of_names:
-                    self.list_of_names.append(i.string)
-            else:
-                self.get_names(i)
+    return _list_descendent_names(node, [])
 
 
-class DefModuleLister:
-    def __init__(self):
-        self.list_of_modules = []
+def get_defined_modules(node: Base) -> List[str]:
+    def _get_defined_modules(_node: Base, _defined_modules: List[str]) -> List[str]:
+        for m in _node.children:
+            if isinstance(m, Module_Stmt):
+                _defined_modules.extend(c.string for c in m.children if isinstance(c, Name))
+            elif isinstance(m, Base):
+                _get_defined_modules(m, _defined_modules)
+        return _defined_modules
 
-    def get_defined_modules(self, node):
-        if node is None:
-            return
-        if not hasattr(node, "children"):
-            return
-        for i in node.children:
-            if i.__class__.__name__ == "Module_Stmt":
-                for j in i.children:
-                    if j.__class__.__name__ == "Name":
-                        self.list_of_modules.append(j.string)
-            else:
-                self.get_defined_modules(i)
+    return _get_defined_modules(node, [])
+
+
+def get_used_modules(node: Base) -> Tuple[List[str], Dict[str, Base]]:
+    def _get_used_modules(_node: Base, _used_modules: List[str], _objects_in_use: Dict[str, Base])\
+            -> Tuple[List[str], Dict[str, Base]]:
+        for m in _node.children:
+            if isinstance(m, Use_Stmt):
+                if m.children[0] is not None:
+                    if m.children[0].string.lower() == "intrinsic":
+                        continue
+                for c in children_of_type(m, Name):
+                    _used_modules.append(c.string)
+                    for k in m.children:
+                        if k.__class__.__name__ == "Only_List":
+                            _objects_in_use[c.string] = k
+                _used_modules.extend(c.string for c in m.children if isinstance(c, Name))
+            elif isinstance(m, Base):
+                _get_used_modules(m, _used_modules, _objects_in_use)
+        return _used_modules, _objects_in_use
+
+    return _get_used_modules(node, [], {})
 
 
 def parse_module_declarations(program):
@@ -912,3 +875,32 @@ def parse_module_declarations(program):
             module_level_variables = {**module_level_variables, **visitor.scope_vars}
 
     return module_level_variables
+
+
+T = TypeVar('T')
+
+
+def singular(items: Iterator[T]) -> T:
+    """
+    Asserts that any given iterator or generator `items` has exactly 1 item and returns that.
+    """
+    # We should be able to get one item.
+    try:
+        it = next(items)
+    except StopIteration:
+        # No items found.
+        raise
+    # But not another one.
+    try:
+        nit = next(items)
+    except StopIteration:
+        # I.e., we must have exhausted the iterator.
+        return it
+    raise ValueError(f"`items` must have only 1 item, got: {it}, {nit}, ...")
+
+
+def children_of_type(node: Base, typ: Type[T]) -> Iterator[T]:
+    """
+    Returns a generator over the children of `node` that are of type `typ`.
+    """
+    return (c for c in node.children if isinstance(c, typ))
