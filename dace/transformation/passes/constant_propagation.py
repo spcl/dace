@@ -118,6 +118,10 @@ class ConstantPropagation(ppl.Pass):
                     k: v
                     for k, v in mapping.items() if v is not _UnknownValue and k not in multivalue_desc_symbols
                 }
+                out_mapping = {
+                    k: v
+                    for k, v in out_consts[block].items() if v is not _UnknownValue and k not in multivalue_desc_symbols
+                }
 
                 if mapping:
                     # Update replaced symbols for later replacements
@@ -129,9 +133,10 @@ class ConstantPropagation(ppl.Pass):
                     elif isinstance(block, AbstractControlFlowRegion):
                         block.replace_dict(mapping, replace_in_graph=False, replace_keys=False)
 
+                if out_mapping:
                     # Replace in outgoing edges as well
                     for e in block.parent_graph.out_edges(block):
-                        e.data.replace_dict(mapping, replace_keys=False)
+                        e.data.replace_dict(out_mapping, replace_keys=False)
                 
                 if isinstance(block, LoopRegion):
                     if block in post_consts and post_consts[block] is not None:
