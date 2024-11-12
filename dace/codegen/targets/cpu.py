@@ -1845,7 +1845,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Define all input connectors of this map entry
         for e in dynamic_map_inputs(state_dfg, node):
-            if e.data.data != e.dst_conn:
+            if cpp.ptr(e.data.data, sdfg.arrays[e.data.data], sdfg, self._frame) != e.dst_conn:
                 callsite_stream.write(
                     self.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg,
                     state_id, node)
