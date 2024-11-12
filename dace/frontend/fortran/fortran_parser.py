@@ -4,11 +4,12 @@ import copy
 import os
 import warnings
 from copy import deepcopy as dpcp
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Dict, Tuple
 
 import networkx as nx
 from fparser.common.readfortran import FortranFileReader as ffr
 from fparser.common.readfortran import FortranStringReader as fsr
+from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory as pf
 from fparser.two.symbol_table import SymbolTable
 
@@ -2543,75 +2544,20 @@ def create_sdfg_from_string(
     reader = fsr(source_string)
     ast = parser(reader)
 
-    exclude_list = []
-    missing_modules = []
     dep_graph = nx.DiGraph()
     asts = {}
-    actually_used_in_module = {}
     interface_blocks = {}
     ast = recursive_ast_improver(ast,
                                  sources,
                                  [],
                                  parser,
                                  interface_blocks,
-                                 exclude_list=exclude_list,
-                                 missing_modules=missing_modules,
+                                 exclude_list=[],
+                                 missing_modules=[],
                                  dep_graph=dep_graph,
                                  asts=asts)
-
-    for mod, blocks in interface_blocks.items():
-
-        # get incoming edges
-        for in_mod, _, data in dep_graph.in_edges(mod, data=True):
-
-            weights = data.get('obj_list')
-            if weights is None:
-                continue
-
-            new_weights = []
-            for weight in weights:
-                name = weight.string
-                if name in blocks:
-                    new_weights.extend(blocks[name])
-                else:
-                    new_weights.append(weight)
-
-            dep_graph[in_mod][mod]['obj_list'] = new_weights
-
-    complete_interface_blocks = {}
-    for mod, blocks in interface_blocks.items():
-        complete_interface_blocks.update(blocks)
-
-    for node, node_data in dep_graph.nodes(data=True):
-
-        objects = node_data.get('info_list')
-
-        if objects is None:
-            continue
-
-        new_names_in_subroutines = {}
-        for subroutine, names in objects.names_in_subroutines.items():
-
-            new_names_list = []
-            for name in names:
-                if name in complete_interface_blocks:
-                    for replacement in complete_interface_blocks[name]:
-                        new_names_list.append(replacement.string)
-                else:
-                    new_names_list.append(name)
-            new_names_in_subroutines[subroutine] = new_names_list
-        objects.names_in_subroutines = new_names_in_subroutines
-
-    parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
-    simple_graph, actually_used_in_module = ast_utils.eliminate_dependencies(dep_graph)
-
-    changed = True
-    while changed:
-
-        simpler_graph = simple_graph.copy()
-        simple_graph, actually_used_in_module = ast_utils.eliminate_dependencies(simpler_graph)
-        if simple_graph.number_of_nodes() == simpler_graph.number_of_nodes() and simple_graph.number_of_edges() == simpler_graph.number_of_edges():
-            changed = False
+    assert not any(nx.simple_cycles(dep_graph))
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
 
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
 
@@ -2955,24 +2901,19 @@ def recursive_ast_improver(ast,
                            source_list,
                            include_list,
                            parser,
-                           interface_blocks,
-                           exclude_list=[],
-                           missing_modules=[],
-                           dep_graph=nx.DiGraph(),
-                           asts={}):
-    dfl = ast_utils.DefModuleLister()
-    dfl.get_defined_modules(ast)
-    defined_modules = dfl.list_of_modules
+                           interface_blocks: Dict[str, Dict[str, List[str]]],
+                           exclude_list,
+                           missing_modules,
+                           dep_graph: nx.DiGraph,
+                           asts):
+    defined_modules = ast_utils.get_defined_modules(ast)
     main_program_mode = False
     if len(defined_modules) != 1:
-        # print("Defined modules: ", defined_modules)
+        print("Defined modules: ", defined_modules)
         print("Assumption failed: Only one module per file")
-        if len(defined_modules) == 0 and ast.__class__.__name__ == "Program":
+        if len(defined_modules) == 0 and isinstance(ast, Program):
             main_program_mode = True
-    ufl = ast_utils.UseModuleLister()
-    ufl.get_used_modules(ast)
-    objects_in_modules = ufl.objects_in_use
-    used_modules = ufl.list_of_modules
+    used_modules, objects_in_modules = ast_utils.get_used_modules(ast)
 
     fandsl = ast_utils.FunctionSubroutineLister()
     fandsl.get_functions_and_subroutines(ast)
@@ -2996,7 +2937,6 @@ def recursive_ast_improver(ast,
         weight = None
         if i in objects_in_modules:
             weight = []
-
             for j in objects_in_modules[i].children:
                 weight.append(j)
 
@@ -3034,13 +2974,10 @@ def recursive_ast_improver(ast,
             continue
         if isinstance(source_list, dict):
             reader = fsr(source_list[next_file])
-
             next_ast = parser(reader)
-
         else:
-            next_reader = ffr(file_candidate=next_file, include_dirs=include_list, source_only=source_list)
-
-            next_ast = parser(next_reader)
+            reader = ffr(file_candidate=next_file, include_dirs=include_list, source_only=source_list)
+            next_ast = parser(reader)
 
         next_ast = recursive_ast_improver(next_ast,
                                           source_list,
@@ -3061,6 +2998,52 @@ def recursive_ast_improver(ast,
             ast.children.append(i)
         asts[i.children[0].children[1].string.lower()] = i
     return ast
+
+
+def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[str, Dict[str, List[str]]]) \
+        -> Tuple[nx.DiGraph, Dict[str, Dict]]:
+    for mod, blocks in interface_blocks.items():
+        for in_mod, _, data in dep_graph.in_edges(mod, data=True):
+            weights = data.get('obj_list')
+            if weights is None:
+                continue
+            new_weights = []
+            for weight in weights:
+                name = weight.string
+                if name in blocks:
+                    new_weights.extend(blocks[name])
+                else:
+                    new_weights.append(weight)
+            data.update(obj_list=new_weights)
+
+    # TODO: Is this block supposed to do _anything_?
+    for node, data in dep_graph.nodes(data=True):
+        objects = data.get('info_list')
+        if objects is None:
+            continue
+        new_names_in_subroutines = {}
+        for subroutine, names in objects.names_in_subroutines.items():
+            new_names_list = []
+            for name in names:
+                if name in interface_blocks:
+                    for replacement in interface_blocks[name]:
+                        new_names_list.append(replacement.string)
+                else:
+                    new_names_list.append(name)
+            new_names_in_subroutines[subroutine] = new_names_list
+        objects.names_in_subroutines = new_names_in_subroutines
+
+    simple_graph, actually_used_in_module = ast_utils.eliminate_dependencies(dep_graph)
+
+    changed = True
+    while changed:
+        old_graph = simple_graph.copy()
+        simple_graph, actually_used_in_module = ast_utils.eliminate_dependencies(old_graph)
+        if (simple_graph.number_of_nodes() == old_graph.number_of_nodes()
+                and simple_graph.number_of_edges() == old_graph.number_of_edges()):
+            changed = False
+
+    return simple_graph, actually_used_in_module
 
 
 def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir,
