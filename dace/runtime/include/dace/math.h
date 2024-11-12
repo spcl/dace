@@ -576,32 +576,23 @@ namespace dace
         template<
             typename T,
             typename U,
-            typename = std::enable_if_t<(std::is_integral<U>::value && std::is_unsigned<U>::value)>
+            typename = std::enable_if_t<std::is_integral<U>::value>
         >
         DACE_CONSTEXPR DACE_HDFI T ipow(const T& a, const U b)
         {
+            if(std::is_signed<U>::value) {
+                if(b < 0)
+                    return 0;
+            }
             if(b == 0) {
                 return T(1);
             };
+            using IterationBound_t = std::make_unsigned_t<U>;
             T result = a;
-            for (U i = 1; i < b; ++i)
+            const IterationBound_t stop{b};
+            for (IterationBound_t i = 1; i < stop; ++i)
                 result *= a;
             return result;
-        }
-
-
-        template<
-            typename T,
-            typename U,
-            typename = std::enable_if_t<(std::is_integral<U>::value && std::is_signed<U>::value)>
-        >
-        DACE_CONSTEXPR DACE_HDFI T ipow(const T& a, const U b)
-        {
-            if(b < 0) {
-                return T(0);
-            };
-            using UnsignedU = std::make_unsigned_t<U>;
-            return ipow(a, UnsignedU{b});
         }
 
 
