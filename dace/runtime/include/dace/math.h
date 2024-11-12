@@ -578,7 +578,7 @@ namespace dace
             typename U,
             typename = std::enable_if_t<std::is_integral<U>::value>
         >
-        DACE_CONSTEXPR DACE_HDFI T ipow(const T& a, const U b)
+        DACE_HDFI T ipow(const T& a, const U b)
         {
             if(std::is_signed<U>::value) {
                 if(b < 0)
