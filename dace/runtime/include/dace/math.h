@@ -512,6 +512,23 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
+
+
+#if defined(DACE_XILINX)
+
+        template<
+            typename T,
+            typename U
+        >
+        DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
+        {
+            return std::pow(a, b);
+        }
+
+#else
+        /* If `DACE_XILINX` is not defined, there is a specialization for `pow`
+         *  which only operates on integers. This allows it to use in `new[]`
+         *  expressions. */
         template<
             typename T,
             typename U,
@@ -522,29 +539,37 @@ namespace dace
             return std::pow(a, b);
         }
 
-#ifndef DACE_XILINX
+
+        //TODO: Should this always be the largest integer?
         template<typename T>
         using IntPowReturnType_t = std::conditional_t<std::is_unsigned<T>::value, unsigned long long int, long long int>;
 
-        template<typename T1, typename T2>
+
+       /* TODO: The return value is always an integer, this is different from the behaviour of `std::pow` that
+        *  always return a float. We should probably patch the code generator to generate `ipow` calls if all
+        *  arguments are integers. */
+        template<
+            typename T1,
+            typename T2,
+            typename = std::enable_if_t<std::is_integral<T1>::value && std::is_integral<T2>::value>
+        >
         static DACE_CONSTEXPR DACE_HDFI
-        std::enable_if_t<std::is_integral<T1>::value && std::is_integral<T2>::value, IntPowReturnType_t<T1> >
+        IntPowReturnType_t<T1>
         pow(const T1& a, const T2& b)
         {
-            /* TODO: The return value is always an integer, this is different from the behaviour of `std::pow` that
-             *  always return a float. We should probably patch the code generator to generate `ipow` calls if all
-             *  arguments are integers. */
-            if(std::is_signed<T2>::value && (b < 0))
-                return 0;
-            using IterationBound_t = typename std::make_unsigned<T2>::type;
+            if(std::is_signed<T2>::value) {
+                if(b < 0)
+                    return 0;
+            }
+            using IterationBound_t = std::make_unsigned_t<T2>;
             IntPowReturnType_t<T1> result = 1;
             const IterationBound_t stop = b;
+            //TODO: Implement logarithmic version.
             for (IterationBound_t i = 0; i < stop; ++i)
                 result *= a;
             return result;
 	};
 #endif
-
 
         template<typename T>
         DACE_HDFI T ipow(const T& a, const unsigned int& b) {
