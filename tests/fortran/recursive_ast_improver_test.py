@@ -20,6 +20,7 @@ def parse_and_improve(sources: Dict[str, str]):
     reader = FortranStringReader(sources['main.f90'])
     ast = parser(reader)
     assert isinstance(ast, Program)
+
     dep_graph = nx.DiGraph()
     asts = {}
     interface_blocks = {}
@@ -312,14 +313,14 @@ end program main
         M(Main_Program, [
             M.IGNORE(),  # program main
             M(Specification_Part, [
-                M(Use_Stmt),  # use lib
+                M(Use_Stmt),  # use lib, only : fun
                 *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
             ]),
             M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
             M.IGNORE(),  # end program main
         ]),
         M(Module, [
-            M(Module_Stmt, [M.IGNORE(), M(Name, has_attr={'string': M(has_value='lib')})]),  # module lib
+            M(Module_Stmt, [M.IGNORE(), M.NAMED('lib')]),  # module lib
             M(Module_Subprogram_Part, [
                 M(Contains_Stmt),  # contains
                 M(Subroutine_Subprogram, [
@@ -389,14 +390,14 @@ end program main
         M(Main_Program, [
             M.IGNORE(),  # program main
             M(Specification_Part, [
-                M(Use_Stmt),  # use lib
+                M(Use_Stmt),  # use lib_indirect, only: fun_indirect
                 *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
             ]),
-            M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
+            M(Execution_Part, [M(Call_Stmt)]),  # call fun_indirect(d)
             M.IGNORE(),  # end program main
         ]),
         M(Module, [
-            M(Module_Stmt, [M.IGNORE(), M(Name, has_attr={'string': M(has_value='lib_indirect')})]),
+            M(Module_Stmt, [M.IGNORE(), M.NAMED('lib_indirect')]),
             # module lib_indirect
             M(Specification_Part, [M(Use_Stmt)]),  # use lib
             M(Module_Subprogram_Part, [
@@ -406,7 +407,7 @@ end program main
             M(End_Module_Stmt),  # end module lib_indirect
         ]),
         M(Module, [
-            M(Module_Stmt, [M.IGNORE(), M(Name, has_attr={'string': M(has_value='lib')})]),  # module lib
+            M(Module_Stmt, [M.IGNORE(), M.NAMED('lib')]),  # module lib
             M(Module_Subprogram_Part, [
                 M(Contains_Stmt),  # contains
                 M(Subroutine_Subprogram),  # subroutine fun(d) ... end subroutine fun
@@ -466,9 +467,9 @@ end program main
             M(Specification_Part, [
                 *[M.IGNORE()] * 2,  # use lib; implicit none
                 M(Interface_Block, [
-                    M(Interface_Stmt, [M(Name, has_attr={'string': M(has_value='xi')})]),  # interface xi
+                    M(Interface_Stmt, [M.NAMED('xi')]),  # interface xi
                     M(Procedure_Stmt, [  # module procedure fun
-                        M('Procedure_Name_List', [M(Name, has_attr={'string': M(has_value='fun')})]),
+                        M('Procedure_Name_List', [M.NAMED('fun')]),
                         *[M.IGNORE()] * 2,
                     ]),
                     M.IGNORE(),  # end interface xi
@@ -544,7 +545,8 @@ end program main
     m = M(Program, [
         M(Main_Program, [
             M.IGNORE(),  # program main
-            M(Specification_Part),  # use lib; implicit none; double precision d(4)
+            M(Specification_Part, [M.IGNORE()]*3),
+            # use lib_indirect, only : fun, fun2; implicit none; double precision d(4)
             M(Execution_Part),  # d(2) = fun()
             M.IGNORE(),  # end program main
         ]),
@@ -553,20 +555,20 @@ end program main
             M(Specification_Part, [
                 *[M.IGNORE()] * 2,  # use lib, only: fun; implicit none
                 M(Interface_Block, [
-                    M(Interface_Stmt, [M(Name, has_attr={'string': M(has_value='xi')})]),  # interface xi
+                    M(Interface_Stmt, [M.NAMED('xi')]),  # interface xi
                     M(Procedure_Stmt, [  # module procedure fun
-                        M('Procedure_Name_List', [M(Name, has_attr={'string': M(has_value='fun')})]),
+                        M('Procedure_Name_List', [M.NAMED('fun')]),
                         *[M.IGNORE()] * 2,
                     ]),
                     M.IGNORE(),  # end interface xi
                 ]),
             ]),
-            M(Module_Subprogram_Part),  # contains; real function fun(); implicit none; fun = 5.5; end function fun
+            M(Module_Subprogram_Part),  # contains; real function fun2(); implicit none; fun2 = 4.2; end function fun2
             M.IGNORE(),  # end module lib
         ]),
         M(Module, [
             *[M.IGNORE()] * 2,  # module lib; implicit none
-            M(Module_Subprogram_Part),  # contains; real function fun2(); implicit none; fun2 = 4.2; end function fun2
+            M(Module_Subprogram_Part),  # contains; real function fun(); implicit none; fun = 5.5; end function fun
             M.IGNORE(),  # end module lib
         ]),
     ])

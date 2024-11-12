@@ -5,6 +5,8 @@ from os import path
 from tempfile import TemporaryDirectory
 from typing import Dict, Optional, Self, Tuple, Type, Union, List, LiteralString, Sequence, Collection
 
+from fparser.two.Fortran2003 import Name
+
 
 @dataclass
 class SourceCodeBuilder:
@@ -154,6 +156,10 @@ class FortranASTMatcher:
     def IGNORE(cls):
         """A placeholder matcher to not check further down the tree."""
         return cls()
+
+    @classmethod
+    def NAMED(cls, name: LiteralString):
+        return cls(Name, has_attr={'string': cls(has_value=name)})
 
 
 class InternalASTMatcher:

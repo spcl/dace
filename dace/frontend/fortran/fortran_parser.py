@@ -4,12 +4,15 @@ import copy
 import os
 import warnings
 from copy import deepcopy as dpcp
+from itertools import chain
 from typing import List, Optional, Set, Dict, Tuple
 
 import networkx as nx
 from fparser.common.readfortran import FortranFileReader as ffr
 from fparser.common.readfortran import FortranStringReader as fsr
-from fparser.two.Fortran2003 import Program
+from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec, Derived_Type_Def, End_Module_Stmt, \
+    Contains_Stmt, Rename, Name
+from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf
 from fparser.two.symbol_table import SymbolTable
 
@@ -2525,7 +2528,7 @@ def create_ast_from_string(
 
         program = ast_transforms.optionalArgsExpander(program)
 
-    return (program, own_ast)
+    return program, own_ast
 
 
 def create_sdfg_from_string(
@@ -2548,7 +2551,7 @@ def create_sdfg_from_string(
 
     dep_graph = nx.DiGraph()
     asts = {}
-    interface_blocks = {}
+    interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
     ast = recursive_ast_improver(ast,
                                  sources,
                                  [],
@@ -2559,141 +2562,10 @@ def create_sdfg_from_string(
                                  dep_graph=dep_graph,
                                  asts=asts)
     assert not any(nx.simple_cycles(dep_graph))
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
-
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
 
-    parse_list = {}
-    what_to_parse_list = {}
-    type_to_parse_list = {}
-    for i in parse_order:
-        edges = simple_graph.in_edges(i)
-        parse_list[i] = []
-        fands_list = []
-        type_list = []
-        res = simple_graph.nodes.get(i).get("info_list")
-        for j in edges:
-            deps = simple_graph.get_edge_data(j[0], j[1]).get("obj_list")
-            if deps is None:
-                continue
-            for k in deps:
-                if k.string not in parse_list[i]:
-                    parse_list[i].append(k.string)
-
-            if res is not None:
-                for jj in parse_list[i]:
-                    if jj in res.list_of_functions:
-                        if jj not in fands_list:
-                            fands_list.append(jj)
-                    if jj in res.list_of_subroutines:
-                        if jj not in fands_list:
-                            fands_list.append(jj)
-                    if jj in res.list_of_types:
-                        if jj not in type_list:
-                            type_list.append(jj)
-        print("Module " + i + " used names: " + str(parse_list[i]))
-        if len(fands_list) > 0:
-            print("Module " + i + " used fands: " + str(fands_list))
-            print("Actually used: " + str(actually_used_in_module[i]))
-        for j in actually_used_in_module[i]:
-            if res is not None:
-                if j in res.list_of_functions:
-                    if j not in fands_list:
-                        fands_list.append(j)
-                if j in res.list_of_subroutines:
-                    if j not in fands_list:
-                        fands_list.append(j)
-                if j in res.list_of_types:
-                    if j not in type_list:
-                        type_list.append(j)
-
-        what_to_parse_list[i] = fands_list
-        type_to_parse_list[i] = type_list
-
-    if len(parse_order) == 0:
-        top_level_ast = ast
-    else:
-        top_level_ast = parse_order.pop()
-    changes = True
-    new_children = []
-    if len(parse_order) > 0:
-        for i in ast.children:
-
-            if i.children[0].children[1].string not in parse_order and i.children[0].children[
-                1].string != top_level_ast:
-                print("Module " + i.children[0].children[1].string + " not needing parsing")
-            else:
-                types = []
-                subroutinesandfunctions = []
-                new_spec_children = []
-                for j in i.children[1].children:
-                    if j.__class__.__name__ == "Type_Declaration_Stmt":
-                        if j.children[0].__class__.__name__ != "Declaration_Type_Spec":
-                            new_spec_children.append(j)
-                            continue
-                        else:
-                            entity_decls = []
-                            for k in j.children[2].children:
-                                if k.__class__.__name__ == "Entity_Decl":
-                                    if k.children[0].string in actually_used_in_module[
-                                        i.children[0].children[1].string]:
-                                        entity_decls.append(k)
-                            if entity_decls == []:
-                                continue
-                            if j.children[2].children.__class__.__name__ == "tuple":
-                                # print("Assumption failed: Tuple not expected")
-                                new_spec_children.append(j)
-                                continue
-                            j.children[2].children.clear()
-                            for k in entity_decls:
-                                j.children[2].children.append(k)
-                            new_spec_children.append(j)
-                    elif j.__class__.__name__ == "Derived_Type_Def":
-                        if j.children[0].children[1].string in type_to_parse_list[i.children[0].children[1].string]:
-                            new_spec_children.append(j)
-                    else:
-                        new_spec_children.append(j)
-                i.children[1].children.clear()
-                for j in new_spec_children:
-                    i.children[1].children.append(j)
-                if i.children[2].__class__.__name__ == "End_Module_Stmt":
-                    new_children.append(i)
-                    continue
-                if i.children[0].children[1].string != top_level_ast:
-                    for j in i.children[2].children:
-                        if j.__class__.__name__ != "Contains_Stmt":
-
-                            if j.children[0].children[1].string in what_to_parse_list[i.children[0].children[1].string]:
-                                subroutinesandfunctions.append(j)
-                    i.children[2].children.clear()
-                    for j in subroutinesandfunctions:
-                        i.children[2].children.append(j)
-                new_children.append(i)
-
-        ast.children.clear()
-        for i in new_children:
-            ast.children.append(i)
-        name_dict = {}
-        rename_dict = {}
-        for i in parse_order:
-            local_rename_dict = {}
-            edges = list(simple_graph.in_edges(i))
-            names = []
-            for j in edges:
-                list_dict = simple_graph.get_edge_data(j[0], j[1])
-                if (list_dict['obj_list'] is not None):
-                    for k in list_dict['obj_list']:
-                        if not k.__class__.__name__ == "Name":
-                            if k.__class__.__name__ == "Rename":
-                                if k.children[2].string not in names:
-                                    names.append(k.children[2].string)
-                                local_rename_dict[k.children[2].string] = k.children[1].string
-                            # print("Assumption failed: Object list contains non-name node")
-                        else:
-                            if k.string not in names:
-                                names.append(k.string)
-            rename_dict[i] = local_rename_dict
-            name_dict[i] = names
+    name_dict, rename_dict = recompute_children(ast, parse_order, simple_graph, actually_used_in_module)
 
     tables = SymbolTable
     own_ast = ast_components.InternalFortranAst(ast, tables)
@@ -2904,7 +2776,7 @@ def recursive_ast_improver(ast,
                            source_list,
                            include_list,
                            parser,
-                           interface_blocks: Dict[str, Dict[str, List[str]]],
+                           interface_blocks: Dict[str, Dict[str, List[Name]]],
                            exclude_list,
                            missing_modules,
                            dep_graph: nx.DiGraph,
@@ -3003,8 +2875,8 @@ def recursive_ast_improver(ast,
     return ast
 
 
-def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[str, Dict[str, List[str]]]) \
-        -> Tuple[nx.DiGraph, Dict[str, Dict]]:
+def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[str, Dict[str, List[Name]]]) \
+        -> Tuple[nx.DiGraph, Dict[str, List]]:
     for mod, blocks in interface_blocks.items():
         for in_mod, _, data in dep_graph.in_edges(mod, data=True):
             weights = data.get('obj_list')
@@ -3028,9 +2900,9 @@ def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[st
         for subroutine, names in objects.names_in_subroutines.items():
             new_names_list = []
             for name in names:
-                if name in interface_blocks:
-                    for replacement in interface_blocks[name]:
-                        new_names_list.append(replacement.string)
+                if name in interface_blocks.keys():
+                    for replacement in interface_blocks[name].keys():
+                        new_names_list.append(replacement)
                 else:
                     new_names_list.append(name)
             new_names_in_subroutines[subroutine] = new_names_list
@@ -3047,6 +2919,114 @@ def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[st
             changed = False
 
     return simple_graph, actually_used_in_module
+
+
+def recompute_children(ast: Program, parse_order: List[str], simple_graph: nx.DiGraph,
+                       actually_used_in_module: Dict[str, List]):
+    if not parse_order:
+        return {}, {}
+
+    parse_list, what_to_parse_list, type_to_parse_list = {}, {}, {}
+    for mod in parse_order:
+        parse_list[mod] = []
+        fands_list, type_list = [], []
+        for tdecl, _, data in simple_graph.in_edges(mod, data=True):
+            deps = data.get("obj_list")
+            if not deps:
+                continue
+            dep_names = list(dep.string for dep in deps)
+            if dep_names:
+                ast_utils.extend_with_new_items_from(parse_list[mod], dep_names)
+        res = simple_graph.nodes.get(mod).get("info_list")
+        if not res:
+            continue
+        res_fand = set(chain(res.list_of_functions, res.list_of_subroutines))
+        res_types = set(res.list_of_types)
+        for tdecl, _, data in simple_graph.in_edges(mod, data=True):
+            fns = list(item for item in parse_list[mod] if item in res_fand)
+            if fns:
+                ast_utils.extend_with_new_items_from(fands_list, fns)
+            typs = list(item for item in parse_list[mod] if item in res_types)
+            if typs:
+                ast_utils.extend_with_new_items_from(type_list, typs)
+        fns = list(item for item in actually_used_in_module[mod] if item in res_fand)
+        if fns:
+            ast_utils.extend_with_new_items_from(fands_list, fns)
+        typs = list(item for item in actually_used_in_module[mod] if item in res_types)
+        if typs:
+            ast_utils.extend_with_new_items_from(type_list, typs)
+        what_to_parse_list[mod] = fands_list
+        type_to_parse_list[mod] = type_list
+
+    top_level_ast: str = parse_order.pop() if parse_order else ast
+    new_children = []
+    for mod in ast.children:
+        stmt, spec, exec = mod.children[0:3]
+        stmt_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
+        if stmt_name not in parse_order and stmt_name != top_level_ast:
+            print(f"Module {stmt_name} not needing parsing")
+            continue
+        subroutinesandfunctions, new_spec_children = [], []
+        for tdecl in ast_utils.children_of_type(spec, Type_Declaration_Stmt):
+            intrinsic_spec, _, entity_decls_list = tdecl.children
+            if isinstance(intrinsic_spec, Declaration_Type_Spec):
+                new_spec_children.append(tdecl)
+                continue
+            entity_decls = []
+            for edecl in ast_utils.children_of_type(entity_decls_list, Entity_Decl):
+                edecl_name = ast_utils.singular(ast_utils.children_of_type(edecl, Name)).string
+                if edecl_name in actually_used_in_module[stmt_name]:
+                    entity_decls.append(edecl)
+            if not entity_decls:
+                continue
+            if isinstance(entity_decls_list.children, tuple):
+                new_spec_children.append(tdecl)
+                continue
+            entity_decls_list.children.clear()
+            for edecl in entity_decls:
+                entity_decls_list.children.append(edecl)
+            new_spec_children.append(tdecl)
+        for derv in ast_utils.children_of_type(spec, Derived_Type_Def):
+            if derv.children[0].children[1].string in type_to_parse_list[stmt_name]:
+                new_spec_children.append(derv)
+        for c in spec.children:
+            if not isinstance(c, (Type_Declaration_Stmt, Derived_Type_Def)):
+                new_spec_children.append(c)
+        spec.children[:] = new_spec_children
+
+        if isinstance(exec, End_Module_Stmt):
+            new_children.append(mod)
+            continue
+        if stmt_name != top_level_ast:
+            for c in exec.children:
+                if not isinstance(c, Contains_Stmt):
+                    if c.children[0].children[1].string in what_to_parse_list[stmt_name]:
+                        subroutinesandfunctions.append(c)
+            exec.children[:] = subroutinesandfunctions
+        new_children.append(mod)
+    ast.children[:] = new_children
+
+    name_dict, rename_dict = {}, {}
+    for mod in parse_order:
+        local_rename_dict = {}
+        names = []
+        for user, _, data in list(simple_graph.in_edges(mod, data=True)):
+            objs = data.get('obj_list')
+            if not objs:
+                continue
+            name_nodes = list(item.string for item in objs if isinstance(item, Name))
+            if name_nodes:
+                ast_utils.extend_with_new_items_from(names, name_nodes)
+            rename_nodes = list(item.children[2].string for item in objs if isinstance(item, Rename))
+            if rename_nodes:
+                ast_utils.extend_with_new_items_from(names, rename_nodes)
+            for item in objs:
+                if isinstance(item, Rename):
+                    local_rename_dict[item.children[2].string] = item.children[1].string
+        rename_dict[mod] = local_rename_dict
+        name_dict[mod] = names
+
+    return name_dict, rename_dict
 
 
 def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir,
