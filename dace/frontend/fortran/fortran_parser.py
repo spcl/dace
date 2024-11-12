@@ -2529,7 +2529,7 @@ def create_ast_from_string(
 def create_sdfg_from_string(
         source_string: str,
         sdfg_name: str,
-        normalize_offsets: bool = False,
+        normalize_offsets: bool = True,
         multiple_sdfgs: bool = False,
         sources: List[str] = None,
 ):
@@ -2757,7 +2757,6 @@ def create_sdfg_from_string(
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
-    program = ast_transforms.ArgumentExtractor(program).visit(program)
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
@@ -2789,6 +2788,8 @@ def create_sdfg_from_string(
     for transformation in own_ast.fortran_intrinsics().transformations():
         transformation.initialize(program)
         program = transformation.visit(program)
+
+    program = ast_transforms.ArgumentExtractor(program).visit(program)
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
