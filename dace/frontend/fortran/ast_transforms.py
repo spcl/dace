@@ -83,7 +83,6 @@ def iter_fields(node: ast_internal_classes.FNode):
     Yield a tuple of ``(fieldname, value)`` for each field in ``node._fields``
     that is present on *node*.
     """
-    assert hasattr(node, "_fields")
     for field in node._fields:
         try:
             yield field, getattr(node, field)
@@ -95,7 +94,6 @@ def iter_attributes(node: ast_internal_classes.FNode):
     Yield a tuple of ``(fieldname, value)`` for each field in ``node._attributes``
     that is present on *node*.
     """
-    assert hasattr(node, "_attributes")
     for field in node._attributes:
         try:
             yield field, getattr(node, field)
