@@ -6,7 +6,8 @@ import copy
 import sympy as sp
 from typing import Dict, List, Set
 
-from dace import data as dt, memlet, nodes, sdfg as sd, symbolic, subsets, properties
+from dace import data as dt, dtypes, memlet, nodes, sdfg as sd, symbolic, subsets, properties
+from dace.codegen.tools.type_inference import infer_expr_type
 from dace.sdfg import graph as gr, nodes
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil
@@ -92,6 +93,15 @@ class LoopToMap(xf.MultiStateTransformation):
         step = loop_analysis.get_loop_stride(self.loop)
         itervar = self.loop.loop_variable
         if start is None or end is None or step is None or itervar is None:
+            return False
+
+        sset = {}
+        sset.update(sdfg.symbols)
+        sset.update(sdfg.arrays)
+        t = dtypes.result_type_of(infer_expr_type(start, sset), infer_expr_type(step, sset), infer_expr_type(end, sset))
+        # We may only convert something to map if the bounds are all integer-derived types. Otherwise most map schedules
+        # except for sequential would be invalid.
+        if not t in dtypes.INTEGER_TYPES:
             return False
 
         # Loops containing break, continue, or returns may not be turned into a map.
