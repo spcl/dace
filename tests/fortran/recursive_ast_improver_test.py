@@ -299,7 +299,7 @@ contains
 end module lib
 """).add_file("""
 program main
-  use lib, only : fun
+  use lib
   implicit none
   double precision d(4)
   call fun(d)
@@ -426,9 +426,9 @@ end program main
 
     # Verify simplification of the dependency graph.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
-    assert set(simple_graph.nodes) == {'main', 'lib_indirect'}
-    assert set(simple_graph.edges) == {('main', 'lib_indirect')}
-    assert actually_used_in_module == {'lib_indirect': ['fun_indirect'], 'main': []}
+    assert set(simple_graph.nodes) == {'main', 'lib', 'lib_indirect'}
+    assert set(simple_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
+    assert actually_used_in_module == {'lib': ['fun'], 'lib_indirect': ['fun_indirect', 'fun'], 'main': []}
 
 
 def test_interface_block_contains_module_procedure():
@@ -498,8 +498,8 @@ end program main
 
     # Verify simplification of the dependency graph.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
-    assert not set(simple_graph.nodes)
-    assert not actually_used_in_module
+    assert set(simple_graph.nodes) == {'lib', 'main'}
+    assert actually_used_in_module == {'lib': ['fun'], 'main': []}
 
 
 def test_module_contains_interface_block():
