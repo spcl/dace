@@ -2565,7 +2565,7 @@ def create_sdfg_from_string(
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
 
-    name_dict, rename_dict = recompute_children(ast, parse_order, simple_graph, actually_used_in_module)
+    name_dict, rename_dict = prune_unused_children(ast, parse_order, simple_graph, actually_used_in_module)
 
     tables = SymbolTable
     own_ast = ast_components.InternalFortranAst(ast, tables)
@@ -2891,7 +2891,6 @@ def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[st
                     new_weights.append(weight)
             data.update(obj_list=new_weights)
 
-    # TODO: Is this block supposed to do _anything_?
     for node, data in dep_graph.nodes(data=True):
         objects = data.get('info_list')
         if objects is None:
@@ -2921,8 +2920,8 @@ def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[st
     return simple_graph, actually_used_in_module
 
 
-def recompute_children(ast: Program, parse_order: List[str], simple_graph: nx.DiGraph,
-                       actually_used_in_module: Dict[str, List]):
+def prune_unused_children(ast: Program, parse_order: List[str], simple_graph: nx.DiGraph,
+                          actually_used_in_module: Dict[str, List]):
     if not parse_order:
         return {}, {}
 

@@ -12,7 +12,7 @@ from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory
 
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver, simplified_dependency_graph, \
-    recompute_children
+    prune_unused_children
 from tests.fortran.fotran_test_helper import SourceCodeBuilder, FortranASTMatcher as M
 
 
@@ -65,7 +65,7 @@ end program main
     assert not actually_used_in_module
 
     # Now the actual operation that we are testing.
-    name_dict, rename_dict = recompute_children(ast, parse_order, simple_graph, actually_used_in_module)
+    name_dict, rename_dict = prune_unused_children(ast, parse_order, simple_graph, actually_used_in_module)
 
     #  Since there was no module, it should be the exact same AST as the corresponding test in
     #  `recursive_ast_improver_test.py`.
@@ -121,7 +121,7 @@ end program main
     assert actually_used_in_module == {'lib': ['fun'], 'main': []}
 
     # Now the actual operation that we are testing.
-    name_dict, rename_dict = recompute_children(ast, parse_order, simple_graph, actually_used_in_module)
+    name_dict, rename_dict = prune_unused_children(ast, parse_order, simple_graph, actually_used_in_module)
 
     #  However, the AST should now be a little different from the original dependency graph computed in
     #  `recursive_ast_improver_test.py`. So, our matcher needs to reflect that too.
@@ -200,7 +200,7 @@ end program main
     assert actually_used_in_module == {'lib': ['fun'], 'lib_indirect': ['fun_indirect', 'fun'], 'main': []}
 
     # Now the actual operation that we are testing.
-    name_dict, rename_dict = recompute_children(ast, parse_order, simple_graph, actually_used_in_module)
+    name_dict, rename_dict = prune_unused_children(ast, parse_order, simple_graph, actually_used_in_module)
 
     #  However, the AST should now be a little different from the original dependency graph computed in
     #  `recursive_ast_improver_test.py`. So, our matcher needs to reflect that too.
@@ -288,7 +288,7 @@ end program main
     assert actually_used_in_module == {'lib': ['fun'], 'lib_indirect': ['fun', 'fun2'], 'main': []}
 
     # Now the actual operation that we are testing.
-    name_dict, rename_dict = recompute_children(ast, parse_order, simple_graph, actually_used_in_module)
+    name_dict, rename_dict = prune_unused_children(ast, parse_order, simple_graph, actually_used_in_module)
 
     #  However, the AST should now be a little different from the original dependency graph computed in
     #  `recursive_ast_improver_test.py`. So, our matcher needs to reflect that too.
@@ -373,7 +373,7 @@ end program main
     assert actually_used_in_module == {'lib': ['fun'], 'main': []}
 
     # Now the actual operation that we are testing.
-    name_dict, rename_dict = recompute_children(ast, parse_order, simple_graph, actually_used_in_module)
+    name_dict, rename_dict = prune_unused_children(ast, parse_order, simple_graph, actually_used_in_module)
 
     #  However, the AST should now be a little different from the original dependency graph computed in
     #  `recursive_ast_improver_test.py`. So, our matcher needs to reflect that too.
