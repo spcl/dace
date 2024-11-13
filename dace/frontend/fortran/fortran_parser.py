@@ -2966,31 +2966,38 @@ def recompute_children(ast: Program, parse_order: List[str], simple_graph: nx.Di
         if stmt_name not in parse_order and stmt_name != top_level_ast:
             print(f"Module {stmt_name} not needing parsing")
             continue
+        # if stmt_name == top_level_ast:
+        #     new_children.append(mod)
         subroutinesandfunctions, new_spec_children = [], []
-        for tdecl in ast_utils.children_of_type(spec, Type_Declaration_Stmt):
-            intrinsic_spec, _, entity_decls_list = tdecl.children
-            if isinstance(intrinsic_spec, Declaration_Type_Spec):
-                new_spec_children.append(tdecl)
-                continue
-            entity_decls = []
-            for edecl in ast_utils.children_of_type(entity_decls_list, Entity_Decl):
-                edecl_name = ast_utils.singular(ast_utils.children_of_type(edecl, Name)).string
-                if edecl_name in actually_used_in_module[stmt_name]:
-                    entity_decls.append(edecl)
-            if not entity_decls:
-                continue
-            if isinstance(entity_decls_list.children, tuple):
-                new_spec_children.append(tdecl)
-                continue
-            entity_decls_list.children.clear()
-            for edecl in entity_decls:
-                entity_decls_list.children.append(edecl)
-            new_spec_children.append(tdecl)
-        for derv in ast_utils.children_of_type(spec, Derived_Type_Def):
-            if derv.children[0].children[1].string in type_to_parse_list[stmt_name]:
-                new_spec_children.append(derv)
         for c in spec.children:
-            if not isinstance(c, (Type_Declaration_Stmt, Derived_Type_Def)):
+            if isinstance(c, Type_Declaration_Stmt):
+                tdecl = c
+                intrinsic_spec, _, entity_decls_list = tdecl.children
+                if not isinstance(intrinsic_spec, Declaration_Type_Spec):
+                    new_spec_children.append(tdecl)
+                    continue
+                entity_decls = []
+                for edecl in ast_utils.children_of_type(entity_decls_list, Entity_Decl):
+                    edecl_name = ast_utils.singular(ast_utils.children_of_type(edecl, Name)).string
+                    if edecl_name in actually_used_in_module[stmt_name]:
+                        entity_decls.append(edecl)
+                    # elif (edecl_name in rename_dict[stmt_name]
+                    #       and rename_dict[stmt_name][edecl_name] in actually_used_in_module[stmt_name]):
+                    #     entity_decls.append(edecl)
+                if not entity_decls:
+                    continue
+                if isinstance(entity_decls_list.children, tuple):
+                    new_spec_children.append(tdecl)
+                    continue
+                entity_decls_list.children.clear()
+                for edecl in entity_decls:
+                    entity_decls_list.children.append(edecl)
+                new_spec_children.append(tdecl)
+            elif isinstance(c, Derived_Type_Def):
+                derv = c
+                if derv.children[0].children[1].string in type_to_parse_list[stmt_name]:
+                    new_spec_children.append(derv)
+            else:
                 new_spec_children.append(c)
         spec.children[:] = new_spec_children
 

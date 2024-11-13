@@ -5,14 +5,14 @@ import networkx as nx
 from fparser.common.readfortran import FortranStringReader
 from fparser.two.Fortran2003 import Main_Program, Specification_Part, Execution_Part, \
     Subroutine_Subprogram, Call_Stmt, Subroutine_Stmt, \
-    End_Subroutine_Stmt, Module_Stmt, Module, End_Module_Stmt, Module_Subprogram_Part, Contains_Stmt, Use_Stmt, Name, \
-    Assignment_Stmt, Interface_Block, Interface_Stmt
+    End_Subroutine_Stmt, Module_Stmt, Module, End_Module_Stmt, Module_Subprogram_Part, Contains_Stmt, Use_Stmt, \
+    Assignment_Stmt, Interface_Block, Interface_Stmt, Program_Stmt, Implicit_Part, End_Program_Stmt
 from fparser.two.Fortran2003 import Program
-from fparser.two.Fortran2008 import Procedure_Stmt
+from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory
 
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver, simplified_dependency_graph, \
-    recompute_children, create_sdfg_from_string
+    recompute_children
 from tests.fortran.fotran_test_helper import SourceCodeBuilder, FortranASTMatcher as M
 
 
@@ -44,6 +44,49 @@ def parse_improve_and_simplify(sources: Dict[str, str]):
     return ast, parse_order, simple_graph, actually_used_in_module, asts
 
 
+def test_minimal():
+    """
+    NOTE: We have a very similar test in `recursive_ast_improver_test.py`.
+    A minimal program that does not have any modules. So, `recompute_children()` should be a noop here.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+program main
+  implicit none
+  double precision d(4)
+  d(2) = 5.5
+end program main
+""").check_with_gfortran().get()
+    ast, parse_order, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+
+    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
+    # `recursive_ast_improver_test.py`.
+    assert not asts
+    assert not set(simple_graph.nodes)
+    assert not actually_used_in_module
+
+    # Now the actual operation that we are testing.
+    name_dict, rename_dict = recompute_children(ast, parse_order, simple_graph, actually_used_in_module)
+
+    #  Since there was no module, it should be the exact same AST as the corresponding test in
+    #  `recursive_ast_improver_test.py`.
+    m = M(Program, [
+        M(Main_Program, [
+            M(Program_Stmt),  # program main
+            M(Specification_Part, [
+                M(Implicit_Part),  # implicit none
+                M(Type_Declaration_Stmt),  # double precision d(4)
+            ]),
+            M(Execution_Part, [M(Assignment_Stmt)]),  # d(2) = 5.5
+            M(End_Program_Stmt),  # end program main
+        ]),
+    ])
+    m.check(ast)
+
+    # Verify
+    assert not name_dict
+    assert not rename_dict
+
+
 def test_uses_module():
     """
     NOTE: We have a very similar test in `recursive_ast_improver_test.py`.
@@ -62,7 +105,7 @@ contains
 end module lib
 """).add_file("""
 program main
-  use lib, only : fun
+  use lib
   implicit none
   double precision d(4)
   call fun(d)
@@ -87,8 +130,7 @@ end program main
             M.IGNORE(),  # program main
             M(Specification_Part, [
                 M(Use_Stmt),  # use lib, only : fun
-                # TODO: Why is it gone? Investigate.
-                M.IGNORE(),  # implicit none; NOTE: the `double precision d(4)` part is now gone from here.
+                *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
             ]),
             M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
             M.IGNORE(),  # end program main
@@ -153,9 +195,9 @@ end program main
     # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
     # `recursive_ast_improver_test.py`.
     assert set(asts.keys()) == {'lib', 'lib_indirect'}
-    assert set(simple_graph.nodes) == {'main', 'lib_indirect'}
-    assert set(simple_graph.edges) == {('main', 'lib_indirect')}
-    assert actually_used_in_module == {'lib_indirect': ['fun_indirect'], 'main': []}
+    assert set(simple_graph.nodes) == {'main', 'lib', 'lib_indirect'}
+    assert set(simple_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
+    assert actually_used_in_module == {'lib': ['fun'], 'lib_indirect': ['fun_indirect', 'fun'], 'main': []}
 
     # Now the actual operation that we are testing.
     name_dict, rename_dict = recompute_children(ast, parse_order, simple_graph, actually_used_in_module)
@@ -167,8 +209,7 @@ end program main
             M.IGNORE(),  # program main
             M(Specification_Part, [
                 M(Use_Stmt),  # use lib_indirect, only: fun_indirect
-                # TODO: Why is it gone? Investigate.
-                M.IGNORE(),  # implicit none; NOTE: the `double precision d(4)` part is now gone from here.
+                *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
             ]),
             M(Execution_Part, [M(Call_Stmt)]),  # call fun_indirect(d)
             M.IGNORE(),  # end program main
@@ -178,27 +219,26 @@ end program main
             # module lib_indirect
             M(Specification_Part, [M(Use_Stmt)]),  # use lib
             M(Module_Subprogram_Part, [
-                # TODO: Why is it gone? Investigate.
-                # NOTE: We have dropped the `contains` statement.
-                M(Subroutine_Subprogram, [
-                    M(Subroutine_Stmt),  # subroutine fun_indirect(d)
-                    M(Specification_Part),  # implicit none; double precision d(4)
-                    M(Execution_Part, [
-                        M(Call_Stmt, [M.NAMED('fun'), M.IGNORE()]),  # call fun(d)
-                    ]),
-                    M(End_Subroutine_Stmt),  # end subroutine fun_indirect
-                ]),
+                # TODO: Why the `contains` node is gone?
+                # M(Contains_Stmt),  # contains
+                M(Subroutine_Subprogram),  # subroutine fun_indirect(d) ... end subroutine fun_indirect
             ]),
             M(End_Module_Stmt),  # end module lib_indirect
         ]),
-        # TODO: Why is it gone? Investigate.
-        # NOTE: We have dropped the `lib` module, which actually contained the defintion of `fun`.
+        M(Module, [
+            M(Module_Stmt, [M.IGNORE(), M.NAMED('lib')]),  # module lib
+            M(Module_Subprogram_Part, [
+                M(Contains_Stmt),  # contains
+                M(Subroutine_Subprogram),  # subroutine fun(d) ... end subroutine fun
+            ]),
+            M(End_Module_Stmt),  # end module lib
+        ]),
     ])
     m.check(ast)
 
     # Verify
-    assert name_dict == {'lib_indirect': ['fun_indirect']}
-    assert rename_dict == {'lib_indirect': {}}
+    assert name_dict == {'lib': ['fun'], 'lib_indirect': ['fun_indirect']}
+    assert rename_dict == {'lib': {}, 'lib_indirect': {}}
 
 
 def test_module_contains_interface_block():
@@ -254,9 +294,8 @@ end program main
     m = M(Program, [
         M(Main_Program, [
             M.IGNORE(),  # program main
-            # TODO: Why is it gone? Investigate.
-            # NOTE: the `double precision d(4)` part is now gone from here.
-            M(Specification_Part, [M.IGNORE()]*2),  # use lib; implicit none
+            M(Specification_Part, [M.IGNORE()] * 3),
+            # use lib_indirect, only : fun, fun2; implicit none; double precision d(4)
             M(Execution_Part, [M(Assignment_Stmt)]),  # d(2) = fun()
             M.IGNORE(),  # end program main
         ]),
@@ -285,5 +324,5 @@ end program main
     m.check(ast)
 
     # Verify
-    assert name_dict =={'lib': ['fun'], 'lib_indirect': ['fun', 'fun2']}
+    assert name_dict == {'lib': ['fun'], 'lib_indirect': ['fun', 'fun2']}
     assert rename_dict == {'lib': {}, 'lib_indirect': {}}
