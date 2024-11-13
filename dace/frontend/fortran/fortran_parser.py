@@ -11,7 +11,7 @@ import networkx as nx
 from fparser.common.readfortran import FortranFileReader as ffr
 from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec, Derived_Type_Def, End_Module_Stmt, \
-    Contains_Stmt, Rename, Name
+    Contains_Stmt, Rename, Name, Subroutine_Subprogram, Function_Subprogram
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf
 from fparser.two.symbol_table import SymbolTable
@@ -2962,11 +2962,11 @@ def recompute_children(ast: Program, parse_order: List[str], simple_graph: nx.Di
     new_children = []
     for mod in ast.children:
         stmt, spec, exec = mod.children[0:3]
-        stmt_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
-        if stmt_name not in parse_order and stmt_name != top_level_ast:
-            print(f"Module {stmt_name} not needing parsing")
+        mod_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
+        if mod_name not in parse_order and mod_name != top_level_ast:
+            print(f"Module {mod_name} not needing parsing")
             continue
-        # if stmt_name == top_level_ast:
+        # if mod_name == top_level_ast:
         #     new_children.append(mod)
         subroutinesandfunctions, new_spec_children = [], []
         for c in spec.children:
@@ -2979,10 +2979,10 @@ def recompute_children(ast: Program, parse_order: List[str], simple_graph: nx.Di
                 entity_decls = []
                 for edecl in ast_utils.children_of_type(entity_decls_list, Entity_Decl):
                     edecl_name = ast_utils.singular(ast_utils.children_of_type(edecl, Name)).string
-                    if edecl_name in actually_used_in_module[stmt_name]:
+                    if edecl_name in actually_used_in_module[mod_name]:
                         entity_decls.append(edecl)
-                    # elif (edecl_name in rename_dict[stmt_name]
-                    #       and rename_dict[stmt_name][edecl_name] in actually_used_in_module[stmt_name]):
+                    # elif (edecl_name in rename_dict[mod_name]
+                    #       and rename_dict[mod_name][edecl_name] in actually_used_in_module[mod_name]):
                     #     entity_decls.append(edecl)
                 if not entity_decls:
                     continue
@@ -2995,8 +2995,13 @@ def recompute_children(ast: Program, parse_order: List[str], simple_graph: nx.Di
                 new_spec_children.append(tdecl)
             elif isinstance(c, Derived_Type_Def):
                 derv = c
-                if derv.children[0].children[1].string in type_to_parse_list[stmt_name]:
+                if derv.children[0].children[1].string in type_to_parse_list[mod_name]:
                     new_spec_children.append(derv)
+            elif isinstance(c, (Subroutine_Subprogram, Function_Subprogram)):
+                subr, subr_stmt = c, c.children[0]
+                subr_name = ast_utils.singular(ast_utils.children_of_type(subr_stmt, Name)).string
+                if subr_name in actually_used_in_module[mod_name]:
+                    new_spec_children.append(subr)
             else:
                 new_spec_children.append(c)
         spec.children[:] = new_spec_children
@@ -3004,10 +3009,10 @@ def recompute_children(ast: Program, parse_order: List[str], simple_graph: nx.Di
         if isinstance(exec, End_Module_Stmt):
             new_children.append(mod)
             continue
-        if stmt_name != top_level_ast:
+        if mod_name != top_level_ast:
             for c in exec.children:
                 if not isinstance(c, Contains_Stmt):
-                    if c.children[0].children[1].string in what_to_parse_list[stmt_name]:
+                    if c.children[0].children[1].string in what_to_parse_list[mod_name]:
                         subroutinesandfunctions.append(c)
             exec.children[:] = subroutinesandfunctions
         new_children.append(mod)

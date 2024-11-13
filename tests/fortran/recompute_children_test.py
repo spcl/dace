@@ -243,6 +243,7 @@ end program main
 
 def test_module_contains_interface_block():
     """
+    NOTE: We have a very similar test in `recursive_ast_improver_test.py`.
     The same simple program, but this time the subroutine is defined inside the main program that calls it.
     """
     sources, main = SourceCodeBuilder().add_file("""
@@ -326,3 +327,83 @@ end program main
     # Verify
     assert name_dict == {'lib': ['fun'], 'lib_indirect': ['fun', 'fun2']}
     assert rename_dict == {'lib': {}, 'lib_indirect': {}}
+
+
+def test_uses_module_but_prunes_unused_defs():
+    """
+    NOTE: We have a very similar test in `recursive_ast_improver_test.py`.
+    A simple program, but this time the subroutine is defined in a module, that also has some unused subroutine.
+    The main program uses the module and calls the subroutine. So, we should have "recursively improved" the AST by
+    parsing that module and constructing the dependency graph. Then after simplification, that unused subroutine should
+    be gone from the dependency graph.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+contains
+  subroutine fun(d)
+    implicit none
+    double precision d(4)
+    d(2) = 5.5
+  end subroutine fun
+  subroutine not_fun(d)  ! `main` only uses `fun`, so this should be dropped after simplification
+    implicit none
+    double precision d(4)
+    d(2) = 4.2
+  end subroutine not_fun
+  integer function real_fun()  ! `main` only uses `fun`, so this should be dropped after simplification
+    implicit none
+    real_fun = 4.7
+  end function real_fun
+end module lib
+""").add_file("""
+program main
+  use lib, only: fun
+  implicit none
+  double precision d(4)
+  call fun(d)
+end program main
+""").check_with_gfortran().get()
+    ast, parse_order, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+
+    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
+    # `recursive_ast_improver_test.py`.
+    assert set(asts.keys()) == {'lib'}
+    assert set(simple_graph.nodes) == {'main', 'lib'}
+    assert set(simple_graph.edges) == {('main', 'lib')}
+    assert actually_used_in_module == {'lib': ['fun'], 'main': []}
+
+    # Now the actual operation that we are testing.
+    name_dict, rename_dict = recompute_children(ast, parse_order, simple_graph, actually_used_in_module)
+
+    #  However, the AST should now be a little different from the original dependency graph computed in
+    #  `recursive_ast_improver_test.py`. So, our matcher needs to reflect that too.
+    m = M(Program, [
+        M(Main_Program, [
+            M.IGNORE(),  # program main
+            M(Specification_Part, [
+                M(Use_Stmt),  # use lib
+                *M.IGNORE(2),  # implicit none; double precision d(4)
+            ]),
+            M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
+            M.IGNORE(),  # end program main
+        ]),
+        M(Module, [
+            M(Module_Stmt, [M.IGNORE(), M.NAMED('lib')]),  # module lib
+            M(Module_Subprogram_Part, [
+                M(Contains_Stmt),  # contains
+                M(Subroutine_Subprogram, [
+                    M(Subroutine_Stmt, [M.IGNORE(), M.NAMED('fun'), *M.IGNORE(2)]),  # subroutine fun(d)
+                    M(Specification_Part),  # implicit none; double precision d(4)
+                    M(Execution_Part),  # d(2) = 5.5
+                    M(End_Subroutine_Stmt),  # end subroutine fun
+                ]),
+                # NOTE: the `not_fun(d)` and `real_fun()` are gone!
+            ]),
+            M(End_Module_Stmt),  # end module lib
+        ]),
+    ])
+    m.check(ast)
+
+    # Verify
+    assert name_dict == {'lib': ['fun']}
+    assert rename_dict == {'lib': {}}

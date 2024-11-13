@@ -590,9 +590,10 @@ end program main
 
 def test_uses_module_but_prunes_unused_defs():
     """
-    A simple program, but this time the subroutine is defined in a module. The main program uses the module and calls
-    the subroutine. So, we should have "recursively improved" the AST by parsing that module and constructing the
-    dependency graph.
+    A simple program, but this time the subroutine is defined in a module, that also has some unused subroutine.
+    The main program uses the module and calls the subroutine. So, we should have "recursively improved" the AST by
+    parsing that module and constructing the dependency graph. Then after simplification, that unused subroutine should
+    be gone from the dependency graph.
     """
     sources, main = SourceCodeBuilder().add_file("""
 module lib
@@ -607,6 +608,10 @@ contains
     double precision d(4)
     d(2) = 4.2
   end subroutine not_fun
+  integer function real_fun()  ! `main` only uses `fun`, so this should be dropped after simplification
+    implicit none
+    real_fun = 4.7
+  end function real_fun
 end module lib
 """).add_file("""
 program main
@@ -634,8 +639,7 @@ end program main
             M(Module_Subprogram_Part, [
                 M(Contains_Stmt),  # contains
                 M(Subroutine_Subprogram, [
-                    M(Subroutine_Stmt,  # subroutine fun(d)
-                      [M.IGNORE(), M.NAMED('fun'), *M.IGNORE(2)]),
+                    M(Subroutine_Stmt, [M.IGNORE(), M.NAMED('fun'), *M.IGNORE(2)]),  # subroutine fun(d)
                     M(Specification_Part),  # implicit none; double precision d(4)
                     M(Execution_Part),  # d(2) = 5.5
                     M(End_Subroutine_Stmt),  # end subroutine fun
@@ -643,9 +647,12 @@ end program main
                 M(Subroutine_Subprogram, [
                     M(Subroutine_Stmt,  # subroutine not_fun(d)
                       [M.IGNORE(), M.NAMED('not_fun'), *M.IGNORE(2)]),
-                    M(Specification_Part),  # implicit none; double precision d(4)
-                    M(Execution_Part),  # d(2) = 4.2
-                    M(End_Subroutine_Stmt),  # end subroutine not_fun
+                    *M.IGNORE(3),
+                ]),
+                M(Function_Subprogram, [
+                    M(Function_Stmt,  # subroutine not_fun(d)
+                      [M.IGNORE(), M.NAMED('real_fun'), *M.IGNORE(2)]),
+                    *M.IGNORE(3),
                 ]),
             ]),
             M(End_Module_Stmt),  # end module lib
