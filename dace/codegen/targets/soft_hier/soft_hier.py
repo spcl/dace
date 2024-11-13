@@ -159,8 +159,8 @@ class SoftHierCodeGen(TargetCodeGenerator):
         for e, state in list(sdfg.all_edges_recursive()):
             nsdfg = state.parent
             if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode):
-                if (e.src.desc(nsdfg).storage == dtypes.StorageType.GPU_Global
-                        and e.dst.desc(nsdfg).storage == dtypes.StorageType.GPU_Global):
+                if (e.src.desc(nsdfg).storage == dtypes.StorageType.SoftHier_HBM
+                        and e.dst.desc(nsdfg).storage == dtypes.StorageType.SoftHier_HBM):
                     copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
                         None, nsdfg, state, e, e.src, e.dst)
                     dims = len(copy_shape)
@@ -206,7 +206,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
         shared_transients = {}
         for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
             if (isinstance(node, nodes.MapEntry)
-                    and node.map.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)):
+                    and node.map.schedule in (dtypes.ScheduleType.SoftHier_Device, )):
                 if state.parent not in shared_transients:
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
@@ -712,14 +712,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         elif isinstance(nodedesc, dace.data.View):
             return
 
-        if nodedesc.storage == dtypes.StorageType.GPU_Global:
-            if not nodedesc.pool:  # If pooled, will be freed somewhere else
-                callsite_stream.write('DACE_GPU_CHECK(%sFree(%s));\n' % (self.backend, dataname), cfg, state_id, node)
-        elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            callsite_stream.write('DACE_GPU_CHECK(%sFreeHost(%s));\n' % (self.backend, dataname), cfg, state_id, node)
-        elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
-             nodedesc.storage == dtypes.StorageType.Register:
-            pass  # Do nothing
+        result_alloc = StringIO()
+        if nodedesc.storage == dtypes.StorageType.SoftHier_HBM:
+            result_alloc.write("DACE_ACL_CHECK(aclrtFree((void**)&%s));\n" % (dataname))
+        elif nodedesc.storage in [
+            dtypes.StorageType.SoftHier_TCDM
+        ]:
+            result_alloc.write(f"// Free {dataname}\n")
         else:
             raise NotImplementedError
 
@@ -1624,7 +1623,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                             dynsmem_size += numel
 
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
-        if max_streams >= 0:
+        if max_streams >= 0 and hasattr(scope_entry, '_cuda_stream'):
             cudastream = '__state->gpu_context->streams[%d]' % scope_entry._cuda_stream
         else:
             cudastream = 'nullptr'

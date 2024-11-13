@@ -1403,7 +1403,7 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
 def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
-    if max_streams >= 0:
+    if max_streams >= 0 and hasattr(node, '_cuda_stream'):
         cudastream = "__state->gpu_context->streams[%d]" % node._cuda_stream
     else:  # Only default stream is used
         cudastream = 'nullptr'
