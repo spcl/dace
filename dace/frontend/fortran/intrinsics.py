@@ -409,7 +409,7 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
         # supports syntax func(arr)
         if isinstance(arg, ast_internal_classes.Name_Node):
             # TODO: missing line number here!
-            array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent, line_number=42)
+            array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent, type='VOID', line_number=42)
             array_node.name = arg
 
             # If we access SUM(arr) where arr has many dimensions,
@@ -741,6 +741,8 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
             )
         else:
             self.first_array, self.second_array, self.cond = self._parse_binary_op(node, arg)
+
+            assert self.first_array is not None
 
     def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
 

@@ -173,7 +173,7 @@ def test_fortran_frontend_pow1():
                    d(1,1,2)=ZHRC(1)                 
                    END SUBROUTINE pow1_test_function
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "pow1_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "pow1_test", True)
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
@@ -205,7 +205,7 @@ def test_fortran_frontend_pow2():
                    d(1,1,2)=ZHRC(1)                 
                    END SUBROUTINE pow2_test_function
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "pow2_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "pow2_test", True)
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
@@ -233,7 +233,7 @@ def test_fortran_frontend_sign1():
                    d(1,1,2)=SIGN(ZSIGK(1),ZHRC(1))                 
                    END SUBROUTINE sign1_test_function
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "sign1_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "sign1_test", True)
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=d)
