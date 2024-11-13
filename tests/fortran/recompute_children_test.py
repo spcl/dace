@@ -130,7 +130,7 @@ end program main
             M.IGNORE(),  # program main
             M(Specification_Part, [
                 M(Use_Stmt),  # use lib, only : fun
-                *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
+                *M.IGNORE(2),  # implicit none; double precision d(4)
             ]),
             M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
             M.IGNORE(),  # end program main
@@ -209,7 +209,7 @@ end program main
             M.IGNORE(),  # program main
             M(Specification_Part, [
                 M(Use_Stmt),  # use lib_indirect, only: fun_indirect
-                *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
+                *M.IGNORE(2),  # implicit none; double precision d(4)
             ]),
             M(Execution_Part, [M(Call_Stmt)]),  # call fun_indirect(d)
             M.IGNORE(),  # end program main
@@ -302,12 +302,12 @@ end program main
         M(Module, [
             M.IGNORE(),  # module lib_indirect
             M(Specification_Part, [
-                *[M.IGNORE()] * 2,  # use lib, only: fun; implicit none
+                *M.IGNORE(2),  # use lib, only: fun; implicit none
                 M(Interface_Block, [
                     M(Interface_Stmt, [M.NAMED('xi')]),  # interface xi
                     M(Procedure_Stmt, [  # module procedure fun
                         M('Procedure_Name_List', [M.NAMED('fun')]),
-                        *[M.IGNORE()] * 2,
+                        *M.IGNORE(2),
                     ]),
                     M.IGNORE(),  # end interface xi
                 ]),
@@ -316,7 +316,7 @@ end program main
             M.IGNORE(),  # end module lib
         ]),
         M(Module, [
-            *[M.IGNORE()] * 2,  # module lib; implicit none
+            *M.IGNORE(2),  # module lib; implicit none
             M(Module_Subprogram_Part),  # contains; real function fun(); implicit none; fun = 5.5; end function fun
             M.IGNORE(),  # end module lib
         ]),

@@ -314,7 +314,7 @@ end program main
             M.IGNORE(),  # program main
             M(Specification_Part, [
                 M(Use_Stmt),  # use lib, only : fun
-                *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
+                *M.IGNORE(2),  # implicit none; double precision d(4)
             ]),
             M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
             M.IGNORE(),  # end program main
@@ -391,7 +391,7 @@ end program main
             M.IGNORE(),  # program main
             M(Specification_Part, [
                 M(Use_Stmt),  # use lib_indirect, only: fun_indirect
-                *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
+                *M.IGNORE(2),  # implicit none; double precision d(4)
             ]),
             M(Execution_Part, [M(Call_Stmt)]),  # call fun_indirect(d)
             M.IGNORE(),  # end program main
@@ -465,12 +465,12 @@ end program main
         M(Main_Program, [
             M.IGNORE(),  # program main
             M(Specification_Part, [
-                *[M.IGNORE()] * 2,  # use lib; implicit none
+                *M.IGNORE(2),  # use lib; implicit none
                 M(Interface_Block, [
                     M(Interface_Stmt, [M.NAMED('xi')]),  # interface xi
                     M(Procedure_Stmt, [  # module procedure fun
                         M('Procedure_Name_List', [M.NAMED('fun')]),
-                        *[M.IGNORE()] * 2,
+                        *M.IGNORE(2),
                     ]),
                     M.IGNORE(),  # end interface xi
                 ]),
@@ -480,7 +480,7 @@ end program main
             M.IGNORE(),  # end program main
         ]),
         M(Module, [
-            *[M.IGNORE()] * 2,  # module lib; implicit none
+            *M.IGNORE(2),  # module lib; implicit none
             M(Module_Subprogram_Part, [
                 M.IGNORE(),  # contains
                 M(Function_Subprogram),  # real function fun(); implicit none; fun = 5.5; end function fun
@@ -553,12 +553,12 @@ end program main
         M(Module, [
             M.IGNORE(),  # module lib_indirect
             M(Specification_Part, [
-                *[M.IGNORE()] * 2,  # use lib, only: fun; implicit none
+                *M.IGNORE(2),  # use lib, only: fun; implicit none
                 M(Interface_Block, [
                     M(Interface_Stmt, [M.NAMED('xi')]),  # interface xi
                     M(Procedure_Stmt, [  # module procedure fun
                         M('Procedure_Name_List', [M.NAMED('fun')]),
-                        *[M.IGNORE()] * 2,
+                        *M.IGNORE(2),
                     ]),
                     M.IGNORE(),  # end interface xi
                 ]),
@@ -567,7 +567,7 @@ end program main
             M.IGNORE(),  # end module lib
         ]),
         M(Module, [
-            *[M.IGNORE()] * 2,  # module lib; implicit none
+            *M.IGNORE(2),  # module lib; implicit none
             M(Module_Subprogram_Part),  # contains; real function fun(); implicit none; fun = 5.5; end function fun
             M.IGNORE(),  # end module lib
         ]),
@@ -618,31 +618,31 @@ end program main
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
 
-    # A matcher focused on correctly parsing the module definitions and uses.
+    # The matcher still catches the definition of `not_fun`.
     m = M(Program, [
         M(Main_Program, [
             M.IGNORE(),  # program main
             M(Specification_Part, [
                 M(Use_Stmt),  # use lib
-                *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
+                *M.IGNORE(2),  # implicit none; double precision d(4)
             ]),
             M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
             M.IGNORE(),  # end program main
         ]),
         M(Module, [
-            M(Module_Stmt, [M.IGNORE(), M(Name, has_attr={'string': M(has_value='lib')})]),  # module lib
+            M(Module_Stmt, [M.IGNORE(), M.NAMED('lib')]),  # module lib
             M(Module_Subprogram_Part, [
                 M(Contains_Stmt),  # contains
                 M(Subroutine_Subprogram, [
                     M(Subroutine_Stmt,  # subroutine fun(d)
-                      [M.IGNORE(), M(Name, has_attr={'string': M(has_value='fun')}), *[M.IGNORE()] * 2]),
+                      [M.IGNORE(), M.NAMED('fun'), *M.IGNORE(2)]),
                     M(Specification_Part),  # implicit none; double precision d(4)
                     M(Execution_Part),  # d(2) = 5.5
                     M(End_Subroutine_Stmt),  # end subroutine fun
                 ]),
                 M(Subroutine_Subprogram, [
                     M(Subroutine_Stmt,  # subroutine not_fun(d)
-                      [M.IGNORE(), M(Name, has_attr={'string': M(has_value='not_fun')}), *[M.IGNORE()] * 2]),
+                      [M.IGNORE(), M.NAMED('not_fun'), *M.IGNORE(2)]),
                     M(Specification_Part),  # implicit none; double precision d(4)
                     M(Execution_Part),  # d(2) = 4.2
                     M(End_Subroutine_Stmt),  # end subroutine not_fun
@@ -661,7 +661,7 @@ end program main
     # Verify that there is not much else to the program.
     assert not interface_blocks
 
-    # Verify simplification of the dependency graph.
+    # Verify simplification of the dependency graph. `not_fun` should be gone after this.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
     assert set(simple_graph.nodes) == {'main', 'lib'}
     assert set(simple_graph.edges) == {('main', 'lib')}
