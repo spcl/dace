@@ -414,7 +414,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                        callsite_stream: CodeIOStream,
                        generate_state_footer: bool = True):
         sid = state.block_id
-
         # Emit internal transient array allocation
         self.allocate_arrays_in_scope(sdfg, cfg, state, global_stream, callsite_stream)
 

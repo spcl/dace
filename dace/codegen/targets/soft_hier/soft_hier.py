@@ -447,14 +447,14 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
 
     def node_dispatch_predicate(self, sdfg, state, node):
         if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
-            if node.schedule in dtypes.GPU_SCHEDULES:
+            if node.schedule in dtypes.SOFTHIER_SCHEDULES:
                 return True
         if SoftHierCodeGen._in_device_code:
             return True
         return False
 
     def state_dispatch_predicate(self, sdfg, state):
-        if self._toplevel_schedule in dtypes.GPU_SCHEDULES:
+        if self._toplevel_schedule in dtypes.SOFTHIER_SCHEDULES:
             return True
         for node in state.sink_nodes():
             if hasattr(node, '_cuda_stream'):
@@ -1373,7 +1373,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         scope_exit = dfg_scope.sink_nodes()[0]
 
         state = cfg.state(state_id)
-
+        print("Using SoftHierCodeGen Scope")
         # If in device-level code, call appropriate function
         if (self._kernel_map is not None and self._kernel_map.map.schedule in dtypes.SOFTHIER_SCHEDULES):
             self.generate_devicelevel_scope(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
