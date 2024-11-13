@@ -30,13 +30,21 @@ def test_nested_conditional_in_map():
     MemletPropagation().apply_pass(sdfg, {})
 
     assert 'A' in sdfg._possible_reads
-    assert str(sdfg._possible_reads['A']) == 'A[0, 0]'
+    assert str(sdfg._possible_reads['A'].subset) == '0, 0'
+    assert sdfg._possible_reads['A'].dynamic == False
+    assert sdfg._possible_reads['A'].volume == M
     assert 'A' in sdfg._certain_reads
-    assert str(sdfg._certain_reads['A']) == 'A[0, 0]'
+    assert str(sdfg._certain_reads['A'].subset) == '0, 0'
+    assert sdfg._certain_reads['A'].dynamic == False
+    assert sdfg._certain_reads['A'].volume == M
     assert 'A' in sdfg._possible_writes
-    assert str(sdfg._possible_writes['A']) == 'A[0:M, 0:N]'
+    assert str(sdfg._possible_writes['A'].subset) == '0:M, 0:N'
+    assert sdfg._possible_writes['A'].dynamic == False
+    assert sdfg._possible_writes['A'].volume == M * N
     assert 'A' in sdfg._certain_writes
-    assert str(sdfg._certain_writes['A']) == 'A[0:M, 0:N]'
+    assert str(sdfg._certain_writes['A'].subset) == '0:M, 0:N'
+    assert sdfg._certain_writes['A'].dynamic == False
+    assert sdfg._certain_writes['A'].volume == M * N
 
 def test_nested_conditional_in_loop_in_map():
     """
@@ -61,13 +69,21 @@ def test_nested_conditional_in_loop_in_map():
     MemletPropagation().apply_pass(sdfg, {})
 
     assert 'A' in sdfg._possible_reads
-    assert str(sdfg._possible_reads['A']) == 'A[0, 0]'
+    assert str(sdfg._possible_reads['A'].subset) == '0, 0'
+    assert sdfg._possible_reads['A'].dynamic == False
+    assert sdfg._possible_reads['A'].volume == M * (N - 2)
     assert 'A' in sdfg._certain_reads
-    assert str(sdfg._certain_reads['A']) == 'A[0, 0]'
+    assert str(sdfg._certain_reads['A'].subset) == '0, 0'
+    assert sdfg._certain_reads['A'].dynamic == False
+    assert sdfg._certain_reads['A'].volume == M * (N - 2)
     assert 'A' in sdfg._possible_writes
-    assert str(sdfg._possible_writes['A']) == 'A[0:M, 0:N - 2]'
+    assert str(sdfg._possible_writes['A'].subset) == '0:M, 0:N - 2'
+    assert sdfg._possible_writes['A'].dynamic == False
+    assert sdfg._possible_writes['A'].volume == M * (N - 2)
     assert 'A' in sdfg._certain_writes
-    assert str(sdfg._certain_writes['A']) == 'A[0:M, 0:N - 2]'
+    assert str(sdfg._certain_writes['A'].subset) == '0:M, 0:N - 2'
+    assert sdfg._certain_writes['A'].dynamic == False
+    assert sdfg._certain_writes['A'].volume == M * (N - 2)
 
 def test_2D_map_added_indices():
     """
