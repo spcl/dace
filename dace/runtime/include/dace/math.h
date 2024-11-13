@@ -570,27 +570,21 @@ namespace dace
             for (IterationBound_t i = 0; i < stop; ++i)
                 result *= a;
             return result;
-	};
+	}
 #endif
 
-        template<
-            typename T,
-            typename U,
-            typename = std::enable_if_t<std::is_integral<U>::value>
-        >
-        DACE_HDFI T ipow(const T& a, const U b)
+       /* Implements the power where the exponent is known as code generation time.
+        *
+        * Furthermore, as in accordance with `CPPUnparse._BinOp` the function assumes
+        * that the exponent is a positive, i.e. $b > 0` integer.
+        *
+        * TODO: Find out whyt the function can not be `constexpr`.
+        */
+        template<typename T>
+        DACE_HDFI T ipow(const T& a, const unsigned int b)
         {
-            if(std::is_signed<U>::value) {
-                if(b < 0)
-                    return 0;
-            }
-            if(b == 0) {
-                return T(1);
-            };
-            using IterationBound_t = std::make_unsigned_t<U>;
             T result = a;
-            const IterationBound_t stop{b};
-            for (IterationBound_t i = 1; i < stop; ++i)
+            for (unsigned int i = 1; i < b; ++i)
                 result *= a;
             return result;
         }
