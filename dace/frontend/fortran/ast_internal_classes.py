@@ -175,7 +175,7 @@ class Type_Name_Node(FNode):
 
 
 class Specification_Part_Node(FNode):
-    _fields = ('specifications', 'symbols', 'interface_blocks', 'typedecls')
+    _fields = ('specifications', 'symbols', 'interface_blocks', 'typedecls','enums')
 
 
 class Execution_Part_Node(FNode):

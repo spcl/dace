@@ -398,11 +398,11 @@ class InternalFortranAst:
     
     def enum_def_stmt(self, node: FASTNode):
         children = self.create_children(node)
-        return children
+        return None
     
     def enumerator_def_stmt(self, node: FASTNode):
         children = self.create_children(node)
-        return children
+        return children[1]
     
     def enumerator_list(self, node: FASTNode):
         children = self.create_children(node)
@@ -413,7 +413,7 @@ class InternalFortranAst:
     
     def enum_def(self, node: FASTNode):
         children = self.create_children(node)
-        return children
+        return children[1:-1]
     
     def exit_stmt(self, node: FASTNode):
         line = get_line(node)
@@ -552,6 +552,7 @@ class InternalFortranAst:
             type=return_type,
             line_number=name.line_number,
             elemental=name.elemental,
+            
         )
 
     def end_program_stmt(self, node: FASTNode):
@@ -1650,6 +1651,7 @@ class InternalFortranAst:
         others = [self.create_ast(i) for i in node.children if not isinstance(i, f08.Type_Declaration_Stmt)]
 
         decls = [self.create_ast(i) for i in node.children if isinstance(i, f08.Type_Declaration_Stmt)]
+        enums = [self.create_ast(i) for i in node.children if isinstance(i, f03.Enum_Def)]
         #decls = list(filter(lambda x: x is not None, decls))
         uses = [self.create_ast(i) for i in node.children if isinstance(i, f03.Use_Stmt)]
         tmp = [self.create_ast(i) for i in node.children]
@@ -1692,7 +1694,8 @@ class InternalFortranAst:
                                                             symbols=symbols,
                                                             interface_blocks=iblocks,
                                                             uses=uses,
-                                                            typedecls=typedecls)
+                                                            typedecls=typedecls,
+                                                            enums=enums)
 
     def intrinsic_type_spec(self, node: FASTNode):
         return node

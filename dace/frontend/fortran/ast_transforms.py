@@ -894,7 +894,8 @@ class FunctionToSubroutineDefiner(NodeTransformer):
                     symbols=None,
                     interface_blocks=None,
                     uses=None,
-                    typedecls=None
+                    typedecls=None,
+                    enums=None
                 )
 
         execution_part=NameReplacer(node.name.name,node.name.name+"__ret").visit(node.execution_part)
@@ -1011,7 +1012,7 @@ class CallExtractor(NodeTransformer):
                             temp = temp - 1
                     newdecl.append(self.visit(var))             
                 newspec.append(ast_internal_classes.Decl_Stmt_Node(vardecl=newdecl))
-        return ast_internal_classes.Specification_Part_Node(specifications=newspec,symbols=node.symbols,typedecls=node.typedecls,uses=node.uses)                
+        return ast_internal_classes.Specification_Part_Node(specifications=newspec,symbols=node.symbols,typedecls=node.typedecls,uses=node.uses,enums=node.enums,interface_blocks=node.interface_blocks)                
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
 
@@ -2471,7 +2472,8 @@ class PointerRemoval(NodeTransformer):
             specifications=newspec,
             symbols=new_symbols,
             typedecls=node.typedecls,
-            uses=node.uses
+            uses=node.uses,
+            enums=node.enums
         )
 
 class ArgumentPruner(NodeVisitor):
@@ -2608,3 +2610,38 @@ class ArgumentPruner(NodeVisitor):
         for arg in node.args:
             self.visit(arg)
 
+class PropagateEnums(NodeTransformer):
+    """
+    """
+    def __init__(self):
+        self.parsed_enums = {}
+        
+
+
+
+    def _parse_enums(self, enums):
+
+         for j in enums:
+                  running_count=0
+                  for k in j:
+                      if isinstance(k, list):
+                            for l in k:
+                                if isinstance(l, ast_internal_classes.Name_Node):
+                                    self.parsed_enums[l.name]=running_count      
+                                    running_count+=1
+                                else:
+                                    raise ValueError("Unknown enum type")
+                      else:
+                          raise ValueError("Unknown enum type")
+
+    def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
+        self._parse_enums(node.enums)
+        return self.generic_visit(node)
+
+    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
+
+        if self.parsed_enums.get(node.name) is not None:
+            node.type = 'INTEGER'
+            return ast_internal_classes.Int_Literal_Node(value=str(self.parsed_enums[node.name]))
+
+        return node
