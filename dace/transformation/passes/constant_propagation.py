@@ -369,6 +369,14 @@ class ConstantPropagation(ppl.Pass):
                         if reassignments and (used_in_assignments - reassignments):
                             assignments[aname] = _UnknownValue
 
+                if isinstance(block, LoopRegion):
+                    # Any constants before a loop that may be overwritten inside the loop cannot be assumed as constants
+                    # for the loop itself.
+                    assigned_in_loop = self._assignments_in_loop(block)
+                    for k in assignments.keys():
+                        if k in assigned_in_loop:
+                            assignments[k] = _UnknownValue
+
                 if block not in in_const_dict:
                     in_const_dict[block] = {}
                 if assignments:
