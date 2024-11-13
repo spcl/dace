@@ -404,6 +404,8 @@ class Range(Subset):
                                                                                        for ts in self.tile_sizes))
 
     def offset(self, other, negative, indices=None, offset_end=True):
+        if other is None:
+            return
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
                 other = Indices(other)
@@ -420,6 +422,8 @@ class Range(Subset):
             self.ranges[i] = (rb + mult * off[i], re, rs)
 
     def offset_new(self, other, negative, indices=None, offset_end=True):
+        if other is None:
+            return Range(self.ranges)
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
                 other = Indices(other)

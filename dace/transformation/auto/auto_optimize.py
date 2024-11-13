@@ -474,6 +474,10 @@ def make_transients_persistent(sdfg: SDFG,
                     not_persistent.add(dnode.data)
                     continue
                 desc = dnode.desc(nsdfg)
+                # Only convert what is not a member of a non-persistent struct.
+                if (dnode.root_data != dnode.data and
+                    nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent):
+                    continue
                 # Only convert arrays and scalars that are not registers
                 if not desc.transient or type(desc) not in {dt.Array, dt.Scalar}:
                     not_persistent.add(dnode.data)

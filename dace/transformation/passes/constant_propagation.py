@@ -118,6 +118,10 @@ class ConstantPropagation(ppl.Pass):
                     k: v
                     for k, v in mapping.items() if v is not _UnknownValue and k not in multivalue_desc_symbols
                 }
+                out_mapping = {
+                    k: v
+                    for k, v in out_consts[block].items() if v is not _UnknownValue and k not in multivalue_desc_symbols
+                }
 
                 if mapping:
                     # Update replaced symbols for later replacements
@@ -129,9 +133,10 @@ class ConstantPropagation(ppl.Pass):
                     elif isinstance(block, AbstractControlFlowRegion):
                         block.replace_dict(mapping, replace_in_graph=False, replace_keys=False)
 
+                if out_mapping:
                     # Replace in outgoing edges as well
                     for e in block.parent_graph.out_edges(block):
-                        e.data.replace_dict(mapping, replace_keys=False)
+                        e.data.replace_dict(out_mapping, replace_keys=False)
                 
                 if isinstance(block, LoopRegion):
                     if block in post_consts and post_consts[block] is not None:
@@ -255,7 +260,7 @@ class ConstantPropagation(ppl.Pass):
         else:
             # No else branch is present, so it is possible that no branch is executed. In this case the out constants
             # are the intersection between the in constants and the post constants.
-            out_consts = in_consts
+            out_consts = in_consts.copy()
             for k, v in post_consts.items():
                 if k not in out_consts:
                     out_consts[k] = _UnknownValue
@@ -385,9 +390,9 @@ class ConstantPropagation(ppl.Pass):
                                                             post_const_dict, out_const_dict)
                 else:
                     # Simple case, no change in constants through this block (states and other basic blocks).
-                    pre_const_dict[block] = in_const_dict[block]
-                    post_const_dict[block] = in_const_dict[block]
-                    out_const_dict[block] = in_const_dict[block]
+                    pre_const_dict[block] = in_const_dict[block].copy()
+                    post_const_dict[block] = in_const_dict[block].copy()
+                    out_const_dict[block] = in_const_dict[block].copy()
 
         # For all sink nodes, compute the overlapping set of constants between them, making sure all constants in the
         # resulting intersection are actually constants (i.e., all blocks see the same constant value for them). This
