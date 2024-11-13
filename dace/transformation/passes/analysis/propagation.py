@@ -12,7 +12,6 @@ from dace import properties, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.propagation import align_memlet, propagate_memlet
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.sdfg import SDFG, memlets_in_ast
@@ -292,8 +291,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                                 iedge.data.volume = 0
                                 iedge.data.dynamic = True
                 except (ValueError, NotImplementedError):
-                    # In any case of memlets that cannot be unsqueezed (i.e.,
-                    # reshapes), use dynamic unbounded memlets.
+                    # In any case of memlets that cannot be unsqueezed (i.e., reshapes), use dynamic unbounded memlets.
                     iedge.data.volume = 0
                     iedge.data.dynamic = True
         for oedge in parent_state.out_edges(nsdfg_node):
@@ -312,8 +310,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                                 oedge.data.volume = 0
                                 oedge.data.dynamic = True
                 except (ValueError, NotImplementedError):
-                    # In any case of memlets that cannot be unsqueezed (i.e.,
-                    # reshapes), use dynamic unbounded memlets.
+                    # In any case of memlets that cannot be unsqueezed (i.e., reshapes), use dynamic unbounded memlets.
                     oedge.data.volume = 0
                     oedge.data.dynamic = True
 
