@@ -1557,6 +1557,10 @@ def _tswds_cf_region(
         for _, b in region.branches:
             yield from _tswds_cf_region(sdfg, b, symbols, recursive)
         return
+    elif isinstance(region, LoopRegion):
+        # Add the own loop variable to the defined symbols, if present.
+        loop_syms = region.new_symbols(symbols)
+        symbols.update({k: v for k, v in loop_syms.items() if v is not None})
 
     # Add symbols from inter-state edges along the state machine
     start_region = region.start_block
