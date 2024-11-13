@@ -299,7 +299,7 @@ contains
 end module lib
 """).add_file("""
 program main
-  use lib, only : fun
+  use lib
   implicit none
   double precision d(4)
   call fun(d)
@@ -426,9 +426,9 @@ end program main
 
     # Verify simplification of the dependency graph.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
-    assert set(simple_graph.nodes) == {'main', 'lib_indirect'}
-    assert set(simple_graph.edges) == {('main', 'lib_indirect')}
-    assert actually_used_in_module == {'lib_indirect': ['fun_indirect'], 'main': []}
+    assert set(simple_graph.nodes) == {'main', 'lib', 'lib_indirect'}
+    assert set(simple_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
+    assert actually_used_in_module == {'lib': ['fun'], 'lib_indirect': ['fun_indirect', 'fun'], 'main': []}
 
 
 def test_interface_block_contains_module_procedure():
@@ -498,8 +498,8 @@ end program main
 
     # Verify simplification of the dependency graph.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
-    assert not set(simple_graph.nodes)
-    assert not actually_used_in_module
+    assert set(simple_graph.nodes) == {'lib', 'main'}
+    assert actually_used_in_module == {'lib': ['fun'], 'main': []}
 
 
 def test_module_contains_interface_block():
@@ -584,3 +584,83 @@ end program main
     assert set(simple_graph.nodes) == {'main', 'lib', 'lib_indirect'}
     assert set(simple_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
     assert actually_used_in_module == {'lib': ['fun'], 'lib_indirect': ['fun', 'fun2'], 'main': []}
+
+
+def test_uses_module_but_prunes_unused_defs():
+    """
+    A simple program, but this time the subroutine is defined in a module. The main program uses the module and calls
+    the subroutine. So, we should have "recursively improved" the AST by parsing that module and constructing the
+    dependency graph.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+contains
+  subroutine fun(d)
+    implicit none
+    double precision d(4)
+    d(2) = 5.5
+  end subroutine fun
+  subroutine not_fun(d)  ! `main` only uses `fun`, so this should be dropped after simplification
+    implicit none
+    double precision d(4)
+    d(2) = 4.2
+  end subroutine not_fun
+end module lib
+""").add_file("""
+program main
+  use lib, only: fun
+  implicit none
+  double precision d(4)
+  call fun(d)
+end program main
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+
+    # A matcher focused on correctly parsing the module definitions and uses.
+    m = M(Program, [
+        M(Main_Program, [
+            M.IGNORE(),  # program main
+            M(Specification_Part, [
+                M(Use_Stmt),  # use lib
+                *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
+            ]),
+            M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
+            M.IGNORE(),  # end program main
+        ]),
+        M(Module, [
+            M(Module_Stmt, [M.IGNORE(), M(Name, has_attr={'string': M(has_value='lib')})]),  # module lib
+            M(Module_Subprogram_Part, [
+                M(Contains_Stmt),  # contains
+                M(Subroutine_Subprogram, [
+                    M(Subroutine_Stmt,  # subroutine fun(d)
+                      [M.IGNORE(), M(Name, has_attr={'string': M(has_value='fun')}), *[M.IGNORE()] * 2]),
+                    M(Specification_Part),  # implicit none; double precision d(4)
+                    M(Execution_Part),  # d(2) = 5.5
+                    M(End_Subroutine_Stmt),  # end subroutine fun
+                ]),
+                M(Subroutine_Subprogram, [
+                    M(Subroutine_Stmt,  # subroutine not_fun(d)
+                      [M.IGNORE(), M(Name, has_attr={'string': M(has_value='not_fun')}), *[M.IGNORE()] * 2]),
+                    M(Specification_Part),  # implicit none; double precision d(4)
+                    M(Execution_Part),  # d(2) = 4.2
+                    M(End_Subroutine_Stmt),  # end subroutine not_fun
+                ]),
+            ]),
+            M(End_Module_Stmt),  # end module lib
+        ]),
+    ])
+    m.check(ast)
+
+    # This time we have a module dependency.
+    assert set(dep_graph.nodes) == {'lib', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib')}
+    assert set(asts.keys()) == {'lib'}
+
+    # Verify that there is not much else to the program.
+    assert not interface_blocks
+
+    # Verify simplification of the dependency graph.
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
+    assert set(simple_graph.nodes) == {'main', 'lib'}
+    assert set(simple_graph.edges) == {('main', 'lib')}
+    assert actually_used_in_module == {'lib': ['fun'], 'main': []}
