@@ -78,6 +78,7 @@ def test_constant_pi_add():
     )
 
 
+@pytest.mark.gpu
 def test_constant_pi_mult():
     _perform_test(
             code="(math.pi ** 2) * 2",
