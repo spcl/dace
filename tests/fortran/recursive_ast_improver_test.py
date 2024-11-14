@@ -164,8 +164,12 @@ contains
   subroutine fun(d)
     implicit none
     double precision d(4)
-    d(2) = 5.5
+    d(2) = fun2()
   end subroutine fun
+  real function fun2()
+    implicit none
+    fun2 = 5.5
+  end function fun2
 end program main
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
@@ -180,8 +184,12 @@ PROGRAM main
   SUBROUTINE fun(d)
     IMPLICIT NONE
     DOUBLE PRECISION :: d(4)
-    d(2) = 5.5
+    d(2) = fun2()
   END SUBROUTINE fun
+  REAL FUNCTION fun2()
+    IMPLICIT NONE
+    fun2 = 5.5
+  END FUNCTION fun2
 END PROGRAM main
 """.strip()
     assert got == want
