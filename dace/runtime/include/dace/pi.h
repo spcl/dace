@@ -246,7 +246,7 @@ namespace dace
         DACE_CONSTEXPR DACE_HDFI int sin(const typeless_pi_mult& pi) noexcept
         { return 0; }
 
-	DACE_CONSTEXPR DACE_HDFI double sin(const typeless_pi_exp& pi) noexcept
+	DACE_HDFI double sin(const typeless_pi_exp& pi) noexcept
 	{ return std::sin(static_cast<double>(pi)); }
 
         DACE_CONSTEXPR DACE_HDFI int cos(const typeless_pi&) noexcept
@@ -255,16 +255,16 @@ namespace dace
         DACE_CONSTEXPR DACE_HDFI int cos(const typeless_pi_mult& pi) noexcept
         { return (pi.mult % 2 == 0) ? 1 : (-1); }
 
-	DACE_CONSTEXPR DACE_HDFI double cos(const typeless_pi_exp& pi) noexcept
+	DACE_HDFI double cos(const typeless_pi_exp& pi) noexcept
 	{ return std::cos(static_cast<double>(pi)); }
 
 
-#       define DEF_PI_TRIGO(F)			\
-	DACE_CONSTEXPR DACE_HDFI double F (const typeless_pi& pi) noexcept			\
-	{ return std:: F( static_cast<double>(pi) ); }						\
-	DACE_CONSTEXPR DACE_HDFI double F (const typeless_pi_mult& pi) noexcept			\
-	{ return std:: F( static_cast<double>(pi) ); }						\
-	DACE_CONSTEXPR DACE_HDFI double F (const typeless_pi_exp& pi) noexcept			\
+#       define DEF_PI_TRIGO(F)						\
+	DACE_HDFI double F (const typeless_pi& pi) noexcept		\
+	{ return std:: F( static_cast<double>(pi) ); }			\
+	DACE_HDFI double F (const typeless_pi_mult& pi) noexcept	\
+	{ return std:: F( static_cast<double>(pi) ); }			\
+	DACE_HDFI double F (const typeless_pi_exp& pi) noexcept		\
 	{ return std:: F( static_cast<double>(pi) ); }
 
         DEF_PI_TRIGO(asin);
