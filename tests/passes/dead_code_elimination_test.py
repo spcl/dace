@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various tests for dead code elimination passes. """
 
 import numpy as np
@@ -43,6 +43,26 @@ def test_dse_unconditional():
 
     DeadStateElimination().apply_pass(sdfg, {})
     assert set(sdfg.states()) == {s, s2, e}
+
+
+def test_dse_edge_condition_with_integer_as_boolean_regression():
+    """
+    This is a regression test for issue #1129, which describes dead state elimination incorrectly eliminating interstate
+    edges when integers are used as boolean values in interstate edge conditions. Code taken from issue #1129.
+    """
+    sdfg = dace.SDFG('dse_edge_condition_with_integer_as_boolean_regression')
+    sdfg.add_scalar('N', dtype=dace.int32, transient=True)
+    sdfg.add_scalar('result', dtype=dace.int32)
+    state_init = sdfg.add_state()
+    state_middle = sdfg.add_state()
+    state_end = sdfg.add_state()
+    sdfg.add_edge(state_init, state_end, dace.InterstateEdge(condition='(not ((N > 20) != 0))',
+                                                             assignments={'result': 'N'}))
+    sdfg.add_edge(state_init, state_middle, dace.InterstateEdge(condition='((N > 20) != 0)'))
+    sdfg.add_edge(state_middle, state_end, dace.InterstateEdge(assignments={'result': '20'}))
+
+    res = DeadStateElimination().apply_pass(sdfg, {})
+    assert res is None
 
 
 def test_dde_simple():
@@ -307,6 +327,7 @@ _out = _tmp
 if __name__ == '__main__':
     test_dse_simple()
     test_dse_unconditional()
+    test_dse_edge_condition_with_integer_as_boolean_regression()
     test_dde_simple()
     test_dde_libnode()
     test_dde_access_node_in_scope(False)
