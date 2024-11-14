@@ -5,7 +5,7 @@ import os
 import warnings
 from copy import deepcopy as dpcp
 from itertools import chain
-from typing import List, Optional, Set, Dict, Tuple
+from typing import List, Optional, Set, Dict, Tuple, Union
 
 import networkx as nx
 from fparser.common.readfortran import FortranFileReader as ffr
@@ -2548,18 +2548,7 @@ def create_sdfg_from_string(
     reader = fsr(source_string)
     ast = parser(reader)
 
-    dep_graph = nx.DiGraph()
-    asts = {}
-    interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
-    ast = recursive_ast_improver(ast,
-                                 sources,
-                                 [],
-                                 parser,
-                                 interface_blocks,
-                                 exclude_list=[],
-                                 missing_modules=[],
-                                 dep_graph=dep_graph,
-                                 asts=asts)
+    ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, sources, [], parser)
     assert not any(nx.simple_cycles(dep_graph))
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
@@ -2771,106 +2760,100 @@ def create_sdfg_from_fortran_file(source_string: str):
     return sdfg
 
 
-def recursive_ast_improver(ast,
-                           source_list,
-                           include_list,
-                           parser,
-                           interface_blocks: Dict[str, Dict[str, List[Name]]],
-                           exclude_list,
-                           missing_modules,
-                           dep_graph: nx.DiGraph,
-                           asts):
-    defined_modules = ast_utils.get_defined_modules(ast)
-    main_program_mode = False
-    if len(defined_modules) != 1:
-        print("Defined modules: ", defined_modules)
-        print("Assumption failed: Only one module per file")
-        if len(defined_modules) == 0 and isinstance(ast, Program):
-            main_program_mode = True
-    used_modules, objects_in_modules = ast_utils.get_used_modules(ast)
+def recursive_ast_improver(ast, source_list: Union[List, Dict], include_list, parser):
+    dep_graph = nx.DiGraph()
+    asts = {}
+    interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
+    exclude_list = set()
+    missing_modules = set()
 
-    fandsl = ast_utils.FunctionSubroutineLister()
-    fandsl.get_functions_and_subroutines(ast)
-    if len(fandsl.interface_blocks) > 0:
-        interface_blocks[ast.children[0].children[0].children[1].string.lower()] = fandsl.interface_blocks
+    NAME_REPLACEMENTS = {
+        'mo_restart_nml_and_att': 'mo_restart_nmls_and_atts',
+        'yomhook': 'yomhook_dummy',
+    }
 
-    if not main_program_mode:
-        parent_module = defined_modules[0]
-    else:
-        parent_module = ast.children[0].children[0].children[1].string
-    for mod in defined_modules:
-        if mod not in exclude_list:
-            exclude_list.append(mod)
-        dep_graph.add_node(mod.lower(), info_list=fandsl)
-    for mod in used_modules:
-        if mod not in dep_graph.nodes:
-            dep_graph.add_node(mod.lower())
-        obj_list = None
-        if mod in objects_in_modules:
-            obj_list = [obj for obj in objects_in_modules[mod].children]
-        dep_graph.add_edge(parent_module.lower(), mod.lower(), obj_list=obj_list)
+    def _recursive_ast_improver(_ast):
+        defined_modules = ast_utils.get_defined_modules(_ast)
+        main_program_mode = False
+        if len(defined_modules) != 1:
+            print("Defined modules: ", defined_modules)
+            print("Assumption failed: Only one module per file")
+            if len(defined_modules) == 0 and isinstance(_ast, Program):
+                main_program_mode = True
+        used_modules, objects_in_modules = ast_utils.get_used_modules(_ast)
 
-    modules_to_parse = []
-    for mod in used_modules:
-        if mod not in chain(defined_modules, exclude_list):
-            modules_to_parse.append(mod)
-    added_modules = []
-    for mod in modules_to_parse:
-        found = False
-        name = mod.lower()
-        if name == "mo_restart_nml_and_att":
-            name = "mo_restart_nmls_and_atts"
-        if name == "yomhook":
-            name = "yomhook_dummy"
-        for srcf in source_list:
-            if name not in srcf:
-                continue
-            fname = srcf.split("/")[-1].lower()
-            if fname == f"{name}.f90":
-                found = True
-                next_file = srcf
-                break
+        fandsl = ast_utils.FunctionSubroutineLister()
+        fandsl.get_functions_and_subroutines(_ast)
+        if fandsl.interface_blocks:
+            mod = _ast.children[0]  # NOTE: We are assuming that only a single top-level object exists.
+            mod_stmt = mod.children[0]
+            mod_name = ast_utils.singular(ast_utils.children_of_type(mod_stmt, Name)).string
+            interface_blocks[mod_name] = fandsl.interface_blocks
 
-        if not found:
-            if mod not in missing_modules:
-                missing_modules.append(mod)
-            continue
-        if isinstance(source_list, dict):
-            reader = fsr(source_list[next_file])
-            next_ast = parser(reader)
+        if not main_program_mode:
+            parent_module = defined_modules[0]
         else:
-            reader = ffr(file_candidate=next_file, include_dirs=include_list, source_only=source_list)
-            next_ast = parser(reader)
+            parent_module = _ast.children[0].children[0].children[1].string
+        for mod in defined_modules:
+            if mod not in exclude_list:
+                exclude_list.add(mod)
+            dep_graph.add_node(mod.lower(), info_list=fandsl)
+        for mod in used_modules:
+            if mod not in dep_graph.nodes:
+                dep_graph.add_node(mod.lower())
+            obj_list = None
+            if mod in objects_in_modules:
+                obj_list = [obj for obj in objects_in_modules[mod].children]
+            dep_graph.add_edge(parent_module.lower(), mod.lower(), obj_list=obj_list)
 
-        next_ast = recursive_ast_improver(next_ast,
-                                          source_list,
-                                          include_list,
-                                          parser,
-                                          exclude_list=exclude_list,
-                                          missing_modules=missing_modules,
-                                          interface_blocks=interface_blocks,
-                                          dep_graph=dep_graph,
-                                          asts=asts)
-        for c in reversed(next_ast.children):
-            if c in added_modules:
-                added_modules.remove(c)
-            added_modules.append(c)
-            c_stmt = c.children[0]
-            c_name = ast_utils.singular(ast_utils.children_of_type(c_stmt, Name)).string
-            if c_name not in exclude_list:
-                exclude_list.append(c_name)
+        modules_to_parse = []
+        for mod in used_modules:
+            if mod not in chain(defined_modules, exclude_list):
+                modules_to_parse.append(mod)
+        added_modules = []
+        for mod in modules_to_parse:
+            name = mod.lower()
+            if name in NAME_REPLACEMENTS:
+                name = NAME_REPLACEMENTS[name]
 
-    for mod in reversed(added_modules):
-        mod_stmt = mod.children[0]
-        mod_name = ast_utils.singular(ast_utils.children_of_type(mod_stmt, Name)).string
-        # Prepend to the list, because in Fortran dependencies should come first.
-        # If the module is already on the list, move it even earlier.
-        if mod in ast.children:
-            ast.children.remove(mod)
-        ast.children.insert(0, mod)
-        asts[mod_name] = mod
+            mod_file = [srcf for srcf in source_list if os.path.basename(srcf).lower() == f"{name}.f90"]
+            assert len(mod_file) <= 1, f"Found multiple files for the same module `{mod}`: {mod_file}"
+            if not mod_file:
+                if mod not in missing_modules:
+                    missing_modules.add(mod)
+                continue
+            mod_file = mod_file[0]
 
-    return ast
+            if isinstance(source_list, dict):
+                reader = fsr(source_list[mod_file])
+                next_ast = parser(reader)
+            else:
+                reader = ffr(file_candidate=mod_file, include_dirs=include_list, source_only=source_list)
+                next_ast = parser(reader)
+
+            _recursive_ast_improver(next_ast)
+
+            for c in reversed(next_ast.children):
+                if c in added_modules:
+                    added_modules.remove(c)
+                added_modules.append(c)
+                c_stmt = c.children[0]
+                c_name = ast_utils.singular(ast_utils.children_of_type(c_stmt, Name)).string
+                if c_name not in exclude_list:
+                    exclude_list.add(c_name)
+
+        for mod in reversed(added_modules):
+            mod_stmt = mod.children[0]
+            mod_name = ast_utils.singular(ast_utils.children_of_type(mod_stmt, Name)).string
+            # Prepend to the list, because in Fortran dependencies should come first.
+            # If the module is already on the list, move it even earlier.
+            if mod in _ast.children:
+                _ast.children.remove(mod)
+            _ast.children.insert(0, mod)
+            asts[mod_name] = mod
+
+    _recursive_ast_improver(ast)
+    return ast, dep_graph, interface_blocks, asts
 
 
 def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[str, Dict[str, List[Name]]]) \
@@ -3055,21 +3038,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     reader = ffr(file_candidate=source_string, include_dirs=include_list, source_only=source_list)
 
     ast = parser(reader)
-    exclude_list = []
-    missing_modules = []
-    dep_graph = nx.DiGraph()
-    asts = {}
-    actually_used_in_module = {}
-    interface_blocks = {}
-    ast = recursive_ast_improver(ast,
-                                 source_list,
-                                 include_list,
-                                 parser,
-                                 interface_blocks,
-                                 exclude_list=exclude_list,
-                                 missing_modules=missing_modules,
-                                 dep_graph=dep_graph,
-                                 asts=asts)
+    ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, source_list, include_list, parser)
 
     for mod, blocks in interface_blocks.items():
 

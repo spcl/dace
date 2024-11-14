@@ -18,18 +18,7 @@ def parse_improve_and_simplify(sources: Dict[str, str]):
     ast = parser(reader)
     assert isinstance(ast, Program)
 
-    dep_graph = nx.DiGraph()
-    asts = {}
-    interface_blocks = {}
-    ast = recursive_ast_improver(ast,
-                                 sources,
-                                 [],
-                                 parser,
-                                 interface_blocks,
-                                 exclude_list=[],
-                                 missing_modules=[],
-                                 dep_graph=dep_graph,
-                                 asts=asts)
+    ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, sources, [], parser)
     assert isinstance(ast, Program)
     assert not any(nx.simple_cycles(dep_graph))
 
