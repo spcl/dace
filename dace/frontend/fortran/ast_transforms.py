@@ -83,8 +83,6 @@ def iter_fields(node: ast_internal_classes.FNode):
     Yield a tuple of ``(fieldname, value)`` for each field in ``node._fields``
     that is present on *node*.
     """
-    if not hasattr(node, "_fields"):
-        a = 1
     for field in node._fields:
         try:
             yield field, getattr(node, field)
@@ -96,8 +94,6 @@ def iter_attributes(node: ast_internal_classes.FNode):
     Yield a tuple of ``(fieldname, value)`` for each field in ``node._attributes``
     that is present on *node*.
     """
-    if not hasattr(node, "_attributes"):
-        a = 1
     for field in node._attributes:
         try:
             yield field, getattr(node, field)
@@ -1806,9 +1802,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
     for idx, i in enumerate(node.indices):
         if isinstance(i, ast_internal_classes.ParDecl_Node):
-
             if i.type == "ALL":
-
                 lower_boundary = None
                 if offsets[idx] != 1:
                     # support symbols and integer literals
