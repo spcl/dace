@@ -536,13 +536,9 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
         dataname = node.data
 
         # Different types of GPU arrays
-        if (nodedesc.storage == dtypes.StorageType.GPU_Global or nodedesc.storage == dtypes.StorageType.CPU_Pinned):
+        if (nodedesc.storage == dtypes.StorageType.SoftHier_HBM):
             result_decl.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.declared_arrays.add(dataname, DefinedType.Pointer, ctypedef)
-        elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
-            raise NotImplementedError('Dynamic shared memory unsupported')
-        elif nodedesc.storage == dtypes.StorageType.Register:
-            raise ValueError('Dynamic allocation of registers not allowed')
         else:
             raise NotImplementedError("SoftHier: Unimplemented storage type " + str(nodedesc.storage))
 
@@ -552,7 +548,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
                        node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
                        declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> None:
         dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
-
+        print(f"SoftHier: Allocating {dataname}")
         try:
             self._dispatcher.defined_vars.get(dataname)
             return
@@ -868,13 +864,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                    dst_storage: dtypes.StorageType, dst_schedule: dtypes.ScheduleType,
                    edge: Tuple[nodes.Node, str, nodes.Node, str, Memlet], sdfg: SDFG, cfg: ControlFlowRegion,
                    dfg: StateSubgraphView, callsite_stream: CodeIOStream) -> None:
+        callsite_stream.write('// SoftHier: Emitting copy from %s to %s' % (src_node, dst_node), sdfg, state_id)
         u, uconn, v, vconn, memlet = edge
         state_dfg = cfg.state(state_id)
-
+        print('SoftHier: Emitting copy from', src_node, 'to', dst_node)
         cpu_storage_types = [
-            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.CPU_Pinned
+            dtypes.StorageType.CPU_Heap
         ]
-        soft_hier_storage_types = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]
+        soft_hier_storage_types = [dtypes.StorageType.SoftHier_HBM, dtypes.StorageType.SoftHier_TCDM]
 
         copy_shape = memlet.subset.bounding_box_size()
         copy_shape = [symbolic.overapproximate(s) for s in copy_shape]
@@ -1213,6 +1210,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                        callsite_stream: CodeIOStream,
                        generate_state_footer: bool = False) -> None:
         # Two modes: device-level state and if this state has active streams
+        print('SoftHier: Generating state', state.label)
         if SoftHierCodeGen._in_device_code:
             self.generate_devicelevel_state(sdfg, cfg, state, function_stream, callsite_stream)
         else:
@@ -1283,6 +1281,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         # Special case: if this is a GPU grid state and something is reading
         # from a possible result of a collaborative write, sync first
+        print('SoftHier: Generating device-level state', state.label)
         if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device:
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
@@ -1373,14 +1372,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         scope_exit = dfg_scope.sink_nodes()[0]
 
         state = cfg.state(state_id)
-        print("Using SoftHierCodeGen Scope")
+        print("################################Using SoftHierCodeGen Scope######################################")
         # If in device-level code, call appropriate function
         if (self._kernel_map is not None and self._kernel_map.map.schedule in dtypes.SOFTHIER_SCHEDULES):
+            print("Generating device-level scope")
             self.generate_devicelevel_scope(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
+            print("Generated device-level scope")
             return
 
         # If not device-level code, ensure the schedule is correct
         if scope_entry.map.schedule not in (dtypes.ScheduleType.SoftHier_Device,):
+            print("Cannot schedule %s directly from non-GPU code" % scope_entry.map.schedule)
             raise TypeError('Cannot schedule %s directly from non-GPU code' % str(scope_entry.map.schedule))
 
         # Modify thread-blocks if dynamic ranges are detected
@@ -1408,7 +1410,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # self.create_grid_barrier = create_grid_barrier
         kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.cfg_id, sdfg.node_id(state),
                                        state.node_id(scope_entry))
-
+        print("Kernel Name: ", kernel_name)
         # Comprehend grid/block dimensions from scopes
         grid_dims, block_dims, tbmap, dtbmap, _ = self.get_kernel_dimensions(dfg_scope)
         is_persistent = (dfg_scope.source_nodes()[0].map.schedule == dtypes.ScheduleType.GPU_Persistent)
@@ -1720,6 +1722,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # Instrumentation (post-kernel)
         if instr is not None:
             callsite_stream.write(outer_stream.getvalue())
+        print("################################Finish Using SoftHierCodeGen Scope######################################")
 
     def get_tb_maps_recursive(self, subgraph):
         res = []
@@ -1968,7 +1971,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
         kernel_stream.write('{', cfg, state_id, node)
-
+        kernel_stream.write("// TEST KERNEL SCOPE\n")
         # Add more opening braces for scope exit to close
         for dim in range(len(node.map.range) - 1):
             kernel_stream.write('{', cfg, state_id, node)
@@ -2117,7 +2120,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
         callsite_stream.write('{', cfg, state_id, scope_entry)
-
+        callsite_stream.write("// TEST DEVICE SCOPE\n")
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             if self.backend == 'hip':
                 raise NotImplementedError('Dynamic thread-block maps on HIP are currently unsupported')
@@ -2529,6 +2532,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        print(f'SoftHier: Generating node {node} in state {state_id}')
         if self.node_dispatch_predicate(sdfg, dfg, node):
             # Dynamically obtain node generator according to class name
             gen = getattr(self, '_generate_' + type(node).__name__, False)
@@ -2537,9 +2541,10 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                 return
 
         if not SoftHierCodeGen._in_device_code:
+            print(f'SoftHier: Generating node {node} in state {state_id} using CPU codegen')
             self._cpu_codegen.generate_node(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
             return
-
+        print(f'SoftHier: Generating node {node} in state {state_id} using SoftHier codegen')
         if isinstance(node, nodes.ExitNode):
             self._locals.clear_scope(self._code_state.indentation + 1)
 
