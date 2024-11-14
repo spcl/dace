@@ -432,23 +432,22 @@ class AST_translator:
                                 self.module_vars.append((k.name, i.name))
             if i.specification_part is not None:
 
-              # this works with CloudSC
-              # unsure about ICON
-              self.transient_mode=False
-             
+                # this works with CloudSC
+                # unsure about ICON
+                self.transient_mode = False
 
-              for j in i.specification_part.symbols:
-                self.translate(j, sdfg)
-                if  isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node):
-                    self.module_vars.append((j.name, i.name))
-                elif isinstance(j, ast_internal_classes.Symbol_Decl_Node):
-                    self.module_vars.append((j.name, i.name))
-                else:
-                    raise ValueError("Unknown symbol type")
-              for j in i.specification_part.specifications:
-                self.translate(j, sdfg)
-                for k in j.vardecl:
-                    self.module_vars.append((k.name, i.name))
+                for j in i.specification_part.symbols:
+                    self.translate(j, sdfg)
+                    if isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node):
+                        self.module_vars.append((j.name, i.name))
+                    elif isinstance(j, ast_internal_classes.Symbol_Decl_Node):
+                        self.module_vars.append((j.name, i.name))
+                    else:
+                        raise ValueError("Unknown symbol type")
+                for j in i.specification_part.specifications:
+                    self.translate(j, sdfg)
+                    for k in j.vardecl:
+                        self.module_vars.append((k.name, i.name))
         # this works with CloudSC
         # unsure about ICON
         self.transient_mode = True
@@ -1035,7 +1034,7 @@ class AST_translator:
                                             changed_indices += 1
                                         local_indices = local_indices + 1
                                 local_all_indices = [None] * (
-                                            len(local_shape) - len(local_index_list)) + local_index_list
+                                        len(local_shape) - len(local_index_list)) + local_index_list
                                 if self.normalize_offsets:
                                     subset = subs.Range([(i, i, 1) if i is not None else (0, s - 1, 1)
                                                          for i, s in zip(local_all_indices, local_shape)])
@@ -1334,7 +1333,7 @@ class AST_translator:
                                             changed_indices += 1
                                         local_indices = local_indices + 1
                                     local_all_indices = [None] * (
-                                                len(local_shape) - len(local_index_list)) + local_index_list
+                                            len(local_shape) - len(local_index_list)) + local_index_list
                                     if self.normalize_offsets:
                                         subset = subs.Range([(i, i, 1) if i is not None else (0, s - 1, 1)
                                                              for i, s in zip(local_all_indices, local_shape)])
@@ -2920,7 +2919,8 @@ def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[st
 
 
 def prune_unused_children(ast: Program, parse_order: List[str], simple_graph: nx.DiGraph,
-                          actually_used_in_module: Dict[str, List]):
+                          actually_used_in_module: Dict[str, List]) \
+        -> Tuple[Dict[str, List[str]], Dict[str, Dict[str, str]]]:
     if not parse_order:
         return {}, {}
 
@@ -3386,7 +3386,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                                            struct_deps_finder.pointer_names):
             if j not in struct_dep_graph.nodes:
                 struct_dep_graph.add_node(j)
-            struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+            struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
     program = ast_transforms.PropagateEnums().visit(program)
     program = ast_transforms.Flatten_Classes(structs_lister.structs).visit(program)
     program.structures = ast_transforms.Structures(structs_lister.structs)
@@ -3442,7 +3442,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         transformation.initialize(program)
         program = transformation.visit(program)
     print("After intrinsics")
-    
+
     program = ast_transforms.TypeInference(program).visit(program)
     program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
@@ -3601,13 +3601,13 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         # copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            #if j.name.name!="cloudscouter":
-            if j.name.name!="cloud_cover_srt":
-            #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
-            #if j.name.name!="rot_vertex_ri":
-            #if j.name.name!="velocity_tendencies":
-            #if j.name.name!="cells2verts_scalar_ri":
-            #if j.name.name!="get_indices_c":
+            # if j.name.name!="cloudscouter":
+            if j.name.name != "cloud_cover_srt":
+                # if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
+                # if j.name.name!="rot_vertex_ri":
+                # if j.name.name!="velocity_tendencies":
+                # if j.name.name!="cells2verts_scalar_ri":
+                # if j.name.name!="get_indices_c":
                 continue
             if j.execution_part is None:
                 continue
