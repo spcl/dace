@@ -71,11 +71,15 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
             if out_names_local_obj is None:
                 # If `obj_list` does not have anything, it means there was no only-list and we're importing everything.
                 dep_info = dep_graph.nodes.get(dep).get('info_list')
-                assert isinstance(dep_info, FunctionSubroutineLister)  # TODO: Is there another possiblity?
-                out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
+                if isinstance(dep_info, FunctionSubroutineLister):
+                    # TODO: Is there another possiblity?
+                    dep_info.list_of_module_vars
+                    out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
                                                                         dep_info.list_of_subroutines,
-                                                                        dep_info.list_of_module_vars,
+                                                                        # dep_info.list_of_module_vars,
                                                                         dep_info.list_of_types))
+                else:
+                    out_names_local_obj = []
             for k in out_names_local_obj:
                 if isinstance(k, Name):
                     out_names_local.append(k.string)
@@ -226,11 +230,14 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
             if out_names_local_obj is None:
                 # If `obj_list` does not have anything, it means there was no only-list and we're importing everything.
                 dep_info = dep_graph.nodes.get(dep).get('info_list')
-                assert isinstance(dep_info, FunctionSubroutineLister)  # TODO: Is there another possiblity?
-                out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
-                                                                        dep_info.list_of_subroutines,
-                                                                        dep_info.list_of_module_vars,
-                                                                        dep_info.list_of_types))
+                if isinstance(dep_info, FunctionSubroutineLister):
+                    # TODO: Is there another possiblity?
+                    out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
+                                                                            dep_info.list_of_subroutines,
+                                                                            # dep_info.list_of_module_vars,
+                                                                            dep_info.list_of_types))
+                else:
+                    out_names_local_obj = []
             for k in out_names_local_obj:
                 if isinstance(k, Name):
                     out_names_local.append(k.string)
