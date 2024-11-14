@@ -40,7 +40,7 @@ def _test_sdfg(
     out = np.zeros(10, dtype=dtype)
     sdfg.apply_gpu_transformations()
     sdfg(out=out)
-    assert np.allclose(out, expected), f"Expected {expected}, but got {out[0]}"
+    assert np.allclose(out, expected, equal_nan=True), f"Expected {expected}, but got {out[0]}"
 
 
 def _perform_test(
@@ -137,9 +137,33 @@ def test_constant_pi_fun():
     )
 
 
+@pytest.mark.gpu
+def test_constant_nan():
+    _perform_test(
+            code="math.nan",
+            expected=math.nan
+    )
+    _perform_test(
+            code="math.nan + 2",
+            expected=math.nan
+    )
+    _perform_test(
+            code="math.nan + 2.0",
+            expected=math.nan
+    )
+    _perform_test(
+            code="math.sin(math.nan + 2.0)",
+            expected=math.nan
+    )
+    _perform_test(
+            code="math.sin(math.nan + 2.0) ** 2",
+            expected=math.nan
+    )
+
 
 if __name__ == "__main__":
     test_constant_pi_simple()
     test_constant_pi_add()
     test_constant_pi_mult()
     test_constant_pi_fun()
+    test_constant_nan()
