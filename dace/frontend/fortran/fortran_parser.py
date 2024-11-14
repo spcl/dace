@@ -2792,60 +2792,49 @@ def recursive_ast_improver(ast,
 
     fandsl = ast_utils.FunctionSubroutineLister()
     fandsl.get_functions_and_subroutines(ast)
-    functions_and_subroutines = fandsl.list_of_functions + fandsl.list_of_subroutines  # + list(fandsl.interface_blocks.keys())
     if len(fandsl.interface_blocks) > 0:
         interface_blocks[ast.children[0].children[0].children[1].string.lower()] = fandsl.interface_blocks
 
-    # print("Functions and subroutines: ", functions_and_subroutines)
     if not main_program_mode:
         parent_module = defined_modules[0]
     else:
         parent_module = ast.children[0].children[0].children[1].string
-    for i in defined_modules:
-        if i not in exclude_list:
-            exclude_list.append(i)
-        # if i not in dep_graph.nodes:
-        dep_graph.add_node(i.lower(), info_list=fandsl)
-    for i in used_modules:
-        if i not in dep_graph.nodes:
-            dep_graph.add_node(i.lower())
-        weight = None
-        if i in objects_in_modules:
-            weight = []
-            for j in objects_in_modules[i].children:
-                weight.append(j)
+    for mod in defined_modules:
+        if mod not in exclude_list:
+            exclude_list.append(mod)
+        dep_graph.add_node(mod.lower(), info_list=fandsl)
+    for mod in used_modules:
+        if mod not in dep_graph.nodes:
+            dep_graph.add_node(mod.lower())
+        obj_list = None
+        if mod in objects_in_modules:
+            obj_list = [obj for obj in objects_in_modules[mod].children]
+        dep_graph.add_edge(parent_module.lower(), mod.lower(), obj_list=obj_list)
 
-        dep_graph.add_edge(parent_module.lower(), i.lower(), obj_list=weight)
-
-    # print("It's turtles all the way down: ", len(exclude_list))
     modules_to_parse = []
-    for i in used_modules:
-        if i not in defined_modules and i not in exclude_list:
-            # print("Module " + i + " not defined")
-            modules_to_parse.append(i)
+    for mod in used_modules:
+        if mod not in chain(defined_modules, exclude_list):
+            modules_to_parse.append(mod)
     added_modules = []
-    for i in modules_to_parse:
+    for mod in modules_to_parse:
         found = False
-        name = i.lower()
-        if i == "mo_restart_nml_and_att":
+        name = mod.lower()
+        if name == "mo_restart_nml_and_att":
             name = "mo_restart_nmls_and_atts"
         if name == "yomhook":
             name = "yomhook_dummy"
-        for j in source_list:
-            if name in j:
-                fname = j.split("/")
-                fname = fname[len(fname) - 1]
-                fname = fname.lower()
-                if fname == name + ".f90" or fname == name + ".F90":
-                    found = True
-                    next_file = j
-                    break
+        for srcf in source_list:
+            if name not in srcf:
+                continue
+            fname = srcf.split("/")[-1].lower()
+            if fname == f"{name}.f90":
+                found = True
+                next_file = srcf
+                break
 
         if not found:
-            # print("Module " + i + " not found in source list! This is bad!")
-            if i not in missing_modules:
-                missing_modules.append(i)
-            # raise Exception("Module " + i + " not found in source list")
+            if mod not in missing_modules:
+                missing_modules.append(mod)
             continue
         if isinstance(source_list, dict):
             reader = fsr(source_list[next_file])
@@ -2863,15 +2852,25 @@ def recursive_ast_improver(ast,
                                           interface_blocks=interface_blocks,
                                           dep_graph=dep_graph,
                                           asts=asts)
-        for mod in next_ast.children:
-            added_modules.append(mod)
-            if mod.children[0].children[1].string not in exclude_list:
-                exclude_list.append(mod.children[0].children[1].string)
+        for c in reversed(next_ast.children):
+            if c in added_modules:
+                added_modules.remove(c)
+            added_modules.append(c)
+            c_stmt = c.children[0]
+            c_name = ast_utils.singular(ast_utils.children_of_type(c_stmt, Name)).string
+            if c_name not in exclude_list:
+                exclude_list.append(c_name)
 
-    for i in added_modules:
-        if ast.children.count(i) == 0:
-            ast.children.append(i)
-        asts[i.children[0].children[1].string.lower()] = i
+    for mod in reversed(added_modules):
+        mod_stmt = mod.children[0]
+        mod_name = ast_utils.singular(ast_utils.children_of_type(mod_stmt, Name)).string
+        # Prepend to the list, because in Fortran dependencies should come first.
+        # If the module is already on the list, move it even earlier.
+        if mod in ast.children:
+            ast.children.remove(mod)
+        ast.children.insert(0, mod)
+        asts[mod_name] = mod
+
     return ast
 
 
@@ -3011,8 +3010,12 @@ def prune_unused_children(ast: Program, parse_order: List[str], simple_graph: nx
         if mod_name != top_level_ast:
             for c in exec.children:
                 if not isinstance(c, Contains_Stmt):
-                    if c.children[0].children[1].string in what_to_parse_list[mod_name]:
+                    c_stmt = c.children[0]
+                    c_name = ast_utils.singular(ast_utils.children_of_type(c_stmt, Name)).string
+                    if c_name in what_to_parse_list[mod_name]:
                         subroutinesandfunctions.append(c)
+                else:
+                    subroutinesandfunctions.append(c)
             exec.children[:] = subroutinesandfunctions
         new_children.append(mod)
     ast.children[:] = new_children
