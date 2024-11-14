@@ -29,10 +29,14 @@ namespace dace
             {
                 return std::numeric_limits<double>::quiet_NaN();
             }
+
+#if !( defined(__CUDACC__) || defined(__HIPCC__) )
+            //There is no long double on the GPU
             DACE_CONSTEXPR DACE_HDFI operator long double() const
             {
                 return std::numeric_limits<long double>::quiet_NaN();
             }
+#endif
             DACE_CONSTEXPR DACE_HDFI typeless_nan operator+() const
             {
                 return typeless_nan{};

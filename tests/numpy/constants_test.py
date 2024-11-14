@@ -37,6 +37,7 @@ def _test_sdfg(
         dtype = np.float64,
 ):
     out = np.zeros(10, dtype=dtype)
+    sdfg.apply_gpu_transformations()
     sdfg(out=out)
     assert np.allclose(out, expected), f"Expected {expected}, but got {out[0]}"
 
@@ -46,6 +47,7 @@ def _perform_test(
         expected,
         dtype = np.float64,
 ):
+    print(f"PERFORM: {code}")
     dace_dtype = dace.dtypes.dtype_to_typeclass(dtype)
     sdfg = _make_sdfg(code=code, dtype=dace_dtype)
     _test_sdfg(sdfg=sdfg, expected=expected, dtype=dtype)
@@ -75,6 +77,10 @@ def test_constant_pi_add():
 
 def test_constant_pi_mult():
     _perform_test(
+            code="(math.pi ** 2) * 2",
+            expected=math.pi * math.pi * 2.0
+    )
+    _perform_test(
             code="math.pi * 2",
             expected=2 * math.pi
     )
@@ -84,10 +90,6 @@ def test_constant_pi_mult():
     )
     _perform_test(
             code="math.pi * math.pi * 2",
-            expected=math.pi * math.pi * 2.0
-    )
-    _perform_test(
-            code="(math.pi ** 2) * 2",
             expected=math.pi * math.pi * 2.0
     )
     _perform_test(

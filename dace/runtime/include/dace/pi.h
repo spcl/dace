@@ -117,16 +117,22 @@ namespace dace
                 typename = std::enable_if_t<std::is_integral<T>::value>
             >
             DACE_CONSTEXPR DACE_HDFI operator T() const noexcept
-            { return T(mult * std::powf(M_PI, exp)); }
+            { return T(mult * std::pow(static_cast<T>(M_PI), exp)); }
 
+
+            /* We have to do the selection this way, because it seems as nvidia does
+             *  not provide `powl` and `powf` in the std namespace */
             DACE_CONSTEXPR DACE_HDFI operator float() const
-            { return float(mult * std::powf(M_PI, exp)); }
+            { using std::pow; return mult * pow(static_cast<float>(M_PI), exp); }
 
             DACE_CONSTEXPR DACE_HDFI operator double() const
-            { return double(mult * std::pow(M_PI, exp)); }
+            { using std::pow; return mult * std::pow(static_cast<double>(M_PI), exp); }
 
+#if !( defined(__CUDACC__) || defined(__HIPCC__) )
+            //There is no long double on the GPU
             DACE_CONSTEXPR DACE_HDFI operator long double() const
-            { return (long double)(mult * std::powl(M_PI, exp)); }
+            { using std::pow; return mult * std::pow(static_cast<long double>(M_PI), exp); }
+#endif
 
             DACE_CONSTEXPR DACE_HDFI typeless_pi_exp operator+() const
             { return *this; }
