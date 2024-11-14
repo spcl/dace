@@ -3345,14 +3345,14 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             continue
 
         partial_ast.add_name_list_for_module(i, name_dict[i])
-        try:
-            partial_module = partial_ast.create_ast(asts[i.lower()])
-            partial_modules[partial_module.name.name] = partial_module
-        except Exception as e:
-            print("Module " + i + " could not be parsed ", partial_ast.unsupported_fortran_syntax[i])
-            print(e, type(e))
+        #try:
+        partial_module = partial_ast.create_ast(asts[i.lower()])
+        partial_modules[partial_module.name.name] = partial_module
+        #except Exception as e:
+        #    print("Module " + i + " could not be parsed ", partial_ast.unsupported_fortran_syntax[i])
+        #    print(e, type(e))
             # print(partial_ast.unsupported_fortran_syntax[i])
-            continue
+        #    continue
         tmp_rename = rename_dict[i]
         for j in tmp_rename:
             # print(j)

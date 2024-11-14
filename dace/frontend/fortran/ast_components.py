@@ -301,6 +301,36 @@ class InternalFortranAst:
             "End_Enum_Stmt": self.end_enum_stmt,
             "Exit_Stmt": self.exit_stmt,
             "Enum_Def": self.enum_def,
+            "Connect_Spec": self.connect_spec,
+            "Namelist_Stmt": self.namelist_stmt,
+            "Namelist_Group_Object_List": self.namelist_group_object_list,
+            "Open_Stmt": self.open_stmt,
+            "Connect_Spec_List": self.connect_spec_list,
+            "Connect_Spec": self.connect_spec,
+            "Association": self.association,
+            "Association_List": self.association_list,
+            "Associate_Stmt": self.associate_stmt,
+            "End_Associate_Stmt": self.end_associate_stmt,
+            "Associate_Construct": self.associate_construct,
+            "Subroutine_Body": self.subroutine_body,
+            "Function_Reference": self.function_reference,
+            "Binding_Name_List": self.binding_name_list,
+            "Generic_Binding": self.generic_binding,
+            "Private_Components_Stmt": self.private_components_stmt,
+            "Stop_Code": self.stop_code,
+            "Error_Stop_Stmt": self.error_stop_stmt,
+            "Pointer_Object_List": self.pointer_object_list,
+            "Nullify_Stmt": self.nullify_stmt,
+            "Deallocate_Stmt": self.deallocate_stmt,
+            "Proc_Component_Ref": self.proc_component_ref,
+            "Component_Spec": self.component_spec,
+            "Allocate_Object_List": self.allocate_object_list,
+            "Read_Stmt": self.read_stmt,
+            "Close_Stmt": self.close_stmt,
+            "Io_Control_Spec": self.io_control_spec,
+            "Io_Control_Spec_List": self.io_control_spec_list,
+            "Close_Spec_List": self.close_spec_list,
+            "Close_Spec": self.close_spec,
 
             #"Component_Decl_List": self.component_decl_list,
             #"Component_Decl": self.component_decl,
@@ -395,6 +425,126 @@ class InternalFortranAst:
 
     def access_stmt(self, node: FASTNode):
         return None
+    
+    def generic_binding(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Generic_Binding_Node(name=children[1],binding=children[2])
+    
+    def private_components_stmt(self, node: FASTNode):
+        return None
+    
+    def deallocate_stmt(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Deallocate_Stmt_Node(list=children[0].list)
+    
+    def proc_component_ref(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Data_Ref_Node(parent_ref=children[0], part_ref=children[2],type="VOID")
+    
+    def component_spec(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Actual_Arg_Spec_Node(arg_name=children[0], arg=children[1],type="VOID")
+    
+    def allocate_object_list(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Allocate_Object_List_Node(list=children)
+    
+    def read_stmt(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Read_Stmt_Node(args=children[0], line_number=node.item.span)
+    
+    def close_stmt(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Close_Stmt_Node(args=children[0], line_number=node.item.span)
+    
+    def io_control_spec(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.IO_Control_Spec_Node(name=children[0],args=children[1])
+    
+    def io_control_spec_list(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.IO_Control_Spec_List_Node(list=children)
+    
+    def close_spec_list(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Close_Spec_List_Node(list=children)
+    
+    def close_spec(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Close_Spec_Node(name=children[0],args=children[1])
+    
+    def stop_code(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Stop_Stmt_Node(code=node.string)
+    
+    def error_stop_stmt(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Error_Stmt_Node(error=children[1])
+    
+    def pointer_object_list(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Pointer_Object_List_Node(list=children)
+    
+    def nullify_stmt(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Nullify_Stmt_Node(list=children[1].list)
+    
+    def binding_name_list(self, node: FASTNode):
+        children=self.create_children(node)
+        return children
+    
+    def connect_spec(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Connect_Spec_Node(type=children[0],args=children[1])
+    
+    def connect_spec_list(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Connect_Spec_List_Node(list=children)
+    
+    def open_stmt(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Open_Stmt_Node(args=children[1].list, line_number=node.item.span)
+    
+    def namelist_stmt(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Namelist_Stmt_Node(name=children[0][0],list=children[0][1])
+    
+    def namelist_group_object_list(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Namelist_Group_Object_List_Node(list=children)
+    
+    def associate_stmt(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Associate_Stmt_Node(args=children[1].list)
+    
+    def association(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Association_Node(name=children[0],expr=children[2])
+    
+    def association_list(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Association_List_Node(list=children)
+    
+    def subroutine_body(self, node: FASTNode):
+        children=self.create_children(node)
+        return children
+    
+    def function_reference(self, node: FASTNode):
+        children=self.create_children(node)
+        line=get_line(node)
+        return ast_internal_classes.Call_Expr_Node(name=children[0], args=children[1].args, type="VOID", line_number=line)
+
+    
+
+    
+    def end_associate_stmt(self, node: FASTNode):
+        return None
+    
+    def associate_construct(self, node: FASTNode):
+        children=self.create_children(node)
+        return ast_internal_classes.Associate_Construct_Node(associate=children[0],body=children[1])
+    
+
     
     def enum_def_stmt(self, node: FASTNode):
         children = self.create_children(node)
@@ -1283,22 +1433,43 @@ class InternalFortranAst:
     def where_stmt(self, node: FASTNode):
         return node
 
-    def forall_stmt(self, node: FASTNode):
-        return node
+
 
     def where_construct(self, node: FASTNode):
-        return node
+        children = self.create_children(node)
+        line = children[0].line_number
+        cond=children[0]
+        body=children[1]
+        current=2
+        body_else=None
+        elifs_cond=[]
+        elifs_body=[]
+        while children[current] is not None:
+            if isinstance(children[current],str) and children[current].lower()=="elsewhere":
+                body_else=children[current+1]
+                current+=2
+            else:
+                elifs_cond.append(children[current])
+                elifs_body.append(children[current+1])    
+                current+=2
+        return ast_internal_classes.Where_Construct_Node(body=body, cond=cond, body_else=body_else, elifs_cond=elifs_cond, elifs_body=elifs_cond, line_number=line)
 
     def where_construct_stmt(self, node: FASTNode):
-        return node
+        children=self.create_children(node)
+        return children[0] 
 
     def masked_elsewhere_stmt(self, node: FASTNode):
-        return node
+        children=self.create_children(node)
+        return children[0]
 
     def elsewhere_stmt(self, node: FASTNode):
-        return node
+        children=self.create_children(node)
+        return children[0]
 
     def end_where_stmt(self, node: FASTNode):
+        return None
+    
+    def forall_stmt(self, node: FASTNode):
         return node
 
     def forall_construct(self, node: FASTNode):

@@ -1505,7 +1505,8 @@ class FortranIntrinsics:
         "ALL": All,
         "MINVAL": MinVal,
         "MAXVAL": MaxVal,
-        "MERGE": Merge
+        "MERGE": Merge,
+        
     }
 
     EXEMPTED_FROM_CALL_EXTRACTION = [
@@ -1541,6 +1542,21 @@ class FortranIntrinsics:
         func_name = node.string
         replacements = {
             "SIGN": "__dace_sign",
+            #TODO implement and categorize the intrinsic functions below
+            "SPREAD": "__dace_spread",
+            "ALLOCATED": "__dace_allocated",
+            "TRIM": "__dace_trim",
+            "IEOR": "__dace_ieor",
+            "TRANSPOSE": "__dace_transpose",
+            "BTEST": "__dace_btest",
+            "LEN_TRIM": "__dace_len_trim",
+            "ASSOCIATED": "__dace_associated",
+            "IBSET": "__dace_ibset",
+            "MAXLOC": "__dace_maxloc",
+            "ISHFT": "__dace_ishft",
+            "IBCLR": "__dace_ibclr",
+            "IBITS": "__dace_ibits",
+            "IAND": "__dace_iand",
         }
         if func_name in replacements:
             return ast_internal_classes.Name_Node(name=replacements[func_name])
