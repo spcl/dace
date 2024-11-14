@@ -2928,7 +2928,7 @@ def prune_unused_children(ast: Program, parse_order: List[str], simple_graph: nx
     for mod in parse_order:
         parse_list[mod] = []
         fands_list, type_list = [], []
-        for tdecl, _, data in simple_graph.in_edges(mod, data=True):
+        for _, _, data in simple_graph.in_edges(mod, data=True):
             deps = data.get("obj_list")
             if not deps:
                 continue
@@ -2940,7 +2940,7 @@ def prune_unused_children(ast: Program, parse_order: List[str], simple_graph: nx
             continue
         res_fand = set(chain(res.list_of_functions, res.list_of_subroutines))
         res_types = set(res.list_of_types)
-        for tdecl, _, data in simple_graph.in_edges(mod, data=True):
+        for _, _, data in simple_graph.in_edges(mod, data=True):
             fns = list(item for item in parse_list[mod] if item in res_fand)
             if fns:
                 ast_utils.extend_with_new_items_from(fands_list, fns)
