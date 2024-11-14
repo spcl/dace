@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeScope
 
 
 class NestedDict(dict):
@@ -802,6 +803,14 @@ class SDFG(ControlFlowRegion):
     def start_state(self, state_id):
         self.start_block = state_id
 
+    @property
+    def regenerate_code(self):
+        return self._regenerate_code
+
+    @regenerate_code.setter
+    def regenerate_code(self, value):
+        self._regenerate_code = value
+
     def set_global_code(self, cpp_code: str, location: str = 'frame'):
         """
         Sets C++ code that will be generated in a global scope on
@@ -1070,6 +1079,24 @@ class SDFG(ControlFlowRegion):
 
     ##########################################
 
+    def as_schedule_tree(self, in_place: bool = False) -> 'ScheduleTreeScope':
+        """
+        Creates a schedule tree from this SDFG and all nested SDFGs. The schedule tree is a tree of nodes that represent
+        the execution order of the SDFG.
+        Each node in the tree can either represent a single statement (symbol assignment, tasklet, copy, library node,
+        etc.) or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
+    
+        It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
+        erasing an empty if branch, or merging two consecutive for-loops.
+
+        :param in_place: If True, the SDFG is modified in-place. Otherwise, a copy is made. Note that the SDFG might
+                         not be usable after the conversion if ``in_place`` is True!
+        :return: A schedule tree representing the given SDFG.
+        """
+        # Avoid import loop
+        from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t
+        return s2t.as_schedule_tree(self, in_place=in_place)
+
     @property
     def build_folder(self) -> str:
         """ Returns a relative path to the build cache folder for this SDFG. """
@@ -1181,7 +1208,7 @@ class SDFG(ControlFlowRegion):
             if isinstance(dtype, dt.Array):
                 return value
             elif isinstance(dtype, dt.Scalar):
-                return dtype.dtype(value)
+                return dtype.dtype.type(value)
             raise TypeError('Unsupported data type %s' % dtype)
 
         result.update({k: cast(*v) for k, v in self.constants_prop.items()})
@@ -1925,6 +1952,20 @@ class SDFG(ControlFlowRegion):
         self._temp_transients += 1
         return name
 
+    def refresh_temp_transients(self):
+        """
+        Updates the temporary transient counter of this SDFG by querying the maximum number among the
+        ``__tmp###`` data descriptors.
+        """
+        temp_transients = [k[5:] for k in self.arrays.keys() if k.startswith('__tmp')]
+        max_temp_transient = 0
+        for arr_suffix in temp_transients:
+            try:
+                max_temp_transient = max(max_temp_transient, int(arr_suffix))
+            except ValueError:  # Not of the form __tmp###
+                continue
+        self._temp_transients = max_temp_transient + 1
+
     def add_temp_transient(self,
                            shape,
                            dtype,
@@ -2293,7 +2334,7 @@ class SDFG(ControlFlowRegion):
         ############################
         # DaCe Compilation Process #
 
-        if self._regenerate_code or not os.path.isdir(build_folder):
+        if self.regenerate_code or not os.path.isdir(build_folder):
             # Clone SDFG as the other modules may modify its contents
             sdfg = copy.deepcopy(self)
             # Fix the build folder name on the copied SDFG to avoid it changing
@@ -2462,6 +2503,38 @@ class SDFG(ControlFlowRegion):
         """
         from dace.transformation.passes.simplify import SimplifyPass
         return SimplifyPass(validate=validate, validate_all=validate_all, verbose=verbose).apply_pass(self, {})
+
+    def auto_optimize(self,
+                      device: dtypes.DeviceType,
+                      validate: bool = True,
+                      validate_all: bool = False,
+                      symbols: Dict[str, int] = None,
+                      use_gpu_storage: bool = False):
+        """
+        Runs a basic sequence of transformations to optimize a given SDFG to decent
+        performance. In particular, performs the following:
+            
+            * Simplify
+            * Auto-parallelization (loop-to-map)
+            * Greedy application of SubgraphFusion
+            * Tiled write-conflict resolution (MapTiling -> AccumulateTransient)
+            * Tiled stream accumulation (MapTiling -> AccumulateTransient)
+            * Collapse all maps to parallelize across all dimensions
+            * Set all library nodes to expand to ``fast`` expansion, which calls
+              the fastest library on the target device
+
+        :param device: the device to optimize for.
+        :param validate: If True, validates the SDFG after all transformations
+                         have been applied.
+        :param validate_all: If True, validates the SDFG after every step.
+        :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
+        :param use_gpu_storage: If True, changes the storage of non-transient data to GPU global memory.
+        :note: Operates in-place on the given SDFG.
+        :note: This function is still experimental and may harm correctness in
+               certain cases. Please report an issue if it does.
+        """
+        from dace.transformation.auto.auto_optimize import auto_optimize
+        auto_optimize(device, validate, validate_all, symbols, use_gpu_storage)
 
     def _initialize_transformations_from_type(
         self,

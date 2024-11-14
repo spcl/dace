@@ -22,8 +22,7 @@ def nested_cflow_test(A: dace.int32[1]):
                             out_a = in_a + 2
 
 
-@pytest.mark.skip
-def test():
+def test_nested_control_flow_with_explicit_tasklets():
     A = np.zeros(1).astype(np.int32)
     nested_cflow_test(A)
 
@@ -33,4 +32,4 @@ def test():
 
 
 if __name__ == "__main__":
-    test()
+    test_nested_control_flow_with_explicit_tasklets()

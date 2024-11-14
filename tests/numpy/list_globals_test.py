@@ -43,7 +43,7 @@ def test_local_list():
     assert np.allclose(result, np.transpose(inp.copy(), axes=local_axes))
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Syntax is not yet supported')
 def test_local_list_with_slice():
     local_axes = [1, 2, 0, 100]
 

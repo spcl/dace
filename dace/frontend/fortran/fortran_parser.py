@@ -818,7 +818,8 @@ class AST_translator:
         calls.visit(node)
         if len(calls.nodes) == 1:
             augmented_call = calls.nodes[0]
-            if augmented_call.name.name not in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh", "__dace_epsilon"]:
+            from dace.frontend.fortran.intrinsics import FortranIntrinsics
+            if augmented_call.name.name not in ["pow", "atan2", "tanh", "__dace_epsilon", *FortranIntrinsics.retained_function_names()]:
                 augmented_call.args.append(node.lval)
                 augmented_call.hasret = True
                 self.call2sdfg(augmented_call, sdfg, cfg)
@@ -1090,7 +1091,8 @@ def create_ast_from_string(
         program = ast_transforms.ArrayToLoop(program).visit(program)
 
         for transformation in own_ast.fortran_intrinsics().transformations():
-            program = transformation(program).visit(program)
+            transformation.initialize(program)
+            program = transformation.visit(program)
 
         program = ast_transforms.ForDeclarer().visit(program)
         program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
@@ -1126,7 +1128,8 @@ def create_sdfg_from_string(
     program = ast_transforms.ArrayToLoop(program).visit(program)
 
     for transformation in own_ast.fortran_intrinsics().transformations():
-        program = transformation(program).visit(program)
+        transformation.initialize(program)
+        program = transformation.visit(program)
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
@@ -1172,7 +1175,8 @@ def create_sdfg_from_fortran_file(source_string: str, use_experimental_cfg_block
     program = ast_transforms.ArrayToLoop(program).visit(program)
 
     for transformation in own_ast.fortran_intrinsics():
-        program = transformation(program).visit(program)
+        transformation.initialize(program)
+        program = transformation.visit(program)
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program).visit(program)

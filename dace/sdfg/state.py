@@ -786,26 +786,22 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 # NOTE: In certain cases the corresponding subset might be None, in this case
                 #   we assume that the whole array is written, which is the default behaviour.
                 ac_desc = n.desc(self.sdfg)
-                ac_size = ac_desc.total_size
-                in_subsets = dict()
-                for in_edge in in_edges:
-                    # Ensure that if the destination subset is not given, our assumption, that the
-                    #  whole array is written to, is valid, by testing if the memlet transfers the
-                    #  whole array.
-                    assert (in_edge.data.dst_subset is not None) or (in_edge.data.num_elements() == ac_size)
-                    in_subsets[in_edge] = (
-                            sbs.Range.from_array(ac_desc)
-                            if in_edge.data.dst_subset is None
-                            else in_edge.data.dst_subset
+                in_subsets = {
+                    in_edge: (
+                        sbs.Range.from_array(ac_desc)
+                        if in_edge.data.dst_subset is None
+                        else in_edge.data.dst_subset
                     )
-                out_subsets = dict()
-                for out_edge in out_edges:
-                    assert (out_edge.data.src_subset is not None) or (out_edge.data.num_elements() == ac_size)
-                    out_subsets[out_edge] = (
+                    for in_edge in in_edges
+                }
+                out_subsets = {
+                    out_edge: (
                         sbs.Range.from_array(ac_desc)
                         if out_edge.data.src_subset is None
                         else out_edge.data.src_subset
                     )
+                    for out_edge in out_edges
+                }
 
                 # Update the read and write sets of the subgraph.
                 if in_edges:

@@ -98,7 +98,7 @@ def test_gpu():
     run_azimint_naive(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Validation error")
+@pytest.mark.skip(reason="Incorrect output")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     run_azimint_naive(dace.dtypes.DeviceType.FPGA)
