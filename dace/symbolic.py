@@ -1013,14 +1013,6 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
     """ 
     Replaces various operations with the appropriate SymPy functions to avoid non-symbolic evaluation.
     """
-
-    interpret_numeric_booleans: bool
-
-    def __init__(self, interpret_numeric_booleans: bool = True):
-        super().__init__()
-
-        self.interpret_numeric_booleans = interpret_numeric_booleans
-
     _ast_to_sympy_comparators = {
         ast.Eq: 'Eq',
         ast.Gt: 'Gt',
@@ -1103,12 +1095,11 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         op = node.ops[0]
         arguments = [node.left, node.comparators[0]]
 
-        if self.interpret_numeric_booleans:
-            # Ensure constant values in boolean comparisons are interpreted als booleans.
-            if isinstance(node.left, ast.Compare) and isinstance(node.comparators[0], _SimpleASTNode):
-                arguments[1] = _convert_truthy_falsy(node.comparators[0])
-            elif isinstance(node.left, _SimpleASTNode) and isinstance(node.comparators[0], ast.Compare):
-                arguments[0] = _convert_truthy_falsy(node.left)
+        # Ensure constant values in boolean comparisons are interpreted als booleans.
+        if isinstance(node.left, ast.Compare) and isinstance(node.comparators[0], _SimpleASTNode):
+            arguments[1] = _convert_truthy_falsy(node.comparators[0])
+        elif isinstance(node.left, _SimpleASTNode) and isinstance(node.comparators[0], ast.Compare):
+            arguments[0] = _convert_truthy_falsy(node.left)
 
         func_node = ast.copy_location(ast.Name(id=self._ast_to_sympy_comparators[type(op)], ctx=ast.Load()), node)
         new_node = ast.Call(func=func_node, args=[self.visit(arg) for arg in arguments], keywords=[])
