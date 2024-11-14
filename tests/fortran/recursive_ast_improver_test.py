@@ -3,15 +3,11 @@ from typing import Dict
 
 import networkx as nx
 from fparser.common.readfortran import FortranStringReader
-from fparser.two.Fortran2003 import Main_Program, Program, Program_Stmt, Specification_Part, Execution_Part, \
-    End_Program_Stmt, Implicit_Part, Assignment_Stmt, Subroutine_Subprogram, Call_Stmt, Subroutine_Stmt, \
-    End_Subroutine_Stmt, Module_Stmt, Module, End_Module_Stmt, Module_Subprogram_Part, Contains_Stmt, Use_Stmt, Name, \
-    Internal_Subprogram_Part, Function_Subprogram, Function_Stmt, End_Function_Stmt, Interface_Block, Interface_Stmt
-from fparser.two.Fortran2008 import Type_Declaration_Stmt, Procedure_Stmt
+from fparser.two.Fortran2003 import Program, Name
 from fparser.two.parser import ParserFactory
 
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver, simplified_dependency_graph
-from tests.fortran.fotran_test_helper import SourceCodeBuilder, FortranASTMatcher as M
+from tests.fortran.fotran_test_helper import SourceCodeBuilder
 
 
 def parse_and_improve(sources: Dict[str, str]):
@@ -20,6 +16,7 @@ def parse_and_improve(sources: Dict[str, str]):
     reader = FortranStringReader(sources['main.f90'])
     ast = parser(reader)
     assert isinstance(ast, Program)
+
     dep_graph = nx.DiGraph()
     asts = {}
     interface_blocks = {}
@@ -50,19 +47,16 @@ end program main
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
 
-    # A pretty thorough matcher to make sure that we got all the parts of this simple program correct.
-    m = M(Program, [
-        M(Main_Program, [
-            M(Program_Stmt),  # program main
-            M(Specification_Part, [
-                M(Implicit_Part),  # implicit none
-                M(Type_Declaration_Stmt),  # double precision d(4)
-            ]),
-            M(Execution_Part, [M(Assignment_Stmt)]),  # d(2) = 5.5
-            M(End_Program_Stmt),  # end program main
-        ]),
-    ])
-    m.check(ast)
+    got = ast.tofortran()
+    want = """
+PROGRAM main
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  d(2) = 5.5
+END PROGRAM main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     # Verify that there is not much else to the program.
     assert not set(dep_graph.nodes)
@@ -95,25 +89,21 @@ end subroutine fun
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
 
-    # A matcher focused on correctly parsing the subroutine definitions and uses.
-    m = M(Program, [
-        M(Main_Program, [
-            M.IGNORE(),  # program main
-            M(Specification_Part),  # implicit none; double precision d(4)
-            M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
-            M.IGNORE(),  # end program main
-        ]),
-        M(Subroutine_Subprogram, [
-            M(Subroutine_Stmt),  # subroutine fun(d)
-            M(Specification_Part, [
-                M(Implicit_Part),  # implicit none
-                M(Type_Declaration_Stmt),  # double precision d(4)
-            ]),
-            M(Execution_Part, [M(Assignment_Stmt)]),  # d(2) = 5.5
-            M(End_Subroutine_Stmt),  # end subroutine fun
-        ]),
-    ])
-    m.check(ast)
+    got = ast.tofortran()
+    want = """
+PROGRAM main
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  CALL fun(d)
+END PROGRAM main
+SUBROUTINE fun(d)
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  d(2) = 5.5
+END SUBROUTINE fun
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     # Verify that there is not much else to the program.
     assert not set(dep_graph.nodes)
@@ -139,19 +129,16 @@ end subroutine fun
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
 
-    # A matcher focused on correctly parsing the subroutine definitions and uses.
-    m = M(Program, [
-        M(Subroutine_Subprogram, [
-            M(Subroutine_Stmt),  # subroutine fun(d)
-            M(Specification_Part, [
-                M(Implicit_Part),  # implicit none
-                M(Type_Declaration_Stmt),  # double precision d(4)
-            ]),
-            M(Execution_Part, [M(Assignment_Stmt)]),  # d(2) = 5.5
-            M(End_Subroutine_Stmt),  # end subroutine fun
-        ]),
-    ])
-    m.check(ast)
+    got = ast.tofortran()
+    want = """
+SUBROUTINE fun(d)
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  d(2) = 5.5
+END SUBROUTINE fun
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     # Verify that there is not much else to the program.
     assert not set(dep_graph.nodes)
@@ -177,34 +164,36 @@ contains
   subroutine fun(d)
     implicit none
     double precision d(4)
-    d(2) = 5.5
+    d(2) = fun2()
   end subroutine fun
+  real function fun2()
+    implicit none
+    fun2 = 5.5
+  end function fun2
 end program main
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
 
-    # A matcher focused on correctly parsing the subroutine definitions and uses.
-    m = M(Program, [
-        M(Main_Program, [
-            M.IGNORE(),  # program main
-            M(Specification_Part),  # implicit none; double precision d(4)
-            M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
-            M(Internal_Subprogram_Part, [
-                M(Contains_Stmt),  # contains
-                M(Subroutine_Subprogram, [
-                    M(Subroutine_Stmt),  # subroutine fun(d)
-                    M(Specification_Part, [
-                        M.IGNORE(),  # implicit none
-                        M(Type_Declaration_Stmt),  # double precision d(4)
-                    ]),
-                    M(Execution_Part, [M(Assignment_Stmt)]),  # d(2) = 5.5
-                    M(End_Subroutine_Stmt),  # end subroutine fun
-                ]),
-            ]),
-            M.IGNORE(),  # end program main
-        ]),
-    ])
-    m.check(ast)
+    got = ast.tofortran()
+    want = """
+PROGRAM main
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  CALL fun(d)
+  CONTAINS
+  SUBROUTINE fun(d)
+    IMPLICIT NONE
+    DOUBLE PRECISION :: d(4)
+    d(2) = fun2()
+  END SUBROUTINE fun
+  REAL FUNCTION fun2()
+    IMPLICIT NONE
+    fun2 = 5.5
+  END FUNCTION fun2
+END PROGRAM main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     # Verify that there is not much else to the program.
     assert not set(dep_graph.nodes)
@@ -250,24 +239,30 @@ end function fun
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
 
-    # A matcher focused on correctly parsing the subroutine definitions and uses.
-    m = M(Program, [
-        M(Main_Program, [
-            M.IGNORE(),  # program main
-            M(Specification_Part),  # implicit none; double precision d(4)
-            M(Execution_Part, [M(Assignment_Stmt)]),  # d(2) = fun()
-            M.IGNORE(),  # end program main
-        ]),
-        M(Function_Subprogram, [
-            M(Function_Stmt),  # subroutine fun()
-            M(Specification_Part, [
-                M(Implicit_Part),  # implicit none
-            ]),
-            M(Execution_Part, [M(Assignment_Stmt)]),  # d(2) = 5.5
-            M(End_Function_Stmt),  # end subroutine fun
-        ]),
-    ])
-    m.check(ast)
+    got = ast.tofortran()
+    want = """
+PROGRAM main
+  IMPLICIT NONE
+  INTERFACE
+    REAL FUNCTION fun()
+      IMPLICIT NONE
+    END FUNCTION fun
+  END INTERFACE
+  INTERFACE
+    REAL FUNCTION fun2()
+      IMPLICIT NONE
+    END FUNCTION fun2
+  END INTERFACE
+  DOUBLE PRECISION :: d(4)
+  d(2) = fun()
+END PROGRAM main
+REAL FUNCTION fun()
+  IMPLICIT NONE
+  fun = 5.5
+END FUNCTION fun
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     assert interface_blocks == {
         'main': {'': [Name('fun'), Name('fun2')]},
@@ -307,32 +302,25 @@ end program main
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
 
-    # A matcher focused on correctly parsing the module definitions and uses.
-    m = M(Program, [
-        M(Main_Program, [
-            M.IGNORE(),  # program main
-            M(Specification_Part, [
-                M(Use_Stmt),  # use lib
-                *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
-            ]),
-            M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
-            M.IGNORE(),  # end program main
-        ]),
-        M(Module, [
-            M(Module_Stmt, [M.IGNORE(), M(Name, has_attr={'string': M(has_value='lib')})]),  # module lib
-            M(Module_Subprogram_Part, [
-                M(Contains_Stmt),  # contains
-                M(Subroutine_Subprogram, [
-                    M(Subroutine_Stmt),  # subroutine fun(d)
-                    M(Specification_Part),  # implicit none; double precision d(4)
-                    M(Execution_Part),  # d(2) = 5.5
-                    M(End_Subroutine_Stmt),  # end subroutine fun
-                ]),
-            ]),
-            M(End_Module_Stmt),  # end module lib
-        ]),
-    ])
-    m.check(ast)
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  CONTAINS
+  SUBROUTINE fun(d)
+    IMPLICIT NONE
+    DOUBLE PRECISION :: d(4)
+    d(2) = 5.5
+  END SUBROUTINE fun
+END MODULE lib
+PROGRAM main
+  USE lib
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  CALL fun(d)
+END PROGRAM main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     # This time we have a module dependency.
     assert set(dep_graph.nodes) == {'lib', 'main'}
@@ -384,37 +372,34 @@ end program main
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
 
-    # A matcher focused on correctly parsing the module definitions and uses.
-    m = M(Program, [
-        M(Main_Program, [
-            M.IGNORE(),  # program main
-            M(Specification_Part, [
-                M(Use_Stmt),  # use lib
-                *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
-            ]),
-            M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
-            M.IGNORE(),  # end program main
-        ]),
-        M(Module, [
-            M(Module_Stmt, [M.IGNORE(), M(Name, has_attr={'string': M(has_value='lib_indirect')})]),
-            # module lib_indirect
-            M(Specification_Part, [M(Use_Stmt)]),  # use lib
-            M(Module_Subprogram_Part, [
-                M(Contains_Stmt),  # contains
-                M(Subroutine_Subprogram),  # subroutine fun_indirect(d) ... end subroutine fun_indirect
-            ]),
-            M(End_Module_Stmt),  # end module lib_indirect
-        ]),
-        M(Module, [
-            M(Module_Stmt, [M.IGNORE(), M(Name, has_attr={'string': M(has_value='lib')})]),  # module lib
-            M(Module_Subprogram_Part, [
-                M(Contains_Stmt),  # contains
-                M(Subroutine_Subprogram),  # subroutine fun(d) ... end subroutine fun
-            ]),
-            M(End_Module_Stmt),  # end module lib
-        ]),
-    ])
-    m.check(ast)
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  CONTAINS
+  SUBROUTINE fun(d)
+    IMPLICIT NONE
+    DOUBLE PRECISION :: d(4)
+    d(2) = 5.5
+  END SUBROUTINE fun
+END MODULE lib
+MODULE lib_indirect
+  USE lib
+  CONTAINS
+  SUBROUTINE fun_indirect(d)
+    IMPLICIT NONE
+    DOUBLE PRECISION :: d(4)
+    CALL fun(d)
+  END SUBROUTINE fun_indirect
+END MODULE lib_indirect
+PROGRAM main
+  USE lib_indirect, ONLY: fun_indirect
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  CALL fun_indirect(d)
+END PROGRAM main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     # This time we have a module dependency.
     assert set(dep_graph.nodes) == {'lib', 'lib_indirect', 'main'}
@@ -459,35 +444,28 @@ end program main
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
 
-    # A matcher focused on correctly parsing the subroutine definitions and uses.
-    m = M(Program, [
-        M(Main_Program, [
-            M.IGNORE(),  # program main
-            M(Specification_Part, [
-                *[M.IGNORE()] * 2,  # use lib; implicit none
-                M(Interface_Block, [
-                    M(Interface_Stmt, [M(Name, has_attr={'string': M(has_value='xi')})]),  # interface xi
-                    M(Procedure_Stmt, [  # module procedure fun
-                        M('Procedure_Name_List', [M(Name, has_attr={'string': M(has_value='fun')})]),
-                        *[M.IGNORE()] * 2,
-                    ]),
-                    M.IGNORE(),  # end interface xi
-                ]),
-                M.IGNORE(),  # double precision d(4)
-            ]),
-            M(Execution_Part, [M(Assignment_Stmt)]),  # d(2) = fun()
-            M.IGNORE(),  # end program main
-        ]),
-        M(Module, [
-            *[M.IGNORE()] * 2,  # module lib; implicit none
-            M(Module_Subprogram_Part, [
-                M.IGNORE(),  # contains
-                M(Function_Subprogram),  # real function fun(); implicit none; fun = 5.5; end function fun
-            ]),
-            M.IGNORE(),  # end module lib
-        ]),
-    ])
-    m.check(ast)
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  REAL FUNCTION fun()
+    IMPLICIT NONE
+    fun = 5.5
+  END FUNCTION fun
+END MODULE lib
+PROGRAM main
+  USE lib
+  IMPLICIT NONE
+  INTERFACE xi
+    MODULE PROCEDURE fun
+  END INTERFACE xi
+  DOUBLE PRECISION :: d(4)
+  d(2) = fun()
+END PROGRAM main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     assert set(dep_graph.nodes) == {'lib', 'main'}
     assert set(dep_graph.edges) == {('main', 'lib')}
@@ -540,37 +518,37 @@ end program main
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
 
-    # A matcher focused on correctly parsing the subroutine definitions and uses.
-    m = M(Program, [
-        M(Main_Program, [
-            M.IGNORE(),  # program main
-            M(Specification_Part),  # use lib; implicit none; double precision d(4)
-            M(Execution_Part),  # d(2) = fun()
-            M.IGNORE(),  # end program main
-        ]),
-        M(Module, [
-            M.IGNORE(),  # module lib_indirect
-            M(Specification_Part, [
-                *[M.IGNORE()] * 2,  # use lib, only: fun; implicit none
-                M(Interface_Block, [
-                    M(Interface_Stmt, [M(Name, has_attr={'string': M(has_value='xi')})]),  # interface xi
-                    M(Procedure_Stmt, [  # module procedure fun
-                        M('Procedure_Name_List', [M(Name, has_attr={'string': M(has_value='fun')})]),
-                        *[M.IGNORE()] * 2,
-                    ]),
-                    M.IGNORE(),  # end interface xi
-                ]),
-            ]),
-            M(Module_Subprogram_Part),  # contains; real function fun(); implicit none; fun = 5.5; end function fun
-            M.IGNORE(),  # end module lib
-        ]),
-        M(Module, [
-            *[M.IGNORE()] * 2,  # module lib; implicit none
-            M(Module_Subprogram_Part),  # contains; real function fun2(); implicit none; fun2 = 4.2; end function fun2
-            M.IGNORE(),  # end module lib
-        ]),
-    ])
-    m.check(ast)
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  REAL FUNCTION fun()
+    IMPLICIT NONE
+    fun = 5.5
+  END FUNCTION fun
+END MODULE lib
+MODULE lib_indirect
+  USE lib, ONLY: fun
+  IMPLICIT NONE
+  INTERFACE xi
+    MODULE PROCEDURE fun
+  END INTERFACE xi
+  CONTAINS
+  REAL FUNCTION fun2()
+    IMPLICIT NONE
+    fun2 = 4.2
+  END FUNCTION fun2
+END MODULE lib_indirect
+PROGRAM main
+  USE lib_indirect, ONLY: fun, fun2
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  d(2) = fun()
+END PROGRAM main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     assert set(dep_graph.nodes) == {'main', 'lib', 'lib_indirect'}
     assert set(dep_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
@@ -584,83 +562,3 @@ end program main
     assert set(simple_graph.nodes) == {'main', 'lib', 'lib_indirect'}
     assert set(simple_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
     assert actually_used_in_module == {'lib': ['fun'], 'lib_indirect': ['fun', 'fun2'], 'main': []}
-
-
-def test_uses_module_but_prunes_unused_defs():
-    """
-    A simple program, but this time the subroutine is defined in a module. The main program uses the module and calls
-    the subroutine. So, we should have "recursively improved" the AST by parsing that module and constructing the
-    dependency graph.
-    """
-    sources, main = SourceCodeBuilder().add_file("""
-module lib
-contains
-  subroutine fun(d)
-    implicit none
-    double precision d(4)
-    d(2) = 5.5
-  end subroutine fun
-  subroutine not_fun(d)  ! `main` only uses `fun`, so this should be dropped after simplification
-    implicit none
-    double precision d(4)
-    d(2) = 4.2
-  end subroutine not_fun
-end module lib
-""").add_file("""
-program main
-  use lib, only: fun
-  implicit none
-  double precision d(4)
-  call fun(d)
-end program main
-""").check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
-
-    # A matcher focused on correctly parsing the module definitions and uses.
-    m = M(Program, [
-        M(Main_Program, [
-            M.IGNORE(),  # program main
-            M(Specification_Part, [
-                M(Use_Stmt),  # use lib
-                *[M.IGNORE()] * 2,  # implicit none; double precision d(4)
-            ]),
-            M(Execution_Part, [M(Call_Stmt)]),  # call fun(d)
-            M.IGNORE(),  # end program main
-        ]),
-        M(Module, [
-            M(Module_Stmt, [M.IGNORE(), M(Name, has_attr={'string': M(has_value='lib')})]),  # module lib
-            M(Module_Subprogram_Part, [
-                M(Contains_Stmt),  # contains
-                M(Subroutine_Subprogram, [
-                    M(Subroutine_Stmt,  # subroutine fun(d)
-                      [M.IGNORE(), M(Name, has_attr={'string': M(has_value='fun')}), *[M.IGNORE()] * 2]),
-                    M(Specification_Part),  # implicit none; double precision d(4)
-                    M(Execution_Part),  # d(2) = 5.5
-                    M(End_Subroutine_Stmt),  # end subroutine fun
-                ]),
-                M(Subroutine_Subprogram, [
-                    M(Subroutine_Stmt,  # subroutine not_fun(d)
-                      [M.IGNORE(), M(Name, has_attr={'string': M(has_value='not_fun')}), *[M.IGNORE()] * 2]),
-                    M(Specification_Part),  # implicit none; double precision d(4)
-                    M(Execution_Part),  # d(2) = 4.2
-                    M(End_Subroutine_Stmt),  # end subroutine not_fun
-                ]),
-            ]),
-            M(End_Module_Stmt),  # end module lib
-        ]),
-    ])
-    m.check(ast)
-
-    # This time we have a module dependency.
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(asts.keys()) == {'lib'}
-
-    # Verify that there is not much else to the program.
-    assert not interface_blocks
-
-    # Verify simplification of the dependency graph.
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
-    assert set(simple_graph.nodes) == {'main', 'lib'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert actually_used_in_module == {'lib': ['fun'], 'main': []}

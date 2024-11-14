@@ -34,7 +34,7 @@ fortrantypes2dacetypes = {
 }
 
 
-def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict]:
+def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str, List]]:
     simple_graph = nx.DiGraph()
     simplify_order = list(nx.topological_sort(dep_graph))
     actually_used_in_module = {}
@@ -917,3 +917,12 @@ def children_of_type(node: Base, typ: Type[T]) -> Iterator[T]:
     Returns a generator over the children of `node` that are of type `typ`.
     """
     return (c for c in node.children if isinstance(c, typ))
+
+
+def extend_with_new_items_from(lst: List[T], items: Iterable[T]):
+    """
+    Extends the list `lst` with new items from `items` (i.e., if it does not exist there already).
+    """
+    for it in items:
+        if it not in lst:
+            lst.append(it)

@@ -5,6 +5,8 @@ from os import path
 from tempfile import TemporaryDirectory
 from typing import Dict, Optional, Self, Tuple, Type, Union, List, LiteralString, Sequence, Collection
 
+from fparser.two.Fortran2003 import Name
+
 
 @dataclass
 class SourceCodeBuilder:
@@ -151,9 +153,21 @@ class FortranASTMatcher:
                     subm.check(attr)
 
     @classmethod
-    def IGNORE(cls):
-        """A placeholder matcher to not check further down the tree."""
-        return cls()
+    def IGNORE(cls, times: Optional[int] = None) -> Union[Self, List[Self]]:
+        """
+        A placeholder matcher to not check further down the tree.
+        If `times` is `None` (which is the default), returns a single matcher.
+        If `times` is an integer value, then returns a list of `IGNORE()` matchers of that size, indicating that many
+        nodes on a row should be ignored.
+        """
+        if times is None:
+            return cls()
+        else:
+            return [cls()] * times
+
+    @classmethod
+    def NAMED(cls, name: LiteralString):
+        return cls(Name, has_attr={'string': cls(has_value=name)})
 
 
 class InternalASTMatcher:
