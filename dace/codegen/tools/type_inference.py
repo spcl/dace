@@ -375,6 +375,8 @@ def _Compare(t, symbols, inferred_symbols):
     for o, e in zip(t.ops, t.comparators):
         if o.__class__.__name__ not in cppunparse.CPPUnparser.cmpops:
             continue
+        if isinstance(e, ast.Constant) and e.value is None:
+            continue
         inf_type = _dispatch(e, symbols, inferred_symbols)
         if isinstance(inf_type, dtypes.vector):
             # Make sure all occuring vectors are of same size
