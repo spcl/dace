@@ -2764,7 +2764,7 @@ def recursive_ast_improver(ast, source_list: Union[List, Dict], include_list, pa
     dep_graph = nx.DiGraph()
     asts = {}
     interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
-    exclude_list = set()
+    exclude = set()
     missing_modules = set()
 
     NAME_REPLACEMENTS = {
@@ -2795,8 +2795,7 @@ def recursive_ast_improver(ast, source_list: Union[List, Dict], include_list, pa
         else:
             parent_module = _ast.children[0].children[0].children[1].string
         for mod in defined_modules:
-            if mod not in exclude_list:
-                exclude_list.add(mod)
+            exclude.add(mod)
             dep_graph.add_node(mod.lower(), info_list=fandsl)
         for mod in used_modules:
             if mod not in dep_graph.nodes:
@@ -2808,7 +2807,7 @@ def recursive_ast_improver(ast, source_list: Union[List, Dict], include_list, pa
 
         modules_to_parse = []
         for mod in used_modules:
-            if mod not in chain(defined_modules, exclude_list):
+            if mod not in chain(defined_modules, exclude):
                 modules_to_parse.append(mod)
         added_modules = []
         for mod in modules_to_parse:
@@ -2819,8 +2818,7 @@ def recursive_ast_improver(ast, source_list: Union[List, Dict], include_list, pa
             mod_file = [srcf for srcf in source_list if os.path.basename(srcf).lower() == f"{name}.f90"]
             assert len(mod_file) <= 1, f"Found multiple files for the same module `{mod}`: {mod_file}"
             if not mod_file:
-                if mod not in missing_modules:
-                    missing_modules.add(mod)
+                missing_modules.add(mod)
                 continue
             mod_file = mod_file[0]
 
@@ -2839,8 +2837,7 @@ def recursive_ast_improver(ast, source_list: Union[List, Dict], include_list, pa
                 added_modules.append(c)
                 c_stmt = c.children[0]
                 c_name = ast_utils.singular(ast_utils.children_of_type(c_stmt, Name)).string
-                if c_name not in exclude_list:
-                    exclude_list.add(c_name)
+                exclude.add(c_name)
 
         for mod in reversed(added_modules):
             mod_stmt = mod.children[0]
