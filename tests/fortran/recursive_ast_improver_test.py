@@ -6,7 +6,8 @@ from fparser.common.readfortran import FortranStringReader
 from fparser.two.Fortran2003 import Program, Name
 from fparser.two.parser import ParserFactory
 
-from dace.frontend.fortran.fortran_parser import recursive_ast_improver, simplified_dependency_graph
+from dace.frontend.fortran.fortran_parser import recursive_ast_improver, simplified_dependency_graph, \
+    create_sdfg_from_string
 from tests.fortran.fotran_test_helper import SourceCodeBuilder
 
 
@@ -17,18 +18,7 @@ def parse_and_improve(sources: Dict[str, str]):
     ast = parser(reader)
     assert isinstance(ast, Program)
 
-    dep_graph = nx.DiGraph()
-    asts = {}
-    interface_blocks = {}
-    ast = recursive_ast_improver(ast,
-                                 sources,
-                                 [],
-                                 parser,
-                                 interface_blocks,
-                                 exclude_list=[],
-                                 missing_modules=[],
-                                 dep_graph=dep_graph,
-                                 asts=asts)
+    ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, sources, [], parser)
     assert isinstance(ast, Program)
     assert not any(nx.simple_cycles(dep_graph))
     return ast, dep_graph, interface_blocks, asts
