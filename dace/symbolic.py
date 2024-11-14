@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from functools import lru_cache
 import sympy
@@ -986,6 +986,14 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
     """ 
     Replaces various operations with the appropriate SymPy functions to avoid non-symbolic evaluation.
     """
+
+    interpret_numeric_booleans: bool
+
+    def __init__(self, interpret_numeric_booleans: bool = True):
+        super().__init__()
+
+        self.interpret_numeric_booleans = interpret_numeric_booleans
+
     _ast_to_sympy_comparators = {
         ast.Eq: 'Eq',
         ast.Gt: 'Gt',
@@ -1067,6 +1075,14 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
             raise NotImplementedError
         op = node.ops[0]
         arguments = [node.left, node.comparators[0]]
+
+        if self.interpret_numeric_booleans:
+            # Ensure constant values in boolean comparisons are interpreted als booleans.
+            if isinstance(node.left, ast.Compare) and isinstance(node.comparators[0], ast.Constant):
+                arguments[1] = ast.copy_location(ast.Constant(bool(node.comparators[0].value)), node.comparators[0])
+            elif isinstance(node.left, ast.Constant) and isinstance(node.comparators[0], ast.Compare):
+                arguments[0] = ast.copy_location(ast.Constant(bool(node.left.value)), node.left)
+
         func_node = ast.copy_location(ast.Name(id=self._ast_to_sympy_comparators[type(op)], ctx=ast.Load()), node)
         new_node = ast.Call(func=func_node, args=[self.visit(arg) for arg in arguments], keywords=[])
         return ast.copy_location(new_node, node)
