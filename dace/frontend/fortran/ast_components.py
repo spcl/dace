@@ -106,7 +106,7 @@ class InternalFortranAst:
     for each entry in the dictionary, the key is the name of the class in the fparser AST and the value
     is the name of the function that will be used to translate the fparser AST to our AST
     """
-    def __init__(self, ast: FASTNode, tables: symbol_table.SymbolTable):
+    def __init__(self):
         """
         Initialization of the AST converter
         :param ast: the fparser AST
@@ -310,10 +310,6 @@ class InternalFortranAst:
 
     def fortran_intrinsics(self) -> "FortranIntrinsics":
         return self.intrinsic_handler
-
-    def list_tables(self):
-        for i in self.tables._symbol_tables:
-            print(i)
 
     def data_pointer_object(self, node: FASTNode):
         children = self.create_children(node)
