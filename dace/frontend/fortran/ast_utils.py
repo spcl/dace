@@ -1,10 +1,11 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple
+from itertools import chain
+from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable
 
 import networkx as nx
 from fparser.two.Fortran2003 import Module_Stmt, Name, Interface_Block, Subroutine_Stmt, Specification_Part, Module, \
     Derived_Type_Def, Function_Stmt, Interface_Stmt, Function_Body, Type_Name, Rename, Entity_Decl, Kind_Selector, \
-    Intrinsic_Type_Spec, Declaration_Type_Spec, Use_Stmt
+    Intrinsic_Type_Spec, Use_Stmt, Declaration_Type_Spec
 from fparser.two.Fortran2008 import Type_Declaration_Stmt, Procedure_Stmt
 from fparser.two.utils import Base
 from numpy import finfo as finf
@@ -33,7 +34,7 @@ fortrantypes2dacetypes = {
 }
 
 
-def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict]:
+def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str, List]]:
     simple_graph = nx.DiGraph()
     simplify_order = list(nx.topological_sort(dep_graph))
     actually_used_in_module = {}
@@ -64,21 +65,27 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict]:
                 for k in in_names_local:
                     if k not in in_names:
                         in_names.append(k)
-        for j in out_edges:
-            out_names_local_obj = dep_graph.get_edge_data(j[0], j[1])["obj_list"]
+        for _, dep in out_edges:
+            out_names_local_obj = dep_graph.get_edge_data(i, dep)["obj_list"]
             out_names_local = []
-            if out_names_local_obj is not None:
-                for k in out_names_local_obj:
-                    if isinstance(k, Name):
-                        out_names_local.append(k.string)
-                    elif isinstance(k, Rename):
-                        out_names_local.append(k.children[1].string)
-                        out_names_local.append(k.children[2].string)
+            if out_names_local_obj is None:
+                # If `obj_list` does not have anything, it means there was no only-list and we're importing everything.
+                dep_info = dep_graph.nodes.get(dep).get('info_list')
+                assert isinstance(dep_info, FunctionSubroutineLister)  # TODO: Is there another possiblity?
+                out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
+                                                                        dep_info.list_of_subroutines,
+                                                                        dep_info.list_of_module_vars,
+                                                                        dep_info.list_of_types))
+            for k in out_names_local_obj:
+                if isinstance(k, Name):
+                    out_names_local.append(k.string)
+                elif isinstance(k, Rename):
+                    out_names_local.append(k.children[1].string)
+                    out_names_local.append(k.children[2].string)
 
-            if out_names_local is not None:
-                for k in out_names_local:
-                    if k not in out_names:
-                        out_names.append(k)
+            for k in out_names_local:
+                if k not in out_names:
+                    out_names.append(k)
         actually_used = []
         for name in in_names:
             actually_used.append(name)
@@ -213,17 +220,23 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict]:
             # print("NOT USED: "+ str(not_used))
 
         out_edges = dep_graph.out_edges(i)
-        out_names = []
-        for j in out_edges:
-            out_names_local_obj = dep_graph.get_edge_data(j[0], j[1])["obj_list"]
+        for _, dep in out_edges:
+            out_names_local_obj = dep_graph.get_edge_data(i, dep)["obj_list"]
             out_names_local = []
-            if out_names_local_obj is not None:
-                for k in out_names_local_obj:
-                    if isinstance(k, Name):
-                        out_names_local.append(k.string)
-                    elif isinstance(k, Rename):
-                        out_names_local.append(k.children[1].string)
-                        out_names_local.append(k.children[2].string)
+            if out_names_local_obj is None:
+                # If `obj_list` does not have anything, it means there was no only-list and we're importing everything.
+                dep_info = dep_graph.nodes.get(dep).get('info_list')
+                assert isinstance(dep_info, FunctionSubroutineLister)  # TODO: Is there another possiblity?
+                out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
+                                                                        dep_info.list_of_subroutines,
+                                                                        dep_info.list_of_module_vars,
+                                                                        dep_info.list_of_types))
+            for k in out_names_local_obj:
+                if isinstance(k, Name):
+                    out_names_local.append(k.string)
+                elif isinstance(k, Rename):
+                    out_names_local.append(k.children[1].string)
+                    out_names_local.append(k.children[2].string)
 
             new_out_names_local = []
             if len(out_names_local) == 0:
@@ -245,9 +258,9 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict]:
                         continue
                     else:
                         simple_graph.add_node(i, info_list=res)
-                if not simple_graph.has_node(j[1]):
-                    simple_graph.add_node(j[1])
-                simple_graph.add_edge(i, j[1], obj_list=new_out_names_local)
+                if not simple_graph.has_node(dep):
+                    simple_graph.add_node(dep)
+                simple_graph.add_edge(i, dep, obj_list=new_out_names_local)
         actually_used_in_module[i] = actually_used
         # print(simple_graph)
     return simple_graph, actually_used_in_module
@@ -841,7 +854,7 @@ def get_defined_modules(node: Base) -> List[str]:
 
 
 def get_used_modules(node: Base) -> Tuple[List[str], Dict[str, Base]]:
-    def _get_used_modules(_node: Base, _used_modules: List[str], _objects_in_use: Dict[str, Base])\
+    def _get_used_modules(_node: Base, _used_modules: List[str], _objects_in_use: Dict[str, Base]) \
             -> Tuple[List[str], Dict[str, Base]]:
         for m in _node.children:
             if isinstance(m, Use_Stmt):
@@ -904,3 +917,12 @@ def children_of_type(node: Base, typ: Type[T]) -> Iterator[T]:
     Returns a generator over the children of `node` that are of type `typ`.
     """
     return (c for c in node.children if isinstance(c, typ))
+
+
+def extend_with_new_items_from(lst: List[T], items: Iterable[T]):
+    """
+    Extends the list `lst` with new items from `items` (i.e., if it does not exist there already).
+    """
+    for it in items:
+        if it not in lst:
+            lst.append(it)

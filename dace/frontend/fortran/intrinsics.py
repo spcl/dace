@@ -631,7 +631,8 @@ class SumProduct(LoopBasedReplacementTransformation):
 
         self.argument_variable = self.rvals[0]
 
-        par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+        par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], [], self.count, new_func_body,
+                              self.scope_vars, self.ast.structures, True)
 
     def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
 
@@ -747,13 +748,15 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
     def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
 
         rangeslen_left = []
-        par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], rangeslen_left, self.count, new_func_body, self.scope_vars, True)
+        par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], rangeslen_left, self.count, new_func_body,
+                              self.scope_vars, self.ast.structures, True)
         if self.second_array is None:
             return
 
         loop_ranges_right = []
         rangeslen_right = []
-        par_Decl_Range_Finder(self.second_array, loop_ranges_right, [], rangeslen_right, self.count, new_func_body, self.scope_vars, True)
+        par_Decl_Range_Finder(self.second_array, loop_ranges_right, [], rangeslen_right, self.count, new_func_body,
+                              self.scope_vars, self.ast.structures, True)
 
         for left_len, right_len in zip(rangeslen_left, rangeslen_right):
             if left_len != right_len:
@@ -949,7 +952,8 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
 
         self.argument_variable = self.rvals[0]
 
-        par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+        par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], [], self.count, new_func_body,
+                              self.scope_vars, True)
 
     def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
 
@@ -1119,22 +1123,27 @@ class Merge(LoopBasedReplacement):
 
             # The first main argument is an array -> this dictates loop boundaries
             # Other arrays, regardless if they appear as the second array or mask, need to have the same loop boundary.
-            par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+            par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], [], self.count, new_func_body,
+                                  self.scope_vars, self.ast.structures, True)
 
             loop_ranges = []
-            par_Decl_Range_Finder(self.second_array, loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+            par_Decl_Range_Finder(self.second_array, loop_ranges, [], [], self.count, new_func_body,
+                                  self.scope_vars, self.ast.structures, True)
             self._adjust_array_ranges(node, self.second_array, self.loop_ranges, loop_ranges)
 
-            par_Decl_Range_Finder(self.destination_array, [], [], [], self.count, new_func_body, self.scope_vars, True)
+            par_Decl_Range_Finder(self.destination_array, [], [], [], self.count,
+                                  new_func_body, self.scope_vars, self.ast.structures, True)
 
             if self.mask_first_array is not None:
                 loop_ranges = []
-                par_Decl_Range_Finder(self.mask_first_array, loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+                par_Decl_Range_Finder(self.mask_first_array, loop_ranges, [], [], self.count, new_func_body,
+                                      self.scope_vars, self.ast.structures, True)
                 self._adjust_array_ranges(node, self.mask_first_array, self.loop_ranges, loop_ranges)
 
             if self.mask_second_array is not None:
                 loop_ranges = []
-                par_Decl_Range_Finder(self.mask_second_array, loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+                par_Decl_Range_Finder(self.mask_second_array, loop_ranges, [], [], self.count, new_func_body,
+                                      self.scope_vars, self.ast.structures, True)
                 self._adjust_array_ranges(node, self.mask_second_array, self.loop_ranges, loop_ranges)
 
         def _initialize_result(self, node: ast_internal_classes.FNode) -> Optional[ast_internal_classes.BinOp_Node]:
