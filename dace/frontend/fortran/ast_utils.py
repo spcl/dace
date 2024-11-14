@@ -1,6 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 from itertools import chain
-from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable
+from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union
 
 import networkx as nx
 from fparser.two.Fortran2003 import Module_Stmt, Name, Interface_Block, Subroutine_Stmt, Specification_Part, Module, \
@@ -71,11 +71,18 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
             if out_names_local_obj is None:
                 # If `obj_list` does not have anything, it means there was no only-list and we're importing everything.
                 dep_info = dep_graph.nodes.get(dep).get('info_list')
-                assert isinstance(dep_info, FunctionSubroutineLister)  # TODO: Is there another possiblity?
-                out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
-                                                                        dep_info.list_of_subroutines,
-                                                                        dep_info.list_of_module_vars,
-                                                                        dep_info.list_of_types))
+                if isinstance(dep_info, FunctionSubroutineLister):
+                    list_of_module_vars = []
+                    for type_stmt in dep_info.list_of_module_vars:
+                        for entity_decl_list in children_of_type(type_stmt, 'Entity_Decl_List'):
+                            for entity_decl in children_of_type(entity_decl_list, Entity_Decl):
+                                list_of_module_vars.append(singular(children_of_type(entity_decl, Name)).string)
+                    out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
+                                                                            dep_info.list_of_subroutines,
+                                                                            list_of_module_vars,
+                                                                            dep_info.list_of_types))
+                else:
+                    out_names_local_obj = []
             for k in out_names_local_obj:
                 if isinstance(k, Name):
                     out_names_local.append(k.string)
@@ -226,11 +233,18 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
             if out_names_local_obj is None:
                 # If `obj_list` does not have anything, it means there was no only-list and we're importing everything.
                 dep_info = dep_graph.nodes.get(dep).get('info_list')
-                assert isinstance(dep_info, FunctionSubroutineLister)  # TODO: Is there another possiblity?
-                out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
-                                                                        dep_info.list_of_subroutines,
-                                                                        dep_info.list_of_module_vars,
-                                                                        dep_info.list_of_types))
+                if isinstance(dep_info, FunctionSubroutineLister):
+                    list_of_module_vars = []
+                    for type_stmt in dep_info.list_of_module_vars:
+                        for entity_decl_list in children_of_type(type_stmt, 'Entity_Decl_List'):
+                            for entity_decl in children_of_type(entity_decl_list, Entity_Decl):
+                                list_of_module_vars.append(singular(children_of_type(entity_decl, Name)).string)
+                    out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
+                                                                            dep_info.list_of_subroutines,
+                                                                            list_of_module_vars,
+                                                                            dep_info.list_of_types))
+                else:
+                    out_names_local_obj = []
             for k in out_names_local_obj:
                 if isinstance(k, Name):
                     out_names_local.append(k.string)
@@ -912,11 +926,14 @@ def singular(items: Iterator[T]) -> T:
     raise ValueError(f"`items` must have only 1 item, got: {it}, {nit}, ...")
 
 
-def children_of_type(node: Base, typ: Type[T]) -> Iterator[T]:
+def children_of_type(node: Base, typ: Union[str, Type[T]]) -> Iterator[T]:
     """
     Returns a generator over the children of `node` that are of type `typ`.
     """
-    return (c for c in node.children if isinstance(c, typ))
+    if isinstance(typ, str):
+        return (c for c in node.children if type(c).__name__ == typ)
+    else:
+        return (c for c in node.children if isinstance(c, typ))
 
 
 def extend_with_new_items_from(lst: List[T], items: Iterable[T]):

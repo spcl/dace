@@ -552,3 +552,64 @@ END PROGRAM main
     assert set(simple_graph.nodes) == {'main', 'lib', 'lib_indirect'}
     assert set(simple_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
     assert actually_used_in_module == {'lib': ['fun'], 'lib_indirect': ['fun', 'fun2'], 'main': []}
+
+
+def test_program_contains_type():
+    """
+    A simple program that has a type defintion, and a function that uses it.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+program main
+  implicit none
+  type simple_type
+    real :: w(5, 5, 5), z(5)
+    integer :: a
+    real :: name
+  end type simple_type
+
+  real :: d(5, 5)
+  call type_test_function(d)
+
+contains
+
+  subroutine type_test_function(d)
+    real d(5, 5)
+    type(simple_type) :: s
+    s%w(1, 1, 1) = 5.5
+    d(2, 1) = 5.5 + s%w(1, 1, 1)
+  end subroutine type_test_function
+end program main
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+
+    got = ast.tofortran()
+    want = """
+PROGRAM main
+  IMPLICIT NONE
+  TYPE :: simple_type
+    REAL :: w(5, 5, 5), z(5)
+    INTEGER :: a
+    REAL :: name
+  END TYPE simple_type
+  REAL :: d(5, 5)
+  CALL type_test_function(d)
+  CONTAINS
+  SUBROUTINE type_test_function(d)
+    REAL :: d(5, 5)
+    TYPE(simple_type) :: s
+    s % w(1, 1, 1) = 5.5
+    d(2, 1) = 5.5 + s % w(1, 1, 1)
+  END SUBROUTINE type_test_function
+END PROGRAM main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert not set(dep_graph.nodes)
+    assert not asts
+    assert not interface_blocks
+
+    # Verify simplification of the dependency graph.
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
+    assert not set(simple_graph.nodes)
+    assert not actually_used_in_module
