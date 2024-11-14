@@ -3,6 +3,7 @@ import dace
 import numpy as np
 import uuid
 import math
+import pytest
 
 def _make_sdfg(
         code: str,
@@ -53,6 +54,7 @@ def _perform_test(
     _test_sdfg(sdfg=sdfg, expected=expected, dtype=dtype)
 
 
+@pytest.mark.gpu
 def test_constant_pi_simple():
     _perform_test(
             code="math.pi",
@@ -60,6 +62,7 @@ def test_constant_pi_simple():
     )
 
 
+@pytest.mark.gpu
 def test_constant_pi_add():
     _perform_test(
             code="-math.pi",
@@ -106,7 +109,32 @@ def test_constant_pi_mult():
     )
 
 
-
+@pytest.mark.gpu
+def test_constant_pi_fun():
+    _perform_test(
+            code="math.sin(math.pi)",
+            expected=0,
+    )
+    _perform_test(
+            code="math.sin(math.pi * 4)",
+            expected=math.sin(math.pi * 4),
+    )
+    _perform_test(
+            code="math.sin(math.pi * 5)",
+            expected=math.sin(math.pi * 5),
+    )
+    _perform_test(
+            code="math.cos(math.pi * 4)",
+            expected=math.cos(math.pi * 4),
+    )
+    _perform_test(
+            code="math.cos(math.pi * 5)",
+            expected=math.cos(math.pi * 5),
+    )
+    _perform_test(
+            code="math.log(math.pi)",
+            expected=math.log(math.pi),
+    )
 
 
 
@@ -114,42 +142,4 @@ if __name__ == "__main__":
     test_constant_pi_simple()
     test_constant_pi_add()
     test_constant_pi_mult()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    test_constant_pi_fun()
