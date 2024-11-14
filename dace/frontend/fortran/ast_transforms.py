@@ -1801,7 +1801,6 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
     for idx, i in enumerate(node.indices):
         if isinstance(i, ast_internal_classes.ParDecl_Node):
-            assert i.type in {'ALL', 'RANGE'}
             if i.type == "ALL":
                 lower_boundary = None
                 if offsets[idx] != 1:
@@ -1853,7 +1852,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                 ranges.append([lower_boundary, upper_boundary])
                 rangeslen.append(-1)
 
-            elif i.type == "RANGE":
+            else:
                 ranges.append([i.range[0], i.range[1]])
 
                 start = 0
