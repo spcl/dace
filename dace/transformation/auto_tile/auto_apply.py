@@ -22,11 +22,8 @@ import numpy
 import cupy
 from pathlib import Path
 import json
-import pycuda.driver as cuda
-import pycuda.autoinit  # Actually used
 from dace.sdfg.analysis.cutout import SDFGCutout
 import sympy
-from dace.transformation.auto_tile import peak_flops_and_badwidth_nvidia
 from dace.transformation.auto_tile import auto_tile_util
 from multiprocessing import Process, Queue
 import os
@@ -43,23 +40,6 @@ def copy_sub_scope(
 
     cut_sdfg = SDFGCutout.singlestate_cutout(state, *nn)
     return cut_sdfg
-
-
-arch_str = peak_flops_and_badwidth_nvidia.get_arch(0)
-
-config.Config.set("compiler", "cuda", "cuda_arch", value=arch_str)
-config.Config.set(
-    "compiler",
-    "cuda",
-    "args",
-    value=" -DNDEBUG -std=c++17 -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter",
-)
-config.Config.set(
-    "compiler",
-    "cpu",
-    "args",
-    value=" -DNDEBUG -std=c++17 -fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter",
-)
 
 
 def find_node_by_cond(state, start_map_entry, cond):
@@ -525,7 +505,7 @@ def apply_using_params(
                                     time,
                                     percentage_of_peak,
                                 )
-                            if percentage_of_peak > threshold:
+                            if percentage_of_peak > threshold and threshold >= 0.0:
                                 b = True
 
                             if work_on_copy:
@@ -602,6 +582,7 @@ def auto_apply(
     write_kernel_report_to_file=True,
     compare_runtime=True,
     _threshold=None,
+    machine_peak_flops_and_mem_bandwidth=None,
 ):
     # Any map that is GPU_Device is transformed applying the
     # AMM-guided transformations.
@@ -675,9 +656,13 @@ def auto_apply(
                     file.write(s1 + "\n")
                     file.write(s2 + "\n")
 
-            peak_flops, mem_bandwidth = (
-                peak_flops_and_badwidth_nvidia.get_peak_flops_and_mem_bandwidth(0)
-            )
+            if machine_peak_flops_and_mem_bandwidth is None:
+                from dace.transformation.auto_tile import peak_flops_and_badwidth_nvidia
+                peak_flops, mem_bandwidth = (
+                    peak_flops_and_badwidth_nvidia.get_peak_flops_and_mem_bandwidth(0)
+                )
+            else:
+                peak_flops, mem_bandwidth = machine_peak_flops_and_mem_bandwidth
             peak_flops *= 1e9
             mem_bandwidth *= 1e9
             s1 = f"Peak FLOPs FLOPs/s: {peak_flops}"
@@ -689,7 +674,6 @@ def auto_apply(
                 file.write(s2 + "\n")
 
             if not kernel_entry.guid in kperf:
-                try:
                     best_config = apply_using_params(
                         sdfg=sdfg,
                         sdfg_name=sdfg_name,
@@ -722,23 +706,25 @@ def auto_apply(
                         float(best_config[1]),
                         float(best_config[2]),
                     )
-                except Exception as e:
-                    best_config = None
-                    s1 = f"Exception: on transforming {kernel_entry}:"
-                    s2 = str(e)
-                    print(s1)
-                    print(s2)
-                    kperf[kernel_entry.guid] = (
-                        f"{kernel_entry.guid}_auto_tiled.sdfg",
-                        None,
-                        str(flops),
-                        str(mem_access),
-                        float(-1.0),
-                        float("nan"),
-                    )
-                    if write_kernel_report_to_file:
-                        file.write(s1 + "\n")
-                        file.write(s2 + "\n")
+                    """
+                    except Exception as e:
+                        best_config = None
+                        s1 = f"Exception: on transforming {kernel_entry}:"
+                        s2 = str(e)
+                        print(s1)
+                        print(s2)
+                        kperf[kernel_entry.guid] = (
+                            f"{kernel_entry.guid}_auto_tiled.sdfg",
+                            None,
+                            str(flops),
+                            str(mem_access),
+                            float(-1.0),
+                            float("nan"),
+                        )
+                        if write_kernel_report_to_file:
+                            file.write(s1 + "\n")
+                            file.write(s2 + "\n")
+                    """
 
             if verbose:
                 s1 = f"Best config: {best_config[:-1]}" if best_config else "none"
