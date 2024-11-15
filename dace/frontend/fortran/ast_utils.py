@@ -1,6 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 from itertools import chain
-from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union
+from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union, LiteralString
 
 import networkx as nx
 from fparser.two.Fortran2003 import Module_Stmt, Name, Interface_Block, Subroutine_Stmt, Specification_Part, Module, \
@@ -68,21 +68,21 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
         for _, dep in out_edges:
             out_names_local_obj = dep_graph.get_edge_data(i, dep)["obj_list"]
             out_names_local = []
-            if out_names_local_obj is None:
-                # If `obj_list` does not have anything, it means there was no only-list and we're importing everything.
+            if out_names_local_obj and '*' in out_names_local_obj:
+                # We have a special symbol indicating that everything needs to be imported.
                 dep_info = dep_graph.nodes.get(dep).get('info_list')
-                if isinstance(dep_info, FunctionSubroutineLister):
-                    list_of_module_vars = []
-                    for type_stmt in dep_info.list_of_module_vars:
-                        for entity_decl_list in children_of_type(type_stmt, 'Entity_Decl_List'):
-                            for entity_decl in children_of_type(entity_decl_list, Entity_Decl):
-                                list_of_module_vars.append(singular(children_of_type(entity_decl, Name)).string)
-                    out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
-                                                                            dep_info.list_of_subroutines,
-                                                                            list_of_module_vars,
-                                                                            dep_info.list_of_types))
-                else:
-                    out_names_local_obj = []
+                assert isinstance(dep_info, FunctionSubroutineLister)
+                list_of_module_vars = []
+                for type_stmt in dep_info.list_of_module_vars:
+                    for entity_decl_list in children_of_type(type_stmt, 'Entity_Decl_List'):
+                        for entity_decl in children_of_type(entity_decl_list, Entity_Decl):
+                            list_of_module_vars.append(singular(children_of_type(entity_decl, Name)).string)
+                out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
+                                                                        dep_info.list_of_subroutines,
+                                                                        list_of_module_vars,
+                                                                        dep_info.list_of_types))
+            if not out_names_local_obj:
+                out_names_local_obj = []
             for k in out_names_local_obj:
                 if isinstance(k, Name):
                     out_names_local.append(k.string)
@@ -230,21 +230,21 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
         for _, dep in out_edges:
             out_names_local_obj = dep_graph.get_edge_data(i, dep)["obj_list"]
             out_names_local = []
-            if out_names_local_obj is None:
-                # If `obj_list` does not have anything, it means there was no only-list and we're importing everything.
+            if out_names_local_obj and '*' in out_names_local_obj:
+                # We have a special symbol indicating that everything needs to be imported.
                 dep_info = dep_graph.nodes.get(dep).get('info_list')
-                if isinstance(dep_info, FunctionSubroutineLister):
-                    list_of_module_vars = []
-                    for type_stmt in dep_info.list_of_module_vars:
-                        for entity_decl_list in children_of_type(type_stmt, 'Entity_Decl_List'):
-                            for entity_decl in children_of_type(entity_decl_list, Entity_Decl):
-                                list_of_module_vars.append(singular(children_of_type(entity_decl, Name)).string)
-                    out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
-                                                                            dep_info.list_of_subroutines,
-                                                                            list_of_module_vars,
-                                                                            dep_info.list_of_types))
-                else:
-                    out_names_local_obj = []
+                assert isinstance(dep_info, FunctionSubroutineLister)
+                list_of_module_vars = []
+                for type_stmt in dep_info.list_of_module_vars:
+                    for entity_decl_list in children_of_type(type_stmt, 'Entity_Decl_List'):
+                        for entity_decl in children_of_type(entity_decl_list, Entity_Decl):
+                            list_of_module_vars.append(singular(children_of_type(entity_decl, Name)).string)
+                out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
+                                                                        dep_info.list_of_subroutines,
+                                                                        list_of_module_vars,
+                                                                        dep_info.list_of_types))
+            if not out_names_local_obj:
+                out_names_local_obj = []
             for k in out_names_local_obj:
                 if isinstance(k, Name):
                     out_names_local.append(k.string)
@@ -867,25 +867,45 @@ def get_defined_modules(node: Base) -> List[str]:
     return _get_defined_modules(node, [])
 
 
-def get_used_modules(node: Base) -> Tuple[List[str], Dict[str, Base]]:
-    def _get_used_modules(_node: Base, _used_modules: List[str], _objects_in_use: Dict[str, Base]) \
-            -> Tuple[List[str], Dict[str, Base]]:
-        for m in _node.children:
-            if isinstance(m, Use_Stmt):
-                if m.children[0] is not None:
-                    if m.children[0].string.lower() == "intrinsic":
-                        continue
-                for c in children_of_type(m, Name):
-                    _used_modules.append(c.string)
-                    for k in m.children:
-                        if k.__class__.__name__ == "Only_List":
-                            _objects_in_use[c.string] = k
-                _used_modules.extend(c.string for c in m.children if isinstance(c, Name))
-            elif isinstance(m, Base):
-                _get_used_modules(m, _used_modules, _objects_in_use)
-        return _used_modules, _objects_in_use
+def get_used_modules(node: Base) -> Tuple[List[str], Dict[str, List[Union[LiteralString, Base]]]]:
+    used_modules: List[str] = []
+    objects_in_use: Dict[str, List[Union[LiteralString, Base]]] = {}
 
-    return _get_used_modules(node, [], {})
+    def _get_used_modules(_node: Base):
+        for m in _node.children:
+            if not isinstance(m, Base):
+                continue
+            if not isinstance(m, Use_Stmt):
+                # Subtree may have `use` statements.
+                _get_used_modules(m)
+                continue
+            if m.children[0] is not None:
+                # TODO: Explain why intrinsic nodes are avoided.
+                if m.children[0].string.lower() == "intrinsic":
+                    continue
+
+            mod_name = singular(children_of_type(m, Name)).string
+            used_modules.append(mod_name)
+            olist = list(children_of_type(m, 'Only_List'))
+            assert len(olist) <= 1, f"{m} can have at most one only-list, got {olist}."
+            if not olist:
+                # TODO: Have better/clearer semantics.
+                if mod_name not in objects_in_use:
+                    objects_in_use[mod_name] = []
+                # Add a special symbol to indicate that everything needs to be imported.
+                objects_in_use[mod_name].append('*')
+            else:
+                olist = olist[0]
+                if not olist.children:
+                    continue
+                # Merge all the used item in one giant list.
+                if mod_name not in objects_in_use:
+                    objects_in_use[mod_name] = []
+                extend_with_new_items_from(objects_in_use[mod_name], olist.children)
+                assert len(set([str(o) for o in objects_in_use[mod_name]])) == len(objects_in_use[mod_name])
+
+    _get_used_modules(node)
+    return used_modules, objects_in_use
 
 
 def parse_module_declarations(program):
