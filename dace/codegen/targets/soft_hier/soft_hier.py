@@ -200,7 +200,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
         self._compute_pool_release(sdfg)
 
         # Write GPU context to state structure
-        self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
+        self._frame.statestruct.append('int filler;')
 
         # Collect all defined symbols and argument lists with one traversal
         shared_transients = {}
@@ -354,38 +354,10 @@ DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
 {other_globalcode}
 
 int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
-    int count;
-
-    // Check that we are able to run {backend} code
-    if ({backend}GetDeviceCount(&count) != {backend}Success)
-    {{
-        printf("ERROR: GPU drivers are not configured or {backend}-capable device "
-               "not found\\n");
-        return 1;
-    }}
-    if (count == 0)
-    {{
-        printf("ERROR: No {backend}-capable devices found\\n");
-        return 2;
-    }}
-
-    // Initialize {backend} before we run the application
-    float *dev_X;
-    DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
-    DACE_GPU_CHECK({backend}Free(dev_X));
-
+    
     {pool_header}
 
     __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
-
-    // Create {backend} streams and events
-    for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {backend}StreamNonBlocking));
-        __state->gpu_context->streams[i] = __state->gpu_context->internal_streams[i]; // Allow for externals to modify streams
-    }}
-    for(int i = 0; i < {nevents}; ++i) {{
-        DACE_GPU_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
-    }}
 
     {initcode}
 
@@ -394,39 +366,11 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
 
 int __dace_exit_cuda({sdfg_state_name} *__state) {{
     {exitcode}
-
-    // Synchronize and check for CUDA errors
-    int __err = static_cast<int>(__state->gpu_context->lasterror);
-    if (__err == 0)
-        __err = static_cast<int>({backend}DeviceSynchronize());
-
-    // Destroy {backend} streams and events
-    for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->internal_streams[i]));
-    }}
-    for(int i = 0; i < {nevents}; ++i) {{
-        DACE_GPU_CHECK({backend}EventDestroy(__state->gpu_context->events[i]));
-    }}
-
+    int __err = 0;
     delete __state->gpu_context;
     return __err;
 }}
 
-DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
-{{
-    if (streamid < 0 || streamid >= {nstreams})
-        return false;
-
-    __state->gpu_context->streams[streamid] = stream;
-
-    return true;
-}}
-
-DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
-{{
-    for (int i = 0; i < {nstreams}; ++i)
-        __state->gpu_context->streams[i] = stream;
-}}
 
 {localcode}
 """.format(params=params_comma,

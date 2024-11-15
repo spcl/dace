@@ -142,8 +142,8 @@
         "language": "CPP"
       }
     },
-    "guid": "b312c58b-72ba-4cc8-9492-769822cec67e",
-    "hash": "b4a2b7517d991e0b15f91ff79b65441fa8e6e1ab9b98c34fcc35a571fd3203b7"
+    "guid": "87dc668f-c234-490a-920b-e6677ac7ffd4",
+    "hash": "35263e38be3c580188cf9c4779ac1f8fa0c9fb82b52d2bd699bd8192fd78ffe2"
   },
   "nodes": [
     {
@@ -180,10 +180,10 @@
               "end_line": 10,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_332978/179853929.py"
+              "filename": "/tmp/ipykernel_389689/179853929.py"
             },
             "data": "A",
-            "guid": "af646f4d-4165-4b5d-9049-1e50519fca31"
+            "guid": "ecbb8af2-b11c-4928-863c-d5f4ad784b24"
           },
           "id": 0,
           "scope_entry": null,
@@ -199,10 +199,10 @@
               "end_line": 11,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_332978/179853929.py"
+              "filename": "/tmp/ipykernel_389689/179853929.py"
             },
             "data": "soft_hier_A",
-            "guid": "40a5b2dc-ac7d-4b85-bf68-1efeea45ace7"
+            "guid": "151aaff4-f867-41b1-a06a-06d55e1df9e6"
           },
           "id": 1,
           "scope_entry": null,
@@ -218,10 +218,10 @@
               "end_line": 12,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_332978/179853929.py"
+              "filename": "/tmp/ipykernel_389689/179853929.py"
             },
             "data": "B",
-            "guid": "698a6076-6d97-41b2-b466-cd947275ecc5"
+            "guid": "3837b0b2-833b-4c9e-885a-e1c99608d8f6"
           },
           "id": 2,
           "scope_entry": null,
@@ -237,10 +237,10 @@
               "end_line": 13,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_332978/179853929.py"
+              "filename": "/tmp/ipykernel_389689/179853929.py"
             },
             "data": "soft_hier_B",
-            "guid": "702d081d-257c-408d-b5a1-7ecb7ec1ad1f"
+            "guid": "ae8146e1-fd74-465c-9573-391907bd0986"
           },
           "id": 3,
           "scope_entry": null,
@@ -272,7 +272,7 @@
               "end_line": 19,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_332978/179853929.py"
+              "filename": "/tmp/ipykernel_389689/179853929.py"
             },
             "in_connectors": {
               "IN_A": null
@@ -280,7 +280,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "62f1df20-50c2-459e-9671-89ad2355f730"
+            "guid": "12d9562a-7ebd-4e88-8d67-a8fc65c0ecd3"
           },
           "id": 4,
           "scope_entry": null,
@@ -296,7 +296,7 @@
             "out_connectors": {
               "OUT_B": null
             },
-            "guid": "009401aa-ab83-4014-9c30-1b542646f5bd"
+            "guid": "522ef1fc-32b2-4a62-a46c-85ceb554b0a2"
           },
           "id": 5,
           "scope_entry": "4",
@@ -328,7 +328,7 @@
               "end_line": 20,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_332978/179853929.py"
+              "filename": "/tmp/ipykernel_389689/179853929.py"
             },
             "in_connectors": {
               "IN_A": null
@@ -336,7 +336,7 @@
             "out_connectors": {
               "OUT_A": null
             },
-            "guid": "37defb7a-1854-400d-a100-d5af00b4e0ee"
+            "guid": "0286ac37-62aa-4992-a573-3860e3e8bdeb"
           },
           "id": 6,
           "scope_entry": "4",
@@ -352,7 +352,7 @@
             "out_connectors": {
               "OUT_B": null
             },
-            "guid": "d62d1025-cf3c-41c9-b7b7-e1aafcffb6d7"
+            "guid": "9b452704-8e79-4288-964e-12e175d579e1"
           },
           "id": 7,
           "scope_entry": "6",
@@ -368,10 +368,10 @@
               "end_line": 23,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_332978/179853929.py"
+              "filename": "/tmp/ipykernel_389689/179853929.py"
             },
             "data": "frag_A",
-            "guid": "ad0c8243-b6ac-4892-9221-d2f435cce779"
+            "guid": "a668b007-48d2-459e-958b-b0779339dc12"
           },
           "id": 8,
           "scope_entry": "6",
@@ -387,10 +387,10 @@
               "end_line": 25,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_332978/179853929.py"
+              "filename": "/tmp/ipykernel_389689/179853929.py"
             },
             "data": "frag_B",
-            "guid": "0070bf77-de9f-4b8c-a3bf-74648756d5a5"
+            "guid": "773fec32-249e-43b4-a625-6d54ea640ea1"
           },
           "id": 9,
           "scope_entry": "6",
@@ -418,7 +418,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "7f932a06-a72b-4d57-b87a-f2e6be3988cb",
+                "guid": "4a879121-8882-40a3-adfe-150450036694",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -461,7 +461,7 @@
                 },
                 "data": "frag_A",
                 "debuginfo": null,
-                "guid": "988fe0fa-3a97-4363-ad8c-363a65150cde",
+                "guid": "7d82e7ef-14de-40a0-8195-7374b7a523ed",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -504,7 +504,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "7b87334b-2abc-4887-8a2c-975455953c4f",
+                "guid": "b36a4b5e-36df-4d4d-abf6-24ffa7f331b5",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -547,7 +547,7 @@
                 },
                 "data": "soft_hier_A",
                 "debuginfo": null,
-                "guid": "6c486d53-f725-48f9-a017-f3aa7dc85527",
+                "guid": "474efac4-a3c4-4af5-b683-8dd10f1aea38",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -590,7 +590,7 @@
                 },
                 "data": "soft_hier_B",
                 "debuginfo": null,
-                "guid": "b1789f82-9df7-40b9-ab38-ebb032b49f32",
+                "guid": "2b396d5c-7c07-49b8-9f33-27b1b7985fda",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -633,7 +633,7 @@
                 },
                 "data": "soft_hier_A",
                 "debuginfo": null,
-                "guid": "6ab8b95f-da68-4188-9322-191e53b25a6f",
+                "guid": "3ffab93b-7bd9-40fc-9451-0c040196739e",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -676,7 +676,7 @@
                 },
                 "data": "soft_hier_A",
                 "debuginfo": null,
-                "guid": "80bab7e8-9857-467e-80ab-5e4859954909",
+                "guid": "3bfb64af-ceb6-44df-8076-26cae075f857",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -719,7 +719,7 @@
                 },
                 "data": "soft_hier_B",
                 "debuginfo": null,
-                "guid": "e873c51c-f4df-45fa-a973-8fb63c454058",
+                "guid": "2383f63f-4b07-42ed-9589-01e3205d09ce",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -762,7 +762,7 @@
                 },
                 "data": "soft_hier_B",
                 "debuginfo": null,
-                "guid": "54e50348-8687-4a6d-b416-c81c720a5f9c",
+                "guid": "0199b8d9-f379-47e3-99e9-b0992a8b3176",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -787,7 +787,7 @@
         }
       ],
       "attributes": {
-        "guid": "2bc98869-eb6a-482d-b510-c8b8479808fa"
+        "guid": "46f28610-a904-4c18-8e49-27547e0a07f1"
       }
     }
   ],
