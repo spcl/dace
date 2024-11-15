@@ -148,7 +148,8 @@ def _tile(
                 output_name = oe.dst.data
                 break
 
-        assert output_name is not None
+        if output_name is None:
+            raise Exception("The output name could not be deduced")
 
         copy_inputs = copy.deepcopy(inputs)
         non_transformed_time = auto_tile_util.run_and_measure_time(_kernel_sdfg, copy_inputs)
@@ -190,7 +191,8 @@ def _tile(
         )
     )
     if not work_on_copy:
-        assert len(combinations) == 1
+        if len(combinations) != 1:
+            raise Exception("If applying to the original sdfg (work_on_copy=False) then only one combination must be provided")
 
     best_config = None
     best_time = None
@@ -208,7 +210,8 @@ def _tile(
             kernel_sdfg = copy.deepcopy(_kernel_sdfg)
             kernel_sdfg.name = f"{kernel_sdfg.name}_c{i}"
             kernel_sdfg_nodes = kernel_sdfg.nodes()
-            assert len(kernel_sdfg_nodes) == 1
+            if len(kernel_sdfg_nodes) != 1:
+                raise Exception("Extracted kernel should have only one state")
             kernel_state = kernel_sdfg_nodes[0]
             kernel_entry = find_node_in_state_by_cond(
                 kernel_state,
@@ -242,7 +245,8 @@ def _tile(
             lambda n: isinstance(n, dace.nodes.MapEntry)
             and n.map.label == "ThreadBlockMap",
         )
-        assert thread_block_map_entry
+        if thread_block_map_entry is None:
+            raise Exception("ThreadBlock Map could not be found after applying threadblock map transformation")
 
         ThreadCoarsening.apply_to(
             sdfg=kernel_sdfg,
@@ -407,6 +411,7 @@ def auto_tile(
     verbose: bool = False,
 ):
     sdfg_name = sdfg.name
+    sym_dict = sdfg.symbols
 
     # Create report folder and file
     folder = Path(f"{sdfg_name}_report")
@@ -416,7 +421,7 @@ def auto_tile(
 
     # If this SDFG was tiled before, just return
     if filename.exists() and tiled_sdfg_path.exists() and not re_apply:
-        return dace.SDFG.from_file(str(tiled_sdfg_path))
+        return dace.SDFG.from_file(str(tiled_sdfg_path)), None
 
     # filename.open('w').close() if filename.exists() else filename.touch()
 
@@ -457,8 +462,11 @@ def auto_tile(
 
     for (state_guid, kernel_entry_guid), best_config in found_tilings.items():
         state = find_state_by_cond(sdfg, lambda n: n.guid == state_guid)
+        if state is None:
+            raise Exception("After auto-tiling, the state is none")
         kernel_entry = find_node_in_state_by_cond(state, lambda n: n.guid == kernel_entry_guid)
-        assert state is not None and kernel_entry is not None
+        if kernel_entry is None:
+            raise Exception("After auto-tiling the kernel entry is none")
         # Create a single element list for applying the transformations
         memory_tiling = [best_config[0]]
         thread_coarsening = [best_config[1]]
@@ -485,7 +493,9 @@ def auto_tile(
     # Add missing symbols
     for input_sym, sym in inputs.items():
         if input_sym not in sdfg.symbols and input_sym not in sdfg.arrays:
-            assert isinstance(sym, dace.symbolic.symbol)
-            sdfg.add_symbol(input_sym, sym.dtype)
+            if isinstance(input_sym, dace.symbolic.symbol):
+                sdfg.add_symbol(input_sym, sym.dtype)
+            else:
+                sdfg.add_symbol(input_sym, dace.dtypes.typeclass(type(sym)))
 
     return sdfg, found_tilings
