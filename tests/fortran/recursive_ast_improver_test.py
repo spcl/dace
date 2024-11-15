@@ -467,6 +467,7 @@ END PROGRAM main
     # Verify simplification of the dependency graph.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
     assert set(simple_graph.nodes) == {'lib', 'main'}
+    assert set(simple_graph.edges) == {('main', 'lib')}
     assert actually_used_in_module == {'lib': ['fun'], 'main': []}
 
 

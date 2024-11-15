@@ -2779,7 +2779,6 @@ def recursive_ast_improver(ast, source_list: Union[List, Dict], include_list, pa
             print("Assumption failed: Only one module per file")
             if len(defined_modules) == 0 and isinstance(_ast, Program):
                 main_program_mode = True
-        used_modules, objects_in_modules = ast_utils.get_used_modules(_ast)
 
         fandsl = ast_utils.FunctionSubroutineLister()
         fandsl.get_functions_and_subroutines(_ast)
@@ -2796,18 +2795,22 @@ def recursive_ast_improver(ast, source_list: Union[List, Dict], include_list, pa
         for mod in defined_modules:
             exclude.add(mod)
             dep_graph.add_node(mod.lower(), info_list=fandsl)
+
+        used_modules, objects_in_modules = ast_utils.get_used_modules(_ast)
         for mod in used_modules:
             if mod not in dep_graph.nodes:
                 dep_graph.add_node(mod.lower())
-            obj_list = None
+            obj_list = []
+            if dep_graph.has_edge(parent_module.lower(), mod.lower()):
+                edge = dep_graph.get_edge_data(parent_module.lower(), mod.lower())
+                if 'obj_list' in edge:
+                    obj_list = edge.get('obj_list')
+                    assert isinstance(obj_list, list)
             if mod in objects_in_modules:
-                obj_list = [obj for obj in objects_in_modules[mod].children]
+                ast_utils.extend_with_new_items_from(obj_list, objects_in_modules[mod])
             dep_graph.add_edge(parent_module.lower(), mod.lower(), obj_list=obj_list)
 
-        modules_to_parse = []
-        for mod in used_modules:
-            if mod not in chain(defined_modules, exclude):
-                modules_to_parse.append(mod)
+        modules_to_parse = [mod for mod in used_modules if mod not in chain(defined_modules, exclude)]
         added_modules = []
         for mod in modules_to_parse:
             name = mod.lower()
@@ -2833,7 +2836,7 @@ def recursive_ast_improver(ast, source_list: Union[List, Dict], include_list, pa
             for c in reversed(next_ast.children):
                 if c in added_modules:
                     added_modules.remove(c)
-                added_modules.append(c)
+                added_modules.insert(0, c)
                 c_stmt = c.children[0]
                 c_name = ast_utils.singular(ast_utils.children_of_type(c_stmt, Name)).string
                 exclude.add(c_name)
@@ -2915,23 +2918,22 @@ def prune_unused_children(ast: Program, parse_order: List[str], simple_graph: nx
             if dep_names:
                 ast_utils.extend_with_new_items_from(parse_list[mod], dep_names)
         res = simple_graph.nodes.get(mod).get("info_list")
-        if not res:
-            continue
-        res_fand = set(chain(res.list_of_functions, res.list_of_subroutines))
-        res_types = set(res.list_of_types)
-        for _, _, data in simple_graph.in_edges(mod, data=True):
-            fns = list(item for item in parse_list[mod] if item in res_fand)
+        if res:
+            res_fand = set(chain(res.list_of_functions, res.list_of_subroutines))
+            res_types = set(res.list_of_types)
+            for _, _, data in simple_graph.in_edges(mod, data=True):
+                fns = list(item for item in parse_list[mod] if item in res_fand)
+                if fns:
+                    ast_utils.extend_with_new_items_from(fands_list, fns)
+                typs = list(item for item in parse_list[mod] if item in res_types)
+                if typs:
+                    ast_utils.extend_with_new_items_from(type_list, typs)
+            fns = list(item for item in actually_used_in_module[mod] if item in res_fand)
             if fns:
                 ast_utils.extend_with_new_items_from(fands_list, fns)
-            typs = list(item for item in parse_list[mod] if item in res_types)
+            typs = list(item for item in actually_used_in_module[mod] if item in res_types)
             if typs:
                 ast_utils.extend_with_new_items_from(type_list, typs)
-        fns = list(item for item in actually_used_in_module[mod] if item in res_fand)
-        if fns:
-            ast_utils.extend_with_new_items_from(fands_list, fns)
-        typs = list(item for item in actually_used_in_module[mod] if item in res_types)
-        if typs:
-            ast_utils.extend_with_new_items_from(type_list, typs)
         what_to_parse_list[mod] = fands_list
         type_to_parse_list[mod] = type_list
 
