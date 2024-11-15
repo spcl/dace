@@ -2551,37 +2551,9 @@ def create_sdfg_from_string(
     ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, sources, [], parser)
     assert not any(nx.simple_cycles(dep_graph))
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-    parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
-
-    name_dict, rename_dict = prune_unused_children(ast, parse_order, simple_graph, actually_used_in_module)
+    prune_unused_children(ast, simple_graph, actually_used_in_module)
 
     own_ast = ast_components.InternalFortranAst()
-    functions_to_rename = {}
-    for i in parse_order:
-        own_ast.current_ast = i
-
-        own_ast.unsupported_fortran_syntax[i] = []
-        if i in ["mtime", "ISO_C_BINDING", "iso_c_binding", "mo_cdi", "iso_fortran_env"]:
-            continue
-
-        own_ast.add_name_list_for_module(i, name_dict[i])
-        try:
-            partial_module = own_ast.create_ast(asts[i])
-        except:
-            print("Module " + i + " could not be parsed ", own_ast.unsupported_fortran_syntax[i])
-            print(own_ast.unsupported_fortran_syntax[i])
-            continue
-        tmp_rename = rename_dict[i]
-        for j in tmp_rename:
-            # print(j)
-            if own_ast.symbols.get(j) is None:
-                # raise NameError("Symbol " + j + " not found in partial ast")
-                if functions_to_rename.get(i) is None:
-                    functions_to_rename[i] = [j]
-                else:
-                    functions_to_rename[i].append(j)
-            else:
-                own_ast.symbols[tmp_rename[j]] = own_ast.symbols[j]
     program = own_ast.create_ast(ast)
 
     # Repeated!
@@ -2900,9 +2872,9 @@ def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[st
     return simple_graph, actually_used_in_module
 
 
-def prune_unused_children(ast: Program, parse_order: List[str], simple_graph: nx.DiGraph,
-                          actually_used_in_module: Dict[str, List]) \
+def prune_unused_children(ast: Program, simple_graph: nx.DiGraph, actually_used_in_module: Dict[str, List]) \
         -> Tuple[Dict[str, List[str]], Dict[str, Dict[str, str]]]:
+    parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
     if not parse_order:
         return {}, {}
 
