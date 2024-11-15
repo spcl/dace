@@ -163,7 +163,6 @@ def run_and_measure_time(kernel_sdfg: SDFG, inputs : Dict[Type[str], Any], repea
     for i in range(repeats):
         kernel_sdfg(**inputs)
         report = kernel_sdfg.get_latest_report()
-        print(report)
         if report is not None:
             report.process_events()
         # Weird hack, TODO: fix
