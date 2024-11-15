@@ -196,6 +196,77 @@ END PROGRAM main
     assert not actually_used_in_module
 
 
+def test_subroutine_contains_function():
+    """
+    A function is defined inside a subroutine that calls it. There is no main program.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+contains
+  subroutine fun(d)
+    implicit none
+    double precision d(4)
+    d(2) = fun2()
+
+  contains
+    real function fun2()
+      implicit none
+      fun2 = 5.5
+    end function fun2
+  end subroutine fun
+end module lib
+""").add_file("""
+program main
+  use lib, only: fun
+  implicit none
+
+  double precision d(4)
+  call fun(d)
+end program main
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  SUBROUTINE fun(d)
+    IMPLICIT NONE
+    DOUBLE PRECISION :: d(4)
+    d(2) = fun2()
+    CONTAINS
+    REAL FUNCTION fun2()
+      IMPLICIT NONE
+      fun2 = 5.5
+    END FUNCTION fun2
+  END SUBROUTINE fun
+END MODULE lib
+PROGRAM main
+  USE lib, ONLY: fun
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  CALL fun(d)
+END PROGRAM main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    # Verify that there is not much else to the program.
+    assert set(dep_graph.nodes) == {'lib', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib')}
+    assert not interface_blocks
+    assert set(asts.keys()) == {'lib'}
+
+    # Verify simplification of the dependency graph.
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
+    assert set(simple_graph.nodes) == {'main', 'lib'}
+    assert set(simple_graph.edges) == {('main', 'lib')}
+    # TODO: `fun2` should actually _not_ be here, since it is not a top-level member of the module. Should investigate.
+    assert actually_used_in_module == {'lib': ['fun', 'fun2'], 'main': []}
+
+
 def test_program_contains_interface_block():
     """
     The same simple program, but this time the subroutine is defined inside the main program that calls it.
@@ -557,7 +628,7 @@ END PROGRAM main
 
 def test_program_contains_type():
     """
-    A simple program that has a type defintion, and a function that uses it.
+    A function is defined inside a subroutine that calls it. A main program uses the top-level subroutine.
     """
     sources, main = SourceCodeBuilder().add_file("""
 program main
