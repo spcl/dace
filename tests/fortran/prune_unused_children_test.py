@@ -304,9 +304,9 @@ END PROGRAM main
     assert rename_dict == {'lib': {}}
 
 
-def test_module_contains_used_and_unused_types():
+def test_module_contains_used_and_unused_types_prunes_unused_defs():
     """
-    A simple program that has a type defintion, and a function that uses it.
+    Module has type definition that the program does not use, so it gets pruned.
     """
     sources, main = SourceCodeBuilder().add_file("""
 module lib
@@ -386,9 +386,9 @@ END PROGRAM main
     assert rename_dict == {'lib': {}}
 
 
-def test_module_contains_used_and_unused_variables():
+def test_module_contains_used_and_unused_variables_doesnt_prune_variables():
     """
-    A simple program that has a type defintion, and a function that uses it.
+    Module has unused variables. But we don't prune variables.
     """
     sources, main = SourceCodeBuilder().add_file("""
 module lib
@@ -451,9 +451,9 @@ END PROGRAM main
     assert rename_dict == {'lib': {}}
 
 
-def test_module_contains_used_and_unused_variables_with_use_all():
+def test_module_contains_used_and_unused_variables_with_use_all_doesnt_prune_variables():
     """
-    A simple program that has a type defintion, and a function that uses it.
+    Module has unused variables that are pulled in with "use-all".
     """
     sources, main = SourceCodeBuilder().add_file("""
 module lib
@@ -516,9 +516,9 @@ END PROGRAM main
     assert rename_dict == {'lib': {}}
 
 
-def test_use_statement_multiple():
+def test_use_statement_multiple_doesnt_prune_variables():
     """
-    A simple program that has a type defintion, and a function that uses it.
+    We have multiple uses of the same module.
     """
     sources, main = SourceCodeBuilder().add_file("""
 module lib
@@ -587,9 +587,9 @@ END PROGRAM main
     assert rename_dict == {'lib': {}}
 
 
-def test_use_statement_multiple_with_useall():
+def test_use_statement_multiple_with_useall__doesnt_prune_variables():
     """
-    A simple program that has a type defintion, and a function that uses it.
+    We have multiple uses of the same module. One of them is a "use-all".
     """
     sources, main = SourceCodeBuilder().add_file("""
 module lib
@@ -655,4 +655,77 @@ END PROGRAM main
 
     # Verify
     assert name_dict == {'lib': ['a', 'b', 'c']}
+    assert rename_dict == {'lib': {}}
+
+
+def test_subroutine_contains_function_no_pruning():
+    """
+    A function is defined inside a subroutine that calls it. A main program uses the top-level subroutine.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+contains
+  subroutine fun(d)
+    implicit none
+    double precision d(4)
+    d(2) = fun2()
+
+  contains
+    real function fun2()
+      implicit none
+      fun2 = 5.5
+    end function fun2
+  end subroutine fun
+end module lib
+""").add_file("""
+program main
+  use lib, only: fun
+  implicit none
+
+  double precision d(4)
+  call fun(d)
+end program main
+""").check_with_gfortran().get()
+    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+
+    # Verify simplification of the dependency graph.
+    assert set(asts.keys()) == {'lib'}
+    assert set(simple_graph.nodes) == {'main', 'lib'}
+    assert set(simple_graph.edges) == {('main', 'lib')}
+    # TODO: `fun2` should actually _not_ be here, since it is not a top-level member of the module. Should investigate.
+    assert actually_used_in_module == {'lib': ['fun', 'fun2'], 'main': []}
+
+    # Now the actual operation that we are testing.
+    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+
+    # `not_fun` and `real_fun` should be gone!
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  SUBROUTINE fun(d)
+    IMPLICIT NONE
+    DOUBLE PRECISION :: d(4)
+    d(2) = fun2()
+    CONTAINS
+    REAL FUNCTION fun2()
+      IMPLICIT NONE
+      fun2 = 5.5
+    END FUNCTION fun2
+  END SUBROUTINE fun
+END MODULE lib
+PROGRAM main
+  USE lib, ONLY: fun
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  CALL fun(d)
+END PROGRAM main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    # Verify
+    assert name_dict == {'lib': ['fun']}
     assert rename_dict == {'lib': {}}
