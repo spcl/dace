@@ -663,7 +663,6 @@ class MapFusion(transformation.SingleStateTransformation):
                     new_inter_name,
                     dtype=inter_desc.dtype,
                     transient=True,
-                    storage=dtypes.StorageType.Register,
                     find_new_name=True,
                 )
 
