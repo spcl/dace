@@ -124,9 +124,6 @@ def _tile(
     if not re_apply:
         raise NotImplementedError("Not re-applying is not implemeneted for tiling yet")
 
-    if not work_on_copy:
-        assert len(combinations) == 1
-
     # Copy kernel as a single state SDFG if we are working on the copy
     if work_on_copy:
         _kernel_sdfg = copy_sub_scope(state, entry)
@@ -192,7 +189,8 @@ def _tile(
             apply_remainder_loop,
         )
     )
-
+    if not work_on_copy:
+        assert len(combinations) == 1
 
     best_config = None
     best_time = None
