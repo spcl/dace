@@ -124,16 +124,6 @@ def _tile(
     if not re_apply:
         raise NotImplementedError("Not re-applying is not implemeneted for tiling yet")
 
-    combinations = list(
-        itertools.product(
-            memory_tiling_parameters,
-            validate_and_pad_params_to_three(thread_coarsening_parameters),
-            validate_and_pad_params_to_three(thread_block_parameters),
-            apply_explicit_memory_transfers,
-            apply_remainder_loop,
-        )
-    )
-
     if not work_on_copy:
         assert len(combinations) == 1
 
@@ -175,10 +165,33 @@ def _tile(
         for node in _kernel_state.nodes():
             if (isinstance(node, dace.nodes.MapEntry)):
                 node.instrument = dace.dtypes.InstrumentationType.No_Instrumentation
+
+        kernel_work_maps = find_nodes_by_cond(
+            _kernel_state,
+            _kernel_entry,
+            lambda n: isinstance(n, dace.nodes.MapEntry)
+            and n.map.schedule == dace.dtypes.ScheduleType.Sequential
+        )
+
+        # No sequential map means no memory tiling (but memory will still be moved)
+        if len(kernel_work_maps) == 0:
+            memory_tiling_parameters = [(1,)]
+
     else:
         _kernel_sdfg = sdfg
         _kernel_state = state
         _kernel_entry = entry
+
+
+    combinations = list(
+        itertools.product(
+            memory_tiling_parameters,
+            validate_and_pad_params_to_three(thread_coarsening_parameters),
+            validate_and_pad_params_to_three(thread_block_parameters),
+            apply_explicit_memory_transfers,
+            apply_remainder_loop,
+        )
+    )
 
 
     best_config = None
