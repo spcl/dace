@@ -488,18 +488,29 @@ class InternalFortranAst:
             #now to add the dimension to the size list after processing it if necessary
             size.append(self.create_ast(dim_expr))
             offset.append(1)
+
         # Here we support arrays that have size declaration - with initial offset.
         elif len(dim_expr) == 2:
             # extract offets
-            for expr in dim_expr:
-                if not isinstance(expr, f03.Int_Literal_Constant):
-                    raise TypeError("Array offsets must be constant expressions!")
-            offset.append(int(dim_expr[0].tostr()))
+            if isinstance(dim_expr[0], f03.Int_Literal_Constant):
+                #raise TypeError("Array offsets must be constant expressions!")
+                offset.append(int(dim_expr[0].tostr()))
+            else:
+                expr = self.create_ast(dim_expr[0])
+                offset.append(expr)
 
-            fortran_size = int(dim_expr[1].tostr()) - int(dim_expr[0].tostr()) + 1
-            fortran_ast_size = f03.Int_Literal_Constant(str(fortran_size))
-
-            size.append(self.create_ast(fortran_ast_size))
+            fortran_size = ast_internal_classes.BinOp_Node(
+                lval=self.create_ast(dim_expr[1]),
+                rval=self.create_ast(dim_expr[0]),
+                op="-",
+                type="INTEGER"
+            )
+            size.append(ast_internal_classes.BinOp_Node(
+                lval=fortran_size,
+                rval=ast_internal_classes.Int_Literal_Node(value=str(1)),
+                op="+",
+                type="INTEGER")
+            )
         else:
             raise TypeError("Array dimension must be at most two expressions")
 
