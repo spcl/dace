@@ -401,9 +401,9 @@ def _tile(
                     best_config = current_config
                     best_time = time
 
-                print(f"Transformed SDFG: {time} ms")
+                print(f"Transformed SDFG: {time:.10f} ms")
                 print(f"Current config: {current_config}, best config: {best_config}")
-                print(f"Non-transformed SDFG: {non_transformed_time} ms")
+                print(f"Non-transformed SDFG: {non_transformed_time:.10f} ms")
 
     return best_config
 
