@@ -5,15 +5,16 @@ import os
 import warnings
 from copy import deepcopy as dpcp
 from itertools import chain
+from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple, Union
 
 import networkx as nx
-from fparser.common.readfortran import FortranFileReader as ffr
+from fparser.common.readfortran import FortranFileReader as ffr, FortranStringReader, FortranFileReader
 from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec, Derived_Type_Def, End_Module_Stmt, \
     Contains_Stmt, Rename, Name, Subroutine_Subprogram, Function_Subprogram
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
-from fparser.two.parser import ParserFactory as pf
+from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
 
 import dace.frontend.fortran.ast_components as ast_components
@@ -27,6 +28,7 @@ from dace import dtypes
 from dace import subsets as subs
 from dace import symbolic as sym
 from dace.data import Scalar, Structure
+from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
 from dace.properties import CodeBlock
 
@@ -452,69 +454,48 @@ class AST_translator:
         # unsure about ICON
         self.transient_mode = True
         ast_utils.add_simple_state_to_sdfg(self, sdfg, "GlobalDefEnd")
-        if node.main_program is not None:
+        if self.startpoint is None:
+            self.startpoint = node.main_program
+        assert self.startpoint is not None, "No main program or start point found"
 
-            for i in node.main_program.specification_part.typedecls:
+        if self.startpoint.specification_part is not None:
+            # this works with CloudSC
+            # unsure about ICON
+            self.transient_mode = False
+
+            for i in self.startpoint.specification_part.typedecls:
                 self.translate(i, sdfg)
-            for i in node.main_program.specification_part.symbols:
+            for i in self.startpoint.specification_part.symbols:
                 self.translate(i, sdfg)
 
-            for i in node.main_program.specification_part.specifications:
+            for i in self.startpoint.specification_part.specifications:
                 self.translate(i, sdfg)
-            for i in node.main_program.specification_part.specifications:
+            for i in self.startpoint.specification_part.specifications:
 
                 ast_utils.add_simple_state_to_sdfg(self, sdfg, "start_struct_size")
                 assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
-
                 for decl in i.vardecl:
+                    if decl.name in sdfg.symbols:
+                        continue
                     add_deferred_shape_assigns_for_structs(self.structures, decl, sdfg, assign_state, decl.name,
-                                                           decl.name, self.placeholders, self.placeholders_offsets,
+                                                           decl.name, self.placeholders,
+                                                           self.placeholders_offsets,
                                                            sdfg.arrays[self.name_mapping[sdfg][decl.name]],
-                                                           self.replace_names, self.actual_offsets_per_sdfg[sdfg])
+                                                           self.replace_names,
+                                                           self.actual_offsets_per_sdfg[sdfg])
 
-            self.translate(node.main_program.execution_part.execution, sdfg)
-        else:
-            if self.startpoint is None:
-                raise ValueError("No main program or start point found")
-            else:
+        if not isinstance(self.startpoint, Main_Program_Node):
+            # this works with CloudSC
+            # unsure about ICON
+            arg_names = [ast_utils.get_name(i) for i in self.startpoint.args]
+            for arr_name, arr in sdfg.arrays.items():
 
-                if self.startpoint.specification_part is not None:
-                    # this works with CloudSC
-                    # unsure about ICON
-                    self.transient_mode = False
+                if arr.transient and arr_name in arg_names:
+                    print(f"Changing the transient status to false of {arr_name} because it's a function argument")
+                    arr.transient = False
 
-                    for i in self.startpoint.specification_part.typedecls:
-                        self.translate(i, sdfg)
-                    for i in self.startpoint.specification_part.symbols:
-                        self.translate(i, sdfg)
-
-                    for i in self.startpoint.specification_part.specifications:
-                        self.translate(i, sdfg)
-                    for i in self.startpoint.specification_part.specifications:
-
-                        ast_utils.add_simple_state_to_sdfg(self, sdfg, "start_struct_size")
-                        assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
-                        for decl in i.vardecl:
-                            if decl.name in sdfg.symbols:
-                                continue
-                            add_deferred_shape_assigns_for_structs(self.structures, decl, sdfg, assign_state, decl.name,
-                                                                   decl.name, self.placeholders,
-                                                                   self.placeholders_offsets,
-                                                                   sdfg.arrays[self.name_mapping[sdfg][decl.name]],
-                                                                   self.replace_names,
-                                                                   self.actual_offsets_per_sdfg[sdfg])
-
-                # this works with CloudSC
-                # unsure about ICON
-                arg_names = [ast_utils.get_name(i) for i in self.startpoint.args]
-                for arr_name, arr in sdfg.arrays.items():
-
-                    if arr.transient and arr_name in arg_names:
-                        print(f"Changing the transient status to false of {arr_name} because it's a function argument")
-                        arr.transient = False
-
-                self.transient_mode = True
-                self.translate(self.startpoint.execution_part.execution, sdfg)
+        self.transient_mode = True
+        self.translate(self.startpoint.execution_part.execution, sdfg)
 
     def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG):
         """
@@ -2530,6 +2511,222 @@ def create_ast_from_string(
     return program, own_ast
 
 
+class ParseConfig:
+    def __init__(self,
+                 main: Union[None, Path, str] = None,
+                 sources: Union[None, List[Path], Dict[str, str]] = None,
+                 includes: Union[None, List[Path], Dict[str, str]] = None):
+        # Make the configs canonical, by processing the various types upfront.
+        if isinstance(main, Path):
+            main = FortranFileReader(main)
+        else:
+            main = FortranStringReader(main)
+        # TODO: This should be done, but for now `recursive_ast_improver()` isn't happy with it. Should be fixed.
+        # if isinstance(sources, list):
+        #     sources = [FortranFileReader(p) for p in sources]
+        # elif isinstance(sources, dict):
+        #     sources = {p: FortranStringReader(content) for p, content in sources.items()}
+        # if isinstance(includes, list):
+        #     includes = [FortranFileReader(p) for p in includes]
+        # elif isinstance(includes, dict):
+        #     includes = {p: FortranStringReader(content) for p, content in includes.items()}
+
+        self.main = main
+        self.sources = sources
+        self.includes = includes
+
+
+def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortranAst, FNode]:
+    parser = ParserFactory().create(std="f2008")
+    ast = parser(cfg.main)
+    assert isinstance(ast, Program)
+
+    ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, cfg.sources, cfg.includes, parser)
+    assert isinstance(ast, Program)
+    assert not any(nx.simple_cycles(dep_graph))
+
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
+    prune_unused_children(ast, simple_graph, actually_used_in_module)
+    assert isinstance(ast, Program)
+
+    iast = ast_components.InternalFortranAst()
+    prog = iast.create_ast(ast)
+    assert isinstance(prog, FNode)
+    return iast, prog
+
+
+class SDFGConfig:
+    def __init__(self,
+                 entry_points: Dict[str, Union[str, List[str]]],
+                 normalize_offsets: bool = True,
+                 multiple_sdfgs: bool = False):
+        for k in entry_points:
+            if isinstance(entry_points[k], str):
+                entry_points[k] = [entry_points[k]]
+        self.entry_points = entry_points
+        self.normalize_offsets = normalize_offsets
+        self.multiple_sdfgs = multiple_sdfgs
+
+
+def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, program: FNode, cfg: SDFGConfig):
+    # Repeated!
+    # We need that to know in transformations what structures are used.
+    # The actual structure listing is repeated later to resolve cycles.
+    # Not sure if we can actually do it earlier.
+
+    structs_lister = ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph = nx.DiGraph()
+    for i, name in zip(structs_lister.structs, structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps = struct_deps_finder.structs_used
+        # print(struct_deps)
+        for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
+                                           struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
+
+    program.structures = ast_transforms.Structures(structs_lister.structs)
+    own_ast.structures = ast_transforms.Structures(structs_lister.structs)
+
+    program.placeholders = own_ast.placeholders
+    program.placeholders_offsets = own_ast.placeholders_offsets
+    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
+    functions_and_subroutines_builder.visit(program)
+    own_ast.functions_and_subroutines = functions_and_subroutines_builder.names
+    own_ast.iblocks = functions_and_subroutines_builder.iblocks
+    program = ast_transforms.functionStatementEliminator(program)
+    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
+    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
+    program = ast_transforms.CallExtractor().visit(program)
+
+    program = ast_transforms.FunctionCallTransformer().visit(program)
+    program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
+    program = ast_transforms.PointerRemoval().visit(program)
+    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
+    for i in program.modules:
+        count = 0
+        for j in i.function_definitions:
+            if isinstance(j, ast_internal_classes.Subroutine_Subprogram_Node):
+                i.subroutine_definitions.append(j)
+                own_ast.functions_and_subroutines.append(j.name)
+                count += 1
+        if count != len(i.function_definitions):
+            raise NameError("Not all functions were transformed to subroutines")
+        i.function_definitions = []
+    program.function_definitions = []
+    count = 0
+    for i in program.function_definitions:
+        if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
+            program.subroutine_definitions.append(i)
+            own_ast.functions_and_subroutines.append(i.name)
+            count += 1
+    if count != len(program.function_definitions):
+        raise NameError("Not all functions were transformed to subroutines")
+    program.function_definitions = []
+    program = ast_transforms.SignToIf().visit(program)
+    program = ast_transforms.ArrayToLoop(program).visit(program)
+
+    for transformation in own_ast.fortran_intrinsics().transformations():
+        transformation.initialize(program)
+        program = transformation.visit(program)
+
+    program = ast_transforms.ArgumentExtractor(program).visit(program)
+
+    program = ast_transforms.ForDeclarer().visit(program)
+    program = ast_transforms.IndexExtractor(program, cfg.normalize_offsets).visit(program)
+    program = ast_transforms.optionalArgsExpander(program)
+    structs_lister = ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph = nx.DiGraph()
+    for i, name in zip(structs_lister.structs, structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps = struct_deps_finder.structs_used
+        # print(struct_deps)
+        for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
+                                           struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
+    cycles = nx.algorithms.cycles.simple_cycles(struct_dep_graph)
+    has_cycles = list(cycles)
+    cycles_we_cannot_ignore = []
+    for cycle in has_cycles:
+        print(cycle)
+        for i in cycle:
+            is_pointer = struct_dep_graph.get_edge_data(i, cycle[(cycle.index(i) + 1) % len(cycle)])["pointing"]
+            point_name = struct_dep_graph.get_edge_data(i, cycle[(cycle.index(i) + 1) % len(cycle)])["point_name"]
+            # print(i,is_pointer)
+            if is_pointer:
+                actually_used_pointer_node_finder = ast_transforms.StructPointerChecker(i, cycle[
+                    (cycle.index(i) + 1) % len(cycle)], point_name)
+                actually_used_pointer_node_finder.visit(program)
+                # print(actually_used_pointer_node_finder.nodes)
+                if len(actually_used_pointer_node_finder.nodes) == 0:
+                    print("We can ignore this cycle")
+                    program = ast_transforms.StructPointerEliminator(i, cycle[(cycle.index(i) + 1) % len(cycle)],
+                                                                     point_name).visit(program)
+                else:
+                    cycles_we_cannot_ignore.append(cycle)
+    if len(cycles_we_cannot_ignore) > 0:
+        raise NameError("Structs have cyclic dependencies")
+    own_ast.tables = own_ast.symbols
+
+    # program =
+    print(dir(functions_and_subroutines_builder))
+    ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
+
+    gmap = {}
+    for ep, ep_spec in cfg.entry_points.items():
+        # Find where to look for the entry point.
+        assert ep_spec
+        mod, pt = ep_spec[:-1], ep_spec[-1]
+        assert len(mod) <= 1, f"currently only one level of entry point search is supported, got: {ep_spec}"
+        ep_box = program  # This is where we will search for our entry point.
+        if mod:
+            mod = mod[0]
+            mod = [m for m in program.modules if m.name.name == mod]
+            assert len(mod) <= 1, f"found multiple modules with the same name: {mod}"
+            if not mod:
+                # Could not even find the module, so skip.
+                continue
+            ep_box = mod[0]
+
+        # Find the actual entry point.
+        fn = [f for f in ep_box.subroutine_definitions if f.name.name == pt]
+        if not mod and program.main_program and program.main_program.name.name.name == pt:
+            # The main program can be a valid entry point, so include that when appropriate.
+            fn.append(program.main_program)
+        assert len(fn) <= 1, f"found multiple subroutines with the same name {ep}"
+        if not fn:
+            continue
+        fn = fn[0]
+
+        # Do the actual translation.
+        ast2sdfg = AST_translator(own_ast, __file__,
+                                  startpoint=fn,
+                                  multiple_sdfgs=cfg.multiple_sdfgs,
+                                  toplevel_subroutine=None,
+                                  normalize_offsets=cfg.normalize_offsets)
+        g = SDFG(ep)
+        ast2sdfg.actual_offsets_per_sdfg[g] = {}
+        ast2sdfg.top_level = program
+        ast2sdfg.globalsdfg = g
+        ast2sdfg.translate(program, g)
+        g.apply_transformations(IntrinsicSDFGTransformation)
+        g.expand_library_nodes()
+        gmap[ep] = g
+
+    return gmap
+
+
 def create_sdfg_from_string(
         source_string: str,
         sdfg_name: str,
@@ -2542,7 +2739,7 @@ def create_sdfg_from_string(
     :param source_string: The fortran file as a string
     :param sdfg_name: The name to be given to the resulting SDFG
     :return: The resulting SDFG
-    
+
     """
     parser = pf().create(std="f2008")
     reader = fsr(source_string)
@@ -3278,13 +3475,13 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             continue
 
         partial_ast.add_name_list_for_module(i, name_dict[i])
-        #try:
+        # try:
         partial_module = partial_ast.create_ast(asts[i.lower()])
         partial_modules[partial_module.name.name] = partial_module
-        #except Exception as e:
+        # except Exception as e:
         #    print("Module " + i + " could not be parsed ", partial_ast.unsupported_fortran_syntax[i])
         #    print(e, type(e))
-            # print(partial_ast.unsupported_fortran_syntax[i])
+        # print(partial_ast.unsupported_fortran_syntax[i])
         #    continue
         tmp_rename = rename_dict[i]
         for j in tmp_rename:
