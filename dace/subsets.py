@@ -21,16 +21,35 @@ def nng(expr):
         return expr
 
 def bounding_box_cover_exact(subset_a, subset_b) -> bool:
+    min_elements_a = subset_a.min_element()
+    max_elements_a = subset_a.max_element()
+    min_elements_b = subset_b.min_element()
+    max_elements_b = subset_b.max_element()
+
+    # Covering only make sense if the two subsets have the same number of dimensions.
+    if len(min_elements_a) != len(min_elements_b):
+        return ValueError(
+                f"A bounding box of dimensionality {len(min_elements_a)} cannot"
+                f" test covering a bounding box of dimensionality {len(min_elements_b)}."
+        )
+
     return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
                 and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
-                for rb, re, orb, ore in zip(subset_a.min_element(), subset_a.max_element(),
-                                            subset_b.min_element(), subset_b.max_element())])
+                for rb, re, orb, ore in zip(min_elements_a, max_elements_a,
+                                            min_elements_b, max_elements_b)])
 
 def bounding_box_symbolic_positive(subset_a, subset_b, approximation = False)-> bool:
     min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
     max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
     min_elements_b = subset_b.min_element_approx() if approximation else subset_b.min_element()
     max_elements_b = subset_b.max_element_approx() if approximation else subset_b.max_element()
+
+    # Covering only make sense if the two subsets have the same number of dimensions.
+    if len(min_elements_a) != len(min_elements_b):
+        return ValueError(
+                f"A bounding box of dimensionality {len(min_elements_a)} cannot"
+                f" test covering a bounding box of dimensionality {len(min_elements_b)}."
+        )
 
     for rb, re, orb, ore in zip(min_elements_a, max_elements_a,
                                 min_elements_b, max_elements_b):
@@ -53,12 +72,18 @@ def bounding_box_symbolic_positive(subset_a, subset_b, approximation = False)-> 
 
 class Subset(object):
     """ Defines a subset of a data descriptor. """
+
     def covers(self, other):
         """ Returns True if this subset covers (using a bounding box) another
             subset. """
-        symbolic_positive = Config.get('optimizer', 'symbolic_positive')
 
-        if not symbolic_positive:
+        # Subsets of different dimensionality can never cover each other.
+        if self.dims() != other.dims():
+            return ValueError(
+                    f"A subset of dimensionality {self.dim()} cannot test covering a subset of dimensionality {other.dims()}"
+            )
+
+        if not Config.get('optimizer', 'symbolic_positive'):
             try:
                 return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
                             and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
@@ -66,7 +91,6 @@ class Subset(object):
                                                         other.min_element_approx(), other.max_element_approx())])
             except TypeError:
                 return False
-
         else:
             try:
                 if not bounding_box_symbolic_positive(self, other, True):
@@ -78,6 +102,12 @@ class Subset(object):
         
     def covers_precise(self, other):
         """ Returns True if self contains all the elements in other. """
+
+        # Subsets of different dimensionality can never cover each other.
+        if self.dims() != other.dims():
+            return ValueError(
+                    f"A subset of dimensionality {self.dim()} cannot test covering a subset of dimensionality {other.dims()}"
+            )
 
         # If self does not cover other with a bounding box union, return false.
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
@@ -132,10 +162,10 @@ class Subset(object):
     def __repr__(self):
         return '%s (%s)' % (type(self).__name__, self.__str__())
 
-    def offset(self, other, negative, indices=None):
+    def offset(self, other, negative, indices=None, offset_end=True):
         raise NotImplementedError
 
-    def offset_new(self, other, negative, indices=None):
+    def offset_new(self, other, negative, indices=None, offset_end=True):
         raise NotImplementedError
 
     def at(self, i, strides):
@@ -199,6 +229,7 @@ def _tuple_to_symexpr(val):
 @dace.serialize.serializable
 class Range(Subset):
     """ Subset defined in terms of a fixed range. """
+
     def __init__(self, ranges):
         parsed_ranges = []
         parsed_tiles = []
@@ -372,7 +403,9 @@ class Range(Subset):
         return (sum(1 if (re - rb + 1) != 1 else 0 for rb, re, _ in self.ranges) + sum(1 if ts != 1 else 0
                                                                                        for ts in self.tile_sizes))
 
-    def offset(self, other, negative, indices=None):
+    def offset(self, other, negative, indices=None, offset_end=True):
+        if other is None:
+            return
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
                 other = Indices(other)
@@ -384,9 +417,13 @@ class Range(Subset):
         off = other.min_element()
         for i in indices:
             rb, re, rs = self.ranges[i]
-            self.ranges[i] = (rb + mult * off[i], re + mult * off[i], rs)
+            if offset_end:
+                re = re + mult * off[i]
+            self.ranges[i] = (rb + mult * off[i], re, rs)
 
-    def offset_new(self, other, negative, indices=None):
+    def offset_new(self, other, negative, indices=None, offset_end=True):
+        if other is None:
+            return Range(self.ranges)
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
                 other = Indices(other)
@@ -396,8 +433,8 @@ class Range(Subset):
         if indices is None:
             indices = set(range(len(self.ranges)))
         off = other.min_element()
-        return Range([(self.ranges[i][0] + mult * off[i], self.ranges[i][1] + mult * off[i], self.ranges[i][2])
-                      for i in indices])
+        return Range([(self.ranges[i][0] + mult * off[i], self.ranges[i][1] if not offset_end else
+                       (self.ranges[i][1] + mult * off[i]), self.ranges[i][2]) for i in indices])
 
     def dims(self):
         return len(self.ranges)
@@ -818,9 +855,11 @@ class Range(Subset):
 class Indices(Subset):
     """ A subset of one element representing a single index in an
         N-dimensional data descriptor. """
+
     def __init__(self, indices):
         if indices is None or len(indices) == 0:
-            raise TypeError('Expected an array of index expressions: got empty' ' array or None')
+            raise TypeError('Expected an array of index expressions: got empty'
+                            ' array or None')
         if isinstance(indices, str):
             raise TypeError("Expected collection of index expression: got str")
         elif isinstance(indices, symbolic.SymExpr):
@@ -830,6 +869,7 @@ class Indices(Subset):
         self.tile_sizes = [1]
 
     def to_json(self):
+
         def a2s(obj):
             if isinstance(obj, symbolic.SymExpr):
                 return str(obj.expr)
@@ -889,7 +929,7 @@ class Indices(Subset):
     def absolute_strides(self, global_shape):
         return [1] * len(self.indices)
 
-    def offset(self, other, negative, indices=None):
+    def offset(self, other, negative, indices=None, offset_end=True):
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
                 other = Indices(other)
@@ -899,7 +939,7 @@ class Indices(Subset):
         for i, off in enumerate(other.min_element()):
             self.indices[i] += mult * off
 
-    def offset_new(self, other, negative, indices=None):
+    def offset_new(self, other, negative, indices=None, offset_end=True):
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
                 other = Indices(other)

@@ -23,7 +23,7 @@ All transformations extend the :class:`~dace.transformation.transformation.Trans
 
 Transformations can have properties and those can be used when applying them: for example, tile sizes in :class:`~dace.transformation.dataflow.tiling.MapTiling`.
 
-For more information on how to use and author data-centric transformations, see the `Using and Creating Transformations <https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb>`_
+For more information on how to use and author data-centric transformations, see the `Using and Creating Transformations <https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/transformations.ipynb>`_
 tutorial.
 
 

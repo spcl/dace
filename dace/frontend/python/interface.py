@@ -49,6 +49,7 @@ def program(f: F,
             recompile: bool = True,
             distributed_compilation: bool = False,
             constant_functions=False,
+            use_experimental_cfg_blocks=False,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     """
     Entry point to a data-centric program. For methods and ``classmethod``s, use
@@ -73,6 +74,8 @@ def program(f: F,
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
                                resulting program.
+    :param use_experimental_cfg_blocks: If True, makes use of experimental CFG blocks susch as loop and conditional
+                                        regions.
     :note: If arguments are defined with type hints, the program can be compiled
            ahead-of-time with ``.compile()``.
     """
@@ -88,7 +91,8 @@ def program(f: F,
                               recreate_sdfg=recreate_sdfg,
                               regenerate_code=regenerate_code,
                               recompile=recompile,
-                              distributed_compilation=distributed_compilation)
+                              distributed_compilation=distributed_compilation,
+                              use_experimental_cfg_blocks=use_experimental_cfg_blocks)
 
 
 function = program
@@ -432,3 +436,17 @@ def in_program() -> bool:
     :return: True if in a DaCe program parsing context, or False otherwise.
     """
     return False
+
+class named:
+    """
+    Creates a `NamedRegion` with the given label.
+    """
+    def __init__(self, name: Optional[str]=None):
+        self.name = name
+    
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return True
+

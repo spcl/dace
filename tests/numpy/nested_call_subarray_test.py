@@ -8,7 +8,7 @@ N = dace.symbol('N')
 @dace.program
 def dace_softmax_ncs(X_in: dace.float32[N], X_out: dace.float32[N]):
     tmp_max = dace.reduce(lambda a, b: a + b, X_in, identity=0)
-    X_out[:] = exp(X_in - tmp_max)
+    X_out[:] = np.exp(X_in - tmp_max)
     tmp_sum = dace.reduce(lambda a, b: max(a, b), X_in)
     X_out[:] /= tmp_sum
 
@@ -22,7 +22,7 @@ def test_ncs_local_program():
     @dace.program
     def dace_softmax_localprog(X_in: dace.float32[N], X_out: dace.float32[N]):
         tmp_max = dace.reduce(lambda a, b: a + b, X_in, identity=0)
-        X_out[:] = exp(X_in - tmp_max)
+        X_out[:] = np.exp(X_in - tmp_max)
         tmp_sum = dace.reduce(lambda a, b: max(a, b), X_in)
         X_out[:] /= tmp_sum
 

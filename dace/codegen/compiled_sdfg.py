@@ -12,7 +12,7 @@ import numpy as np
 import sympy as sp
 
 from dace import data as dt, dtypes, hooks, symbolic
-from dace.codegen import exceptions as cgx, common
+from dace.codegen import exceptions as cgx
 from dace.config import Config
 from dace.frontend import operations
 
@@ -369,6 +369,7 @@ class CompiledSDFG(object):
                     f'An error was detected after running "{self._sdfg.name}": {self._get_error_text(res)}')
 
     def _get_error_text(self, result: Union[str, int]) -> str:
+        from dace.codegen import common  # Circular import
         if self.has_gpu_code:
             if isinstance(result, int):
                 result = common.get_gpu_runtime().get_error_string(result)
@@ -428,6 +429,7 @@ class CompiledSDFG(object):
 
         :note: You may use `_construct_args()` to generate the processed arguments.
         """
+        from dace.codegen import common  # Circular import
         try:
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
@@ -516,6 +518,9 @@ class CompiledSDFG(object):
                     # Otherwise, None values are passed as null pointers below
                 elif isinstance(arg, ctypes._Pointer):
                     pass
+                elif isinstance(arg, str):
+                    # Cast to bytes
+                    arglist[i] = ctypes.c_char_p(arg.encode('utf-8'))
                 else:
                     raise TypeError(f'Passing an object (type {type(arg).__name__}) to an array in argument "{a}"')
             elif is_array and not is_dtArray:
@@ -548,6 +553,8 @@ class CompiledSDFG(object):
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
                     pass
+                elif isinstance(arg, bool) and atype.dtype.type == np.bool_:
+                    pass
                 elif (isinstance(arg, str) or arg is None) and atype.dtype == dtypes.string:
                     if arg is None:
                         arglist[i] = ctypes.c_char_p(None)
@@ -573,7 +580,7 @@ class CompiledSDFG(object):
         arg_ctypes = tuple(at.dtype.as_ctypes() for at in argtypes)
 
         constants = self.sdfg.constants
-        callparams = tuple((actype(arg.get()) if isinstance(arg, symbolic.symbol) else arg, actype, atype, aname)
+        callparams = tuple((arg, actype, atype, aname)
                            for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames)
                            if not (symbolic.issymbolic(arg) and (hasattr(arg, 'name') and arg.name in constants)))
 

@@ -4,21 +4,22 @@ Functionality relating to Memlet propagation (deducing external memlets
 from internal memory accesses and scope ranges).
 """
 
-from collections import deque
 import copy
-from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
-import itertools
 import functools
-import sympy
-from sympy import ceiling, Symbol
-from sympy.concrete.summations import Sum
+import itertools
 import warnings
-import networkx as nx
-
-from dace import registry, subsets, symbolic, dtypes, data
-from dace.memlet import Memlet
-from dace.sdfg import nodes, graph as gr
+from collections import deque
 from typing import List, Set
+
+import sympy
+from sympy import Symbol, ceiling
+from sympy.concrete.summations import Sum
+
+from dace import data, dtypes, registry, subsets, symbolic
+from dace.memlet import Memlet
+from dace.sdfg import graph as gr
+from dace.sdfg import nodes
+from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 
 
 @registry.make_registry
@@ -61,17 +62,17 @@ class SeparableMemlet(MemletPattern):
                                           for rb, re, rs in node_range])
 
         for dim in range(data_dims):
-
             dexprs = []
             for expr in expressions:
-                if isinstance(expr[dim], symbolic.SymExpr):
-                    dexprs.append(expr[dim].approx)
-                elif isinstance(expr[dim], tuple):
-                    dexprs.append((expr[dim][0].approx if isinstance(expr[dim][0], symbolic.SymExpr) else expr[dim][0],
-                                   expr[dim][1].approx if isinstance(expr[dim][1], symbolic.SymExpr) else expr[dim][1],
-                                   expr[dim][2].approx if isinstance(expr[dim][2], symbolic.SymExpr) else expr[dim][2]))
+                expr_dim = expr[dim]
+                if isinstance(expr_dim, symbolic.SymExpr):
+                    dexprs.append(expr_dim.approx)
+                elif isinstance(expr_dim, tuple):
+                    dexprs.append((expr_dim[0].approx if isinstance(expr_dim[0], symbolic.SymExpr) else expr_dim[0],
+                                   expr_dim[1].approx if isinstance(expr_dim[1], symbolic.SymExpr) else expr_dim[1],
+                                   expr_dim[2].approx if isinstance(expr_dim[2], symbolic.SymExpr) else expr_dim[2]))
                 else:
-                    dexprs.append(expr[dim])
+                    dexprs.append(expr_dim)
 
             for pattern_class in SeparableMemletPattern.extensions().keys():
                 smpattern = pattern_class()
@@ -93,15 +94,16 @@ class SeparableMemlet(MemletPattern):
 
             dexprs = []
             for expr in expressions:
-                if isinstance(expr[i], symbolic.SymExpr):
-                    dexprs.append(expr[i].approx)
-                elif isinstance(expr[i], tuple):
-                    dexprs.append((expr[i][0].approx if isinstance(expr[i][0], symbolic.SymExpr) else expr[i][0],
-                                   expr[i][1].approx if isinstance(expr[i][1], symbolic.SymExpr) else expr[i][1],
-                                   expr[i][2].approx if isinstance(expr[i][2], symbolic.SymExpr) else expr[i][2],
+                expr_i = expr[i]
+                if isinstance(expr_i, symbolic.SymExpr):
+                    dexprs.append(expr_i.approx)
+                elif isinstance(expr_i, tuple):
+                    dexprs.append((expr_i[0].approx if isinstance(expr_i[0], symbolic.SymExpr) else expr_i[0],
+                                   expr_i[1].approx if isinstance(expr_i[1], symbolic.SymExpr) else expr_i[1],
+                                   expr_i[2].approx if isinstance(expr_i[2], symbolic.SymExpr) else expr_i[2],
                                    expr.tile_sizes[i]))
                 else:
-                    dexprs.append(expr[i])
+                    dexprs.append(expr_i)
 
             result[i] = smpattern.propagate(array, dexprs, overapprox_range)
 
@@ -375,7 +377,7 @@ class ConstantSMemlet(SeparableMemletPattern):
                 matches = rngelem.match(cst)
                 if matches is None or len(matches) != 1:
                     return False
-                if not matches[cst].is_constant():
+                if matches[cst].free_symbols:
                     return False
 
         else:  # Single element case
@@ -384,7 +386,7 @@ class ConstantSMemlet(SeparableMemletPattern):
                 matches = dexpr.match(cst)
                 if matches is None or len(matches) != 1:
                     return False
-                if not matches[cst].is_constant():
+                if matches[cst].free_symbols:
                     return False
 
         return True
@@ -569,8 +571,8 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
     """
 
     # We import here to avoid cyclic imports.
-    from dace.transformation.interstate.loop_detection import find_for_loop
     from dace.sdfg import utils as sdutils
+    from dace.transformation.interstate.loop_detection import find_for_loop
 
     condition_edges = {}
 
@@ -739,8 +741,8 @@ def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
 
     # We import here to avoid cyclic imports.
     from dace.sdfg import InterstateEdge
-    from dace.transformation.helpers import split_interstate_edges
     from dace.sdfg.analysis import cfg
+    from dace.transformation.helpers import split_interstate_edges
 
     # Reset the state edge annotations (which may have changed due to transformations)
     reset_state_annotations(sdfg)
@@ -1294,6 +1296,8 @@ def align_memlet(state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
     # Fix memlet fields
     result.data = node.data
     result.subset = e.data.other_subset
+    if result.subset is None:
+        result.subset = subsets.Range.from_array(state.sdfg.arrays[result.data])
     result.other_subset = e.data.subset
     result._is_data_src = not is_src
     return result
@@ -1428,10 +1432,15 @@ def propagate_subset(memlets: List[Memlet],
         tmp_subset = None
 
         subset = None
-        if use_dst and md.dst_subset is not None:
-            subset = md.dst_subset
-        elif not use_dst and md.src_subset is not None:
-            subset = md.src_subset
+        src, dst = md.subset, md.other_subset
+        if md._is_data_src is not None:
+            # Ideally, this should always be the case. In practice, it is not always so. So, if the memlet is uninitialized
+            # for some reason, we just explicitly fallback to `subset` and `other_subset` to retain the prior behaviour.
+            src, dst = md.src_subset, md.dst_subset
+        if use_dst and dst is not None:
+            subset = dst
+        elif not use_dst and src is not None:
+            subset = src
         else:
             subset = md.subset
 

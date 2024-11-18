@@ -12,6 +12,7 @@ from .frontend.python.ndloop import ndrange
 from .frontend.operations import reduce, elementwise
 
 from . import data, hooks, subsets
+from .codegen.compiled_sdfg import CompiledSDFG
 from .config import Config
 from .sdfg import SDFG, SDFGState, InterstateEdge, nodes
 from .sdfg.propagation import propagate_memlets_sdfg, propagate_memlet

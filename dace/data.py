@@ -136,27 +136,6 @@ def create_datadescriptor(obj, no_custom_desc=False):
                     'adaptor method to the type hint or object itself.')
 
 
-def find_new_name(name: str, existing_names: Sequence[str]) -> str:
-    """
-    Returns a name that matches the given ``name`` as a prefix, but does not
-    already exist in the given existing name set. The behavior is typically
-    to append an underscore followed by a unique (increasing) number. If the
-    name does not already exist in the set, it is returned as-is.
-
-    :param name: The given name to find.
-    :param existing_names: The set of existing names.
-    :return: A new name that is not in existing_names.
-    """
-    if name not in existing_names:
-        return name
-    cur_offset = 0
-    new_name = name + '_' + str(cur_offset)
-    while new_name in existing_names:
-        cur_offset += 1
-        new_name = name + '_' + str(cur_offset)
-    return new_name
-
-
 def _prod(sequence):
     return functools.reduce(lambda a, b: a * b, sequence, 1)
 
@@ -188,9 +167,16 @@ class Data:
         Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
     """
 
+    def _transient_setter(self, value):
+        self._transient = value
+        if isinstance(self, Structure):
+            for _, v in self.members.items():
+                if isinstance(v, Data):
+                    v.transient = value
+
     dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
     shape = ShapeProperty(default=[])
-    transient = Property(dtype=bool, default=False)
+    transient = Property(dtype=bool, default=False, setter=_transient_setter)
     storage = EnumProperty(dtype=dtypes.StorageType, desc="Storage location", default=dtypes.StorageType.Default)
     lifetime = EnumProperty(dtype=dtypes.AllocationLifetime,
                             desc='Data allocation span',

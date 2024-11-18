@@ -111,7 +111,7 @@ def test_cpu():
     run_conv2d_bias(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Illegal memory access error')
 # @pytest.mark.gpu
 def test_gpu():
     run_conv2d_bias(dace.dtypes.DeviceType.GPU)

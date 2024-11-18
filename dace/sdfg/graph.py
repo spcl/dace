@@ -3,6 +3,7 @@
 
 from collections import deque, OrderedDict
 import itertools
+import uuid
 import networkx as nx
 from dace.dtypes import deduplicate
 import dace.serialize
@@ -309,9 +310,12 @@ class Graph(Generic[NodeT, EdgeT]):
         """ Returns the total number of nodes in the graph (nx compatibility)"""
         return self.number_of_nodes()
 
-    def bfs_edges(self, node: Union[NodeT, Sequence[NodeT]], reverse: bool = False) -> Iterable[Edge[EdgeT]]:
+    def edge_bfs(self, node: Union[NodeT, Sequence[NodeT]], reverse: bool = False) -> Iterable[Edge[EdgeT]]:
         """Returns a generator over edges in the graph originating from the
-        passed node in BFS order"""
+        passed node in BFS order.
+
+        :note: All reachable edges are yielded including back edges
+        """
         if isinstance(node, (tuple, list)):
             queue = deque(node)
         else:
@@ -405,7 +409,7 @@ class Graph(Generic[NodeT, EdgeT]):
             for path in map(nx.utils.pairwise, nx.all_simple_paths(self._nx, source_node, dest_node)):
                 yield [Edge(e[0], e[1], self._nx.edges[e]['data']) for e in path]
         else:
-            return nx.all_simple_paths(self._nx, source_node, dest_node)
+            yield from nx.all_simple_paths(self._nx, source_node, dest_node)
 
     def all_nodes_between(self, begin: NodeT, end: NodeT) -> Sequence[NodeT]:
         """Finds all nodes between begin and end. Returns None if there is any
@@ -825,3 +829,7 @@ class OrderedMultiDiConnectorGraph(OrderedMultiDiGraph[NodeT, EdgeT], Generic[No
 
     def is_multigraph(self) -> bool:
         return True
+
+
+def generate_element_id(element) -> str:
+    return str(uuid.uuid4())

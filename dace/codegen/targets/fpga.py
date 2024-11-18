@@ -302,7 +302,7 @@ def is_vendor_supported(fpga_vendor: str) -> bool:
     Returns wheter the given vendor is supported or not, by looking
     among the registered FPGA code-generators.
 
-    :param fpga_vendor: the fpga vendor 
+    :param fpga_vendor: the fpga vendor
     """
 
     registered_codegens = dace.codegen.targets.target.TargetCodeGenerator._registry_
@@ -416,8 +416,8 @@ class FPGACodeGen(TargetCodeGenerator):
         '''
         Finds a tasklet with SystemVerilog as its language, within the given subgraph, if it contains one.
 
-        :param subgraph: The subgraph to check. 
-        :return: The tasklet node if one exists, None otherwise. 
+        :param subgraph: The subgraph to check.
+        :return: The tasklet node if one exists, None otherwise.
         '''
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.NestedSDFG):
@@ -2112,7 +2112,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 end_type = None
                             if end_type is not None:
                                 if np.dtype(end_type.dtype.type) > np.dtype('uint32'):
-                                    loop_var_type = end_type.ctype
+                                    v = dace.config.Config.get("compiler", "fpga", "vendor")
+                                    if v.casefold() == 'intel_fpga'.casefold():
+                                        loop_var_type = end_type.ocltype
+                                    else:
+                                        loop_var_type = end_type.ctype
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):

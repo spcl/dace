@@ -31,6 +31,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
 
     # Nest states
     states = subgraph.nodes()
+    return_state = None
     if len(states) > 1:
 
         if start is not None:
@@ -107,7 +108,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                     # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
                     pass
 
-        new_state = sdfg.add_state('nested_sdfg_parent')
+        return_state = new_state = sdfg.add_state('nested_sdfg_parent')
         nsdfg = SDFG("nested_sdfg", constants=sdfg.constants_prop, parent=new_state)
         nsdfg.add_node(source_node, is_start_state=True)
         nsdfg.add_nodes_from([s for s in states if s is not source_node])
@@ -184,9 +185,9 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
             new_state = extra_state
 
     else:
-        new_state = states[0]
+        return_state = states[0]
 
-    return new_state
+    return return_state
 
 
 def _copy_state(sdfg: SDFG,
@@ -378,7 +379,7 @@ def nest_state_subgraph(sdfg: SDFG,
                          SDFG.
         :raise ValueError: The subgraph is contained in more than one scope.
     """
-    if state.parent != sdfg:
+    if state.sdfg != sdfg:
         raise KeyError('State does not belong to given SDFG')
     if subgraph is not state and subgraph.graph is not state:
         raise KeyError('Subgraph does not belong to given state')
@@ -432,7 +433,7 @@ def nest_state_subgraph(sdfg: SDFG,
     # top-level graph)
     data_in_subgraph = set(n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
     # Find other occurrences in SDFG
-    other_nodes = set(n.data for s in sdfg.nodes() for n in s.nodes()
+    other_nodes = set(n.data for s in sdfg.states() for n in s.nodes()
                       if isinstance(n, nodes.AccessNode) and n not in subgraph.nodes())
     subgraph_transients = set()
     for data in data_in_subgraph:
@@ -687,6 +688,9 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
     for e in orig_edges:
         newstate.add_edge(new_nodes[e.src], e.src_conn, new_nodes[e.dst], e.dst_conn, e.data)
 
+    for bn in boundary_nodes:
+        bn._in_connectors.clear()
+
     return newstate
 
 
@@ -708,7 +712,7 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
                 orig_edges.add(e)
 
     # Collect nodes_to_move
-    for edge in state.bfs_edges(node):
+    for edge in state.edge_bfs(node):
         nodes_to_move.add(edge.dst)
         orig_edges.add(edge)
 
@@ -933,11 +937,7 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     return ScopeSubgraphView(state, new_nodes, new_entry)
 
 
-def offset_map(state: SDFGState,
-               entry: nodes.MapEntry,
-               dim: int,
-               offset: symbolic.SymbolicType,
-               negative: bool = True):
+def offset_map(state: SDFGState, entry: nodes.MapEntry, dim: int, offset: symbolic.SymbolicType, negative: bool = True):
     """
     Offsets a map parameter and its contents by a value.
 
@@ -1264,6 +1264,17 @@ def gpu_map_has_explicit_threadblocks(state: SDFGState, entry: nodes.EntryNode) 
         return True
     imm_maps = get_internal_scopes(state, entry, immediate=True)
     if any(m.schedule == dtypes.ScheduleType.Default for _, m in imm_maps):
+        return True
+
+    return False
+
+
+def gpu_map_has_explicit_dyn_threadblocks(state: SDFGState, entry: nodes.EntryNode) -> bool:
+    """
+    Returns True if GPU_Device map has explicit thread-block maps nested within.
+    """
+    internal_maps = get_internal_scopes(state, entry)
+    if any(m.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic for _, m in internal_maps):
         return True
 
     return False

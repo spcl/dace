@@ -30,9 +30,7 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
-        guard = self.loop_guard
-        begin = self.loop_begin
-        found = find_for_loop(graph, guard, begin)
+        found = self.loop_information()
 
         # If loop cannot be detected, fail
         if not found:
@@ -49,20 +47,19 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
 
     def apply(self, graph: ControlFlowRegion, sdfg):
         # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
         begin: sd.SDFGState = self.loop_begin
         after_state: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride, together with the last
         # state(s) before the loop and the last loop state.
-        itervar, rng, loop_struct = find_for_loop(graph, guard, begin)
+        itervar, rng, loop_struct = self.loop_information()
 
         # Loop must be fully unrollable for now.
         if self.count != 0:
             raise NotImplementedError  # TODO(later)
 
         # Get loop states
-        loop_states = list(sdutil.dfs_conditional(graph, sources=[begin], condition=lambda _, child: child != guard))
+        loop_states = self.loop_body()
         first_id = loop_states.index(begin)
         last_state = loop_struct[1]
         last_id = loop_states.index(last_state)
@@ -91,7 +88,7 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
             unrolled_states.append((new_states[first_id], new_states[last_id]))
 
         # Get any assignments that might be on the edge to the after state
-        after_assignments = (graph.edges_between(guard, after_state)[0].data.assignments)
+        after_assignments = self.loop_exit_edge().data.assignments
 
         # Connect new states to before and after states without conditions
         if unrolled_states:
@@ -101,7 +98,8 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
             graph.add_edge(unrolled_states[-1][1], after_state, sd.InterstateEdge(assignments=after_assignments))
 
         # Remove old states from SDFG
-        graph.remove_nodes_from([guard] + loop_states)
+        guard_or_latch = self.loop_meta_states()
+        graph.remove_nodes_from(guard_or_latch + loop_states)
 
     def instantiate_loop(
         self,

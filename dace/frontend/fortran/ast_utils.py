@@ -188,8 +188,31 @@ class TaskletWriter:
         return "".join(map(str, node.value))
 
     def floatlit2string(self, node: ast_internal_classes.Real_Literal_Node):
+        # Typecheck and crash early if unexpected.
+        assert hasattr(node, 'value')
+        lit = node.value
+        assert isinstance(lit, str)
 
-        return "".join(map(str, node.value))
+        # Fortran "real literals" may have an additional suffix at the end.
+        # Examples:
+        # valid: 1.0 => 1
+        # valid: 1. => 1
+        # valid: 1.e5 => 1e5
+        # valid: 1.d5 => 1e5
+        # valid: 1._kinder => 1 (precondition: somewhere earlier, `integer, parameter :: kinder=8`)
+        # valid: 1.e5_kinder => 1e5
+        # not valid: 1.d5_kinder => 1e5
+        # TODO: Is there a complete spec of the structure of real literals?
+        if '_' in lit:
+            # First, deal with kind specification and remove it altogether, since we know the type anyway.
+            parts = lit.split('_')
+            assert 1 <= len(parts) <= 2, f"{lit} is not a valid fortran literal."
+            lit = parts[0]
+            assert 'd' not in lit, f"{lit} is not a valid fortran literal."
+        if 'd' in lit:
+            # Again, since we know the type anyway, here we just make the s/d/e/ replacement.
+            lit = lit.replace('d', 'e')
+        return f"{float(lit)}"
 
     def boollit2string(self, node: ast_internal_classes.Bool_Literal_Node):
 

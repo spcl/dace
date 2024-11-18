@@ -4,7 +4,7 @@ The Python-Frontend aims to assist users in creating SDFGs from Python code
 relatively quickly. You may read a list of supported Python features
 [here](python_supported_features.md). The frontend supports also operations
 among DaCe arrays, in a manner similar to NumPy. A short tutorial can be bound
-[here](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/numpy_frontend.ipynb).
+[here](https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/numpy_frontend.ipynb).
 Please note that the Python-Frontend is still in an early version. For any issues
 and feature requests, you can create an issue in the main DaCe project. You can
 also address any questions you have to alziogas@inf.ethz.ch
