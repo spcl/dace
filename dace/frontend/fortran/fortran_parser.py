@@ -3474,7 +3474,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         if i in ["mtime", "ISO_C_BINDING", "iso_c_binding", "mo_cdi", "iso_fortran_env"]:
             continue
 
-        partial_ast.add_name_list_for_module(i, name_dict[i])
         # try:
         partial_module = partial_ast.create_ast(asts[i.lower()])
         partial_modules[partial_module.name.name] = partial_module
