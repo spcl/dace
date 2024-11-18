@@ -640,14 +640,10 @@ class InternalFortranAst:
 
     def program(self, node: FASTNode):
         children = self.create_children(node)
-
         main_program = get_child(children, ast_internal_classes.Main_Program_Node)
-
         function_definitions = [i for i in children if isinstance(i, ast_internal_classes.Function_Subprogram_Node)]
-
         subroutine_definitions = [i for i in children if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node)]
         modules = [node for node in children if isinstance(node, ast_internal_classes.Module_Node)]
-
         return ast_internal_classes.Program_Node(main_program=main_program,
                                                  function_definitions=function_definitions,
                                                  subroutine_definitions=subroutine_definitions,
