@@ -78,10 +78,10 @@ def test_symbolic_return():
 
     assert i < len(cft.children) - 1
     exit_scope = cft.children[i+1]
-    assert isinstance(exit_scope, cf.SingleState)
+    assert isinstance(exit_scope, cf.BasicCFBlock)
 
     guard = for_scope.guard
-    fexit = exit_scope.first_state
+    fexit = exit_scope.first_block
     states = list(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
     
     nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, states), start=guard)

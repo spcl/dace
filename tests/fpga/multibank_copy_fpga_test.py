@@ -28,7 +28,7 @@ def mkc(sdfg: dace.SDFG,
     if copy_expr is None:
         copy_expr = src_name
     if (state_before == None):
-        state = sdfg.add_state(is_start_state=True)
+        state = sdfg.add_state(is_start_block=True)
     else:
         state = sdfg.add_state_after(state_before)
 
@@ -75,9 +75,9 @@ def copy_multibank_1_mem_type(mem_type):
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default, StorageType.FPGA_Global, [3, 4, 4], [3, 4, 4], "a", None,
                   (mem_type, "0:3"))
     s, _, _ = mkc(sdfg, s, "x", "y", None, StorageType.FPGA_Global, None, [2, 4, 4, 4],
-                  "x[1, 1:4, 1:4]->1, 1:4, 1:4, 1", None, (mem_type, "3:5"))
+                  "x[1, 1:4, 1:4]->[1, 1:4, 1:4, 1]", None, (mem_type, "3:5"))
     s, _, _ = mkc(sdfg, s, "y", "z", None, StorageType.FPGA_Global, None, [1, 4, 4, 4],
-                  "y[1, 0:4, 0:4, 0:4]->0, 0:4, 0:4, 0:4", None, (mem_type, "5:6"))
+                  "y[1, 0:4, 0:4, 0:4]->[0, 0:4, 0:4, 0:4]", None, (mem_type, "5:6"))
     s, _, _ = mkc(sdfg, s, "z", "w", None, StorageType.FPGA_Global, None, [1, 4, 4, 4], "z", None, (mem_type, "6:7"))
     s, _, c = mkc(sdfg, s, "w", "c", None, StorageType.Default, None, [1, 4, 4, 4], "w")
 
@@ -97,9 +97,9 @@ def copy_multibank_2_mem_type(mem_type_1, mem_type_2):
     sdfg = dace.SDFG("copy_multibank_2_mem_type_" + mem_type_1 + "_" + mem_type_2)
     s, a, _ = mkc(sdfg, None, "a", "x", StorageType.Default, StorageType.FPGA_Global, [3, 5, 5], [3, 5, 5], "a", None,
                   (mem_type_1, "0:3"))
-    s, _, _ = mkc(sdfg, s, "x", "d1", None, StorageType.FPGA_Global, None, [3, 5, 5], "x[2, 0:5, 0:5]->1, 0:5, 0:5",
+    s, _, _ = mkc(sdfg, s, "x", "d1", None, StorageType.FPGA_Global, None, [3, 5, 5], "x[2, 0:5, 0:5]->[1, 0:5, 0:5]",
                   None, (mem_type_2, "1:4"))
-    s, _, _ = mkc(sdfg, s, "d1", "y", None, StorageType.FPGA_Global, None, [1, 7, 7], "d1[1, 0:5,0:5]->0, 2:7, 2:7",
+    s, _, _ = mkc(sdfg, s, "d1", "y", None, StorageType.FPGA_Global, None, [1, 7, 7], "d1[1, 0:5,0:5]->[0, 2:7, 2:7]",
                   None, (mem_type_1, "3:4"))
     s, _, c = mkc(sdfg, s, "y", "c", None, StorageType.Default, None, [1, 7, 7], "y")
 

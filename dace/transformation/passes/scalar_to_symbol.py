@@ -23,6 +23,7 @@ from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.sdfg import InterstateEdge
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as passes
+from dace.transformation.transformation import experimental_cfg_block_compatible
 
 
 class AttributedCallDetector(ast.NodeVisitor):
@@ -85,6 +86,8 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # General array checks
     for aname, desc in sdfg.arrays.items():
+        if isinstance(desc, (dt.View, dt.StructureView)):
+            continue
         if (transients_only and not desc.transient) or isinstance(desc, dt.Stream):
             continue
         if desc.total_size != 1:
@@ -95,7 +98,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # Check all occurrences of candidates in SDFG and filter out
     candidates_seen: Set[str] = set()
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         candidates_in_state: Set[str] = set()
 
         for node in state.nodes():
@@ -184,6 +187,9 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 else:
                     # Check that tasklets have only one statement
                     cb: props.CodeBlock = edge.src.code
+                    if edge.src.has_side_effects(sdfg):
+                        candidates.remove(candidate)
+                        continue
                     if cb.language is dtypes.Language.Python:
                         if (len(cb.code) > 1 or not isinstance(cb.code[0], ast.Assign)):
                             candidates.remove(candidate)
@@ -225,7 +231,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # Filter out non-integral symbols that do not appear in inter-state edges
     interstate_symbols = set()
-    for edge in sdfg.edges():
+    for edge in sdfg.all_interstate_edges():
         interstate_symbols |= edge.data.free_symbols
     for candidate in (candidates - interstate_symbols):
         if integers_only and sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
@@ -313,21 +319,25 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
         """
         self.in_edges = in_edges
         self.out_edges = out_edges
+        self.arrays = {k: sdfg.arrays[v.data] for k, v in in_edges.items() if k is not None}
+        self.arrays.update({k: sdfg.arrays[v.data] for k, v in out_edges.items() if k is not None})
         self.sdfg = sdfg
         self.defined = defined_syms
+        self.connector_names = set(in_edges.keys()) | set(out_edges.keys())
         self.in_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
         self.out_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
         self.do_not_remove: Set[str] = set()
-        self.latest: DefaultDict[str, int] = collections.defaultdict(int)
 
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # Convert subscript to symbol name
+        node = self.generic_visit(node)
         node_name = astutils.rname(node)
         if node_name in self.in_edges:
-            self.latest[node_name] += 1
-            new_name = f'{node_name}_{self.latest[node_name]}'
+            new_name = dt.find_new_name(node_name, self.connector_names)
+            self.connector_names.add(new_name)
+
             orig_subset = self.in_edges[node_name].subset
-            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1]))
+            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.arrays)[1]))
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.in_mapping[new_name] = (node_name, subset)
@@ -335,17 +345,18 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
             else:
                 self.do_not_remove.add(node_name)
         elif node_name in self.out_edges:
-            self.latest[node_name] += 1
-            new_name = f'{node_name}_{self.latest[node_name]}'
+            new_name = dt.find_new_name(node_name, self.connector_names)
+            self.connector_names.add(new_name)
+
             orig_subset = self.out_edges[node_name].subset
-            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1]))
+            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.arrays)[1]))
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.out_mapping[new_name] = (node_name, subset)
                 return ast.copy_location(ast.Name(id=new_name, ctx=ast.Store()), node)
             else:
                 self.do_not_remove.add(node_name)
-        return self.generic_visit(node)
+        return node
 
 
 def _range_is_promotable(subset: subsets.Range, defined: Set[str]) -> bool:
@@ -508,9 +519,11 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                         replacement symbol name.
     :note: Operates in-place on the SDFG.
     """
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in array_names]
         for node in scalar_nodes:
+            if node not in state:
+                continue
             symname = array_names[node.data]
             for out_edge in state.out_edges(node):
                 for e in state.memlet_tree(out_edge):
@@ -585,6 +598,7 @@ def translate_cpp_tasklet_to_python(code: str):
 
 @dataclass(unsafe_hash=True)
 @props.make_properties
+@experimental_cfg_block_compatible
 class ScalarToSymbolPromotion(passes.Pass):
 
     CATEGORY: str = 'Simplification'
@@ -633,11 +647,11 @@ class ScalarToSymbolPromotion(passes.Pass):
         if len(to_promote) == 0:
             return None
 
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
             # Step 2: Assignment tasklets
             for node in scalar_nodes:
-                if state.in_degree(node) == 0:
+                if node not in state or state.in_degree(node) == 0:
                     continue
                 in_edge = state.in_edges(node)[0]
                 input = in_edge.src
@@ -645,8 +659,10 @@ class ScalarToSymbolPromotion(passes.Pass):
                 # There is only zero or one incoming edges by definition
                 tasklet_inputs = [e.src for e in state.in_edges(input)]
                 # Step 2.1
-                new_state = xfh.state_fission(sdfg, gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
-                new_isedge: sd.InterstateEdge = sdfg.out_edges(new_state)[0]
+                new_state = xfh.state_fission(gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
+                if state.edges_between(input, node):  # Edge still there after fission, remove manually
+                    state.remove_edge_and_connectors(state.edges_between(input, node)[0])
+                new_isedge: sd.InterstateEdge = new_state.parent_graph.out_edges(new_state)[0]
                 # Step 2.2
                 node: nodes.AccessNode = new_state.sink_nodes()[0]
                 input = new_state.in_edges(node)[0].src
@@ -683,7 +699,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         remove_scalar_reads(sdfg, {k: k for k in to_promote})
 
         # Step 4: Isolated nodes
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
             state.remove_nodes_from([n for n in scalar_nodes if len(state.all_edges(n)) == 0])
 
@@ -699,7 +715,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         # Step 6: Inter-state edge cleanup
         cleanup_re = {s: re.compile(fr'\b{re.escape(s)}\[.*?\]') for s in to_promote}
         promo = TaskletPromoterDict({k: k for k in to_promote})
-        for edge in sdfg.edges():
+        for edge in sdfg.all_interstate_edges():
             ise: InterstateEdge = edge.data
             # Condition
             if not edge.data.is_unconditional():

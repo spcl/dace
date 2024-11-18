@@ -5,15 +5,18 @@ import sympy as sp
 from typing import Optional
 
 from dace import sdfg as sd
+from dace.sdfg.state import ControlFlowRegion
 from dace.properties import Property, make_properties, CodeBlock
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from dace.transformation.interstate.loop_unroll import LoopUnroll
+from dace.transformation.transformation import experimental_cfg_block_compatible
 
 
 @make_properties
+@experimental_cfg_block_compatible
 class LoopPeeling(LoopUnroll):
     """
     Splits the first `count` iterations of a state machine for-loop into
@@ -73,24 +76,23 @@ class LoopPeeling(LoopUnroll):
         res = str(itersym) + op + str(end)
         return res
 
-    def apply(self, _, sdfg: sd.SDFG):
+    def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
         ####################################################################
         # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
         begin: sd.SDFGState = self.loop_begin
         after_state: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride
-        condition_edge = sdfg.edges_between(guard, begin)[0]
-        not_condition_edge = sdfg.edges_between(guard, after_state)[0]
-        itervar, rng, loop_struct = find_for_loop(sdfg, guard, begin)
+        condition_edge = self.loop_condition_edge()
+        not_condition_edge = self.loop_exit_edge()
+        itervar, rng, loop_struct = self.loop_information()
 
         # Get loop states
-        loop_states = list(sdutil.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard))
+        loop_states = self.loop_body()
         first_id = loop_states.index(begin)
         last_state = loop_struct[1]
         last_id = loop_states.index(last_state)
-        loop_subgraph = gr.SubgraphView(sdfg, loop_states)
+        loop_subgraph = gr.SubgraphView(graph, loop_states)
 
         ####################################################################
         # Transform
@@ -101,7 +103,7 @@ class LoopPeeling(LoopUnroll):
             init_edges = []
             before_states = loop_struct[0]
             for before_state in before_states:
-                init_edge = sdfg.edges_between(before_state, guard)[0]
+                init_edge = self.loop_init_edge()
                 init_edge.data.assignments[itervar] = str(rng[0] + self.count * rng[2])
                 init_edges.append(init_edge)
             append_states = before_states
@@ -122,15 +124,15 @@ class LoopPeeling(LoopUnroll):
 
                 # Connect states to before the loop with unconditional edges
                 for append_state in append_states:
-                    sdfg.add_edge(append_state, new_states[first_id], sd.InterstateEdge())
+                    graph.add_edge(append_state, new_states[first_id], sd.InterstateEdge())
                 append_states = [new_states[last_id]]
 
             # Reconnect edge to guard state from last peeled iteration
             for append_state in append_states:
                 if append_state not in before_states:
                     for init_edge in init_edges:
-                        sdfg.remove_edge(init_edge)
-                    sdfg.add_edge(append_state, guard, init_edges[0].data)
+                        graph.remove_edge(init_edge)
+                    graph.add_edge(append_state, init_edge.dst, init_edges[0].data)
         else:
             # If begin, change initialization assignment and prepend states before
             # guard
@@ -155,10 +157,10 @@ class LoopPeeling(LoopUnroll):
                 )
 
                 # Connect states to before the loop with unconditional edges
-                sdfg.add_edge(new_states[last_id], prepend_state, sd.InterstateEdge())
+                graph.add_edge(new_states[last_id], prepend_state, sd.InterstateEdge())
                 prepend_state = new_states[first_id]
 
             # Reconnect edge to guard state from last peeled iteration
             if prepend_state != after_state:
-                sdfg.remove_edge(not_condition_edge)
-                sdfg.add_edge(guard, prepend_state, not_condition_edge.data)
+                graph.remove_edge(not_condition_edge)
+                graph.add_edge(not_condition_edge.src, prepend_state, not_condition_edge.data)

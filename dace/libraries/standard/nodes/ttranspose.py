@@ -38,7 +38,10 @@ class ExpandPure(ExpandTransformation):
         out_mem = dace.Memlet(expr=f"_out_tensor[{','.join([map_params[i] for i in node.axes])}]")
         inputs = {"_inp": inp_mem}
         outputs = {"_out": out_mem}
-        code = f"_out = {node.alpha} * _inp"
+        if node.alpha == 1:
+            code = "_out = _inp"
+        else:
+            code = f"_out = decltype(_inp)({node.alpha}) * _inp"
         if node.beta != 0:
             inputs["_inout"] = out_mem
             code = f"_out = {node.alpha} * _inp + {node.beta} * _inout"

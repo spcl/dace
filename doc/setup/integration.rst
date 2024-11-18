@@ -79,7 +79,7 @@ you to call the SDFG's entry point function, perform basic type checking, and ar
 Python callback to function pointer, etc.).
 
 Since the compiled SDFG is a low-level interface, it is much faster to call than the Python interface. 
-`We show this behavior in the Benchmarking tutorial <https://nbviewer.org/github/spcl/dace/blob/master/tutorials/benchmarking.ipynb>`_. 
+`We show this behavior in the Benchmarking tutorial <https://nbviewer.org/github/spcl/dace/blob/main/tutorials/benchmarking.ipynb>`_. 
 However, it requires caution as opposed to calling the ``@dace.program`` or the ``SDFG`` object because:
 
     * Each array return value is represented internally as a single array (not reallocated every call) and will be 

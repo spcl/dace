@@ -32,7 +32,7 @@ def _make_sdfg(language: str, with_data: bool = False):
     sdfg.add_array('A', (N, ), datatype)
     sdfg.add_array('B', (M, ), datatype)
     sdfg.add_array('C', (M, ), datatype)
-    state = sdfg.add_state(is_start_state=True)
+    state = sdfg.add_state(is_start_block=True)
     A = state.add_read('A')
     B = state.add_read('B')
     C = state.add_write('C')
@@ -95,6 +95,7 @@ def _make_sdfg(language: str, with_data: bool = False):
 
 
 def test_basic():
+
     @dace.program
     def test_basic_tf(A: datatype[5, 5]):
         B = A + 1
@@ -113,6 +114,7 @@ def test_basic():
 
 
 def test_same_name():
+
     @dace.program
     def test_same_name(A: datatype[5, 5]):
         B = A + 1
@@ -132,6 +134,7 @@ def test_same_name():
 
 
 def test_same_name_different_memlet():
+
     @dace.program
     def test_same_name_different_memlet(A: datatype[5, 5], B: datatype[5, 5]):
         C = B * 3
@@ -152,6 +155,7 @@ def test_same_name_different_memlet():
 
 
 def test_tasklet_fusion_multiline():
+
     @dace.program
     def test_tasklet_fusion_multiline(A: datatype):
         B = A + 1
@@ -177,6 +181,7 @@ def test_tasklet_fusion_multiline():
 
 
 def test_map_param():
+
     @dace.program
     def map_uses_param(A: dace.float32[10], B: dace.float32[10], C: dace.float32[10]):
         for i in dace.map[0:10]:
@@ -214,7 +219,9 @@ def test_map_with_tasklets(language: str, with_data: bool):
     ref = map_with_tasklets.f(A, B)
     assert (np.allclose(C, ref))
 
+
 def test_none_connector():
+
     @dace.program
     def sdfg_none_connector(A: dace.float32[32], B: dace.float32[32]):
         tmp = dace.define_local([32], dace.float32)
@@ -229,7 +236,6 @@ def test_none_connector():
                 a << A[i]
                 b >> tmp2[i]
                 b = a + 1
-
 
         for i in dace.map[0:32]:
             with dace.tasklet:
@@ -248,7 +254,7 @@ def test_none_connector():
         if isinstance(node, dace.nodes.MapEntry):
             map_entry = node
             break
-    
+
     assert map_entry is not None
     assert len([edge.src_conn for edge in sdfg.start_state.out_edges(map_entry) if edge.src_conn is None]) == 1
 
@@ -260,20 +266,20 @@ def test_none_connector():
 
 
 def test_intermediate_transients():
+
     @dace.program
     def sdfg_intermediate_transients(A: dace.float32[10], B: dace.float32[10]):
         tmp = dace.define_local_scalar(dace.float32)
-        
+
         # Use tmp twice to test removal of data
         tmp = A[0] + 1
         tmp = tmp * 2
         B[0] = tmp
 
-
     sdfg = sdfg_intermediate_transients.to_sdfg(simplify=True)
     assert len([node for node in sdfg.start_state.data_nodes() if node.data == "tmp"]) == 2
 
-    xforms = Optimizer(sdfg=sdfg).get_pattern_matches(patterns=(TaskletFusion,))
+    xforms = Optimizer(sdfg=sdfg).get_pattern_matches(patterns=(TaskletFusion, ))
     applied = False
     for xform in xforms:
         if xform.data.data == "tmp":
@@ -281,9 +287,38 @@ def test_intermediate_transients():
             applied = True
             break
 
-    assert applied
-    assert len([node for node in sdfg.start_state.data_nodes() if node.data == "tmp"]) == 1
-    assert "tmp" in sdfg.arrays
+    # tmp is used twice, so tasklet fusion should not apply
+    assert not applied
+
+
+def test_transient_in_different_state():
+
+    @dace.program
+    def sdfg_intermediate_transients(A: dace.float32[10], B: dace.float32[10]):
+        tmp = dace.define_local_scalar(dace.float32)
+
+        # Use tmp in different states to test removal of data
+        if B[0] < 0:
+            tmp = A[0] - 1
+            B[0] = tmp
+        else:
+            tmp = A[0] + 1
+            B[0] = tmp
+
+    sdfg = sdfg_intermediate_transients.to_sdfg(simplify=True)
+    assert len([node for state in sdfg.states() for node in state.data_nodes() if node.data == "tmp"]) == 2
+
+    xforms = Optimizer(sdfg=sdfg).get_pattern_matches(patterns=(TaskletFusion, ))
+    applied = False
+    for xform in xforms:
+        if xform.data.data == "tmp":
+            xform.apply(sdfg.start_state, sdfg)
+            applied = True
+            break
+
+    # tmp is used twice, so tasklet fusion should not apply
+    assert not applied
+
 
 if __name__ == '__main__':
     test_basic()
@@ -297,3 +332,4 @@ if __name__ == '__main__':
     test_map_with_tasklets(language='CPP', with_data=True)
     test_none_connector()
     test_intermediate_transients()
+    test_transient_in_different_state()

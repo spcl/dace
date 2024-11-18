@@ -271,14 +271,14 @@ def test_mapfission_with_symbols():
     sdfg.add_array('A', (M, N), dace.int32)
     sdfg.add_array('B', (M, N), dace.int32)
 
-    state = sdfg.add_state('parent', is_start_state=True)
+    state = sdfg.add_state('parent', is_start_block=True)
     me, mx = state.add_map('parent_map', {'i': '0:N'})
 
     nsdfg = dace.SDFG('nested_sdfg')
     nsdfg.add_scalar('inner_A', dace.int32)
     nsdfg.add_scalar('inner_B', dace.int32)
 
-    nstate = nsdfg.add_state('child', is_start_state=True)
+    nstate = nsdfg.add_state('child', is_start_block=True)
     na = nstate.add_access('inner_A')
     nb = nstate.add_access('inner_B')
     ta = nstate.add_tasklet('tasklet_A', {}, {'__out'}, '__out = M')
@@ -319,14 +319,14 @@ def test_two_edges_through_map():
     sdfg.add_array('A', (N, ), dace.int32)
     sdfg.add_array('B', (N, ), dace.int32)
 
-    state = sdfg.add_state('parent', is_start_state=True)
+    state = sdfg.add_state('parent', is_start_block=True)
     me, mx = state.add_map('parent_map', {'i': '0:N'})
 
     nsdfg = dace.SDFG('nested_sdfg')
     nsdfg.add_array('inner_A', (N, ), dace.int32)
     nsdfg.add_scalar('inner_B', dace.int32)
 
-    nstate = nsdfg.add_state('child', is_start_state=True)
+    nstate = nsdfg.add_state('child', is_start_block=True)
     na = nstate.add_access('inner_A')
     nb = nstate.add_access('inner_B')
     t = nstate.add_tasklet('tasklet', {'__in1', '__in2'}, {'__out'}, '__out = __in1 + __in2')
@@ -460,7 +460,7 @@ def test_single_data_multiple_connectors():
     inner_sdfg.add_array('B0', (10, ), dtype=dace.int32)
     inner_sdfg.add_array('B1', (10, ), dtype=dace.int32)
 
-    inner_state = inner_sdfg.add_state('inner_state', is_start_state=True)
+    inner_state = inner_sdfg.add_state('inner_state', is_start_block=True)
 
     inner_state.add_mapped_tasklet(name='plus',
                                    map_ranges={'j': '0:10'},
@@ -481,7 +481,7 @@ def test_single_data_multiple_connectors():
                                    code='__b1 = __a0 - __a1',
                                    external_edges=True)
 
-    outer_state = outer_sdfg.add_state('outer_state', is_start_state=True)
+    outer_state = outer_sdfg.add_state('outer_state', is_start_block=True)
 
     a = outer_state.add_access('A')
     b = outer_state.add_access('B')
@@ -529,7 +529,7 @@ def test_dependent_symbol():
     inner_sdfg.add_array('B0', (10, ), dtype=dace.int32)
     inner_sdfg.add_array('B1', (10, ), dtype=dace.int32)
 
-    inner_state = inner_sdfg.add_state('inner_state', is_start_state=True)
+    inner_state = inner_sdfg.add_state('inner_state', is_start_block=True)
 
     inner_state.add_mapped_tasklet(name='plus',
                                    map_ranges={'j': 'first:last'},
@@ -550,7 +550,7 @@ def test_dependent_symbol():
     inner_sdfg2.add_array('A1', (10, ), dtype=dace.int32)
     inner_sdfg2.add_array('B1', (10, ), dtype=dace.int32)
 
-    inner_state2 = inner_sdfg2.add_state('inner_state2', is_start_state=True)
+    inner_state2 = inner_sdfg2.add_state('inner_state2', is_start_block=True)
 
     inner_state2.add_mapped_tasklet(name='minus',
                                     map_ranges={'j': 'first:last'},
@@ -571,7 +571,7 @@ def test_dependent_symbol():
     inner_state.add_edge(a1, None, nsdfg, 'A1', dace.Memlet(data='A1', subset='0:10'))
     inner_state.add_edge(nsdfg, 'B1', b1, None, dace.Memlet(data='B1', subset='0:10'))
 
-    outer_state = outer_sdfg.add_state('outer_state', is_start_state=True)
+    outer_state = outer_sdfg.add_state('outer_state', is_start_block=True)
 
     a = outer_state.add_access('A')
     b = outer_state.add_access('B')

@@ -113,9 +113,8 @@ def test_cpu():
     run_contour_integral(dace.dtypes.DeviceType.CPU)
 
 
-# NOTE: Doesn't work yet with GPU-auto-optimize
-# @pytest.mark.gpu
-@pytest.mark.skip
+@pytest.mark.gpu
+@pytest.mark.skip('Incorrect outputs due to auto-optimize')
 def test_gpu():
     run_contour_integral(dace.dtypes.DeviceType.GPU)
 

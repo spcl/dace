@@ -26,7 +26,6 @@ def slowmm(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
 
 
 def onetest(instrumentation: dace.InstrumentationType, size=128):
-    N.set(size)
     A = np.random.rand(size, size)
     B = np.random.rand(size, size)
     C = np.zeros([size, size], dtype=np.float64)
@@ -47,7 +46,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
     if instrumentation == dace.InstrumentationType.GPU_Events:
         sdfg.apply_transformations(GPUTransformSDFG)
 
-    sdfg(A=A, B=B, C=C, N=N)
+    sdfg(A=A, B=B, C=C, N=size)
 
     # Check for correctness
     assert np.allclose(C, 20 * A @ B)
@@ -63,8 +62,7 @@ def test_timer():
     onetest(dace.InstrumentationType.Timer)
 
 
-#@pytest.mark.papi
-@pytest.mark.skip
+@pytest.mark.papi
 def test_papi():
     # Run a lighter load for the sake of performance
     onetest(dace.InstrumentationType.PAPI_Counters, 4)

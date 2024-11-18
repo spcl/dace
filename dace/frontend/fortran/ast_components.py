@@ -987,9 +987,6 @@ class InternalFortranAst:
                                                   body=ast_internal_classes.Execution_Part_Node(execution=body),
                                                   line_number=do.line_number)
 
-    def real_literal_constant(self, node: FASTNode):
-        return node
-
     def subscript_triplet(self, node: FASTNode):
         if node.string == ":":
             return ast_internal_classes.ParDecl_Node(type="ALL")

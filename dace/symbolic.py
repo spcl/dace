@@ -1,15 +1,17 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from functools import lru_cache
+import sys
 import sympy
 import pickle
 import re
 from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, Union
-import warnings
 import numpy
 
 import sympy.abc
 import sympy.printing.str
+
+import packaging.version as packaging_version
 
 from dace import dtypes
 
@@ -21,6 +23,19 @@ _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 # Since version 1.9, the values of this dictionary are None. In the dictionary
 # below, we recreate it to be as in versions < 1.9.
 _sympy_clash = {k: v if v else getattr(sympy.abc, k) for k, v in sympy.abc._clash.items()}
+
+# SymPy 1.13 changes the behavior of `==` such that floats with different precisions
+# are always different.
+# For DaCe, mostly the comparison of value (ignoring precision) is relevant which
+# can be done with `equal_valued`. However, `equal_valued` was only introduced in
+# SymPy 1.12, so we fall back to `==` in that case (which ignores precision in those versions).
+# For convenience, we provide this functionality in our own SymPy layer.
+if packaging_version.Version(sympy.__version__) < packaging_version.Version("1.12"):
+
+    def equal_valued(x, y):
+        return x == y
+else:
+    equal_valued = sympy.core.numbers.equal_valued
 
 
 class symbol(sympy.Symbol):
@@ -42,7 +57,7 @@ class symbol(sympy.Symbol):
         if not isinstance(dtype, dtypes.typeclass):
             raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
 
-        dkeys = [k for k, v in dtypes.DTYPE_TO_TYPECLASS.items() if v == dtype]
+        dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
         is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
         if 'integer' in assumptions or not numpy.any(is_integer):
             # Using __xnew__ as the regular __new__ is cached, which leads
@@ -53,19 +68,10 @@ class symbol(sympy.Symbol):
 
         self.dtype = dtype
         self._constraints = []
-        self.value = None
         return self
 
-    def set(self, value):
-        warnings.warn('symbol.set is deprecated, use keyword arguments', DeprecationWarning)
-        if value is not None:
-            # First, check constraints
-            self.check_constraints(value)
-
-        self.value = self.dtype(value)
-
     def __getstate__(self):
-        return dict(self.assumptions0, **{'value': self.value, 'dtype': self.dtype, '_constraints': self._constraints})
+        return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
 
     def _eval_subs(self, old, new):
         """
@@ -84,15 +90,6 @@ class symbol(sympy.Symbol):
             return None
         except AttributeError:
             return None
-
-    def is_initialized(self):
-        return self.value is not None
-
-    def get(self):
-        warnings.warn('symbol.get is deprecated, use keyword arguments', DeprecationWarning)
-        if self.value is None:
-            raise UnboundLocalError('Uninitialized symbol value for \'' + self.name + '\'')
-        return self.value
 
     def set_constraints(self, constraint_list):
         try:
@@ -140,9 +137,6 @@ class symbol(sympy.Symbol):
                 raise RuntimeError('Cannot validate constraint %s for symbol %s' % (str(constraint), self.name))
         if fail is not None:
             raise RuntimeError('Value %s invalidates constraint %s for symbol %s' % (str(value), str(fail), self.name))
-
-    def get_or_return(self, uninitialized_ret):
-        return self.value or uninitialized_ret
 
 
 class SymExpr(object):
@@ -287,13 +281,6 @@ class SymExpr(object):
 SymbolicType = Union[sympy.Basic, SymExpr]
 
 
-def symvalue(val):
-    """ Returns the symbol value if it is a symbol. """
-    if isinstance(val, symbol):
-        return val.get()
-    return val
-
-
 # http://stackoverflow.com/q/3844948/
 def _checkEqualIvo(lst):
     return not lst or lst.count(lst[0]) == len(lst)
@@ -333,9 +320,8 @@ def symlist(values):
     return result
 
 
-def evaluate(expr: Union[sympy.Basic, int, float],
-             symbols: Dict[Union[symbol, str], Union[int, float]]) -> \
-        Union[int, float, numpy.number]:
+def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str],
+                                                                 Union[int, float]]) -> Union[int, float, numpy.number]:
     """
     Evaluates an expression to a constant based on a mapping from symbols
     to values.
@@ -356,9 +342,7 @@ def evaluate(expr: Union[sympy.Basic, int, float],
         return expr
 
     # Evaluate all symbols
-    syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)):
-            sval.get() if isinstance(sval, symbol) else sval
-            for sname, sval in symbols.items()}
+    syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)): sval for sname, sval in symbols.items()}
 
     # Filter out `None` values, callables, and iterables but not strings (for SymPy 1.12)
     syms = {
@@ -601,6 +585,8 @@ class int_floor(sympy.Function):
         """
         if x.is_Number and y.is_Number:
             return x // y
+        if y.is_Number and y == 1:
+            return x
 
     def _eval_is_integer(self):
         return True
@@ -675,29 +661,77 @@ class IfExpr(sympy.Function):
         if x.is_Boolean:
             return (y if x else z)
 
+    def _eval_is_real(self):
+        if self.args[1].is_real is True and self.args[2].is_real is True:
+            return True
+        if self.args[1].is_real is False and self.args[2].is_real is False:
+            return False
 
-class BitwiseAnd(sympy.Function):
+    def _eval_is_nonnegative(self):
+        if self.args[1].is_nonnegative is True and self.args[2].is_nonnegative is True:
+            return True
+        if self.args[1].is_nonnegative is False and self.args[2].is_nonnegative is False:
+            return False
+
+    def _eval_is_positive(self):
+        if self.args[1].is_positive is True and self.args[2].is_positive is True:
+            return True
+        if self.args[1].is_positive is False and self.args[2].is_positive is False:
+            return False
+
+    def _eval_is_integer(self):
+        if self.args[1].is_integer is True and self.args[2].is_integer is True:
+            return True
+        if self.args[1].is_integer is False and self.args[2].is_integer is False:
+            return False
+
+
+class bitwise_and(sympy.Function):
     pass
 
 
-class BitwiseOr(sympy.Function):
+class bitwise_or(sympy.Function):
     pass
 
 
-class BitwiseXor(sympy.Function):
+class bitwise_xor(sympy.Function):
     pass
 
 
-class BitwiseNot(sympy.Function):
+class bitwise_invert(sympy.Function):
     pass
 
 
-class LeftShift(sympy.Function):
-    pass
+class left_shift(sympy.Function):
+
+    @classmethod
+    def eval(cls, x, y):
+        """
+        Evaluates a left shift.
+
+        :param x: Value to shift.
+        :param y: Value to shift by.
+        :return: Return value (literal or symbolic).
+        """
+        if x.is_Number and y.is_Number:
+            return x << y
+        return x * (2**y)
 
 
-class RightShift(sympy.Function):
-    pass
+class right_shift(sympy.Function):
+
+    @classmethod
+    def eval(cls, x, y):
+        """
+        Evaluates a right shift.
+
+        :param x: Value to shift.
+        :param y: Value to shift by.
+        :return: Return value (literal or symbolic).
+        """
+        if x.is_Number and y.is_Number:
+            return x >> y
+        return int_floor(x, (2**y))
 
 
 class ROUND(sympy.Function):
@@ -732,10 +766,18 @@ class Attr(sympy.Function):
 
     @property
     def free_symbols(self):
-        return {sympy.Symbol(str(self))}
+        # NOTE: The following handles the case where the attribute is an array access, e.g., "indptr[i]"
+        if isinstance(self.args[1], sympy.Function):
+            attribute = str(self.args[1].func)
+        else:
+            attribute = str(self.args[1])
+        return {sympy.Symbol(f"{self.args[0]}.{attribute}")}
 
     def __str__(self):
         return f'{self.args[0]}.{self.args[1]}'
+
+    def _subs(self, *args, **kwargs):
+        return Attr(self.args[0].subs(*args, **kwargs), self.args[1].subs(*args, **kwargs))
 
 
 def sympy_intdiv_fix(expr):
@@ -941,6 +983,32 @@ def evaluate_optional_arrays(expr, sdfg):
     return expr
 
 
+# Depending on the Python version we need to handle different AST nodes to correctly interpret and detect falsy / truthy
+# values.
+if sys.version_info < (3, 8):
+    _SimpleASTNode = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
+    _SimpleASTNodeT = Union[ast.Constant, ast.Name, ast.NameConstant, ast.Num]
+
+    def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
+        if isinstance(node, ast.Num):
+            node_val = node.n
+        elif isinstance(node, ast.Name):
+            node_val = node.id
+        else:
+            node_val = node.value
+        return ast.copy_location(ast.NameConstant(bool(node_val)), node)
+else:
+    _SimpleASTNode = (ast.Constant, ast.Name)
+    _SimpleASTNodeT = Union[ast.Constant, ast.Name]
+
+    def __comp_convert_truthy_falsy(node: _SimpleASTNodeT):
+        return ast.copy_location(ast.Constant(bool(node.value)), node)
+
+# Convert simple AST node (constant) into a falsy / truthy. Anything other than 0, None, and an empty string '' is
+# considered a truthy, while the listed exceptions are considered falsy values - following the semantics of Python's
+# bool() builtin.
+_convert_truthy_falsy = __comp_convert_truthy_falsy
+
 class PythonOpToSympyConverter(ast.NodeTransformer):
     """ 
     Replaces various operations with the appropriate SymPy functions to avoid non-symbolic evaluation.
@@ -960,12 +1028,12 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
     }
 
     _ast_to_sympy_functions = {
-        ast.BitAnd: 'BitwiseAnd',
-        ast.BitOr: 'BitwiseOr',
-        ast.BitXor: 'BitwiseXor',
-        ast.Invert: 'BitwiseNot',
-        ast.LShift: 'LeftShift',
-        ast.RShift: 'RightShift',
+        ast.BitAnd: 'bitwise_and',
+        ast.BitOr: 'bitwise_or',
+        ast.BitXor: 'bitwise_xor',
+        ast.Invert: 'bitwise_invert',
+        ast.LShift: 'left_shift',
+        ast.RShift: 'right_shift',
         ast.FloorDiv: 'int_floor',
     }
 
@@ -979,17 +1047,34 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
                                           node)
             new_node = ast.Call(func=func_node, args=[self.visit(node.operand)], keywords=[])
             return ast.copy_location(new_node, node)
+
+        # Convert arithmetic expressions of the form "-(a == b)" to ternary operators
+        node.operand = self._convert_boolop_to_ifexpr(node.operand)
+
         return self.generic_visit(node)
 
     def visit_BinOp(self, node):
+        # Convert arithmetic expressions of the form "a + (b == c)" to ternary operators
+        node.left = self._convert_boolop_to_ifexpr(node.left)
+        node.right = self._convert_boolop_to_ifexpr(node.right)
+
         if type(node.op) in self._ast_to_sympy_functions:
             func_node = ast.copy_location(ast.Name(id=self._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()),
                                           node)
+
             new_node = ast.Call(func=func_node,
                                 args=[self.visit(value) for value in (node.left, node.right)],
                                 keywords=[])
             return ast.copy_location(new_node, node)
         return self.generic_visit(node)
+
+    def _convert_boolop_to_ifexpr(self, node: ast.AST):
+        if isinstance(node, ast.Compare):
+            return ast.copy_location(
+                ast.Call(func=ast.Name(id='IfExpr', ctx=ast.Load),
+                         args=[node, ast.Constant(value=1), ast.Constant(value=0)],
+                         keywords=[]), node)
+        return node
 
     def visit_BoolOp(self, node):
         func_node = ast.copy_location(ast.Name(id=type(node.op).__name__, ctx=ast.Load()), node)
@@ -1009,6 +1094,13 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
             raise NotImplementedError
         op = node.ops[0]
         arguments = [node.left, node.comparators[0]]
+
+        # Ensure constant values in boolean comparisons are interpreted als booleans.
+        if isinstance(node.left, ast.Compare) and isinstance(node.comparators[0], _SimpleASTNode):
+            arguments[1] = _convert_truthy_falsy(node.comparators[0])
+        elif isinstance(node.left, _SimpleASTNode) and isinstance(node.comparators[0], ast.Compare):
+            arguments[0] = _convert_truthy_falsy(node.left)
+
         func_node = ast.copy_location(ast.Name(id=self._ast_to_sympy_comparators[type(op)], ctx=ast.Load()), node)
         new_node = ast.Call(func=func_node, args=[self.visit(arg) for arg in arguments], keywords=[])
         return ast.copy_location(new_node, node)
@@ -1028,7 +1120,7 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
                                   self.visit(node.orelse)],
                             keywords=[])
         return ast.copy_location(new_node, node)
-    
+
     def visit_Subscript(self, node):
         if isinstance(node.value, ast.Attribute):
             attr = ast.Subscript(value=ast.Name(id=node.value.attr, ctx=ast.Load()), slice=node.slice, ctx=ast.Load())
@@ -1085,12 +1177,18 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'arg': sympy.Symbol('arg'),
         'Is': Is,
         'IsNot': IsNot,
-        'BitwiseAnd': BitwiseAnd,
-        'BitwiseOr': BitwiseOr,
-        'BitwiseXor': BitwiseXor,
-        'BitwiseNot': BitwiseNot,
-        'LeftShift': LeftShift,
-        'RightShift': RightShift,
+        'BitwiseAnd': bitwise_and,
+        'BitwiseOr': bitwise_or,
+        'BitwiseXor': bitwise_xor,
+        'BitwiseNot': bitwise_invert,
+        'bitwise_and': bitwise_and,
+        'bitwise_or': bitwise_or,
+        'bitwise_xor': bitwise_xor,
+        'bitwise_invert': bitwise_invert,
+        'LeftShift': left_shift,
+        'left_shift': left_shift,
+        'RightShift': right_shift,
+        'right_shift': right_shift,
         'int_floor': int_floor,
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,
@@ -1147,7 +1245,18 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) == 'OR':
             return f'(({self._print(expr.args[0])}) or ({self._print(expr.args[1])}))'
         if str(expr.func) == 'Attr':
-            return f'{self._print(expr.args[0])}.{self._print(expr.args[1])}'
+            # TODO: We want to check that args[0] is a Structure.
+            #       However, this is information is not currently passed from the code generator.
+            if self.cpp_mode:
+                sep = '->'
+            else:
+                sep = '.'
+            if isinstance(expr.args[1], sympy.Function):
+                attribute = f'{self._print(expr.args[1].func)}[{",".join(map(self._print, expr.args[1].args))}]'
+            else:
+                attribute = self._print(expr.args[1])
+            return f'{self._print(expr.args[0])}{sep}{attribute}'
+            # return f'{self._print(expr.args[0])}.{self._print(expr.args[1])}'
         return super()._print_Function(expr)
 
     def _print_Mod(self, expr):
@@ -1405,8 +1514,7 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
         return sympy.ask(sympy.Q.is_true(sympy.Eq(*args)))
 
 
-def symbols_in_code(code: str, potential_symbols: Set[str] = None,
-                    symbols_to_ignore: Set[str] = None) -> Set[str]:
+def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ignore: Set[str] = None) -> Set[str]:
     """
     Tokenizes a code string for symbols and returns a set thereof.
 
@@ -1419,7 +1527,7 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None,
     if potential_symbols is not None and len(potential_symbols) == 0:
         # Don't bother tokenizing for an empty set of potential symbols
         return set()
-    
+
     tokens = set(re.findall(_NAME_TOKENS, code))
     if potential_symbols is not None:
         tokens &= potential_symbols

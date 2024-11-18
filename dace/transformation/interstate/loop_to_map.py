@@ -75,6 +75,7 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
 
 
 @make_properties
+@xf.single_level_sdfg_only
 class LoopToMap(DetectLoop, xf.MultiStateTransformation):
     """Convert a control flow loop into a dataflow map. Currently only supports
        the simple case where there is no overlap between inputs and outputs in
@@ -94,15 +95,16 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
-        guard = self.loop_guard
         begin = self.loop_begin
 
         # Guard state should not contain any dataflow
-        if len(guard.nodes()) != 0:
-            return False
+        if expr_index <= 1:
+            guard = self.loop_guard
+            if len(guard.nodes()) != 0:
+                return False
 
         # If loop cannot be detected, fail
-        found = find_for_loop(graph, guard, begin, itervar=self.itervar)
+        found = self.loop_information(itervar=self.itervar)
         if not found:
             return False
 
@@ -114,7 +116,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             if symbolic.contains_sympy_functions(expr):
                 return False
 
-        in_order_states = list(cfg.stateorder_topological_sort(sdfg))
+        in_order_states = list(cfg.blockorder_topological_sort(sdfg))
         loop_begin_idx = in_order_states.index(begin)
         loop_end_idx = in_order_states.index(body_end)
 
@@ -122,7 +124,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             return False
 
         # Find all loop-body states
-        states: List[SDFGState] = list(sdutil.dfs_conditional(sdfg, [begin], lambda _, c: c is not guard))
+        states: List[SDFGState] = self.loop_body()
 
         assert (body_end in states)
 
@@ -137,7 +139,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         for state in states:
             for e in sdfg.out_edges(state):
                 # Collect read-before-assigned symbols (this works because the states are always in order,
-                # see above call to `stateorder_topological_sort`)
+                # see above call to `blockorder_topological_sort`)
                 read_symbols = e.data.read_symbols()
                 read_symbols -= symbols_that_may_be_used
                 used_before_assignment |= read_symbols
@@ -348,22 +350,15 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         from dace.sdfg.propagation import align_memlet
 
         # Obtain loop information
-        guard: sd.SDFGState = self.loop_guard
+        itervar, (start, end, step), (_, body_end) = self.loop_information(itervar=self.itervar)
+        states = self.loop_body()
         body: sd.SDFGState = self.loop_begin
-        after: sd.SDFGState = self.exit_state
-
-        # Obtain iteration variable, range, and stride
-        itervar, (start, end, step), (_, body_end) = find_for_loop(sdfg, guard, body, itervar=self.itervar)
-
-        # Find all loop-body states
-        states = set()
-        to_visit = [body]
-        while to_visit:
-            state = to_visit.pop(0)
-            for _, dst, _ in sdfg.out_edges(state):
-                if dst not in states and dst is not guard:
-                    to_visit.append(dst)
-            states.add(state)
+        exit_state = self.exit_state
+        entry_edge = self.loop_condition_edge()
+        init_edge = self.loop_init_edge()
+        after_edge = self.loop_exit_edge()
+        condition_edge = self.loop_condition_edge()
+        increment_edge = self.loop_increment_edge()
 
         nsdfg = None
 
@@ -424,7 +419,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             nsdfg = SDFG("loop_body", constants=sdfg.constants_prop, parent=new_body)
             nsdfg.add_node(body, is_start_state=True)
             body.parent = nsdfg
-            exit_state = nsdfg.add_state('exit')
+            nexit_state = nsdfg.add_state('exit')
             nsymbols = dict()
             for state in states:
                 if state is body:
@@ -437,20 +432,48 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 for src, dst, data in sdfg.in_edges(state):
                     nsymbols.update({s: sdfg.symbols[s] for s in data.assignments.keys() if s in sdfg.symbols})
                     nsdfg.add_edge(src, dst, data)
-            nsdfg.add_edge(body_end, exit_state, InterstateEdge())
+            nsdfg.add_edge(body_end, nexit_state, InterstateEdge())
 
-            # Move guard -> body edge to guard -> new_body
-            for src, dst, data, in sdfg.edges_between(guard, body):
-                sdfg.add_edge(src, new_body, data)
-            # Move body_end -> guard edge to new_body -> guard
-            for src, dst, data in sdfg.edges_between(body_end, guard):
-                sdfg.add_edge(new_body, dst, data)
+            increment_edge = None
+
+            # Specific instructions for loop type
+            if self.expr_index <= 1:  # Natural loop with guard
+                guard = self.loop_guard
+
+                # Move guard -> body edge to guard -> new_body
+                for e in sdfg.edges_between(guard, body):
+                    sdfg.remove_edge(e)
+                    condition_edge = sdfg.add_edge(e.src, new_body, e.data)
+                # Move body_end -> guard edge to new_body -> guard
+                for e in sdfg.edges_between(body_end, guard):
+                    sdfg.remove_edge(e)
+                    increment_edge = sdfg.add_edge(new_body, e.dst, e.data)
+
+
+            elif 1 < self.expr_index <= 3 or 5 <= self.expr_index <= 7:  # Rotated loop
+                entrystate = self.entry_state
+                latch = self.loop_latch
+
+                # Move entry edge to entry -> new_body
+                for src, dst, data, in sdfg.edges_between(entrystate, body):
+                    init_edge = sdfg.add_edge(src, new_body, data)
+
+                # Move body_end -> latch to new_body -> latch
+                for src, dst, data in sdfg.edges_between(latch, exit_state):
+                    after_edge = sdfg.add_edge(new_body, dst, data)
+
+            elif self.expr_index == 4:  # Self-loop
+                entrystate = self.entry_state
+
+                # Move entry edge to entry -> new_body
+                for src, dst, data in sdfg.edges_between(entrystate, body):
+                    init_edge = sdfg.add_edge(src, new_body, data)
+                for src, dst, data in sdfg.edges_between(body, exit_state):
+                    after_edge = sdfg.add_edge(new_body, dst, data)
+
 
             # Delete loop-body states and edges from parent SDFG
-            for state in states:
-                for e in sdfg.all_edges(state):
-                    sdfg.remove_edge(e)
-                sdfg.remove_node(state)
+            sdfg.remove_nodes_from(states)
 
             # Add NestedSDFG arrays
             for name in read_set | write_set:
@@ -489,12 +512,13 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             # correct map with a positive increment
             start, end, step = end, start, -step
 
+        reentry_assignments = {k: v for k, v in condition_edge.data.assignments.items() if k != itervar}
+
         # If necessary, make a nested SDFG with assignments
-        isedge = sdfg.edges_between(guard, body)[0]
         symbols_to_remove = set()
-        if len(isedge.data.assignments) > 0:
+        if len(reentry_assignments) > 0:
             nsdfg = helpers.nest_state_subgraph(sdfg, body, gr.SubgraphView(body, body.nodes()))
-            for sym in isedge.data.free_symbols:
+            for sym in entry_edge.data.free_symbols:
                 if sym in nsdfg.symbol_mapping or sym in nsdfg.in_connectors:
                     continue
                 if sym in sdfg.symbols:
@@ -521,12 +545,12 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             nstate = nsdfg.sdfg.node(0)
             init_state = nsdfg.sdfg.add_state_before(nstate)
             nisedge = nsdfg.sdfg.edges_between(init_state, nstate)[0]
-            nisedge.data.assignments = isedge.data.assignments
+            nisedge.data.assignments = reentry_assignments
             symbols_to_remove = set(nisedge.data.assignments.keys())
             for k in nisedge.data.assignments.keys():
                 if k in nsdfg.symbol_mapping:
                     del nsdfg.symbol_mapping[k]
-            isedge.data.assignments = {}
+            condition_edge.data.assignments = {}
 
         source_nodes = body.source_nodes()
         sink_nodes = body.sink_nodes()
@@ -540,8 +564,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     continue
                 # Arrays written with subsets that do not depend on the loop variable must be thread-local
                 map_dependency = False
-                for e in state.in_edges(node):
-                    subset = e.data.get_dst_subset(e, state)
+                for e in body.in_edges(node):
+                    subset = e.data.get_dst_subset(e, body)
                     if any(str(s) == itervar for s in subset.free_symbols):
                         map_dependency = True
                         break
@@ -643,25 +667,27 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         if not source_nodes and not sink_nodes:
             body.add_nedge(entry, exit, memlet.Memlet())
 
-        # Get rid of the loop exit condition edge
-        after_edge = sdfg.edges_between(guard, after)[0]
-        sdfg.remove_edge(after_edge)
+        # Get rid of the loop exit condition edge (it will be readded below)
+        if self.expr_index not in (5, 6, 7):
+            sdfg.remove_edge(after_edge)
 
         # Remove the assignment on the edge to the guard
-        for e in sdfg.in_edges(guard):
+        for e in [init_edge, increment_edge]:
+            if e is None:
+                continue
             if itervar in e.data.assignments:
                 del e.data.assignments[itervar]
 
         # Remove the condition on the entry edge
-        condition_edge = sdfg.edges_between(guard, body)[0]
         condition_edge.data.condition = CodeBlock("1")
 
         # Get rid of backedge to guard
-        sdfg.remove_edge(sdfg.edges_between(body, guard)[0])
+        if increment_edge is not None:
+            sdfg.remove_edge(increment_edge)
 
         # Route body directly to after state, maintaining any other assignments
         # it might have had
-        sdfg.add_edge(body, after, sd.InterstateEdge(assignments=after_edge.data.assignments))
+        sdfg.add_edge(body, exit_state, sd.InterstateEdge(assignments=after_edge.data.assignments))
 
         # If this had made the iteration variable a free symbol, we can remove
         # it from the SDFG symbols

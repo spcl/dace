@@ -103,7 +103,7 @@ class ExpandReducePure(pm.ExpandTransformation):
                 'reduce_init', {'_o%d' % i: '0:%s' % symstr(d)
                                 for i, d in enumerate(outedge.data.subset.size())}, {},
                 '__out = %s' % node.identity,
-                {'__out': dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in range(output_dims)]))},
+                {'__out': dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in osqdim]))},
                 external_edges=True)
         else:
             nstate = nsdfg.add_state()
@@ -817,7 +817,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         }
 
         local_storage = InLocalStorage()
-        local_storage.setup_match(sdfg, sdfg.sdfg_id, sdfg.nodes().index(state), in_local_storage_subgraph, 0)
+        local_storage.setup_match(sdfg, sdfg.cfg_id, sdfg.nodes().index(state), in_local_storage_subgraph, 0)
 
         local_storage.array = in_edge.data.data
         local_storage.apply(graph, sdfg)
@@ -825,7 +825,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         sdfg.data(in_transient.data).storage = dtypes.StorageType.Register
 
         local_storage = OutLocalStorage()
-        local_storage.setup_match(sdfg, sdfg.sdfg_id, sdfg.nodes().index(state), out_local_storage_subgraph, 0)
+        local_storage.setup_match(sdfg, sdfg.cfg_id, sdfg.nodes().index(state), out_local_storage_subgraph, 0)
         local_storage.array = out_edge.data.data
         local_storage.apply(graph, sdfg)
         out_transient = local_storage._data_node
@@ -872,7 +872,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         # itself and expand again.
         reduce_node.implementation = 'CUDA (block)'
         sub_expansion = ExpandReduceCUDABlock()
-        sub_expansion.setup_match(sdfg, sdfg.sdfg_id, sdfg.node_id(state), {}, 0)
+        sub_expansion.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), {}, 0)
         return sub_expansion.expansion(node=node, state=state, sdfg=sdfg)
         #return reduce_node.expand(sdfg, state)
 
@@ -1088,7 +1088,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
     """
         GPU implementation of the reduce node. This expansion aims to map the reduction inputs to an optimal GPU schedule.
     """
-    environments = [CUDA]
+    environments = []
 
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
@@ -1099,6 +1099,8 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         :param state: the state in which the node is in
         :param sdfg: the SDFG in which the node is in
         """
+        from dace.codegen import common
+
         node.validate(sdfg, state)
         inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
@@ -1106,6 +1108,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         isqdim = insubset.squeeze()
         raw_input_data = sdfg.arrays[inedge.data.data]
         raw_output_data = sdfg.arrays[outedge.data.data]
+        warp_size = 64 if common.get_gpu_backend() == 'hip' else 32
 
         in_type = raw_input_data.dtype
 
@@ -1132,7 +1135,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         axes = [axis for axis in axes if axis in isqdim]
 
         # call the planner script
-        schedule = red_planner.get_reduction_schedule(raw_input_data, axes)
+        schedule = red_planner.get_reduction_schedule(raw_input_data, axes, warp_size=warp_size)
 
         if schedule.error:
             # return pure expansion if error
@@ -1340,25 +1343,25 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             real_state = nested_sdfg.add_state('real_state')
 
             nested_sdfg.add_edge(start_state, real_state,
-                                 dace.InterstateEdge(f'_b1 + 32 * _g < {schedule.in_shape[-1]}'))
+                                 dace.InterstateEdge(f'_b1 + {warp_size} * _g < {schedule.in_shape[-1]}'))
 
             reset_outm = dace.Memlet(f'_out[{",".join(["_o%d" % i for i in range(len(schedule.out_shape))])}]')
             if len(schedule.out_shape) > 1:
                 outm = dace.Memlet(
-                    f'_out[{",".join(["_o%d" % i for i in range(len(schedule.out_shape) - 1)])},_g * 32 + _b]',
+                    f'_out[{",".join(["_o%d" % i for i in range(len(schedule.out_shape) - 1)])},_g * {warp_size} + _b]',
                     dynamic=True)
                 outm_wcr = dace.Memlet(
-                    f'_out[{",".join(["_o%d" % i for i in range(len(schedule.out_shape) - 1)])},_g * 32 + _b]',
+                    f'_out[{",".join(["_o%d" % i for i in range(len(schedule.out_shape) - 1)])},_g * {warp_size} + _b]',
                     dynamic=True,
                     wcr=node.wcr)
 
             else:
-                outm = dace.Memlet(f'_out[_g * 32 + _b]', dynamic=True)
-                outm_wcr = dace.Memlet(f'_out[_g * 32 + _b]', dynamic=True, wcr=node.wcr)
+                outm = dace.Memlet(f'_out[_g * {warp_size} + _b]', dynamic=True)
+                outm_wcr = dace.Memlet(f'_out[_g * {warp_size} + _b]', dynamic=True, wcr=node.wcr)
 
             input_subset = input_subset[:-2]
             input_subset.append(f'0:{schedule.sequential[0]}')
-            input_subset.append('_g * 32 + _b1')
+            input_subset.append(f'_g * {warp_size} + _b1')
             inmm = dace.Memlet(f'_in[{",".join(input_subset)}]', dynamic=True)
 
             if schedule.multi_axes:
@@ -1401,13 +1404,13 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                                             schedule=dtypes.ScheduleType.GPU_ThreadBlock)
 
             else:
-                bme1, bmx1 = nstate.add_map('block', {'_b': f'0:32'}, schedule=dtypes.ScheduleType.GPU_ThreadBlock)
+                bme1, bmx1 = nstate.add_map('block', {'_b': f'0:{warp_size}'}, schedule=dtypes.ScheduleType.GPU_ThreadBlock)
 
                 bme2, bmx2 = nstate.add_map('block', {f'_b{i}': f'0:{sz}'
                                                       for i, sz in enumerate(schedule.block)},
                                             schedule=dtypes.ScheduleType.GPU_ThreadBlock)
 
-            # add shared memory of size 32 to outer sdfg
+            # add shared memory of warp size to outer sdfg
             nsdfg.add_array('s_mem', [schedule.shared_mem_size],
                             nsdfg.arrays['_in'].dtype,
                             dtypes.StorageType.GPU_Shared,
@@ -1482,11 +1485,11 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             if mini_warps:
                 cond_tasklet = nstate.add_tasklet(
                     'cond_write', {'_input'}, {'_output'},
-                    f'if _b + 32 * _g < {schedule.out_shape[-1]} and _bb == 0 and _mwid == 0: _output = _input')
+                    f'if _b + {warp_size} * _g < {schedule.out_shape[-1]} and _bb == 0 and _mwid == 0: _output = _input')
             else:
                 cond_tasklet = nstate.add_tasklet(
                     'cond_write', {'_input'}, {'_output'},
-                    f'if _b + 32 * _g < {schedule.out_shape[-1]} and _bb == 0: _output = _input')
+                    f'if _b + {warp_size} * _g < {schedule.out_shape[-1]} and _bb == 0: _output = _input')
 
             # connect accumulator to identity tasklet
             real_state.add_memlet_path(accread, ime, id, dst_conn='a', memlet=dace.Memlet('acc[0]'))
@@ -1511,8 +1514,8 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 nstate.add_memlet_path(s_mem3, bme3, cond_tasklet, dst_conn='_input', memlet=dace.Memlet('s_mem[_b]'))
             else:
                 bme3, bmx3 = nstate.add_map('block', {
-                    '_bb': '0:16',
-                    '_b': f'0:32'
+                    '_bb': f'0:{512//warp_size}',
+                    '_b':  f'0:{warp_size}'
                 },
                                             schedule=dtypes.ScheduleType.GPU_ThreadBlock)
                 nstate.add_memlet_path(s_mem3, bme3, cond_tasklet, dst_conn='_input', memlet=dace.Memlet('s_mem[_b]'))

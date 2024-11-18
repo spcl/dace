@@ -13,7 +13,6 @@ import threading
 
 import dace
 import tempfile
-import jinja2
 
 
 def partialclass(cls, *args, **kwds):
@@ -23,7 +22,7 @@ def partialclass(cls, *args, **kwds):
     return NewCls
 
 
-def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
+def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None, verbose: bool = True):
     """
     View an sdfg in the system's HTML viewer
 
@@ -33,6 +32,7 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
                     the generated HTML and related sources will be
                     served using a basic web server on that port,
                     blocking the current thread.
+    :param verbose: Be verbose.
     """
     # If vscode is open, try to open it inside vscode
     if filename is None:
@@ -43,9 +43,18 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
         ):
             fd, filename = tempfile.mkstemp(suffix='.sdfg')
             sdfg.save(filename)
-            os.system(f'code {filename}')
+            if platform.system() == 'Darwin':
+                # Special case for MacOS
+                os.system(f'open {filename}')
+            else:
+                os.system(f'code {filename}')
             os.close(fd)
             return
+
+    try:
+        import jinja2
+    except (ImportError, ModuleNotFoundError):
+        raise ImportError('SDFG.view() requires jinja2, please install by running `pip install jinja2`')
 
     if type(sdfg) is dace.SDFG:
         sdfg = dace.serialize.dumps(sdfg.to_json())
@@ -71,7 +80,8 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
     with open(html_filename, "w") as f:
         f.write(html)
 
-    print("File saved at %s" % html_filename)
+    if(verbose):
+        print("File saved at %s" % html_filename)
 
     if fd is not None:
         os.close(fd)
@@ -83,7 +93,8 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
         # start the web server
         handler = partialclass(http.server.SimpleHTTPRequestHandler, directory=dirname)
         httpd = http.server.HTTPServer(('localhost', filename), handler)
-        print(f"Serving at localhost:{filename}, press enter to stop...")
+        if(verbose):
+            print(f"Serving at localhost:{filename}, press enter to stop...")
 
         # start the server in a different thread
         def serve():

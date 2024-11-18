@@ -61,6 +61,45 @@ static DACE_CONSTEXPR DACE_HDFI T Mod(const T& value, const T2& modulus) {
     return value % modulus;
 }
 
+// Fortran implements MOD for floating-point values as well
+template <typename T>
+static DACE_CONSTEXPR DACE_HDFI T Mod_float(const T& value, const T& modulus) {
+    return value - static_cast<int>(value / modulus) * modulus;
+}
+
+// Fortran implementation of MODULO
+template <typename T>
+static DACE_CONSTEXPR DACE_HDFI T Modulo(const T& value, const T& modulus) {
+    // Fortran implementation for integers - find R such that value = Q * modulus + R
+    // However, R must be in [0, modulus)
+    // To achieve that, we need to cast the division to floats.
+    // Example: -17, 3 must produce 1 and not -2.
+    // If we don't use cast, the floor is called on -5, producing wrong value.
+    // Instead, we need to have floor(-5.6... ) to ensure it produces -6.
+    // Similarly, 17, -3 must produce -1 and not 2.
+    // This means that the default solution works if value and modulus have the same sign.
+    return value - floor(static_cast<float>(value) / modulus) * modulus;
+}
+
+template <typename T>
+static DACE_CONSTEXPR DACE_HDFI T Modulo_float(const T& value, const T& modulus) {
+    return value - floor(value / modulus) * modulus;
+}
+
+// Implement to support a match wtih Fortran's intrinsic EXPONENT
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
+  int exponent = 0;
+  std::frexp(a, &exponent);
+  return exponent;
+}
+
+// Implement to support Fortran's intrinsic NINT - round, but return an integer
+template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI int iround(const T& a) {
+  return static_cast<int>(round(a));
+}
+
 template <typename T, typename T2>
 static DACE_CONSTEXPR DACE_HDFI T int_ceil(const T& numerator, const T2& denominator) {
     return (numerator + denominator - 1) / denominator;
@@ -457,7 +496,7 @@ namespace dace
 {
     namespace math
     {       
-        static DACE_CONSTEXPR typeless_pi pi{};
+        static DACE_CONSTEXPR DACE_HostDev typeless_pi pi{};
         static DACE_CONSTEXPR typeless_nan nan{};
         //////////////////////////////////////////////////////
         template<typename T>
@@ -473,36 +512,29 @@ namespace dace
             return (thrust::complex<T>)thrust::pow(a, b);
         }
 #endif
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const T& b)
+        template<typename T, typename U>
+        DACE_CONSTEXPR DACE_HDFI auto pow(const T& a, const U& b)
         {
-            return (T)std::pow(a, b);
+            return std::pow(a, b);
         }
 
 #ifndef DACE_XILINX
         static DACE_CONSTEXPR DACE_HDFI int pow(const int& a, const int& b)
         {
-/*#ifndef __CUDA_ARCH__
-            return std::pow(a, b);
-#else*/
             if (b < 0) return 0;
             int result = 1;
             for (int i = 0; i < b; ++i)
                 result *= a;
             return result;
-//#endif
         }
+
         static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
                                        const unsigned int& b)
         {
-/*#ifndef __CUDA_ARCH__
-            return std::pow(a, b);
-#else*/
             unsigned int result = 1;
             for (unsigned int i = 0; i < b; ++i)
                 result *= a;
             return result;
-//#endif
         }
 #endif
 
@@ -512,17 +544,6 @@ namespace dace
             for (unsigned int i = 1; i < b; ++i)
                 result *= a;
             return result;
-        }
-
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const int& b)
-        {
-            return (T)std::pow(a, (T)b);
-        }
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const unsigned int& b)
-        {
-            return (T)std::pow(a, (T)b);
         }
 
         template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>

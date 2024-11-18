@@ -36,6 +36,9 @@ def test_map_dim_shuffle():
     sdfg(A=A, B=B)
     assert np.allclose(B, expected)
 
+    assert sdfg.apply_transformations_repeated(MapDimShuffle, options={"parameters": ["k", "i"]}) == 0
+    assert sdfg.apply_transformations_repeated(MapDimShuffle, options={"parameters": ["k", "i", "l"]}) == 0
+
 
 if __name__ == '__main__':
     test_map_dim_shuffle()
