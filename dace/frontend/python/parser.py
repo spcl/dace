@@ -153,7 +153,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                  recompile: bool = True,
                  distributed_compilation: bool = False,
                  method: bool = False,
-                 use_experimental_cfg_blocks: bool = False):
+                 use_experimental_cfg_blocks: bool = True):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f

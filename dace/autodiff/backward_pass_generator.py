@@ -3045,6 +3045,7 @@ class BackwardPassGenerator:
         Given an AccessNode for data that needs to be forwarded from the forward pass to the backward pass,
         Return a nested SDFG that recomputes this data from input data.
         """
+        # TODO: Get the correct recomputation nsdfg for loops
         nsdfg_label = "recomputation_nsdfg_" + target_an.data
 
         # Initially, we will replicate the whole SDFG into a Nested-SDFG and connect it
@@ -3249,7 +3250,7 @@ class BackwardPassGenerator:
         # As preprocessing step,
         # We will store all of the global program inputs,
         # if they are required for the backward pass
-        # NOTE: This can be relaxed since if an input is overwritten
+        # NOTE: This can be relaxed since if an input is not overwritten
         # if can be recomputed
         to_remove = []
         for i, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
@@ -3311,36 +3312,9 @@ class BackwardPassGenerator:
         """
         Create and solve an ILP to decide on the best store-recompute combination for the desired data.
         """
-        recomputation_nsdfgs: List[nodes.NestedSDFG] = []
-        storage_costs: List[int] = []
-        # Get the recomputation NSDFGs
-        for forward_state, backward_state, access_node, node, edge in self._forward_data:
-            try:
-                nsdfg = self._get_recomputation_nsdfg(forward_state, access_node)
-            except:
-                print(f"WARNING! couldn't get the recomputation nested SDFG for {access_node.label}")
-                nsdfg = None
-                
-            recomputation_nsdfgs.append(nsdfg)
-            
-            # Get the storage cost for this access node
-            size = 1
-            for shape in self.sdfg.arrays[access_node.data].shape:
-                # Only accept int sizes for now
-                if not isinstance(shape, int):
-                    raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
-                size *= shape
-            
-            # Convert the shape to KiBs
-            size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
-            
-            storage_costs.append(size)
-            
-        # Get the computational cost of each recomputation block
-        computational_cost = self._get_data_computational_cost(recomputation_nsdfgs)
 
         # Get the measurements sequence for the ILP
-        strategy_choices = self._define_and_solve_ilp(recomputation_nsdfgs, computational_cost, storage_costs)
+        strategy_choices, recomputation_nsdfgs = self._define_and_solve_ilp()
 
         # Solve the ILP and return the decision
         return strategy_choices, recomputation_nsdfgs
@@ -3375,23 +3349,115 @@ class BackwardPassGenerator:
 
         return computational_costs
 
-    def _define_and_solve_ilp(self, recomputation_nsdfgs: List[nodes.NestedSDFG], computational_costs: List[float], storage_costs: List[int]):
+    def _define_and_solve_ilp(self):
         """
         Get the memory measurement sequence to be fed to the ilp solver as constraints
         """
+        
         # Define the problem
         model = LpProblem(name=f"ILP-{self.sdfg.label}", sense=LpMinimize)
+        
+        recomputation_nsdfgs: List[nodes.NestedSDFG] = []
+        storage_costs: List[int] = []
+        
+        # Dict of all the data that is within the loop
+        loop_data: Dict[LoopRegion, nodes.AccessNode] = {}
+        
+        # Dict of the loops and data to be recomputed and their recomputation nsdfg
+        loop_data_recomputation_nsdfg: Dict[Tuple[LoopRegion, nodes.AccessNode], nodes.NestedSDFG] = {}
+        
+        # Dict of the data and its storage cost
+        loop_storage_costs: Dict[nodes.AccessNode, int] = {}
+        # Loop data to remove from the original list
+        to_remove = []
+        
+        # Remove loop data from the forward data list to be treated separetly
+        for i, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
+            within_loop, loop = self._state_within_loop(forward_state)
+            if within_loop:
+                # Add it to the dictionary
+                loop_data[loop] = access_node
+                
+                # Get the recomputation nsdfgs for the loop data
+                nsdfg = self._get_recomputation_nsdfg(forward_state, access_node)
+                
+                # Add it to the dictionary
+                loop_data_recomputation_nsdfg[(loop, access_node)] = nsdfg
+                
+                # Get the storage cost for this access node
+                size = 1
+                for shape in self.sdfg.arrays[access_node.data].shape:
+                    # Only accept int sizes for now
+                    if not isinstance(shape, int):
+                        raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
+                    size *= shape
+                
+                # Convert the shape to KiBs
+                size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
+                
+                loop_storage_costs[access_node] = size
+            
+                # Remove it from the forward_data dict
+                to_remove.append(i)
+                
+        # Get the cost of recomputing the loop data
+        loop_computation_costs = self._get_loop_recomputation_costs()
+        
+        # Define the decision variables for each loop
+        loop_decs: Dict[LoopRegion, LpVariable] = []
+        for i, (loop, access_node) in enumerate(loop_data_recomputation_nsdfg.keys()):
+            start, end = self._extract_loop_region_info(loop)
+            
+            # TODO: Make sure the low and up bound are as expected
+            if loop not in loop_decs:
+                loop_decs[loop] = LpVariable(name=f"loop_v_{i}", lowBound=start, upBound=end, cat="Integer")
 
-        # Define the decision variables
+            # Get the cost of recomputing this access node in the loop
+            cost = loop_computation_costs[loop, access_node]
+            
+            # Add the constraint to the loop
+            model += pulp.lpSum(cost * loop_decs[loop]), "Maximize_Performance"
+        
+        # Clean up the forward data list
+        self._forward_data = [data for i, data in enumerate(self._forward_data) if i not in to_remove]
+        
+        # Get the recomputation NSDFGs for non-loop data 
+        for forward_state, backward_state, access_node, node, edge in self._forward_data:
+            try:
+                nsdfg = self._get_recomputation_nsdfg(forward_state, access_node)
+            except:
+                print(f"WARNING! couldn't get the recomputation nested SDFG for {access_node.label}")
+                nsdfg = None
+                
+            recomputation_nsdfgs.append(nsdfg)
+            
+            # Get the storage cost for this access node
+            size = 1
+            for shape in self.sdfg.arrays[access_node.data].shape:
+                # Only accept int sizes for now
+                if not isinstance(shape, int):
+                    raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
+                size *= shape
+            
+            # Convert the shape to KiBs
+            size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
+            
+            storage_costs.append(size)
+            
+        # Get the computational cost of each recomputation block
+        computational_costs = self._get_data_computational_cost(recomputation_nsdfgs)
+        
+        
+        # Define the decision variables for non-loop data
         decs: List[LpVariable] = []
         for i, nsdfg in enumerate(recomputation_nsdfgs):
             decs.append(LpVariable(name=f"v_{i}", cat="Binary"))
-
-        # Define the objective function
+                
+        # Add non loop data to the objective function
         model += pulp.lpSum(cost * (1 - decs[i]) for i, cost in enumerate(computational_costs)), "Maximize_Performance"
         
         # Get memory constraints
-        self._add_memory_constraints_to_ilp(model, decs, storage_costs)
+        self._add_memory_constraints_to_ilp(model, decs, storage_costs, loop_sorage_costs, loop_data_recomputation_nsdfg)
 
         # Solve the ILP and return the decisions
         # Add the parameter for supressing print messages
@@ -3405,12 +3471,14 @@ class BackwardPassGenerator:
             raise AutoDiffException("ILP Couldn't be solved please check the inputs")
         choices = ["store" if pulp.value(dec) == 1.0 else "recompute" for dec in decs]
         
-        # print(recomputation_nsdfgs)
-        # # print(f"Peak mempory usage is: {pulp.value("")}")
-        # print(choices)
-        return choices
-
-    def _add_memory_constraints_to_ilp(self, model: LpProblem, decs: List[LpVariable], storage_costs: List[int], max_memory_usage: int = 8722000):
+        return choices, recomputation_nsdfgs
+    def _get_loop_recomputation_costs(self):
+        """
+        Get the recomputation costs for data that will require running a sequential loop again. 
+        This will return the cost of a single iteration of this loop. 
+        """
+        return []
+    def _add_memory_constraints_to_ilp(self, model: LpProblem, decs: List[LpVariable], storage_costs: List[int], loop_decs: List[LpVariable], loop_sorage_costs: Dict[nodes.AccessNode, int], loop_recomputation_nsdfgs: Dict[Tuple[LoopRegion, nodes.AccessNode], nodes.NestedSDFG], max_memory_usage: int = 8722000):
         """
         """
         # List of constraints to return 
@@ -3471,8 +3539,16 @@ class BackwardPassGenerator:
         for i, v in enumerate(decs):
             new_constraint = constraints[-1] + v*storage_costs[i]
             constraints.append(new_constraint)
-            model += (pmu >= new_constraint, f"Constraint_{len(constraints)}") 
-            
+            model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
+             
+        for loop, node in loop_recomputation_nsdfgs.keys():
+            cost = loop_sorage_costs[node]
+            low_bound, up_bound = self._extract_loop_region_info(loop)
+            decision_variable = loop_decs[loop]
+            new_constraint = constraints[-1] + (up_bound - decision_variable)*cost
+            constraints.append(new_constraint)
+            model += (pmu >= new_constraint, f"Constraint_loop_{len(constraints)}")
+             
         # Get the order of the states 
         states_topological = list(self.sdfg.bfs_nodes(self.sdfg.start_state))
 
@@ -3486,86 +3562,95 @@ class BackwardPassGenerator:
         state_constraints_dict = {}
         
         # Go through the states and add the allocation/deallocation accordingly
-        for state in states_topological:
-            state_allocation_sizes: list[int] = []
-            
-            # Identify where to add the measurements of this state
-            # Get all the incoming state edges to this state
-            in_edges = self.sdfg.in_edges(state)
-            
-            to_add = []
-            if len(in_edges) == 0:
-                # Start state
-                to_add.append(constraints[-1])
+        for node in states_topological:
+            if isinstance(node, LoopRegion):
+                loop = node
+                # Evaluate the peak memory usage of the loop body for a single iteration without recomputation
+                # Evaluate the peak memory usage of the loop body for a single iteration with recomputation
+                # Evaluate the leftover memory from an average iteration for the loop
+                # Add the formula to the constraints
             else:
-                # Get the to add list of all the incoming states and merge them
-                for edge in in_edges:
-                    state_constraints = state_constraints_dict[edge.src]
-                    to_add = to_add + state_constraints
-            
-            # Get the allocations for this state
-            for _, _, first_node_instance, _, _, _ in codegen.to_allocate[state]:
-                # Get the size of the array associated with this access node
-                size = 1
-                for shape in self.sdfg.arrays[first_node_instance.data].shape:
-                    # Only accept int sizes for now
-                    if not isinstance(shape, int):
-                        raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
-                    size *= shape
+                state = node
+                assert isinstance(state, SDFGState)    
+                state_allocation_sizes: list[int] = []
                 
-                # Convert the shape to KiBs
-                size = size * self.sdfg.arrays[first_node_instance.data].dtype.bytes / 1024
-                state_allocation_sizes.append(size)
+                # Identify where to add the measurements of this state
+                # Get all the incoming state edges to this state
+                in_edges = self.sdfg.in_edges(state)
                 
-                updated_to_add = []
+                to_add = []
+                if len(in_edges) == 0:
+                    # Start state
+                    to_add.append(constraints[-1])
+                else:
+                    # Get the to add list of all the incoming states and merge them
+                    for edge in in_edges:
+                        state_constraints = state_constraints_dict[edge.src]
+                        to_add = to_add + state_constraints
                 
-                # Add the constraint
-                for const in to_add:
-                    new_constraint = const + size
-                    updated_to_add.append(new_constraint)
-                    constraints.append(new_constraint)
-                    model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-                to_add = updated_to_add 
-            # Check if any recomputation terms can be inserted here
-            if state in recomputation_states:
-                for i, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
-                    if not backward_state == state:
-                        continue
-                    
+                # Get the allocations for this state
+                for _, _, first_node_instance, _, _, _ in codegen.to_allocate[state]:
                     # Get the size of the array associated with this access node
                     size = 1
-                    for shape in self.sdfg.arrays[access_node.data].shape:
+                    for shape in self.sdfg.arrays[first_node_instance.data].shape:
                         # Only accept int sizes for now
                         if not isinstance(shape, int):
                             raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
                         size *= shape
                     
                     # Convert the shape to KiBs
-                    size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
+                    size = size * self.sdfg.arrays[first_node_instance.data].dtype.bytes / 1024
                     state_allocation_sizes.append(size)
                     
-                    # Add the constraint
-                    # TODO: evaluate the recomputation peak memory usage and replace it here
                     updated_to_add = []
+                    
+                    # Add the constraint
                     for const in to_add:
-                        new_constraint = const + (1-decs[i])*storage_costs[i]
+                        new_constraint = const + size
                         updated_to_add.append(new_constraint)
                         constraints.append(new_constraint)
                         model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
                     to_add = updated_to_add 
-            # Add the deallocation for when the state exists
-            for size in state_allocation_sizes:
-                # Add the constraint
-                updated_to_add = []
-                for const in to_add:
-                    new_constraint = const - size
-                    updated_to_add.append(new_constraint)
-                    constraints.append(new_constraint)
-                    model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-                to_add = updated_to_add
-            
-            # Update the state constraints dict
-            state_constraints_dict[state] = to_add
+                # Check if any recomputation terms can be inserted here
+                if state in recomputation_states:
+                    for i, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
+                        if not backward_state == state:
+                            continue
+                        
+                        # Get the size of the array associated with this access node
+                        size = 1
+                        for shape in self.sdfg.arrays[access_node.data].shape:
+                            # Only accept int sizes for now
+                            if not isinstance(shape, int):
+                                raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
+                            size *= shape
+                        
+                        # Convert the shape to KiBs
+                        size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
+                        state_allocation_sizes.append(size)
+                        
+                        # Add the constraint
+                        # TODO: evaluate the recomputation peak memory usage and replace it here
+                        updated_to_add = []
+                        for const in to_add:
+                            new_constraint = const + (1-decs[i])*storage_costs[i]
+                            updated_to_add.append(new_constraint)
+                            constraints.append(new_constraint)
+                            model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
+                        to_add = updated_to_add 
+                # Add the deallocation for when the state exists
+                for size in state_allocation_sizes:
+                    # Add the constraint
+                    updated_to_add = []
+                    for const in to_add:
+                        new_constraint = const - size
+                        updated_to_add.append(new_constraint)
+                        constraints.append(new_constraint)
+                        model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
+                    to_add = updated_to_add
+                
+                # Update the state constraints dict
+                state_constraints_dict[state] = to_add
             
         # Add the deallocation for when the sdfg exists
         for size in sdfg_allocation_sizes:
@@ -3583,19 +3668,6 @@ class BackwardPassGenerator:
                   
         # Make sure the pmu is less than the user provided maximum memory usage
         model += (pmu <= max_memory_usage, f"Final_Constraint")
-
-    def _choose_overwrite_resolution_strategy(self, forward_state: SDFGState, target_an: nodes.AccessNode):
-        """
-        Evaluate what is the best strategy to resolve the overwritten forward_node.
-        """
-        # Get Nested-SDFG block that calculates the wanted value only
-        # Given the original access node and the indicies that are to be returned
-        # if "B" not in target_an.data and target_an.data != "y":
-        #     recomputation_nsdfg = self._get_recomputation_nsdfg(forward_state=forward_state, target_an=target_an)
-        #     print(f"Recomputing: {target_an}")
-        #     return "recompute", recomputation_nsdfg
-        # else:
-        return "store", None
 
     def _get_accessnode_to_forward(self, forward_state: SDFGState, backward_state: SDFGState,
                                    forward_node: nodes.AccessNode):
