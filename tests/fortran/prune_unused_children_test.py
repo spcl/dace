@@ -68,6 +68,155 @@ END PROGRAM main
     assert not rename_dict
 
 
+def test_toplevel_subroutine_no_pruning():
+    """
+    A simple program with not much to "recursively improve", but this time the subroutine is defined outside and called
+    from the main program.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+program main
+  implicit none
+  double precision d(4)
+  call fun(d)
+end program main
+
+subroutine fun(d)
+  implicit none
+  double precision d(4)
+  d(2) = 5.5
+end subroutine fun
+""").check_with_gfortran().get()
+    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+
+    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
+    # `recursive_ast_improver_test.py`.
+    assert not asts
+    assert not set(simple_graph.nodes)
+    assert not actually_used_in_module
+
+    # Now the actual operation that we are testing.
+    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+
+    got = ast.tofortran()
+    want = """
+PROGRAM main
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  CALL fun(d)
+END PROGRAM main
+SUBROUTINE fun(d)
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  d(2) = 5.5
+END SUBROUTINE fun
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    # Verify
+    assert not name_dict
+    assert not rename_dict
+
+
+def test_standalone_subroutine_no_pruning():
+    """
+    A standalone subroutine, with no program or module in sight.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine fun(d)
+  implicit none
+  double precision d(4)
+  d(2) = 5.5
+end subroutine fun
+""").check_with_gfortran().get()
+    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+
+    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
+    # `recursive_ast_improver_test.py`.
+    assert not asts
+    assert not set(simple_graph.nodes)
+    assert not actually_used_in_module
+
+    # Now the actual operation that we are testing.
+    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE fun(d)
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  d(2) = 5.5
+END SUBROUTINE fun
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    # Verify
+    assert not name_dict
+    assert not rename_dict
+
+
+def test_toplevel_subroutine_uses_another_module_no_pruning():
+    """
+    A simple program with not much to "recursively improve", but this time the subroutine is defined outside and called
+    from the main program.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  double precision :: val = 5.5
+end module lib
+""").add_file("""
+program main
+  implicit none
+  double precision d(4)
+  call fun(d)
+end program main
+
+subroutine fun(d)
+  use lib
+  implicit none
+  double precision d(4)
+  d(2) = val
+end subroutine fun
+""").check_with_gfortran().get()
+    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+
+    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
+    # `recursive_ast_improver_test.py`.
+    assert set(asts.keys()) == {'lib'}
+    assert set(simple_graph.nodes) == {'lib', 'main'}
+    assert actually_used_in_module == {'lib': ['val'], 'main': []}
+
+    # Now the actual operation that we are testing.
+    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  DOUBLE PRECISION :: val = 5.5
+END MODULE lib
+PROGRAM main
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  CALL fun(d)
+END PROGRAM main
+SUBROUTINE fun(d)
+  USE lib
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  d(2) = val
+END SUBROUTINE fun
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    # Verify
+    assert name_dict == {'lib': ['val']}
+    assert rename_dict == {'lib': {}}
+
+
 def test_uses_module_which_uses_module_no_pruning():
     """
     NOTE: We have a very similar test in `recursive_ast_improver_test.py`.
