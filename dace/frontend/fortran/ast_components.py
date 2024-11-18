@@ -1,11 +1,13 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, List, Optional, Type, TypeVar, Union, overload, TYPE_CHECKING
 
+import networkx as nx
 from fparser.two import Fortran2003 as f03
 from fparser.two import Fortran2008 as f08
 
 from dace.frontend.fortran import ast_internal_classes
-from dace.frontend.fortran.ast_internal_classes import Name_Node
+from dace.frontend.fortran.ast_internal_classes import Name_Node, Program_Node
+from dace.frontend.fortran.ast_transforms import StructLister, StructDependencyLister, Structures
 
 if TYPE_CHECKING:
     from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -110,14 +112,12 @@ class InternalFortranAst:
         """
         Initialization of the AST converter
         """
-        self.name_list = {}
         self.to_parse_list = {}
         self.unsupported_fortran_syntax = {}
         self.current_ast = None
         self.functions_and_subroutines = []
         self.symbols = {}
         self.intrinsics_list = []
-        self.rename_list = {}
         self.placeholders = {}
         self.placeholders_offsets = {}
         self.types = {
@@ -345,14 +345,9 @@ class InternalFortranAst:
         else:
             raise NotImplementedError("Data pointer object not supported yet")
 
-    def add_name_list_for_module(self, module: str, name_list: List[str]):
-        self.name_list[module] = name_list
-
     def create_children(self, node: FASTNode):
-        return [self.create_ast(child)
-                for child in node] if isinstance(node,
-                                                 (list,
-                                                  tuple)) else [self.create_ast(child) for child in node.children]
+        return [self.create_ast(child) for child in node] \
+            if isinstance(node, (list, tuple)) else [self.create_ast(child) for child in node.children]
 
     def cycle_stmt(self, node: FASTNode):
         line = get_line(node)
@@ -364,31 +359,46 @@ class InternalFortranAst:
         :param node: FASTNode
         :note: this is a recursive function, and relies on the dictionary of supported syntax to call the correct converter functions
         """
-        if node is not None:
-            if isinstance(node, (list, tuple)):
-                return [self.create_ast(child) for child in node]
+        if not node:
+            return None
+        if isinstance(node, (list, tuple)):
+            return [self.create_ast(child) for child in node]
+        if type(node).__name__ in self.supported_fortran_syntax:
+            handler = self.supported_fortran_syntax[type(node).__name__]
+            return handler(node)
 
-            if type(node).__name__ in self.supported_fortran_syntax:
-                # print(type(node), type(node).__name__, type(node).__name__ in self.supported_fortran_syntax)
-                return self.supported_fortran_syntax[type(node).__name__](node)
-            else:
-                if type(node).__name__ == "Intrinsic_Name":
-                    if node not in self.intrinsics_list:
-                        self.intrinsics_list.append(node)
-                if self.unsupported_fortran_syntax.get(self.current_ast) is None:
-                    self.unsupported_fortran_syntax[self.current_ast] = []
-                if type(node).__name__ not in self.unsupported_fortran_syntax[self.current_ast]:
-                    if type(node).__name__ not in self.unsupported_fortran_syntax[self.current_ast]:
-                        self.unsupported_fortran_syntax[self.current_ast].append(type(node).__name__)
-                for i in node.children:
-                    self.create_ast(i)
-                print("Unsupported syntax: ", type(node).__name__, node.string)
-                return None
-            # except Exception as e:
-            #    print("Error in create_ast: ", e)
-            #    return None
-
+        if type(node).__name__ == "Intrinsic_Name":
+            if node not in self.intrinsics_list:
+                self.intrinsics_list.append(node)
+        if self.unsupported_fortran_syntax.get(self.current_ast) is None:
+            self.unsupported_fortran_syntax[self.current_ast] = []
+        if type(node).__name__ not in self.unsupported_fortran_syntax[self.current_ast]:
+            if type(node).__name__ not in self.unsupported_fortran_syntax[self.current_ast]:
+                self.unsupported_fortran_syntax[self.current_ast].append(type(node).__name__)
+        for i in node.children:
+            self.create_ast(i)
+        print("Unsupported syntax: ", type(node).__name__, node.string)
         return None
+
+    def finalize_ast(self, prog: Program_Node):
+        structs_lister = StructLister()
+        structs_lister.visit(prog)
+        struct_dep_graph = nx.DiGraph()
+        for i, name in zip(structs_lister.structs, structs_lister.names):
+            if name not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(name)
+            struct_deps_finder = StructDependencyLister(structs_lister.names)
+            struct_deps_finder.visit(i)
+            struct_deps = struct_deps_finder.structs_used
+            # print(struct_deps)
+            for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
+                                               struct_deps_finder.pointer_names):
+                if j not in struct_dep_graph.nodes:
+                    struct_dep_graph.add_node(j)
+                struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
+        prog.structures = Structures(structs_lister.structs)
+        prog.placeholders = self.placeholders
+        prog.placeholders_offsets = self.placeholders_offsets
 
     def suffix(self, node: FASTNode):
         children = self.create_children(node)
