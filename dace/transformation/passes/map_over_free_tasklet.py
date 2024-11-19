@@ -52,10 +52,17 @@ class MapOverFreeTasklet(ppl.Pass):
                 if isinstance(node, dace.nodes.NestedSDFG):
                     inner_sdfg = node.sdfg
                     self.apply_pass(inner_sdfg, {})
-                elif len(state.in_edges(node)) == 0 and sd[node] is None:
-                    _, start_nodes, end_nodes = self._get_component(state, node)
-                    self._apply(state, start_nodes, end_nodes, counter)
-                    counter += 1
+                elif (len(state.in_edges(node)) == 0
+                      and sd[node] is None
+                      and not isinstance(node, dace.nodes.EntryNode)
+                      and not isinstance(node, dace.nodes.ExitNode)
+                    ):
+                    component, start_nodes, end_nodes = self._get_component(state, node)
+                    # Only apply if there are no entry nodes in the component
+                    has_entry_node = any([isinstance(v, dace.nodes.EntryNode) for v in component])
+                    if not has_entry_node:
+                        self._apply(state, start_nodes, end_nodes, counter)
+                        counter += 1
 
     def _apply(self, state: SDFGState,
                start_nodes: List[dace.nodes.Node],
