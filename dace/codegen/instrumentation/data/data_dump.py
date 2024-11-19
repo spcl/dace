@@ -45,7 +45,7 @@ class DataInstrumentationProviderMixin:
         # Emit synchronous memcpy
         preamble = f'''
         {{
-        {new_desc.as_arg(name=new_ptr)} = new {desc.dtype.ctype}[{csize}];
+        {new_desc.as_arg(name=new_ptr)} = new {desc.dtype.ctype}[std::size_t({csize})];
         {self.backend}Memcpy({new_ptr}, {ptr}, sizeof({desc.dtype.ctype}) * ({csize}), {self.backend}MemcpyDeviceToHost);
         '''
 
@@ -65,7 +65,7 @@ class DataInstrumentationProviderMixin:
         # Emit synchronous memcpy
         preamble = f'''
         {{
-        {new_desc.as_arg(name=new_ptr)} = new {desc.dtype.ctype}[{csize}];
+        {new_desc.as_arg(name=new_ptr)} = new {desc.dtype.ctype}[std::size_t({csize})];
         '''
 
         postamble = f'''
