@@ -417,8 +417,12 @@ class CPUCodeGen(TargetCodeGenerator):
                         ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
                         defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
                         self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
-                        self.allocate_array(sdfg, cfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v,
-                                            function_stream, declaration_stream, allocation_stream)
+                        if isinstance(v, data.Scalar):
+                            # NOTE: Scalar members are already defined in the struct definition.
+                            self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
+                        else:
+                            self.allocate_array(sdfg, cfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v,
+                                                function_stream, declaration_stream, allocation_stream)
             return
         if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, cfg, dfg, state_id, node, function_stream, declaration_stream,
@@ -1942,7 +1946,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Define all input connectors of this map entry
         for e in dynamic_map_inputs(state_dfg, node):
-            if e.data.data != e.dst_conn:
+            if cpp.ptr(e.data.data, sdfg.arrays[e.data.data], sdfg, self._frame) != e.dst_conn:
                 callsite_stream.write(
                     self.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]), cfg,
                     state_id, node)

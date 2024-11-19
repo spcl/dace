@@ -948,7 +948,12 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping:
                 continue
             isvar = data.Scalar(isvarType)
-            callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
+            if (schedule in (dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Multi_Pumped)
+                    and config.Config.get('compiler', 'fpga', 'vendor').lower() == 'intel_fpga'):
+                # Emit OpenCL type
+                callsite_stream.write(f'{isvarType.ocltype} {isvarName};\n', sdfg)
+            else:
+                callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
             self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
 
         callsite_stream.write('\n', sdfg)

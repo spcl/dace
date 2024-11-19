@@ -72,7 +72,7 @@ def starred_target(a: dace.float32[1]):
     return b, c, d, e
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Syntax is not yet supported')
 def test_starred_target():
     a = np.zeros((1, ), dtype=np.float32)
     a[0] = np.pi
@@ -94,7 +94,7 @@ def attribute_reference(a: mystruct[1]):
     a.b[0] = 6
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Syntax is not yet supported')
 def test_attribute_reference():
     a = np.ndarray((1, ), dtype=np.dtype(mystruct.as_ctypes()))
     attribute_reference(a=a)

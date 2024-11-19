@@ -38,7 +38,7 @@ try:
         output = subprocess.check_output([cmake_path, '--version']).decode('utf-8')
         cmake_version = tuple(int(t) for t in output.splitlines()[0].split(' ')[-1].split('.'))
         # If version meets minimum requirements, CMake is not necessary
-        if cmake_version >= (3, 15):
+        if cmake_version >= (3, 17):
             cmake_requires = []
 except (subprocess.CalledProcessError, OSError, IndexError, ValueError):
     # Any failure in getting the CMake version counts as "not found"
@@ -73,7 +73,7 @@ setup(name='dace',
       },
       include_package_data=True,
       install_requires=[
-         'numpy < 2.0', 'networkx >= 2.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'websockets', 'jinja2',
+          'numpy < 2.0', 'networkx >= 2.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply',
           'fparser >= 0.1.3', 'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill',
           'pyreadline;platform_system=="Windows"', 'typing-compat; python_version < "3.8"', 'packaging'
       ] + cmake_requires,
