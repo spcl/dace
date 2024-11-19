@@ -2,8 +2,8 @@
 from typing import Dict
 
 from dace.frontend.fortran.ast_internal_classes import Program_Node, Main_Program_Node, Subroutine_Subprogram_Node, \
-    Module_Node
-from dace.frontend.fortran.ast_transforms import Structures
+    Module_Node, Specification_Part_Node
+from dace.frontend.fortran.ast_transforms import Structures, Structure
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast
 from tests.fortran.fotran_test_helper import SourceCodeBuilder, InternalASTMatcher as M
 
@@ -201,6 +201,7 @@ end program main
 """).check_with_gfortran().get()
     # Construct
     iast, prog = construct_internal_ast(sources)
+
     # Verify
     assert not iast.fortran_intrinsics().transformations()
     m = M(Program_Node, has_attr={
@@ -226,3 +227,53 @@ end program main
     fn = mod.subroutine_definitions[0]
     assert not hasattr(fn, 'function_definitions')  # Not here!
     assert not hasattr(fn, 'subroutine_definitions')  # Not here!
+
+
+def test_module_contains_types():
+    """
+    Module has type definition that the program does not use, so it gets pruned.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type used_type
+    real :: w(5, 5, 5), z(5)
+    integer :: a
+    real :: name
+  end type used_type
+end module lib
+""").add_file("""
+program main
+  implicit none
+  real :: d(5, 5)
+  call fun(d)
+end program main
+subroutine fun(d)
+  use lib, only : used_type
+  real d(5, 5)
+  type(used_type) :: s
+  s%w(1, 1, 1) = 5.5
+  d(2, 1) = 5.5 + s%w(1, 1, 1)
+end subroutine fun
+""").check_with_gfortran().get()
+    # Construct
+    iast, prog = construct_internal_ast(sources)
+
+    # Verify
+    assert not iast.fortran_intrinsics().transformations()
+    m = M(Program_Node, has_attr={
+        'main_program': M(Main_Program_Node),
+        'modules': [M(Module_Node, has_attr={
+            'specification_part': M(Specification_Part_Node, {'typedecls': M.IGNORE(1)})
+        }, has_empty_attr={'function_definitions', 'interface_blocks'})],
+        'subroutine_definitions': [
+            M(Subroutine_Subprogram_Node, {
+                'name': M.NAMED('fun'),
+                'args': [M.NAMED('d')],
+            }),
+        ],
+        'structures': M(Structures, {
+            'structures': {'used_type': M(Structure)},
+        })
+    }, has_empty_attr={'function_definitions', 'placeholders', 'placeholders_offsets'})
+    m.check(prog)

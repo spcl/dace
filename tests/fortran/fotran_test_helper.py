@@ -54,7 +54,7 @@ class SourceCodeBuilder:
                     f.write(content)
             # Run `gfortran -Wall` to verify that it compiles.
             # Note: we're relying on the fact that python dictionaries keeps the insertion order when calling `keys()`.
-            cmd = ['gfortran', '-Wall', '-c', *self.sources.keys()]
+            cmd = ['gfortran', '-Wall', '-shared', *self.sources.keys()]
             subprocess.run(cmd, cwd=td, capture_output=True).check_returncode()
             return self
 
@@ -214,7 +214,7 @@ class InternalASTMatcher:
 
     def __init__(self,
                  is_type: Optional[Type] = None,
-                 has_attr: Optional[Dict[str, Union[Self, List[Self]]]] = None,
+                 has_attr: Optional[Dict[str, Union[Self, List[Self], Dict[str, Self]]]] = None,
                  has_empty_attr: Optional[Collection[str]] = None,
                  has_value: Optional[LiteralString] = None):
         # TODO: Include Set[Self] to `has_children` type?
@@ -243,6 +243,12 @@ class InternalASTMatcher:
                     assert len(attr) == len(subm), f"{attr} must have the same length as {subm}."
                     for (c, m) in zip(attr, subm):
                         m.check(c)
+                elif isinstance(subm, Dict):
+                    assert isinstance(attr, Dict)
+                    assert len(attr) == len(subm)
+                    assert subm.keys() <= attr.keys()
+                    for k in subm.keys():
+                        subm[k].check(attr[k])
                 else:
                     subm.check(attr)
 
