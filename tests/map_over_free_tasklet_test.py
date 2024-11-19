@@ -61,6 +61,16 @@ def _trivial_chain_sdfg():
     sdfg.validate()
     return sdfg
 
+def _trivial_chain_in_nested_sdfg():
+    sdfg = dace.SDFG("main")
+    state = sdfg.add_state("_s")
+    inner_sdfg = dace.SDFG("inner")
+    inner_state = inner_sdfg.add_state("_inner_s")
+    _add_chain(inner_sdfg, inner_state, name="ch_1", length=2, add_scalar=True)
+    state.add_nested_sdfg(inner_sdfg, None, {}, {})
+    sdfg.validate()
+    return sdfg
+
 
 def _two_trivial_chains_sdfg():
     sdfg = dace.SDFG("main")
@@ -147,44 +157,48 @@ def _check_is_in_scope(state, sd, node):
         return any(srcs) or any(dsts)
     return True
 
+def _check_recursive(sdfg):
+    for state in sdfg.states():
+        sd = state.scope_dict()
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.NestedSDFG):
+                _check_recursive(node.sdfg)
+            else:
+                assert( _check_is_in_scope(state, sd, node))
+
 def test_trivial_chain():
     sdfg = _trivial_chain_sdfg()
     mapOverFreeTasklet = MapOverFreeTasklet()
     mapOverFreeTasklet.apply_pass(sdfg, {})
-    for state in sdfg.states():
-        sd = state.scope_dict()
-        for node in state.nodes():
-            assert( _check_is_in_scope(state, sd, node))
+    _check_recursive(sdfg)
     sdfg.validate()
 
 def test_two_trivial_chains_sdfg():
     sdfg = _two_trivial_chains_sdfg()
     mapOverFreeTasklet = MapOverFreeTasklet()
     mapOverFreeTasklet.apply_pass(sdfg, {})
-    for state in sdfg.states():
-        sd = state.scope_dict()
-        for node in state.nodes():
-            assert( _check_is_in_scope(state, sd, node))
+    _check_recursive(sdfg)
     sdfg.validate()
 
 def test_multiple_input_chain_sdfg():
     sdfg = _multiple_input_chain_sdfg()
     mapOverFreeTasklet = MapOverFreeTasklet()
     mapOverFreeTasklet.apply_pass(sdfg, {})
-    for state in sdfg.states():
-        sd = state.scope_dict()
-        for node in state.nodes():
-            assert( _check_is_in_scope(state, sd, node))
+    _check_recursive(sdfg)
     sdfg.validate()
 
 def test_complex_chain_sdfg():
     sdfg = _complex_chain_sdfg()
     mapOverFreeTasklet = MapOverFreeTasklet()
     mapOverFreeTasklet.apply_pass(sdfg, {})
-    for state in sdfg.states():
-        sd = state.scope_dict()
-        for node in state.nodes():
-            assert( _check_is_in_scope(state, sd, node))
+    _check_recursive(sdfg)
+    sdfg.validate()
+
+def test_trivial_chain_in_nested_sdfg():
+    sdfg = _trivial_chain_in_nested_sdfg()
+    mapOverFreeTasklet = MapOverFreeTasklet()
+    mapOverFreeTasklet.apply_pass(sdfg, {})
+    _check_recursive(sdfg)
     sdfg.validate()
 
 if __name__ == "__main__":
@@ -192,3 +206,4 @@ if __name__ == "__main__":
     test_two_trivial_chains_sdfg()
     test_multiple_input_chain_sdfg()
     test_complex_chain_sdfg()
+    test_trivial_chain_in_nested_sdfg()

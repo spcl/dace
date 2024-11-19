@@ -49,7 +49,10 @@ class MapOverFreeTasklet(ppl.Pass):
             sd = state.scope_dict()
             nodes = state.nodes()
             for node in nodes:
-                if len(state.in_edges(node)) == 0 and sd[node] is None:
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    inner_sdfg = node.sdfg
+                    self.apply_pass(inner_sdfg, {})
+                elif len(state.in_edges(node)) == 0 and sd[node] is None:
                     _, start_nodes, end_nodes = self._get_component(state, node)
                     self._apply(state, start_nodes, end_nodes, counter)
                     counter += 1
