@@ -68,9 +68,9 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
         for _, dep in out_edges:
             out_names_local_obj = dep_graph.get_edge_data(i, dep)["obj_list"]
             out_names_local = []
-            if out_names_local_obj and '*' in out_names_local_obj:
+            dep_info = dep_graph.nodes.get(dep).get('info_list')
+            if dep_info and out_names_local_obj and '*' in out_names_local_obj:
                 # We have a special symbol indicating that everything needs to be imported.
-                dep_info = dep_graph.nodes.get(dep).get('info_list')
                 assert isinstance(dep_info, FunctionSubroutineLister)
                 list_of_module_vars = []
                 for type_stmt in dep_info.list_of_module_vars:
@@ -230,9 +230,9 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
         for _, dep in out_edges:
             out_names_local_obj = dep_graph.get_edge_data(i, dep)["obj_list"]
             out_names_local = []
-            if out_names_local_obj and '*' in out_names_local_obj:
+            dep_info = dep_graph.nodes.get(dep).get('info_list')
+            if dep_info and out_names_local_obj and '*' in out_names_local_obj:
                 # We have a special symbol indicating that everything needs to be imported.
-                dep_info = dep_graph.nodes.get(dep).get('info_list')
                 assert isinstance(dep_info, FunctionSubroutineLister)
                 list_of_module_vars = []
                 for type_stmt in dep_info.list_of_module_vars:
