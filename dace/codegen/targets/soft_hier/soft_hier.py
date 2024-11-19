@@ -527,7 +527,7 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
         arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
         ctypedef = '%s *' % nodedesc.dtype.ctype
 
-        # Different types of GPU arrays
+        # Different types of SoftHier arrays
         if nodedesc.storage == dtypes.StorageType.SoftHier_HBM:
             if not declared:
                 result_decl.write('%s %s;\n' % (ctypedef, dataname))
@@ -808,7 +808,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                    dst_storage: dtypes.StorageType, dst_schedule: dtypes.ScheduleType,
                    edge: Tuple[nodes.Node, str, nodes.Node, str, Memlet], sdfg: SDFG, cfg: ControlFlowRegion,
                    dfg: StateSubgraphView, callsite_stream: CodeIOStream) -> None:
-        callsite_stream.write('// SoftHier: Emitting copy from %s to %s' % (src_node, dst_node), sdfg, state_id)
+        # callsite_stream.write('// SoftHier: Emitting copy from %s to %s' % (src_node, dst_node), sdfg, state_id)
         u, uconn, v, vconn, memlet = edge
         state_dfg = cfg.state(state_id)
         print('SoftHier: Emitting copy from', src_node, 'to', dst_node)
@@ -1012,89 +1012,100 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # Copy within the SoftHier storage
         elif (src_storage in soft_hier_storage_types and dst_storage in soft_hier_storage_types):
-
-            state_dfg = cfg.state(state_id)
-            sdict = state_dfg.scope_dict()
-            schedule_node = src_node
-            if scope_contains_scope(sdict, src_node, dst_node):
-                schedule_node = dst_node
-
             state = state_dfg
-            while (schedule_node is None or not isinstance(schedule_node, nodes.MapEntry)
-                   or schedule_node.map.schedule == dtypes.ScheduleType.Sequential):
-                ret = xfh.get_parent_map(state, schedule_node)
-                if ret is None:
-                    schedule_node = None
-                    break
-                schedule_node, state = ret
-
-            if schedule_node is None:
-                inner_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[None]
-            else:
-                inner_schedule = schedule_node.map.schedule
-
-            # Collaborative load
-            if inner_schedule == dtypes.ScheduleType.GPU_Device:
-                # Obtain copy information
-                copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
-                    self._dispatcher, sdfg, state, edge, src_node, dst_node, self._cpu_codegen._packed_types))
-
-                dims = len(copy_shape)
-
-                funcname = 'dace::%sTo%s%dD' % (_get_storagename(src_storage), _get_storagename(dst_storage), dims)
-                self._scope_has_collaborative_copy = True
-                accum = ''
-                custom_reduction = []
-                if memlet.wcr is not None:
-                    redtype = operations.detect_reduction_type(memlet.wcr)
-                    reduction_tmpl = ''
-                    # Special call for detected reduction types
-                    if redtype != dtypes.ReductionType.Custom:
-                        credtype = ('dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1:])
-                        reduction_tmpl = '<%s>' % credtype
-                    else:
-                        dtype = dst_node.desc(sdfg).dtype
-                        custom_reduction = [unparse_cr(sdfg, memlet.wcr, dtype)]
-                    accum = '::template Accum%s' % reduction_tmpl
-
-                if any(symbolic.issymbolic(s, sdfg.constants) for s in copy_shape):
-                    callsite_stream.write(('    {func}Dynamic<{type}, {bdims}, {is_async}>{accum}({args});').format(
+            # Obtain copy information
+            copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
+                self._dispatcher, sdfg, state, edge, src_node, dst_node, self._cpu_codegen._packed_types))
+            name = memlet.data
+            nodedesc = sdfg.arrays[name]
+            if vconn:
+                # Rm. IN_
+                dst_name = vconn[3:]
+            elif isinstance(v, nodes.AccessNode):
+                dst_name = v.data
+            subset: subsets.Range = memlet.subset
+            if uconn:
+                # Rm. OUT_
+                src_name = uconn[4:]
+            elif isinstance(u, nodes.AccessNode):
+                src_name = u.data
+            #src_name = name
+            assert len(subset.string_list()) == 1
+            beg, end, step = subset.ranges[0]
+            assert step == 1
+            length = (end + 1) - beg
+            data_size = nodedesc.dtype.bytes  # Number of bytes per element
+            if (
+                src_storage == dtypes.StorageType.SoftHier_HBM
+                and dst_storage == dtypes.StorageType.SoftHier_TCDM
+            ):
+                callsite_stream.write(
+                    "// SoftHier_HBM -> SoftHier_TCDM"
+                )
+                callsite_stream.write(
+                    "if(flex_is_dm_core())"
+                )
+                callsite_stream.write("{", cfg, state_id, src_node)
+                funcname = "flex_dma_async_1d"
+                callsite_stream.write(('    {func}({args});').format(
                         func=funcname,
-                        type=dst_node.desc(sdfg).dtype.ctype,
-                        bdims=', '.join(_topy(self._block_dims)),
-                        is_async='true' if state_dfg.out_degree(dst_node) == 0 else 'false',
-                        accum=accum,
-                        args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + custom_reduction +
-                                       _topy(dst_strides) + _topy(copy_shape))), cfg, state_id, [src_node, dst_node])
-                elif funcname == 'dace::SharedToGlobal1D':
-                    # special case: use a new template struct that provides functions for copy and reduction
-                    callsite_stream.write(
-                        ('    {func}<{type}, {bdims}, {copysize}, {is_async}>{accum}({args});').format(
-                            func=funcname,
-                            type=dst_node.desc(sdfg).dtype.ctype,
-                            bdims=', '.join(_topy(self._block_dims)),
-                            copysize=', '.join(_topy(copy_shape)),
-                            is_async='true' if state_dfg.out_degree(dst_node) == 0 else 'false',
-                            accum=accum or '::Copy',
-                            args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + _topy(dst_strides) +
-                                           custom_reduction)), cfg, state_id, [src_node, dst_node])
-                else:
-                    callsite_stream.write(
-                        ('    {func}<{type}, {bdims}, {copysize}, ' +
-                         '{dststrides}, {is_async}>{accum}({args});').format(
-                             func=funcname,
-                             type=dst_node.desc(sdfg).dtype.ctype,
-                             bdims=', '.join(_topy(self._block_dims)),
-                             copysize=', '.join(_topy(copy_shape)),
-                             dststrides=', '.join(_topy(dst_strides)),
-                             is_async='true' if state_dfg.out_degree(dst_node) == 0 else 'false',
-                             accum=accum,
-                             args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + custom_reduction)), cfg,
-                        state_id, [src_node, dst_node])
-            # Per-thread load (same as CPU copies)
+                        args=', '.join([f'hbm_addr({src_expr})'] + [f'local({dst_expr})'] + [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
+                )
+                callsite_stream.write("flex_dma_async_wait_all();")
+                callsite_stream.write("}", cfg, state_id, src_node)
+                callsite_stream.write("flex_intra_cluster_sync();")
+            elif (
+                src_storage == dtypes.StorageType.SoftHier_TCDM
+                and dst_storage == dtypes.StorageType.SoftHier_TCDM
+            ):
+                callsite_stream.write("// SoftHier_TCDM -> SoftHier_TCDM")
+                callsite_stream.write(
+                    "if(flex_is_dm_core())"
+                )
+                callsite_stream.write("{", cfg, state_id, src_node)
+                funcname = "flex_dma_async_1d"
+                callsite_stream.write(('    {func}({args});').format(
+                        func=funcname,
+                        args=', '.join([f'local({src_expr})'] + [f'local({dst_expr})'] + [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
+                )
+                callsite_stream.write("flex_dma_async_wait_all();")
+                callsite_stream.write("}", cfg, state_id, src_node)
+                callsite_stream.write("flex_intra_cluster_sync();")
+            elif (
+                src_storage == dtypes.StorageType.SoftHier_TCDM
+                and dst_storage == dtypes.StorageType.SoftHier_HBM
+            ):
+                callsite_stream.write(
+                    "// SoftHier_TCDM -> SoftHier_HBM"
+                )
+                callsite_stream.write(
+                    "if(flex_is_dm_core())"
+                )
+                callsite_stream.write("{", cfg, state_id, src_node)
+                funcname = "flex_dma_async_1d"
+                callsite_stream.write(('    {func}({args});').format(
+                        func=funcname,
+                        args=', '.join([f'local({src_expr})'] + [f'hbm_addr({dst_expr})'] + [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
+                )
+                callsite_stream.write("flex_dma_async_wait_all();")
+                callsite_stream.write("}", cfg, state_id, src_node)
+                callsite_stream.write("flex_intra_cluster_sync();")
             else:
-                self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+                raise NotImplementedError(
+                    f"Unimplemented copy type: {src_storage} -> {dst_storage}"
+                )
         else:
+            print(
+                sdfg,
+                cfg,
+                dfg,
+                state_id,
+                src_node,
+                dst_node,
+                edge,
+                None,
+                callsite_stream,
+            )
             self._cpu_codegen.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
 
     def copy_memory(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
@@ -1357,6 +1368,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         print("Kernel Name: ", kernel_name)
         # Comprehend grid/block dimensions from scopes
         grid_dims, block_dims, tbmap, dtbmap, _ = self.get_kernel_dimensions(dfg_scope)
+        print("Grid Dims: ", grid_dims)
+        print("Block Dims: ", block_dims)
+        print("TBMap: ", tbmap)
+        print("DTBMap: ", dtbmap)
         is_persistent = (dfg_scope.source_nodes()[0].map.schedule == dtypes.ScheduleType.GPU_Persistent)
 
         # Get parameters of subgraph
@@ -1475,9 +1490,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             prototype_kernel_args[aname] = arg
 
-        kernel_args_typed = [('const ' if k in const_params else '') + v.as_arg(name=k)
+        kernel_args_typed = [f'uint32_t {k}'
                              for k, v in prototype_kernel_args.items()]
-
+        print("Kernel Args Typed: ", kernel_args_typed)
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, cfg, dfg_scope, state_id, scope_entry.map, kernel_name, grid_dims, block_dims,
                                    tbmap, dtbmap, kernel_args_typed, self._globalcode, kernel_stream)
@@ -1491,20 +1506,20 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         node = dfg_scope.source_nodes()[0]
 
         # Set kernel launch bounds
-        if node.gpu_launch_bounds == "-1":
-            launch_bounds = ''
-        elif node.gpu_launch_bounds == "0":
-            if any(symbolic.issymbolic(b) for b in block_dims):
-                launch_bounds = ''
-            else:
-                launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
-        else:
-            launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
+        # if node.gpu_launch_bounds == "-1":
+        #     launch_bounds = ''
+        # elif node.gpu_launch_bounds == "0":
+        #     if any(symbolic.issymbolic(b) for b in block_dims):
+        #         launch_bounds = ''
+        #     else:
+        #         launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
+        # else:
+        #     launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
 
         # Write kernel prototype
         self._localcode.write(
-            '__global__ void %s %s(%s) {\n' %
-            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), sdfg, state_id, node)
+            'void %s(%s) {\n' %
+            (kernel_name, ', '.join(kernel_args_typed)), sdfg, state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
@@ -1903,6 +1918,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         # generator)
         kernel_stream.write('{', cfg, state_id, node)
         kernel_stream.write("// TEST KERNEL SCOPE\n", cfg, state_id, node)
+        kernel_stream.write("flex_global_barrier_xy();\n", cfg, state_id, node)
         kernel_stream.write(f"uint32_t cluster_id = flex_get_cluster_id();\n", cfg, state_id, node)
         kernel_stream.write(f"uint32_t core_id = flex_get_core_id();\n", cfg, state_id, node)
         
@@ -1941,7 +1957,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         scope_entry = dfg_scope.source_nodes()[0]
 
-
+        kernel_stream.write("flex_global_barrier_xy();\n", cfg, state_id, node)
         self._dispatcher.dispatch_subgraph(sdfg,
                                            cfg,
                                            dfg_scope,
@@ -1992,12 +2008,57 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         callsite_stream.write('{', cfg, state_id, scope_entry)
         callsite_stream.write("// TEST DEVICE SCOPE\n")
         # Emit internal array allocation (deallocation handled at MapExit)
+        
+        # Collect arrays to allocate
+        arrays_to_allocate = []
+        for node, parent in dfg_scope.all_nodes_recursive():
+            print(f"NODE: {node}")
+            if isinstance(node, nodes.AccessNode):
+                desc = node.desc(sdfg)
+                if desc.storage == dtypes.StorageType.SoftHier_TCDM:
+                    arrays_to_allocate.append((node.data, desc))
+
+        # Generate size and address macros
+        current_address = '0'  # Base address is 0
+        array_addresses = {}
+        for desc_name, desc in arrays_to_allocate:
+            # Compute total size in bytes without using sizeof()
+            data_size = desc.dtype.bytes  # Number of bytes per element
+            total_size = desc.total_size * data_size  # Total size in bytes
+
+            # Convert total_size to C++ code (string), accounting for symbolic expressions
+            size_expr = cpp.sym2cpp(total_size)
+            size_macro = f'#define {desc_name.upper()}_SIZE ({size_expr})\n'
+            address_macro = f'#define {desc_name.upper()}_ADDR ({current_address})\n'
+            current_address = f'({current_address} + {desc_name.upper()}_SIZE)'
+
+            self._globalcode.write(size_macro, sdfg, state_id, scope_entry)
+            self._globalcode.write(address_macro, sdfg, state_id, scope_entry)
+
+            array_addresses[desc_name] = f'{desc_name.upper()}_ADDR'
+
+        # Proceed to declare addresses in the device kernel
+        for desc_name, desc in arrays_to_allocate:
+            ptr_name = cpp.ptr(desc_name, desc, sdfg, self._frame)
+            ctypedef = f'{desc.dtype.ctype} *'
+
+            # Declare the pointer (if needed)
+            self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer, ctypedef)
+
+            # Declare uint32_t address variable and assign from macro
+            address_macro = array_addresses[desc_name]
+            addr_var = f'{desc_name}'
+            callsite_stream.write(f'uint32_t {addr_var} = {address_macro};', sdfg, state_id, scope_entry)
+
         self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
         # Generate all index arguments for block
         if scope_map.schedule == dtypes.ScheduleType.SoftHier_Cluster:
+            block_dims = self._block_dims
             brange = subsets.Range(scope_map.range[::-1])
             kdims = brange.size()
+            minels = brange.min_element()
+            maxels = brange.max_element()
             dsym = [
                 symbolic.symbol('__DAPT%d' % i, nonnegative=True, integer=True) 
                 for i in range(len(brange))
@@ -2016,6 +2077,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                for i in range(min(len(brange), 3)):
+                    varname = scope_map.params[-i - 1]
+                    condition = ''
+                    condition += '%s <= %s' % (varname, brange.max_element()[i])
+                    if len(condition) > 0:
+                        callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)    
+
             if len(brange) == 2:
                 for i in range(min(len(brange), 3)):
                     varname = scope_map.params[-i - 1]
@@ -2030,35 +2098,36 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
             # Generate conditions for this block's execution using min and max
             # element, e.g. skipping out-of-bounds threads in trailing block
-            minels = brange.min_element()
-            maxels = brange.max_element()
-            for i, (v, minel, maxel) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
-                condition = ''
+            
+            callsite_stream.write(f'// Minels: {minels}, Maxels: {maxels}', cfg, state_id, scope_entry)
+            # for i, (v, minel, maxel) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
+            #     print(f"V: {v}, Minel: {minel}, Maxel: {maxel}")
+            #     condition = ''
 
-                # Optimize conditions if they are always true
-                #############################################
+            #     # Optimize conditions if they are always true
+            #     #############################################
 
-                # Block range start
-                if i >= 3 or (dsym[i] >= minel) != True:
-                    condition += '%s >= %s' % (v, _topy(minel))
+            #     # Block range start
+            #     if i >= 3 or (dsym[i] >= minel) != True:
+            #         condition += '%s >= %s' % (v, _topy(minel))
 
-                # Special case: block size is exactly the range of the map (0:b)
-                if i >= 3:
-                    skipcond = False
-                else:
-                    skipcond = dsym_end[i].subs({dsym[i]: minel}) == maxel
+            #     # Special case: block size is exactly the range of the map (0:b)
+            #     if i >= 3:
+            #         skipcond = False
+            #     else:
+            #         skipcond = dsym_end[i].subs({dsym[i]: minel}) == maxel
 
-                # Block range end
-                if i >= 3 or (not skipcond and (dsym_end[i] < maxel) != True):
-                    if len(condition) > 0:
-                        condition += ' && '
-                    condition += '%s < %s' % (v, _topy(maxel + 1))
+            #     # Block range end
+            #     if i >= 3 or (not skipcond and (dsym_end[i] < maxel) != True):
+            #         if len(condition) > 0:
+            #             condition += ' && '
+            #         condition += '%s < %s' % (v, _topy(maxel + 1))
 
-                # Emit condition in code
-                if len(condition) > 0:
-                    callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
-                else:
-                    callsite_stream.write('{', cfg, state_id, scope_entry)
+            #     # Emit condition in code
+            #     if len(condition) > 0:
+            #         callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
+            #     else:
+            #         callsite_stream.write('{', cfg, state_id, scope_entry)
 
         ##########################################################
 
@@ -2070,7 +2139,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                             function_stream,
                                             callsite_stream,
                                             skip_entry_node=True)
-
+        callsite_stream.write("flex_global_barrier_xy();\n", cfg, state_id, node)
         # If there are any other threadblock maps down the road,
         # synchronize the thread-block / grid
         parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
