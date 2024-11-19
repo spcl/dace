@@ -2444,7 +2444,7 @@ class AST_translator:
                                shape=sizes,
                                dtype=datatype,
                                offset=offset,
-                               strides=strides,
+                              strides=strides,
                                transient=transient)
 
         self.all_array_names.append(self.name_mapping[sdfg][node.name])
@@ -3023,7 +3023,7 @@ def prune_unused_children(ast: Program, parse_order: List[str], simple_graph: nx
 
 
 def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir,
-                                               icon_sdfgs_dir, normalize_offsets: bool = False):
+                                               icon_sdfgs_dir, normalize_offsets: bool = False,propagation_info=None):
     """
     Creates an SDFG from a fortran file
     :param source_string: The fortran file name
@@ -3396,6 +3396,59 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             raise NameError("Not all functions were transformed to subroutines")
         i.function_definitions = []
     program.function_definitions = []
+
+#let's fix the propagation info for ECRAD
+
+    for i in propagation_info:
+        if isinstance(i[0],ast_internal_classes.Data_Ref_Node):
+            i[0].parent_ref.name=i[0].parent_ref.name.replace("ecrad_conf","config")
+
+#time to trim the ast using the propagation info
+    #adding enums from radiotion config
+    parkind_ast= parser(ffr(file_candidate="/home/alex/icon-model/src/shared/mo_kind.f90"))
+    parkinds=partial_ast.create_ast(parkind_ast)
+    radiation_config_ast= parser(ffr(file_candidate="/home/alex/icon-model/src/configure_model/mo_radiation_config.f90"))
+    radiation_config_internal_ast=partial_ast.create_ast(radiation_config_ast)
+    enum_propagator=ast_transforms.PropagateEnums()
+    enum_propagator.visit(radiation_config_internal_ast)
+
+    program=enum_propagator.generic_visit(program)
+    replacements=1
+    step=1
+    while replacements>0:
+        program=enum_propagator.generic_visit(program)
+        prop=ast_transforms.AssignmentPropagator(propagation_info)
+        program=prop.visit(program)
+        replacements=prop.replacements
+        if_eval=ast_transforms.IfEvaluator()
+        program=if_eval.visit(program)
+        replacements+=if_eval.replacements
+        print("Made "+ str(replacements) + " replacements in step " +  str(step) + " Prop: "+ str(prop.replacements) + " If: " + str(if_eval.replacements))
+        step+=1
+
+    unusedFunctionFinder = ast_transforms.FindUnusedFunctions("radiation",parse_order)
+    unusedFunctionFinder.visit(program)    
+    used_funcs=unusedFunctionFinder.used_names
+    needed=[]
+    current_list=used_funcs['radiation']
+    for i in reversed(parse_order):
+        for j in program.modules:
+            if j.name.name==i:
+                for k in j.subroutine_definitions:
+                    if k.name.name in current_list:
+                        current_list+=used_funcs[k.name.name]
+                        needed.append([j.name.name,k.name.name])
+        
+    for i in program.modules:
+        subroutines=[]
+        for j in needed:
+            if i.name.name==j[0]:
+                
+                for k in i.subroutine_definitions:
+                    if k.name.name==j[1]:
+                        subroutines.append(k)
+        i.subroutine_definitions=subroutines         
+
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
@@ -3504,8 +3557,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program.functions_and_subroutines = partial_ast.functions_and_subroutines
     unordered_modules = program.modules
 
-    arg_pruner = ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes)
-    arg_pruner.visit(program)
+    #arg_pruner = ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes)
+    #arg_pruner.visit(program)
 
     program.modules = []
     for i in parse_order:
@@ -3518,7 +3571,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     for j in program.subroutine_definitions:
         # if j.name.name!="cloudscouter":
-        if j.name.name != "tspectralplanck_calc":
+        #if j.name.name != "tspectralplanck_init":
+        if j.name.name != "radiation":    
+        #if j.name.name != "solver_homogeneous_lw":
             # if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             # if j.name.name!="rot_vertex_ri":
             # if j.name.name!="velocity_tendencies":
@@ -3567,7 +3622,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         # copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
             # if j.name.name!="cloudscouter":
-            if j.name.name != "cloud_cover_srt":
+            #if j.name.name != "solver_homogeneous_lw":
+            #if j.name.name != "tspectralplanck_init":
+            if j.name.name != "radiation":
+            #if j.name.name != "radiation_scheme":
                 # if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
                 # if j.name.name!="rot_vertex_ri":
                 # if j.name.name!="velocity_tendencies":
@@ -3584,7 +3642,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 startpoint=startpoint,
                 sdfg_path=icon_sdfgs_dir,
                 # toplevel_subroutine_arg_names=arg_pruner.visited_funcs[toplevel_subroutine],
-                subroutine_used_names=arg_pruner.used_in_all_functions,
+                #subroutine_used_names=arg_pruner.used_in_all_functions,
                 normalize_offsets=normalize_offsets
             )
             sdfg = SDFG(j.name.name)

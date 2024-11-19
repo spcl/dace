@@ -295,6 +295,7 @@ class InternalFortranAst:
             "Enum_Def_Stmt": self.enum_def_stmt,
             "Enumerator_Def_Stmt": self.enumerator_def_stmt,
             "Enumerator_List": self.enumerator_list,
+            "Enumerator": self.enumerator,
             "End_Enum_Stmt": self.end_enum_stmt,
             "Exit_Stmt": self.exit_stmt,
             "Enum_Def": self.enum_def,
@@ -539,6 +540,10 @@ class InternalFortranAst:
     def enum_def_stmt(self, node: FASTNode):
         children = self.create_children(node)
         return None
+    
+    def enumerator(self, node: FASTNode):
+        children = self.create_children(node)
+        return children
 
     def enumerator_def_stmt(self, node: FASTNode):
         children = self.create_children(node)
@@ -783,7 +788,13 @@ class InternalFortranAst:
 
     def allocate_stmt(self, node: FASTNode):
         children = self.create_children(node)
-        return ast_internal_classes.Allocate_Stmt_Node(allocation_list=children[1])
+        if isinstance(children[0], ast_internal_classes.Name_Node):
+            print(children[0].name)
+        if isinstance(children[0], ast_internal_classes.Data_Ref_Node):
+            print(children[0].parent_ref.name+"."+children[0].part_ref.name)
+            
+        line=get_line(node)
+        return ast_internal_classes.Allocate_Stmt_Node(name=children[0],allocation_list=children[1],line_number=line)
 
     def allocation_list(self, node: FASTNode):
         children = self.create_children(node)
@@ -791,9 +802,13 @@ class InternalFortranAst:
 
     def allocation(self, node: FASTNode):
         children = self.create_children(node)
-        name = get_child(children, ast_internal_classes.Name_Node)
+        name = children[0]
+        #if isinstance(children[0], ast_internal_classes.Name_Node):
+        #    print(children[0].name)
+        #if isinstance(children[0], ast_internal_classes.Data_Ref_Node):
+        #    print(children[0].parent_ref.name+"."+children[0].part_ref.name)
         shape = get_child(children, ast_internal_classes.Allocate_Shape_Spec_List)
-        return ast_internal_classes.Allocation_Node(name=name, shape=shape)
+        return ast_internal_classes.Allocation_Node(name=children[0], shape=shape)
 
     def allocate_shape_spec_list(self, node: FASTNode):
         children = self.create_children(node)
@@ -1564,7 +1579,7 @@ class InternalFortranAst:
         for j in range(1, len(cond_end.op)):
             cond_add = ast_internal_classes.BinOp_Node(op=cond_end.op[j], lval=cond_start, rval=cond_end.cond[j],
                                                        line_number=line)
-            cond = ast_internal_classes.BinOp_Node(op=".AND.", lval=cond, rval=cond_add, line_number=line)
+            cond = ast_internal_classes.BinOp_Node(op=".OR.", lval=cond, rval=cond_add, line_number=line)
 
         toplevelIf = ast_internal_classes.If_Stmt_Node(cond=cond, line_number=line)
         currentIf = toplevelIf
@@ -1576,7 +1591,7 @@ class InternalFortranAst:
                 for j in range(1, len(i.op)):
                     cond_add = ast_internal_classes.BinOp_Node(op=i.op[j], lval=cond_start, rval=i.cond[j],
                                                                line_number=line)
-                    cond = ast_internal_classes.BinOp_Node(op=".AND.", lval=cond, rval=cond_add, line_number=line)
+                    cond = ast_internal_classes.BinOp_Node(op=".OR.", lval=cond, rval=cond_add, line_number=line)
 
                 newif = ast_internal_classes.If_Stmt_Node(cond=cond, line_number=line)
                 currentIf.body = ast_internal_classes.Execution_Part_Node(execution=body)
@@ -1632,9 +1647,13 @@ class InternalFortranAst:
             return [[".EQ.", children[0]]]
         if len(children) == 2:
             return [[".EQ.", children[0]], [".EQ.", children[1]]]
-
         else:
-            raise ValueError("Can't parse case range list")
+            retlist = []
+            for i in children:
+                retlist.append([".EQ.", i])
+            return retlist    
+        #else:
+        #    raise ValueError("Can't parse case range list")
 
     def end_select_stmt(self, node: FASTNode):
         return node

@@ -168,15 +168,26 @@ class Name_Range_Node(FNode):
     _attributes = ('name', 'type', 'arrname', 'pos')
     _fields = ()
 
+class Where_Construct_Node(FNode):
+    _attributes = ()
+    _fields = ('main_body', 'main_cond', 'else_body','elifs_body','elifs_cond')
 
 class Type_Name_Node(FNode):
     _attributes = ('name', 'type')
     _fields = ()
 
+class Generic_Binding_Node(FNode):
+    _attributes = ()
+    _fields = ('name', 'binding')
 
 class Specification_Part_Node(FNode):
     _fields = ('specifications', 'symbols', 'interface_blocks', 'typedecls','enums')
 
+class Stop_Stmt_Node(FNode):
+    _attributes = ('code')
+
+class Error_Stmt_Node(FNode):
+    _fields = ('error')    
 
 class Execution_Part_Node(FNode):
     _fields = ('execution', )
@@ -277,6 +288,11 @@ class Arg_List_Node(FNode):
 class Component_Spec_List_Node(FNode):
     _fields = ('args', )
 
+class Allocate_Object_List_Node(FNode):
+    _fields = ('list', )
+
+class Deallocate_Stmt_Node(FNode):
+    _fields = ('list', )    
 
 class Decl_Stmt_Node(Statement_Node):
     _attributes = ()
@@ -417,6 +433,75 @@ class Else_Separator_Node(FNode):
 class Procedure_Separator_Node(FNode):
     _attributes = ()
     _fields = ('parent_ref', 'part_ref')
+
+class Pointer_Object_List_Node(FNode):
+    _attributes = ()
+    _fields = ('list')
+
+class Read_Stmt_Node(FNode):
+    _attributes = ()
+    _fields = ('args')
+
+class Close_Stmt_Node(FNode):
+    _attributes = ()
+    _fields = ('args')   
+
+class Open_Stmt_Node(FNode):
+    _attributes = ()
+    _fields = ('args')
+
+class Associate_Stmt_Node(FNode):
+    _attributes = ()
+    _fields = ('args')
+
+class Associate_Construct_Node(FNode):
+    _attributes = ()
+    _fields = ('associate', 'body')    
+
+class Association_List_Node(FNode):    
+    _attributes = ()
+    _fields = ('list')
+
+class Association_Node(FNode):
+    _attributes = ()
+    _fields = ('name', 'expr')    
+
+class Connect_Spec_Node(FNode):
+    _attributes = ('type')
+    _fields = ('args')
+
+class Close_Spec_Node(FNode):
+    _attributes = ('type')
+    _fields = ('args')
+
+class Close_Spec_List_Node(FNode):
+    _attributes = ()
+    _fields = ('list')      
+
+class IO_Control_Spec_Node(FNode):
+    _attributes = ('type')
+    _fields = ('args')    
+
+class IO_Control_Spec_List_Node(FNode):
+    _attributes = ()
+    _fields = ('list')    
+
+class Connect_Spec_List_Node(FNode):
+    _attributes = ()
+    _fields = ('list')    
+
+class Nullify_Stmt_Node(FNode):
+    _attributes = ()
+    _fields = ('list')    
+
+class Namelist_Stmt_Node(FNode):
+    _attributes = ()
+    _fields = ('list','name' )
+
+class Namelist_Group_Object_List_Node(FNode):
+    _attributes = ()
+    _fields = ('list')
+
 
 class Bound_Procedures_Node(FNode):
     _attributes = ()

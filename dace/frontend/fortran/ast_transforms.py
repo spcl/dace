@@ -4,6 +4,8 @@ from dace.frontend.fortran import ast_internal_classes, ast_utils
 from typing import Dict, List, Optional, Tuple, Set, Union
 import copy
 
+from dace import symbolic as sym
+import sympy as sp
     
 class Structure:
 
@@ -209,7 +211,7 @@ class Flatten_Classes(NodeTransformer):
                                 optional_args_count=new_node.optional_args_count,
                                 elemental=new_node.elemental,
                                 line_number=new_node.line_number)
-                        elif j.args[2] is not None:
+                        elif hasattr(j,"args") and j.args[2] is not None:
                             if j.args[2].name==node.name.name:
                                 
                                 return ast_internal_classes.Subroutine_Subprogram_Node(
@@ -671,7 +673,7 @@ class CallToArray(NodeTransformer):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.excepted_funcs = [
-            "malloc", "pow", "cbrt", "__dace_sign", "tanh", "atan2",
+            "malloc", "pow", "cbrt", "__dace_sign","__dace_allocated", "tanh", "atan2",
             "__dace_epsilon", *FortranIntrinsics.function_names()
         ]
 
@@ -2623,7 +2625,11 @@ class PropagateEnums(NodeTransformer):
                                 if isinstance(l, ast_internal_classes.Name_Node):
                                     self.parsed_enums[l.name]=running_count      
                                     running_count+=1
+                                elif isinstance(l, list):
+                                    self.parsed_enums[l[0].name]=l[2].value
+                                    running_count=int(l[2].value)+1
                                 else:
+
                                     raise ValueError("Unknown enum type")
                       else:
                           raise ValueError("Unknown enum type")
@@ -2639,3 +2645,122 @@ class PropagateEnums(NodeTransformer):
             return ast_internal_classes.Int_Literal_Node(value=str(self.parsed_enums[node.name]))
 
         return node
+    
+
+class IfEvaluator(NodeTransformer):
+    def __init__(self):
+        self.replacements = 0
+
+    def visit_If_Stmt_Node(self, node):
+        try:
+            text=ast_utils.TaskletWriter({},{}).write_code(node.cond)
+        except:
+            text=None
+            return self.generic_visit(node)
+        #print(text)
+        try:
+            evaluated=sym.evaluate(sym.pystr_to_symbolic(text),{})
+        except:
+            print("Failed: "+ text)
+            return self.generic_visit(node)
+
+        if evaluated == sp.true:
+            print("Expr: "+text +" eval to True replace")
+            self.replacements+=1
+            return node.body
+        elif evaluated == sp.false:
+            print("Expr: "+text +" eval to False replace")
+            self.replacements+=1
+            return node.body_else
+            
+
+        return self.generic_visit(node)
+
+
+class AssignmentLister(NodeTransformer):
+    def __init__(self,correction=[]):
+        self.simple_assignments = []
+        self.correction=correction
+
+    def reset(self):
+        self.simple_assignments = []    
+
+    def visit_BinOp_Node(self, node):
+        if node.op == "=":
+            if isinstance(node.lval, ast_internal_classes.Name_Node):
+                for i in self.correction:
+                    if node.lval.name == i[0]:
+                        node.rval.value = i[1]
+            self.simple_assignments.append((node.lval, node.rval))
+        return node    
+
+class AssignmentPropagator(NodeTransformer):
+    def __init__(self,simple_assignments):
+        self.simple_assignments = simple_assignments
+        self.replacements = 0
+
+    def visit_If_Stmt_Node(self, node):
+        test=self.generic_visit(node)
+        return ast_internal_classes.If_Stmt_Node(line_number=node.line_number, cond=test.cond, body=test.body, body_else=test.body_else)    
+
+    def generic_visit(self, node: ast_internal_classes.FNode):
+        for field, old_value in iter_fields(node):
+            if isinstance(old_value, list):
+                new_values = []
+                for value in old_value:
+                    if isinstance(value, ast_internal_classes.FNode):
+                        value = self.visit(value)
+                        if value is None:
+                            continue
+                        elif not isinstance(value, ast_internal_classes.FNode):
+                            new_values.extend(value)
+                            continue
+                    new_values.append(value)
+                old_value[:] = new_values
+            elif isinstance(old_value, ast_internal_classes.FNode):
+                done=False
+                if isinstance(node, ast_internal_classes.BinOp_Node):
+                            if node.op=="=":
+                                if old_value==node.lval:
+                                    new_node = self.visit(old_value)
+                                    done=True          
+                if not done:
+                    for i in self.simple_assignments:
+                            if old_value == i[0]:
+                                old_value = i[1]
+                                self.replacements+=1
+                                break
+                    new_node = self.visit(old_value)        
+                
+                if new_node is None:
+                    delattr(node, field)
+                else:
+                    setattr(node, field, new_node)
+        return node    
+    
+
+class getCalls(NodeVisitor):
+    def __init__(self):
+        self.calls = []
+
+    def visit_Call_Expr_Node(self, node):
+        self.calls.append(node.name.name)
+        for arg in node.args:
+            self.visit(arg)
+        return
+
+class FindUnusedFunctions(NodeVisitor):
+    def __init__(self, root,parse_order):
+        self.root = root
+        self.parse_order=parse_order
+        self.used_names ={}
+
+    def visit_Subroutine_Subprogram_Node(self, node):
+        getacall=getCalls()
+        getacall.visit(node.execution_part)
+        used_calls=getacall.calls
+        self.used_names[node.name.name]=used_calls
+        return
+
+
+    

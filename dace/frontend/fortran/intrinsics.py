@@ -1566,8 +1566,13 @@ class FortranIntrinsics:
             "IBCLR": "__dace_ibclr",
             "IBITS": "__dace_ibits",
             "IAND": "__dace_iand",
+            "FRACTION": "__dace_fraction",
+            "NEW_LINE": "__dace_new_line",
+            "PRECISION": "__dace_precision",
         }
         if func_name in replacements:
+            if func_name=="__dace_allocated":
+                print("ALLOCATED ", node.parent)
             return ast_internal_classes.Name_Node(name=replacements[func_name])
         elif DirectReplacement.replacable_name(func_name):
 

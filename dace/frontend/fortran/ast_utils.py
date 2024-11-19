@@ -382,8 +382,8 @@ class TaskletWriter:
                  name_mapping=None,
                  input: List[str] = None,
                  input_changes: List[str] = None,
-                 placeholders=None,
-                 placeholders_offsets=None,
+                 placeholders={},
+                 placeholders_offsets={},
                  rename_dict=None
                  ):
         self.outputs = outputs
@@ -504,7 +504,8 @@ class TaskletWriter:
                     return "0"
                 offset = self.sdfg.arrays[sdfg_name].offset[location[1]]
                 return self.write_code(str(offset))
-        for i in self.sdfg.arrays:
+        if self.sdfg is not None:    
+          for i in self.sdfg.arrays:
             sdfg_name = self.mapping.get(self.sdfg).get(name)
             if sdfg_name == i:
                 name = i
