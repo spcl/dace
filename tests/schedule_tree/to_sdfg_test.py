@@ -146,7 +146,7 @@ def test_state_boundaries_cfg():
             tn.TaskletNode(nodes.Tasklet('bla1', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
             tn.ForScope([
                 tn.TaskletNode(nodes.Tasklet('bla2', {}, {'out'}, 'out = i'), {}, {'out': dace.Memlet('A[1]')}),
-            ], cf.ForScope(None, None, 'i', None, '0', CodeBlock('i < 20'), 'i + 1', None, [])),
+            ], cf.ForScope(None, None, True, 'i', None, '0', CodeBlock('i < 20'), 'i + 1', None, [])),
         ],
     )
 
