@@ -12,7 +12,7 @@ import networkx as nx
 from fparser.common.readfortran import FortranFileReader as ffr, FortranStringReader, FortranFileReader
 from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec, Derived_Type_Def, End_Module_Stmt, \
-    Contains_Stmt, Rename, Name, Subroutine_Subprogram, Function_Subprogram
+    Contains_Stmt, Rename, Name, Subroutine_Subprogram, Function_Subprogram, Module, Main_Program
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -3040,6 +3040,10 @@ def prune_unused_children(ast: Program, simple_graph: nx.DiGraph, actually_used_
     top_level_ast: str = parse_order.pop() if parse_order else ast
     new_children = []
     for mod in ast.children:
+        if not isinstance(mod, (Module, Main_Program)):
+            # Leave it alone if it is not a module  or program node (e.g., a subroutine).
+            new_children.append(mod)
+            continue
         stmt, spec, exec = mod.children[0:3]
         mod_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
         if mod_name not in parse_order and mod_name != top_level_ast:
