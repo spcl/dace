@@ -145,6 +145,7 @@ class InternalFortranAst:
             "Subroutine_Subprogram": self.subroutine_subprogram,
             "Function_Subprogram": self.function_subprogram,
             "Module_Subprogram_Part": self.module_subprogram_part,
+            "Internal_Subprogram_Part": self.internal_subprogram_part,
             "Subroutine_Stmt": self.subroutine_stmt,
             "Function_Stmt": self.function_stmt,
             "Prefix": self.prefix_stmt,
@@ -679,6 +680,7 @@ class InternalFortranAst:
         name = get_child(children, ast_internal_classes.Subroutine_Stmt_Node)
         specification_part = get_child(children, ast_internal_classes.Specification_Part_Node)
         execution_part = get_child(children, ast_internal_classes.Execution_Part_Node)
+        internal_subprogram_part = get_child(children, ast_internal_classes.Internal_Subprogram_Part_Node)
         return_type = ast_internal_classes.Void
 
         optional_args_count = 0
@@ -696,6 +698,7 @@ class InternalFortranAst:
             mandatory_args_count=mandatory_args_count,
             specification_part=specification_part,
             execution_part=execution_part,
+            internal_subprogram_part=internal_subprogram_part,
             type=return_type,
             line_number=name.line_number,
             elemental=name.elemental,
@@ -859,6 +862,13 @@ class InternalFortranAst:
         function_definitions = [i for i in children if isinstance(i, ast_internal_classes.Function_Subprogram_Node)]
         subroutine_definitions = [i for i in children if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node)]
         return ast_internal_classes.Module_Subprogram_Part_Node(function_definitions=function_definitions,
+                                                                subroutine_definitions=subroutine_definitions)
+
+    def internal_subprogram_part(self, node: FASTNode):
+        children = self.create_children(node)
+        function_definitions = [i for i in children if isinstance(i, ast_internal_classes.Function_Subprogram_Node)]
+        subroutine_definitions = [i for i in children if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node)]
+        return ast_internal_classes.Internal_Subprogram_Part_Node(function_definitions=function_definitions,
                                                                 subroutine_definitions=subroutine_definitions)
 
     def interface_block(self, node: FASTNode):
