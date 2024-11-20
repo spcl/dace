@@ -756,27 +756,34 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if isinstance(dst_node, nodes.Tasklet):
             # Copy into tasklet
+            desc = sdfg.arrays[memlet.data]
+            deferred_size_names = self._get_deferred_size_names(desc, memlet)
             stream.write(
-                "    " + self.memlet_definition(sdfg, memlet, False, vconn, dst_node.in_connectors[vconn]),
+                "    " + self.memlet_definition(sdfg, memlet, False, vconn, dst_node.in_connectors[vconn], deferred_size_names=deferred_size_names),
                 cfg,
                 state_id,
                 [src_node, dst_node],
             )
-            stream.write(
-                "//u1"
-            )
+            if deferred_size_names is not None:
+                stream.write(
+                    "// Size uses deferred allocation"
+                )
+
             return
         elif isinstance(src_node, nodes.Tasklet):
             # Copy out of tasklet
+            desc = sdfg.arrays[memlet.data]
+            deferred_size_names = self._get_deferred_size_names(desc, memlet)
             stream.write(
-                "    " + self.memlet_definition(sdfg, memlet, True, uconn, src_node.out_connectors[uconn]),
+                "    " + self.memlet_definition(sdfg, memlet, True, uconn, src_node.out_connectors[uconn], deferred_size_names=deferred_size_names),
                 cfg,
                 state_id,
                 [src_node, dst_node],
             )
-            stream.write(
-                "//u2"
-            )
+            if deferred_size_names is not None:
+                stream.write(
+                    "// Size uses deferred allocation"
+                )
             return
         else:  # Copy array-to-array
             src_nodedesc = src_node.desc(sdfg)
@@ -874,6 +881,7 @@ class CPUCodeGen(TargetCodeGenerator):
             #############################################
 
             state_dfg: SDFGState = cfg.nodes()[state_id]
+
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = cpp.memlet_copy_to_absolute_strides(
                 self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, self._packed_types)
@@ -1043,6 +1051,27 @@ class CPUCodeGen(TargetCodeGenerator):
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
         return (f'dace::wcr_custom<{dtype.ctype}>:: template {func}({custom_reduction}, {ptr}, {inname})')
 
+    def _get_deferred_size_names(self, desc, memlet):
+        if (desc.storage != dtypes.StorageType.GPU_Global and
+            desc.storage != dtypes.StorageType.CPU_Heap and
+            not desc.transient):
+            return None
+        def check_dace_defer(elements):
+            for elem in elements:
+                if isinstance(elem, symbolic.symbol) and str(elem).startswith("__dace_defer"):
+                    return True
+            return False
+        deferred_size_names = None
+        if check_dace_defer(desc.shape):
+            if desc.storage == dtypes.StorageType.GPU_Global or desc.storage == dtypes.StorageType.CPU_Heap:
+                deferred_size_names = []
+                for i, elem in enumerate(desc.shape):
+                    if str(elem).startswith("__dace_defer"):
+                        deferred_size_names.append(f"__{memlet.data}_dim{i}_size" if desc.storage == dtypes.StorageType.GPU_Global else f"{desc.size_desc_name}[{i}]")
+                    else:
+                        deferred_size_names.append(elem)
+        return deferred_size_names if len(deferred_size_names) > 0 else None
+
     def process_out_memlets(self,
                             sdfg: SDFG,
                             cfg: ControlFlowRegion,
@@ -1179,22 +1208,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             # If the storage type if CPU_Heap or GPU_Global then it might be requiring deferred allocation
                             # We can check if the array requires sepcial access using A_size[0] (CPU) or __A_dim0_size (GPU0)
                             # by going through the shape and checking for symbols starting with __dace_defer
-                            def check_dace_defer(elements):
-                                for elem in elements:
-                                    if isinstance(elem, symbolic.symbol) and str(elem).startswith("__dace_defer"):
-                                        return True
-                                return False
-                            deferred_size_names = None
-                            if check_dace_defer(desc.shape):
-                                if desc.storage == dtypes.StorageType.GPU_Global or desc.storage == dtypes.StorageType.CPU_Heap:
-                                    deferred_size_names = []
-                                    for i, elem in enumerate(desc.shape):
-                                        if str(elem).startswith("__dace_defer"):
-                                            deferred_size_names.append(f"__{memlet.data}_dim{i}_size" if desc.storage == dtypes.StorageType.GPU_Global else f"{desc.size_desc_name}[{i}]")
-                                        else:
-                                            deferred_size_names.append(elem)
-                                else:
-                                    raise Exception("Deferred Allocation only supported on array storages of type GPU_Global or CPU_Heap")
+                            deferred_size_names = self._get_deferred_size_names(desc, memlet)
                             expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame, deferred_size_names=deferred_size_names)
                             write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
 
@@ -1332,7 +1346,8 @@ class CPUCodeGen(TargetCodeGenerator):
                           local_name: str,
                           conntype: Union[data.Data, dtypes.typeclass] = None,
                           allow_shadowing: bool = False,
-                          codegen: 'CPUCodeGen' = None):
+                          codegen: 'CPUCodeGen' = None,
+                          deferred_size_names = None):
         # TODO: Robust rule set
         if conntype is None:
             raise ValueError('Cannot define memlet for "%s" without connector type' % local_name)
@@ -1381,7 +1396,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                 decouple_array_interfaces=decouple_array_interfaces)
 
         result = ''
-        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
+        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame, deferred_size_names=deferred_size_names)
                 if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
 
         if expr != ptr:
@@ -1425,7 +1440,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if not output:
                     if isinstance(desc, data.Stream) and desc.is_stream_array():
-                        index = cpp.cpp_offset_expr(desc, memlet.subset)
+                        index = cpp.cpp_offset_expr(desc, memlet.subset, deferred_size_names=deferred_size_names)
                         expr = f"{memlet.data}[{index}]"
                     result += f'{memlet_type} {local_name} = ({expr}).pop();'
                     defined = DefinedType.Scalar

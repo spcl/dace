@@ -232,6 +232,14 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
         elif memlet.data == dst_node.data:
             copy_shape, src_strides = reshape_strides(dst_subset, dst_strides, src_strides, copy_shape)
 
+    def replace_dace_defer_dim(string, arrname):
+        pattern = r"__dace_defer_dim(\d+)"
+        return re.sub(pattern, r"A_size[\1]", string)
+
+    # TODO: do this better?
+    dst_expr = replace_dace_defer_dim(dst_expr, dst_node.data) if dst_expr is not None else None
+    src_expr = replace_dace_defer_dim(src_expr, src_node.data) if src_expr is not None else None
+
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 

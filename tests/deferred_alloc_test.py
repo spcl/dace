@@ -1,5 +1,6 @@
 import dace
 import numpy
+import cupy
 
 def _get_trivial_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient: bool, write_size="0:2"):
     sdfg = dace.sdfg.SDFG(name="deferred_alloc_test")
@@ -11,17 +12,15 @@ def _get_trivial_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient: bo
     an_1 = state.add_access('A')
     an_1.add_in_connector('_write_size')
 
-    an_2 = state.add_array(name="user_size", shape=(2,), dtype=numpy.uint64)
+    an_2 = state.add_array(name="user_size", shape=(2,), dtype=dace.uint64)
 
     state.add_edge(an_2, None, an_1, '_write_size',
                 dace.Memlet(expr=f"user_size[{write_size}]") )
 
-    sdfg.save("def_alloc_1.sdfg")
-
     return sdfg
 
 
-def _get_assign_map_sdfg(storage_type: dace.dtypes.StorageType, transient: bool):
+def _get_assign_map_sdfg(storage_type: dace.dtypes.StorageType, transient: bool, schedule_type: dace.dtypes.ScheduleType.Default):
     sdfg = dace.sdfg.SDFG(name="deferred_alloc_test_4")
 
     sdfg.add_array(name="A", shape=(15, "__dace_defer"), dtype=dace.float32, storage=storage_type,
@@ -33,12 +32,13 @@ def _get_assign_map_sdfg(storage_type: dace.dtypes.StorageType, transient: bool)
     an_1.add_in_connector('_write_size')
     an_1.add_out_connector('_read_size')
 
-    an_2 = state.add_array(name="user_size", shape=(2,), dtype=numpy.uint64)
+    an_2 = state.add_array(name="user_size", shape=(2,), dtype=dace.uint64)
 
     state.add_edge(an_2, None, an_1, '_write_size',
                 dace.Memlet(expr="user_size[0:2]") )
 
-    map_entry, map_exit = state.add_map(name="map",ndrange={"i":dace.subsets.Range([(0,15-1,1)]),"j":dace.subsets.Range([(0,"__A_dim1_size-1", 1)]) })
+    map_entry, map_exit = state.add_map(name="map",ndrange={"i":dace.subsets.Range([(0,15-1,1)]),"j":dace.subsets.Range([(0,"__A_dim1_size-1", 1)]) },
+                                        schedule=schedule_type)
     state.add_edge(an_1, '_read_size', map_entry, "__A_dim1_size", dace.Memlet(expr="A_size[1]"))
     map_entry.add_in_connector("__A_dim1_size")
     map_exit.add_in_connector("IN_A")
@@ -51,8 +51,17 @@ def _get_assign_map_sdfg(storage_type: dace.dtypes.StorageType, transient: bool)
     an_3 = state.add_access('A')
     state.add_edge(map_exit, "OUT_A", an_3, None, dace.Memlet(data="A", subset=dace.subsets.Range([(0,15-1, 1), (0,"__A_dim1_size-1", 1)])))
 
+    arr_name, arr = sdfg.add_array(name="example_array", dtype=dace.float32, shape=(1,), transient=False, storage=storage_type)
+    arrn = state.add_access(arr_name)
+
+    if storage_type == dace.dtypes.StorageType.CPU_Heap:
+        assert (schedule_type == dace.dtypes.ScheduleType.Sequential)
+    elif storage_type == dace.dtypes.StorageType.GPU_Global:
+        assert (schedule_type == dace.dtypes.ScheduleType.GPU_Device)
+
     an_3.add_out_connector('_read_size')
-    map_entry2, map_exit2 = state.add_map(name="map2",ndrange={"i":dace.subsets.Range([(0,15-1,1)]),"j":dace.subsets.Range([(0,"__A_dim1_size-1", 1)]) })
+    map_entry2, map_exit2 = state.add_map(name="map2",ndrange={"i":dace.subsets.Range([(0,15-1,1)]),"j":dace.subsets.Range([(0,"__A_dim1_size-1", 1)])},
+                                            schedule=schedule_type)
     state.add_edge(an_3, '_read_size', map_entry2, "__A_dim1_size", dace.Memlet(expr="A_size[1]"))
     state.add_edge(an_3, None, map_entry2, "IN_A", dace.Memlet(expr="A[0:15, 0:__A_dim1_size]"))
     map_entry2.add_in_connector("__A_dim1_size")
@@ -61,14 +70,14 @@ def _get_assign_map_sdfg(storage_type: dace.dtypes.StorageType, transient: bool)
     map_exit2.add_in_connector("IN_A")
     map_exit2.add_out_connector("OUT_A")
 
-    t2 = state.add_tasklet(name="check", inputs={"_in"}, outputs={"_out"}, code='if (_in != 5.0){ throw std::runtime_error("fail"); } \n _out=_in;', language=dace.dtypes.Language.CPP)
+    t2 = state.add_tasklet(name="check", inputs={"_in"}, outputs={"_out"}, code='_out = _in', language=dace.dtypes.Language.Python)
     state.add_edge(map_entry2, "OUT_A", t2, "_in", dace.Memlet(expr="A[i, j]"))
     state.add_edge(t2, "_out", map_exit2, "IN_A", dace.Memlet(expr="A[i, j]"))
 
     an_5 = state.add_access('A')
     state.add_edge(map_exit2, "OUT_A", an_5, None, dace.Memlet(data="A", subset=dace.subsets.Range([(0,15-1, 1), (0,"__A_dim1_size-1", 1)])))
 
-    sdfg.save("def_alloc_4.sdfg")
+    state.add_edge(an_5, None, arrn, None, dace.memlet.Memlet("A[7, 7]"))
 
     return sdfg
 
@@ -91,8 +100,8 @@ def test_trivial_realloc(storage_type: dace.dtypes.StorageType, transient: bool)
 
     sdfg.compile()
 
-def test_realloc_use(storage_type: dace.dtypes.StorageType, transient: bool):
-    sdfg = _get_assign_map_sdfg(storage_type, transient)
+def test_realloc_use(storage_type: dace.dtypes.StorageType, transient: bool, schedule_type: dace.dtypes.ScheduleType):
+    sdfg = _get_assign_map_sdfg(storage_type, transient, schedule_type)
     try:
         sdfg.validate()
     except Exception:
@@ -104,7 +113,18 @@ def test_realloc_use(storage_type: dace.dtypes.StorageType, transient: bool):
     if not _valid_to_reallocate(transient, storage_type, None):
         raise AssertionError("Realloc-use with non-transient data did not fail when it was expected to.")
 
-    sdfg.compile()
+    compiled_sdfg = sdfg.compile()
+    if storage_type == dace.dtypes.StorageType.CPU_Heap:
+        arr = numpy.array([-1.0]).astype(numpy.float32)
+        user_size = numpy.array([10, 10]).astype(numpy.uint64)
+        compiled_sdfg (user_size=user_size, example_array=arr)
+        assert ( arr[0] == 3.0 )
+    if storage_type == dace.dtypes.StorageType.GPU_Global:
+        arr = cupy.array([-1.0]).astype(cupy.float32)
+        user_size = numpy.array([10, 10]).astype(numpy.uint64)
+        compiled_sdfg (user_size=user_size, example_array=arr)
+        assert ( arr.get()[0] == 3.0 )
+
 
 def test_incomplete_write_dimensions_1():
     sdfg =  _get_trivial_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True, "1:2")
@@ -128,25 +148,28 @@ def test_realloc_inside_map():
     pass
 
 if __name__ == "__main__":
-    for storage_type in [dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.GPU_Global]:
+    for storage_type, schedule_type in [(dace.dtypes.StorageType.CPU_Heap, dace.dtypes.ScheduleType.Sequential),
+                                        (dace.dtypes.StorageType.GPU_Global, dace.dtypes.ScheduleType.GPU_Device)]:
         print(f"Trivial Realloc with storage {storage_type}")
         test_trivial_realloc(storage_type, True)
         print(f"Trivial Realloc-Use with storage {storage_type}")
-        test_realloc_use(storage_type, True)
+        test_realloc_use(storage_type, True, schedule_type)
 
-    for storage_type in [dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.GPU_Global]:
+    for storage_type, schedule_type in [(dace.dtypes.StorageType.CPU_Heap, dace.dtypes.ScheduleType.Sequential),
+                                        (dace.dtypes.StorageType.GPU_Global, dace.dtypes.ScheduleType.GPU_Device)]:
         print(f"Trivial Realloc with storage {storage_type} on non-transient data")
         test_trivial_realloc(storage_type, False)
         print(f"Trivial Realloc-Use with storage {storage_type} on non-transient data")
-        test_realloc_use(storage_type, False)
+        test_realloc_use(storage_type, False, schedule_type)
 
     # Try some other combinations
     for transient in [True, False]:
-        for storage_type in [dace.dtypes.StorageType.Default, dace.dtypes.StorageType.Register]:
+        for storage_type, schedule_type in [(dace.dtypes.StorageType.CPU_Heap, dace.dtypes.ScheduleType.Sequential),
+                                            (dace.dtypes.StorageType.GPU_Global, dace.dtypes.ScheduleType.GPU_Device)]:
             print(f"Trivial Realloc with storage {storage_type} on transient:{transient} data")
             test_trivial_realloc(storage_type, transient)
             print(f"Trivial Realloc-Use with storage {storage_type} on transient:{transient} data")
-            test_realloc_use(storage_type, transient)
+            test_realloc_use(storage_type, transient, schedule_type)
 
     print(f"Realloc with incomplete write 1")
     test_incomplete_write_dimensions_1()
