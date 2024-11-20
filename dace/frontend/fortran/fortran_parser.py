@@ -2642,7 +2642,9 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     if len(cycles_we_cannot_ignore) > 0:
         raise NameError("Structs have cyclic dependencies")
 
-    ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
+    # TODO: `ArgumentPruner` does not cleanly remove arguments (and it's not entirely clear that arguments must be
+    #  pruned on the frontend in the first place), so disable until it is fixed.
+    # ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
 
     gmap = {}
     for ep, ep_spec in cfg.entry_points.items():
