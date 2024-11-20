@@ -12,7 +12,8 @@ import networkx as nx
 from fparser.common.readfortran import FortranFileReader as ffr, FortranStringReader, FortranFileReader
 from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec, Derived_Type_Def, End_Module_Stmt, \
-    Contains_Stmt, Rename, Name, Subroutine_Subprogram, Function_Subprogram, Module, Main_Program
+    Contains_Stmt, Rename, Name, Subroutine_Subprogram, Function_Subprogram, Module, Main_Program, Module_Stmt, \
+    Specification_Part, Execution_Part, Program_Stmt, Module_Subprogram_Part, Subroutine_Stmt, Function_Stmt
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -460,7 +461,6 @@ class AST_translator:
             for i in self.startpoint.specification_part.specifications:
                 self.translate(i, sdfg)
             for i in self.startpoint.specification_part.specifications:
-
                 ast_utils.add_simple_state_to_sdfg(self, sdfg, "start_struct_size")
                 assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
                 for decl in i.vardecl:
@@ -3002,6 +3002,30 @@ def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[st
     return simple_graph, actually_used_in_module
 
 
+def _get_module_or_program_parts(mod: Union[Module, Main_Program]) \
+        -> Tuple[
+            Union[Module_Stmt, Program_Stmt],
+            Optional[Specification_Part],
+            Optional[Execution_Part],
+            Optional[Module_Subprogram_Part],
+        ]:
+    # There must exist a module statment.
+    stmt = ast_utils.singular(ast_utils.children_of_type(mod, Module_Stmt if isinstance(mod, Module) else Program_Stmt))
+    # There may or may not exist a specification part.
+    spec = list(ast_utils.children_of_type(mod, Specification_Part))
+    assert len(spec) <= 1, f"A module/program cannot have more than one specification parts, found {spec} in {mod}"
+    spec = spec[0] if spec else None
+    # There may or may not exist an execution part.
+    exec = list(ast_utils.children_of_type(mod, Execution_Part))
+    assert len(exec) <= 1, f"A module/program cannot have more than one execution parts, found {spec} in {mod}"
+    exec = exec[0] if exec else None
+    # There may or may not exist a subprogram part.
+    subp = list(ast_utils.children_of_type(mod, Module_Subprogram_Part))
+    assert len(subp) <= 1, f"A module/program cannot have more than one subprogram parts, found {subp} in {mod}"
+    subp = subp[0] if subp else None
+    return stmt, spec, exec, subp
+
+
 def prune_unused_children(ast: Program, simple_graph: nx.DiGraph, actually_used_in_module: Dict[str, List]) \
         -> Tuple[Dict[str, List[str]], Dict[str, Dict[str, str]]]:
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
@@ -3046,64 +3070,64 @@ def prune_unused_children(ast: Program, simple_graph: nx.DiGraph, actually_used_
             # Leave it alone if it is not a module  or program node (e.g., a subroutine).
             new_children.append(mod)
             continue
-        stmt, spec, exec = mod.children[0:3]
+        stmt, spec, exec, subp = _get_module_or_program_parts(mod)
         mod_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
         if mod_name not in parse_order and mod_name != top_level_ast:
             print(f"Module {mod_name} not needing parsing")
             continue
         # if mod_name == top_level_ast:
         #     new_children.append(mod)
-        subroutinesandfunctions, new_spec_children = [], []
-        for c in spec.children:
-            if isinstance(c, Type_Declaration_Stmt):
-                tdecl = c
-                intrinsic_spec, _, entity_decls_list = tdecl.children
-                if not isinstance(intrinsic_spec, Declaration_Type_Spec):
+        if spec:
+            new_spec_children = []
+            for c in spec.children:
+                if isinstance(c, Type_Declaration_Stmt):
+                    tdecl = c
+                    intrinsic_spec, _, entity_decls_list = tdecl.children
+                    if not isinstance(intrinsic_spec, Declaration_Type_Spec):
+                        new_spec_children.append(tdecl)
+                        continue
+                    entity_decls = []
+                    for edecl in ast_utils.children_of_type(entity_decls_list, Entity_Decl):
+                        edecl_name = ast_utils.singular(ast_utils.children_of_type(edecl, Name)).string
+                        if edecl_name in actually_used_in_module[mod_name]:
+                            entity_decls.append(edecl)
+                        # elif (edecl_name in rename_dict[mod_name]
+                        #       and rename_dict[mod_name][edecl_name] in actually_used_in_module[mod_name]):
+                        #     entity_decls.append(edecl)
+                    if not entity_decls:
+                        continue
+                    if isinstance(entity_decls_list.children, tuple):
+                        new_spec_children.append(tdecl)
+                        continue
+                    entity_decls_list.children.clear()
+                    for edecl in entity_decls:
+                        entity_decls_list.children.append(edecl)
                     new_spec_children.append(tdecl)
-                    continue
-                entity_decls = []
-                for edecl in ast_utils.children_of_type(entity_decls_list, Entity_Decl):
-                    edecl_name = ast_utils.singular(ast_utils.children_of_type(edecl, Name)).string
-                    if edecl_name in actually_used_in_module[mod_name]:
-                        entity_decls.append(edecl)
-                    # elif (edecl_name in rename_dict[mod_name]
-                    #       and rename_dict[mod_name][edecl_name] in actually_used_in_module[mod_name]):
-                    #     entity_decls.append(edecl)
-                if not entity_decls:
-                    continue
-                if isinstance(entity_decls_list.children, tuple):
-                    new_spec_children.append(tdecl)
-                    continue
-                entity_decls_list.children.clear()
-                for edecl in entity_decls:
-                    entity_decls_list.children.append(edecl)
-                new_spec_children.append(tdecl)
-            elif isinstance(c, Derived_Type_Def):
-                derv = c
-                if derv.children[0].children[1].string in type_to_parse_list[mod_name]:
-                    new_spec_children.append(derv)
-            elif isinstance(c, (Subroutine_Subprogram, Function_Subprogram)):
-                subr, subr_stmt = c, c.children[0]
-                subr_name = ast_utils.singular(ast_utils.children_of_type(subr_stmt, Name)).string
-                if subr_name in actually_used_in_module[mod_name]:
-                    new_spec_children.append(subr)
-            else:
-                new_spec_children.append(c)
-        spec.children[:] = new_spec_children
-
-        if isinstance(exec, End_Module_Stmt):
-            new_children.append(mod)
-            continue
-        if mod_name != top_level_ast:
-            for c in exec.children:
-                if not isinstance(c, Contains_Stmt):
-                    c_stmt = c.children[0]
+                elif isinstance(c, Derived_Type_Def):
+                    derv = c
+                    if derv.children[0].children[1].string in type_to_parse_list[mod_name]:
+                        new_spec_children.append(derv)
+                elif isinstance(c, (Subroutine_Subprogram, Function_Subprogram)):
+                    subr, subr_stmt = c, c.children[0]
+                    subr_name = ast_utils.singular(ast_utils.children_of_type(subr_stmt, Name)).string
+                    if subr_name in actually_used_in_module[mod_name]:
+                        new_spec_children.append(subr)
+                else:
+                    new_spec_children.append(c)
+            spec.children[:] = new_spec_children
+        if subp:
+            subroutinesandfunctions = []
+            for c in subp.children:
+                if isinstance(c, (Subroutine_Subprogram, Function_Subprogram)):
+                    c_stmt = ast_utils.singular(
+                        ast_utils.children_of_type(
+                            c, Subroutine_Stmt if isinstance(c, Subroutine_Subprogram) else Function_Stmt))
                     c_name = ast_utils.singular(ast_utils.children_of_type(c_stmt, Name)).string
-                    if c_name in what_to_parse_list[mod_name]:
+                    if mod_name in what_to_parse_list and c_name in what_to_parse_list[mod_name]:
                         subroutinesandfunctions.append(c)
                 else:
                     subroutinesandfunctions.append(c)
-            exec.children[:] = subroutinesandfunctions
+            subp.children[:] = subroutinesandfunctions
         new_children.append(mod)
     ast.children[:] = new_children
 

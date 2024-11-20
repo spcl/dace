@@ -118,6 +118,57 @@ END SUBROUTINE fun
     assert not rename_dict
 
 
+def test_program_contains_subroutine_no_pruning():
+    """
+    A simple program with not much to "recursively improve", but this time the subroutine is defined outside and called
+    from the main program.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+program main
+  implicit none
+  double precision d(4)
+  call fun(d)
+contains
+  subroutine fun(d)
+    implicit none
+    double precision d(4)
+    d(2) = 5.5
+  end subroutine fun
+end program main
+""").check_with_gfortran().get()
+    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+
+    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
+    # `recursive_ast_improver_test.py`.
+    assert not asts
+    assert not set(simple_graph.nodes)
+    assert not actually_used_in_module
+
+    # Now the actual operation that we are testing.
+    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+
+    got = ast.tofortran()
+    want = """
+PROGRAM main
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  CALL fun(d)
+  CONTAINS
+  SUBROUTINE fun(d)
+    IMPLICIT NONE
+    DOUBLE PRECISION :: d(4)
+    d(2) = 5.5
+  END SUBROUTINE fun
+END PROGRAM main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    # Verify
+    assert not name_dict
+    assert not rename_dict
+
+
 def test_standalone_subroutine_no_pruning():
     """
     A standalone subroutine, with no program or module in sight.

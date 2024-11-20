@@ -105,6 +105,30 @@ class Module_Node(FNode):
 
 
 class Module_Subprogram_Part_Node(FNode):
+    def __init__(self,
+                 subroutine_definitions: List['Subroutine_Subprogram_Node'],
+                 function_definitions: List['Function_Subprogram_Node'],
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.subroutine_definitions = subroutine_definitions
+        self.function_definitions = function_definitions
+
+    _attributes = ()
+    _fields = (
+        'subroutine_definitions',
+        'function_definitions',
+    )
+
+
+class Internal_Subprogram_Part_Node(FNode):
+    def __init__(self,
+                 subroutine_definitions: List['Subroutine_Subprogram_Node'],
+                 function_definitions: List['Function_Subprogram_Node'],
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.subroutine_definitions = subroutine_definitions
+        self.function_definitions = function_definitions
+
     _attributes = ()
     _fields = (
         'subroutine_definitions',
