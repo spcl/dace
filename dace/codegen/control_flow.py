@@ -114,7 +114,7 @@ class ControlFlow:
         :param symbols: A dictionary of symbol names and their types.
         :return: C++ string with the generated code of the control flow block.
         """
-        print("class ControlFlow as_cpp")
+        # print("class ControlFlow as_cpp")
         raise NotImplementedError
 
     def generate_transition(self,
@@ -173,24 +173,24 @@ class BasicCFBlock(ControlFlow):
     state: SDFGState
 
     def as_cpp(self, codegen, symbols) -> str:
-        print("class BasicCFBlock as_cpp")
+        # print("class BasicCFBlock as_cpp")
         cfg = self.state.parent_graph
 
         expr = '__state_{}_{}:;\n'.format(cfg.cfg_id, self.state.label)
         if self.state.number_of_nodes() > 0:
-            print(f"state {self.state.label} has {self.state.number_of_nodes()} nodes")
+            # print(f"state {self.state.label} has {self.state.number_of_nodes()} nodes")
             expr += '{\n'
             expr += self.dispatch_state(self.state)
             expr += '\n}\n'
         else:
             # Dispatch empty state in any case in order to register that the state was dispatched.
-            print(f"state {self.state.label} has no nodes")
+            # print(f"state {self.state.label} has no nodes")
             expr += self.dispatch_state(self.state)
 
         # If any state has no children, it should jump to the end of the SDFG
         if not self.last_block and cfg.out_degree(self.state) == 0:
             expr += 'goto __state_exit_{};\n'.format(cfg.cfg_id)
-        print("Finish BasicCFBlock as_cpp")
+        # print("Finish BasicCFBlock as_cpp")
         return expr
 
     @property
@@ -275,12 +275,12 @@ class GeneralBlock(RegionBlock):
     sequential: bool
 
     def as_cpp(self, codegen, symbols) -> str:
-        print("class GeneralBlock as_cpp")
+        # print("class GeneralBlock as_cpp")
         expr = ''
         # print length of elements
-        print(f"length of elements: {len(self.elements)}")
+        # print(f"length of elements: {len(self.elements)}")
         for i, elem in enumerate(self.elements):
-            print(f"generate_transition: {i} for type {type(elem)}")
+            # print(f"generate_transition: {i} for type {type(elem)}")
             expr += elem.as_cpp(codegen, symbols)
             # In a general block, emit transitions and assignments after each individual block or region.
             if isinstance(elem, BasicCFBlock) or (isinstance(elem, RegionBlock) and elem.region):
@@ -326,7 +326,7 @@ class GeneralBlock(RegionBlock):
                 if (len(out_edges) == 1 and out_edges[0].data.is_unconditional()):
                     continue
                 expr += f'goto __state_exit_{sdfg.cfg_id};\n'
-        print("Finish GeneralBlock as_cpp")
+        # print("Finish GeneralBlock as_cpp")
         return expr
 
     @property
@@ -1137,7 +1137,7 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
     :return: Control-flow block representing the entire SDFG.
     """
     if sdfg.root_sdfg.using_experimental_blocks:
-        print("Using experimental blocks")
+        # print("Using experimental blocks")
         return structured_control_flow_tree_with_regions(sdfg, dispatch_state)
 
     # Avoid import loops
@@ -1162,9 +1162,9 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
                               gotos_to_break=[],
                               assignments_to_ignore=[],
                               sequential=True)
-    print("Structured control flow tree")
+    # print("Structured control flow tree")
     _structured_control_flow_traversal(sdfg, sdfg.start_state, ptree, branch_merges, back_edges, dispatch_state,
                                        root_block)
-    print("Reset block parents")
+    # print("Reset block parents")
     _reset_block_parents(root_block)
     return root_block

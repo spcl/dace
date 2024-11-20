@@ -176,7 +176,7 @@ class CPUCodeGen(TargetCodeGenerator):
                       function_stream: CodeIOStream,
                       callsite_stream: CodeIOStream) -> None:
         # Dynamically obtain node generator according to class name
-        print(f'CPU: Generating node {node} in state {state_id}')
+        # print(f'CPU: Generating node {node} in state {state_id}')
         try:
             gen = getattr(self, "_generate_" + type(node).__name__)
         except AttributeError:
