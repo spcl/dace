@@ -1,6 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 from itertools import chain
-from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union, LiteralString
+from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union
 
 import networkx as nx
 from fparser.two.Fortran2003 import Module_Stmt, Name, Interface_Block, Subroutine_Stmt, Specification_Part, Module, \
@@ -84,9 +84,9 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
                                 if entity_name in used_obj.identifiers:
                                     list_of_module_vars.append(entity_name)
                     used_names = list(Name(name) for name in chain(dep_info.list_of_functions,
-                                                                            dep_info.list_of_subroutines,
-                                                                            list_of_module_vars,
-                                                                            dep_info.list_of_types))
+                                                                   dep_info.list_of_subroutines,
+                                                                   list_of_module_vars,
+                                                                   dep_info.list_of_types))
                     extend_with_new_items_from(canonical_used_objs, used_names)
                 else:
                     extend_with_new_items_from(canonical_used_objs, [used_obj])
@@ -254,9 +254,9 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
                                 if entity_name in used_obj.identifiers:
                                     list_of_module_vars.append(entity_name)
                     used_names = list(Name(name) for name in chain(dep_info.list_of_functions,
-                                                                            dep_info.list_of_subroutines,
-                                                                            list_of_module_vars,
-                                                                            dep_info.list_of_types))
+                                                                   dep_info.list_of_subroutines,
+                                                                   list_of_module_vars,
+                                                                   dep_info.list_of_types))
                     extend_with_new_items_from(canonical_used_objs, used_names)
                 else:
                     extend_with_new_items_from(canonical_used_objs, [used_obj])
@@ -521,11 +521,11 @@ class TaskletWriter:
                 offset = self.sdfg.arrays[sdfg_name].offset[location[1]]
                 return self.write_code(str(offset))
         if self.sdfg is not None:
-          for i in self.sdfg.arrays:
-            sdfg_name = self.mapping.get(self.sdfg).get(name)
-            if sdfg_name == i:
-                name = i
-                break
+            for i in self.sdfg.arrays:
+                sdfg_name = self.mapping.get(self.sdfg).get(name)
+                if sdfg_name == i:
+                    name = i
+                    break
 
         if len(self.outputs) > 0:
             if name == self.outputs[0]:
