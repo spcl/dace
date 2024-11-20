@@ -1616,12 +1616,11 @@ def functionStatementEliminator(node=ast_internal_classes.Program_Node):
                 subroutine_definitions=module_subroutine_definitions,
                 function_definitions=module_function_definitions,
             ))
-    return ast_internal_classes.Program_Node(main_program=main_program,
-                                             function_definitions=function_definitions,
-                                             subroutine_definitions=subroutine_definitions,
-                                             modules=modules,
-                                             module_declarations=node.module_declarations,
-                                             structures=node.structures)
+    node.main_program = main_program
+    node.function_definitions = function_definitions
+    node.subroutine_definitions = subroutine_definitions
+    node.modules = modules
+    return node
 
 
 def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
