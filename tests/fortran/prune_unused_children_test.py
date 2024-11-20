@@ -451,7 +451,7 @@ END PROGRAM main
     assert rename_dict == {'lib': {}}
 
 
-def test_module_contains_used_and_unused_variables_with_use_all_doesnt_prune_variables():
+def test_module_contains_used_and_unused_variables_with_use_all_prunes_unused():
     """
     Module has unused variables that are pulled in with "use-all".
     """
@@ -483,7 +483,7 @@ end program main
     assert set(asts.keys()) == {'lib'}
     assert set(simple_graph.nodes) == {'main', 'lib'}
     assert set(simple_graph.edges) == {('main', 'lib')}
-    assert actually_used_in_module == {'main': [], 'lib': ['used', 'unused']}
+    assert actually_used_in_module == {'main': [], 'lib': ['used']}
 
     # Now the actual operation that we are testing.
     name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
@@ -512,7 +512,7 @@ END PROGRAM main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     # Verify
-    assert name_dict == {'lib': ['used', 'unused']}
+    assert name_dict == {'lib': ['used']}
     assert rename_dict == {'lib': {}}
 
 
@@ -587,7 +587,7 @@ END PROGRAM main
     assert rename_dict == {'lib': {}}
 
 
-def test_use_statement_multiple_with_useall__doesnt_prune_variables():
+def test_use_statement_multiple_with_useall_prunes_unused():
     """
     We have multiple uses of the same module. One of them is a "use-all".
     """
@@ -622,7 +622,7 @@ end program main
     assert set(asts.keys()) == {'lib'}
     assert set(simple_graph.nodes) == {'main', 'lib'}
     assert set(simple_graph.edges) == {('main', 'lib')}
-    assert actually_used_in_module == {'main': [], 'lib': ['a', 'b', 'c']}
+    assert actually_used_in_module == {'main': [], 'lib': ['a', 'b']}
 
     # Now the actual operation that we are testing.
     name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
@@ -654,7 +654,7 @@ END PROGRAM main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     # Verify
-    assert name_dict == {'lib': ['a', 'b', 'c']}
+    assert name_dict == {'lib': ['a', 'b']}
     assert rename_dict == {'lib': {}}
 
 
