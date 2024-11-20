@@ -542,6 +542,59 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                             'written to, but only given to nested SDFG as an '
                             'input connector' % node.data, sdfg, state_id, nid)
 
+            # Deferred allocation related tests
+            insize = "_write_size"
+            outsize = "_read_size"
+            read_size_edges = list(state.edges_by_connector(node, outsize))
+            write_size_edges = list(state.edges_by_connector(node, insize))
+
+            # Reading-Writing the size is valid only if the array is transient and has the storage type CPU_Heap or GPU_Global
+            has_writes_or_reads = len(read_size_edges) + len(write_size_edges) > 0
+            size_access_allowed = arr.transient and (arr.storage == dtypes.StorageType.CPU_Heap or arr.storage == dtypes.StorageType.GPU_Global)
+            if has_writes_or_reads and not size_access_allowed:
+                raise InvalidSDFGNodeError('Reading the size of an array, or changing (writing to) the size of an array '
+                                           'is only valid if the array is transient and the storage is CPU_Heap or GPU_Global', sdfg, state_id, nid)
+
+            if len(write_size_edges) > 1:
+                raise InvalidSDFGNodeError('One node can have at maximum one edge writing to its size descriptior', sdfg, state_id, nid)
+
+            # The write needs to always have the same length of the dimension of the node
+            if len(write_size_edges) == 1:
+                write_size_edge = write_size_edges[0]
+                edge_id = state.edge_id(write_size_edge)
+                required_range = len(arr.shape)
+                try:
+                    elements = int(write_size_edge.data.num_elements())
+                    if elements != required_range or write_size_edge.data.subset.dims() != 1:
+                        raise Exception
+                except Exception:
+                    raise InvalidSDFGEdgeError('The write to a node needs to match the length of the array shape '
+                                                'the volume needs to be integer (not symbolic) and the shape one dimensional', sdfg, state_id, edge_id)
+
+            # Reads to map can be only scalars-sized
+            for read_size_edge in read_size_edges:
+                edge_id = state.edge_id(read_size_edge)
+                from dace import nodes
+                if (isinstance(read_size_edge.dst, nodes.EntryNode) or
+                    isinstance(read_size_edge.dst, nodes.AccessNode) or
+                    isinstance(read_size_edge.dst, nodes.Tasklet)):
+                    if isinstance(read_size_edge.dst, nodes.MapEntry):
+                        required_range = 1
+                        try:
+                            elements = int(read_size_edge.data.num_elements())
+                            if elements != required_range and read_size_edge.data.subset.dims() != 1:
+                                raise Exception()
+                        except Exception:
+                            raise InvalidSDFGEdgeError('The read to a map entry needs have dimension 1'
+                                                        'If reading multiple dimensions, multiple edges need to go to the map entry', sdfg, state_id, edge_id)
+                else:
+                    raise InvalidSDFGEdgeError('The read size should connect to an entry node, access node, or tasklet (this can be changed)'
+                                                , sdfg, state_id, edge_id)
+
+
+
+
+
         if (isinstance(node, nd.ConsumeEntry) and "IN_stream" not in node.in_connectors):
             raise InvalidSDFGNodeError("Consume entry node must have an input stream", sdfg, state_id, nid)
         if (isinstance(node, nd.ConsumeEntry) and "OUT_stream" not in node.out_connectors):
