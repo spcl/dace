@@ -1205,7 +1205,7 @@ class CPUCodeGen(TargetCodeGenerator):
             elif isinstance(node, nodes.AccessNode):
                 if dst_node != node and not isinstance(dst_node, nodes.Tasklet) :
                     # If it is a size change, reallocate will be called
-                    if edge.dst_conn is not None and edge.dst_conn == "IN_size":
+                    if edge.dst_conn is not None and edge.dst_conn == "_write_size":
                         continue
 
                     dispatcher.dispatch_copy(
@@ -2269,7 +2269,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if memlet_path[-1].dst == node:
                 src_node = memlet_path[0].src
 
-                if in_connector == "IN_size":
+                if in_connector == "_write_size":
                     self._dispatcher.dispatch_reallocate(
                         src_node,
                         node,

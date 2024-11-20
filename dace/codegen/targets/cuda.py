@@ -1507,7 +1507,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         const_params = _get_const_params(dfg_scope)
         # make dynamic map inputs constant
         # TODO move this into _get_const_params(dfg_scope)
-        # Do not add src as const if the size is being red (src_conn is OUT_size)
+        # Do not add src as const if the size is being red (src_conn is _read_size)
         const_params |= set((str(e.src)) for e in dace.sdfg.dynamic_map_inputs(state, scope_entry) if not e.src_conn.endswith("size"))
 
         # Store init/exit code streams

@@ -1085,7 +1085,7 @@ class SDFG(ControlFlowRegion):
         the execution order of the SDFG.
         Each node in the tree can either represent a single statement (symbol assignment, tasklet, copy, library node,
         etc.) or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
-    
+
         It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
         erasing an empty if branch, or merging two consecutive for-loops.
 
@@ -1753,20 +1753,21 @@ class SDFG(ControlFlowRegion):
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        size_desc = dt.Array(dtype=dace.uint64,
-                            shape=(len(shape),),
-                            storage=dtypes.StorageType.Default,
-                            location=None,
-                            allow_conflicts=False,
-                            transient=True,
-                            strides=(1,),
-                            offset=(0,),
-                            lifetime=lifetime,
-                            alignment=alignment,
-                            debuginfo=debuginfo,
-                            total_size=len(shape),
-                            may_alias=False,
-                            size_desc_name=None)
+        if transient:
+            size_desc = dt.Array(dtype=dace.uint64,
+                                shape=(len(shape),),
+                                storage=dtypes.StorageType.Default,
+                                location=None,
+                                allow_conflicts=False,
+                                transient=True,
+                                strides=(1,),
+                                offset=(0,),
+                                lifetime=lifetime,
+                                alignment=alignment,
+                                debuginfo=debuginfo,
+                                total_size=len(shape),
+                                may_alias=False,
+                                size_desc_name=None)
 
         desc = dt.Array(dtype=dtype,
                         shape=shape,
@@ -1784,11 +1785,12 @@ class SDFG(ControlFlowRegion):
                         size_desc_name=None)
 
         array_name = self.add_datadesc(name, desc, find_new_name=find_new_name)
-        size_desc_name = f"{array_name}_size"
-        self.add_datadesc(size_desc_name, size_desc, find_new_name=False)
-        # In case find_new_name and a new name is returned
-        # we need to update the size descriptor name of the array
-        desc.size_desc_name = size_desc_name
+        if transient:
+            size_desc_name = f"{array_name}_size"
+            self.add_datadesc(size_desc_name, size_desc, find_new_name=False)
+            # In case find_new_name and a new name is returned
+            # we need to update the size descriptor name of the array
+            desc.size_desc_name = size_desc_name
         return array_name, desc
 
     def add_view(self,
@@ -2542,7 +2544,7 @@ class SDFG(ControlFlowRegion):
         """
         Runs a basic sequence of transformations to optimize a given SDFG to decent
         performance. In particular, performs the following:
-            
+
             * Simplify
             * Auto-parallelization (loop-to-map)
             * Greedy application of SubgraphFusion
