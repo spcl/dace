@@ -965,7 +965,7 @@ class BackwardPassGenerator:
 
             forward_nodes = forward_nodes.union(
                 {n
-                 for e in state.bfs_edges(state_required_gradients)
+                 for e in state.edge_bfs(state_required_gradients)
                  for n in [e.src, e.dst]})
 
             # Update the list of required gradients to use for states
@@ -982,7 +982,7 @@ class BackwardPassGenerator:
                 if isinstance(node, nodes.AccessNode) and node.data in given_gradients_all_states:
                     state_given_gradients.append(node)
 
-            backward_nodes = {n for e in state.bfs_edges(state_given_gradients, reverse=True) for n in [e.src, e.dst]}
+            backward_nodes = {n for e in state.edge_bfs(state_given_gradients, reverse=True) for n in [e.src, e.dst]}
             nodes_list = list(forward_nodes.intersection(backward_nodes))
             state_subgraph = dstate.StateSubgraphView(state, nodes_list)
 
@@ -1009,7 +1009,7 @@ class BackwardPassGenerator:
                 # Do reverse BFS starting from this new set of nodes
                 backward_nodes = {
                     n
-                    for e in state.bfs_edges(state_given_gradients, reverse=True)
+                    for e in state.edge_bfs(state_given_gradients, reverse=True)
                     for n in [e.src, e.dst]
                 }
                 view_nodes = list(forward_nodes.intersection(backward_nodes))
@@ -1062,6 +1062,28 @@ class BackwardPassGenerator:
 
         self.backward_grad_arrays[grad_name] = cloned_datadesc
         self.backward_sdfg.arrays[grad_name] = copy.deepcopy(cloned_datadesc)
+
+    def _check_if_loop_summation_should_accumelate(self, backward_state: SDFGState, access_node: nodes.AccessNode):
+        """
+        Returns True if the gradients should accumelate over loop iterations
+        # TODO: Add more robust checks
+        """
+        # If all the values to write are read within the loop,
+        # then there is no need to accumelate
+
+        # Do a reverse bfs from this node and see if the data is being read
+        backward_nodes = {
+            n
+            for e in backward_state.edge_bfs(access_node, reverse=True)
+            for n in [e.src, e.dst]
+            if isinstance(n, nodes.AccessNode) and n.data == access_node.data and backward_state.out_degree(n) > 0
+        }
+
+        if len(backward_nodes) > 0:
+            return False
+
+        # TODO: Make this look into more than just one state and nodes in the same state that are not connected
+        return True
 
     def _state_within_loop(self, forward_state: SDFGState) -> Tuple[bool, LoopRegion]:
         """
@@ -1960,7 +1982,7 @@ class BackwardPassGenerator:
             # save all the nodes in the path to the assignement block list
             conditional_assingement_block_nodes = {
                 n
-                for e in forward_state.bfs_edges(bools_an, reverse=True)
+                for e in forward_state.edge_bfs(bools_an, reverse=True)
                 for n in [e.src, e.dst]
             }
 
@@ -1969,7 +1991,7 @@ class BackwardPassGenerator:
                 forward_state=forward_state, block_nodes=conditional_assingement_block_nodes, subgraph=subgraph)
             for node in nodes_to_keep_tracking:
                 # we get the reverse bfs of this node and remove it from block nodes to avoid skipping these nodes
-                node_subgraph = {n for e in forward_state.bfs_edges(node, reverse=True) for n in [e.src, e.dst]}
+                node_subgraph = {n for e in forward_state.edge_bfs(node, reverse=True) for n in [e.src, e.dst]}
 
                 # add the node itself
                 node_subgraph.add(node)
@@ -2045,7 +2067,7 @@ class BackwardPassGenerator:
 
             backward_nodes = backward_nodes.union(
                 {n
-                 for e in state.bfs_edges(state_given_gradients, reverse=True)
+                 for e in state.edge_bfs(state_given_gradients, reverse=True)
                  for n in [e.src, e.dst]})
 
             # update the list of required gradients to use for states
@@ -2074,7 +2096,7 @@ class BackwardPassGenerator:
 
             forward_nodes = forward_nodes.union(
                 {n
-                 for e in state.bfs_edges(state_required_gradients)
+                 for e in state.edge_bfs(state_required_gradients)
                  for n in [e.src, e.dst]})
 
             # update the list of required gradients to use for states
@@ -2227,7 +2249,28 @@ class BackwardPassGenerator:
                         summation_node = ONNXSum(f"sum_{array_grad_name}")
 
                         grad_desc = self.backward_sdfg.arrays[array_grad_name]
-                        cuda = False
+
+                        # Check if we need to accumulate gradients over loop iterations
+                        within_loop, _ = self._state_within_loop(forward_state)
+                        if within_loop:
+                            # Check that the values read from this loop should accumelate at each iteration
+                            if self._check_if_loop_summation_should_accumelate(backward_state, reversed_node):
+
+                                # Check that the write is to a golbal array and not a temorary
+                                if not self.backward_sdfg.arrays[reversed_node.data].transient:
+
+                                    # Duplicate the access node
+                                    duplicated_reversed_node = copy.deepcopy(reversed_node)
+
+                                    # Add it to the backward state
+                                    backward_state.add_node(duplicated_reversed_node)
+
+                                    # Connect it to the reversed node
+                                    # This will mean it will be summed in the loop after this block
+                                    backward_state.add_edge(
+                                        duplicated_reversed_node, None, reversed_node, None,
+                                        self.backward_sdfg.make_array_memlet(duplicated_reversed_node.data))
+
                         # connect each incoming edge to the summation node
                         for i, edge in enumerate(backward_state.in_edges(reversed_node)):
 
@@ -2248,13 +2291,15 @@ class BackwardPassGenerator:
                             new_edge = backward_state.add_edge(edge.src, edge.src_conn, access_intermediate, None,
                                                                edge.data)
 
-                            self._set_wcr_sum_if_needed(forward_state, backward_state, new_edge)
+                            # TODO: I don't think you ever need to accumulate gradients here actually
+                            # self._set_wcr_sum_if_needed(forward_state, backward_state, new_edge)
+
                             summation_node.add_in_connector(f"data_0__{i}")
                             backward_state.add_edge(access_intermediate, None, summation_node, f"data_0__{i}",
                                                     self.backward_sdfg.make_array_memlet(intermediate_name))
                             backward_state.remove_edge(edge)
 
-                        # add the final connection to the summation node
+                        # Add the final connection to the summation node
                         self._connect_summation_node(forward_state=forward_state,
                                                      backward_state=backward_state,
                                                      summation_node=summation_node,
@@ -2269,8 +2314,10 @@ class BackwardPassGenerator:
                         else:
                             raise ValueError(f"Unsupported storage {grad_desc.storage}")
                     elif backward_state.in_degree(reversed_node) == 1:
-                        self._set_wcr_sum_if_needed(forward_state, backward_state,
-                                                    backward_state.in_edges(reversed_node)[0])
+                        self._set_wcr_sum_if_needed(forward_state,
+                                                    backward_state,
+                                                    backward_state.in_edges(reversed_node)[0],
+                                                    summation_node=True)
 
                 # if this node is a tasklet with a condition, we add some modification to the backward state
                 elif (isinstance(node, nodes.Tasklet)
@@ -2295,8 +2342,8 @@ class BackwardPassGenerator:
         read_write_intersection = self._check_write_read_ranges(forward_state=forward_state, forward_node=forward_node)
         # check if the summation result can be directly assigned to the reversed node
         if not read_write_intersection:
-            backward_state.add_edge(summation_node, "sum", reversed_node, None,
-                                    self.backward_sdfg.make_array_memlet(array_grad_name))
+            new_edge = backward_state.add_edge(summation_node, "sum", reversed_node, None,
+                                               self.backward_sdfg.make_array_memlet(array_grad_name))
         else:
             # we need to create an assignement for each peace of data
             # first create an intermediate array
@@ -2483,18 +2530,83 @@ class BackwardPassGenerator:
         # get the backward state for this node
         return self.reversed_states_map[state]
 
-    def _set_wcr_sum_if_needed(self, forward_state: SDFGState, backward_state: SDFGState,
-                               edge: dgraph.MultiConnectorEdge):
+    def _fix_multiple_in_edges_to_connector(self, backward_state: SDFGState, destination_node, target_in_connector):
+        """
+        """
+        # Create a summation tasklet for all the incoming edges
+        inputs = [e.src_conn for e in backward_state.in_edges(destination_node) if e.dst_conn == target_in_connector]
+        outputs = [target_in_connector]
+        code = f"{target_in_connector} = {' + '.join(inputs)}"
+
+        # This function should only be called if there are multiple edges poinitng to the same connector
+        assert len(inputs) > 1
+
+        new_tasklet = backward_state.add_tasklet("avoid_wcr_with_sum", inputs=inputs, outputs=outputs, code=code)
+
+        # Redirect the edges to the tasklet the edges to be connected to the new tasklet
+        i = 0
+        for e in backward_state.in_edges(destination_node):
+            if not e.dst_conn == target_in_connector:
+                continue
+
+            # Save the original memlets for later use
+            save_memlet = e.data
+
+            # Change the data to a temporary
+            name = f"__tmp__avoid_wcr_with_sum_{i}"
+            memlet = Memlet(expr=f"{name}[0]")
+            # Use the same type as the source array for the transient
+            dtype = backward_state.sdfg.arrays[save_memlet.data].dtype
+            scalar_node = backward_state.sdfg.add_array(name=name,
+                                                        shape=[save_memlet.num_accesses],
+                                                        dtype=dtype,
+                                                        transient=True)
+            backward_state.add_edge(e.src, e.src_conn, new_tasklet, e.src_conn, memlet)
+            backward_state.remove_edge(e)
+            i += 1
+
+        # connect the output of the tasklet to the in connector
+        backward_state.add_edge(new_tasklet, target_in_connector, destination_node, target_in_connector, save_memlet)
+
+    def _set_wcr_sum_if_needed(self,
+                               forward_state: SDFGState,
+                               backward_state: SDFGState,
+                               edge: dgraph.MultiConnectorEdge,
+                               summation_node: bool = False):
         """ Set the WCR to sum for all edges along the path of edge, if needed.
             This function will also add gradient initialization to zero if necessary.
             The initialization is necessary if there will be a wcr or if the write will be to only a subset of the array.
             :param edge: the root edge to start from
+            :param summation_node: True if this node is a part of a summation node for gradient accumulation
         """
+        if not self._check_if_loop_summation_should_accumelate(backward_state, edge.dst):
+            return
+
+        # First, we should avoid cases where we have two in edges to the same connector in this path
+        for path_edge in backward_state.memlet_tree(edge):
+            # Count the amount of in edges per connector
+            connector_in_edges = collections.defaultdict(int)
+            explored = {}
+            self.sdfg.save("log_sdfgs/before_in_edges.sdfg")
+            for _, _, _, dst_conn, _ in backward_state.in_edges(path_edge.dst):
+                connector_in_edges[dst_conn] += 1
+                explored[dst_conn] = False
+
+            more_than_one_edge_to_connector = any(v > 1 for v in connector_in_edges.values())
+
+            if more_than_one_edge_to_connector:
+                # Instead of setting a WCR edge, we will add a summation tasklet to sum the elements
+                # and return a single edge to the connector
+                for _, _, _, dst_conn, _ in backward_state.in_edges(path_edge.dst):
+                    if connector_in_edges[dst_conn] > 1 and not explored[dst_conn]:
+                        self._fix_multiple_in_edges_to_connector(backward_state, path_edge.dst, dst_conn)
+                        explored[dst_conn] = True
+
         inverse_array_grad_map = {v: k for k, v in self.array_grad_map.items()}
 
         add_wcr = False
 
-        # this method assumes that the memlet tree is iterated from the root backwards
+        # This method assumes that the memlet tree is iterated from the root backwards
         for path_edge in backward_state.memlet_tree(edge):
             data_name = path_edge.data.data
             if data_name in inverse_array_grad_map and inverse_array_grad_map[
@@ -2506,7 +2618,9 @@ class BackwardPassGenerator:
                 # self._init_grad)
                 break
 
-            # set the wcr to sum temporarily so that the following works
+            # Set the wcr to sum temporarily so that the following works
+            # Here, we are checking if there are possible conflicting writes
+            # To the same node
             old_wcr = path_edge.data.wcr
             path_edge.data.wcr = "lambda x, y: x + y"
             if is_write_conflicted_with_reason(backward_state, path_edge):
@@ -2514,17 +2628,19 @@ class BackwardPassGenerator:
                 add_wcr = True
             path_edge.data.wcr = old_wcr
 
-            # count the amount of in edges per connector
-            connector_in_edges = collections.defaultdict(int)
-            for _, _, _, dst_conn, _ in backward_state.in_edges(path_edge.dst):
-                connector_in_edges[dst_conn] += 1
+        # Special case for reads within loops
+        within_loop, _ = self._state_within_loop(forward_state)
 
-            more_than_one_edge_to_connector = any(v > 1 for v in connector_in_edges.values())
+        # If this is a summation node we will treat this special case in the reverse_subgraph function
+        if within_loop and not summation_node:
+            # Check that the values read from this loop should accumelate at each iteration
+            # TODO
 
-            if more_than_one_edge_to_connector:
+            # Check that the write is to a golbal array and not a temorary
+            if not self.backward_sdfg.arrays[edge.dst.data].transient:
                 add_wcr = True
 
-        # check if any of the inputs from this accessnode will be used to contribute in a wcr way
+        # Check if any of the inputs from this accessnode will be used to contribute in a wcr way
         if not add_wcr:
             add_wcr = self._input_used_with_a_wcr(forward_state=forward_state, backward_node=edge.dst)
 
@@ -2586,11 +2702,11 @@ class BackwardPassGenerator:
         # do reverse bfs starting from this new set of nodes
         backward_nodes = {
             n
-            for e in forward_state.bfs_edges(state_given_gradients, reverse=True)
+            for e in forward_state.edge_bfs(state_given_gradients, reverse=True)
             for n in [e.src, e.dst]
         }
 
-        forward_nodes = {n for e in forward_state.bfs_edges(forward_node) for n in [e.src, e.dst]}
+        forward_nodes = {n for e in forward_state.edge_bfs(forward_node) for n in [e.src, e.dst]}
 
         intersection = backward_nodes.intersection(forward_nodes)
 
@@ -2606,7 +2722,7 @@ class BackwardPassGenerator:
 
         return False
 
-    def _set_wcr_if_needed(self, forward_node: nodes.Node, memlet: dstate.MultiConnectorEdge):
+    def _set_wcr_if_needed(self, forward_state: SDFGState, forward_node: nodes.Node, memlet: dstate.MultiConnectorEdge):
         """
         If this Access node represents a gradient that has already been used in other places.
         We want to accumulat the gradients and not overwrite them.
@@ -2617,9 +2733,10 @@ class BackwardPassGenerator:
             return memlet
 
         # Check if this if the first time we see if when reversing the SDFG
+        # There needs to be at least one read from this node for the wcr to apply
         instances = [
-            fwd_node for fwd_node, bwd_node in self.reverse_map.items()
-            if isinstance(fwd_node, nodes.AccessNode) and fwd_node.data == forward_node.data
+            fwd_node for fwd_node, _ in self.reverse_map.items() if isinstance(fwd_node, nodes.AccessNode)
+            and fwd_node.data == forward_node.data and forward_state.in_degree(forward_node) > 0
         ]
 
         # If this is the first time, no need for a wcr
@@ -2659,15 +2776,15 @@ class BackwardPassGenerator:
 
             memlet = copy.deepcopy(memlet)
 
-            # remove the WCR since these are now read edges
+            # Remove the WCR since these are now read edges
             memlet.wcr = None
 
             grad_name = self.array_grad_name(memlet.data)
             if grad_name not in self.backward_sdfg.arrays:
-                # this grad hasn't been written before: initialize it
+                # This grad hasn't been written before: initialize it
                 self._add_gradient_data_descriptor(memlet.data)
 
-            memlet = self._set_wcr_if_needed(forward_node=forward_node, memlet=memlet)
+            memlet = self._set_wcr_if_needed(forward_state=forward_state, forward_node=forward_node, memlet=memlet)
             memlet.data = grad_name
 
             backward_state.add_edge(
@@ -2863,13 +2980,11 @@ class BackwardPassGenerator:
 
             # The data has been overwritten
             if not overwritten:
-                # print(f"Storing {forward_node.data}: Not overwritten")
                 # We still have access to this data
                 self._connect_forward_accessnode_not_overwritten(forward_state, backward_state, forward_node,
                                                                  target_node, starting_edge)
                 return
 
-            # print(f"Storing {forward_node.data}")
             self._resolve_overwrite_with_store(forward_state=forward_state,
                                                backward_state=backward_state,
                                                forward_node=forward_node,
@@ -2948,7 +3063,7 @@ class BackwardPassGenerator:
             # We remove all the decendant computation from the graph
 
             # Do a reverse bfs to get all the necessary computation
-            backward_nodes = {n for e in forward_state.bfs_edges(target_an, reverse=True) for n in [e.src, e.dst]}
+            backward_nodes = {n for e in forward_state.edge_bfs(target_an, reverse=True) for n in [e.src, e.dst]}
 
             # Remove everything else
             decendant_nodes = set(forward_state.nodes()) - backward_nodes
@@ -3017,13 +3132,13 @@ class BackwardPassGenerator:
             # Add the desciptor
             old_desc = nsdfg.sdfg.arrays[name]
             new_desc = copy.deepcopy(old_desc)
-            
+
             # Check if this is the output of the recomputation block
             if name not in nsdfg.out_connectors:
                 new_desc.transient = True
             else:
                 new_desc.transient = False
-                
+
             nsdfg.sdfg.add_datadesc(name=new_name, datadesc=new_desc)
 
             # Add a copy operation between the input node and the new descriptor
@@ -3246,7 +3361,7 @@ class BackwardPassGenerator:
         """
         strategy_choice: List[bool] = []
         recomputation_nsdfgs: List[nodes.NestedSDFG] = []
-        
+
         # As preprocessing step,
         # We will store all of the global program inputs,
         # if they are required for the backward pass
@@ -3256,17 +3371,16 @@ class BackwardPassGenerator:
         for i, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
             if access_node.data not in self.sdfg.arg_names:
                 continue
-            
+
             # Store the input
-            self._connect_forward_accessnode(forward_state, backward_state, access_node, node, edge,
-                                             None, "store")
-            
+            self._connect_forward_accessnode(forward_state, backward_state, access_node, node, edge, None, "store")
+
             # Remove this element from the list of the data to forward
             to_remove.append(i)
-            
+
         # Remove elements from the list of data to be forwarded
         self._forward_data = [item for idx, item in enumerate(self._forward_data) if idx not in to_remove]
-            
+
         if self.strategy == "store_all":
             strategy_choice = ["store"] * len(self._forward_data)
 
@@ -3345,7 +3459,7 @@ class BackwardPassGenerator:
 
             # Combine the three metrics with some weights
             alpha, beta, gamma = 0.4, 0.2, 0.4
-            computational_costs.append(w_d_res[0] * alpha + w_d_res[1] * beta )
+            computational_costs.append(w_d_res[0] * alpha + w_d_res[1] * beta)
 
         return computational_costs
 
@@ -3353,37 +3467,37 @@ class BackwardPassGenerator:
         """
         Get the memory measurement sequence to be fed to the ilp solver as constraints
         """
-        
+
         # Define the problem
         model = LpProblem(name=f"ILP-{self.sdfg.label}", sense=LpMinimize)
-        
+
         recomputation_nsdfgs: List[nodes.NestedSDFG] = []
         storage_costs: List[int] = []
-        
+
         # Dict of all the data that is within the loop
         loop_data: Dict[LoopRegion, nodes.AccessNode] = {}
-        
+
         # Dict of the loops and data to be recomputed and their recomputation nsdfg
         loop_data_recomputation_nsdfg: Dict[Tuple[LoopRegion, nodes.AccessNode], nodes.NestedSDFG] = {}
-        
+
         # Dict of the data and its storage cost
         loop_storage_costs: Dict[nodes.AccessNode, int] = {}
         # Loop data to remove from the original list
         to_remove = []
-        
+
         # Remove loop data from the forward data list to be treated separetly
         for i, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
             within_loop, loop = self._state_within_loop(forward_state)
             if within_loop:
                 # Add it to the dictionary
                 loop_data[loop] = access_node
-                
+
                 # Get the recomputation nsdfgs for the loop data
                 nsdfg = self._get_recomputation_nsdfg(forward_state, access_node)
-                
+
                 # Add it to the dictionary
                 loop_data_recomputation_nsdfg[(loop, access_node)] = nsdfg
-                
+
                 # Get the storage cost for this access node
                 size = 1
                 for shape in self.sdfg.arrays[access_node.data].shape:
@@ -3391,46 +3505,46 @@ class BackwardPassGenerator:
                     if not isinstance(shape, int):
                         raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
                     size *= shape
-                
+
                 # Convert the shape to KiBs
                 size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
-                
+
                 loop_storage_costs[access_node] = size
-            
+
                 # Remove it from the forward_data dict
                 to_remove.append(i)
-                
+
         # Get the cost of recomputing the loop data
         loop_computation_costs = self._get_loop_recomputation_costs()
-        
+
         # Define the decision variables for each loop
         loop_decs: Dict[LoopRegion, LpVariable] = []
         for i, (loop, access_node) in enumerate(loop_data_recomputation_nsdfg.keys()):
             start, end = self._extract_loop_region_info(loop)
-            
+
             # TODO: Make sure the low and up bound are as expected
             if loop not in loop_decs:
                 loop_decs[loop] = LpVariable(name=f"loop_v_{i}", lowBound=start, upBound=end, cat="Integer")
 
             # Get the cost of recomputing this access node in the loop
             cost = loop_computation_costs[loop, access_node]
-            
+
             # Add the constraint to the loop
             model += pulp.lpSum(cost * loop_decs[loop]), "Maximize_Performance"
-        
+
         # Clean up the forward data list
         self._forward_data = [data for i, data in enumerate(self._forward_data) if i not in to_remove]
-        
-        # Get the recomputation NSDFGs for non-loop data 
+
+        # Get the recomputation NSDFGs for non-loop data
         for forward_state, backward_state, access_node, node, edge in self._forward_data:
             try:
                 nsdfg = self._get_recomputation_nsdfg(forward_state, access_node)
             except:
                 print(f"WARNING! couldn't get the recomputation nested SDFG for {access_node.label}")
                 nsdfg = None
-                
+
             recomputation_nsdfgs.append(nsdfg)
-            
+
             # Get the storage cost for this access node
             size = 1
             for shape in self.sdfg.arrays[access_node.data].shape:
@@ -3438,63 +3552,73 @@ class BackwardPassGenerator:
                 if not isinstance(shape, int):
                     raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
                 size *= shape
-            
+
             # Convert the shape to KiBs
             size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
-            
+
             storage_costs.append(size)
-            
+
         # Get the computational cost of each recomputation block
         computational_costs = self._get_data_computational_cost(recomputation_nsdfgs)
-        
-        
+
         # Define the decision variables for non-loop data
         decs: List[LpVariable] = []
         for i, nsdfg in enumerate(recomputation_nsdfgs):
             decs.append(LpVariable(name=f"v_{i}", cat="Binary"))
-                
+
         # Add non loop data to the objective function
         model += pulp.lpSum(cost * (1 - decs[i]) for i, cost in enumerate(computational_costs)), "Maximize_Performance"
-        
+
         # Get memory constraints
-        self._add_memory_constraints_to_ilp(model, decs, storage_costs, loop_sorage_costs, loop_data_recomputation_nsdfg)
+        self._add_memory_constraints_to_ilp(model, decs, storage_costs, loop_sorage_costs,
+                                            loop_data_recomputation_nsdfg)
 
         # Solve the ILP and return the decisions
         # Add the parameter for supressing print messages
         model.solve(pulp.PULP_CBC_CMD(msg=False))
         status = pulp.LpStatus[model.status]
         print(model)
-        
+
         # Output results
         if status == "Infeasible":
             print(model)
             raise AutoDiffException("ILP Couldn't be solved please check the inputs")
         choices = ["store" if pulp.value(dec) == 1.0 else "recompute" for dec in decs]
-        
+
         return choices, recomputation_nsdfgs
+
     def _get_loop_recomputation_costs(self):
         """
         Get the recomputation costs for data that will require running a sequential loop again. 
         This will return the cost of a single iteration of this loop. 
         """
         return []
-    def _add_memory_constraints_to_ilp(self, model: LpProblem, decs: List[LpVariable], storage_costs: List[int], loop_decs: List[LpVariable], loop_sorage_costs: Dict[nodes.AccessNode, int], loop_recomputation_nsdfgs: Dict[Tuple[LoopRegion, nodes.AccessNode], nodes.NestedSDFG], max_memory_usage: int = 8722000):
+
+    def _add_memory_constraints_to_ilp(self,
+                                       model: LpProblem,
+                                       decs: List[LpVariable],
+                                       storage_costs: List[int],
+                                       loop_decs: List[LpVariable],
+                                       loop_sorage_costs: Dict[nodes.AccessNode, int],
+                                       loop_recomputation_nsdfgs: Dict[Tuple[LoopRegion, nodes.AccessNode],
+                                                                       nodes.NestedSDFG],
+                                       max_memory_usage: int = 8722000):
         """
         """
-        # List of constraints to return 
-        constraints :List = []
+        # List of constraints to return
+        constraints: List = []
         constraints.append(0)
         print(decs)
         sdfg_allocation_sizes: List[int] = []
-        
+
         # Create an auxiliary variable that represents the PMU
         pmu = LpVariable(name=f"PMU", cat="Integer")
-        
+
         # Call the code gen to determin where each allocation will happen
         # codegen.to_allocate is a dictionary mapping what to allocate in each scope
         codegen = framecode.DaCeCodeGenerator(self.sdfg)
         codegen.determine_allocation_lifetime(self.sdfg)
-        
+
         # Add the global inputs as initial constraints
         for arg in self.sdfg.arg_names:
             # Get the size of the array associated with this access node
@@ -3503,17 +3627,17 @@ class BackwardPassGenerator:
                 # Only accept int sizes for now
                 if not isinstance(shape, int):
                     raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
-                size *= shape 
-                
+                size *= shape
+
             # Convert the shape to KiBs
             size = size * self.sdfg.arrays[arg].dtype.bytes / 1024
             sdfg_allocation_sizes.append(size)
-            
+
             # Add the constraint
             new_constraint = constraints[-1] + size
             constraints.append(new_constraint)
             model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-        
+
         # Add global allocation constraints
         for _, _, first_node_instance, _, _, _ in codegen.to_allocate[self.sdfg]:
             # Get the size of the array associated with this access node
@@ -3522,34 +3646,34 @@ class BackwardPassGenerator:
                 # Only accept int sizes for now
                 if not isinstance(shape, int):
                     raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
-                size *= shape 
-                
+                size *= shape
+
             # Convert the shape to KiBs
             size = size * self.sdfg.arrays[first_node_instance.data].dtype.bytes / 1024
             sdfg_allocation_sizes.append(size)
-            
+
             # Add the constraint
             new_constraint = constraints[-1] + size
             constraints.append(new_constraint)
             model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-        
+
         # Add the store constraints
-        # Since we know the stored values will be used in a different state, 
+        # Since we know the stored values will be used in a different state,
         # we know they will be allocated on the SDFG level
         for i, v in enumerate(decs):
-            new_constraint = constraints[-1] + v*storage_costs[i]
+            new_constraint = constraints[-1] + v * storage_costs[i]
             constraints.append(new_constraint)
             model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-             
+
         for loop, node in loop_recomputation_nsdfgs.keys():
             cost = loop_sorage_costs[node]
             low_bound, up_bound = self._extract_loop_region_info(loop)
             decision_variable = loop_decs[loop]
-            new_constraint = constraints[-1] + (up_bound - decision_variable)*cost
+            new_constraint = constraints[-1] + (up_bound - decision_variable) * cost
             constraints.append(new_constraint)
             model += (pmu >= new_constraint, f"Constraint_loop_{len(constraints)}")
-             
-        # Get the order of the states 
+
+        # Get the order of the states
         states_topological = list(self.sdfg.bfs_nodes(self.sdfg.start_state))
 
         # Identify the recomputation states
@@ -3557,10 +3681,10 @@ class BackwardPassGenerator:
         recomputation_states: List[SDFGState] = []
         for _, backward_state, _, _, _ in self._forward_data:
             recomputation_states.append(backward_state)
-        
+
         # Dictionary of state : set of last updated constraints
         state_constraints_dict = {}
-        
+
         # Go through the states and add the allocation/deallocation accordingly
         for node in states_topological:
             if isinstance(node, LoopRegion):
@@ -3571,13 +3695,13 @@ class BackwardPassGenerator:
                 # Add the formula to the constraints
             else:
                 state = node
-                assert isinstance(state, SDFGState)    
+                assert isinstance(state, SDFGState)
                 state_allocation_sizes: list[int] = []
-                
+
                 # Identify where to add the measurements of this state
                 # Get all the incoming state edges to this state
                 in_edges = self.sdfg.in_edges(state)
-                
+
                 to_add = []
                 if len(in_edges) == 0:
                     # Start state
@@ -3587,7 +3711,7 @@ class BackwardPassGenerator:
                     for edge in in_edges:
                         state_constraints = state_constraints_dict[edge.src]
                         to_add = to_add + state_constraints
-                
+
                 # Get the allocations for this state
                 for _, _, first_node_instance, _, _, _ in codegen.to_allocate[state]:
                     # Get the size of the array associated with this access node
@@ -3597,26 +3721,26 @@ class BackwardPassGenerator:
                         if not isinstance(shape, int):
                             raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
                         size *= shape
-                    
+
                     # Convert the shape to KiBs
                     size = size * self.sdfg.arrays[first_node_instance.data].dtype.bytes / 1024
                     state_allocation_sizes.append(size)
-                    
+
                     updated_to_add = []
-                    
+
                     # Add the constraint
                     for const in to_add:
                         new_constraint = const + size
                         updated_to_add.append(new_constraint)
                         constraints.append(new_constraint)
                         model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-                    to_add = updated_to_add 
+                    to_add = updated_to_add
                 # Check if any recomputation terms can be inserted here
                 if state in recomputation_states:
                     for i, (forward_state, backward_state, access_node, node, edge) in enumerate(self._forward_data):
                         if not backward_state == state:
                             continue
-                        
+
                         # Get the size of the array associated with this access node
                         size = 1
                         for shape in self.sdfg.arrays[access_node.data].shape:
@@ -3624,20 +3748,20 @@ class BackwardPassGenerator:
                             if not isinstance(shape, int):
                                 raise AutoDiffException("Symbolic shapes not yet supported for the ILP")
                             size *= shape
-                        
+
                         # Convert the shape to KiBs
                         size = size * self.sdfg.arrays[access_node.data].dtype.bytes / 1024
                         state_allocation_sizes.append(size)
-                        
+
                         # Add the constraint
                         # TODO: evaluate the recomputation peak memory usage and replace it here
                         updated_to_add = []
                         for const in to_add:
-                            new_constraint = const + (1-decs[i])*storage_costs[i]
+                            new_constraint = const + (1 - decs[i]) * storage_costs[i]
                             updated_to_add.append(new_constraint)
                             constraints.append(new_constraint)
                             model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-                        to_add = updated_to_add 
+                        to_add = updated_to_add
                 # Add the deallocation for when the state exists
                 for size in state_allocation_sizes:
                     # Add the constraint
@@ -3648,10 +3772,10 @@ class BackwardPassGenerator:
                         constraints.append(new_constraint)
                         model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
                     to_add = updated_to_add
-                
+
                 # Update the state constraints dict
                 state_constraints_dict[state] = to_add
-            
+
         # Add the deallocation for when the sdfg exists
         for size in sdfg_allocation_sizes:
             # Get the end states of the SDFG
@@ -3659,13 +3783,13 @@ class BackwardPassGenerator:
             to_add_final = []
             for state in end_states:
                 to_add_final += state_constraints_dict[state]
-                
+
             # Add the constraint
             for const in to_add_final:
                 new_constraint = const - size
                 constraints.append(new_constraint)
                 model += (pmu >= new_constraint, f"Constraint_{len(constraints)}")
-                  
+
         # Make sure the pmu is less than the user provided maximum memory usage
         model += (pmu <= max_memory_usage, f"Final_Constraint")
 
@@ -4174,7 +4298,7 @@ class BackwardPassGenerator:
         Given an access node get the subgraph from the forward state that writes to this access node
         """
         # reverse bfs from the accesss node
-        backward_nodes = {n for e in state.bfs_edges(node, reverse=True) for n in [e.src, e.dst]}
+        backward_nodes = {n for e in state.edge_bfs(node, reverse=True) for n in [e.src, e.dst]}
         forward_nodes = {n for n in state.nodes()}
         # intersection with all the nodes in the forward state
         forward_subgraph = dstate.StateSubgraphView(state, list(forward_nodes.intersection(backward_nodes)))
@@ -4357,6 +4481,84 @@ class BackwardPassGenerator:
         # Get the new array shape
         # This will be the shape of the current array
         shape: List[int] = list(self.sdfg.arrays[forward_an.data].shape)
+
+        # # If this is a view and the shape is not static
+        # if any(isinstance(s, dace.symbol) or isinstance(s, sp.Expr) for s in shape):
+        #     # If this is a view
+        #     if type(forward_an.desc(self.sdfg)) is dt.ArrayView:
+        #         # Use the shape of the viewed node instead
+        #         in_edges = forward_state.in_edges(forward_an)
+
+        #         # Sanity checks
+        #         assert len(in_edges) == 1
+        #         assert "views" in forward_an.in_connectors
+
+        #         # Get the shape of the viewed node
+        #         node = in_edges[0].src
+        #         new_shape = list(self.sdfg.arrays[node.data].shape)
+
+        #         # We only want to make this change if the two shapes match in size
+        #         # Otherwise, the memlets for the storing will be wrong
+        #         assert len(new_shape) == shape
+        #         shape = new_shape
+
+        #         # Make sure that the new shape doesn't have any symbolic elements
+        #         # TODO: this is still fixable in case this is a view of a view
+        #         assert not any(isinstance(s, dace.symbol) or isinstance(s, sp.Expr) for s in shape)
+
+        # If the shape is an expression:
+        if any(isinstance(s, dace.symbol) or isinstance(s, sp.Expr) for s in shape):
+            # Otherwise, replace all the loop dependant allocations with the max length of the loop
+            # For example, an array of size [i+1] in a range(2, 10) loop will be stored in a [10, 10] array (1)
+            # Additionally, an array of size [32-i] in the same loop will be stored in a [10, 30]  (2)
+            loops = self._get_all_enclosing_loops(forward_state)
+
+            if len(loops) > 0:
+                # Loop over the shape dimensions
+                for i, s in enumerate(shape):
+                    if isinstance(s, dace.symbol) or isinstance(s, sp.Expr):
+                        # Get the symbol to match
+                        loop_index = s.free_symbols
+                        loop_index = str(list(loop_index)[0])
+                        # Get the loop range for this symbol
+                        loop_size = -1
+                        for l in loops:
+                            # Convert the sympy symbol to string to check if it macthes the loop variable
+                            if loop_index in l.loop_variable:
+                                # Get the max loop range
+                                start, end = self._extract_loop_region_info(l)
+
+                                # TODO: Is this a safe conversion?
+                                end = int(end)
+                                start = int(start)
+                                # If this is the case of exmaple (1) mentioned above
+                                # TODO: How can we do this better?
+                                matched = f"-{loop_index}" in str(s) or f"- {loop_index}" in str(s)
+                                if not matched:
+                                    # TODO: Check code for reversed loops
+                                    if end > start:
+                                        loop_size = end
+                                    else:
+                                        loop_size = start
+                                    break
+                                else:
+                                    # Example (2)
+                                    # We want the opposite
+                                    if end <= start:
+                                        loop_size = end
+                                    else:
+                                        loop_size = start
+                                    break
+
+                        if loop_size == -1:
+                            raise AutoDiffException(
+                                f"Can't figure out how to save the data {forward_an.data} because of its symbol shape {shape}"
+                            )
+
+                        # Replace the symbol with the loop size and evaluate the expression
+                        s = s.subs(sp.Symbol(loop_index), loop_size)
+                        shape[i] = s
+
         # Plus the size of any enclosing loops
         encolsed, _ = self._state_within_loop(forward_state=forward_state)
         nb_enclosing_loops = 0
