@@ -1,5 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import List, Optional, Tuple, Union, Dict
+from typing import List, Optional, Tuple, Union, Dict, Any
 
 
 # The node class is the base class for all nodes in the AST. It provides attributes including the line number and fields.
@@ -95,6 +95,20 @@ class Main_Program_Node(FNode):
 
 
 class Module_Node(FNode):
+    def __init__(self,
+                 name: 'Name_Node',
+                 specification_part: 'Specification_Part_Node',
+                 subroutine_definitions: List['Subroutine_Subprogram_Node'],
+                 function_definitions: List['Function_Subprogram_Node'],
+                 interface_blocks: Dict,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.specification_part = specification_part
+        self.subroutine_definitions = subroutine_definitions
+        self.function_definitions = function_definitions
+        self.interface_blocks = interface_blocks
+
     _attributes = ('name',)
     _fields = (
         'specification_part',
@@ -144,7 +158,25 @@ class Actual_Arg_Spec_Node(FNode):
 
 
 class Function_Subprogram_Node(FNode):
-    _attributes = ('name', 'type', 'ret_name')
+    def __init__(self,
+                 name: 'Name_Node',
+                 args: List,
+                 ret: 'Name_Node',
+                 specification_part: 'Specification_Part_Node',
+                 execution_part: 'Execution_Part_Node',
+                 type: Any = None,
+                 elemental: bool = False,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.type = type
+        self.ret = ret
+        self.args = args
+        self.specification_part = specification_part
+        self.execution_part = execution_part
+        self.elemental = elemental
+
+    _attributes = ('name', 'type', 'ret')
     _fields = (
         'args',
         'specification_part',
@@ -153,7 +185,27 @@ class Function_Subprogram_Node(FNode):
 
 
 class Subroutine_Subprogram_Node(FNode):
-    _attributes = ('name', 'type')
+    def __init__(self,
+                 name: 'Name_Node',
+                 args: List,
+                 specification_part: 'Specification_Part_Node',
+                 execution_part: 'Execution_Part_Node',
+                 mandatory_args_count: int = -1,
+                 optional_args_count: int = -1,
+                 type: Any = None,
+                 elemental: bool = False,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.type = type
+        self.args = args
+        self.mandatory_args_count = mandatory_args_count
+        self.optional_args_count = optional_args_count
+        self.elemental = elemental
+        self.specification_part = specification_part
+        self.execution_part = execution_part
+
+    _attributes = ('name', 'type', 'elemental')
     _fields = (
         'args',
         'mandatory_args_count',

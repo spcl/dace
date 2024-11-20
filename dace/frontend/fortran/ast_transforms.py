@@ -274,8 +274,13 @@ class FindFunctionAndSubroutines(NodeVisitor):
 
     def visit_Module_Node(self, node: ast_internal_classes.Module_Node):
         self.iblocks.update(node.interface_blocks)
-
         self.generic_visit(node)
+
+    @staticmethod
+    def from_node(node: ast_internal_classes.FNode) -> 'FindFunctionAndSubroutines':
+        v = FindFunctionAndSubroutines()
+        v.visit(node)
+        return v
 
 
 class FindNames(NodeVisitor):
@@ -1663,6 +1668,7 @@ def functionStatementEliminator(node=ast_internal_classes.Program_Node):
                 specification_part=i.specification_part,
                 subroutine_definitions=module_subroutine_definitions,
                 function_definitions=module_function_definitions,
+                interface_blocks=i.interface_blocks,
             ))
     node.main_program = main_program
     node.function_definitions = function_definitions

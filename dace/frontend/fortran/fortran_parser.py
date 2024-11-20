@@ -2563,17 +2563,17 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     # The actual structure listing is repeated later to resolve cycles.
     # Not sure if we can actually do it earlier.
 
-    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
-    functions_and_subroutines_builder.visit(program)
     program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
+    program = ast_transforms.StructConstructorToFunctionCall(
+        ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
+    program = ast_transforms.CallToArray(ast_transforms.FindFunctionAndSubroutines.from_node(program)).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
-    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
+    program = ast_transforms.ElementalFunctionExpander(
+        ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
     for i in program.modules:
         count = 0
         for j in i.function_definitions:
@@ -2676,7 +2676,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         ast2sdfg = AST_translator(__file__, multiple_sdfgs=cfg.multiple_sdfgs, startpoint=fn, toplevel_subroutine=None,
                                   normalize_offsets=cfg.normalize_offsets)
         g = SDFG(ep)
-        ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
+        ast2sdfg.functions_and_subroutines = ast_transforms.FindFunctionAndSubroutines.from_node(program).names
         ast2sdfg.structures = program.structures
         ast2sdfg.placeholders = program.placeholders
         ast2sdfg.placeholders_offsets = program.placeholders_offsets
