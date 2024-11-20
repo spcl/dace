@@ -247,11 +247,16 @@ class AST_translator:
 
     def __init__(self, source: str, multiple_sdfgs: bool = False, startpoint=None, sdfg_path=None,
                  toplevel_subroutine: Optional[str] = None, subroutine_used_names: Optional[Set[str]] = None,
-                 normalize_offsets=False):
+                 normalize_offsets=False, do_not_make_internal_variables_argument: bool = False):
         """
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
+        :do_not_make_internal_variables_argument: Avoid turning internal variables of the entry point into arguments.
+            This essentially avoids the hack with `transient_mode = False`, since we can rely on `startpoint` for
+            arbitrary entry point anyway.
         """
+        # TODO: Refactor the callers who rely on the hack with `transient_mode = False`, then remove the
+        #  `do_not_make_internal_variables_argument` argument entirely, since we don't need it at that point.
         self.sdfg_path = sdfg_path
         self.count_of_struct_symbols_lifted = 0
         self.registered_types = {}
@@ -289,6 +294,7 @@ class AST_translator:
         self.toplevel_subroutine = toplevel_subroutine
         self.subroutine_used_names = subroutine_used_names
         self.normalize_offsets = normalize_offsets
+        self.do_not_make_internal_variables_argument = do_not_make_internal_variables_argument
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
             ast_internal_classes.For_Stmt_Node: self.forstmt2sdfg,
@@ -426,7 +432,7 @@ class AST_translator:
 
                 # this works with CloudSC
                 # unsure about ICON
-                self.transient_mode = False
+                self.transient_mode = self.do_not_make_internal_variables_argument
 
                 for j in i.specification_part.symbols:
                     self.translate(j, sdfg)
@@ -451,7 +457,7 @@ class AST_translator:
         if self.startpoint.specification_part is not None:
             # this works with CloudSC
             # unsure about ICON
-            self.transient_mode = False
+            self.transient_mode = self.do_not_make_internal_variables_argument
 
             for i in self.startpoint.specification_part.typedecls:
                 self.translate(i, sdfg)
@@ -2563,17 +2569,17 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     # The actual structure listing is repeated later to resolve cycles.
     # Not sure if we can actually do it earlier.
 
-    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
-    functions_and_subroutines_builder.visit(program)
     program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
+    program = ast_transforms.StructConstructorToFunctionCall(
+        ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
+    program = ast_transforms.CallToArray(ast_transforms.FindFunctionAndSubroutines.from_node(program)).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
-    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
+    program = ast_transforms.ElementalFunctionExpander(
+        ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
     for i in program.modules:
         count = 0
         for j in i.function_definitions:
@@ -2674,9 +2680,9 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
 
         # Do the actual translation.
         ast2sdfg = AST_translator(__file__, multiple_sdfgs=cfg.multiple_sdfgs, startpoint=fn, toplevel_subroutine=None,
-                                  normalize_offsets=cfg.normalize_offsets)
+                                  normalize_offsets=cfg.normalize_offsets, do_not_make_internal_variables_argument=True)
         g = SDFG(ep)
-        ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
+        ast2sdfg.functions_and_subroutines = ast_transforms.FindFunctionAndSubroutines.from_node(program).names
         ast2sdfg.structures = program.structures
         ast2sdfg.placeholders = program.placeholders
         ast2sdfg.placeholders_offsets = program.placeholders_offsets
