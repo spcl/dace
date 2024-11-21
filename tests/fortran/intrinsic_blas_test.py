@@ -15,6 +15,8 @@ subroutine main(arg1, arg2, res1)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
+    # TODO: We should re-enable `simplify()` once we merge it.
+    # sdfg.simplify()
     sdfg.compile()
 
     size = 5
@@ -41,6 +43,8 @@ subroutine main(arg1, arg2, res1)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main', normalize_offsets=False)
+    # TODO: We should re-enable `simplify()` once we merge it.
+    # sdfg.simplify()
     sdfg.compile()
 
     size = 5
