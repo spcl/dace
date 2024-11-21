@@ -40,8 +40,9 @@ def _get_interstate_dependent_sdfg(assignments: Dict, symbols_at_start=False):
     return sdfg
 
 def test_interstate_assignment():
-    sdfg = _get_interstate_dependent_sdfg({"N": 5}, False)
+    sdfg = _get_interstate_dependent_sdfg({"N": "5"}, False)
     sdfg.validate()
+    sdfg.save("s0.sdfg")
     sdfg()
     iatm =  InterstateAssignmentToMap()
     iatm.apply_pass(sdfg, {})
@@ -49,5 +50,17 @@ def test_interstate_assignment():
     sdfg.validate()
     sdfg()
 
+def test_interstate_assignment_2():
+    sdfg = _get_interstate_dependent_sdfg({"N": 5}, True)
+    sdfg.validate()
+    sdfg.save("s1.sdfg")
+    sdfg(N=10)
+    iatm =  InterstateAssignmentToMap()
+    iatm.apply_pass(sdfg, {})
+    sdfg.save("s3.sdfg")
+    sdfg.validate()
+    sdfg(N=10)
+
 if __name__ == "__main__":
     test_interstate_assignment()
+    test_interstate_assignment_2()
