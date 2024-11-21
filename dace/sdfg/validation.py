@@ -337,13 +337,18 @@ def _check_symbol_assignments_and_array_size(sdfg):
         for key in e.data.assignments.keys():
             symbol = symbolic.symbol(key)
             symbol_assignments[symbol] += 1
+    for arg in sdfg.arglist():
+        symbol = symbolic.symbol(arg)
+        symbol_assignments[symbol] += 1
 
     reassigned_symbols = {key: value for key, value in symbol_assignments.items() if value > 1}
 
     reassigned_size_symbols = set.union(symbols_used_for_size, reassigned_symbols)
 
-    warnings.warn(f'WARNING: The following symbols used to determine the sizes of arrays ({reassigned_size_symbols}) '
-                  f' are re-assigned (multiple interstate assignments and counts: {reassigned_symbols}) on interstate edges')
+    if len(reassigned_symbols) > 0:
+        warnings.warn(f'WARNING: The following symbols used to determine the sizes of arrays ({reassigned_size_symbols}) '
+                    f' are re-assigned (multiple interstate assignments and counts: {reassigned_symbols}) on interstate edges '
+                    f' if the symbol is passed to the SDFG it counts as one assignment')
 
 def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]):
     """
