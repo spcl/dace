@@ -57,7 +57,16 @@ class BlockTiling(transformation.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.thread_block_map_entry, cls.sequential_map_entry)]
 
     def can_be_applied(self, state, expr_index, sdfg, permissive=False):
+        #if state.entry_node(self.sequential_map_entry) != self.thread_block_map_entry:
+        #    return False
+        #if self.thread_block_map_entry.schedule != dtypes.ScheduleType.GPU_ThreadBlock or \
+        #    self.sequential_map_entry.schedule != dtypes.ScheduleType.Sequential:
+        #    return False
+
         return True
+
+    def update_names():
+        pass
 
     def find_next_map_entry(self, state: SDFGState, node : nodes.MapEntry):
         nodes_to_check = [v for u, u_conn, v, v_conn, memlet in state.out_edges(node)]

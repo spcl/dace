@@ -6,7 +6,7 @@
 import dace
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
-from dace.properties import make_properties, SymbolicProperty
+from dace.properties import ListProperty, make_properties, SymbolicProperty
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
@@ -20,30 +20,20 @@ from typing import List
 class ThreadCoarsening(transformation.SingleStateTransformation):
     """
     Thread coarsening means for GPU code-gen one thread does not comute 1 cell of the output, but
-    a tile_size_x * tile_size_y * tile_size_t sub domain of the output.
+    a tile_sizes (dimensions go as x,y,z...) sub domain of the output.
     """
 
     device_map_entry = transformation.PatternNode(nodes.MapEntry)
-    thread_block_map_entry = transformation.PatternNode(nodes.MapEntry)
+    thread_group_map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    # Properties
-    tile_size_x = SymbolicProperty(dtype=int, default=4, desc="Number threads in the threadBlock X Dim")
-    tile_size_y = SymbolicProperty(dtype=int, default=1, desc="Number threads in the threadBlock Y Dim")
-    tile_size_z = SymbolicProperty(dtype=int, default=1, desc="Number threads in the threadBlock Z Dim")
+    tile_sizes = ListProperty(element_type=int, desc="Computational domain per core / thread")
 
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.thread_block_map_entry, cls.device_map_entry)]
 
     def can_be_applied(self, state, expr_index, sdfg, permissive=False):
-        # Applicable if the map is a GPU_ThreadBlock Scheduled Map
-        if self.thread_block_map_entry.map.schedule != dtypes.ScheduleType.GPU_ThreadBlock:
-            return False
-
         return MapTiling.can_be_applied(self, state, expr_index=expr_index, sdfg=sdfg, permissive=permissive)
-
-    def update_names():
-        pass
 
     def apply(self, state: SDFGState, sdfg: SDFG):
         # When the ThreadBlock scheduled loop is tiled, then beg:end:1 becomes beg:end:tile_size
@@ -52,7 +42,7 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
         # This can be handled by changing the range and the step of the thread block scheduled loop and increasing the step size of the parent
 
         dev_entry : nodes.MapEntry = self.device_map_entry
-        thread_block_entry : nodes.MapEntry = self.thread_block_map_entry
+        thread_group_entry : nodes.MapEntry = self.thread_group_map_entry
 
         # If there are transient access nodes leading to the first inner sequential map the sizes of the arrays and the
         # subsets / volumes of the corresponding memlets need to be adapted
@@ -63,10 +53,8 @@ class ThreadCoarsening(transformation.SingleStateTransformation):
                 assert(v.map.schedule == dtypes.ScheduleType.Sequential)
                 inner_sequential_map_entry = v
 
-        tx = self.tile_size_x
-        ty = self.tile_size_y
-        tz = self.tile_size_z
-        possible_tile_sizes = [tz, ty, tx]
+
+        possible_tile_sizes = self.tile_sizes
         used_dimensions = min(3, len(thread_block_entry.map.params))
         tile_sizes = [1] * len(thread_block_entry.map.params)
         # Depending on the sizes of the params use: (tz,ty,tx), (ty,tx) or (tx)
