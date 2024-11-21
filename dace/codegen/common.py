@@ -43,11 +43,11 @@ def _sym2cpp(s, arrayexprs):
 
 
 def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
-    """ 
-    Converts an array of symbolic variables (or one) to C++ strings. 
-    
+    """
+    Converts an array of symbolic variables (or one) to C++ strings.
+
     :param s: Symbolic expression to convert.
-    :param arrayexprs: Set of names of arrays, used to convert SymPy 
+    :param arrayexprs: Set of names of arrays, used to convert SymPy
                        user-functions back to array expressions.
     :return: C++-compilable expression or list thereof.
     """
@@ -171,3 +171,57 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
                            'environment variable to point to the libraries.')
 
     return gpu_runtime.GPURuntime(backend, libpath)
+
+@lru_cache()
+def get_ascend_runtime() -> AscendRuntime:
+    """
+    Returns the Ascend runtime library. The result is cached for performance.
+
+    Returns:
+        AscendRuntime: Initialized Ascend runtime object
+
+    Raises:
+        RuntimeError: If runtime library cannot be found
+    """
+    # Try to get path from environment variable
+    ascend_home = os.environ.get('ASCEND_HOME_PATH')
+    if not ascend_home:
+        raise RuntimeError('ASCEND_HOME_PATH environment variable is not set')
+
+    # Construct runtime library path
+    libpath = os.path.join(ascend_home, 'lib64', 'libruntime.so')
+
+    # Check if library exists
+    if not os.path.exists(libpath):
+        # Alternative paths to try
+        alternative_paths = [
+            '/usr/local/Ascend/ascend-toolkit/latest/runtime/lib64/libruntime.so',
+            '/opt/Ascend/ascend-toolkit/latest/runtime/lib64/libruntime.so'
+        ]
+
+        for alt_path in alternative_paths:
+            if os.path.exists(alt_path):
+                libpath = alt_path
+                break
+        else:
+            raise RuntimeError(
+                f'Ascend runtime library not found. '
+                f'Checked paths:\n- {libpath}\n' +
+                '\n'.join(f'- {path}' for path in alternative_paths) +
+                '\nPlease set ASCEND_HOME_PATH or ensure the library is installed.'
+            )
+
+    return AscendRuntime(libpath)
+
+def is_ascend_available() -> bool:
+    """
+    Check if Ascend runtime is available
+
+    Returns:
+        bool: True if Ascend runtime can be loaded, False otherwise
+    """
+    try:
+        get_ascend_runtime()
+        return True
+    except RuntimeError:
+        return False

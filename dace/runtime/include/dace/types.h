@@ -62,7 +62,7 @@
 #endif
 
 
-#if !defined(__CUDACC__) && !defined(__HIPCC__) && !defined(__CCE_KT_TEST__)
+#if !defined(__CUDACC__) && !defined(__HIPCC__) && !defined(DACE_ASCEND)
 namespace dace {
     struct half {
         // source: https://stackoverflow.com/a/26779139/15853075

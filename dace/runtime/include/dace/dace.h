@@ -2,6 +2,10 @@
 #ifndef __DACE_RUNTIME_H
 #define __DACE_RUNTIME_H
 
+#ifdef DACE_ASCEND
+#ifndef __CCE_KT_TEST__
+#endif
+
 // Necessary headers
 #include <cstdio>
 #include <cmath>
@@ -20,11 +24,17 @@
 #include "pyinterop.h"
 #include "reduction.h"
 #include "copy.h"
+#ifndef DACE_ASCEND
 #include "stream.h"
+#endif
 #include "os.h"
+#ifndef DACE_ASCEND
 #include "perf/reporting.h"
+#endif
 #include "comm.h"
+#ifndef DACE_ASCEND
 #include "serialization.h"
+#endif
 
 #if defined(__CUDACC__) || defined(__HIPCC__)
 #include "cuda/cudacommon.cuh"
@@ -48,4 +58,9 @@
 #include "ascendc/ascendccommon.h"
 #endif
 
+#ifdef DACE_ASCEND
+#endif
+#endif
+
 #endif  // __DACE_RUNTIME_H
+

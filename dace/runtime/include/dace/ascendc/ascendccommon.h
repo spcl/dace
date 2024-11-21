@@ -1,11 +1,13 @@
 // Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
+#ifndef __CCE_KT_TEST__
 #include "acl/acl.h"
-#include "types.h"
+#include <iostream>
 
 #define GM_HALF __gm__ dace::float16* __restrict__
 #define GM_FLOAT __gm__ dace::float32* __restrict__
+
 
 #define DACE_ACL_CHECK(x)                                               \
   do {                                                                  \
@@ -23,15 +25,18 @@ struct Context {
   int num_events;
   aclrtStream *streams;
   aclrtStream *internal_streams;
+  aclrtContext aclrt_context;
 
   Context(int nstreams, int nevents)
       : num_streams(nstreams),
         num_events(nevents),
         streams(new aclrtStream[nstreams]),
-        internal_streams(new aclrtStream[nstreams]) {}
+        internal_streams(new aclrtStream[nstreams]),
+        aclrt_context() {}
 
   ~Context() { delete[] streams; }
 };
 
 }  // namespace ascendc
 }  // namespace dace
+#endif

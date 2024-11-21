@@ -243,12 +243,12 @@ class AscendCCodeGen(TargetCodeGenerator):
             params_comma = ", " + params_comma
 
         self._codeobject.code = """
-#include <dace/dace.h>
-
-#include "kernel_operator.h"
+#ifdef DACE_ASCEND
 #ifndef __CCE_KT_TEST__
-#include "acl/acl.h"
 #endif
+
+#include <iostream>
+#include <dace/dace.h>
 
 {file_header}
 
@@ -267,9 +267,6 @@ int __dace_init_ascendc({sdfg_state_name} *__state{params}) {{
     float *dev_X;
     DACE_ACL_CHECK(aclrtMalloc((void **) &dev_X, 1, ACL_MEM_MALLOC_HUGE_FIRST));
     DACE_ACL_CHECK(aclrtFree(dev_X));
-
-
-
 
     // Create acl streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
@@ -318,6 +315,10 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 }}
 
 {localcode}
+
+#ifdef DACE_ASCEND
+#endif
+#endif
 """.format(
             params=params_comma,
             sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
@@ -1483,7 +1484,6 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
 void __dace_runkernel_{fname}({fargs})
 {{
-#ifndef __CCE_KT_TEST__
 """.format(
                 fname=kernel_name,
                 fargs=", ".join(
@@ -1543,7 +1543,6 @@ void __dace_runkernel_{fname}({fargs})
         )
 
         self._emit_sync(self._localcode)
-        self._localcode.write("#endif")
 
         # Close the runkernel function
         self._localcode.write("}")

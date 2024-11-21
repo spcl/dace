@@ -26,7 +26,7 @@ class ReloadableDLL(object):
     def __init__(self, library_filename, program_name):
         """
         Creates a new reloadable shared object.
-        
+
         :param library_filename: Path to library file.
         :param program_name: Name of the DaCe program (for use in finding
                              the stub library loader).
@@ -84,6 +84,8 @@ class ReloadableDLL(object):
         # If internal library is already loaded, skip
         if self._lib is not None and self._lib.value is not None:
             return
+
+        ctypes.CDLL('/scratch1/ybudanaz/local/ascend-toolkit/latest/runtime/lib64/libruntime.so', mode=ctypes.RTLD_GLOBAL)
         self._stub = ctypes.CDLL(self._stub_filename)
 
         # Set return types of stub functions
@@ -174,7 +176,7 @@ def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
 
 
 class CompiledSDFG(object):
-    """ A compiled SDFG object that can be called through Python. 
+    """ A compiled SDFG object that can be called through Python.
 
     Todo:
         Scalar return values are not handled properly, this is a code gen issue.
@@ -242,7 +244,7 @@ class CompiledSDFG(object):
             consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
             encountered, the method exits early. All fields defined until then will nevertheless be available in the
             structure.
-            
+
             :return: the ctypes.Structure representation of the state struct.
         """
         if not self._libhandle:
@@ -342,7 +344,7 @@ class CompiledSDFG(object):
 
     def initialize(self, *args, **kwargs):
         """
-        Initializes the compiled SDFG without invoking it. 
+        Initializes the compiled SDFG without invoking it.
 
         :param args: Arguments to call SDFG with.
         :param kwargs: Keyword arguments to call SDFG with.

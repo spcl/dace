@@ -3,6 +3,10 @@
  * Stub library that can load other libraries for use in as DaCe programs
  **/
 
+#ifdef DACE_ASCEND
+#ifndef __CCE_KT_TEST__
+#endif
+
 #ifdef _WIN32
     #include <windows.h>
     #define DACE_EXPORTED extern "C" __declspec(dllexport)
@@ -15,7 +19,7 @@
 #include <omp.h>
 
 // Loads a library and returns a handle to it, or NULL if there was an error
-// NOTE: On Windows, path must be given as a Unicode string (UTF-16, or 
+// NOTE: On Windows, path must be given as a Unicode string (UTF-16, or
 //       ctypes.c_wchar_p)
 DACE_EXPORTED void *load_library(const char *filename) {
     if (!filename)
@@ -67,12 +71,12 @@ DACE_EXPORTED void *get_symbol(void *hLibrary, const char *symbol) {
 }
 
 // Loads a library and returns a handle to it, or NULL if there was an error
-// NOTE: On Windows, path must be given as a Unicode string (UTF-16, or 
+// NOTE: On Windows, path must be given as a Unicode string (UTF-16, or
 //       ctypes.c_wchar_p)
 DACE_EXPORTED void unload_library(void *hLibrary) {
     if (!hLibrary)
         return;
-    
+
     // Workaround so that OpenMP does not go ballistic when calling dlclose()
     omp_get_max_threads();
 
@@ -83,4 +87,6 @@ DACE_EXPORTED void unload_library(void *hLibrary) {
 #endif
 }
 
-
+#ifdef DACE_ASCEND
+#endif
+#endif

@@ -105,7 +105,7 @@ class DaCeCodeGenerator(object):
     def preprocess(self, sdfg: SDFG) -> None:
         """
         Called before code generation. Used for making modifications on the SDFG prior to code generation.
-        
+
         :note: Post-conditions assume that the SDFG will NOT be changed after this point.
         :param sdfg: The SDFG to modify in-place.
         """
@@ -211,7 +211,9 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         """
         # Write frame code - header
         global_stream.write('/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n' + '#include <dace/dace.h>\n', sdfg)
-
+        global_stream.write("""#ifdef DACE_ASCEND
+#ifndef __CCE_KT_TEST__
+#endif\n""")
         # Write header required by environments
         for env in self.environments:
             self.statestruct.extend(env.state_fields)
@@ -353,6 +355,11 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
 
         callsite_stream.write('delete __state;\n', sdfg)
         callsite_stream.write('return __err;\n}\n', sdfg)
+
+        callsite_stream.write("""#ifdef DACE_ASCEND
+#endif
+#endif\n"""
+        )
 
     def generate_external_memory_management(self, sdfg: SDFG, callsite_stream: CodeIOStream):
         """

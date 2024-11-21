@@ -2,6 +2,10 @@
 cmake_minimum_required(VERSION 3.17)
 project(dace_program)
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 # General options
 set(DACE_PROGRAM_NAME "dace_program" CACHE STRING "Name of DaCe program")
 set(DACE_SRC_DIR "" CACHE STRING "Root directory of generated code files")
@@ -41,6 +45,7 @@ set(DACE_ASCEND_SOC_VERSION "ascend910" CACHE STRING "Choose SoC Version")
 set(DACE_ASCEND_PRODUCT_TYPE ${DACE_ASCEND_SOC_VERSION})
 set(DACE_ASCEND_CORE_TYPE "AiCore")
 set(DACE_ASCEND_CCE_CMAKE_PATH ${CMAKE_SOURCE_DIR}/targets/ascendc)
+set(DACE_ASCEND_CUSTOM_TILING "NO_CUSTOM_TILING")
 list(APPEND CMAKE_MODULE_PATH ${DACE_ASCEND_CCE_CMAKE_PATH})
 message(WARNING ${CMAKE_SOURCE_DIR}/targets/ascendc)
 
@@ -282,34 +287,27 @@ if (DACE_ENABLE_RTL AND DACE_ENABLE_XILINX)
   set(DACE_RTLLIB_DIR ${CMAKE_SOURCE_DIR}/../external/rtllib)
   include ("${DACE_RTLLIB_DIR}/cmake/rtl_target.cmake")
 endif()
+
 if (DACE_ENABLE_ASCEND)
   add_definitions(-DDACE_ASCEND)
   enable_language(CCE)
+  set_source_files_properties(${DACE_ASCEND_FILES} PROPERTIES LANGUAGE CCE)
+  set_source_files_properties(${DACE_HOST_FILES} PROPERTIES LANGUAGE CCE)
 
-  # Necessary to find tikicpulib
-  list(APPEND CMAKE_PREFIX_PATH "${DACE_ASCEND_INSTALL_PATH}/tools/tikicpulib/lib/cmake")
-  find_package(tikicpulib REQUIRED)
-  include_directories(${DACE_ASCEND_INSTALL_PATH}/acllib/include)
-  link_libraries(
-    tikicpulib::${DACE_ASCEND_PRODUCT_TYPE}
-    ascendcl
-  )
-  add_library(dace_ascendc_kernels SHARED
-    ${DACE_ASCEND_FILES}
-  )
-  target_compile_definitions(dace_ascendc_kernels PRIVATE
-    TILING_KEY_VAR=0
-  )
-  target_compile_options(dace_ascendc_kernels PRIVATE
+  add_library(ascendc_kernels SHARED ${DACE_ASCEND_FILES})
+  target_compile_definitions(ascendc_kernels PRIVATE TILING_KEY_VAR=0)
+  target_compile_options(ascendc_kernels PRIVATE
     -O2
     -std=c++17
+    ${OpenMP_CXX_FLAGS}
   )
-  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_link_options(dace_ascendc_kernels PRIVATE
-      -Wl,--as-needed
-    )
-  endif()
-  list(APPEND DACE_LIBS dace_ascendc_kernels)
+  add_compile_options(-std=c++17 ${OpenMP_CXX_FLAGS})
+  target_compile_features(ascendc_kernels PUBLIC cxx_std_17)
+  list(APPEND DACE_LIBS ascendc_kernels)
+  target_link_libraries(ascendc_kernels PUBLIC OpenMP::OpenMP_CXX ${OpenMP_CXX_LIBRARIES})
+  message(STATUS "OpenMP_CXX_FLAGS: ${OpenMP_CXX_FLAGS}")
+  message(STATUS "OpenMP_CXX_LIBRARIES: ${OpenMP_CXX_LIBRARIES}")
+  #add_link_options(-Wl,--as-needed)
 endif()
 
 # Create HIP object files
@@ -612,8 +610,11 @@ endif()
 include("targets/mlir/mlir.cmake")
 
 # Create DaCe library file
-add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
+add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_ASCEND_FILES} ${DACE_HOST_FILES} ${DACE_OBJECTS})
 target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
+target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ascendc_kernels /scratch1/ybudanaz/local/ascend-toolkit/latest/runtime/lib64/libruntime.so)
+target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC stdc++ aclrt runtime)
+target_compile_features(${DACE_PROGRAM_NAME} PUBLIC cxx_std_17)
 
 # Add additional required files
 if(DACE_ENABLE_INTELFPGA)
@@ -653,8 +654,15 @@ endif()
 
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
-target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
+target_compile_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_FLAGS})
+target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
+target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_LIBRARIES})
+target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${CMAKE_DL_LIBS} ascendc_kernels)
+link_directories(/scratch1/ybudanaz/local/ascend-toolkit/latest/runtime/lib64)
+target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC runtime /scratch1/ybudanaz/local/ascend-toolkit/latest/runtime/lib64/libruntime.so)
 
+target_compile_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
+target_link_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
 # Windows-specific fixes
 if (MSVC_IDE)
     # Copy output DLL from the "Debug" and "Release" directories CMake adds
