@@ -808,7 +808,11 @@ class MapEntry(EntryNode):
         result = {}
         # Add map params
         for p, rng in zip(self._map.params, self._map.range):
-            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
+            if p in self._map.param_types:
+                result[p] = self._map.param_types[p]
+            else:
+                result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), 
+                                                  infer_expr_type(rng[1], symbols))
 
         # Handle the dynamic map ranges.
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
@@ -890,6 +894,7 @@ class Map(object):
     # List of (editable) properties
     label = Property(dtype=str, desc="Label of the map")
     params = ListProperty(element_type=str, desc="Mapped parameters")
+    param_types = DictProperty(key_type=str, value_type=dtypes.typeclass, desc="Types of mapped parameters")
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
