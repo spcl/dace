@@ -421,9 +421,9 @@ class CPUCodeGen(TargetCodeGenerator):
                                            allocation_stream)
         if isinstance(nodedesc, data.Scalar):
             if node.setzero:
-                declaration_stream.write("%s %s = 0; //u1\n" % (nodedesc.dtype.ctype, name), cfg, state_id, node)
+                declaration_stream.write("%s %s = 0;\n" % (nodedesc.dtype.ctype, name), cfg, state_id, node)
             else:
-                declaration_stream.write("%s %s;//u1\n" % (nodedesc.dtype.ctype, name), cfg, state_id, node)
+                declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name), cfg, state_id, node)
             define_var(name, DefinedType.Scalar, nodedesc.dtype.ctype)
         elif isinstance(nodedesc, data.Stream):
             ###################################################################
