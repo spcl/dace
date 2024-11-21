@@ -192,7 +192,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
     """ Verifies the correctness of an SDFG by applying multiple tests.
-    
+
         :param sdfg: The SDFG to verify.
         :param references: An optional set keeping seen IDs for object
                            miscopy validation.
@@ -313,6 +313,10 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
+
+        # If a symbol used for the size of an array, but is assigned on an interstate edge, issue a warning
+        _check_symbol_assignments_and_array_size(sdfg)
+
     except InvalidSDFGError as ex:
         # If the SDFG is invalid, save it
         fpath = os.path.join('_dacegraphs', 'invalid.sdfgz')
@@ -320,6 +324,26 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         ex.path = fpath
         raise
 
+def _check_symbol_assignments_and_array_size(sdfg):
+    arrs = sdfg.arrays.values()
+    symbols_used_for_size = set()
+    for arr in arrs:
+        for s in arr.shape:
+            if isinstance(s, symbolic.SymExpr) or isinstance(s, symbolic.symbol):
+                symbols_used_for_size.add(s)
+
+    symbol_assignments = defaultdict(int)
+    for e in sdfg.edges():
+        for key in e.data.assignments.keys():
+            symbol = symbolic.symbol(key)
+            symbol_assignments[symbol] += 1
+
+    reassigned_symbols = {key: value for key, value in symbol_assignments.items() if value > 1}
+
+    reassigned_size_symbols = set.union(symbols_used_for_size, reassigned_symbols)
+
+    warnings.warn(f'WARNING: The following symbols used to determine the sizes of arrays ({reassigned_size_symbols}) '
+                  f' are re-assigned (multiple interstate assignments and counts: {reassigned_symbols}) on interstate edges')
 
 def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]):
     """
@@ -435,6 +459,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         try:
             if isinstance(node, nd.NestedSDFG):
                 node.validate(sdfg, state, references, **context)
+                _check_symbol_assignments_and_array_size(node.sdfg)
             else:
                 node.validate(sdfg, state)
         except InvalidSDFGError:
