@@ -41,6 +41,8 @@ class ScheduleTreeScope(ScheduleTreeNode):
         if self.children:
             for child in children:
                 child.parent = self
+        self.containers = {}
+        self.symbols = {}
 
     def as_string(self, indent: int = 0):
         if not self.children:

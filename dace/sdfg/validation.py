@@ -1,17 +1,22 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
+
 import copy
-from dace.dtypes import DebugInfo
 import os
-from typing import TYPE_CHECKING, Dict, List, Set
 import warnings
+from collections import defaultdict
+from typing import TYPE_CHECKING, Dict, List, Set
+
+import networkx as nx
+
 from dace import dtypes, subsets, symbolic
+from dace.dtypes import DebugInfo
 
 if TYPE_CHECKING:
     import dace
+    from dace.memlet import Memlet
     from dace.sdfg import SDFG
     from dace.sdfg import graph as gr
-    from dace.memlet import Memlet
     from dace.sdfg.state import ControlFlowRegion
 
 ###########################################
@@ -34,8 +39,8 @@ def validate_control_flow_region(sdfg: 'SDFG',
                                  symbols: dict,
                                  references: Set[int] = None,
                                  **context: bool):
-    from dace.sdfg.state import SDFGState, ControlFlowRegion, ConditionalBlock
     from dace.sdfg.scope import is_in_scope
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, SDFGState
 
     if len(region.source_nodes()) > 1 and region.start_block is None:
         raise InvalidSDFGError("Starting block undefined", sdfg, None)
@@ -114,9 +119,10 @@ def validate_control_flow_region(sdfg: 'SDFG',
             also_assigned = (syms & edge.data.assignments.keys()) - {aname}
             if also_assigned:
                 eid = region.edge_id(edge)
-                raise InvalidSDFGInterstateEdgeError(f'Race condition: inter-state assignment {aname} = {aval} uses '
-                                                     f'variables {also_assigned}, which are also modified in the same '
-                                                     'edge.', sdfg, eid)
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Race condition: inter-state assignment {aname} = {aval} uses '
+                    f'variables {also_assigned}, which are also modified in the same '
+                    'edge.', sdfg, eid)
 
         # Add edge symbols into defined symbols
         symbols.update(issyms)
@@ -200,7 +206,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     # Avoid import loop
     from dace import data as dt
     from dace.codegen.targets import fpga
-    from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
+    from dace.sdfg.scope import is_devicelevel_fpga, is_devicelevel_gpu
 
     references = references or set()
 
@@ -223,9 +229,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
         # Check the names of data descriptors and co.
         seen_names: Set[str] = set()
-        for obj_names in [
-                sdfg.arrays.keys(), sdfg.symbols.keys(), sdfg._rdistrarrays.keys(), sdfg._subarrays.keys()
-        ]:
+        for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys(), sdfg._rdistrarrays.keys(), sdfg._subarrays.keys()]:
             if not seen_names.isdisjoint(obj_names):
                 raise InvalidSDFGError(
                     f'Found duplicated names: "{seen_names.intersection(obj_names)}". Please ensure '
@@ -237,15 +241,13 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             if const_name in sdfg.arrays:
                 if const_type != sdfg.arrays[const_name].dtype:
                     # This should actually be an error, but there is a lots of code that depends on it.
-                    warnings.warn(
-                        f'Mismatch between constant and data descriptor of "{const_name}", '
-                        f'expected to find "{const_type}" but found "{sdfg.arrays[const_name]}".')
+                    warnings.warn(f'Mismatch between constant and data descriptor of "{const_name}", '
+                                  f'expected to find "{const_type}" but found "{sdfg.arrays[const_name]}".')
             elif const_name in sdfg.symbols:
-                if const_type != sdfg.symbols[const_name]:
+                if const_type.dtype != sdfg.symbols[const_name]:
                     # This should actually be an error, but there is a lots of code that depends on it.
-                    warnings.warn(
-                        f'Mismatch between constant and symobl type of "{const_name}", '
-                        f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
+                    warnings.warn(f'Mismatch between constant and symobl type of "{const_name}", '
+                                  f'expected to find "{const_type}" but found "{sdfg.symbols[const_name]}".')
             else:
                 warnings.warn(f'Found constant "{const_name}" that does not refer to an array or a symbol.')
 
@@ -383,14 +385,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     from dace.sdfg import SDFG
     from dace.sdfg import nodes as nd
     from dace.sdfg import utils as sdutil
-    from dace.sdfg.scope import scope_contains_scope, is_devicelevel_gpu, is_devicelevel_fpga
+    from dace.sdfg.scope import (is_devicelevel_fpga, is_devicelevel_gpu, scope_contains_scope)
 
     sdfg = sdfg or state.parent
     state_id = state_id if state_id is not None else state.parent_graph.node_id(state)
     symbols = symbols or {}
     initialized_transients = (initialized_transients if initialized_transients is not None else {'__pystate'})
     references = references or set()
-    scope = state.scope_dict()
 
     # Obtain whether we are already in an accelerator context
     if not hasattr(context, 'in_gpu'):
@@ -419,6 +420,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
     if state.has_cycles():
         raise InvalidSDFGError('State should be acyclic but contains cycles', sdfg, state_id)
+
+    scope = state.scope_dict()
 
     for nid, node in enumerate(state.nodes()):
         # Reference check
@@ -513,7 +516,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                       # Streams do not need to be initialized
                       and not isinstance(arr, dt.Stream)):
                     if node.setzero == False:
-                        warnings.warn('WARNING: Use of uninitialized transient "%s" in state %s' %
+                        warnings.warn('WARNING: Use of uninitialized transient "%s" in state "%s"' %
                                       (node.data, state.label))
 
                 # Register initialized transients
@@ -829,7 +832,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             dst_expr = (e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen)
             if symbolic.inequal_symbols(src_expr, dst_expr):
                 error = InvalidSDFGEdgeError('Dimensionality mismatch between src/dst subsets', sdfg, state_id, eid)
-                # NOTE: Make an exception for Views
+                # NOTE: Make an exception for Views and reference sets
                 from dace.sdfg import utils
                 if (isinstance(sdfg.arrays[src_node.data], dt.View) and utils.get_view_edge(state, src_node) is e):
                     warnings.warn(error.message)
@@ -837,7 +840,45 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if (isinstance(sdfg.arrays[dst_node.data], dt.View) and utils.get_view_edge(state, dst_node) is e):
                     warnings.warn(error.message)
                     continue
+                if e.dst_conn == 'set':
+                    continue
                 raise error
+
+    if Config.get_bool('experimental.check_race_conditions'):
+        node_labels = []
+        write_accesses = defaultdict(list)
+        read_accesses = defaultdict(list)
+        for node in state.data_nodes():
+            node_labels.append(node.label)
+            write_accesses[node.label].extend([{
+                'subset': e.data.dst_subset,
+                'node': node,
+                'wcr': e.data.wcr
+            } for e in state.in_edges(node)])
+            read_accesses[node.label].extend([{
+                'subset': e.data.src_subset,
+                'node': node
+            } for e in state.out_edges(node)])
+
+        for node_label in node_labels:
+            writes = write_accesses[node_label]
+            reads = read_accesses[node_label]
+            # Check write-write data races.
+            for i in range(len(writes)):
+                for j in range(i + 1, len(writes)):
+                    same_or_unreachable_nodes = (writes[i]['node'] == writes[j]['node']
+                                                 or not nx.has_path(state.nx, writes[i]['node'], writes[j]['node']))
+                    no_wcr = writes[i]['wcr'] is None and writes[j]['wcr'] is None
+                    if same_or_unreachable_nodes and no_wcr:
+                        subsets_intersect = subsets.intersects(writes[i]['subset'], writes[j]['subset'])
+                        if subsets_intersect:
+                            warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
+            # Check read-write data races.
+            for write in writes:
+                for read in reads:
+                    if (not nx.has_path(state.nx, read['node'], write['node'])
+                            and subsets.intersects(write['subset'], read['subset'])):
+                        warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
 
     ########################################
 

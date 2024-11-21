@@ -162,10 +162,10 @@ class Subset(object):
     def __repr__(self):
         return '%s (%s)' % (type(self).__name__, self.__str__())
 
-    def offset(self, other, negative, indices=None):
+    def offset(self, other, negative, indices=None, offset_end=True):
         raise NotImplementedError
 
-    def offset_new(self, other, negative, indices=None):
+    def offset_new(self, other, negative, indices=None, offset_end=True):
         raise NotImplementedError
 
     def at(self, i, strides):
@@ -229,6 +229,7 @@ def _tuple_to_symexpr(val):
 @dace.serialize.serializable
 class Range(Subset):
     """ Subset defined in terms of a fixed range. """
+
     def __init__(self, ranges):
         parsed_ranges = []
         parsed_tiles = []
@@ -402,7 +403,9 @@ class Range(Subset):
         return (sum(1 if (re - rb + 1) != 1 else 0 for rb, re, _ in self.ranges) + sum(1 if ts != 1 else 0
                                                                                        for ts in self.tile_sizes))
 
-    def offset(self, other, negative, indices=None):
+    def offset(self, other, negative, indices=None, offset_end=True):
+        if other is None:
+            return
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
                 other = Indices(other)
@@ -414,9 +417,13 @@ class Range(Subset):
         off = other.min_element()
         for i in indices:
             rb, re, rs = self.ranges[i]
-            self.ranges[i] = (rb + mult * off[i], re + mult * off[i], rs)
+            if offset_end:
+                re = re + mult * off[i]
+            self.ranges[i] = (rb + mult * off[i], re, rs)
 
-    def offset_new(self, other, negative, indices=None):
+    def offset_new(self, other, negative, indices=None, offset_end=True):
+        if other is None:
+            return Range(self.ranges)
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
                 other = Indices(other)
@@ -426,8 +433,8 @@ class Range(Subset):
         if indices is None:
             indices = set(range(len(self.ranges)))
         off = other.min_element()
-        return Range([(self.ranges[i][0] + mult * off[i], self.ranges[i][1] + mult * off[i], self.ranges[i][2])
-                      for i in indices])
+        return Range([(self.ranges[i][0] + mult * off[i], self.ranges[i][1] if not offset_end else
+                       (self.ranges[i][1] + mult * off[i]), self.ranges[i][2]) for i in indices])
 
     def dims(self):
         return len(self.ranges)
@@ -848,9 +855,11 @@ class Range(Subset):
 class Indices(Subset):
     """ A subset of one element representing a single index in an
         N-dimensional data descriptor. """
+
     def __init__(self, indices):
         if indices is None or len(indices) == 0:
-            raise TypeError('Expected an array of index expressions: got empty' ' array or None')
+            raise TypeError('Expected an array of index expressions: got empty'
+                            ' array or None')
         if isinstance(indices, str):
             raise TypeError("Expected collection of index expression: got str")
         elif isinstance(indices, symbolic.SymExpr):
@@ -860,6 +869,7 @@ class Indices(Subset):
         self.tile_sizes = [1]
 
     def to_json(self):
+
         def a2s(obj):
             if isinstance(obj, symbolic.SymExpr):
                 return str(obj.expr)
@@ -919,7 +929,7 @@ class Indices(Subset):
     def absolute_strides(self, global_shape):
         return [1] * len(self.indices)
 
-    def offset(self, other, negative, indices=None):
+    def offset(self, other, negative, indices=None, offset_end=True):
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
                 other = Indices(other)
@@ -929,7 +939,7 @@ class Indices(Subset):
         for i, off in enumerate(other.min_element()):
             self.indices[i] += mult * off
 
-    def offset_new(self, other, negative, indices=None):
+    def offset_new(self, other, negative, indices=None, offset_end=True):
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
                 other = Indices(other)
