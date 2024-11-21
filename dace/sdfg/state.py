@@ -745,51 +745,78 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         return defined_syms
 
+
     def _read_and_write_sets(self) -> Tuple[Dict[AnyStr, List[Subset]], Dict[AnyStr, List[Subset]]]:
         """
         Determines what data is read and written in this subgraph, returning
         dictionaries from data containers to all subsets that are read/written.
         """
+        from dace.sdfg import utils  # Avoid cyclic import
+
+        # Ensures that the `{src,dst}_subset` are properly set.
+        #  TODO: find where the problems are
+        for edge in self.edges():
+            edge.data.try_initialize(self.sdfg, self, edge)
+
         read_set = collections.defaultdict(list)
         write_set = collections.defaultdict(list)
-        from dace.sdfg import utils  # Avoid cyclic import
-        subgraphs = utils.concurrent_subgraphs(self)
-        for sg in subgraphs:
-            rs = collections.defaultdict(list)
-            ws = collections.defaultdict(list)
-            # Traverse in topological order, so data that is written before it
-            # is read is not counted in the read set
-            for n in utils.dfs_topological_sort(sg, sources=sg.source_nodes()):
-                if isinstance(n, nd.AccessNode):
-                    in_edges = sg.in_edges(n)
-                    out_edges = sg.out_edges(n)
-                    # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
-                    for out_edge in list(out_edges):
-                        for in_edge in list(in_edges):
-                            if (in_edge.data.data == out_edge.data.data
-                                    and in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
-                                out_edges.remove(out_edge)
-                                break
 
-                    for e in in_edges:
-                        # skip empty memlets
-                        if e.data.is_empty():
-                            continue
-                        # Store all subsets that have been written
-                        ws[n.data].append(e.data.subset)
-                    for e in out_edges:
-                        # skip empty memlets
-                        if e.data.is_empty():
-                            continue
-                        rs[n.data].append(e.data.subset)
-            # Union all subgraphs, so an array that was excluded from the read
-            # set because it was written first is still included if it is read
-            # in another subgraph
-            for data, accesses in rs.items():
+        # NOTE: In a previous version a _single_ read (i.e. leaving Memlet) that was
+        #   fully covered by a single write (i.e. an incoming Memlet) was removed from
+        #   the read set and only the write survived. However, this was never fully
+        #   implemented nor correctly implemented and caused problems.
+        #   So this filtering was removed.
+
+        for subgraph in utils.concurrent_subgraphs(self):
+            subgraph_read_set = collections.defaultdict(list)  # read and write set of this subgraph.
+            subgraph_write_set = collections.defaultdict(list)
+            for n in utils.dfs_topological_sort(subgraph, sources=subgraph.source_nodes()):
+                if not isinstance(n, nd.AccessNode):
+                    # Read and writes can only be done through access nodes,
+                    #  so ignore every other node.
+                    continue
+
+                # Get a list of all incoming (writes) and outgoing (reads) edges of the
+                #  access node, ignore all empty memlets as they do not carry any data.
+                in_edges = [in_edge for in_edge in subgraph.in_edges(n) if not in_edge.data.is_empty()]
+                out_edges = [out_edge for out_edge in subgraph.out_edges(n) if not out_edge.data.is_empty()]
+
+                # Extract the subsets that describes where we read and write the data
+                #  and store them for the later filtering.
+                # NOTE: In certain cases the corresponding subset might be None, in this case
+                #   we assume that the whole array is written, which is the default behaviour.
+                ac_desc = n.desc(self.sdfg)
+                in_subsets = {
+                    in_edge: (
+                        sbs.Range.from_array(ac_desc)
+                        if in_edge.data.dst_subset is None
+                        else in_edge.data.dst_subset
+                    )
+                    for in_edge in in_edges
+                }
+                out_subsets = {
+                    out_edge: (
+                        sbs.Range.from_array(ac_desc)
+                        if out_edge.data.src_subset is None
+                        else out_edge.data.src_subset
+                    )
+                    for out_edge in out_edges
+                }
+
+                # Update the read and write sets of the subgraph.
+                if in_edges:
+                    subgraph_write_set[n.data].extend(in_subsets.values())
+                if out_edges:
+                    subgraph_read_set[n.data].extend(out_subsets[out_edge] for out_edge in out_edges)
+
+            # Add the subgraph's read and write set to the final ones.
+            for data, accesses in subgraph_read_set.items():
                 read_set[data] += accesses
-            for data, accesses in ws.items():
+            for data, accesses in subgraph_write_set.items():
                 write_set[data] += accesses
-        return read_set, write_set
+
+        return copy.deepcopy((read_set, write_set))
+
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
@@ -818,6 +845,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         for node in self.nodes():
             if isinstance(node, nd.AccessNode):
                 descs[node.data] = node.desc(sdfg)
+                # NOTE: In case of multiple nodes of the same data this will
+                #   override previously found nodes.
                 descs_with_nodes[node.data] = node
                 if isinstance(node.desc(sdfg), dt.Scalar):
                     scalars_with_nodes.add(node.data)
@@ -834,19 +863,57 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     else:
                         data_args[node.data] = desc
 
-        # Add data arguments from memlets, if do not appear in any of the nodes
-        # (i.e., originate externally)
+        # Add data arguments from memlets, if do not appear in any of the nodes (i.e., originate externally)
+        #  TODO: Investigate is scanning the adjacent edges of the input and output connectors is better.
         for edge in self.edges():
-            if edge.data.data is not None and edge.data.data not in descs:
-                desc = sdfg.arrays[edge.data.data]
-                if isinstance(desc, dt.Scalar):
-                    # Ignore code->code edges.
-                    if (isinstance(edge.src, nd.CodeNode) and isinstance(edge.dst, nd.CodeNode)):
-                        continue
+            if edge.data.is_empty():
+                continue
 
-                    scalar_args[edge.data.data] = desc
+            elif edge.data.data not in descs:
+                # The edge reads data from the outside, and the Memlet is directly indicating what is read.
+                if (isinstance(edge.src, nd.CodeNode) and isinstance(edge.dst, nd.CodeNode)):
+                    continue    # Ignore code->code edges.
+                additional_descs = {edge.data.data: sdfg.arrays[edge.data.data]}
+
+            elif isinstance(edge.dst, (nd.AccessNode, nd.CodeNode)) and isinstance(edge.src, nd.EntryNode):
+                # Special case from the above; An AccessNode reads data from the Outside, but
+                #  the Memlet references the data on the inside. Thus we have to follow the data
+                #  to where it originates from.
+                # NOTE: We have to use a memlet path, because we have to go "against the flow"
+                #   Furthermore, in a valid SDFG the data will only come from one source anyway.
+                top_source_edge = self.graph.memlet_path(edge)[0]
+                if not isinstance(top_source_edge.src, nd.AccessNode):
+                    continue
+                additional_descs = (
+                        {top_source_edge.src.data: top_source_edge.src.desc(sdfg)}
+                        if top_source_edge.src.data not in descs
+                        else {}
+                )
+
+            elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
+                # Same case as above, but for outgoing Memlets.
+                # NOTE: We have to use a memlet tree here, because the data could potentially
+                #   go to multiple sources. We have to do it this way, because if we would call
+                #   `memlet_tree()` here, then we would just get the edge back.
+                additional_descs = {}
+                connector_to_look = "OUT_" + edge.dst_conn[3:]
+                for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
+                    if (
+                        (not oedge.data.is_empty()) and (oedge.data.data not in descs)
+                        and (oedge.data.data not in additional_descs)
+                    ):
+                        additional_descs[oedge.data.data] = sdfg.arrays[oedge.data.data]
+
+            else:
+                # Case is ignored.
+                continue
+
+            # Now processing the list of newly found data.
+            for aname, additional_desc in additional_descs.items():
+                if isinstance(additional_desc, dt.Scalar):
+                    scalar_args[aname] = additional_desc
                 else:
-                    data_args[edge.data.data] = desc
+                    data_args[aname] = additional_desc
 
         # Loop over locally-used data descriptors
         for name, desc in descs.items():

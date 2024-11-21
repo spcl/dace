@@ -103,7 +103,7 @@ class ExpandReducePure(pm.ExpandTransformation):
                 'reduce_init', {'_o%d' % i: '0:%s' % symstr(d)
                                 for i, d in enumerate(outedge.data.subset.size())}, {},
                 '__out = %s' % node.identity,
-                {'__out': dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in range(output_dims)]))},
+                {'__out': dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in osqdim]))},
                 external_edges=True)
         else:
             nstate = nsdfg.add_state()
