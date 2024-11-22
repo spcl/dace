@@ -1779,22 +1779,11 @@ class ArrayLoopNodeLister(NodeVisitor):
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         rval_pardecls = [i for i in mywalk(node.rval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
         lval_pardecls = [i for i in mywalk(node.lval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
-        if len(lval_pardecls) > 0:
-            if len(rval_pardecls) == 1:
-                self.range_nodes.append(node)
-                self.nodes.append(node)
-                return
-            elif len(rval_pardecls) > 1:
-                for i in rval_pardecls[1:]:
-                    if i != rval_pardecls[0] and i.type != 'ALL':
-                        raise NotImplementedError("Only supporting one range in right expression")
-
-                self.range_nodes.append(node)
-                self.nodes.append(node)
-                return
-            else:
-                self.nodes.append(node)
-                return
+        if not lval_pardecls:
+            return
+        if rval_pardecls:
+            self.range_nodes.append(node)
+        self.nodes.append(node)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         return
