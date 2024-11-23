@@ -8,6 +8,7 @@ from dace.properties import ListProperty, Property, make_properties, SymbolicPro
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
+from dace.transformation.auto_tile.auto_tile_util import order_tiling_params
 from dace.transformation.dataflow.tiling import MapTiling
 from dace import dtypes
 from functools import reduce
@@ -74,20 +75,7 @@ class AddComputeElementBlockMap(transformation.SingleStateTransformation):
         # becomes A, B, C3, D2, E1
         # tiles: 1, 2, 3, map: A, B
         # becomes A2, B1
-        tile_sizes = []
-
-        map_entry_len = len(map_entry.map.range)
-        block_dim_len = len(block_dims)
-        if map_entry_len > block_dim_len:
-            # tiles: 1, 2, 3, map: A, B, C, D, E
-            # becomes A, B, C3, D2, E1
-            tile_sizes = [1] * (map_entry_len - block_dim_len) + list(reversed(block_dims))
-        elif map_entry_len == block_dim_len:
-            tile_sizes = list(reversed(block_dims))
-        else:
-            # tiles: 1, 2, 3, map: A, B
-            # becomes A2, B1
-            tile_sizes  = list(reversed(block_dims[:map_entry_len]))
+        tile_sizes = order_tiling_params(map_entry.map.range, block_dims)
 
         # Tile trivial simplifies come checks for the BlockCoarsening and ThreadCoarsening transformations
         MapTiling.apply_to(

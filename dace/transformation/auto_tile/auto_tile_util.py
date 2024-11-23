@@ -302,3 +302,23 @@ def end_to_end_measurements(
 
     return (time1, time2)
 
+def order_tiling_params(map_range, tiling_dims):
+    # tiles: 1, 2, 3, map: A, B, C, D, E
+    # becomes A, B, C3, D2, E1
+    # tiles: 1, 2, 3, map: A, B
+    # becomes A2, B1
+    tile_sizes = []
+
+    map_entry_len = len(map_range)
+    block_dim_len = len(tiling_dims)
+    if map_entry_len > block_dim_len:
+        # tiles: 1, 2, 3, map: A, B, C, D, E
+        # becomes A, B, C3, D2, E1
+        tile_sizes = [1] * (map_entry_len - block_dim_len) + list(reversed(tiling_dims))
+    elif map_entry_len == block_dim_len:
+        tile_sizes = list(reversed(tiling_dims))
+    else:
+        # tiles: 1, 2, 3, map: A, B
+        # becomes A2, B1
+        tile_sizes  = list(reversed(tiling_dims[:map_entry_len]))
+    return tile_sizes

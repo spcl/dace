@@ -20,7 +20,7 @@ from dace import symbol
 
 
 @make_properties
-class MemoryMovementNode(CodeLibraryNode):
+class GPUGlobalToGPUSharedMovementNode(CodeLibraryNode):
     src_subset = SubsetProperty(default=None, allow_none=True, desc="")
     src_arr_name = Property(dtype=str, default="", allow_none=False, desc="")
     src_arr = Property(dtype=dace.data.Array, default=None, allow_none=True, desc="")
@@ -307,54 +307,77 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
     """
 
     device_map_entry = transformation.PatternNode(nodes.MapEntry)
-    thread_block_map_entry = transformation.PatternNode(nodes.MapEntry)
+    thread_group_map_entry = transformation.PatternNode(nodes.MapEntry)
     map_entry = transformation.PatternNode(nodes.MapEntry)
     tiles_evenly = Property(dtype=bool, default=False, desc="No remainder loop")
+    dst_memory_location = Property(
+        dtype=dtypes.StorageType,
+        default=dtypes.StorageType.GPU_Shared,
+        desc="Destination memory location",
+    )
+    src_memory_location = Property(
+        dtype=dtypes.StorageType,
+        default=dtypes.StorageType.GPU_Global,
+        desc="Source memory location",
+    )
+    use_lib_node = Property(dtype=bool, default=False, desc="use library node if available")
 
     def __init__(self):
         self._added_arrays = []
         super().__init__()
 
-    # Properties
-    memory_location = Property(
-        dtype=dtypes.StorageType,
-        default=dtypes.StorageType.GPU_Shared,
-        desc="Destination memory location",
-    )
-
     @classmethod
     def expressions(cls):
         return [
             sdutil.node_path_graph(
-                cls.device_map_entry, cls.thread_block_map_entry, cls.map_entry
+                cls.device_map_entry, cls.thread_group_map_entry, cls.map_entry
             )
         ]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         return True
 
-    def infer_source(
+    def _infer_source(
         self, state: SDFGState, sdfg: SDFG, edge: MultiConnectorEdge[Memlet]
     ):
         u, uc, v, vc, memlet = edge
         return (memlet.data, sdfg.arrays[memlet.data].storage)
 
-    location_to_prefix = {
+    _location_prefixes = {
         dtypes.StorageType.GPU_Global: "glb",
         dtypes.StorageType.GPU_Shared: "shr",
     }
 
-    def filter_terms(self, expr, vars):
+    def _location_to_prefix(self, storage: dtypes.StorageType):
+        return self._location_prefixes.get(storage, storage.name)
+
+    def filter_terms(self, expr : SymExpr, vars):
         if isinstance(expr, int):
             return expr
 
         # Base case: if the expression is a single term
-        if expr.is_Atom:
-            for var in vars:
-                if expr.has(symbol(var)):
-                    return expr
-            if expr.is_number:
+        #simplified = dace.symbolic.simplify(expr)
+        #print(simplified, type(simplified))
+        # TODO: right now
+        #print(expr, type(expr))
+        def try_simplify(expr):
+            try:
+                return dace.symbolic.simplify(expr)
+            except Exception as e:
                 return expr
+        simplified = try_simplify(expr)
+        if isinstance(simplified, dace.symbolic.SymExpr):
+            _e = simplified.expr
+            #print(_e, type(_e))
+            simplified = simplified.expr
+        #print(simplified, type(simplified), simplified.is_constant())
+
+        if simplified.is_Atom:
+            for var in vars:
+                if simplified.has(symbol(var)):
+                    return simplified
+            if simplified.is_number:
+                return simplified
             else:
                 return 0
 
@@ -374,21 +397,26 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
         tiles_evenly = self.tiles_evenly
         for out_edge in state.out_edges(self.map_entry):
             u, uc, v, vc, memlet = out_edge
-            src_arr_name, src_arrstorage_type = self.infer_source(state, sdfg, out_edge)
-            if src_arrstorage_type == dtypes.StorageType.GPU_Global:
+            src_arr_name, src_arrstorage_type = self._infer_source(state, sdfg, out_edge)
+            if src_arrstorage_type == self.src_memory_location:
                 num_loads += 1
 
         current_load = 0
         for out_edge in state.out_edges(self.map_entry):
             u, uc, v, vc, memlet = out_edge
-            src_arr_name, src_arrstorage_type = self.infer_source(state, sdfg, out_edge)
-            if src_arrstorage_type != dtypes.StorageType.GPU_Global or isinstance(
+            src_arr_name, src_arrstorage_type = self._infer_source(state, sdfg, out_edge)
+            print(src_arrstorage_type, self.src_memory_location, isinstance(
+                sdfg.arrays[src_arr_name], dace.data.Scalar
+            ))
+
+            if src_arrstorage_type != self.src_memory_location or isinstance(
                 sdfg.arrays[src_arr_name], dace.data.Scalar
             ):
                 continue
 
-            parsedstorage_type = f"{src_arrstorage_type}".split(".")[-1]
-            parsed_memory_location = f"{self.memory_location}".split(".")[-1]
+            parsedstorage_type = src_arrstorage_type.name
+
+            parsed_memory_location = self.dst_memory_location.name
 
             # Map the subset accessed by a thread to the subset accessed by the threadblock
             subset_to_pass = []
@@ -396,11 +424,11 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             to_replace = []
             for i, (beg, end, step) in enumerate(memlet.subset):
                 for sym in set.union(beg.free_symbols, end.free_symbols):
-                    for param in self.thread_block_map_entry.map.params:
+                    for param in self.thread_group_map_entry.map.params:
                         if str(sym) == param:
                             to_replace.append(i)
                             break
-            for in_edge in state.in_edges(self.thread_block_map_entry):
+            for in_edge in state.in_edges(self.thread_group_map_entry):
                 _, _, _, _, _memlet = in_edge
                 if _memlet.data == memlet.data:
                     for j in range(len(memlet.subset)):
@@ -422,10 +450,12 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             dst_arr_shape = shape
             num_threads = [
                 int((e + 1 - b) / s)
-                for b, e, s in self.thread_block_map_entry.map.range
+                for b, e, s in self.thread_group_map_entry.map.range
             ]
 
-            dst_arr_name = self.location_to_prefix[self.memory_location] + src_arr_name
+            dst_arr_name = (
+                self._location_to_prefix(self.dst_memory_location) + "_" + src_arr_name
+            )
             c = 0
             while dst_arr_name in sdfg.arrays:
                 if not (dst_arr_name + str(c) in sdfg.arrays):
@@ -437,28 +467,32 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 dtype=sdfg.arrays[src_arr_name].dtype,
                 shape=dst_arr_shape,
                 transient=True,
-                storage=self.memory_location,
+                storage=self.dst_memory_location,
             )
             self._added_arrays.append(dst_arr_name)
 
             # raise Exception(type(subset_to_pass), ", ", type(subset_to_pass[0]))
 
-            lib_node = MemoryMovementNode(
-                name=lib_node_name,
-                input_names=[vc],
-                output_names=[uc],
-                src_subset=dace.subsets.Range(subset_to_pass),
-                src_arr_name=src_arr_name,
-                src_arr=sdfg.arrays[src_arr_name],
-                dst_arr_name=dst_arr_name,
-                dst_arr=dst_arr,
-                num_threads=num_threads,
-                storage=self.memory_location,
-                sync=bool(current_load == num_loads - 1),
-                tiles_evenly=tiles_evenly,
-            )
-            current_load += 1
-            state.add_node(lib_node)
+            if (self.src_memory_location == dace.dtypes.StorageType.GPU_Global and
+                self.dst_memory_location == dace.dtypes.StorageType.GPU_Shared and
+                self.use_lib_node):
+
+                lib_node = GPUGlobalToGPUSharedMovementNode(
+                    name=lib_node_name,
+                    input_names=[vc],
+                    output_names=[uc],
+                    src_subset=dace.subsets.Range(subset_to_pass),
+                    src_arr_name=src_arr_name,
+                    src_arr=sdfg.arrays[src_arr_name],
+                    dst_arr_name=dst_arr_name,
+                    dst_arr=dst_arr,
+                    num_threads=num_threads,
+                    storage=self.dst_memory_location,
+                    sync=bool(current_load == num_loads - 1),
+                    tiles_evenly=tiles_evenly,
+                )
+                current_load += 1
+                state.add_node(lib_node)
             state.remove_edge(out_edge)
 
             # Add offsets for the rest of the accesses
@@ -476,28 +510,28 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
 
             # This removes any parameter that depends on the grid loop
             new_subset = []
-            thread_block_offset = []
+            thread_group_offset = []
             for beg, end, step in old_subset:
                 _beg = self.filter_terms(
-                    SymExpr(beg), self.thread_block_map_entry.map.params
+                    SymExpr(beg), self.thread_group_map_entry.map.params
                 )
                 _end = self.filter_terms(
-                    SymExpr(end), self.thread_block_map_entry.map.params
+                    SymExpr(end), self.thread_group_map_entry.map.params
                 )
                 _step = self.filter_terms(
-                    SymExpr(step), self.thread_block_map_entry.map.params
+                    SymExpr(step), self.thread_group_map_entry.map.params
                 )
                 if isinstance(_beg, SymExpr) or isinstance(_beg, symbol):
-                    thread_block_offset.append(
+                    thread_group_offset.append(
                         any(
                             [
                                 _beg.has(symbol(v))
-                                for v in self.thread_block_map_entry.map.params
+                                for v in self.thread_group_map_entry.map.params
                             ]
                         )
                     )
                 else:
-                    thread_block_offset.append(False)
+                    thread_group_offset.append(False)
                 new_subset.append((_beg, _end, _step))
 
             new_range_list = new_subset
@@ -508,14 +542,21 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 subset=subsets.Range(new_range_list), data=dst_arr_name
             )
 
-            # Outer Map -> Lib Node
-            state.add_edge(u, uc, lib_node, vc, memlet)
 
-            # Lib Node -> Access Node
-            state.add_edge(lib_node, uc, dst_access_node, None, to_dst_memlet)
+            if (self.src_memory_location == dace.dtypes.StorageType.GPU_Global and
+                self.dst_memory_location == dace.dtypes.StorageType.GPU_Shared and
+                self.use_lib_node):
+                # Outer Map -> Lib Node
+                state.add_edge(u, uc, lib_node, vc, memlet)
 
-            # Acces Node -> Inner Map
-            state.add_edge(dst_access_node, None, v, vc, to_map_memlet)
+                # Lib Node -> Access Node
+                state.add_edge(lib_node, uc, dst_access_node, None, to_dst_memlet)
+
+                # Acces Node -> Inner Map
+                state.add_edge(dst_access_node, None, v, vc, to_map_memlet)
+            else:
+                state.add_edge(u, uc, dst_access_node, None, memlet)
+                state.add_edge(dst_access_node, None, v, vc, to_map_memlet)
 
             # Update any memlet that accesses any of the mapped arrays
             edges_to_check = set()
@@ -524,9 +565,11 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             while nodeset:
                 n = nodeset.pop()
                 if not isinstance(n, nodes.MapExit):
-                    edges_to_check = edges_to_check.union(set(state.out_edges(n)))
+                    edges_to_check = edges_to_check.union(set([
+                        e for e in state.out_edges(n) if not isinstance(e.dst, dace.nodes.MapExit)])
+                        )
                     nodeset = nodeset.union(
-                        set([v for u, uc, v, vc, m in state.out_edges(n)])
+                        set([v for u, uc, v, vc, m in state.out_edges(n) if not isinstance(v, dace.nodes.MapExit)])
                     )
 
             for edge in edges_to_check:
@@ -539,10 +582,10 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                     ]
 
                     for i, ((beg, end, step), apply_offset) in enumerate(
-                        zip(new_subset_list, thread_block_offset)
+                        zip(new_subset_list, thread_group_offset)
                     ):
                         if apply_offset:
-                            params = self.thread_block_map_entry.map.params
+                            params = self.thread_group_map_entry.map.params
                             nb = (
                                 beg + symbol(params[i]),
                                 end + symbol(params[i]),
@@ -556,7 +599,10 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                     state.remove_edge(edge)
                     state.add_edge(u, uc, v, vc, new_memlet)
 
-        self.map_entry.map.gpu_forcesyncthreads = True
+        if (self.src_memory_location == dace.dtypes.StorageType.GPU_Global and
+            self.dst_memory_location == dace.dtypes.StorageType.GPU_Shared and
+            self.use_lib_node):
+            self.map_entry.map.gpu_forcesyncthreads = True
 
     @staticmethod
     def annotates_memlets():
