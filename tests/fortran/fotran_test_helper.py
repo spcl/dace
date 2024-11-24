@@ -5,7 +5,11 @@ from os import path
 from tempfile import TemporaryDirectory
 from typing import Dict, Optional, Self, Tuple, Type, Union, List, LiteralString, Sequence, Collection
 
+from dace.frontend.fortran.ast_internal_classes import Name_Node
 from fparser.two.Fortran2003 import Name
+
+from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, SDFGConfig, \
+    create_sdfg_from_internal_ast
 
 
 @dataclass
@@ -50,7 +54,7 @@ class SourceCodeBuilder:
                     f.write(content)
             # Run `gfortran -Wall` to verify that it compiles.
             # Note: we're relying on the fact that python dictionaries keeps the insertion order when calling `keys()`.
-            cmd = ['gfortran', '-Wall', '-c', *self.sources.keys()]
+            cmd = ['gfortran', '-Wall', '-shared', *self.sources.keys()]
             subprocess.run(cmd, cwd=td, capture_output=True).check_returncode()
             return self
 
@@ -210,7 +214,7 @@ class InternalASTMatcher:
 
     def __init__(self,
                  is_type: Optional[Type] = None,
-                 has_attr: Optional[Dict[str, Union[Self, List[Self]]]] = None,
+                 has_attr: Optional[Dict[str, Union[Self, List[Self], Dict[str, Self]]]] = None,
                  has_empty_attr: Optional[Collection[str]] = None,
                  has_value: Optional[LiteralString] = None):
         # TODO: Include Set[Self] to `has_children` type?
@@ -228,21 +232,55 @@ class InternalASTMatcher:
             assert node == self.has_value
         if self.has_empty_attr is not None:
             for key in self.has_empty_attr:
-                assert not hasattr(node, key) or not getattr(node, key)
+                assert not hasattr(node, key) or not getattr(node, key), f"{node} is expected to not have key: {key}"
         if self.has_attr is not None and len(self.has_attr.keys()) > 0:
             for key, subm in self.has_attr.items():
-                assert hasattr(node, key)
+                assert hasattr(node, key), f"{node} doesn't have key: {key}"
                 attr = getattr(node, key)
 
                 if isinstance(subm, Sequence):
-                    assert isinstance(attr, Sequence)
-                    assert len(attr) == len(subm)
+                    assert isinstance(attr, Sequence), f"{attr} must be a sequence, since {subm} is."
+                    assert len(attr) == len(subm), f"{attr} must have the same length as {subm}."
                     for (c, m) in zip(attr, subm):
                         m.check(c)
+                elif isinstance(subm, Dict):
+                    assert isinstance(attr, Dict)
+                    assert len(attr) == len(subm)
+                    assert subm.keys() <= attr.keys()
+                    for k in subm.keys():
+                        subm[k].check(attr[k])
                 else:
                     subm.check(attr)
 
     @classmethod
-    def IGNORE(cls):
-        """A placeholder matcher to not check further down the tree."""
-        return cls()
+    def IGNORE(cls, times: Optional[int] = None) -> Union[Self, List[Self]]:
+        """
+        A placeholder matcher to not check further down the tree.
+        If `times` is `None` (which is the default), returns a single matcher.
+        If `times` is an integer value, then returns a list of `IGNORE()` matchers of that size, indicating that many
+        nodes on a row should be ignored.
+        """
+        if times is None:
+            return cls()
+        else:
+            return [cls()] * times
+
+    @classmethod
+    def NAMED(cls, name: LiteralString):
+        return cls(Name_Node, {'name': cls(has_value=name)})
+
+
+def create_singular_sdfg_from_string(
+        sources: Dict[str, str],
+        entry_point: str,
+        normalize_offsets: bool = True):
+    cfg = ParseConfig(main=sources['main.f90'], sources=sources)
+    own_ast, program = create_internal_ast(cfg)
+
+    entry_point = entry_point.split('.')
+    cfg = SDFGConfig({entry_point[-1]: entry_point}, normalize_offsets, False)
+    gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
+    assert gmap.keys() == {entry_point[-1]}
+    g = list(gmap.values())[0]
+
+    return g

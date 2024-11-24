@@ -12,7 +12,8 @@ import networkx as nx
 from fparser.common.readfortran import FortranFileReader as ffr, FortranStringReader, FortranFileReader
 from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec, Derived_Type_Def, End_Module_Stmt, \
-    Contains_Stmt, Rename, Name, Subroutine_Subprogram, Function_Subprogram
+    Contains_Stmt, Rename, Name, Subroutine_Subprogram, Function_Subprogram, Module, Main_Program, Module_Stmt, \
+    Specification_Part, Execution_Part, Program_Stmt, Module_Subprogram_Part, Subroutine_Stmt, Function_Stmt
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -244,31 +245,26 @@ class AST_translator:
     This class is responsible for translating the internal AST into a SDFG.
     """
 
-    def __init__(
-            self,
-            ast: ast_components.InternalFortranAst,
-            source: str,
-            multiple_sdfgs: bool = False,
-            startpoint=None,
-            sdfg_path=None,
-            toplevel_subroutine: Optional[str] = None,
-            subroutine_used_names: Optional[Set[str]] = None,
-            normalize_offsets=False
-    ):
+    def __init__(self, source: str, multiple_sdfgs: bool = False, startpoint=None, sdfg_path=None,
+                 toplevel_subroutine: Optional[str] = None, subroutine_used_names: Optional[Set[str]] = None,
+                 normalize_offsets=False, do_not_make_internal_variables_argument: bool = False):
         """
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
+        :do_not_make_internal_variables_argument: Avoid turning internal variables of the entry point into arguments.
+            This essentially avoids the hack with `transient_mode = False`, since we can rely on `startpoint` for
+            arbitrary entry point anyway.
         """
+        # TODO: Refactor the callers who rely on the hack with `transient_mode = False`, then remove the
+        #  `do_not_make_internal_variables_argument` argument entirely, since we don't need it at that point.
         self.sdfg_path = sdfg_path
         self.count_of_struct_symbols_lifted = 0
         self.registered_types = {}
         self.transient_mode = True
-        self.tables = ast.tables
         self.startpoint = startpoint
         self.top_level = None
         self.globalsdfg = None
         self.multiple_sdfgs = multiple_sdfgs
-        self.functions_and_subroutines = ast.functions_and_subroutines
         self.name_mapping = ast_utils.NameMap()
         self.actual_offsets_per_sdfg = {}
         self.names_of_object_in_parent_sdfg = {}
@@ -291,14 +287,14 @@ class AST_translator:
         self.struct_views = {}
         self.last_call_expression = {}
         self.struct_view_count = 0
-        self.structures = ast.structures
-        self.placeholders = ast.placeholders
-        self.placeholders_offsets = ast.placeholders_offsets
-        # self.iblocks=ast.iblocks
+        self.structures = None
+        self.placeholders = None
+        self.placeholders_offsets = None
         self.replace_names = {}
         self.toplevel_subroutine = toplevel_subroutine
         self.subroutine_used_names = subroutine_used_names
         self.normalize_offsets = normalize_offsets
+        self.do_not_make_internal_variables_argument = do_not_make_internal_variables_argument
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
             ast_internal_classes.For_Stmt_Node: self.forstmt2sdfg,
@@ -436,7 +432,7 @@ class AST_translator:
 
                 # this works with CloudSC
                 # unsure about ICON
-                self.transient_mode = False
+                self.transient_mode = self.do_not_make_internal_variables_argument
 
                 for j in i.specification_part.symbols:
                     self.translate(j, sdfg)
@@ -461,7 +457,7 @@ class AST_translator:
         if self.startpoint.specification_part is not None:
             # this works with CloudSC
             # unsure about ICON
-            self.transient_mode = False
+            self.transient_mode = self.do_not_make_internal_variables_argument
 
             for i in self.startpoint.specification_part.typedecls:
                 self.translate(i, sdfg)
@@ -471,7 +467,6 @@ class AST_translator:
             for i in self.startpoint.specification_part.specifications:
                 self.translate(i, sdfg)
             for i in self.startpoint.specification_part.specifications:
-
                 ast_utils.add_simple_state_to_sdfg(self, sdfg, "start_struct_size")
                 assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
                 for decl in i.vardecl:
@@ -2221,8 +2216,8 @@ class AST_translator:
 
         # if the sdfg is the toplevel-sdfg, the variable is a global variable
         is_arg = False
-        if isinstance(node.parent, ast_internal_classes.Subroutine_Subprogram_Node) or isinstance(node.parent,
-                                                                                                  ast_internal_classes.Function_Subprogram_Node):
+        if isinstance(node.parent,
+                      (ast_internal_classes.Subroutine_Subprogram_Node, ast_internal_classes.Function_Subprogram_Node)):
             if hasattr(node.parent, "args"):
                 for i in node.parent.args:
                     name = ast_utils.get_name(i)
@@ -2425,7 +2420,7 @@ class AST_translator:
                                shape=sizes,
                                dtype=datatype,
                                offset=offset,
-                              strides=strides,
+                               strides=strides,
                                transient=transient)
 
         self.all_array_names.append(self.name_mapping[sdfg][node.name])
@@ -2490,7 +2485,6 @@ def create_ast_from_string(
 
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
-    functions_and_subroutines = functions_and_subroutines_builder.names
 
     if transform:
         program = ast_transforms.functionStatementEliminator(program)
@@ -2552,6 +2546,7 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     iast = ast_components.InternalFortranAst()
     prog = iast.create_ast(ast)
     assert isinstance(prog, FNode)
+    iast.finalize_ast(prog)
     return iast, prog
 
 
@@ -2574,46 +2569,22 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     # The actual structure listing is repeated later to resolve cycles.
     # Not sure if we can actually do it earlier.
 
-    structs_lister = ast_transforms.StructLister()
-    structs_lister.visit(program)
-    struct_dep_graph = nx.DiGraph()
-    for i, name in zip(structs_lister.structs, structs_lister.names):
-        if name not in struct_dep_graph.nodes:
-            struct_dep_graph.add_node(name)
-        struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
-        struct_deps_finder.visit(i)
-        struct_deps = struct_deps_finder.structs_used
-        # print(struct_deps)
-        for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
-                                           struct_deps_finder.pointer_names):
-            if j not in struct_dep_graph.nodes:
-                struct_dep_graph.add_node(j)
-            struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
-
-    program.structures = ast_transforms.Structures(structs_lister.structs)
-    own_ast.structures = ast_transforms.Structures(structs_lister.structs)
-
-    program.placeholders = own_ast.placeholders
-    program.placeholders_offsets = own_ast.placeholders_offsets
-    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
-    functions_and_subroutines_builder.visit(program)
-    own_ast.functions_and_subroutines = functions_and_subroutines_builder.names
-    own_ast.iblocks = functions_and_subroutines_builder.iblocks
     program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
+    program = ast_transforms.StructConstructorToFunctionCall(
+        ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
+    program = ast_transforms.CallToArray(ast_transforms.FindFunctionAndSubroutines.from_node(program)).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
-    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
+    program = ast_transforms.ElementalFunctionExpander(
+        ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
     for i in program.modules:
         count = 0
         for j in i.function_definitions:
             if isinstance(j, ast_internal_classes.Subroutine_Subprogram_Node):
                 i.subroutine_definitions.append(j)
-                own_ast.functions_and_subroutines.append(j.name)
                 count += 1
         if count != len(i.function_definitions):
             raise NameError("Not all functions were transformed to subroutines")
@@ -2623,7 +2594,6 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     for i in program.function_definitions:
         if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
             program.subroutine_definitions.append(i)
-            own_ast.functions_and_subroutines.append(i.name)
             count += 1
     if count != len(program.function_definitions):
         raise NameError("Not all functions were transformed to subroutines")
@@ -2677,11 +2647,10 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
                     cycles_we_cannot_ignore.append(cycle)
     if len(cycles_we_cannot_ignore) > 0:
         raise NameError("Structs have cyclic dependencies")
-    own_ast.tables = own_ast.symbols
 
-    # program =
-    print(dir(functions_and_subroutines_builder))
-    ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
+    # TODO: `ArgumentPruner` does not cleanly remove arguments (and it's not entirely clear that arguments must be
+    #  pruned on the frontend in the first place), so disable until it is fixed.
+    # ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
 
     gmap = {}
     for ep, ep_spec in cfg.entry_points.items():
@@ -2710,12 +2679,13 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         fn = fn[0]
 
         # Do the actual translation.
-        ast2sdfg = AST_translator(own_ast, __file__,
-                                  startpoint=fn,
-                                  multiple_sdfgs=cfg.multiple_sdfgs,
-                                  toplevel_subroutine=None,
-                                  normalize_offsets=cfg.normalize_offsets)
+        ast2sdfg = AST_translator(__file__, multiple_sdfgs=cfg.multiple_sdfgs, startpoint=fn, toplevel_subroutine=None,
+                                  normalize_offsets=cfg.normalize_offsets, do_not_make_internal_variables_argument=True)
         g = SDFG(ep)
+        ast2sdfg.functions_and_subroutines = ast_transforms.FindFunctionAndSubroutines.from_node(program).names
+        ast2sdfg.structures = program.structures
+        ast2sdfg.placeholders = program.placeholders
+        ast2sdfg.placeholders_offsets = program.placeholders_offsets
         ast2sdfg.actual_offsets_per_sdfg[g] = {}
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = g
@@ -2741,48 +2711,16 @@ def create_sdfg_from_string(
     :return: The resulting SDFG
 
     """
-    parser = pf().create(std="f2008")
-    reader = fsr(source_string)
-    ast = parser(reader)
-
-    ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, sources, [], parser)
-    assert not any(nx.simple_cycles(dep_graph))
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-    prune_unused_children(ast, simple_graph, actually_used_in_module)
-
-    own_ast = ast_components.InternalFortranAst()
-    program = own_ast.create_ast(ast)
+    cfg = ParseConfig(main=source_string, sources=sources)
+    own_ast, program = create_internal_ast(cfg)
 
     # Repeated!
     # We need that to know in transformations what structures are used.
     # The actual structure listing is repeated later to resolve cycles.
     # Not sure if we can actually do it earlier.
 
-    structs_lister = ast_transforms.StructLister()
-    structs_lister.visit(program)
-    struct_dep_graph = nx.DiGraph()
-    for i, name in zip(structs_lister.structs, structs_lister.names):
-        if name not in struct_dep_graph.nodes:
-            struct_dep_graph.add_node(name)
-        struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
-        struct_deps_finder.visit(i)
-        struct_deps = struct_deps_finder.structs_used
-        # print(struct_deps)
-        for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
-                                           struct_deps_finder.pointer_names):
-            if j not in struct_dep_graph.nodes:
-                struct_dep_graph.add_node(j)
-            struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
-
-    program.structures = ast_transforms.Structures(structs_lister.structs)
-    own_ast.structures = ast_transforms.Structures(structs_lister.structs)
-
-    program.placeholders = own_ast.placeholders
-    program.placeholders_offsets = own_ast.placeholders_offsets
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
-    own_ast.functions_and_subroutines = functions_and_subroutines_builder.names
-    own_ast.iblocks = functions_and_subroutines_builder.iblocks
     program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
@@ -2797,7 +2735,6 @@ def create_sdfg_from_string(
         for j in i.function_definitions:
             if isinstance(j, ast_internal_classes.Subroutine_Subprogram_Node):
                 i.subroutine_definitions.append(j)
-                own_ast.functions_and_subroutines.append(j.name)
                 count += 1
         if count != len(i.function_definitions):
             raise NameError("Not all functions were transformed to subroutines")
@@ -2807,7 +2744,6 @@ def create_sdfg_from_string(
     for i in program.function_definitions:
         if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
             program.subroutine_definitions.append(i)
-            own_ast.functions_and_subroutines.append(i.name)
             count += 1
     if count != len(program.function_definitions):
         raise NameError("Not all functions were transformed to subroutines")
@@ -2861,15 +2797,18 @@ def create_sdfg_from_string(
                     cycles_we_cannot_ignore.append(cycle)
     if len(cycles_we_cannot_ignore) > 0:
         raise NameError("Structs have cyclic dependencies")
-    own_ast.tables = own_ast.symbols
 
     # program =
     print(dir(functions_and_subroutines_builder))
     ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
 
-    ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs, toplevel_subroutine=sdfg_name,
+    ast2sdfg = AST_translator(__file__, multiple_sdfgs=multiple_sdfgs, toplevel_subroutine=sdfg_name,
                               normalize_offsets=normalize_offsets)
     sdfg = SDFG(sdfg_name)
+    ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
+    ast2sdfg.structures = program.structures
+    ast2sdfg.placeholders = program.placeholders
+    ast2sdfg.placeholders_offsets = program.placeholders_offsets
     ast2sdfg.actual_offsets_per_sdfg[sdfg] = {}
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
@@ -2917,7 +2856,7 @@ def create_sdfg_from_fortran_file(source_string: str):
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor().visit(program)
     program = ast_transforms.optionalArgsExpander(program)
-    ast2sdfg = AST_translator(own_ast, __file__)
+    ast2sdfg = AST_translator(__file__)
     sdfg = SDFG(source_string)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
@@ -3069,6 +3008,30 @@ def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[st
     return simple_graph, actually_used_in_module
 
 
+def _get_module_or_program_parts(mod: Union[Module, Main_Program]) \
+        -> Tuple[
+            Union[Module_Stmt, Program_Stmt],
+            Optional[Specification_Part],
+            Optional[Execution_Part],
+            Optional[Module_Subprogram_Part],
+        ]:
+    # There must exist a module statment.
+    stmt = ast_utils.singular(ast_utils.children_of_type(mod, Module_Stmt if isinstance(mod, Module) else Program_Stmt))
+    # There may or may not exist a specification part.
+    spec = list(ast_utils.children_of_type(mod, Specification_Part))
+    assert len(spec) <= 1, f"A module/program cannot have more than one specification parts, found {spec} in {mod}"
+    spec = spec[0] if spec else None
+    # There may or may not exist an execution part.
+    exec = list(ast_utils.children_of_type(mod, Execution_Part))
+    assert len(exec) <= 1, f"A module/program cannot have more than one execution parts, found {spec} in {mod}"
+    exec = exec[0] if exec else None
+    # There may or may not exist a subprogram part.
+    subp = list(ast_utils.children_of_type(mod, Module_Subprogram_Part))
+    assert len(subp) <= 1, f"A module/program cannot have more than one subprogram parts, found {subp} in {mod}"
+    subp = subp[0] if subp else None
+    return stmt, spec, exec, subp
+
+
 def prune_unused_children(ast: Program, simple_graph: nx.DiGraph, actually_used_in_module: Dict[str, List]) \
         -> Tuple[Dict[str, List[str]], Dict[str, Dict[str, str]]]:
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
@@ -3109,64 +3072,68 @@ def prune_unused_children(ast: Program, simple_graph: nx.DiGraph, actually_used_
     top_level_ast: str = parse_order.pop() if parse_order else ast
     new_children = []
     for mod in ast.children:
-        stmt, spec, exec = mod.children[0:3]
+        if not isinstance(mod, (Module, Main_Program)):
+            # Leave it alone if it is not a module  or program node (e.g., a subroutine).
+            new_children.append(mod)
+            continue
+        stmt, spec, exec, subp = _get_module_or_program_parts(mod)
         mod_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
         if mod_name not in parse_order and mod_name != top_level_ast:
             print(f"Module {mod_name} not needing parsing")
             continue
         # if mod_name == top_level_ast:
         #     new_children.append(mod)
-        subroutinesandfunctions, new_spec_children = [], []
-        for c in spec.children:
-            if isinstance(c, Type_Declaration_Stmt):
-                tdecl = c
-                intrinsic_spec, _, entity_decls_list = tdecl.children
-                if not isinstance(intrinsic_spec, Declaration_Type_Spec):
+        if spec:
+            new_spec_children = []
+            for c in spec.children:
+                if isinstance(c, Type_Declaration_Stmt):
+                    tdecl = c
+                    intrinsic_spec, _, entity_decls_list = tdecl.children
+                    if not isinstance(intrinsic_spec, Declaration_Type_Spec):
+                        new_spec_children.append(tdecl)
+                        continue
+                    entity_decls = []
+                    for edecl in ast_utils.children_of_type(entity_decls_list, Entity_Decl):
+                        edecl_name = ast_utils.singular(ast_utils.children_of_type(edecl, Name)).string
+                        if edecl_name in actually_used_in_module[mod_name]:
+                            entity_decls.append(edecl)
+                        # elif (edecl_name in rename_dict[mod_name]
+                        #       and rename_dict[mod_name][edecl_name] in actually_used_in_module[mod_name]):
+                        #     entity_decls.append(edecl)
+                    if not entity_decls:
+                        continue
+                    if isinstance(entity_decls_list.children, tuple):
+                        new_spec_children.append(tdecl)
+                        continue
+                    entity_decls_list.children.clear()
+                    for edecl in entity_decls:
+                        entity_decls_list.children.append(edecl)
                     new_spec_children.append(tdecl)
-                    continue
-                entity_decls = []
-                for edecl in ast_utils.children_of_type(entity_decls_list, Entity_Decl):
-                    edecl_name = ast_utils.singular(ast_utils.children_of_type(edecl, Name)).string
-                    if edecl_name in actually_used_in_module[mod_name]:
-                        entity_decls.append(edecl)
-                    # elif (edecl_name in rename_dict[mod_name]
-                    #       and rename_dict[mod_name][edecl_name] in actually_used_in_module[mod_name]):
-                    #     entity_decls.append(edecl)
-                if not entity_decls:
-                    continue
-                if isinstance(entity_decls_list.children, tuple):
-                    new_spec_children.append(tdecl)
-                    continue
-                entity_decls_list.children.clear()
-                for edecl in entity_decls:
-                    entity_decls_list.children.append(edecl)
-                new_spec_children.append(tdecl)
-            elif isinstance(c, Derived_Type_Def):
-                derv = c
-                if derv.children[0].children[1].string in type_to_parse_list[mod_name]:
-                    new_spec_children.append(derv)
-            elif isinstance(c, (Subroutine_Subprogram, Function_Subprogram)):
-                subr, subr_stmt = c, c.children[0]
-                subr_name = ast_utils.singular(ast_utils.children_of_type(subr_stmt, Name)).string
-                if subr_name in actually_used_in_module[mod_name]:
-                    new_spec_children.append(subr)
-            else:
-                new_spec_children.append(c)
-        spec.children[:] = new_spec_children
-
-        if isinstance(exec, End_Module_Stmt):
-            new_children.append(mod)
-            continue
-        if mod_name != top_level_ast:
-            for c in exec.children:
-                if not isinstance(c, Contains_Stmt):
-                    c_stmt = c.children[0]
+                elif isinstance(c, Derived_Type_Def):
+                    derv = c
+                    if derv.children[0].children[1].string in type_to_parse_list[mod_name]:
+                        new_spec_children.append(derv)
+                elif isinstance(c, (Subroutine_Subprogram, Function_Subprogram)):
+                    subr, subr_stmt = c, c.children[0]
+                    subr_name = ast_utils.singular(ast_utils.children_of_type(subr_stmt, Name)).string
+                    if subr_name in actually_used_in_module[mod_name]:
+                        new_spec_children.append(subr)
+                else:
+                    new_spec_children.append(c)
+            spec.children[:] = new_spec_children
+        if subp:
+            subroutinesandfunctions = []
+            for c in subp.children:
+                if isinstance(c, (Subroutine_Subprogram, Function_Subprogram)):
+                    c_stmt = ast_utils.singular(
+                        ast_utils.children_of_type(
+                            c, Subroutine_Stmt if isinstance(c, Subroutine_Subprogram) else Function_Stmt))
                     c_name = ast_utils.singular(ast_utils.children_of_type(c_stmt, Name)).string
-                    if c_name in what_to_parse_list[mod_name]:
+                    if mod_name in what_to_parse_list and c_name in what_to_parse_list[mod_name]:
                         subroutinesandfunctions.append(c)
                 else:
                     subroutinesandfunctions.append(c)
-            exec.children[:] = subroutinesandfunctions
+            subp.children[:] = subroutinesandfunctions
         new_children.append(mod)
     ast.children[:] = new_children
 
@@ -3194,7 +3161,7 @@ def prune_unused_children(ast: Program, simple_graph: nx.DiGraph, actually_used_
 
 
 def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir,
-                                               icon_sdfgs_dir, normalize_offsets: bool = False,propagation_info=None):
+                                               icon_sdfgs_dir, normalize_offsets: bool = False, propagation_info=None):
     """
     Creates an SDFG from a fortran file
     :param source_string: The fortran file name
@@ -3476,7 +3443,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         if i in ["mtime", "ISO_C_BINDING", "iso_c_binding", "mo_cdi", "iso_fortran_env"]:
             continue
 
-        partial_ast.add_name_list_for_module(i, name_dict[i])
         # try:
         partial_module = partial_ast.create_ast(asts[i.lower()])
         partial_modules[partial_module.name.name] = partial_module
@@ -3570,35 +3536,38 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         i.function_definitions = []
     program.function_definitions = []
 
-#let's fix the propagation info for ECRAD
+    # let's fix the propagation info for ECRAD
 
     for i in propagation_info:
-        if isinstance(i[0],ast_internal_classes.Data_Ref_Node):
-            i[0].parent_ref.name=i[0].parent_ref.name.replace("ecrad_conf","config")
+        if isinstance(i[0], ast_internal_classes.Data_Ref_Node):
+            i[0].parent_ref.name = i[0].parent_ref.name.replace("ecrad_conf", "config")
 
-#time to trim the ast using the propagation info
-    #adding enums from radiotion config
-    parkind_ast= parser(ffr(file_candidate="/home/alex/icon-model/src/shared/mo_kind.f90"))
-    parkinds=partial_ast.create_ast(parkind_ast)
-    radiation_config_ast= parser(ffr(file_candidate="/home/alex/icon-model/src/configure_model/mo_radiation_config.f90"))
-    radiation_config_internal_ast=partial_ast.create_ast(radiation_config_ast)
-    enum_propagator=ast_transforms.PropagateEnums()
+    # time to trim the ast using the propagation info
+    # adding enums from radiotion config
+    parkind_ast = parser(ffr(file_candidate="/home/alex/icon-model/src/shared/mo_kind.f90"))
+    parkinds = partial_ast.create_ast(parkind_ast)
+    radiation_config_ast = parser(
+        ffr(file_candidate="/home/alex/icon-model/src/configure_model/mo_radiation_config.f90"))
+    radiation_config_internal_ast = partial_ast.create_ast(radiation_config_ast)
+    enum_propagator = ast_transforms.PropagateEnums()
     enum_propagator.visit(radiation_config_internal_ast)
 
-    program=enum_propagator.generic_visit(program)
-    replacements=1
-    step=1
-    while replacements>0:
-        program=enum_propagator.generic_visit(program)
-        prop=ast_transforms.AssignmentPropagator(propagation_info)
-        program=prop.visit(program)
-        replacements=prop.replacements
-        if_eval=ast_transforms.IfEvaluator()
-        program=if_eval.visit(program)
-        replacements+=if_eval.replacements
-        print("Made "+ str(replacements) + " replacements in step " +  str(step) + " Prop: "+ str(prop.replacements) + " If: " + str(if_eval.replacements))
-        step+=1
+    program = enum_propagator.generic_visit(program)
+    replacements = 1
+    step = 1
+    while replacements > 0:
+        program = enum_propagator.generic_visit(program)
+        prop = ast_transforms.AssignmentPropagator(propagation_info)
+        program = prop.visit(program)
+        replacements = prop.replacements
+        if_eval = ast_transforms.IfEvaluator()
+        program = if_eval.visit(program)
+        replacements += if_eval.replacements
+        print("Made " + str(replacements) + " replacements in step " + str(step) + " Prop: " + str(
+            prop.replacements) + " If: " + str(if_eval.replacements))
+        step += 1
 
+<<<<<<< HEAD
     unusedFunctionFinder = ast_transforms.FindUnusedFunctions("radiation",parse_order)
     unusedFunctionFinder.visit(program)    
     used_funcs=unusedFunctionFinder.used_names
@@ -3619,15 +3588,30 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                         current_list+=used_funcs[k.name.name]
                         needed.append([j.name.name,k.name.name])
      
+=======
+    unusedFunctionFinder = ast_transforms.FindUnusedFunctions("radiation", parse_order)
+    unusedFunctionFinder.visit(program)
+    used_funcs = unusedFunctionFinder.used_names
+    needed = []
+    current_list = used_funcs['radiation']
+    for i in reversed(parse_order):
+        for j in program.modules:
+            if j.name.name == i:
+                for k in j.subroutine_definitions:
+                    if k.name.name in current_list:
+                        current_list += used_funcs[k.name.name]
+                        needed.append([j.name.name, k.name.name])
+
+>>>>>>> 6de81b9161c5accc76ea447106c91713d6479003
     for i in program.modules:
-        subroutines=[]
+        subroutines = []
         for j in needed:
-            if i.name.name==j[0]:
-                
+            if i.name.name == j[0]:
+
                 for k in i.subroutine_definitions:
-                    if k.name.name==j[1]:
+                    if k.name.name == j[1]:
                         subroutines.append(k)
-        i.subroutine_definitions=subroutines         
+        i.subroutine_definitions = subroutines
 
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
@@ -3737,8 +3721,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program.functions_and_subroutines = partial_ast.functions_and_subroutines
     unordered_modules = program.modules
 
-    #arg_pruner = ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes)
-    #arg_pruner.visit(program)
+    # arg_pruner = ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes)
+    # arg_pruner.visit(program)
 
     program.modules = []
     for i in parse_order:
@@ -3751,9 +3735,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     for j in program.subroutine_definitions:
         # if j.name.name!="cloudscouter":
-        #if j.name.name != "tspectralplanck_init":
-        if j.name.name != "radiation":    
-        #if j.name.name != "solver_homogeneous_lw":
+        # if j.name.name != "tspectralplanck_init":
+        if j.name.name != "radiation":
+            # if j.name.name != "solver_homogeneous_lw":
             # if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             # if j.name.name!="rot_vertex_ri":
             # if j.name.name!="velocity_tendencies":
@@ -3764,9 +3748,13 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             continue
         print(f"Building SDFG {j.name.name}")
         startpoint = j
-        ast2sdfg = AST_translator(program, __file__, multiple_sdfgs=False, startpoint=startpoint,
-                                  sdfg_path=icon_sdfgs_dir, normalize_offsets=normalize_offsets)
+        ast2sdfg = AST_translator(__file__, multiple_sdfgs=False, startpoint=startpoint, sdfg_path=icon_sdfgs_dir,
+                                  normalize_offsets=normalize_offsets)
         sdfg = SDFG(j.name.name)
+        ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
+        ast2sdfg.structures = program.structures
+        ast2sdfg.placeholders = program.placeholders
+        ast2sdfg.placeholders_offsets = program.placeholders_offsets
         ast2sdfg.actual_offsets_per_sdfg[sdfg] = {}
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = sdfg
@@ -3802,10 +3790,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         # copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
             # if j.name.name!="cloudscouter":
-            #if j.name.name != "solver_homogeneous_lw":
-            #if j.name.name != "tspectralplanck_init":
+            # if j.name.name != "solver_homogeneous_lw":
+            # if j.name.name != "tspectralplanck_init":
             if j.name.name != "radiation":
-            #if j.name.name != "radiation_scheme":
+                # if j.name.name != "radiation_scheme":
                 # if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
                 # if j.name.name!="rot_vertex_ri":
                 # if j.name.name!="velocity_tendencies":
@@ -3817,15 +3805,19 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             print(f"Building SDFG {j.name.name}")
             startpoint = j
             ast2sdfg = AST_translator(
-                program, __file__,
+                __file__,
                 multiple_sdfgs=False,
                 startpoint=startpoint,
                 sdfg_path=icon_sdfgs_dir,
                 # toplevel_subroutine_arg_names=arg_pruner.visited_funcs[toplevel_subroutine],
-                #subroutine_used_names=arg_pruner.used_in_all_functions,
+                # subroutine_used_names=arg_pruner.used_in_all_functions,
                 normalize_offsets=normalize_offsets
             )
             sdfg = SDFG(j.name.name)
+            ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
+            ast2sdfg.structures = program.structures
+            ast2sdfg.placeholders = program.placeholders
+            ast2sdfg.placeholders_offsets = program.placeholders_offsets
             ast2sdfg.actual_offsets_per_sdfg[sdfg] = {}
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg

@@ -127,3 +127,30 @@ end program main
     not_fun = gmap['not_fun'].compile()
     not_fun(d=d, val=5.5)
     assert np.allclose(d, [0, 4.2, 0, 5.5])
+
+
+def test_subroutine_with_local_variable():
+    """
+    A standalone subroutine, with no program or module in sight.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine fun(d)
+  implicit none
+  double precision, intent(inout) :: d(4)
+  double precision :: e(4)
+  e(:) = 1.0
+  e(2) = 4.2
+  d(:) = e(:)
+end subroutine fun
+""").check_with_gfortran().get()
+    # Construct
+    iast, prog = construct_internal_ast(sources)
+    gmap = construct_sdfg(iast, prog, ['fun'])
+
+    # Verify
+    assert gmap.keys() == {'fun'}
+    d = np.full([4], 0, dtype=np.float64)
+
+    fun = gmap['fun'].compile()
+    fun(d=d)
+    assert np.allclose(d, [1, 4.2, 1, 1])

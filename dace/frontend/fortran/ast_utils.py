@@ -1,6 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 from itertools import chain
-from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union, LiteralString
+from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union
 
 import networkx as nx
 from fparser.two.Fortran2003 import Module_Stmt, Name, Interface_Block, Subroutine_Stmt, Specification_Part, Module, \
@@ -42,12 +42,10 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
         res = dep_graph.nodes.get(i).get("info_list")
         if simple_graph.has_node(i):
             simple_graph.add_node(i, info_list=res)
-        out_edges = dep_graph.out_edges(i)
-        in_edges = dep_graph.in_edges(i)
         in_names = []
         out_names = []
 
-        for j in in_edges:
+        for j in dep_graph.in_edges(i):
             in_names_local_obj = dep_graph.get_edge_data(j[0], j[1])["obj_list"]
             # if in_names_local_obj is not None:
             #   for k in in_names_local_obj:
@@ -65,10 +63,11 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
                 for k in in_names_local:
                     if k not in in_names:
                         in_names.append(k)
-        for _, dep in out_edges:
-            out_names_local_obj = dep_graph.get_edge_data(i, dep)["obj_list"]
+        for _, dep in dep_graph.out_edges(i):
+            out_names_local_obj = dep_graph.get_edge_data(i, dep).get('obj_list', [])
             out_names_local = []
             dep_info = dep_graph.nodes.get(dep).get('info_list')
+<<<<<<< HEAD
             if out_names_local_obj and '*' in out_names_local_obj and dep_info is not None:
                 # We have a special symbol indicating that everything needs to be imported.
                 
@@ -84,13 +83,38 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
                                                                         dep_info.list_of_types))
             if not out_names_local_obj:
                 out_names_local_obj = []
+=======
+            canonical_used_objs = []
+            for used_obj in out_names_local_obj:
+                if isinstance(used_obj, UseAllPruneList):
+                    # We have a special type indicating that everything needs to be imported.
+                    if not dep_info:
+                        # If there is nothing to import, then do nothing.
+                        continue
+                    assert used_obj.module == dep
+                    assert isinstance(dep_info, FunctionSubroutineLister)
+                    list_of_module_vars = []
+                    for type_stmt in dep_info.list_of_module_vars:
+                        for entity_decl_list in children_of_type(type_stmt, 'Entity_Decl_List'):
+                            for entity_decl in children_of_type(entity_decl_list, Entity_Decl):
+                                entity_name = singular(children_of_type(entity_decl, Name)).string
+                                if entity_name in used_obj.identifiers:
+                                    list_of_module_vars.append(entity_name)
+                    used_names = list(Name(name) for name in chain(dep_info.list_of_functions,
+                                                                   dep_info.list_of_subroutines,
+                                                                   list_of_module_vars,
+                                                                   dep_info.list_of_types))
+                    extend_with_new_items_from(canonical_used_objs, used_names)
+                else:
+                    extend_with_new_items_from(canonical_used_objs, [used_obj])
+            out_names_local_obj = canonical_used_objs
+>>>>>>> 6de81b9161c5accc76ea447106c91713d6479003
             for k in out_names_local_obj:
                 if isinstance(k, Name):
                     out_names_local.append(k.string)
                 elif isinstance(k, Rename):
                     out_names_local.append(k.children[1].string)
                     out_names_local.append(k.children[2].string)
-
             for k in out_names_local:
                 if k not in out_names:
                     out_names.append(k)
@@ -227,11 +251,11 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
             # print(i)
             # print("NOT USED: "+ str(not_used))
 
-        out_edges = dep_graph.out_edges(i)
-        for _, dep in out_edges:
-            out_names_local_obj = dep_graph.get_edge_data(i, dep)["obj_list"]
+        for _, dep in dep_graph.out_edges(i):
+            out_names_local_obj = dep_graph.get_edge_data(i, dep).get('obj_list', [])
             out_names_local = []
             dep_info = dep_graph.nodes.get(dep).get('info_list')
+<<<<<<< HEAD
             if out_names_local_obj and '*' in out_names_local_obj and dep_info is not None:
                 # We have a special symbol indicating that everything needs to be imported.
                 
@@ -247,6 +271,32 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
                                                                         dep_info.list_of_types))
             if not out_names_local_obj:
                 out_names_local_obj = []
+=======
+            canonical_used_objs = []
+            for used_obj in out_names_local_obj:
+                if isinstance(used_obj, UseAllPruneList):
+                    # We have a special type indicating that everything needs to be imported.
+                    if not dep_info:
+                        # If there is nothing to import, then do nothing.
+                        continue
+                    assert used_obj.module == dep
+                    assert isinstance(dep_info, FunctionSubroutineLister)
+                    list_of_module_vars = []
+                    for type_stmt in dep_info.list_of_module_vars:
+                        for entity_decl_list in children_of_type(type_stmt, 'Entity_Decl_List'):
+                            for entity_decl in children_of_type(entity_decl_list, Entity_Decl):
+                                entity_name = singular(children_of_type(entity_decl, Name)).string
+                                if entity_name in used_obj.identifiers:
+                                    list_of_module_vars.append(entity_name)
+                    used_names = list(Name(name) for name in chain(dep_info.list_of_functions,
+                                                                   dep_info.list_of_subroutines,
+                                                                   list_of_module_vars,
+                                                                   dep_info.list_of_types))
+                    extend_with_new_items_from(canonical_used_objs, used_names)
+                else:
+                    extend_with_new_items_from(canonical_used_objs, [used_obj])
+            out_names_local_obj = canonical_used_objs
+>>>>>>> 6de81b9161c5accc76ea447106c91713d6479003
             for k in out_names_local_obj:
                 if isinstance(k, Name):
                     out_names_local.append(k.string)
@@ -506,12 +556,12 @@ class TaskletWriter:
                     return "0"
                 offset = self.sdfg.arrays[sdfg_name].offset[location[1]]
                 return self.write_code(str(offset))
-        if self.sdfg is not None:    
-          for i in self.sdfg.arrays:
-            sdfg_name = self.mapping.get(self.sdfg).get(name)
-            if sdfg_name == i:
-                name = i
-                break
+        if self.sdfg is not None:
+            for i in self.sdfg.arrays:
+                sdfg_name = self.mapping.get(self.sdfg).get(name)
+                if sdfg_name == i:
+                    name = i
+                    break
 
         if len(self.outputs) > 0:
             if name == self.outputs[0]:
@@ -870,9 +920,20 @@ def get_defined_modules(node: Base) -> List[str]:
     return _get_defined_modules(node, [])
 
 
-def get_used_modules(node: Base) -> Tuple[List[str], Dict[str, List[Union[LiteralString, Base]]]]:
+class UseAllPruneList:
+    def __init__(self, module: str, identifiers: List[str]):
+        """
+        Keeps a list of referenced identifiers to intersect with the identifiers available in the module.
+        WARN: The list of referenced identifiers is taken from the scope of the invocation of "use", but may not be
+        entirely reliable. The parser should be able to function without this pruning (i.e., by really importing all).
+        """
+        self.module = module
+        self.identifiers = identifiers
+
+
+def get_used_modules(node: Base) -> Tuple[List[str], Dict[str, List[Union[UseAllPruneList, Base]]]]:
     used_modules: List[str] = []
-    objects_in_use: Dict[str, List[Union[LiteralString, Base]]] = {}
+    objects_in_use: Dict[str, List[Union[UseAllPruneList, Base]]] = {}
 
     def _get_used_modules(_node: Base):
         for m in _node.children:
@@ -895,8 +956,11 @@ def get_used_modules(node: Base) -> Tuple[List[str], Dict[str, List[Union[Litera
                 # TODO: Have better/clearer semantics.
                 if mod_name not in objects_in_use:
                     objects_in_use[mod_name] = []
+                # A list of identifiers referred in the context of `_node`. If it's a specification part, then the
+                # context is its parent. If it's a module or a program, then `_node` itself is the context.
+                refs = list_descendent_names(_node.parent if isinstance(_node, Specification_Part) else _node)
                 # Add a special symbol to indicate that everything needs to be imported.
-                objects_in_use[mod_name].append('*')
+                objects_in_use[mod_name].append(UseAllPruneList(mod_name, refs))
             else:
                 olist = olist[0]
                 if not olist.children:

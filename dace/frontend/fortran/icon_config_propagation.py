@@ -1,31 +1,20 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from fparser.common.readfortran import FortranStringReader
+import os
+import sys
+
 from fparser.common.readfortran import FortranFileReader as ffr
-
 from fparser.two.parser import ParserFactory as pf
-import sys, os
-import numpy as np
-
 
 current = os.path.dirname(os.path.realpath(__file__))
 parent = os.path.dirname(current)
 sys.path.append(parent)
 
-from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
 from dace.frontend.fortran import fortran_parser
-from fparser.two.symbol_table import SymbolTable
 
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_utils as ast_utils
-import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
-from dace import symbolic as sym
-import sympy as sp
-
-from fparser.two import Fortran2003 as f03
-from fparser.two import Fortran2008 as f08
 
 def find_path_recursive(base_dir):
     dirs = os.listdir(base_dir)
@@ -36,6 +25,7 @@ def find_path_recursive(base_dir):
         if os.path.isfile(os.path.join(base_dir, path)) and (path.endswith(".F90") or path.endswith(".f90")):
             fortran_files.append(os.path.join(base_dir, path))
     return fortran_files
+
 
 def read_lines_between(file_path: str, start_str: str, end_str: str) -> list[str]:
     lines_between = []
@@ -53,6 +43,7 @@ def read_lines_between(file_path: str, start_str: str, end_str: str) -> list[str
                 lines_between.append(line.strip())
     return lines_between[1:]
 
+
 def parse_assignments(assignments: list[str]) -> list[tuple[str, str]]:
     parsed_assignments = []
     for assignment in assignments:
@@ -64,7 +55,6 @@ def parse_assignments(assignments: list[str]) -> list[tuple[str, str]]:
     return parsed_assignments
 
 
-
 if __name__ == "__main__":
     base_dir_ecrad = "/home/alex/icon-model/externals/ecrad"
     base_dir_icon = "/home/alex/icon-model/src"
@@ -72,62 +62,63 @@ if __name__ == "__main__":
     ast_builder = ast_components.InternalFortranAst()
     parser = pf().create(std="f2008")
 
-
-
-    strings = read_lines_between("/home/alex/icon-model/run/exp.exclaim_ape_R2B09", "! radiation_nml: radiation scheme", "/")
+    strings = read_lines_between("/home/alex/icon-model/run/exp.exclaim_ape_R2B09", "! radiation_nml: radiation scheme",
+                                 "/")
     parsed_strings = parse_assignments(strings)
 
-    parkind_ast= parser(ffr(file_candidate="/home/alex/icon-model/src/shared/mo_kind.f90"))
-    parkinds=ast_builder.create_ast(parkind_ast)
-    
+    parkind_ast = parser(ffr(file_candidate="/home/alex/icon-model/src/shared/mo_kind.f90"))
+    parkinds = ast_builder.create_ast(parkind_ast)
+
     reader = ffr(file_candidate="/home/alex/icon-model/src/namelists/mo_radiation_nml.f90")
     namelist_ast = parser(reader)
-    namelist_internal_ast=ast_builder.create_ast(namelist_ast)
-    lister=ast_transforms.AssignmentLister(parsed_strings)
+    namelist_internal_ast = ast_builder.create_ast(namelist_ast)
+    lister = ast_transforms.AssignmentLister(parsed_strings)
 
-    replacements=1
-    step=1
-    while replacements>0:
+    replacements = 1
+    step = 1
+    while replacements > 0:
         lister.reset()
         lister.visit(namelist_internal_ast)
-        prop=ast_transforms.AssignmentPropagator(lister.simple_assignments)
-        namelist_internal_ast=prop.visit(namelist_internal_ast)
-        replacements=prop.replacements
-        if_eval=ast_transforms.IfEvaluator()
-        namelist_internal_ast=if_eval.visit(namelist_internal_ast)
-        replacements+=if_eval.replacements
-        print("Made "+ str(replacements) + " replacements in step " +  str(step) + " Prop: "+ str(prop.replacements) + " If: " + str(if_eval.replacements))
-        step+=1
+        prop = ast_transforms.AssignmentPropagator(lister.simple_assignments)
+        namelist_internal_ast = prop.visit(namelist_internal_ast)
+        replacements = prop.replacements
+        if_eval = ast_transforms.IfEvaluator()
+        namelist_internal_ast = if_eval.visit(namelist_internal_ast)
+        replacements += if_eval.replacements
+        print("Made " + str(replacements) + " replacements in step " + str(step) + " Prop: " + str(
+            prop.replacements) + " If: " + str(if_eval.replacements))
+        step += 1
 
-    #adding enums from radiotion config
-    adiation_config_ast= parser(ffr(file_candidate="/home/alex/icon-model/src/configure_model/mo_radiation_config.f90"))
-    radiation_config_internal_ast=ast_builder.create_ast(adiation_config_ast)
-    enum_propagator=ast_transforms.PropagateEnums()
+    # adding enums from radiotion config
+    adiation_config_ast = parser(
+        ffr(file_candidate="/home/alex/icon-model/src/configure_model/mo_radiation_config.f90"))
+    radiation_config_internal_ast = ast_builder.create_ast(adiation_config_ast)
+    enum_propagator = ast_transforms.PropagateEnums()
     enum_propagator.visit(radiation_config_internal_ast)
 
-    #namelist_assignments.insert(0,("amd", "28.970"))
-    
-    ecrad_init_ast= parser(ffr(file_candidate="/home/alex/icon-model/src/atm_phy_nwp/mo_nwp_ecrad_init.f90"))
-    ecrad_internal_ast=ast_builder.create_ast(ecrad_init_ast)
-    #clearing acc check
-    ecrad_internal_ast.modules[0].subroutine_definitions.pop(1)
-    ecrad_internal_ast=enum_propagator.generic_visit(ecrad_internal_ast)
-    lister2=ast_transforms.AssignmentLister(parsed_strings)
-    replacements=1
-    step=1
-    while replacements>0:
-        lister2.reset()
-        ecrad_internal_ast=enum_propagator.generic_visit(ecrad_internal_ast)
-        lister2.visit(ecrad_internal_ast)
-        prop=ast_transforms.AssignmentPropagator(lister2.simple_assignments+lister.simple_assignments)
-        ecrad_internal_ast=prop.visit(ecrad_internal_ast)
-        replacements=prop.replacements
-        if_eval=ast_transforms.IfEvaluator()
-        ecrad_internal_ast=if_eval.visit(ecrad_internal_ast)
-        replacements+=if_eval.replacements
-        print("Made "+ str(replacements) + " replacements in step " +  str(step) + " Prop: "+ str(prop.replacements) + " If: " + str(if_eval.replacements))
-        step+=1
+    # namelist_assignments.insert(0,("amd", "28.970"))
 
+    ecrad_init_ast = parser(ffr(file_candidate="/home/alex/icon-model/src/atm_phy_nwp/mo_nwp_ecrad_init.f90"))
+    ecrad_internal_ast = ast_builder.create_ast(ecrad_init_ast)
+    # clearing acc check
+    ecrad_internal_ast.modules[0].subroutine_definitions.pop(1)
+    ecrad_internal_ast = enum_propagator.generic_visit(ecrad_internal_ast)
+    lister2 = ast_transforms.AssignmentLister(parsed_strings)
+    replacements = 1
+    step = 1
+    while replacements > 0:
+        lister2.reset()
+        ecrad_internal_ast = enum_propagator.generic_visit(ecrad_internal_ast)
+        lister2.visit(ecrad_internal_ast)
+        prop = ast_transforms.AssignmentPropagator(lister2.simple_assignments + lister.simple_assignments)
+        ecrad_internal_ast = prop.visit(ecrad_internal_ast)
+        replacements = prop.replacements
+        if_eval = ast_transforms.IfEvaluator()
+        ecrad_internal_ast = if_eval.visit(ecrad_internal_ast)
+        replacements += if_eval.replacements
+        print("Made " + str(replacements) + " replacements in step " + str(step) + " Prop: " + str(
+            prop.replacements) + " If: " + str(if_eval.replacements))
+        step += 1
 
     #namelist_internal_ast=IfEvaluator().visit(namelist_internal_ast)
     base_dir = "/home/alex/icon-model/externals/ecrad/"
