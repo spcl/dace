@@ -6,8 +6,7 @@ from fparser.common.readfortran import FortranStringReader
 from fparser.two.Fortran2003 import Program, Name
 from fparser.two.parser import ParserFactory
 
-from dace.frontend.fortran.fortran_parser import recursive_ast_improver, simplified_dependency_graph, \
-    create_sdfg_from_string
+from dace.frontend.fortran.fortran_parser import recursive_ast_improver, simplified_dependency_graph
 from tests.fortran.fotran_test_helper import SourceCodeBuilder
 
 
@@ -269,7 +268,7 @@ END PROGRAM main
 
 def test_program_contains_interface_block():
     """
-    The same simple program, but this time the subroutine is defined inside the main program that calls it.
+    The program contains interface blocks.
     """
     sources, main = SourceCodeBuilder().add_file("""
 program main
@@ -336,6 +335,81 @@ END FUNCTION fun
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
     assert not set(simple_graph.nodes)
     assert not actually_used_in_module
+
+
+def test_program_contains_interface_block_with_useall():
+    """
+    A module contains interface block, that relies on an implementation provided by a top-level definitions.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  interface
+    real function fun()
+      implicit none
+    end function fun
+  end interface
+contains
+  real function fun2()
+    fun2 = fun()
+  end function fun2
+end module lib
+""").add_file("""
+program main
+  use lib
+  use lib, only: fun2
+  implicit none
+
+  double precision d(4)
+  d(2) = fun2()
+end program main
+
+real function fun()
+  implicit none
+  fun = 5.5
+end function fun
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  INTERFACE
+    REAL FUNCTION fun()
+      IMPLICIT NONE
+    END FUNCTION fun
+  END INTERFACE
+  CONTAINS
+  REAL FUNCTION fun2()
+    fun2 = fun()
+  END FUNCTION fun2
+END MODULE lib
+PROGRAM main
+  USE lib
+  USE lib, ONLY: fun2
+  IMPLICIT NONE
+  DOUBLE PRECISION :: d(4)
+  d(2) = fun2()
+END PROGRAM main
+REAL FUNCTION fun()
+  IMPLICIT NONE
+  fun = 5.5
+END FUNCTION fun
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert interface_blocks == {'lib': {'': [Name('fun')]}}
+    # Verify that there is not much else to the program.
+    assert set(dep_graph.nodes) == {'lib', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib')}
+    assert set(asts.keys()) == {'lib'}
+
+    # Verify simplification of the dependency graph.
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
+    assert set(simple_graph.nodes) == {'lib', 'main'}
+    assert actually_used_in_module == {'lib': ['fun2'], 'main': []}
 
 
 def test_uses_module():
