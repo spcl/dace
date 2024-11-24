@@ -3218,6 +3218,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
             new_weights = []
             for weight in weights:
+                if isinstance(weight, str):
+                    continue
                 name = weight.string
                 if name in blocks:
                     new_weights.extend(blocks[name])
@@ -3602,14 +3604,21 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     used_funcs=unusedFunctionFinder.used_names
     needed=[]
     current_list=used_funcs['radiation']
+    current_list+='radiation'   
+    needed.append(['radiation_interface','radiation'])
+    skip_list=['radiation_monochromatic','radiation_cloudless_sw',
+               'radiation_tripleclods_sw','radiation_homogeneous_sw']
     for i in reversed(parse_order):
         for j in program.modules:
+            if j.name.name in skip_list:
+                continue
             if j.name.name==i:
+                
                 for k in j.subroutine_definitions:
                     if k.name.name in current_list:
                         current_list+=used_funcs[k.name.name]
                         needed.append([j.name.name,k.name.name])
-        
+     
     for i in program.modules:
         subroutines=[]
         for j in needed:

@@ -66,7 +66,7 @@ def parse_assignments(assignments: list[str]) -> list[tuple[str, str]]:
 
 
 if __name__ == "__main__":
-    base_dir_ecrad = "/home/alex/ecrad/"
+    base_dir_ecrad = "/home/alex/icon-model/externals/ecrad"
     base_dir_icon = "/home/alex/icon-model/src"
     fortran_files = find_path_recursive(base_dir_ecrad)
     ast_builder = ast_components.InternalFortranAst()
@@ -130,12 +130,12 @@ if __name__ == "__main__":
 
 
     #namelist_internal_ast=IfEvaluator().visit(namelist_internal_ast)
-    base_dir = "/home/alex/ecrad/"
+    base_dir = "/home/alex/icon-model/externals/ecrad/"
     #base_dir = "/mnt/c/Users/AlexWork/icon_f2dace/src"
     fortran_files = find_path_recursive(base_dir)
   
     #print(fortran_files)
-    inc_list = ["/home/alex/ecrad/include"]
+    inc_list = ["/home/alex/icon-model/externals/ecrad/include"]
     #inc_list = ["/mnt/c/Users/AlexWork/icon_f2dace/src/include"]
     
     #sdfg = fortran_parser.create_sdfg_from_fortran_file_with_options(
@@ -148,7 +148,7 @@ if __name__ == "__main__":
         #"/home/alex/ecrad/radiation/radiation_homogeneous_lw.F90",
         #"/home/alex/ecrad/ifs/yoe_spectral_planck.F90",
         #"/home/alex/ecrad/ifs/radiation_scheme.F90",
-        "/home/alex/ecrad/radiation/radiation_interface.F90",
+        "/home/alex/icon-model/externals/ecrad/radiation/radiation_interface.F90",
         #"/mnt/c/Users/AlexWork/icon_f2dace/src/shared/mo_loopindices.f90",
         #"/mnt/c/Users/AlexWork/icon_f2dace/src/parallel_infrastructure/mo_mpi.f90",
         #"/mnt/c/Users/AlexWork/icon_f2dace/src/shared/mo_fortran_tools.f90",
@@ -157,7 +157,7 @@ if __name__ == "__main__":
         #"/mnt/c/Users/AlexWork/icon_f2dace/src/configure_model/mo_parallel_config.f90",
         #"/mnt/c/Users/AlexWork/icon_f2dace/src/shared/mo_exception.f90",
         include_list=inc_list,
-        source_list=fortran_files,icon_sources_dir="/home/alex/ecrad/",
+        source_list=fortran_files,icon_sources_dir="/home/alex/icon-model/externals/ecradicon-model/external/ecrad/",
         icon_sdfgs_dir="/home/alex/fcdc/ecrad_f2dace/sdfgs",normalize_offsets=True, propagation_info=lister.simple_assignments+lister2.simple_assignments)
     
 

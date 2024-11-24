@@ -1569,6 +1569,7 @@ class FortranIntrinsics:
             "FRACTION": "__dace_fraction",
             "NEW_LINE": "__dace_new_line",
             "PRECISION": "__dace_precision",
+            "MATMUL": "__dace_matmul",
         }
         if func_name in replacements:
             if func_name=="__dace_allocated":
