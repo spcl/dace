@@ -715,10 +715,16 @@ class InternalFortranAst:
         return ast_internal_classes.Only_List_Node(names=names, renames=renames)
 
     def prefix_stmt(self, node: FASTNode):
+        if 'recursive' in node.string.lower():
+            print("recursive found")
         for i in node.children:
             if i.string.lower() == "elemental":
-                return ast_internal_classes.Prefix_Node(elemental=True)
-        return ast_internal_classes.Prefix_Node(elemental=False)
+                return ast_internal_classes.Prefix_Node(elemental=True,recursive=False, pure=False)
+            if i.string.lower() == "recursive":
+                return ast_internal_classes.Prefix_Node(elemental=False,recursive=True, pure=False)
+            if i.string.lower() == "pure":
+                return ast_internal_classes.Prefix_Node(elemental=False,recursive=False, pure=True)
+        return ast_internal_classes.Prefix_Node(elemental=False,recursive=False, pure=False)
 
     def function_subprogram(self, node: FASTNode):
         children = self.create_children(node)
@@ -748,6 +754,9 @@ class InternalFortranAst:
             elemental = False
         else:
             elemental = prefix.elemental
+        if prefix is not None and prefix.recursive:
+            print("recursive found "+name.name)
+
         ret = get_child(children, ast_internal_classes.Suffix_Node)
         if args == None:
             ret_args = []
@@ -766,6 +775,8 @@ class InternalFortranAst:
             elemental = False
         else:
             elemental = prefix.elemental
+        if prefix is not None and prefix.recursive:
+            print("recursive found "+name.name)    
         if args == None:
             ret_args = []
         else:

@@ -67,23 +67,6 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
             out_names_local_obj = dep_graph.get_edge_data(i, dep).get('obj_list', [])
             out_names_local = []
             dep_info = dep_graph.nodes.get(dep).get('info_list')
-<<<<<<< HEAD
-            if out_names_local_obj and '*' in out_names_local_obj and dep_info is not None:
-                # We have a special symbol indicating that everything needs to be imported.
-                
-                assert isinstance(dep_info, FunctionSubroutineLister)
-                list_of_module_vars = []
-                for type_stmt in dep_info.list_of_module_vars:
-                    for entity_decl_list in children_of_type(type_stmt, 'Entity_Decl_List'):
-                        for entity_decl in children_of_type(entity_decl_list, Entity_Decl):
-                            list_of_module_vars.append(singular(children_of_type(entity_decl, Name)).string)
-                out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
-                                                                        dep_info.list_of_subroutines,
-                                                                        list_of_module_vars,
-                                                                        dep_info.list_of_types))
-            if not out_names_local_obj:
-                out_names_local_obj = []
-=======
             canonical_used_objs = []
             for used_obj in out_names_local_obj:
                 if isinstance(used_obj, UseAllPruneList):
@@ -108,7 +91,6 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
                 else:
                     extend_with_new_items_from(canonical_used_objs, [used_obj])
             out_names_local_obj = canonical_used_objs
->>>>>>> 6de81b9161c5accc76ea447106c91713d6479003
             for k in out_names_local_obj:
                 if isinstance(k, Name):
                     out_names_local.append(k.string)
@@ -255,23 +237,6 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
             out_names_local_obj = dep_graph.get_edge_data(i, dep).get('obj_list', [])
             out_names_local = []
             dep_info = dep_graph.nodes.get(dep).get('info_list')
-<<<<<<< HEAD
-            if out_names_local_obj and '*' in out_names_local_obj and dep_info is not None:
-                # We have a special symbol indicating that everything needs to be imported.
-                
-                assert isinstance(dep_info, FunctionSubroutineLister)
-                list_of_module_vars = []
-                for type_stmt in dep_info.list_of_module_vars:
-                    for entity_decl_list in children_of_type(type_stmt, 'Entity_Decl_List'):
-                        for entity_decl in children_of_type(entity_decl_list, Entity_Decl):
-                            list_of_module_vars.append(singular(children_of_type(entity_decl, Name)).string)
-                out_names_local_obj = list(Name(name) for name in chain(dep_info.list_of_functions,
-                                                                        dep_info.list_of_subroutines,
-                                                                        list_of_module_vars,
-                                                                        dep_info.list_of_types))
-            if not out_names_local_obj:
-                out_names_local_obj = []
-=======
             canonical_used_objs = []
             for used_obj in out_names_local_obj:
                 if isinstance(used_obj, UseAllPruneList):
@@ -296,7 +261,6 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
                 else:
                     extend_with_new_items_from(canonical_used_objs, [used_obj])
             out_names_local_obj = canonical_used_objs
->>>>>>> 6de81b9161c5accc76ea447106c91713d6479003
             for k in out_names_local_obj:
                 if isinstance(k, Name):
                     out_names_local.append(k.string)
@@ -826,6 +790,7 @@ class FunctionSubroutineLister:
         self.names_in_subroutines = {}
         self.list_of_types = []
         self.names_in_types = {}
+        self.functions_and_subroutines_in_types= []
         self.list_of_module_vars = []
         self.interface_blocks: Dict[str, List[Name]] = {}
 
@@ -844,6 +809,8 @@ class FunctionSubroutineLister:
                 self.names_in_types[name] = list_descendent_names(i)
                 self.names_in_types[name] += list_descendent_typenames(i)
                 self.list_of_types.append(name)
+                
+
             elif isinstance(i, Function_Stmt):
                 fn_name = singular(children_of_type(i, Name)).string
                 self.names_in_functions[fn_name] = list_descendent_names(node)

@@ -258,7 +258,7 @@ class Function_Stmt_Node(FNode):
 
 
 class Prefix_Node(FNode):
-    _attributes = ('elemental',)
+    _attributes = ('elemental','recursive','pure')
     _fields = ()
 
 

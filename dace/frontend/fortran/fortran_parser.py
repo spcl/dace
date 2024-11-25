@@ -3184,7 +3184,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
 
             new_weights = []
-            for weight in weights:
+            if isinstance(weights[0], ast_utils.UseAllPruneList):
+                #TODO
+                continue
+            else:
+              for weight in weights:
                 if isinstance(weight, str):
                     continue
                 name = weight.string
@@ -3262,6 +3266,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                     if jj.lower() in res.list_of_types:
                         if jj.lower() not in type_list:
                             type_list.append(jj.lower())
+                            
         print("Module " + i + " used names: " + str(parse_list[i]))
         if len(fands_list) > 0:
             print("Module " + i + " used fands: " + str(fands_list))
@@ -3359,10 +3364,12 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if i.children[0].children[1].string.lower() != top_level_ast:
                 for j in i.children[2].children:
                     if j.__class__.__name__ != "Contains_Stmt":
-
+                        
                         if j.children[0].children[1].string.lower() in what_to_parse_list[
                             i.children[0].children[1].string.lower()]:
                             subroutinesandfunctions.append(j)
+                        else:
+                            print("Removing " + j.children[0].children[1].string + " from module " + i.children[0].children[1].string)    
                 i.children[2].children.clear()
                 for j in subroutinesandfunctions:
                     i.children[2].children.append(j)
@@ -3567,7 +3574,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             prop.replacements) + " If: " + str(if_eval.replacements))
         step += 1
 
-<<<<<<< HEAD
     unusedFunctionFinder = ast_transforms.FindUnusedFunctions("radiation",parse_order)
     unusedFunctionFinder.visit(program)    
     used_funcs=unusedFunctionFinder.used_names
@@ -3588,21 +3594,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                         current_list+=used_funcs[k.name.name]
                         needed.append([j.name.name,k.name.name])
      
-=======
-    unusedFunctionFinder = ast_transforms.FindUnusedFunctions("radiation", parse_order)
-    unusedFunctionFinder.visit(program)
-    used_funcs = unusedFunctionFinder.used_names
-    needed = []
-    current_list = used_funcs['radiation']
-    for i in reversed(parse_order):
-        for j in program.modules:
-            if j.name.name == i:
-                for k in j.subroutine_definitions:
-                    if k.name.name in current_list:
-                        current_list += used_funcs[k.name.name]
-                        needed.append([j.name.name, k.name.name])
-
->>>>>>> 6de81b9161c5accc76ea447106c91713d6479003
     for i in program.modules:
         subroutines = []
         for j in needed:

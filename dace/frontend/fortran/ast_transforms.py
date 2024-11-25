@@ -204,6 +204,7 @@ class Flatten_Classes(NodeTransformer):
 
     def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
         new_node = self.generic_visit(node)
+        print("Subroutine: ", node.name.name)
         if self.current_class is not None:
             for i in self.classes:
                 if i.is_class is True:
@@ -1614,6 +1615,8 @@ class OptionalArgsTransformer(NodeTransformer):
                     new_args[i] = ast_internal_classes.Bool_Literal_Node(value='0')
                 elif dtype == 'DOUBLE':
                     new_args[i] = ast_internal_classes.Real_Literal_Node(value='0')
+                elif dtype == 'CHAR':
+                    new_args[i] = ast_internal_classes.Char_Literal_Node(value='0')    
                 else:
                     raise NotImplementedError()
                 new_args[i + optional_args] = ast_internal_classes.Bool_Literal_Node(value='0')
@@ -1993,7 +1996,9 @@ class ArrayToLoop(NodeTransformer):
                                                 if k.name != l.name:
                                                     raise NotImplementedError("Ranges must be the same")
                                             else:
-                                                raise NotImplementedError("Ranges must be the same")
+                                                # this is not actually illegal.
+                                                #raise NotImplementedError("Ranges must be the same")
+                                                continue
                                 else:
                                     raise NotImplementedError("Ranges must be identical")
 
@@ -2730,7 +2735,7 @@ class IfEvaluator(NodeTransformer):
         try:
             evaluated = sym.evaluate(sym.pystr_to_symbolic(text), {})
         except:
-            print("Failed: " + text)
+            #print("Failed: " + text)
             return self.generic_visit(node)
 
         if evaluated == sp.true:
