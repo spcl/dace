@@ -30,6 +30,7 @@ from dace import subsets as subs
 from dace import symbolic as sym
 from dace.data import Scalar, Structure
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
+from dace.frontend.fortran.ast_utils import UseAllPruneList
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
 from dace.properties import CodeBlock
 
@@ -2972,6 +2973,9 @@ def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[st
                 continue
             new_weights = []
             for weight in weights:
+                if isinstance(weight, UseAllPruneList):
+                    continue
+                # TODO: Other possibilities for weights beside `Name` and `Rename`? Not all `Base` type has a `string`.
                 name = weight.string
                 if name in blocks:
                     new_weights.extend(blocks[name])
@@ -3184,13 +3188,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
 
             new_weights = []
-            if isinstance(weights[0], ast_utils.UseAllPruneList):
-                #TODO
-                continue
-            else:
-              for weight in weights:
-                if isinstance(weight, str):
+            for weight in weights:
+                if isinstance(weight, UseAllPruneList):
                     continue
+                # TODO: Other possibilities for weights beside `Name` and `Rename`? Not all `Base` type has a `string`.
                 name = weight.string
                 if name in blocks:
                     new_weights.extend(blocks[name])

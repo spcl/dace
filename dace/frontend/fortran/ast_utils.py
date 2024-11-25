@@ -293,6 +293,11 @@ def eliminate_dependencies(dep_graph: nx.DiGraph) -> Tuple[nx.DiGraph, Dict[str,
                 simple_graph.add_edge(i, dep, obj_list=new_out_names_local)
         actually_used_in_module[i] = actually_used
         # print(simple_graph)
+
+    # Verify that all `UseAllPruneList` items are accounted for in the simplified graph.
+    for _, _, uses in simple_graph.edges.data('obj_list'):
+        assert not uses or all(isinstance(u, Base) for u in uses)
+
     return simple_graph, actually_used_in_module
 
 
