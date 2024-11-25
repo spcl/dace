@@ -131,3 +131,117 @@ END SUBROUTINE main
 
     assert name_dict == {'lib': ['Square', 'area', 'get_area']}
     assert not rename_dict == {'lib': []}
+
+
+def test_procedure_replacer_nested():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type Value
+    real :: val
+  contains
+    procedure :: get_value
+  end type Value
+  type Square
+    type(Value) :: side
+  contains
+    procedure :: get_area
+  end type Square
+contains
+  real function get_value(this)
+    implicit none
+    class(Value), intent(in) :: this
+    get_value = this%val
+  end function get_value
+  real function get_area(this, m)
+    implicit none
+    class(Square), intent(in) :: this
+    real, intent(in) :: m
+    real :: side
+    side = this%side%get_value()
+    get_area = m*side*side
+  end function get_area
+end module lib
+""").add_file("""
+subroutine main
+  use lib, only: Square
+  implicit none
+  type(Square) :: s
+  real :: a
+
+  s%side%val = 1.0
+  a = s%get_area(1.0)
+end subroutine main
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  TYPE :: Value
+    REAL :: val
+    CONTAINS
+    PROCEDURE :: get_value
+  END TYPE Value
+  TYPE :: Square
+    TYPE(Value) :: side
+    CONTAINS
+    PROCEDURE :: get_area
+  END TYPE Square
+  CONTAINS
+  REAL FUNCTION get_value(this)
+    IMPLICIT NONE
+    CLASS(Value), INTENT(IN) :: this
+    get_value = this % val
+  END FUNCTION get_value
+  REAL FUNCTION get_area(this, m)
+    IMPLICIT NONE
+    CLASS(Square), INTENT(IN) :: this
+    REAL, INTENT(IN) :: m
+    REAL :: side
+    side = get_value(this % side)
+    get_area = m * side * side
+  END FUNCTION get_area
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: get_area
+  USE lib, ONLY: Square
+  IMPLICIT NONE
+  TYPE(Square) :: s
+  REAL :: a
+  s % side % val = 1.0
+  a = get_area(s, 1.0)
+END SUBROUTINE main
+""".strip()
+    print(got)
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert set(dep_graph.nodes) == {'lib', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib')}
+    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'Square', 'get_area'}
+    assert not interface_blocks
+    assert set(asts.keys()) == {'lib'}
+
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
+
+    # Nothing changed here.
+    assert set(simple_graph.nodes) == {'lib', 'main'}
+    assert set(simple_graph.edges) == {('main', 'lib')}
+    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'Square', 'get_area'}
+    assert not interface_blocks
+    assert set(asts.keys()) == {'lib'}
+
+    assert ({k: set(v) for k, v in actually_used_in_module.items()}
+            == {'lib': {'get_area', 'Square', 'get_value', 'Value'}, 'main': set()})
+
+    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    got = ast.tofortran()
+    # Still want the same program, because nothing should have been pruned.
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert name_dict == {'lib': ['Square', 'get_area']}
+    assert not rename_dict == {'lib': []}

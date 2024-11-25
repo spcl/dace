@@ -34,7 +34,7 @@ from dace import subsets as subs
 from dace import symbolic as sym
 from dace.data import Scalar, Structure
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
-from dace.frontend.fortran.ast_utils import UseAllPruneList, get_defined_modules
+from dace.frontend.fortran.ast_utils import UseAllPruneList
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
 from dace.properties import CodeBlock
 
@@ -2903,7 +2903,7 @@ def procedure_specs(ast: Program) -> Dict[Tuple[str, ...], Tuple[str, ...]]:
     return proc_map
 
 
-def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> Program:
+def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program, nx.DiGraph):
     proc_map = procedure_specs(ast)
     for pd in walk(ast, Procedure_Designator):
         # TODO:
@@ -2950,10 +2950,11 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> Program:
         assert len(pname) == 2
         mod, pname = pname
 
-        if not specification_part:
-            subprog.children.append(Specification_Part(get_reader(f"use {mod}, only: {pname}")))
-        else:
-            specification_part.children.insert(0, Use_Stmt(f"use {mod}, only: {pname}"))
+        if mod != cmod:
+            if not specification_part:
+                subprog.children.append(Specification_Part(get_reader(f"use {mod}, only: {pname}")))
+            else:
+                specification_part.children.insert(0, Use_Stmt(f"use {mod}, only: {pname}"))
         obj_list = []
         if dep_graph.has_edge(cmod, mod):
             edge = dep_graph.get_edge_data(cmod, mod)
@@ -2961,7 +2962,6 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> Program:
                 obj_list = edge.get('obj_list')
                 assert isinstance(obj_list, list)
         ast_utils.extend_with_new_items_from(obj_list, [Name(pname)])
-
 
         # For both function and subroutine calls, we replace `bname` with `pname`, and add `dref` as the first arg.
         _, args = callsite.children
