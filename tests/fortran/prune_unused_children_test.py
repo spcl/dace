@@ -7,7 +7,7 @@ from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver, simplified_dependency_graph, \
-    prune_unused_children
+    prune_unused_children, deconstruct_procedure_calls
 from tests.fortran.fotran_test_helper import SourceCodeBuilder
 
 
@@ -19,6 +19,10 @@ def parse_improve_and_simplify(sources: Dict[str, str]):
     assert isinstance(ast, Program)
 
     ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, sources, [], parser)
+    assert isinstance(ast, Program)
+    assert not any(nx.simple_cycles(dep_graph))
+
+    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
     assert isinstance(ast, Program)
     assert not any(nx.simple_cycles(dep_graph))
 
