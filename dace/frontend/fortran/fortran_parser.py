@@ -2904,6 +2904,8 @@ def procedure_specs(ast: Program) -> Dict[Tuple[str, ...], Tuple[str, ...]]:
 
 
 def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program, nx.DiGraph):
+    SUFFIX, COUNTER = 'deconproc', 0
+
     proc_map = procedure_specs(ast)
     for pd in walk(ast, Procedure_Designator):
         # TODO:
@@ -2950,11 +2952,16 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         assert len(pname) == 2
         mod, pname = pname
 
-        if mod != cmod:
+        if mod == cmod:
+            # Since `pname` must have been already defined at the module level, there is no need for aliasing.
+            pname_alias = pname
+        else:
+            # If we are importing it from a different module, we should create an alias to avoid name collision.
+            pname_alias, COUNTER = f"{pname}_{SUFFIX}_{COUNTER}", COUNTER + 1
             if not specification_part:
-                subprog.children.append(Specification_Part(get_reader(f"use {mod}, only: {pname}")))
+                subprog.children.append(Specification_Part(get_reader(f"use {mod}, only: {pname_alias} => {pname}")))
             else:
-                specification_part.children.insert(0, Use_Stmt(f"use {mod}, only: {pname}"))
+                specification_part.children.insert(0, Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}"))
         obj_list = []
         if dep_graph.has_edge(cmod, mod):
             edge = dep_graph.get_edge_data(cmod, mod)
@@ -2963,13 +2970,13 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
                 assert isinstance(obj_list, list)
         ast_utils.extend_with_new_items_from(obj_list, [Name(pname)])
 
-        # For both function and subroutine calls, we replace `bname` with `pname`, and add `dref` as the first arg.
+        # For both function and subroutine calls, we replace `bname` with `pname_alias`, and add `dref` as the first arg.
         _, args = callsite.children
         if args is None:
             args = Actual_Arg_Spec_List(f"{dref}")
         else:
             args = Actual_Arg_Spec_List(f"{dref}, {args}")
-        callsite.items = (pname, args)
+        callsite.items = (pname_alias, args)
     return ast, dep_graph
 
 
