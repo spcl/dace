@@ -3940,6 +3940,9 @@ class ProgramVisitor(ExtNodeVisitor):
         for arg in args_to_remove:
             args.remove(arg)
 
+        # Refresh temporary transient counter of the nested SDFG
+        sdfg.refresh_temp_transients()
+
         # Change connector names
         updated_args = []
         arrays_before = list(sdfg.arrays.items())

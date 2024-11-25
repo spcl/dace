@@ -536,6 +536,8 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
     for state in sdfg.states():
         scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in array_names]
         for node in scalar_nodes:
+            if node not in state:
+                continue
             symname = array_names[node.data]
             for out_edge in state.out_edges(node):
                 for e in state.memlet_tree(out_edge):
@@ -663,7 +665,7 @@ class ScalarToSymbolPromotion(passes.Pass):
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
             # Step 2: Assignment tasklets
             for node in scalar_nodes:
-                if state.in_degree(node) == 0:
+                if node not in state or state.in_degree(node) == 0:
                     continue
                 in_edge = state.in_edges(node)[0]
                 input = in_edge.src

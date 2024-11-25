@@ -145,7 +145,7 @@ def run_mandelbrot2(device_type: dace.dtypes.DeviceType):
         Z, N = sdfg(xmin, xmax, ymin, ymax, maxiter, horizon)
 
     # Compute ground truth and validate
-    Z_ref, N_ref = ground_truth(xmin, xmax, ymin, ymax, xn, yn, maxiter)
+    Z_ref, N_ref = ground_truth(xmin, xmax, ymin, ymax, XN, YN, maxiter)
     assert np.allclose(Z, Z_ref)
     assert np.allclose(N, N_ref)
     return sdfg
