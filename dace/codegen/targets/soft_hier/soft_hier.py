@@ -811,7 +811,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # callsite_stream.write('// SoftHier: Emitting copy from %s to %s' % (src_node, dst_node), sdfg, state_id)
         u, uconn, v, vconn, memlet = edge
         state_dfg = cfg.state(state_id)
-        # print('SoftHier: Emitting copy from', src_node, 'to', dst_node)
+        print('SoftHier: Emitting copy from', src_node, 'to', dst_node)
         cpu_storage_types = [
             dtypes.StorageType.CPU_Heap
         ]
@@ -1030,7 +1030,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             elif isinstance(u, nodes.AccessNode):
                 src_name = u.data
             #src_name = name
-            assert len(subset.string_list()) == 1
+            # assert len(subset.string_list()) == 1
+            # callsite_stream.write(f'// subset.string_list() = {subset.string_list()}')
+            # print(f'subset = {subset}; subset.string_list() = {subset.string_list()}')
             beg, end, step = subset.ranges[0]
             assert step == 1
             length = (end + 1) - beg
@@ -1669,7 +1671,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
         if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
-            callsite_stream.write('}', cfg, state_id, scope_entry)
+            callsite_stream.write('\\has_dynamic_map_inputs}', cfg, state_id, scope_entry)
 
         synchronize_streams(sdfg, cfg, state, state_id, scope_entry, scope_exit, callsite_stream, self)
 
@@ -2010,9 +2012,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # print(f"NODE: {node}")
             if isinstance(node, nodes.AccessNode):
                 desc = node.desc(sdfg)
-                if desc.storage == dtypes.StorageType.SoftHier_TCDM:
+                if desc.storage == dtypes.StorageType.SoftHier_TCDM and (node.data, desc) not in arrays_to_allocate:
                     arrays_to_allocate.append((node.data, desc))
-
         # Generate size and address macros
         current_address = '0'  # Base address is 0
         array_addresses = {}
@@ -2078,6 +2079,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     condition += '%s <= %s' % (varname, brange.max_element()[i])
                     if len(condition) > 0:
                         callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)    
+                    else:
+                        callsite_stream.write('{', cfg, state_id, scope_entry)
 
             if len(brange) == 2:
                 for i in range(min(len(brange), 3)):
@@ -2086,6 +2089,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                    callsite_stream.write('{' , cfg, state_id, scope_entry)    
 
             # Delinearize beyond the third dimension
             if len(brange) > 3:
@@ -2135,26 +2139,27 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                             callsite_stream,
                                             skip_entry_node=True)
         callsite_stream.write("flex_global_barrier_xy();\n", cfg, state_id, node)
+        callsite_stream.write("// Finished deivelevel scope\n", cfg, state_id, node)
         # If there are any other threadblock maps down the road,
         # synchronize the thread-block / grid
-        parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
-        if (len(next_scopes) > 0 or parent_scope.schedule == dtypes.ScheduleType.Sequential):
-            # Thread-block synchronization
-            if scope_entry.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
-                callsite_stream.write('__syncthreads();', cfg, state_id, scope_entry)
-            # Grid synchronization (kernel fusion)
-            elif scope_entry.map.schedule == dtypes.ScheduleType.GPU_Device \
-                    and self._kernel_map.schedule == dtypes.ScheduleType.GPU_Device:
-                # Escape grid conditions
-                for _ in self._kernel_grid_conditions:
-                    callsite_stream.write('}', cfg, state_id, scope_entry)
+        # parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
+        # if (len(next_scopes) > 0 or parent_scope.schedule == dtypes.ScheduleType.Sequential):
+        #     # Thread-block synchronization
+        #     if scope_entry.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+        #         callsite_stream.write('__syncthreads();', cfg, state_id, scope_entry)
+        #     # Grid synchronization (kernel fusion)
+        #     elif scope_entry.map.schedule == dtypes.ScheduleType.GPU_Device \
+        #             and self._kernel_map.schedule == dtypes.ScheduleType.GPU_Device:
+        #         # Escape grid conditions
+        #         for _ in self._kernel_grid_conditions:
+        #             callsite_stream.write('}', cfg, state_id, scope_entry)
 
-                # Synchronize entire grid
-                callsite_stream.write('__gbar.Sync();', cfg, state_id, scope_entry)
+        #         # Synchronize entire grid
+        #         callsite_stream.write('__gbar.Sync();', cfg, state_id, scope_entry)
 
-                # Rewrite grid conditions
-                for cond in self._kernel_grid_conditions:
-                    callsite_stream.write(cond, cfg, state_id, scope_entry)
+        #         # Rewrite grid conditions
+        #         for cond in self._kernel_grid_conditions:
+        #             callsite_stream.write(cond, cfg, state_id, scope_entry)
 
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:

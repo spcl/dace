@@ -580,6 +580,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     incoming_edges += 1
 
             if incoming_edges == 0:
+                print(f'node is {node}')
                 raise InvalidSDFGNodeError("Dangling in-connector %s" % conn, sdfg, state_id, nid)
             # Connectors may have only one incoming edge
             # Due to input connectors of scope exit, this is only correct
