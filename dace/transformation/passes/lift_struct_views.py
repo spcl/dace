@@ -76,13 +76,11 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         if self.direction == 'in':
             self.state.add_edge(self.data_node, None, view_node, 'views',
                                 Memlet.from_array(self.data_node.data + '.' + node.attr, self.data.members[node.attr]))
-            # TODO: determine the actual subset from the tasklet accesses.
             self.state.add_edge(view_node, None, self.tasklet, new_connector_name,
                                 Memlet.from_array(view_name, view))
         else:
             self.state.add_edge(view_node, 'views', self.data_node, None,
                                 Memlet.from_array(self.data_node.data + '.' + node.attr, self.data.members[node.attr]))
-            # TODO: determine the actual subset from the tasklet accesses.
             self.state.add_edge(self.tasklet, new_connector_name, view_node, None,
                                 Memlet.from_array(view_name, view))
         return self.generic_visit(replacement)
