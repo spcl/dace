@@ -16,7 +16,7 @@ from dace.sdfg.propagation import align_memlet, propagate_memlet, propagate_subs
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.sdfg import SDFG, memlets_in_ast
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.subsets import Range, Subset, SubsetUnion
+from dace.subsets import Range, SubsetUnion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.helpers import unsqueeze_memlet
@@ -331,7 +331,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
             for iedge in state.in_edges(anode):
                 if not iedge.data.is_empty():
                     root_edge = state.memlet_tree(iedge).root().edge
-                    writes[anode.data].append([root_edge.data, anode])
+                    writes[anode.data].append((root_edge.data, anode))
 
         # Go over (overapproximated) reads and check if they are covered by writes.
         not_covered_reads: Dict[str, Set[Memlet]] = defaultdict(set)
@@ -363,27 +363,28 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         state._certain_writes = {}
         state._possible_writes = {}
         for data in writes:
-            subset = None
-            volume = None
-            is_dynamic = False
-            for memlet, _ in writes[data]:
-                is_dynamic |= memlet.dynamic
-                if subset is None:
-                    subset = SubsetUnion(memlet.dst_subset or memlet.subset)
-                else:
-                    subset.union(memlet.dst_subset or memlet.subset)
-                if memlet.volume == 0:
-                    volume = 0
-                else:
-                    if volume is None:
-                        volume = memlet.volume
-                    elif volume != 0:
-                        volume += memlet.volume
-            new_memlet = Memlet(data=data, subset=subset)
-            new_memlet.dynamic = is_dynamic
-            new_memlet.volume = volume
-            state._certain_writes[data] = new_memlet
-            state._possible_writes[data] = new_memlet
+            if len(writes[data]) > 0:
+                subset = None
+                volume = None
+                is_dynamic = False
+                for memlet, _ in writes[data]:
+                    is_dynamic |= memlet.dynamic
+                    if subset is None:
+                        subset = SubsetUnion(memlet.dst_subset or memlet.subset)
+                    else:
+                        subset.union(memlet.dst_subset or memlet.subset)
+                    if memlet.volume == 0:
+                        volume = 0
+                    else:
+                        if volume is None:
+                            volume = memlet.volume
+                        elif volume != 0:
+                            volume += memlet.volume
+                new_memlet = Memlet(data=data, subset=subset)
+                new_memlet.dynamic = is_dynamic
+                new_memlet.volume = volume if volume is not None else 0
+                state._certain_writes[data] = new_memlet
+                state._possible_writes[data] = new_memlet
 
         state._certain_reads = {}
         state._possible_reads = {}
