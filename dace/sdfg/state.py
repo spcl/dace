@@ -1380,7 +1380,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if not isinstance(node, nd.Node):
             raise TypeError("Expected Node, got " + type(node).__name__ + " (" + str(node) + ")")
         # Correct nested SDFG's parent attributes
-        if isinstance(node, nd.NestedSDFG) and node.sdfg:
+        if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
             node.sdfg.parent = self
             node.sdfg.parent_sdfg = self.sdfg
             node.sdfg.parent_nsdfg_node = node
