@@ -1905,6 +1905,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
             else:
                 ranges.append([i.range[0], i.range[1]])
+                lower_boundary = i.range[0]
 
                 start = 0
                 if isinstance(i.range[0], ast_internal_classes.Int_Literal_Node):
@@ -1940,7 +1941,23 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                         ast_internal_classes.Symbol_Decl_Node(
                             name="tmp_parfor_" + str(count + len(rangepos) - 1), type="INTEGER", sizes=None, init=None)
                     ]))
-            indices.append(ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)))
+
+
+            # To account for ranges with different starting offsets inside the same loop,
+            # we need to adapt array accesses.
+            # Since our loop index already starts with 1, we need to add to this "lower_boundary - 1"
+            indices.append(
+                ast_internal_classes.BinOp_Node(
+                    lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)),
+                    op="+",
+                    rval = ast_internal_classes.BinOp_Node(
+                        lval=lower_boundary,
+                        op="-",
+                        rval=ast_internal_classes.Int_Literal_Node(value="1")
+                    )
+                )
+            )
+            #indices.append(ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)))
         else:
             indices.append(i)
         currentindex += 1
