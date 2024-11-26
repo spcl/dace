@@ -985,7 +985,7 @@ def singular(items: Iterator[T]) -> T:
     raise ValueError(f"`items` must have only 1 item, got: {it}, {nit}, ...")
 
 
-def children_of_type(node: Base, typ: Union[str, Type[T]]) -> Iterator[T]:
+def children_of_type(node: Base, typ: Union[str, Type[T], Tuple[Type, ...]]) -> Iterator[T]:
     """
     Returns a generator over the children of `node` that are of type `typ`.
     """

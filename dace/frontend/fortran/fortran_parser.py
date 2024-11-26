@@ -9,14 +9,18 @@ from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple, Union
 
 import networkx as nx
+from fparser.api import get_reader
 from fparser.common.readfortran import FortranFileReader as ffr, FortranStringReader, FortranFileReader
 from fparser.common.readfortran import FortranStringReader as fsr
-from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec, Derived_Type_Def, End_Module_Stmt, \
-    Contains_Stmt, Rename, Name, Subroutine_Subprogram, Function_Subprogram, Module, Main_Program, Module_Stmt, \
-    Specification_Part, Execution_Part, Program_Stmt, Module_Subprogram_Part, Subroutine_Stmt, Function_Stmt
+from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec, Derived_Type_Def, Rename, Name, \
+    Subroutine_Subprogram, Function_Subprogram, Module, Main_Program, Module_Stmt, \
+    Specification_Part, Execution_Part, Program_Stmt, Module_Subprogram_Part, Subroutine_Stmt, Function_Stmt, \
+    Procedure_Designator, Function_Reference, Call_Stmt, Use_Stmt, Actual_Arg_Spec_List, Specific_Binding, \
+    Derived_Type_Stmt, Type_Name
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
+from fparser.two.utils import Base, walk
 
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
@@ -2540,6 +2544,10 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     assert isinstance(ast, Program)
     assert not any(nx.simple_cycles(dep_graph))
 
+    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    assert isinstance(ast, Program)
+    assert not any(nx.simple_cycles(dep_graph))
+
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
     prune_unused_children(ast, simple_graph, actually_used_in_module)
     assert isinstance(ast, Program)
@@ -2868,7 +2876,111 @@ def create_sdfg_from_fortran_file(source_string: str):
     return sdfg
 
 
-def recursive_ast_improver(ast, source_list: Union[List, Dict], include_list, parser):
+def procedure_specs(ast: Program) -> Dict[Tuple[str, ...], Tuple[str, ...]]:
+    proc_map: Dict[Tuple[str, ...], Tuple[str, ...]] = {}
+    for pb in walk(ast, Specific_Binding):
+        # Ref: https://github.com/stfc/fparser/blob/8c870f84edbf1a24dfbc886e2f7226d1b158d50b/src/fparser/two/Fortran2003.py#L2504
+        iname, mylist, dcolon, bname, pname = pb.children
+
+        proc_spec, subp_spec = [bname.string], [pname.string if pname else bname.string]
+
+        typedef: Derived_Type_Def = pb.parent.parent
+        typedef_stmt: Derived_Type_Stmt = ast_utils.singular(ast_utils.children_of_type(typedef, Derived_Type_Stmt))
+        typedef_name: str = ast_utils.singular(ast_utils.children_of_type(typedef_stmt, Type_Name)).string
+        proc_spec.insert(0, typedef_name)
+
+        # TODO: Generalize.
+        # We assume that the type is defined inside a module (i.e., not another subprogram).
+        mod: Module = typedef.parent.parent
+        mod_stmt: Module_Stmt = ast_utils.singular(ast_utils.children_of_type(mod, (Module_Stmt, Program_Stmt)))
+        mod_name: str = ast_utils.singular(ast_utils.children_of_type(mod_stmt, Name)).string
+        proc_spec.insert(0, mod_name)
+        subp_spec.insert(0, mod_name)
+
+        # TODO: Is this assumption true?
+        # We assume that the type and the bound function exist in the same scope (i.e., module, subprogram etc.).
+        proc_map[tuple(proc_spec)] = tuple(subp_spec)
+    return proc_map
+
+
+def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program, nx.DiGraph):
+    SUFFIX, COUNTER = 'deconproc', 0
+
+    proc_map = procedure_specs(ast)
+    for pd in walk(ast, Procedure_Designator):
+        # TODO:
+        #  1. Find the specification part where `dref` would live and where we would insert `use`.
+        #  2. Find the type of `dref`.
+        #  3. Find the bound subprogram from the type of `dref`.
+        #  4. Insert an `use` for that bound subprogram.
+
+        # Ref: https://github.com/stfc/fparser/blob/master/src/fparser/two/Fortran2003.py#L12530
+        dref, op, bname = pd.children
+
+        callsite = pd.parent
+        assert isinstance(callsite, (Function_Reference, Call_Stmt))
+
+        cmod = callsite.parent
+        while cmod and not isinstance(cmod, (Module, Main_Program)):
+            cmod = cmod.parent
+        if cmod:
+            stmt, _, _, _ = _get_module_or_program_parts(cmod)
+            cmod = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string.lower()
+        else:
+            subp = list(ast_utils.children_of_type(ast, Subroutine_Subprogram))
+            assert subp
+            stmt = ast_utils.singular(ast_utils.children_of_type(subp[0], Subroutine_Stmt))
+            cmod = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string.lower()
+
+        # Find the nearest execution and its correpsonding specification parts.
+        execution_part = callsite.parent
+        while not isinstance(execution_part, Execution_Part):
+            execution_part = execution_part.parent
+        subprog = execution_part.parent
+        specification_part = list(ast_utils.children_of_type(subprog, Specification_Part))
+        assert len(specification_part) <= 1
+        if specification_part:
+            specification_part = specification_part[0]
+
+        # TODO: Current hacks:
+        #  1. Assume that there is only one procdecure named `bname` anywhere.
+        #  2. Assume that `pname` is not already an existing identifier (i.e., we can import it without renaming).
+        pname = [v for k, v in proc_map.items() if k[-1] == bname.string]
+        assert len(pname) == 1
+        pname = pname[0]
+        # We are assumping that it's a subprogram defined directly inside a module.
+        assert len(pname) == 2
+        mod, pname = pname
+
+        if mod == cmod:
+            # Since `pname` must have been already defined at the module level, there is no need for aliasing.
+            pname_alias = pname
+        else:
+            # If we are importing it from a different module, we should create an alias to avoid name collision.
+            pname_alias, COUNTER = f"{pname}_{SUFFIX}_{COUNTER}", COUNTER + 1
+            if not specification_part:
+                subprog.children.append(Specification_Part(get_reader(f"use {mod}, only: {pname_alias} => {pname}")))
+            else:
+                specification_part.children.insert(0, Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}"))
+        obj_list = []
+        if dep_graph.has_edge(cmod, mod):
+            edge = dep_graph.get_edge_data(cmod, mod)
+            if 'obj_list' in edge:
+                obj_list = edge.get('obj_list')
+                assert isinstance(obj_list, list)
+        ast_utils.extend_with_new_items_from(obj_list, [Name(pname)])
+
+        # For both function and subroutine calls, we replace `bname` with `pname_alias`, and add `dref` as the first arg.
+        _, args = callsite.children
+        if args is None:
+            args = Actual_Arg_Spec_List(f"{dref}")
+        else:
+            args = Actual_Arg_Spec_List(f"{dref}, {args}")
+        callsite.items = (pname_alias, args)
+    return ast, dep_graph
+
+
+def recursive_ast_improver(ast: Base, source_list: Union[List, Dict], include_list, parser):
     dep_graph = nx.DiGraph()
     asts = {}
     interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
