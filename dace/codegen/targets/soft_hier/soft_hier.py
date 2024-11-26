@@ -1018,6 +1018,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 self._dispatcher, sdfg, state, edge, src_node, dst_node, self._cpu_codegen._packed_types))
             name = memlet.data
             nodedesc = sdfg.arrays[name]
+            dims = len(copy_shape)
+            # print(f'copy_memory: {src_node} -> {dst_node}, {copy_shape}, {src_strides}, {dst_strides}, {src_expr}, {dst_expr}')
+            # print(f'dims = {dims}')
             if vconn:
                 # Rm. IN_
                 dst_name = vconn[3:]
@@ -1032,70 +1035,157 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             #src_name = name
             # assert len(subset.string_list()) == 1
             # callsite_stream.write(f'// subset.string_list() = {subset.string_list()}')
-            # print(f'subset = {subset}; subset.string_list() = {subset.string_list()}')
-            beg, end, step = subset.ranges[0]
-            assert step == 1
-            length = (end + 1) - beg
-            data_size = nodedesc.dtype.bytes  # Number of bytes per element
-            if (
-                src_storage == dtypes.StorageType.SoftHier_HBM
-                and dst_storage == dtypes.StorageType.SoftHier_TCDM
-            ):
-                callsite_stream.write(
-                    "// SoftHier_HBM -> SoftHier_TCDM"
-                )
-                callsite_stream.write(
-                    "if(flex_is_dm_core())"
-                )
-                callsite_stream.write("{", cfg, state_id, src_node)
-                funcname = "flex_dma_async_1d"
-                callsite_stream.write(('    {func}({args});').format(
-                        func=funcname,
-                        args=', '.join([f'hbm_addr({src_expr})'] + [f'local({dst_expr})'] + [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
-                )
-                callsite_stream.write("flex_dma_async_wait_all();")
-                callsite_stream.write("}", cfg, state_id, src_node)
-                callsite_stream.write("flex_intra_cluster_sync();")
-            elif (
-                src_storage == dtypes.StorageType.SoftHier_TCDM
-                and dst_storage == dtypes.StorageType.SoftHier_TCDM
-            ):
-                callsite_stream.write("// SoftHier_TCDM -> SoftHier_TCDM")
-                callsite_stream.write(
-                    "if(flex_is_dm_core())"
-                )
-                callsite_stream.write("{", cfg, state_id, src_node)
-                funcname = "flex_dma_async_1d"
-                callsite_stream.write(('    {func}({args});').format(
-                        func=funcname,
-                        args=', '.join([f'local({src_expr})'] + [f'local({dst_expr})'] + [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
-                )
-                callsite_stream.write("flex_dma_async_wait_all();")
-                callsite_stream.write("}", cfg, state_id, src_node)
-                callsite_stream.write("flex_intra_cluster_sync();")
-            elif (
-                src_storage == dtypes.StorageType.SoftHier_TCDM
-                and dst_storage == dtypes.StorageType.SoftHier_HBM
-            ):
-                callsite_stream.write(
-                    "// SoftHier_TCDM -> SoftHier_HBM"
-                )
-                callsite_stream.write(
-                    "if(flex_is_dm_core())"
-                )
-                callsite_stream.write("{", cfg, state_id, src_node)
-                funcname = "flex_dma_async_1d"
-                callsite_stream.write(('    {func}({args});').format(
-                        func=funcname,
-                        args=', '.join([f'local({src_expr})'] + [f'hbm_addr({dst_expr})'] + [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
-                )
-                callsite_stream.write("flex_dma_async_wait_all();")
-                callsite_stream.write("}", cfg, state_id, src_node)
-                callsite_stream.write("flex_intra_cluster_sync();")
-            else:
-                raise NotImplementedError(
-                    f"Unimplemented copy type: {src_storage} -> {dst_storage}"
-                )
+            if dims == 1:
+                beg, end, step = subset.ranges[0]
+                length = (end + 1) - beg
+                data_size = nodedesc.dtype.bytes  # Number of bytes per element
+                if (
+                    src_storage == dtypes.StorageType.SoftHier_HBM
+                    and dst_storage == dtypes.StorageType.SoftHier_TCDM
+                ):
+                    callsite_stream.write(
+                        "// SoftHier_HBM -> SoftHier_TCDM"
+                    )
+                    callsite_stream.write(
+                        "if(flex_is_dm_core())"
+                    )
+                    callsite_stream.write("{", cfg, state_id, src_node)
+                    funcname = "flex_dma_async_1d"
+                    callsite_stream.write(('    {func}({args});').format(
+                            func=funcname,
+                            args=', '.join([f'local({dst_expr})'] + [f'hbm_addr({src_expr})'] + [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
+                    )
+                    callsite_stream.write("flex_dma_async_wait_all();")
+                    callsite_stream.write("}", cfg, state_id, src_node)
+                    callsite_stream.write("flex_intra_cluster_sync();")
+                elif (
+                    src_storage == dtypes.StorageType.SoftHier_TCDM
+                    and dst_storage == dtypes.StorageType.SoftHier_TCDM
+                ):
+                    callsite_stream.write("// SoftHier_TCDM -> SoftHier_TCDM")
+                    callsite_stream.write(
+                        "if(flex_is_dm_core())"
+                    )
+                    callsite_stream.write("{", cfg, state_id, src_node)
+                    funcname = "flex_dma_async_1d"
+                    callsite_stream.write(('    {func}({args});').format(
+                            func=funcname,
+                            args=', '.join([f'local({dst_expr})'] + [f'local({src_expr})'] + [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
+                    )
+                    callsite_stream.write("flex_dma_async_wait_all();")
+                    callsite_stream.write("}", cfg, state_id, src_node)
+                    callsite_stream.write("flex_intra_cluster_sync();")
+                elif (
+                    src_storage == dtypes.StorageType.SoftHier_TCDM
+                    and dst_storage == dtypes.StorageType.SoftHier_HBM
+                ):
+                    callsite_stream.write(
+                        "// SoftHier_TCDM -> SoftHier_HBM"
+                    )
+                    callsite_stream.write(
+                        "if(flex_is_dm_core())"
+                    )
+                    callsite_stream.write("{", cfg, state_id, src_node)
+                    funcname = "flex_dma_async_1d"
+                    callsite_stream.write(('    {func}({args});').format(
+                            func=funcname,
+                            args=', '.join([f'hbm_addr({dst_expr})'] + 
+                                           [f'local({src_expr})'] + 
+                                           [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
+                    )
+                    callsite_stream.write("flex_dma_async_wait_all();")
+                    callsite_stream.write("}", cfg, state_id, src_node)
+                    callsite_stream.write("flex_intra_cluster_sync();")
+                else:
+                    raise NotImplementedError(
+                        f"Unimplemented copy type: {src_storage} -> {dst_storage}"
+                    )
+            elif dims == 2:
+                print(f'subset = {subset}; subset.string_list() = {subset.string_list()}')
+                
+                beg, end, step = subset.ranges[0]
+                print(f'index_0: {src_name} -> {dst_name}, {beg}, {end}, {step}')
+                length_0 = (end + 1) - beg
+                
+                beg, end, step = subset.ranges[1]
+                length_1 = (end + 1) - beg
+                
+                print(f'index_1: {src_name} -> {dst_name}, {beg}, {end}, {step}')
+                data_size = nodedesc.dtype.bytes
+                if (
+                    src_storage == dtypes.StorageType.SoftHier_HBM
+                    and dst_storage == dtypes.StorageType.SoftHier_TCDM
+                ):
+                    callsite_stream.write(
+                        "// SoftHier_HBM -> SoftHier_TCDM 2D"
+                    )
+                    callsite_stream.write(
+                        "if(flex_is_dm_core())"
+                    )
+                    callsite_stream.write("{", cfg, state_id, src_node)
+                    funcname = "flex_dma_async_2d"
+                    callsite_stream.write(('    {func}({args});').format(
+                            func=funcname,
+                            args=', '.join([f'local({dst_expr})'] + 
+                                           [f'hbm_addr({src_expr})'] + 
+                                           [f'{length_1}*{data_size}'] +
+                                           [f'{dst_strides[0]}*{data_size}'] +
+                                           [f'{src_strides[0]}*{data_size}'] +
+                                           [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
+                    )
+                    callsite_stream.write("flex_dma_async_wait_all();")
+                    callsite_stream.write("}", cfg, state_id, src_node)
+                    callsite_stream.write("flex_intra_cluster_sync();")
+                elif (
+                    src_storage == dtypes.StorageType.SoftHier_TCDM
+                    and dst_storage == dtypes.StorageType.SoftHier_TCDM
+                ):
+                    callsite_stream.write("// SoftHier_TCDM -> SoftHier_TCDM")
+                    callsite_stream.write(
+                        "if(flex_is_dm_core())"
+                    )
+                    callsite_stream.write("{", cfg, state_id, src_node)
+                    funcname = "flex_dma_async_2d"
+                    callsite_stream.write(('    {func}({args});').format(
+                            func=funcname,
+                            args=', '.join([f'local({dst_expr})'] + 
+                                           [f'local({src_expr})'] + 
+                                           [f'{length_1}*{data_size}'] +
+                                           [f'{src_strides[0]}*{data_size}'] +
+                                           [f'{dst_strides[0]}*{data_size}'] +
+                                           [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
+                    )
+                    callsite_stream.write("flex_dma_async_wait_all();")
+                    callsite_stream.write("}", cfg, state_id, src_node)
+                    callsite_stream.write("flex_intra_cluster_sync();")
+                elif (
+                    src_storage == dtypes.StorageType.SoftHier_TCDM
+                    and dst_storage == dtypes.StorageType.SoftHier_HBM
+                ):
+                    callsite_stream.write(
+                        "// SoftHier_TCDM -> SoftHier_HBM"
+                    )
+                    callsite_stream.write(
+                        "if(flex_is_dm_core())"
+                    )
+                    callsite_stream.write("{", cfg, state_id, src_node)
+                    funcname = "flex_dma_async_2d"
+                    callsite_stream.write(('    {func}({args});').format(
+                            func=funcname,
+                            args=', '.join([f'hbm_addr({dst_expr})'] + 
+                                           [f'local({src_expr})'] + 
+                                           [f'{length_1}*{data_size}'] +
+                                           [f'{src_strides[0]}*{data_size}'] +
+                                           [f'{dst_strides[0]}*{data_size}'] +
+                                           [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
+                    )
+                    callsite_stream.write("flex_dma_async_wait_all();")
+                    callsite_stream.write("}", cfg, state_id, src_node)
+                    callsite_stream.write("flex_intra_cluster_sync();")
+                else:
+                    raise NotImplementedError(
+                        f"Unimplemented copy type: {src_storage} -> {dst_storage}"
+                    )
         else:
             print(
                 sdfg,
