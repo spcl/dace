@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Any, Dict, Optional, Set, Union
 
 from dace import SDFG, Memlet, SDFGState
+from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.transformation import pass_pipeline as ppl
@@ -130,7 +131,7 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         slice_view_node = self.state.add_access(slice_view_name)
         attr_view_node = self.state.add_access(attr_view_name)
         if self.direction == 'in':
-            idx = ast.unparse(val.slice)
+            idx = astutils.unparse(val.slice)
             if isinstance(val.slice, ast.Tuple):
                 idx = idx.strip('()')
             slice_memlet = Memlet(self.data_node.data + '[' + idx + ']')
@@ -146,7 +147,7 @@ class RecodeAttributeNodes(ast.NodeTransformer):
             # TODO: determine the actual subset from the tasklet accesses.
             attr_memlet = Memlet.from_array(slice_view_name + '.' + node.attr, struct.members[node.attr])
             self.state.add_edge(attr_view_node, 'views', slice_view_node, None, attr_memlet)
-            idx = ast.unparse(val.slice)
+            idx = astutils.unparse(val.slice)
             slice_memlet = Memlet(self.data_node.data + '[' + idx + ']')
             self.state.add_edge(slice_view_node, 'views', self.data_node, None, slice_memlet)
         return self.generic_visit(replacement)
