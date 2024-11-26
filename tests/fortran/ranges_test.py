@@ -8,8 +8,8 @@ from dace.frontend.fortran import ast_transforms, fortran_parser
 # * Range 'ALL'
 # * selecting one element by constant
 # * selecting one element by variable
-# * selecting a subset (proper range) through constants (WiP)
-# * selecting a subset (proper range) through variables (WiP)
+# * selecting a subset (proper range) through constants
+# * selecting a subset (proper range) through variables
 # * ECRAD patterns (WiP)
 # * Arrays with offsets (WiP)
 
@@ -164,13 +164,57 @@ def test_fortran_frontend_multiple_ranges_subset():
         input1[i] = i + 1
     res = np.full([3], 42, order="F", dtype=np.float64)
     sdfg(input1=input1, res=res, outside_init=False)
-    print(res)
     for idx, val in enumerate(res):
         assert val == -3.0
 
+def test_fortran_frontend_multiple_ranges_subset_var():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM multiple_ranges_subset_var
+                    implicit none
+                    double precision, dimension(9) :: input1
+                    double precision, dimension(3) :: res
+                    integer, dimension(4) :: pos
+                    CALL multiple_ranges_subset_var_function(input1, res, pos)
+                    end
+
+                    SUBROUTINE multiple_ranges_subset_var_function(input1, res, pos)
+                    double precision, dimension(9) :: input1
+                    double precision, dimension(3) :: res
+                    integer, dimension(4) :: pos
+
+                    res(:) = input1(pos(1):pos(2)) - input1(pos(3):pos(4))
+
+                    END SUBROUTINE multiple_ranges_subset_var_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_subset_var", True)
+    #sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 9
+    input1 = np.full([size], 0, order="F", dtype=np.float64)
+    for i in range(size):
+        input1[i] = 2 ** i
+
+    pos = np.full([4], 0, order="F", dtype=np.int32)
+    pos[0] = 2
+    pos[1] = 4
+    pos[2] = 6
+    pos[3] = 8
+
+    res = np.full([3], 42, order="F", dtype=np.float64)
+    sdfg(input1=input1, pos=pos, res=res, outside_init=False)
+
+    for i in range(len(res)):
+        assert res[i] == input1[pos[0] - 1 + i] - input1[pos[2] - 1 + i]
+
 if __name__ == "__main__":
 
-    test_fortran_frontend_multiple_ranges_all()
-    test_fortran_frontend_multiple_ranges_selection()
-    test_fortran_frontend_multiple_ranges_selection_var()
-    test_fortran_frontend_multiple_ranges_subset()
+    #test_fortran_frontend_multiple_ranges_all()
+    #test_fortran_frontend_multiple_ranges_selection()
+    #test_fortran_frontend_multiple_ranges_selection_var()
+    #test_fortran_frontend_multiple_ranges_subset()
+    test_fortran_frontend_multiple_ranges_subset_var()
