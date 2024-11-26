@@ -1901,6 +1901,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                         op="-",
                         rval=ast_internal_classes.Int_Literal_Node(value="1")
                     )
+
                 ranges.append([lower_boundary, upper_boundary])
                 rangeslen.append(-1)
 
@@ -1969,8 +1970,9 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                 """
                     For RHS, we adjust starting array position by taking consideration the initial value
                     of the loop iterator.
-                """
 
+                    Offset is handled by always subtracting the lower boundary.
+                """
                 current_lower_boundary = main_iterator_ranges[currentindex][0]
 
                 indices.append(
@@ -1980,7 +1982,6 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                         rval = ast_internal_classes.BinOp_Node(
                             lval=lower_boundary,
                             op="-",
-                            #rval=ast_internal_classes.Int_Literal_Node(value="1")
                             rval=current_lower_boundary
                         )
                     )
