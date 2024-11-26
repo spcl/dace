@@ -2892,7 +2892,7 @@ def procedure_specs(ast: Program) -> Dict[Tuple[str, ...], Tuple[str, ...]]:
         # TODO: Generalize.
         # We assume that the type is defined inside a module (i.e., not another subprogram).
         mod: Module = typedef.parent.parent
-        mod_stmt: Module_Stmt = ast_utils.singular(ast_utils.children_of_type(mod, Module_Stmt))
+        mod_stmt: Module_Stmt = ast_utils.singular(ast_utils.children_of_type(mod, (Module_Stmt, Program_Stmt)))
         mod_name: str = ast_utils.singular(ast_utils.children_of_type(mod_stmt, Name)).string
         proc_spec.insert(0, mod_name)
         subp_spec.insert(0, mod_name)
