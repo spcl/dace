@@ -130,7 +130,7 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     assert name_dict == {'lib': ['Square', 'area', 'get_area']}
-    assert not rename_dict == {'lib': []}
+    assert rename_dict == {'lib': {}}
 
 
 def test_procedure_replacer_nested():
@@ -215,7 +215,6 @@ SUBROUTINE main
   a = get_area_deconproc_0(s, 1.0)
 END SUBROUTINE main
 """.strip()
-    print(got)
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
@@ -244,10 +243,10 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     assert name_dict == {'lib': ['Square', 'get_area']}
-    assert not rename_dict == {'lib': []}
+    assert rename_dict == {'lib': []}
 
 
-def test_procedure_replacer_name_collision():
+def test_procedure_replacer_name_collision_with_exisiting_var():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
   implicit none
@@ -333,4 +332,4 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     assert name_dict == {'lib': ['Square', 'area']}
-    assert not rename_dict == {'lib': []}
+    assert rename_dict == {'lib': {}}
