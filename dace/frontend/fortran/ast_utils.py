@@ -1,6 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 from itertools import chain
-from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union
+from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union, Optional
 
 import networkx as nx
 from fparser.two.Fortran2003 import Module_Stmt, Name, Interface_Block, Subroutine_Stmt, Specification_Part, Module, \
@@ -970,19 +970,28 @@ def singular(items: Iterator[T]) -> T:
     """
     Asserts that any given iterator or generator `items` has exactly 1 item and returns that.
     """
-    # We should be able to get one item.
+    it = atmost_one(items)
+    assert it is not None, f"`items` must not be empty."
+    return it
+
+
+def atmost_one(items: Iterator[T]) -> Optional[T]:
+    """
+    Asserts that any given iterator or generator `items` has exactly 1 item and returns that.
+    """
+    # We might get one item.
     try:
         it = next(items)
     except StopIteration:
         # No items found.
-        raise
+        return None
     # But not another one.
     try:
         nit = next(items)
     except StopIteration:
         # I.e., we must have exhausted the iterator.
         return it
-    raise ValueError(f"`items` must have only 1 item, got: {it}, {nit}, ...")
+    raise ValueError(f"`items` must have at most 1 item, got: {it}, {nit}, ...")
 
 
 def children_of_type(node: Base, typ: Union[str, Type[T], Tuple[Type, ...]]) -> Iterator[T]:
