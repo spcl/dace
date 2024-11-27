@@ -6,7 +6,7 @@ from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 
 from dace.frontend.fortran.fortran_parser import deconstruct_procedure_calls, recursive_ast_improver, \
-    prune_unused_children, simplified_dependency_graph, deconstruct_associations
+    prune_unused_children, simplified_dependency_graph, deconstruct_associations, correct_for_function_calls
 from tests.fortran.fotran_test_helper import SourceCodeBuilder
 
 
@@ -474,16 +474,23 @@ module lib
   type Square
     real :: side
   contains
-    procedure :: area
-    generic :: g_area => area
+    procedure :: area_real
+    procedure :: area_integer
+    generic :: g_area => area_real, area_integer
   end type Square
 contains
-  real function area(this, m)
+  real function area_real(this, m)
     implicit none
     class(Square), intent(in) :: this
     real, intent(in) :: m
-    area = m*this%side*this%side
-  end function area
+    area_real = m*this%side*this%side
+  end function area_real
+  real function area_integer(this, m)
+    implicit none
+    class(Square), intent(in) :: this
+    integer, intent(in) :: m
+    area_integer = m*this%side*this%side
+  end function area_integer
 end module lib
 """).add_file("""
 subroutine main
@@ -491,13 +498,16 @@ subroutine main
   implicit none
   type(Square) :: s
   real :: a
+  real :: mr = 1.0
+  integer :: mi = 1
 
   s%side = 1.0
-  a = s%area(1.0)
-  a = s%g_area(1.0)
+  a = s%g_area(mr)
+  a = s%g_area(mi)
 end subroutine main
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast = correct_for_function_calls(ast)
     ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
 
     got = ast.tofortran()
@@ -507,27 +517,36 @@ MODULE lib
   TYPE :: Square
     REAL :: side
     CONTAINS
-    PROCEDURE :: area
-    GENERIC :: g_area => area
+    PROCEDURE :: area_real
+    PROCEDURE :: area_integer
+    GENERIC :: g_area => area_real, area_integer
   END TYPE Square
   CONTAINS
-  REAL FUNCTION area(this, m)
+  REAL FUNCTION area_real(this, m)
     IMPLICIT NONE
     CLASS(Square), INTENT(IN) :: this
     REAL, INTENT(IN) :: m
-    area = m * this % side * this % side
-  END FUNCTION area
+    area_real = m * this % side * this % side
+  END FUNCTION area_real
+  REAL FUNCTION area_integer(this, m)
+    IMPLICIT NONE
+    CLASS(Square), INTENT(IN) :: this
+    INTEGER, INTENT(IN) :: m
+    area_integer = m * this % side * this % side
+  END FUNCTION area_integer
 END MODULE lib
 SUBROUTINE main
-  USE lib, ONLY: area_deconproc_1 => area
-  USE lib, ONLY: area_deconproc_0 => area
+  USE lib, ONLY: area_integer_deconproc_1 => area_integer
+  USE lib, ONLY: area_real_deconproc_0 => area_real
   USE lib, ONLY: Square
   IMPLICIT NONE
   TYPE(Square) :: s
   REAL :: a
+  REAL :: mr = 1.0
+  INTEGER :: mi = 1
   s % side = 1.0
-  a = area_deconproc_0(s, 1.0)
-  a = area_deconproc_1(s, 1.0)
+  a = area_real_deconproc_0(s, mr)
+  a = area_integer_deconproc_1(s, mi)
 END SUBROUTINE main
 """.strip()
     assert got == want
@@ -535,7 +554,7 @@ END SUBROUTINE main
 
     assert set(dep_graph.nodes) == {'lib', 'main'}
     assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'Square', 'area'}
+    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'Square', 'area_integer', 'area_real'}
     assert not interface_blocks
     assert set(asts.keys()) == {'lib'}
 
@@ -544,12 +563,12 @@ END SUBROUTINE main
     # Nothing changed here.
     assert set(simple_graph.nodes) == {'lib', 'main'}
     assert set(simple_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'Square', 'area'}
+    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'Square', 'area_integer', 'area_real'}
     assert not interface_blocks
     assert set(asts.keys()) == {'lib'}
 
     assert ({k: set(v) for k, v in actually_used_in_module.items()}
-            == {'lib': {'area', 'Square'}, 'main': set()})
+            == {'lib': {'Square', 'area_integer', 'area_real'}, 'main': set()})
 
     name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
     got = ast.tofortran()
@@ -557,7 +576,7 @@ END SUBROUTINE main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
-    assert name_dict == {'lib': ['Square', 'area']}
+    assert name_dict == {'lib': ['Square', 'area_real', 'area_integer']}
     assert rename_dict == {'lib': {}}
 
 

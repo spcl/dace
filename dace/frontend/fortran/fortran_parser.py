@@ -17,7 +17,9 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Subroutine_Subprogram, Function_Subprogram, Module, Main_Program, Module_Stmt, \
     Specification_Part, Execution_Part, Program_Stmt, Module_Subprogram_Part, Subroutine_Stmt, Function_Stmt, \
     Procedure_Designator, Function_Reference, Call_Stmt, Use_Stmt, Actual_Arg_Spec_List, Specific_Binding, \
-    Derived_Type_Stmt, Type_Name, Data_Ref, Component_Decl, Generic_Binding, Association, Associate_Construct, Part_Ref
+    Derived_Type_Stmt, Type_Name, Data_Ref, Component_Decl, Generic_Binding, Association, Associate_Construct, Part_Ref, \
+    Intrinsic_Type_Spec, Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, \
+    Signed_Int_Literal_Constant
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -2894,7 +2896,7 @@ def find_name(node: NAMED_STMTS_OF_INTEREST_TYPES) -> str:
     return name.string
 
 
-def find_named_ancester(node: Base) -> Optional[Base]:
+def find_named_ancester(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
     anc = node.parent
     while anc:
         stmt = ast_utils.atmost_one(ast_utils.children_of_type(anc, NAMED_STMTS_OF_INTEREST_TYPES))
@@ -2977,23 +2979,30 @@ def find_real_ident_spec(ident: str, in_spec: Tuple[str, ...],
 
 def find_type_entity(node: Entity_Decl,
                      ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES],
-                     alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]) -> Tuple[str, ...]:
+                     alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]) -> Optional[Tuple[str, ...]]:
     anc = node.parent
     decl_typ = None
     while anc:
-        decl_typ = ast_utils.atmost_one(ast_utils.children_of_type(anc, Declaration_Type_Spec))
+        decl_typ = ast_utils.atmost_one(
+            ast_utils.children_of_type(anc, (Intrinsic_Type_Spec, Declaration_Type_Spec)))
         if decl_typ:
             break
         anc = anc.parent
-    assert decl_typ is not None
+    if not decl_typ:
+        return None
+    if isinstance(decl_typ, Intrinsic_Type_Spec):
+        typ_name, _ = decl_typ.children
+        return (typ_name,)
+
+    assert isinstance(decl_typ, Declaration_Type_Spec)
     _, typ_name = decl_typ.children
     spec = ident_spec(node)
     return find_real_ident_spec(typ_name.string, spec, ident_map, alias_map)
 
 
-def find_type_dataref(dref: Union[Name, Data_Ref], scope_spec: Tuple[str, ...],
-                      ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES],
-                      alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]) -> Tuple[str, ...]:
+def _dataref_root(dref: Union[Name, Data_Ref], scope_spec: Tuple[str, ...],
+                  ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES],
+                  alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]):
     if isinstance(dref, Name):
         root, rest = dref, []
     else:
@@ -3002,6 +3011,47 @@ def find_type_dataref(dref: Union[Name, Data_Ref], scope_spec: Tuple[str, ...],
     root_spec = find_real_ident_spec(root.string, scope_spec, ident_map, alias_map)
     assert root_spec in ident_map
     root_type_spec = find_type_entity(ident_map[root_spec], ident_map, alias_map)
+    assert root_type_spec
+    return root_type_spec, rest
+
+
+def find_dataref_component_spec(dref: Union[Name, Data_Ref], scope_spec: Tuple[str, ...],
+                                ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES],
+                                alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]) -> Tuple[str, ...]:
+    # The root must have been a typed object.
+    root_type_spec, rest = _dataref_root(dref, scope_spec, ident_map, alias_map)
+
+    cur_type_spec = root_type_spec
+    # All component shards except for the last one must have been type objects too.
+    for comp in rest[:-1]:
+        assert isinstance(comp, (Name, Part_Ref))
+        if isinstance(comp, Part_Ref):
+            part_name, _ = comp.children[0], comp.children[1:]
+            comp_spec = find_real_ident_spec(part_name.string, cur_type_spec, ident_map, alias_map)
+        elif isinstance(comp, Name):
+            comp_spec = find_real_ident_spec(comp.string, cur_type_spec, ident_map, alias_map)
+        assert comp_spec in ident_map
+        # So, we get the type spec for those component shards.
+        cur_type_spec = find_type_entity(ident_map[comp_spec], ident_map, alias_map)
+        assert cur_type_spec
+
+    # For the last one, we just need the component spec.
+    comp = rest[-1]
+    assert isinstance(comp, (Name, Part_Ref))
+    if isinstance(comp, Part_Ref):
+        part_name, _ = comp.children[0], comp.children[1:]
+        comp_spec = find_real_ident_spec(part_name.string, cur_type_spec, ident_map, alias_map)
+    elif isinstance(comp, Name):
+        comp_spec = find_real_ident_spec(comp.string, cur_type_spec, ident_map, alias_map)
+    assert comp_spec in ident_map
+
+    return comp_spec
+
+
+def find_type_dataref(dref: Union[Name, Data_Ref], scope_spec: Tuple[str, ...],
+                      ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES],
+                      alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]) -> Tuple[str, ...]:
+    root_type_spec, rest = _dataref_root(dref, scope_spec, ident_map, alias_map)
 
     cur_type_spec = root_type_spec
     for comp in rest:
@@ -3013,6 +3063,7 @@ def find_type_dataref(dref: Union[Name, Data_Ref], scope_spec: Tuple[str, ...],
             comp_spec = find_real_ident_spec(comp.string, cur_type_spec, ident_map, alias_map)
         assert comp_spec in ident_map
         cur_type_spec = find_type_entity(ident_map[comp_spec], ident_map, alias_map)
+        assert cur_type_spec
     return cur_type_spec
 
 
@@ -3070,6 +3121,41 @@ def generic_specs(ast: Program) -> Dict[Tuple[str, ...], Tuple[Tuple[str, ...], 
     return genc_map
 
 
+def correct_for_function_calls(ast: Program):
+    """Look for function calls that may have been misidentified as array access and fix them."""
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast, ident_map)
+
+    for pr in walk(ast, Part_Ref):
+        scope = find_named_ancester(pr.parent)
+        assert scope
+        scope_spec = ident_spec(scope)
+
+        if isinstance(pr.parent, Data_Ref):
+            dref = pr.parent
+            comp_spec = find_dataref_component_spec(dref, scope_spec, ident_map, alias_map)
+            comp_type_spec = find_type_entity(ident_map[comp_spec], ident_map, alias_map)
+            if not comp_type_spec:
+                # Cannot find a type, so it must be a function call.
+                par = dref.parent
+                fnref = Function_Reference(dref.tofortran())
+                fnref.parent = par
+                par.items = [fnref if c == dref else c for c in par.children]
+        else:
+            pr_name, _ = pr.children
+            pr_spec = scope_spec + (pr_name.string,)
+            assert pr_spec in ident_map
+            pr_type_spec = find_type_entity(ident_map[pr_spec], ident_map, alias_map)
+            if not pr_type_spec:
+                # Cannot find a type, so it must be a function call.
+                par = pr.parent
+                fnref = Function_Reference(pr.tofortran())
+                # TODO: Sometimes we don't need to explicitly set parents, but sometimes we do. Why?
+                fnref.parent = par
+                par.items = [fnref if c == pr else c for c in par.children]
+    return ast
+
+
 def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program, nx.DiGraph):
     SUFFIX, COUNTER = 'deconproc', 0
 
@@ -3117,10 +3203,41 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         dref_type_spec = find_type_dataref(dref, scope_spec, ident_map, alias_map)
         bspec = dref_type_spec + (bname.string,)
         if bspec in genc_map and genc_map[bspec]:
-            # TODO: How to resolve generics? I.e., how to select the right procedure from a call to a generic?
-            # assert len(genc_map[bspec]) <= 1, f"cannot handle type resolution of generics yet, got: {bspec} => {genc_map[bspec]}"
-            # bspec, = genc_map[bspec]
-            bspec = genc_map[bspec][0]
+            fnref = pd.parent
+            assert isinstance(fnref, Function_Reference)
+            _, args = fnref.children
+            args_sig = []
+            for c in args.children:
+                c_type = None
+                if isinstance(c, (Real_Literal_Constant, Signed_Real_Literal_Constant)):
+                    c_type = ('REAL',)
+                elif isinstance(c, (Int_Literal_Constant, Signed_Int_Literal_Constant)):
+                    c_type = ('INTEGER',)
+                elif isinstance(c, Name):
+                    c_spec = scope_spec + (c.string,)
+                    assert c_spec in ident_map
+                    c_type = find_type_entity(ident_map[c_spec], ident_map, alias_map)
+                assert c_type
+                args_sig.append(c_type)
+            args_sig = tuple(args_sig)
+
+            for cand in genc_map[bspec]:
+                cand_stmt = ident_map[proc_map[cand]]
+                cand_spec = ident_spec(cand_stmt)
+                cand_fn = cand_stmt.parent
+                # TODO: Add ref.
+                _, _, cand_args, _ = cand_stmt.children
+                assert cand_args
+                cand_args_sig = []
+                # We can skip the first argument because that's already known.
+                for ca in cand_args.children[1:]:
+                    ca_type_spec = find_type_entity(ident_map[cand_spec + (ca.string,)], ident_map, alias_map)
+                    cand_args_sig.append(ca_type_spec)
+                cand_args_sig = tuple(cand_args_sig)
+
+                if args_sig == cand_args_sig:
+                    bspec = cand
+                    break
         assert bspec in proc_map, f"[in mod: {cmod}] {bspec} should have been among {set(proc_map.keys())}"
         pname = proc_map[bspec]
 
@@ -3151,13 +3268,13 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
                 assert isinstance(obj_list, list)
         ast_utils.extend_with_new_items_from(obj_list, [Name(pname)])
 
-        # For both function and subroutine calls, we replace `bname` with `pname_alias`, and add `dref` as the first arg.
+        # For both function and subroutine calls, replace `bname` with `pname_alias`, and add `dref` as the first arg.
         _, args = callsite.children
         if args is None:
             args = Actual_Arg_Spec_List(f"{dref}")
         else:
             args = Actual_Arg_Spec_List(f"{dref}, {args}")
-        callsite.items = (pname_alias, args)
+        callsite.items = (Name(pname_alias), args)
     return ast, dep_graph
 
 
