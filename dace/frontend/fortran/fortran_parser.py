@@ -19,11 +19,12 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Procedure_Designator, Function_Reference, Call_Stmt, Use_Stmt, Actual_Arg_Spec_List, Specific_Binding, \
     Derived_Type_Stmt, Type_Name, Data_Ref, Component_Decl, Generic_Binding, Association, Associate_Construct, Part_Ref, \
     Intrinsic_Type_Spec, Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, \
-    Signed_Int_Literal_Constant
+    Signed_Int_Literal_Constant, Char_Literal_Constant, Logical_Literal_Constant, Actual_Arg_Spec, \
+    Intrinsic_Function_Reference
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
-from fparser.two.utils import Base, walk
+from fparser.two.utils import Base, walk, BinaryOpBase
 
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
@@ -3008,9 +3009,12 @@ def _dataref_root(dref: Union[Name, Data_Ref], scope_spec: Tuple[str, ...],
     else:
         assert len(dref.children) >= 2
         root, rest = dref.children[0], dref.children[1:]
-    root_spec = find_real_ident_spec(root.string, scope_spec, ident_map, alias_map)
-    assert root_spec in ident_map
-    root_type_spec = find_type_entity(ident_map[root_spec], ident_map, alias_map)
+    if isinstance(root, Name):
+        root_spec = find_real_ident_spec(root.string, scope_spec, ident_map, alias_map)
+        assert root_spec in ident_map
+        root_type_spec = find_type_entity(ident_map[root_spec], ident_map, alias_map)
+    elif isinstance(root, Data_Ref):
+        root_type_spec = find_type_dataref(root, scope_spec, ident_map, alias_map)
     assert root_type_spec
     return root_type_spec, rest
 
@@ -3204,27 +3208,46 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         bspec = dref_type_spec + (bname.string,)
         if bspec in genc_map and genc_map[bspec]:
             fnref = pd.parent
-            assert isinstance(fnref, Function_Reference)
+            assert isinstance(fnref, (Function_Reference, Call_Stmt))
             _, args = fnref.children
             args_sig = []
             for c in args.children:
-                c_type = None
-                if isinstance(c, (Real_Literal_Constant, Signed_Real_Literal_Constant)):
-                    c_type = ('REAL',)
-                elif isinstance(c, (Int_Literal_Constant, Signed_Int_Literal_Constant)):
-                    c_type = ('INTEGER',)
-                elif isinstance(c, Name):
-                    c_spec = scope_spec + (c.string,)
-                    assert c_spec in ident_map
-                    c_type = find_type_entity(ident_map[c_spec], ident_map, alias_map)
-                assert c_type
+                def _deduct_type(x):
+                    if isinstance(x, (Real_Literal_Constant, Signed_Real_Literal_Constant)):
+                        return ('REAL',)
+                    elif isinstance(x, (Int_Literal_Constant, Signed_Int_Literal_Constant)):
+                        return ('INTEGER',)
+                    elif isinstance(x, Char_Literal_Constant):
+                        return ('CHARACTER',)
+                    elif isinstance(x, Logical_Literal_Constant):
+                        return ('LOGICAL',)
+                    elif isinstance(x, Name):
+                        x_spec = scope_spec + (x.string,)
+                        assert x_spec in ident_map
+                        return find_type_entity(ident_map[x_spec], ident_map, alias_map)
+                    elif isinstance(x, Data_Ref):
+                        return find_type_dataref(x, scope_spec, ident_map, alias_map)
+                    elif isinstance(x, Part_Ref):
+                        # TODO: Add ref.
+                        part_name, _ = x.children
+                        return find_type_dataref(part_name, scope_spec, ident_map, alias_map)
+                    elif isinstance(x, Actual_Arg_Spec):
+                        kw, val = x.children
+                        return _deduct_type(val)
+                    elif isinstance(x, BinaryOpBase):
+                        # TODO: Figure out the actual type.
+                        return ('*',)
+                    elif isinstance(x, Intrinsic_Function_Reference):
+                        # TODO: Figure out the actual type.
+                        return ('*',)
+                c_type = _deduct_type(c)
+                assert c_type, f"got: {c} / {type(c)} : {fnref}"
                 args_sig.append(c_type)
             args_sig = tuple(args_sig)
 
             for cand in genc_map[bspec]:
                 cand_stmt = ident_map[proc_map[cand]]
                 cand_spec = ident_spec(cand_stmt)
-                cand_fn = cand_stmt.parent
                 # TODO: Add ref.
                 _, _, cand_args, _ = cand_stmt.children
                 assert cand_args
@@ -3232,10 +3255,22 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
                 # We can skip the first argument because that's already known.
                 for ca in cand_args.children[1:]:
                     ca_type_spec = find_type_entity(ident_map[cand_spec + (ca.string,)], ident_map, alias_map)
+                    assert ca_type_spec
                     cand_args_sig.append(ca_type_spec)
                 cand_args_sig = tuple(cand_args_sig)
 
-                if args_sig == cand_args_sig:
+                def _eq_(a_sig: Tuple[Tuple[str, ...]], b_sig: Tuple[Tuple[str, ...]]):
+                    if len(a_sig) != len(b_sig):
+                        return False
+                    for a, b in zip(a_sig, b_sig):
+                        if ('*',) in {a, b}:
+                            # Consider them matched.
+                            continue
+                        if a != b:
+                            return False
+                    return True
+
+                if _eq_(args_sig, cand_args_sig):
                     bspec = cand
                     break
         assert bspec in proc_map, f"[in mod: {cmod}] {bspec} should have been among {set(proc_map.keys())}"
