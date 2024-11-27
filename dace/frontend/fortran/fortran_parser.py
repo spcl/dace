@@ -3678,6 +3678,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     ast = parser(reader)
     ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, source_list, include_list, parser)
+    ast = deconstruct_associations(ast)
     ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
 
     for mod, blocks in interface_blocks.items():
