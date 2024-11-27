@@ -1800,7 +1800,9 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           newbody: list,
                           scope_vars: ScopeVarsDeclarations,
                           structures: Structures,
-                          declaration=True):
+                          declaration=True,
+                          main_iterator_ranges: Optional[list] = None
+):
     """
     Helper function for the transformation of array operations and sums to loops
     :param node: The AST to be transformed
@@ -1809,8 +1811,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
     :param rangepos: The positions of the ranges
     :param count: The current count of the loop
     :param newbody: The new basic block that will contain the loop
-    :param declaration: Whether the declaration of the loop variable is needed
-    :param is_sum_to_loop: Whether the transformation is for a sum to loop
+    :param main_iterator_ranges: When parsing right-hand side of equation, use access to main loop range 
     :return: Ranges, rangepos, newbody
     """
 
@@ -1900,11 +1901,13 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                         op="-",
                         rval=ast_internal_classes.Int_Literal_Node(value="1")
                     )
+
                 ranges.append([lower_boundary, upper_boundary])
                 rangeslen.append(-1)
 
             else:
                 ranges.append([i.range[0], i.range[1]])
+                lower_boundary = i.range[0]
 
                 start = 0
                 if isinstance(i.range[0], ast_internal_classes.Int_Literal_Node):
@@ -1940,7 +1943,46 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                         ast_internal_classes.Symbol_Decl_Node(
                             name="tmp_parfor_" + str(count + len(rangepos) - 1), type="INTEGER", sizes=None, init=None)
                     ]))
-            indices.append(ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)))
+
+
+            """
+                To account for ranges with different starting offsets inside the same loop,
+                we need to adapt array accesses.
+                The main loop iterator is already initialized with the lower boundary of the dominating array.
+
+                Thus, if the offset is the same, the index is just "tmp_parfor".
+                Otherwise, it is "tmp_parfor - tmp_parfor_lower_boundary + our_lower_boundary"
+            """
+
+            if declaration:
+                """
+                    For LHS, we don't need to adjust - we dictate the loop iterator.
+                """
+
+                indices.append(
+                    ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1))
+                )
+            else:
+
+                """
+                    For RHS, we adjust starting array position by taking consideration the initial value
+                    of the loop iterator.
+
+                    Offset is handled by always subtracting the lower boundary.
+                """
+                current_lower_boundary = main_iterator_ranges[currentindex][0]
+
+                indices.append(
+                    ast_internal_classes.BinOp_Node(
+                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)),
+                        op="+",
+                        rval = ast_internal_classes.BinOp_Node(
+                            lval=lower_boundary,
+                            op="-",
+                            rval=current_lower_boundary
+                        )
+                    )
+                )
         else:
             indices.append(i)
         currentindex += 1
@@ -1985,7 +2027,7 @@ class ArrayToLoop(NodeTransformer):
                         rangesrval = []
 
                         par_Decl_Range_Finder(i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars,
-                                              self.ast.structures, False)
+                                              self.ast.structures, False, ranges)
 
                         for i, j in zip(ranges, rangesrval):
                             if i != j:
