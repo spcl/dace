@@ -3743,6 +3743,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             new_names_in_subroutines[subroutine] = new_names_list
         objects.names_in_subroutines = new_names_in_subroutines
 
+        #Half fix to recompute the info list with the changed names.
         fandsl = ast_utils.FunctionSubroutineLister()
         for i in ast.children:
             mod_name=i.children[0].children[1].string
