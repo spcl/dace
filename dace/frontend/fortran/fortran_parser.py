@@ -4,6 +4,7 @@ import copy
 import os
 import warnings
 from copy import deepcopy as dpcp
+from functools import cmp_to_key
 from itertools import chain
 from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple, Union
@@ -3298,6 +3299,22 @@ def recursive_ast_improver(ast: Base, source_list: Union[List, Dict], include_li
             asts[mod_name] = mod
 
     _recursive_ast_improver(ast)
+
+    # Sort the modules in the AST in their topological order.
+    order = list(reversed(list(nx.topological_sort(dep_graph))))
+
+    def cmp(a: Base, b: Base):
+        a_name = ast_utils.singular(ast_utils.children_of_type(a, NAMED_STMTS_OF_INTEREST_TYPES))
+        if a_name not in order:
+            return -1
+        b_name = ast_utils.singular(ast_utils.children_of_type(b, NAMED_STMTS_OF_INTEREST_TYPES))
+        if b_name not in order:
+            return +1
+        a_loc, b_loc = order.index(a_name), order.index(b_name)
+        return a_loc < b_loc
+
+    ast.items = sorted(ast.children, key=cmp_to_key(cmp))
+
     return ast, dep_graph, interface_blocks, asts
 
 
