@@ -3286,6 +3286,7 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         else:
             # If we are importing it from a different module, we should create an alias to avoid name collision.
             pname_alias, COUNTER = f"{pname}_{SUFFIX}_{COUNTER}", COUNTER + 1
+            #pname_alias = f"{pname}"
             if not specification_part:
                 specification_part = Specification_Part(get_reader(f"use {mod}, only: {pname_alias} => {pname}"))
                 subprog.content = subprog.children + [specification_part]
@@ -3743,6 +3744,16 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             new_names_in_subroutines[subroutine] = new_names_list
         objects.names_in_subroutines = new_names_in_subroutines
 
+        fandsl = ast_utils.FunctionSubroutineLister()
+        for i in ast.children:
+            mod_name=i.children[0].children[1].string
+            if mod_name == node:
+                fandsl.get_functions_and_subroutines(i)
+                node_data['info_list'] = fandsl
+                break
+
+
+    
     # print(dep_graph)
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
     simple_graph, actually_used_in_module = ast_utils.eliminate_dependencies(dep_graph)
@@ -3786,6 +3797,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                     if jj.lower() in res.list_of_types:
                         if jj.lower() not in type_list:
                             type_list.append(jj.lower())
+                            
 
         print("Module " + i + " used names: " + str(parse_list[i]))
         if len(fands_list) > 0:
