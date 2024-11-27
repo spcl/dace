@@ -2800,8 +2800,7 @@ def create_sdfg_from_string(
         raise NameError("Structs have cyclic dependencies")
 
     # program =
-    print(dir(functions_and_subroutines_builder))
-    ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
+    #ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
 
     ast2sdfg = AST_translator(__file__, multiple_sdfgs=multiple_sdfgs, toplevel_subroutine=sdfg_name,
                               normalize_offsets=normalize_offsets)
