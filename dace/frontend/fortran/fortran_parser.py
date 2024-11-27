@@ -3287,9 +3287,11 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
             # If we are importing it from a different module, we should create an alias to avoid name collision.
             pname_alias, COUNTER = f"{pname}_{SUFFIX}_{COUNTER}", COUNTER + 1
             if not specification_part:
-                subprog.children.append(Specification_Part(get_reader(f"use {mod}, only: {pname_alias} => {pname}")))
+                specification_part = Specification_Part(get_reader(f"use {mod}, only: {pname_alias} => {pname}"))
+                subprog.items = subprog.children + [specification_part]
             else:
-                specification_part.children.insert(0, Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}"))
+                use_stmt = Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}")
+                specification_part.items = [use_stmt] + specification_part.children
         obj_list = []
         if dep_graph.has_edge(cmod, mod):
             edge = dep_graph.get_edge_data(cmod, mod)
@@ -3446,21 +3448,6 @@ def recursive_ast_improver(ast: Base, source_list: Union[List, Dict], include_li
             asts[mod_name] = mod
 
     _recursive_ast_improver(ast)
-
-    # Sort the modules in the AST in their topological order.
-    order = list(reversed(list(nx.topological_sort(dep_graph))))
-
-    def cmp(a: Base, b: Base):
-        a_name = ast_utils.singular(ast_utils.children_of_type(a, NAMED_STMTS_OF_INTEREST_TYPES))
-        if a_name not in order:
-            return -1
-        b_name = ast_utils.singular(ast_utils.children_of_type(b, NAMED_STMTS_OF_INTEREST_TYPES))
-        if b_name not in order:
-            return +1
-        a_loc, b_loc = order.index(a_name), order.index(b_name)
-        return a_loc < b_loc
-
-    ast.items = sorted(ast.children, key=cmp_to_key(cmp))
 
     return ast, dep_graph, interface_blocks, asts
 
