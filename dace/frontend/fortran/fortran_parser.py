@@ -20,7 +20,7 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Derived_Type_Stmt, Type_Name, Data_Ref, Component_Decl, Generic_Binding, Association, Associate_Construct, Part_Ref, \
     Intrinsic_Type_Spec, Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, \
     Signed_Int_Literal_Constant, Char_Literal_Constant, Logical_Literal_Constant, Actual_Arg_Spec, \
-    Intrinsic_Function_Reference
+    Intrinsic_Function_Reference, Section_Subscript, Section_Subscript_List, Subscript_Triplet
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -3288,10 +3288,10 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
             pname_alias, COUNTER = f"{pname}_{SUFFIX}_{COUNTER}", COUNTER + 1
             if not specification_part:
                 specification_part = Specification_Part(get_reader(f"use {mod}, only: {pname_alias} => {pname}"))
-                subprog.items = subprog.children + [specification_part]
+                subprog.content = subprog.children + [specification_part]
             else:
                 use_stmt = Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}")
-                specification_part.items = [use_stmt] + specification_part.children
+                specification_part.content = [use_stmt] + specification_part.children
         obj_list = []
         if dep_graph.has_edge(cmod, mod):
             edge = dep_graph.get_edge_data(cmod, mod)
@@ -3336,12 +3336,41 @@ def deconstruct_associations(ast: Program) -> Program:
                     repl = local_map[root.string]
                     repl = type(repl)(repl.tofortran())
                     dr.items = (repl, *dr_rest)
+            # # Replace the part-ref roots as appropriate.
+            for pr in walk(node, Part_Ref):
+                if isinstance(pr.parent, (Data_Ref, Part_Ref)):
+                    continue
+                # TODO: Add ref.
+                root, subsc = pr.children
+                if root.string in local_map:
+                    repl = local_map[root.string]
+                    repl = type(repl)(repl.tofortran())
+                    if isinstance(subsc, Section_Subscript_List) and isinstance(repl, (Data_Ref, Part_Ref)):
+                        access = repl
+                        while isinstance(access, (Data_Ref, Part_Ref)):
+                            access = access.children[-1]
+                        if isinstance(access, Section_Subscript_List):
+                            # We cannot just chain accesses, so we need to combine them to produce a single access.
+                            # TODO: Maybe `isinstance(c, Subscript_Triplet)` + offset manipulation?
+                            free_comps = [(i, c) for i, c in enumerate(access.children) if c == Subscript_Triplet(':')]
+                            assert len(free_comps) >= len(subsc.children),\
+                                f"Free rank cannot increase, got {root}/{access} => {subsc}"
+                            for i, c in enumerate(subsc.children):
+                                idx, _ = free_comps[i]
+                                free_comps[i] = (idx, c)
+                            free_comps = {i: c for i, c in free_comps}
+                            access.items = [free_comps.get(i, c) for i, c in enumerate(access.children)]
+                            # Now replace the entire `pr` with `repl`.
+                            par = pr.parent
+                            par.items = [repl if c == pr else c for c in par.children]
+                    # Otherwise, just replace normally.
+                    pr.items = (repl, subsc)
             # Replace all the other names.
             for nm in walk(node, Name):
                 # TODO: This is hacky and can backfire if `nm` is not a standalone identifier.
                 par = nm.parent
                 # Avoid data refs as we have just processed them.
-                if isinstance(par, Data_Ref) or (isinstance(par, Part_Ref) and isinstance(par.parent, Data_Ref)):
+                if isinstance(par, (Data_Ref, Part_Ref)):
                     continue
                 if nm.string not in local_map:
                     continue
