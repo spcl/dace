@@ -808,10 +808,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                    dst_storage: dtypes.StorageType, dst_schedule: dtypes.ScheduleType,
                    edge: Tuple[nodes.Node, str, nodes.Node, str, Memlet], sdfg: SDFG, cfg: ControlFlowRegion,
                    dfg: StateSubgraphView, callsite_stream: CodeIOStream) -> None:
-        # callsite_stream.write('// SoftHier: Emitting copy from %s to %s' % (src_node, dst_node), sdfg, state_id)
+        callsite_stream.write('// SoftHier: Emitting copy from %s to %s' % (src_node, dst_node), sdfg, state_id)
         u, uconn, v, vconn, memlet = edge
         state_dfg = cfg.state(state_id)
-        print('SoftHier: Emitting copy from', src_node, 'to', dst_node)
+        # print('SoftHier: Emitting copy from', src_node, 'to', dst_node)
         cpu_storage_types = [
             dtypes.StorageType.CPU_Heap
         ]
@@ -1101,16 +1101,16 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         f"Unimplemented copy type: {src_storage} -> {dst_storage}"
                     )
             elif dims == 2:
-                print(f'subset = {subset}; subset.string_list() = {subset.string_list()}')
+                # print(f'subset = {subset}; subset.string_list() = {subset.string_list()}')
                 
                 beg, end, step = subset.ranges[0]
-                print(f'index_0: {src_name} -> {dst_name}, {beg}, {end}, {step}')
+                # print(f'index_0: {src_name} -> {dst_name}, {beg}, {end}, {step}')
                 length_0 = (end + 1) - beg
                 
                 beg, end, step = subset.ranges[1]
                 length_1 = (end + 1) - beg
                 
-                print(f'index_1: {src_name} -> {dst_name}, {beg}, {end}, {step}')
+                # print(f'index_1: {src_name} -> {dst_name}, {beg}, {end}, {step}')
                 data_size = nodedesc.dtype.bytes
                 if (
                     src_storage == dtypes.StorageType.SoftHier_HBM
@@ -1204,6 +1204,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
                     memlet: Memlet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         state = cfg.state(state_id)
+        print(f'copy_memory: {src_node} -> {dst_node}')
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register
             src_parent = state.entry_node(src_node)
@@ -1419,7 +1420,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         scope_exit = dfg_scope.sink_nodes()[0]
 
         state = cfg.state(state_id)
-        # print("################################Using SoftHierCodeGen Scope######################################")
+        print("################################Using SoftHierCodeGen Scope######################################")
         # If in device-level code, call appropriate function
         if (self._kernel_map is not None and self._kernel_map.map.schedule in dtypes.SOFTHIER_SCHEDULES):
             # print("Generating device-level scope")
@@ -2179,7 +2180,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
-                    callsite_stream.write('{' , cfg, state_id, scope_entry)    
+                for i in range(min(len(brange), 3)):
+                    varname = scope_map.params[-i - 1]
+                    condition = ''
+                    condition += '%s <= %s' % (varname, brange.max_element()[i])
+                    if len(condition) > 0:
+                        callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)    
+                    else:
+                        callsite_stream.write('{', cfg, state_id, scope_entry)
 
             # Delinearize beyond the third dimension
             if len(brange) > 3:
@@ -2255,9 +2263,11 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         # print(f'SoftHier: Generating node {node} in state {state_id}')
         if self.node_dispatch_predicate(sdfg, dfg, node):
+            # print(f'SoftHier: Dynamically obtain node generator according to class name')
             # Dynamically obtain node generator according to class name
             gen = getattr(self, '_generate_' + type(node).__name__, False)
             if gen is not False:  # Not every node type has a code generator here
+                # print(f'SoftHier: Generating node {node} in state {state_id} using {gen}')
                 gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
                 return
 
@@ -2384,7 +2394,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             callsite_stream.write(f'if (({index_expr}) == {location}) {{')
 
         return 1
-
+ 
     def _generate_Tasklet(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                           node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         generated_preamble_scopes = 0
@@ -2397,12 +2407,18 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                                                                 callsite_stream)
             generated_preamble_scopes += self._generate_condition_from_location('gpu_block', self._get_block_id(), node,
                                                                                 callsite_stream)
-
+        print(f'generated_preamble_scopes: {generated_preamble_scopes}')
         # Call standard tasklet generation
-        old_codegen = self._cpu_codegen.calling_codegen
-        self._cpu_codegen.calling_codegen = self
-        self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-        self._cpu_codegen.calling_codegen = old_codegen
+        if node.name == "mmad_redmule":
+            old_codegen = self._cpu_codegen.calling_codegen
+            self._cpu_codegen.calling_codegen = self
+            self._cpu_codegen._generate_RedMule_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+            self._cpu_codegen.calling_codegen = old_codegen
+        else:
+            old_codegen = self._cpu_codegen.calling_codegen
+            self._cpu_codegen.calling_codegen = self
+            self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+            self._cpu_codegen.calling_codegen = old_codegen
 
         if generated_preamble_scopes > 0:
             # Generate appropriate postamble

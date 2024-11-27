@@ -390,7 +390,7 @@ class TargetDispatcher(object):
                           skip_exit_node: bool = False):
         """ Dispatches a code generator for a scope subgraph of an
             `SDFGState`. """
-        # print("~~~~~~~~~~~~~~~Dispatching subgraph", dfg, "in state", state_id)
+        print("~~~~~~~~~~~~~~~Dispatching subgraph", dfg, "in state", state_id)
         start_nodes = list(v for v in dfg.nodes() if len(list(dfg.predecessors(v))) == 0)
 
         # Mark nodes to skip in order to be able to skip
@@ -421,7 +421,7 @@ class TargetDispatcher(object):
                 # print("***************Dispatching node", v, "in state", state_id)
                 self.dispatch_node(sdfg, cfg, dfg, state_id, v, function_stream, callsite_stream)
                 # print("***************Finished dispatching node", v, "in state", state_id)
-        # print("~~~~~~~~~~~~~~~Finished dispatching subgraph", dfg, "in state", state_id)
+        print("~~~~~~~~~~~~~~~Finished dispatching subgraph", dfg, "in state", state_id)
 
     def get_node_dispatcher(self, sdfg: SDFG, state: SDFGState, node: nodes.Node):
         satisfied_dispatchers = [dispatcher for pred, dispatcher in self._node_dispatchers if pred(sdfg, state, node)]

@@ -159,8 +159,8 @@
         "language": "CPP"
       }
     },
-    "guid": "af0ffe99-fadc-4d02-918e-684052225abb",
-    "hash": "c4e7ce906997a72401be3b3c91cea65f560ee762fcad74da9a0b40715ca2d3ed"
+    "guid": "6f6d5769-24eb-4c30-a718-b58e0f1252de",
+    "hash": "1a3734901cc5bb46575f8e9d502d0b0a4c30416afd9ddb2e5489114c754dbd4f"
   },
   "nodes": [
     {
@@ -230,7 +230,7 @@
               "end_line": 32,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1172897/403677390.py"
+              "filename": "/tmp/ipykernel_1190878/1022771455.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -240,7 +240,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "e4c22790-b41c-4c34-a6d5-f70cfb01a87f"
+            "guid": "86cbfacb-18f0-43ac-975d-7554f2d41f88"
           },
           "id": 0,
           "scope_entry": null,
@@ -256,7 +256,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "f36ee6b7-32d7-401d-82e4-78572076ceda"
+            "guid": "aeb08dc3-3202-45f6-9c02-ae2aba724356"
           },
           "id": 1,
           "scope_entry": "0",
@@ -272,10 +272,10 @@
               "end_line": 42,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1172897/403677390.py"
+              "filename": "/tmp/ipykernel_1190878/1022771455.py"
             },
             "data": "A",
-            "guid": "593a0a5d-918a-4053-8e66-3313c6d56294"
+            "guid": "fbb456e0-cfa6-44ad-b1b5-2538840ac39d"
           },
           "id": 2,
           "scope_entry": null,
@@ -291,10 +291,10 @@
               "end_line": 42,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1172897/403677390.py"
+              "filename": "/tmp/ipykernel_1190878/1022771455.py"
             },
             "data": "B",
-            "guid": "0e6fdb27-acd3-4696-8067-0b6263535e8a"
+            "guid": "9bec2ebd-634b-4739-9c37-973aa89f86db"
           },
           "id": 3,
           "scope_entry": null,
@@ -310,10 +310,10 @@
               "end_line": 49,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1172897/403677390.py"
+              "filename": "/tmp/ipykernel_1190878/1022771455.py"
             },
             "data": "C",
-            "guid": "de39b82b-2b6d-43e3-b3e4-22570a863fd9"
+            "guid": "e0943eba-4a9b-441c-a010-1001ba770854"
           },
           "id": 4,
           "scope_entry": null,
@@ -352,7 +352,7 @@
               "end_line": 52,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1172897/403677390.py"
+              "filename": "/tmp/ipykernel_1190878/1022771455.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -362,7 +362,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "34202089-e832-4ad2-b5a3-4dc37386740d"
+            "guid": "4ee984ca-72a5-4760-bc43-d8f9904741c7"
           },
           "id": 5,
           "scope_entry": "0",
@@ -378,7 +378,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "860cfcfb-7438-4f7a-afbf-a839b92a5bca"
+            "guid": "2ce33ae8-0bab-43cf-bd1a-b89e69fa7d03"
           },
           "id": 6,
           "scope_entry": "5",
@@ -417,7 +417,7 @@
               "end_line": 75,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1172897/403677390.py"
+              "filename": "/tmp/ipykernel_1190878/1022771455.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -427,7 +427,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "d8f5ea4d-0501-420d-9bf0-021920c3823c"
+            "guid": "61ecf0b1-2de4-488a-9043-2831ef785cd3"
           },
           "id": 7,
           "scope_entry": "5",
@@ -443,7 +443,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "acd1ace8-3454-49c6-92ed-a253968d6918"
+            "guid": "7426eac5-6950-4536-9da0-001fba975f52"
           },
           "id": 8,
           "scope_entry": "7",
@@ -475,7 +475,7 @@
               "end_line": 98,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1172897/403677390.py"
+              "filename": "/tmp/ipykernel_1190878/1022771455.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -487,7 +487,7 @@
               "OUT_B": null,
               "OUT_accumulator": null
             },
-            "guid": "a8c8cfb9-4a58-4c35-9372-80ef681f6e17"
+            "guid": "8cf7e992-b53b-4eb2-ad10-64b4dd2d1a91"
           },
           "id": 9,
           "scope_entry": "7",
@@ -503,7 +503,7 @@
             "out_connectors": {
               "OUT_accumulator": null
             },
-            "guid": "c87b4c4c-d8ff-4d2e-9d3d-72bac9fa7733"
+            "guid": "6d6715b4-8c47-47a6-9403-10e9050b9d5a"
           },
           "id": 10,
           "scope_entry": "9",
@@ -520,10 +520,10 @@
               "end_line": 104,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1172897/403677390.py"
+              "filename": "/tmp/ipykernel_1190878/1022771455.py"
             },
             "data": "accumulator",
-            "guid": "8ff0cdac-081f-4490-91d5-88cedde9939b"
+            "guid": "13fe7e13-6612-4db9-a60b-d5e0bc86fa70"
           },
           "id": 11,
           "scope_entry": "7",
@@ -539,10 +539,10 @@
               "end_line": 129,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1172897/403677390.py"
+              "filename": "/tmp/ipykernel_1190878/1022771455.py"
             },
             "data": "local_A",
-            "guid": "d94b310b-8652-42b1-8694-997a7d563f69"
+            "guid": "4e5798ac-7394-49e7-8237-7400262a8fbc"
           },
           "id": 12,
           "scope_entry": "9",
@@ -558,10 +558,10 @@
               "end_line": 129,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1172897/403677390.py"
+              "filename": "/tmp/ipykernel_1190878/1022771455.py"
             },
             "data": "local_B",
-            "guid": "87d1cae4-e07a-4548-ab4c-37f2f4d53936"
+            "guid": "f2c42ac2-2c7f-41f5-a2ce-513bfa9b8777"
           },
           "id": 13,
           "scope_entry": "9",
@@ -569,7 +569,7 @@
         },
         {
           "type": "Tasklet",
-          "label": "mmad",
+          "label": "mmad_redmule",
           "attributes": {
             "code": {
               "string_data": "flex_redmule_trigger(_in_a, _in_b, _in_accumulate, REDMULE_FP_16);",
@@ -581,9 +581,9 @@
               "end_line": 138,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1172897/403677390.py"
+              "filename": "/tmp/ipykernel_1190878/1022771455.py"
             },
-            "label": "mmad",
+            "label": "mmad_redmule",
             "in_connectors": {
               "_in_accumulator": null,
               "_in_local_a": null,
@@ -592,7 +592,7 @@
             "out_connectors": {
               "_out_accumulator": null
             },
-            "guid": "3e5b6eda-5ec4-4a89-afc0-47ed21f6ad49"
+            "guid": "13899ddc-22da-421c-8ad2-ff15b4fd7499"
           },
           "id": 14,
           "scope_entry": "9",
@@ -608,10 +608,10 @@
               "end_line": 147,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1172897/403677390.py"
+              "filename": "/tmp/ipykernel_1190878/1022771455.py"
             },
             "data": "accumulator",
-            "guid": "f975a135-368a-4728-bd32-621a1faba8fc"
+            "guid": "9f4af730-dfa2-422b-9711-4d11da6a2d53"
           },
           "id": 15,
           "scope_entry": "9",
@@ -627,7 +627,7 @@
               "attributes": {
                 "volume": "1",
                 "debuginfo": null,
-                "guid": "f144dc12-7672-48c2-b29f-a8c75ef8e374",
+                "guid": "e5455e92-0cdb-4580-94ae-51c15caef2bd",
                 "src_subset": null,
                 "dst_subset": null,
                 "is_data_src": false,
@@ -666,7 +666,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "5b48f53f-cf4c-428e-959e-a2508d869f2e",
+                "guid": "4d4c17b1-647e-4385-a866-4b09677d30a1",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -721,7 +721,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "bb797cb1-80a4-4b56-9fb2-7b441b253c94",
+                "guid": "688f5b9a-6558-4243-828c-7c1ecb7403b8",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -776,7 +776,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "170f763d-dc9b-457e-818b-c97e77178f52",
+                "guid": "e2f37a95-e85d-4d46-852d-c5a5fad0fa19",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -831,7 +831,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "ee9e7187-a6f2-43a3-925c-2a541c2d94ea",
+                "guid": "47f3992d-3101-4a20-a318-868ba703cb9f",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -886,7 +886,7 @@
                 },
                 "data": "local_A",
                 "debuginfo": null,
-                "guid": "7fb71097-3b03-4941-9dc6-1b122ceb72e4",
+                "guid": "09e42a7c-bff6-4503-adc3-97d7ffc2787f",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -941,7 +941,7 @@
                 },
                 "data": "local_B",
                 "debuginfo": null,
-                "guid": "c9c707fb-f777-4e0c-b676-d2f01884a17a",
+                "guid": "3af6db47-f1e7-49c9-9ffe-9b25a5117ded",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -996,7 +996,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "12131425-dcb3-4fd6-837d-8183767cb16c",
+                "guid": "addf835d-d087-499f-ba5a-a228263138fa",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1051,7 +1051,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "b95e241d-5dc9-48b0-a979-a909c636c33e",
+                "guid": "6fc7573e-77bb-447b-b6f7-05d6e6ee9768",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1106,7 +1106,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "9b4fd679-08eb-41e3-9e30-276fe360f63a",
+                "guid": "3f80de5d-5511-4704-900c-20f22a9dc8dc",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1161,7 +1161,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "f938db3e-3121-4ec1-bc1c-fff21951c64e",
+                "guid": "47396aca-9d65-4973-a9a1-039d5efc55d8",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1216,7 +1216,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "089ef760-35e2-4315-8f6e-440422ab445b",
+                "guid": "eecd0615-2be7-486e-af38-9618848985e1",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1271,7 +1271,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "7c6eb39b-cef8-453e-893f-a9e686261529",
+                "guid": "77a77e97-2def-4060-954d-76afd824aa96",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1326,7 +1326,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "2a210d47-1c49-470f-9e27-3f5fc2e93b95",
+                "guid": "49d139eb-b108-4676-8ed5-be6ad87f2e1f",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1381,7 +1381,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "dd22438b-2d97-4510-8045-6a38d739b511",
+                "guid": "957ed9a2-a866-460e-ac3c-aa8a1a7df018",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1436,7 +1436,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "9067b426-fde2-44d6-b219-188edac03f0f",
+                "guid": "0ec15a0c-bda6-49ee-821a-760228247519",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1491,7 +1491,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "36ce39b6-255b-4804-959f-d0b2bbad240a",
+                "guid": "05f43482-08ec-48ed-ad25-be74f53788da",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1546,7 +1546,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "e523a8c2-252e-4917-851d-c473eb70393d",
+                "guid": "b09de255-32d7-472e-b14a-4bb304348b7c",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1601,7 +1601,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "18eef0cd-2713-4d8b-96f5-e02583ff2db4",
+                "guid": "14e50a31-0f25-4b32-ab0f-10480facbce6",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1656,7 +1656,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "07d3fa53-80ca-4b47-8eda-97379a85260e",
+                "guid": "4643d0ac-862b-4e43-8cf1-6497e2343edf",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1711,7 +1711,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "70c8e8da-a46a-4eee-a7fa-c83607f5f542",
+                "guid": "8ba7674f-e83d-4685-8960-74331c701c5d",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1742,7 +1742,7 @@
         }
       ],
       "attributes": {
-        "guid": "38eb9aba-8bc2-4c33-a335-54098b94cdee"
+        "guid": "9e52de8c-54a6-467c-97e6-e53805e0bd64"
       }
     }
   ],
