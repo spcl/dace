@@ -1948,13 +1948,10 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
             """
                 To account for ranges with different starting offsets inside the same loop,
                 we need to adapt array accesses.
-                Since our loop index already starts with 1, we need to add to this "lower_boundary - 1"
-                The "-1" is needed because we add lower boundary twice (
-
-                However! The main loop iterator is already initialized with the lower boundary of the dominating array.
+                The main loop iterator is already initialized with the lower boundary of the dominating array.
 
                 Thus, if the offset is the same, the index is just "tmp_parfor".
-                Otherwise, it is "tmp_parfor - tmp_parfor_lower_boundary + lower_boundary - 1"
+                Otherwise, it is "tmp_parfor - tmp_parfor_lower_boundary + our_lower_boundary"
             """
 
             if declaration:
