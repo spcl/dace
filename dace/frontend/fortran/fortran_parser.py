@@ -3276,11 +3276,6 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         assert bspec in proc_map, f"[in mod: {cmod}] {bspec} should have been among {set(proc_map.keys())}"
         pname = proc_map[bspec]
 
-        # TODO: Current hacks:
-        #  1. Assume (correctly) that multiple procecures named `bname` can be attached to different types.
-        #  2. Assume that the types attached to `bname` are unique. I.e., different types with the same name cannot come
-        #  from different modules.
-        #  3. Assume that `pname` is not already an existing identifier (i.e., we can import it without renaming).
         # We are assumping that it's a subprogram defined directly inside a module.
         assert len(pname) == 2
         mod, pname = pname
