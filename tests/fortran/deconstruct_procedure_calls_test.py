@@ -673,7 +673,7 @@ def test_association_replacer_array_access():
 module lib
   implicit none
   type Square
-    real :: sides(4)
+    real :: sides(2, 2)
   contains
     procedure :: area => perim
   end type Square
@@ -694,8 +694,8 @@ subroutine main
 
   associate(sides => s%sides)
     s%sides = 0.5
-    s%sides(1) = 1.0
-    sides(4) = 1.0
+    s%sides(1, 1) = 1.0
+    sides(2, 2) = 1.0
     a = perim(s, 1.0)
     a = s%area(1.0)
   end associate
@@ -710,7 +710,7 @@ end subroutine main
 MODULE lib
   IMPLICIT NONE
   TYPE :: Square
-    REAL :: sides(4)
+    REAL :: sides(2, 2)
     CONTAINS
     PROCEDURE :: area => perim
   END TYPE Square
@@ -729,8 +729,106 @@ SUBROUTINE main
   TYPE(Square) :: s
   REAL :: a
   s % sides = 0.5
-  s % sides(1) = 1.0
-  s % sides(4) = 1.0
+  s % sides(1, 1) = 1.0
+  s % sides(2, 2) = 1.0
+  a = perim(s, 1.0)
+  a = perim_deconproc_0(s, 1.0)
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert set(dep_graph.nodes) == {'lib', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib')}
+    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'Square', 'perim'}
+    assert not interface_blocks
+    assert set(asts.keys()) == {'lib'}
+
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
+
+    # Nothing changed here.
+    assert set(simple_graph.nodes) == {'lib', 'main'}
+    assert set(simple_graph.edges) == {('main', 'lib')}
+    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'Square', 'perim'}
+    assert not interface_blocks
+    assert set(asts.keys()) == {'lib'}
+
+    assert ({k: set(v) for k, v in actually_used_in_module.items()}
+            == {'lib': {'perim', 'Square'}, 'main': set()})
+
+    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    got = ast.tofortran()
+    # Still want the same program, because nothing should have been pruned.
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert name_dict == {'lib': ['Square', 'perim']}
+    assert rename_dict == {'lib': {}}
+
+
+def test_association_replacer_array_access_within_array_access():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type Square
+    real :: sides(2, 2)
+  contains
+    procedure :: area => perim
+  end type Square
+contains
+  real function perim(this, m)
+    implicit none
+    class(Square), intent(in) :: this
+    real, intent(in) :: m
+    perim = m * sum(this%sides)
+  end function perim
+end module lib
+""").add_file("""
+subroutine main
+  use lib, only: Square, perim
+  implicit none
+  type(Square) :: s
+  real :: a
+
+  associate(sides => s%sides(:, 1))
+    s%sides = 0.5
+    s%sides(1, 1) = 1.0
+    sides(2) = 1.0
+    a = perim(s, 1.0)
+    a = s%area(1.0)
+  end associate
+end subroutine main
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast = deconstruct_associations(ast)
+    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  TYPE :: Square
+    REAL :: sides(2, 2)
+    CONTAINS
+    PROCEDURE :: area => perim
+  END TYPE Square
+  CONTAINS
+  REAL FUNCTION perim(this, m)
+    IMPLICIT NONE
+    CLASS(Square), INTENT(IN) :: this
+    REAL, INTENT(IN) :: m
+    perim = m * SUM(this % sides)
+  END FUNCTION perim
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: perim_deconproc_0 => perim
+  USE lib, ONLY: Square, perim
+  IMPLICIT NONE
+  TYPE(Square) :: s
+  REAL :: a
+  s % sides = 0.5
+  s % sides(1, 1) = 1.0
+  s % sides(2, 1) = 1.0
   a = perim(s, 1.0)
   a = perim_deconproc_0(s, 1.0)
 END SUBROUTINE main
