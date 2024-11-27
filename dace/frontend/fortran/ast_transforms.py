@@ -1961,6 +1961,7 @@ class ArrayToLoop(NodeTransformer):
         self.scope_vars = ScopeVarsDeclarations(ast)
         self.scope_vars.visit(ast)
 
+
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
         for child in node.execution:
