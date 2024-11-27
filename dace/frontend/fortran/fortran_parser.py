@@ -4,6 +4,7 @@ import copy
 import os
 import warnings
 from copy import deepcopy as dpcp
+from functools import cmp_to_key
 from itertools import chain
 from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple, Union
@@ -16,11 +17,14 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Subroutine_Subprogram, Function_Subprogram, Module, Main_Program, Module_Stmt, \
     Specification_Part, Execution_Part, Program_Stmt, Module_Subprogram_Part, Subroutine_Stmt, Function_Stmt, \
     Procedure_Designator, Function_Reference, Call_Stmt, Use_Stmt, Actual_Arg_Spec_List, Specific_Binding, \
-    Derived_Type_Stmt, Type_Name
+    Derived_Type_Stmt, Type_Name, Data_Ref, Component_Decl, Generic_Binding, Association, Associate_Construct, Part_Ref, \
+    Intrinsic_Type_Spec, Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, \
+    Signed_Int_Literal_Constant, Char_Literal_Constant, Logical_Literal_Constant, Actual_Arg_Spec, \
+    Intrinsic_Function_Reference
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
-from fparser.two.utils import Base, walk
+from fparser.two.utils import Base, walk, BinaryOpBase
 
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
@@ -2544,6 +2548,7 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     assert isinstance(ast, Program)
     assert not any(nx.simple_cycles(dep_graph))
 
+    ast = deconstruct_associations(ast)
     ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
     assert isinstance(ast, Program)
     assert not any(nx.simple_cycles(dep_graph))
@@ -2876,6 +2881,196 @@ def create_sdfg_from_fortran_file(source_string: str):
     return sdfg
 
 
+NAMED_STMTS_OF_INTEREST_TYPES = Union[
+    Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
+    Specific_Binding, Generic_Binding]
+
+
+def find_name(node: NAMED_STMTS_OF_INTEREST_TYPES) -> str:
+    if isinstance(node, Specific_Binding):
+        # Ref: https://github.com/stfc/fparser/blob/8c870f84edbf1a24dfbc886e2f7226d1b158d50b/src/fparser/two/Fortran2003.py#L2504
+        iname, mylist, dcolon, bname, pname = node.children
+        name = bname
+    else:
+        # TODO: Test out other type specific ways of finding names.
+        name = ast_utils.singular(ast_utils.children_of_type(node, Name))
+    return name.string
+
+
+def find_named_ancester(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
+    anc = node.parent
+    while anc:
+        stmt = ast_utils.atmost_one(ast_utils.children_of_type(anc, NAMED_STMTS_OF_INTEREST_TYPES))
+        if stmt:
+            return stmt
+        anc = anc.parent
+    return None
+
+
+def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Tuple[str, ...]:
+    """
+    Constuct a list of identifier strings that can uniquely determine it through the entire AST.
+    """
+    # TODO: Is this assumption true?
+    # We assume that there is only one `Name` children in any `Stmt` objects.
+    ident_base = find_name(node)
+
+    # Find the next named ancestor.
+    anc = find_named_ancester(node.parent)
+    if not anc:
+        return (ident_base,)
+    assert isinstance(anc, NAMED_STMTS_OF_INTEREST_TYPES)
+    return ident_spec(anc) + (ident_base,)
+
+
+def identifier_specs(ast: Program) -> Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]:
+    """
+    Maps each identifier of interest in `ast` to its associated node that defines it.
+    """
+    ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES] = {}
+    for stmt in walk(ast, NAMED_STMTS_OF_INTEREST_TYPES):
+        ident_map[ident_spec(stmt)] = stmt
+    return ident_map
+
+
+def alias_specs(ast: Program, ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]):
+    """
+    Maps each "alias-type" identifier of interest in `ast` to its associated node that defines it.
+    """
+    alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES] = {}
+    for stmt in walk(ast, Use_Stmt):
+        spec = ident_spec(stmt)
+        mod_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
+        mod_spec = (mod_name,)
+        if mod_spec not in ident_map:
+            # TODO: `netcdf` is somehow not present. Why? Is it because it is an external library?
+            continue
+        alias_map[spec] = ident_map[mod_spec]
+
+        olist = ast_utils.atmost_one(ast_utils.children_of_type(stmt, 'Only_List'))
+        if not olist:
+            # If there is no only list, all the top level (public) symbols are considered aliased.
+            for k, v in ident_map.items():
+                if len(k) != len(mod_spec) + 1 or k[:len(mod_spec)] != mod_spec:
+                    continue
+                alias_spec = spec[:-1] + k[-1:]
+                alias_map[alias_spec] = v
+        else:
+            # Otherwise, only specific identifiers are aliased.
+            c_names = {c.string if isinstance(c, Name) else c.string for c in olist.children}
+            for k, v in ident_map.items():
+                if k[-1] not in c_names:
+                    continue
+                alias_spec = spec[:-1] + k[-1:]
+                alias_map[alias_spec] = v
+    return alias_map
+
+
+def find_real_ident_spec(ident: str, in_spec: Tuple[str, ...],
+                         ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES],
+                         alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]) -> Tuple[str, ...]:
+    k = in_spec + (ident,)
+    if k in ident_map:
+        return k
+    if k in alias_map:
+        return ident_spec(alias_map[k])
+    assert in_spec, f"cannot find {ident}"
+    return find_real_ident_spec(ident, in_spec[:-1], ident_map, alias_map)
+
+
+def find_type_entity(node: Entity_Decl,
+                     ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES],
+                     alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]) -> Optional[Tuple[str, ...]]:
+    anc = node.parent
+    decl_typ = None
+    while anc:
+        decl_typ = ast_utils.atmost_one(
+            ast_utils.children_of_type(anc, (Intrinsic_Type_Spec, Declaration_Type_Spec)))
+        if decl_typ:
+            break
+        anc = anc.parent
+    if not decl_typ:
+        return None
+    if isinstance(decl_typ, Intrinsic_Type_Spec):
+        typ_name, _ = decl_typ.children
+        return (typ_name,)
+
+    assert isinstance(decl_typ, Declaration_Type_Spec)
+    _, typ_name = decl_typ.children
+    spec = ident_spec(node)
+    return find_real_ident_spec(typ_name.string, spec, ident_map, alias_map)
+
+
+def _dataref_root(dref: Union[Name, Data_Ref], scope_spec: Tuple[str, ...],
+                  ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES],
+                  alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]):
+    if isinstance(dref, Name):
+        root, rest = dref, []
+    else:
+        assert len(dref.children) >= 2
+        root, rest = dref.children[0], dref.children[1:]
+    if isinstance(root, Name):
+        root_spec = find_real_ident_spec(root.string, scope_spec, ident_map, alias_map)
+        assert root_spec in ident_map
+        root_type_spec = find_type_entity(ident_map[root_spec], ident_map, alias_map)
+    elif isinstance(root, Data_Ref):
+        root_type_spec = find_type_dataref(root, scope_spec, ident_map, alias_map)
+    assert root_type_spec
+    return root_type_spec, rest
+
+
+def find_dataref_component_spec(dref: Union[Name, Data_Ref], scope_spec: Tuple[str, ...],
+                                ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES],
+                                alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]) -> Tuple[str, ...]:
+    # The root must have been a typed object.
+    root_type_spec, rest = _dataref_root(dref, scope_spec, ident_map, alias_map)
+
+    cur_type_spec = root_type_spec
+    # All component shards except for the last one must have been type objects too.
+    for comp in rest[:-1]:
+        assert isinstance(comp, (Name, Part_Ref))
+        if isinstance(comp, Part_Ref):
+            part_name, _ = comp.children[0], comp.children[1:]
+            comp_spec = find_real_ident_spec(part_name.string, cur_type_spec, ident_map, alias_map)
+        elif isinstance(comp, Name):
+            comp_spec = find_real_ident_spec(comp.string, cur_type_spec, ident_map, alias_map)
+        assert comp_spec in ident_map
+        # So, we get the type spec for those component shards.
+        cur_type_spec = find_type_entity(ident_map[comp_spec], ident_map, alias_map)
+        assert cur_type_spec
+
+    # For the last one, we just need the component spec.
+    comp = rest[-1]
+    assert isinstance(comp, (Name, Part_Ref))
+    if isinstance(comp, Part_Ref):
+        part_name, _ = comp.children[0], comp.children[1:]
+        comp_spec = find_real_ident_spec(part_name.string, cur_type_spec, ident_map, alias_map)
+    elif isinstance(comp, Name):
+        comp_spec = find_real_ident_spec(comp.string, cur_type_spec, ident_map, alias_map)
+    assert comp_spec in ident_map
+
+    return comp_spec
+
+
+def find_type_dataref(dref: Union[Name, Data_Ref], scope_spec: Tuple[str, ...],
+                      ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES],
+                      alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]) -> Tuple[str, ...]:
+    root_type_spec, rest = _dataref_root(dref, scope_spec, ident_map, alias_map)
+
+    cur_type_spec = root_type_spec
+    for comp in rest:
+        assert isinstance(comp, (Name, Part_Ref))
+        if isinstance(comp, Part_Ref):
+            part_name, _ = comp.children[0], comp.children[1:]
+            comp_spec = find_real_ident_spec(part_name.string, cur_type_spec, ident_map, alias_map)
+        elif isinstance(comp, Name):
+            comp_spec = find_real_ident_spec(comp.string, cur_type_spec, ident_map, alias_map)
+        assert comp_spec in ident_map
+        cur_type_spec = find_type_entity(ident_map[comp_spec], ident_map, alias_map)
+        assert cur_type_spec
+    return cur_type_spec
+
+
 def procedure_specs(ast: Program) -> Dict[Tuple[str, ...], Tuple[str, ...]]:
     proc_map: Dict[Tuple[str, ...], Tuple[str, ...]] = {}
     for pb in walk(ast, Specific_Binding):
@@ -2893,9 +3088,10 @@ def procedure_specs(ast: Program) -> Dict[Tuple[str, ...], Tuple[str, ...]]:
         # We assume that the type is defined inside a module (i.e., not another subprogram).
         mod: Module = typedef.parent.parent
         mod_stmt: Module_Stmt = ast_utils.singular(ast_utils.children_of_type(mod, (Module_Stmt, Program_Stmt)))
-        mod_name: str = ast_utils.singular(ast_utils.children_of_type(mod_stmt, Name)).string
-        proc_spec.insert(0, mod_name)
-        subp_spec.insert(0, mod_name)
+        # TODO: Add ref.
+        _, mod_name = mod_stmt.children
+        proc_spec.insert(0, mod_name.string)
+        subp_spec.insert(0, mod_name.string)
 
         # TODO: Is this assumption true?
         # We assume that the type and the bound function exist in the same scope (i.e., module, subprogram etc.).
@@ -2903,10 +3099,77 @@ def procedure_specs(ast: Program) -> Dict[Tuple[str, ...], Tuple[str, ...]]:
     return proc_map
 
 
+def generic_specs(ast: Program) -> Dict[Tuple[str, ...], Tuple[Tuple[str, ...], ...]]:
+    genc_map: Dict[Tuple[str, ...], Tuple[Tuple[str, ...], ...]] = {}
+    for gb in walk(ast, Generic_Binding):
+        # TODO: Add ref.
+        aspec, bname, plist = gb.children
+        if plist:
+            plist = plist.children
+        else:
+            plist = []
+
+        scope = find_named_ancester(gb.parent)
+        assert scope
+        scope_spec = ident_spec(scope)
+        genc_spec = scope_spec + (bname.string,)
+
+        proc_specs = []
+        for pname in plist:
+            pspec = scope_spec + (pname.string,)
+            proc_specs.append(pspec)
+
+        # TODO: Is this assumption true?
+        # We assume that the type and the bound function exist in the same scope (i.e., module, subprogram etc.).
+        genc_map[tuple(genc_spec)] = tuple(proc_specs)
+    return genc_map
+
+
+def correct_for_function_calls(ast: Program):
+    """Look for function calls that may have been misidentified as array access and fix them."""
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast, ident_map)
+
+    for pr in walk(ast, Part_Ref):
+        scope = find_named_ancester(pr.parent)
+        assert scope
+        scope_spec = ident_spec(scope)
+
+        if isinstance(pr.parent, Data_Ref):
+            dref = pr.parent
+            comp_spec = find_dataref_component_spec(dref, scope_spec, ident_map, alias_map)
+            comp_type_spec = find_type_entity(ident_map[comp_spec], ident_map, alias_map)
+            if not comp_type_spec:
+                # Cannot find a type, so it must be a function call.
+                par = dref.parent
+                fnref = Function_Reference(dref.tofortran())
+                fnref.parent = par
+                par.items = [fnref if c == dref else c for c in par.children]
+        else:
+            pr_name, _ = pr.children
+            pr_spec = scope_spec + (pr_name.string,)
+            assert pr_spec in ident_map
+            pr_type_spec = find_type_entity(ident_map[pr_spec], ident_map, alias_map)
+            if not pr_type_spec:
+                # Cannot find a type, so it must be a function call.
+                par = pr.parent
+                fnref = Function_Reference(pr.tofortran())
+                # TODO: Sometimes we don't need to explicitly set parents, but sometimes we do. Why?
+                fnref.parent = par
+                par.items = [fnref if c == pr else c for c in par.children]
+    return ast
+
+
 def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program, nx.DiGraph):
     SUFFIX, COUNTER = 'deconproc', 0
 
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast, ident_map)
     proc_map = procedure_specs(ast)
+    genc_map = generic_specs(ast)
+    # We should have removed all the `association`s by now.
+    assert not walk(ast, Association), f"{walk(ast, Association)}"
+
     for pd in walk(ast, Procedure_Designator):
         # TODO:
         #  1. Find the specification part where `dref` would live and where we would insert `use`.
@@ -2920,6 +3183,7 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         callsite = pd.parent
         assert isinstance(callsite, (Function_Reference, Call_Stmt))
 
+        # Find out the module name.
         cmod = callsite.parent
         while cmod and not isinstance(cmod, (Module, Main_Program)):
             cmod = cmod.parent
@@ -2937,17 +3201,81 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         while not isinstance(execution_part, Execution_Part):
             execution_part = execution_part.parent
         subprog = execution_part.parent
-        specification_part = list(ast_utils.children_of_type(subprog, Specification_Part))
-        assert len(specification_part) <= 1
-        if specification_part:
-            specification_part = specification_part[0]
+        specification_part = ast_utils.atmost_one(ast_utils.children_of_type(subprog, Specification_Part))
 
-        # TODO: Current hacks:
-        #  1. Assume that there is only one procdecure named `bname` anywhere.
-        #  2. Assume that `pname` is not already an existing identifier (i.e., we can import it without renaming).
-        pname = [v for k, v in proc_map.items() if k[-1] == bname.string]
-        assert len(pname) == 1
-        pname = pname[0]
+        scope_spec = ident_spec(find_named_ancester(callsite.parent))
+        dref_type_spec = find_type_dataref(dref, scope_spec, ident_map, alias_map)
+        bspec = dref_type_spec + (bname.string,)
+        if bspec in genc_map and genc_map[bspec]:
+            fnref = pd.parent
+            assert isinstance(fnref, (Function_Reference, Call_Stmt))
+            _, args = fnref.children
+            args_sig = []
+            for c in args.children:
+                def _deduct_type(x):
+                    if isinstance(x, (Real_Literal_Constant, Signed_Real_Literal_Constant)):
+                        return ('REAL',)
+                    elif isinstance(x, (Int_Literal_Constant, Signed_Int_Literal_Constant)):
+                        return ('INTEGER',)
+                    elif isinstance(x, Char_Literal_Constant):
+                        return ('CHARACTER',)
+                    elif isinstance(x, Logical_Literal_Constant):
+                        return ('LOGICAL',)
+                    elif isinstance(x, Name):
+                        x_spec = scope_spec + (x.string,)
+                        assert x_spec in ident_map
+                        return find_type_entity(ident_map[x_spec], ident_map, alias_map)
+                    elif isinstance(x, Data_Ref):
+                        return find_type_dataref(x, scope_spec, ident_map, alias_map)
+                    elif isinstance(x, Part_Ref):
+                        # TODO: Add ref.
+                        part_name, _ = x.children
+                        return find_type_dataref(part_name, scope_spec, ident_map, alias_map)
+                    elif isinstance(x, Actual_Arg_Spec):
+                        kw, val = x.children
+                        return _deduct_type(val)
+                    elif isinstance(x, BinaryOpBase):
+                        # TODO: Figure out the actual type.
+                        return ('*',)
+                    elif isinstance(x, Intrinsic_Function_Reference):
+                        # TODO: Figure out the actual type.
+                        return ('*',)
+                c_type = _deduct_type(c)
+                assert c_type, f"got: {c} / {type(c)} : {fnref}"
+                args_sig.append(c_type)
+            args_sig = tuple(args_sig)
+
+            for cand in genc_map[bspec]:
+                cand_stmt = ident_map[proc_map[cand]]
+                cand_spec = ident_spec(cand_stmt)
+                # TODO: Add ref.
+                _, _, cand_args, _ = cand_stmt.children
+                assert cand_args
+                cand_args_sig = []
+                # We can skip the first argument because that's already known.
+                for ca in cand_args.children[1:]:
+                    ca_type_spec = find_type_entity(ident_map[cand_spec + (ca.string,)], ident_map, alias_map)
+                    assert ca_type_spec
+                    cand_args_sig.append(ca_type_spec)
+                cand_args_sig = tuple(cand_args_sig)
+
+                def _eq_(a_sig: Tuple[Tuple[str, ...]], b_sig: Tuple[Tuple[str, ...]]):
+                    if len(a_sig) != len(b_sig):
+                        return False
+                    for a, b in zip(a_sig, b_sig):
+                        if ('*',) in {a, b}:
+                            # Consider them matched.
+                            continue
+                        if a != b:
+                            return False
+                    return True
+
+                if _eq_(args_sig, cand_args_sig):
+                    bspec = cand
+                    break
+        assert bspec in proc_map, f"[in mod: {cmod}] {bspec} should have been among {set(proc_map.keys())}"
+        pname = proc_map[bspec]
+
         # We are assumping that it's a subprogram defined directly inside a module.
         assert len(pname) == 2
         mod, pname = pname
@@ -2970,14 +3298,59 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
                 assert isinstance(obj_list, list)
         ast_utils.extend_with_new_items_from(obj_list, [Name(pname)])
 
-        # For both function and subroutine calls, we replace `bname` with `pname_alias`, and add `dref` as the first arg.
+        # For both function and subroutine calls, replace `bname` with `pname_alias`, and add `dref` as the first arg.
         _, args = callsite.children
         if args is None:
             args = Actual_Arg_Spec_List(f"{dref}")
         else:
             args = Actual_Arg_Spec_List(f"{dref}, {args}")
-        callsite.items = (pname_alias, args)
+        callsite.items = (Name(pname_alias), args)
     return ast, dep_graph
+
+
+def deconstruct_associations(ast: Program) -> Program:
+    for assoc in walk(ast, Associate_Construct):
+        # TODO: Add ref.
+        stmt, rest, _ = assoc.children[0], assoc.children[1:-1], assoc.children[-1]
+        # TODO: Add ref.
+        kw, assoc_list = stmt.children[0], stmt.children[1:]
+        if not assoc_list:
+            continue
+
+        # Keep track of what to replace in the local scope.
+        local_map: Dict[str, Base] = {}
+        for al in assoc_list:
+            for a in al.children:
+                # TODO: Add ref.
+                a_src, _, a_tgt = a.children
+                local_map[a_src.string] = a_tgt
+
+        for node in rest:
+            # Replace the data-ref roots as appropriate.
+            for dr in walk(node, Data_Ref):
+                # TODO: Add ref.
+                root, dr_rest = dr.children[0], dr.children[1:]
+                if root.string in local_map:
+                    repl = local_map[root.string]
+                    repl = type(repl)(repl.tofortran())
+                    dr.items = (repl, *dr_rest)
+            # Replace all the other names.
+            for nm in walk(node, Name):
+                # TODO: This is hacky and can backfire if `nm` is not a standalone identifier.
+                par = nm.parent
+                # Avoid data refs as we have just processed them.
+                if isinstance(par, Data_Ref) or (isinstance(par, Part_Ref) and isinstance(par.parent, Data_Ref)):
+                    continue
+                if nm.string not in local_map:
+                    continue
+                repl = local_map[nm.string]
+                repl = type(repl)(repl.tofortran())
+                par.items = tuple(repl if c == nm else c for c in par.children)
+
+        par = assoc.parent
+        par.content = list(chain(*([rest if c == assoc else [c] for c in par.children])))
+
+    return ast
 
 
 def recursive_ast_improver(ast: Base, source_list: Union[List, Dict], include_list, parser):
@@ -3073,6 +3446,22 @@ def recursive_ast_improver(ast: Base, source_list: Union[List, Dict], include_li
             asts[mod_name] = mod
 
     _recursive_ast_improver(ast)
+
+    # Sort the modules in the AST in their topological order.
+    order = list(reversed(list(nx.topological_sort(dep_graph))))
+
+    def cmp(a: Base, b: Base):
+        a_name = ast_utils.singular(ast_utils.children_of_type(a, NAMED_STMTS_OF_INTEREST_TYPES))
+        if a_name not in order:
+            return -1
+        b_name = ast_utils.singular(ast_utils.children_of_type(b, NAMED_STMTS_OF_INTEREST_TYPES))
+        if b_name not in order:
+            return +1
+        a_loc, b_loc = order.index(a_name), order.index(b_name)
+        return a_loc < b_loc
+
+    ast.items = sorted(ast.children, key=cmp_to_key(cmp))
+
     return ast, dep_graph, interface_blocks, asts
 
 
@@ -3379,7 +3768,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                     if jj.lower() in res.list_of_types:
                         if jj.lower() not in type_list:
                             type_list.append(jj.lower())
-                            
+
         print("Module " + i + " used names: " + str(parse_list[i]))
         if len(fands_list) > 0:
             print("Module " + i + " used fands: " + str(fands_list))
