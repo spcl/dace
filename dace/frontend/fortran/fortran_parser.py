@@ -3289,6 +3289,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     ast = parser(reader)
     ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, source_list, include_list, parser)
+    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
 
     for mod, blocks in interface_blocks.items():
 
@@ -3693,12 +3694,12 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     needed=[]
     current_list=used_funcs['radiation']
     current_list+='radiation'   
-    current_list+='calc_no_scattering_transmittance_lw'
-    needed.append(['radiation_twostreams','calc_no_scattering_transmittance_lw'])
-    #needed.append(['radiation_interface','radiation'])
+    #current_list+='calc_no_scattering_transmittance_lw'
+    #needed.append(['radiation_twostreams','calc_no_scattering_transmittance_lw'])
+    needed.append(['radiation_interface','radiation'])
     skip_list=[]
-    #skip_list=['radiation_monochromatic','radiation_cloudless_sw',
-    #           'radiation_tripleclods_sw','radiation_homogeneous_sw']
+    skip_list=['radiation_monochromatic','radiation_cloudless_sw',
+               'radiation_tripleclods_sw','radiation_homogeneous_sw']
     for i in reversed(parse_order):
         for j in program.modules:
             if j.name.name in skip_list:
