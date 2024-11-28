@@ -72,10 +72,6 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Square
     REAL :: side
-    CONTAINS
-    PROCEDURE :: area
-    PROCEDURE :: area_alt => area
-    PROCEDURE :: get_area
   END TYPE Square
   CONTAINS
   REAL FUNCTION area(this, m)
@@ -185,13 +181,9 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Value
     REAL :: val
-    CONTAINS
-    PROCEDURE :: get_value
   END TYPE Value
   TYPE :: Square
     TYPE(Value) :: side
-    CONTAINS
-    PROCEDURE :: get_area
   END TYPE Square
   CONTAINS
   REAL FUNCTION get_value(this)
@@ -286,8 +278,6 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Square
     REAL :: side
-    CONTAINS
-    PROCEDURE :: area
   END TYPE Square
   CONTAINS
   REAL FUNCTION area(this, m)
@@ -395,8 +385,6 @@ MODULE lib_1
   IMPLICIT NONE
   TYPE :: Square
     REAL :: side
-    CONTAINS
-    PROCEDURE :: area
   END TYPE Square
   CONTAINS
   REAL FUNCTION area(this, m)
@@ -410,8 +398,6 @@ MODULE lib_2
   IMPLICIT NONE
   TYPE :: Circle
     REAL :: rad
-    CONTAINS
-    PROCEDURE :: area
   END TYPE Circle
   CONTAINS
   REAL FUNCTION area(this, m)
@@ -518,10 +504,6 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Square
     REAL :: side
-    CONTAINS
-    PROCEDURE :: area_real
-    PROCEDURE :: area_integer
-    GENERIC :: g_area => area_real, area_integer
   END TYPE Square
   CONTAINS
   REAL FUNCTION area_real(this, m)
@@ -714,8 +696,6 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Square
     REAL :: sides(2, 2)
-    CONTAINS
-    PROCEDURE :: area => perim
   END TYPE Square
   CONTAINS
   REAL FUNCTION perim(this, m)
@@ -812,8 +792,6 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Square
     REAL :: sides(2, 2)
-    CONTAINS
-    PROCEDURE :: area => perim
   END TYPE Square
   CONTAINS
   REAL FUNCTION perim(this, m)
@@ -915,8 +893,6 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Square
     REAL :: sides(2, 2)
-    CONTAINS
-    PROCEDURE :: area => perim
   END TYPE Square
   CONTAINS
   REAL FUNCTION perim(this, m)
@@ -1000,7 +976,6 @@ end subroutine main
     ast = deconstruct_enums(ast)
 
     got = ast.tofortran()
-    print(got)
     want = """
 SUBROUTINE main
   IMPLICIT NONE

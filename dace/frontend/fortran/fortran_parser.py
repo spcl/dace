@@ -20,7 +20,7 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Intrinsic_Type_Spec, Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, \
     Signed_Int_Literal_Constant, Char_Literal_Constant, Logical_Literal_Constant, Actual_Arg_Spec, \
     Intrinsic_Function_Reference, Section_Subscript_List, Subscript_Triplet, Structure_Constructor, Enum_Def, \
-    Enumerator_List, Enumerator, Expr
+    Enumerator_List, Enumerator, Expr, Type_Bound_Procedure_Part
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -3405,6 +3405,11 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         pname_alias = Name(pname_alias)
         callsite.items = (pname_alias, args)
         _reparent_children(callsite)
+
+    for tbp in walk(ast, Type_Bound_Procedure_Part):
+        par = tbp.parent
+        par.content = [c for c in par.children if c != tbp]
+        _reparent_children(par)
     return ast, dep_graph
 
 
