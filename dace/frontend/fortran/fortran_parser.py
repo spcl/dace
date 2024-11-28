@@ -4,7 +4,6 @@ import copy
 import os
 import warnings
 from copy import deepcopy as dpcp
-from functools import cmp_to_key
 from itertools import chain
 from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple, Union
@@ -20,7 +19,8 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Derived_Type_Stmt, Type_Name, Data_Ref, Component_Decl, Generic_Binding, Association, Associate_Construct, Part_Ref, \
     Intrinsic_Type_Spec, Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, \
     Signed_Int_Literal_Constant, Char_Literal_Constant, Logical_Literal_Constant, Actual_Arg_Spec, \
-    Intrinsic_Function_Reference, Section_Subscript, Section_Subscript_List, Subscript_Triplet, Structure_Constructor
+    Intrinsic_Function_Reference, Section_Subscript_List, Subscript_Triplet, Structure_Constructor, Enum_Def, \
+    Enumerator_List, Enumerator, Expr
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -2548,6 +2548,7 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     assert isinstance(ast, Program)
     assert not any(nx.simple_cycles(dep_graph))
 
+    ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = correct_for_function_calls(ast)
     ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
@@ -2814,7 +2815,7 @@ def create_sdfg_from_string(
         raise NameError("Structs have cyclic dependencies")
 
     # program =
-    #ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
+    # ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
 
     ast2sdfg = AST_translator(__file__, multiple_sdfgs=multiple_sdfgs, toplevel_subroutine=sdfg_name,
                               normalize_offsets=normalize_offsets)
@@ -2937,40 +2938,51 @@ def alias_specs(ast: Program, ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_IN
     """
     Maps each "alias-type" identifier of interest in `ast` to its associated node that defines it.
     """
-    alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES] = {}
+    alias_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES] \
+        = {k: v for k, v in ident_map.items()}
+
     for stmt in walk(ast, Use_Stmt):
-        spec = ident_spec(stmt)
         mod_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
         mod_spec = (mod_name,)
+
+        scope = find_named_ancester(stmt.parent)
+        assert scope
+        scope_spec = ident_spec(scope)
+        use_spec = scope_spec + (mod_name,)
+
         if mod_spec not in ident_map:
-            # TODO: `netcdf` is somehow not present. Why? Is it because it is an external library?
+            # TODO: `netcdf` is somehow not present. Create a stub for `netcdf`.
+            assert mod_name == 'netcdf'
             continue
-        alias_map[spec] = ident_map[mod_spec]
+        # The module's name cannot be used as an identifier in this scope anymore, so just point to the module.
+        alias_map[use_spec] = ident_map[mod_spec]
 
         olist = ast_utils.atmost_one(ast_utils.children_of_type(stmt, 'Only_List'))
         if not olist:
             # If there is no only list, all the top level (public) symbols are considered aliased.
-            for k, v in ident_map.items():
+            alias_updates: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES] = {}
+            for k, v in alias_map.items():
                 if len(k) != len(mod_spec) + 1 or k[:len(mod_spec)] != mod_spec:
                     continue
-                alias_spec = spec[:-1] + k[-1:]
-                alias_map[alias_spec] = v
+                alias_spec = scope_spec + k[-1:]
+                alias_updates[alias_spec] = v
+            alias_map.update(alias_updates)
         else:
             # Otherwise, only specific identifiers are aliased.
-            c_names: Dict[str, str] = {}
             for c in olist.children:
                 assert isinstance(c, (Name, Rename))
                 if isinstance(c, Name):
-                    c_names[c.string] = c.string
+                    src, tgt = c, c
                 elif isinstance(c, Rename):
                     _, src, tgt = c.children
-                    c_names[src.string] = tgt.string
-            for k, v in ident_map.items():
-                for src, tgt in c_names.items():
-                    if k[-1] != tgt:
-                        continue
-                    alias_spec = spec[:-1] + (src,)
-                    alias_map[alias_spec] = v
+                src, tgt = src.string, tgt.string
+                src_spec = scope_spec + (src,)
+                tgt_spec = mod_spec + (tgt,)
+                # `tgt_spec` must have already been resolved if we have sorted the modules properly.
+                assert tgt_spec in alias_map, f"{src_spec} => {tgt_spec}"
+                alias_map[src_spec] = alias_map[tgt_spec]
+
+    assert set(ident_map.keys()).issubset(alias_map.keys())
     return alias_map
 
 
@@ -3151,20 +3163,21 @@ def correct_for_function_calls(ast: Program):
                 # Cannot find a type, so it must be a function call.
                 par = dref.parent
                 fnref = Function_Reference(dref.tofortran())
-                fnref.parent = par
                 par.items = [fnref if c == dref else c for c in par.children]
+                _reparent_children(par)
         else:
             pr_name, _ = pr.children
-            pr_spec = scope_spec + (pr_name.string,)
-            assert pr_spec in ident_map
-            pr_type_spec = find_type_entity(ident_map[pr_spec], ident_map, alias_map)
+            if isinstance(pr_name, Name):
+                pr_spec = find_real_ident_spec(pr_name.string, scope_spec, ident_map, alias_map)
+                pr_type_spec = find_type_entity(ident_map[pr_spec], ident_map, alias_map)
+            elif isinstance(pr_name, Data_Ref):
+                pr_type_spec = find_type_dataref(pr_name, scope_spec, ident_map, alias_map)
             if not pr_type_spec:
                 # Cannot find a type, so it must be a function call.
                 par = pr.parent
                 fnref = Function_Reference(pr.tofortran())
-                # TODO: Sometimes we don't need to explicitly set parents, but sometimes we do. Why?
-                fnref.parent = par
                 par.items = [fnref if c == pr else c for c in par.children]
+                _reparent_children(par)
 
     for sc in walk(ast, Structure_Constructor):
         scope = find_named_ancester(sc.parent)
@@ -3173,20 +3186,70 @@ def correct_for_function_calls(ast: Program):
 
         # TODO: Add ref.
         sc_type, _ = sc.children
-        sc_type_spec = scope_spec + (sc_type.string,)
-        sc_type_node = None
-        if sc_type_spec in ident_map:
-            sc_type_node = ident_map[sc_type_spec]
-        if sc_type_spec in alias_map:
-            sc_type_node = alias_map[sc_type_spec]
-        if isinstance(sc_type_node, Function_Stmt):
+        sc_type_spec = find_real_ident_spec(sc_type.string, scope_spec, ident_map, alias_map)
+        if isinstance(ident_map[sc_type_spec], Function_Stmt):
             # Now we know that this identifier actually refers to a function.
             par = sc.parent
             fnref = Function_Reference(sc.tofortran())
-            # TODO: Sometimes we don't need to explicitly set parents, but sometimes we do. Why?
-            fnref.parent = par
             par.items = [fnref if c == sc else c for c in par.children]
+            _reparent_children(par)
 
+    return ast
+
+
+def sort_modules(ast: Program) -> Program:
+    TOPLEVEL = '__toplevel__'
+
+    def _get_module(n: Base) -> str:
+        p = n
+        while p and not isinstance(p, (Module, Main_Program)):
+            p = p.parent
+        if not p:
+            return TOPLEVEL
+        else:
+            p = ast_utils.singular(ast_utils.children_of_type(p, (Module_Stmt, Program_Stmt)))
+            return find_name(p)
+
+    g = nx.DiGraph()  # An edge u->v means u should come before v, i.e., v depends on u.
+    for c in ast.children:
+        g.add_node(_get_module(c))
+
+    for u in walk(ast, Use_Stmt):
+        u_name = ast_utils.singular(ast_utils.children_of_type(u, Name)).string
+        v_name = _get_module(u)
+        g.add_edge(u_name, v_name)
+
+    top_ord = {n: i for i, n in enumerate(nx.lexicographical_topological_sort(g))}
+    # We keep the top-level subroutines at the end. It is only a cosmetic choice and fortran accepts them anywhere.
+    top_ord[TOPLEVEL] = len(top_ord) + 1
+    assert all(_get_module(n) in top_ord for n in ast.children)
+    ast.content = sorted(ast.children, key=lambda x: top_ord[_get_module(x)])
+
+    return ast
+
+
+def deconstruct_enums(ast: Program) -> Program:
+    for en in walk(ast, Enum_Def):
+        en_dict: Dict[str, Expr] = {}
+        # We need to for automatic counting.
+        next_val = '0'
+        next_offset = 0
+        for el in walk(en, Enumerator_List):
+            for c in el.children:
+                if isinstance(c, Name):
+                    c_name = c.string
+                elif isinstance(c, Enumerator):
+                    # TODO: Add ref.
+                    name, _, val = c.children
+                    c_name = name.string
+                    next_val = val.string
+                    next_offset = 0
+                en_dict[c_name] = Expr(f"{next_val} + {next_offset}")
+                next_offset = next_offset + 1
+        type_decls = [Type_Declaration_Stmt(f"integer, parameter :: {k} = {v}") for k, v in en_dict.items()]
+        par = en.parent
+        par.content = list(chain(*(type_decls if c == en else [c] for c in par.children)))
+        _reparent_children(par)
     return ast
 
 
@@ -3270,6 +3333,7 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
                     elif isinstance(x, Intrinsic_Function_Reference):
                         # TODO: Figure out the actual type.
                         return ('*',)
+
                 c_type = _deduct_type(c)
                 assert c_type, f"got: {c} / {type(c)} : {fnref}"
                 args_sig.append(c_type)
@@ -3316,13 +3380,14 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         else:
             # If we are importing it from a different module, we should create an alias to avoid name collision.
             pname_alias, COUNTER = f"{pname}_{SUFFIX}_{COUNTER}", COUNTER + 1
-            #pname_alias = f"{pname}"
             if not specification_part:
                 specification_part = Specification_Part(get_reader(f"use {mod}, only: {pname_alias} => {pname}"))
                 subprog.content = subprog.children + [specification_part]
+                _reparent_children(subprog)
             else:
                 use_stmt = Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}")
                 specification_part.content = [use_stmt] + specification_part.children
+                _reparent_children(subprog)
         obj_list = []
         if dep_graph.has_edge(cmod, mod):
             edge = dep_graph.get_edge_data(cmod, mod)
@@ -3337,8 +3402,17 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
             args = Actual_Arg_Spec_List(f"{dref}")
         else:
             args = Actual_Arg_Spec_List(f"{dref}, {args}")
-        callsite.items = (Name(pname_alias), args)
+        pname_alias = Name(pname_alias)
+        callsite.items = (pname_alias, args)
+        _reparent_children(callsite)
     return ast, dep_graph
+
+
+def _reparent_children(node: Base):
+    """Make `node` a parent of all its children, in case it isn't already."""
+    for c in node.children:
+        if isinstance(c, Base):
+            c.parent = node
 
 
 def deconstruct_associations(ast: Program) -> Program:
@@ -3367,6 +3441,7 @@ def deconstruct_associations(ast: Program) -> Program:
                     repl = local_map[root.string]
                     repl = type(repl)(repl.tofortran())
                     dr.items = (repl, *dr_rest)
+                    _reparent_children(dr)
             # # Replace the part-ref roots as appropriate.
             for pr in walk(node, Part_Ref):
                 if isinstance(pr.parent, (Data_Ref, Part_Ref)):
@@ -3384,7 +3459,7 @@ def deconstruct_associations(ast: Program) -> Program:
                             # We cannot just chain accesses, so we need to combine them to produce a single access.
                             # TODO: Maybe `isinstance(c, Subscript_Triplet)` + offset manipulation?
                             free_comps = [(i, c) for i, c in enumerate(access.children) if c == Subscript_Triplet(':')]
-                            assert len(free_comps) >= len(subsc.children),\
+                            assert len(free_comps) >= len(subsc.children), \
                                 f"Free rank cannot increase, got {root}/{access} => {subsc}"
                             for i, c in enumerate(subsc.children):
                                 idx, _ = free_comps[i]
@@ -3394,8 +3469,11 @@ def deconstruct_associations(ast: Program) -> Program:
                             # Now replace the entire `pr` with `repl`.
                             par = pr.parent
                             par.items = [repl if c == pr else c for c in par.children]
+                            _reparent_children(par)
+                            continue
                     # Otherwise, just replace normally.
                     pr.items = (repl, subsc)
+                    _reparent_children(pr)
             # Replace all the other names.
             for nm in walk(node, Name):
                 # TODO: This is hacky and can backfire if `nm` is not a standalone identifier.
@@ -3408,14 +3486,16 @@ def deconstruct_associations(ast: Program) -> Program:
                 repl = local_map[nm.string]
                 repl = type(repl)(repl.tofortran())
                 par.items = tuple(repl if c == nm else c for c in par.children)
+                _reparent_children(par)
 
         par = assoc.parent
         par.content = list(chain(*([rest if c == assoc else [c] for c in par.children])))
+        _reparent_children(par)
 
     return ast
 
 
-def recursive_ast_improver(ast: Base, source_list: Union[List, Dict], include_list, parser):
+def recursive_ast_improver(ast: Program, source_list: Union[List, Dict], include_list, parser):
     dep_graph = nx.DiGraph()
     asts = {}
     interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
@@ -3427,7 +3507,7 @@ def recursive_ast_improver(ast: Base, source_list: Union[List, Dict], include_li
         'yomhook': 'yomhook_dummy',
     }
 
-    def _recursive_ast_improver(_ast):
+    def _recursive_ast_improver(_ast: Base):
         defined_modules = ast_utils.get_defined_modules(_ast)
         main_program_mode = False
         if len(defined_modules) != 1:
@@ -3500,14 +3580,14 @@ def recursive_ast_improver(ast: Base, source_list: Union[List, Dict], include_li
         for mod in reversed(added_modules):
             mod_stmt = mod.children[0]
             mod_name = ast_utils.singular(ast_utils.children_of_type(mod_stmt, Name)).string
-            # Prepend to the list, because in Fortran dependencies should come first.
-            # If the module is already on the list, move it even earlier.
-            if mod in _ast.children:
-                _ast.children.remove(mod)
-            _ast.children.insert(0, mod)
+            if mod not in _ast.children:
+                _ast.children.append(mod)
             asts[mod_name] = mod
 
     _recursive_ast_improver(ast)
+
+    # Sort the modules in the order of their dependency.
+    ast = sort_modules(ast)
 
     return ast, dep_graph, interface_blocks, asts
 
@@ -3725,7 +3805,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     ast = parser(reader)
     ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, source_list, include_list, parser)
+    ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
+    ast = correct_for_function_calls(ast)
     ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
 
     for mod, blocks in interface_blocks.items():
@@ -3774,17 +3856,15 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             new_names_in_subroutines[subroutine] = new_names_list
         objects.names_in_subroutines = new_names_in_subroutines
 
-        #Half fix to recompute the info list with the changed names.
+        # Half fix to recompute the info list with the changed names.
         fandsl = ast_utils.FunctionSubroutineLister()
         for i in ast.children:
-            mod_name=i.children[0].children[1].string
+            mod_name = i.children[0].children[1].string
             if mod_name == node:
                 fandsl.get_functions_and_subroutines(i)
                 node_data['info_list'] = fandsl
                 break
 
-
-    
     # print(dep_graph)
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
     simple_graph, actually_used_in_module = ast_utils.eliminate_dependencies(dep_graph)
@@ -3828,7 +3908,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                     if jj.lower() in res.list_of_types:
                         if jj.lower() not in type_list:
                             type_list.append(jj.lower())
-                            
 
         print("Module " + i + " used names: " + str(parse_list[i]))
         if len(fands_list) > 0:
@@ -3927,12 +4006,13 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if i.children[0].children[1].string.lower() != top_level_ast:
                 for j in i.children[2].children:
                     if j.__class__.__name__ != "Contains_Stmt":
-                        
+
                         if j.children[0].children[1].string.lower() in what_to_parse_list[
                             i.children[0].children[1].string.lower()]:
                             subroutinesandfunctions.append(j)
                         else:
-                            print("Removing " + j.children[0].children[1].string + " from module " + i.children[0].children[1].string)    
+                            print("Removing " + j.children[0].children[1].string + " from module " +
+                                  i.children[0].children[1].string)
                 i.children[2].children.clear()
                 for j in subroutinesandfunctions:
                     i.children[2].children.append(j)
@@ -4153,13 +4233,13 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         for j in program.modules:
             if j.name.name in skip_list:
                 continue
-            if j.name.name==i:
-                
+            if j.name.name == i:
+
                 for k in j.subroutine_definitions:
                     if k.name.name in current_list:
-                        current_list+=used_funcs[k.name.name]
-                        needed.append([j.name.name,k.name.name])
-     
+                        current_list += used_funcs[k.name.name]
+                        needed.append([j.name.name, k.name.name])
+
     for i in program.modules:
         subroutines = []
         for j in needed:
@@ -4293,8 +4373,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     for j in program.subroutine_definitions:
         # if j.name.name!="cloudscouter":
         # if j.name.name != "tspectralplanck_init":
-        #if j.name.name != "radiation":
-        if j.name.name != "calc_no_scattering_transmittance_lw":    
+        # if j.name.name != "radiation":
+        if j.name.name != "calc_no_scattering_transmittance_lw":
             # if j.name.name != "solver_homogeneous_lw":
             # if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             # if j.name.name!="rot_vertex_ri":
@@ -4350,9 +4430,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             # if j.name.name!="cloudscouter":
             # if j.name.name != "solver_homogeneous_lw":
             # if j.name.name != "tspectralplanck_init":
-            #if j.name.name != "radiation":
+            # if j.name.name != "radiation":
             if j.name.name != "calc_no_scattering_transmittance_lw":
-                
                 # if j.name.name != "radiation_scheme":
                 # if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
                 # if j.name.name!="rot_vertex_ri":
