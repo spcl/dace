@@ -795,7 +795,7 @@ class FunctionSubroutineLister:
         self.names_in_subroutines = {}
         self.list_of_types = []
         self.names_in_types = {}
-        self.functions_and_subroutines_in_types= []
+        
         self.list_of_module_vars = []
         self.interface_blocks: Dict[str, List[Name]] = {}
 

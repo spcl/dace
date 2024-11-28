@@ -1772,7 +1772,8 @@ class InternalFortranAst:
         return None
 
     def stop_stmt(self, node: FASTNode):
-        return node
+        return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name="__dace_exit"), args=[], type="VOID",
+                                                  line_number=node.item.span)
 
     def dummy_arg_list(self, node: FASTNode):
         children = self.create_children(node)
