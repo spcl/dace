@@ -20,7 +20,7 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Derived_Type_Stmt, Type_Name, Data_Ref, Component_Decl, Generic_Binding, Association, Associate_Construct, Part_Ref, \
     Intrinsic_Type_Spec, Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, \
     Signed_Int_Literal_Constant, Char_Literal_Constant, Logical_Literal_Constant, Actual_Arg_Spec, \
-    Intrinsic_Function_Reference, Section_Subscript, Section_Subscript_List, Subscript_Triplet
+    Intrinsic_Function_Reference, Section_Subscript, Section_Subscript_List, Subscript_Triplet, Structure_Constructor
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -2549,6 +2549,7 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     assert not any(nx.simple_cycles(dep_graph))
 
     ast = deconstruct_associations(ast)
+    ast = correct_for_function_calls(ast)
     ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
     assert isinstance(ast, Program)
     assert not any(nx.simple_cycles(dep_graph))
@@ -2956,12 +2957,20 @@ def alias_specs(ast: Program, ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_IN
                 alias_map[alias_spec] = v
         else:
             # Otherwise, only specific identifiers are aliased.
-            c_names = {c.string if isinstance(c, Name) else c.string for c in olist.children}
+            c_names: Dict[str, str] = {}
+            for c in olist.children:
+                assert isinstance(c, (Name, Rename))
+                if isinstance(c, Name):
+                    c_names[c.string] = c.string
+                elif isinstance(c, Rename):
+                    _, src, tgt = c.children
+                    c_names[src.string] = tgt.string
             for k, v in ident_map.items():
-                if k[-1] not in c_names:
-                    continue
-                alias_spec = spec[:-1] + k[-1:]
-                alias_map[alias_spec] = v
+                for src, tgt in c_names.items():
+                    if k[-1] != tgt:
+                        continue
+                    alias_spec = spec[:-1] + (src,)
+                    alias_map[alias_spec] = v
     return alias_map
 
 
@@ -3156,6 +3165,28 @@ def correct_for_function_calls(ast: Program):
                 # TODO: Sometimes we don't need to explicitly set parents, but sometimes we do. Why?
                 fnref.parent = par
                 par.items = [fnref if c == pr else c for c in par.children]
+
+    for sc in walk(ast, Structure_Constructor):
+        scope = find_named_ancester(sc.parent)
+        assert scope
+        scope_spec = ident_spec(scope)
+
+        # TODO: Add ref.
+        sc_type, _ = sc.children
+        sc_type_spec = scope_spec + (sc_type.string,)
+        sc_type_node = None
+        if sc_type_spec in ident_map:
+            sc_type_node = ident_map[sc_type_spec]
+        if sc_type_spec in alias_map:
+            sc_type_node = alias_map[sc_type_spec]
+        if isinstance(sc_type_node, Function_Stmt):
+            # Now we know that this identifier actually refers to a function.
+            par = sc.parent
+            fnref = Function_Reference(sc.tofortran())
+            # TODO: Sometimes we don't need to explicitly set parents, but sometimes we do. Why?
+            fnref.parent = par
+            par.items = [fnref if c == sc else c for c in par.children]
+
     return ast
 
 
