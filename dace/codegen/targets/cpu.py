@@ -685,6 +685,7 @@ class CPUCodeGen(TargetCodeGenerator):
             raise LookupError("Memlet does not point to any of the nodes")
 
         if isinstance(dst_node, nodes.Tasklet):
+            print(f"Copy into Tasklet")
             # Copy into tasklet
             stream.write(
                 "    " + self.memlet_definition(sdfg, memlet, False, vconn, dst_node.in_connectors[vconn]),
@@ -1284,7 +1285,8 @@ class CPUCodeGen(TargetCodeGenerator):
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
                 if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
-
+        print(f"expr: {expr}") 
+        print(f"ptr: {ptr}")
         if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)
         # If there is a type mismatch, cast pointer
@@ -1399,6 +1401,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 u = edge.src
                 memlet = edge.data
                 src_node = state_dfg.memlet_path(edge)[0].src
+                dst_node = state_dfg.memlet_path(edge)[-1].dst
 
                 if edge.dst_conn:  # Not (None or "")
                     if edge.dst_conn in arrays:  # Disallow duplicates
@@ -1422,17 +1425,25 @@ class CPUCodeGen(TargetCodeGenerator):
                         self._dispatcher.defined_vars.add(edge.dst_conn, defined_type, f"const {ctype}")
 
                     else:
-                        self._dispatcher.dispatch_copy(
-                            src_node,
-                            node,
-                            edge,
-                            sdfg,
-                            cfg,
-                            dfg,
-                            state_id,
-                            function_stream,
-                            inner_stream,
-                        )
+                        u, uconn, v, vconn, memlet = edge
+                        print(f"u: {u}, uconn: {uconn}, v: {v}, vconn: {vconn}, memlet: {memlet}")
+                        # Obtain copy information
+                        if isinstance(edge.src, nodes.AccessNode):
+                            assign_str = (f"{write_type} {edge.dst_conn} = {edge.src};")
+                            inner_stream.write(assign_str, cfg, state_id, [edge.src, edge.dst])
+                            self._dispatcher.defined_vars.add(edge.dst_conn, DefinedType.Pointer, ctype)
+                        else:
+                            # Find the source Access Node
+                            desc = sdfg.arrays[memlet.data]
+                            ptr = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                            assign_str = (f"{write_type} {edge.dst_conn} = {ptr};")
+                            inner_stream.write(
+                                assign_str,
+                                cfg,
+                                state_id,
+                                [src_node, dst_node],
+                            )
+                            self._dispatcher.defined_vars.add(edge.dst_conn, DefinedType.Pointer, ctype)
 
                     # Also define variables in the C++ unparser scope
                     self._locals.define(edge.dst_conn, -1, self._ldepth + 1, ctype)
@@ -1545,7 +1556,7 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream.write('{', cfg, state_id, node)
             callsite_stream.write(inner_stream.getvalue(), cfg, state_id, node)
             callsite_stream.write(after_memlets_stream.getvalue())
-            callsite_stream.write('flex_redmule_wait();', cfg, state_id, node)
+            callsite_stream.write('flex_intra_cluster_sync();', cfg, state_id, node)
             callsite_stream.write('}', cfg, state_id, node)
             callsite_stream.write(outer_stream_end.getvalue(), cfg, state_id, node)
 
