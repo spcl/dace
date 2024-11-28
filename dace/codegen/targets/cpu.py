@@ -183,7 +183,6 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(node, nodes.LibraryNode):
                 raise NodeNotExpandedError(sdfg, state_id, dfg.node_id(node))
             raise
-
         gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
 
         # Mark node as "generated"

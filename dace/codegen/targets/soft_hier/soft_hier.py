@@ -811,7 +811,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                    dst_storage: dtypes.StorageType, dst_schedule: dtypes.ScheduleType,
                    edge: Tuple[nodes.Node, str, nodes.Node, str, Memlet], sdfg: SDFG, cfg: ControlFlowRegion,
                    dfg: StateSubgraphView, callsite_stream: CodeIOStream) -> None:
-        callsite_stream.write('// SoftHier: Emitting copy from %s to %s' % (src_node, dst_node), sdfg, state_id)
         u, uconn, v, vconn, memlet = edge
         state_dfg = cfg.state(state_id)
         # print('SoftHier: Emitting copy from', src_node, 'to', dst_node)
@@ -1038,7 +1037,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 src_name = u.data
             #src_name = name
             # assert len(subset.string_list()) == 1
-            callsite_stream.write(f'// subset.string_list() = {subset.string_list()}')
             if dims == 1:
                 beg, end, step = subset.ranges[0]
                 length = (end + 1) - beg
@@ -1067,18 +1065,24 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     and dst_storage == dtypes.StorageType.SoftHier_TCDM
                 ):
                     callsite_stream.write("// SoftHier_TCDM -> SoftHier_TCDM")
-                    callsite_stream.write(
-                        "if(flex_is_dm_core())"
-                    )
-                    callsite_stream.write("{", cfg, state_id, src_node)
-                    funcname = "flex_dma_async_1d"
-                    callsite_stream.write(('    {func}({args});').format(
-                            func=funcname,
-                            args=', '.join([f'local({dst_expr})'] + [f'local({src_expr})'] + [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
-                    )
-                    callsite_stream.write("flex_dma_async_wait_all();")
-                    callsite_stream.write("}", cfg, state_id, src_node)
-                    callsite_stream.write("flex_intra_cluster_sync();")
+                    if src_expr == dst_expr:
+                        # do nothing
+                        # print("src_expr == dst_expr")
+                        # callsite_stream.write("/* src_expr == dst_expr */")
+                        pass
+                    else:
+                        callsite_stream.write(
+                            "if(flex_is_dm_core())"
+                        )
+                        callsite_stream.write("{", cfg, state_id, src_node)
+                        funcname = "flex_dma_async_1d"
+                        callsite_stream.write(('    {func}({args});').format(
+                                func=funcname,
+                                args=', '.join([f'local({dst_expr})'] + [f'local({src_expr})'] + [f'{length}*{data_size}'])), cfg, state_id, [src_node, dst_node]
+                        )
+                        callsite_stream.write("flex_dma_async_wait_all();")
+                        callsite_stream.write("}", cfg, state_id, src_node)
+                        callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_HBM
@@ -1145,6 +1149,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     and dst_storage == dtypes.StorageType.SoftHier_TCDM
                 ):
                     callsite_stream.write("// SoftHier_TCDM -> SoftHier_TCDM")
+                    if src_expr == dst_expr:
+                        # do nothing
+                        pass
                     callsite_stream.write(
                         "if(flex_is_dm_core())"
                     )
@@ -1186,17 +1193,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
                     callsite_stream.write("flex_intra_cluster_sync();")
-                elif (
-                    src_storage == dtypes.StorageType.SoftHier_HBM
-                    and dst_storage == dtypes.StorageType.SoftHier_HBM
-                ):       
-                    if src_expr == dst_expr:
-                        # do nothing
-                        pass
-                    else:
-                        raise NotImplementedError(
-                            f"Unimplemented copy type: {src_storage} -> {dst_storage}"
-                        )
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_HBM
                     and dst_storage == dtypes.StorageType.SoftHier_HBM
@@ -2037,20 +2033,32 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         kernel_stream.write(f"uint32_t cluster_id = flex_get_cluster_id();\n", cfg, state_id, node)
         kernel_stream.write(f"uint32_t core_id = flex_get_core_id();\n", cfg, state_id, node)
         
-        for i in range(len(kernel_map.range)):
-            varname = kernel_map.params[-i - 1]
-            kernel_stream.write(f'int {varname} = 0;\n', cfg, state_id, node)
-            self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+        # for i in range(len(kernel_map.range)):
+        #     varname = kernel_map.params[-i - 1]
+        #     kernel_stream.write(f'int {varname} = 0;\n', cfg, state_id, node)
+        #     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
 
         # Add more opening braces for scope exit to close
         for dim in range(len(node.map.range) - 1):
             kernel_stream.write('{', cfg, state_id, node)
-
         # Generate all index arguments for kernel grid
         krange = subsets.Range(kernel_map.range[::-1])
         kdims = krange.size()
         dsym = [symbolic.symbol('__DAPB%d' % i, nonnegative=True, integer=True) for i in range(len(krange))]
         bidx = krange.coord_at(dsym)
+        entry_node = dfg_scope.source_nodes()[0]
+        
+        print(f'krange: {krange}; kdims: {kdims}; dsym: {dsym}; bidx: {bidx}')
+        for i, r in enumerate(node.map.range):
+            var = kernel_map.params[-i - 1]
+            begin, end, skip = r
+            kernel_stream.write(
+                "for (auto %s = %s; %s < %s; %s += %s) {\n" %
+                (var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
+                cfg,
+                state_id,
+                node,
+            )
 
         # handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(sdfg.states()[state_id], dfg_scope.source_nodes()[0]):
@@ -2081,7 +2089,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                            kernel_stream,
                                            skip_entry_node=True)
 
-
+        for i, r in enumerate(node.map.range):
+            kernel_stream.write('}', cfg, state_id, node)
         self._block_dims = None
         self._kernel_map = None
         self._kernel_state = None
