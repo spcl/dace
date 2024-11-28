@@ -532,9 +532,11 @@ class InternalFortranAst:
         return children
 
     def function_reference(self, node: FASTNode):
-        children = self.create_children(node)
+        name, args = self.create_children(node)
         line = get_line(node)
-        return ast_internal_classes.Call_Expr_Node(name=children[0], args=children[1].args, type="VOID",
+        return ast_internal_classes.Call_Expr_Node(name=name,
+                                                   args=args.args if args else [],
+                                                   type="VOID",
                                                    line_number=line)
 
     def end_associate_stmt(self, node: FASTNode):
