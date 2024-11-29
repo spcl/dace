@@ -3189,6 +3189,9 @@ def correct_for_function_calls(ast: Program):
 
         # TODO: Add ref.
         sc_type, _ = sc.children
+        if sc_type.string.startswith('nf90_'):
+            # TODO: Create an empty stub for netcdf to allow producing compilable AST.
+            continue
         sc_type_spec = find_real_ident_spec(sc_type.string, scope_spec, ident_map, alias_map)
         if isinstance(ident_map[sc_type_spec], Function_Stmt):
             # Now we know that this identifier actually refers to a function.
