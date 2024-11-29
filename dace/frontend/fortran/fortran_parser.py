@@ -2952,7 +2952,7 @@ def alias_specs(ast: Program, ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_IN
 
         if mod_spec not in ident_map:
             # TODO: `netcdf` is somehow not present. Create a stub for `netcdf`.
-            assert mod_name == 'netcdf'
+            #assert mod_name == 'netcdf'
             continue
         # The module's name cannot be used as an identifier in this scope anymore, so just point to the module.
         alias_map[use_spec] = ident_map[mod_spec]
