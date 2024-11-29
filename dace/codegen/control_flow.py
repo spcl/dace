@@ -60,7 +60,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 import networkx as nx
 import sympy as sp
-from dace import dtypes
+import dace
+from dace import dtypes, symbolic
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion,
                              ReturnBlock, SDFGState)
@@ -464,6 +465,22 @@ class ForScope(ControlFlow):
     @property
     def children(self) -> List[ControlFlow]:
         return [self.body]
+
+    def loop_range(self) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
+        """
+        For well-formed loops, returns a tuple of (start, end, stride). Otherwise, returns None.
+        """
+        from dace.transformation.interstate.loop_detection import find_for_loop
+        sdfg = self.guard.parent
+        for e in sdfg.out_edges(self.guard):
+            if e.data.condition == self.condition:
+                break
+        else:
+            return None  # Condition edge not found
+        result = find_for_loop(sdfg, self.guard, e.dst, self.itervar)
+        if result is None:
+            return None
+        return result[1]
 
 
 @dataclass

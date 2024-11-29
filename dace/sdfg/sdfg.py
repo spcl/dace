@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
-    from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeScope
+    from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeRoot
 
 
 class NestedDict(dict):
@@ -1079,7 +1079,7 @@ class SDFG(ControlFlowRegion):
 
     ##########################################
 
-    def as_schedule_tree(self, in_place: bool = False) -> 'ScheduleTreeScope':
+    def as_schedule_tree(self, in_place: bool = False) -> 'ScheduleTreeRoot':
         """
         Creates a schedule tree from this SDFG and all nested SDFGs. The schedule tree is a tree of nodes that represent
         the execution order of the SDFG.
@@ -1087,7 +1087,8 @@ class SDFG(ControlFlowRegion):
         etc.) or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
     
         It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
-        erasing an empty if branch, or merging two consecutive for-loops.
+        erasing an empty if branch, or merging two consecutive for-loops. The SDFG can then be reconstructed via the 
+        ``as_sdfg`` method or the ``from_schedule_tree`` function in ``dace.sdfg.analysis.schedule_tree.tree_to_sdfg``.
 
         :param in_place: If True, the SDFG is modified in-place. Otherwise, a copy is made. Note that the SDFG might
                          not be usable after the conversion if ``in_place`` is True!
