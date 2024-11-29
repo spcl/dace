@@ -695,8 +695,9 @@ class CallToArray(NodeTransformer):
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.excepted_funcs = [
             "malloc", "pow", "cbrt", "__dace_sign", "__dace_allocated", "tanh", "atan2",
-            "__dace_epsilon", *FortranIntrinsics.function_names()
+            "__dace_epsilon","__dace_exit", *FortranIntrinsics.function_names()
         ]
+        #"surrtpk","surrtab","surrtrf","abor1"
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         if isinstance(node.name, str):
@@ -704,7 +705,7 @@ class CallToArray(NodeTransformer):
         assert node.name is not None, f"not a valid call expression, got: {node} / {type(node)}"
         name = node.name.name
 
-        if name in self.excepted_funcs or name in [i.name for i in self.funcs.names] or name in self.funcs.iblocks:
+        if name.startswith("__dace_") or  name in self.excepted_funcs or name in [i.name for i in self.funcs.names] or name in self.funcs.iblocks:
             processed_args = []
             for i in node.args:
                 arg = CallToArray(self.funcs).visit(i)
