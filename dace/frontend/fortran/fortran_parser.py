@@ -20,7 +20,7 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Intrinsic_Type_Spec, Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, \
     Signed_Int_Literal_Constant, Char_Literal_Constant, Logical_Literal_Constant, Actual_Arg_Spec, \
     Intrinsic_Function_Reference, Section_Subscript_List, Subscript_Triplet, Structure_Constructor, Enum_Def, \
-    Enumerator_List, Enumerator, Expr, Type_Bound_Procedure_Part
+    Enumerator_List, Enumerator, Expr, Type_Bound_Procedure_Part, Interface_Stmt
 from fparser.two.Fortran2008 import Type_Declaration_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -2884,18 +2884,23 @@ def create_sdfg_from_fortran_file(source_string: str):
 
 NAMED_STMTS_OF_INTEREST_TYPES = Union[
     Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
-    Specific_Binding, Generic_Binding]
+    Specific_Binding, Generic_Binding, Interface_Stmt]
 
 
-def find_name(node: NAMED_STMTS_OF_INTEREST_TYPES) -> str:
+def find_name(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
+    """Find the name of the block/statment if it has one. For anonymous blocks, return `None`."""
     if isinstance(node, Specific_Binding):
         # Ref: https://github.com/stfc/fparser/blob/8c870f84edbf1a24dfbc886e2f7226d1b158d50b/src/fparser/two/Fortran2003.py#L2504
         iname, mylist, dcolon, bname, pname = node.children
         name = bname
+    elif isinstance(node, Interface_Stmt):
+        name, = node.children
     else:
         # TODO: Test out other type specific ways of finding names.
         name = ast_utils.singular(ast_utils.children_of_type(node, Name))
-    return name.string
+    if name:
+        name = name.string
+    return name
 
 
 def find_named_ancester(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
@@ -2909,19 +2914,24 @@ def find_named_ancester(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
 
 
 def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Tuple[str, ...]:
-    """
-    Constuct a list of identifier strings that can uniquely determine it through the entire AST.
-    """
-    # TODO: Is this assumption true?
-    # We assume that there is only one `Name` children in any `Stmt` objects.
-    ident_base = find_name(node)
+    def _ident_spec(_node: NAMED_STMTS_OF_INTEREST_TYPES) -> Tuple[str, ...]:
+        """
+        Constuct a list of identifier strings that can uniquely determine it through the entire AST.
+        """
+        ident_base = (find_name(_node),)
+        # Find the next named ancestor.
+        anc = find_named_ancester(_node.parent)
+        if not anc:
+            return ident_base
+        assert isinstance(anc, NAMED_STMTS_OF_INTEREST_TYPES)
+        return _ident_spec(anc) + ident_base
 
-    # Find the next named ancestor.
-    anc = find_named_ancester(node.parent)
-    if not anc:
-        return (ident_base,)
-    assert isinstance(anc, NAMED_STMTS_OF_INTEREST_TYPES)
-    return ident_spec(anc) + (ident_base,)
+    spec = _ident_spec(node)
+    # The last part of the spec cannot be nothing, because we cannot refer to the anonymous blocks.
+    assert spec and spec[-1]
+    # For the rest, the anonymous blocks puts their contend onto their parents.
+    spec = tuple(c for c in spec if c)
+    return spec
 
 
 def identifier_specs(ast: Program) -> Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES]:
@@ -2930,6 +2940,9 @@ def identifier_specs(ast: Program) -> Dict[Tuple[str, ...], NAMED_STMTS_OF_INTER
     """
     ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES] = {}
     for stmt in walk(ast, NAMED_STMTS_OF_INTEREST_TYPES):
+        if isinstance(stmt, Interface_Stmt) and not stmt.children:
+            # There can be anonymous blocks, e.g., interface blocks, which cannot be identified.
+            continue
         ident_map[ident_spec(stmt)] = stmt
     return ident_map
 
@@ -3605,14 +3618,16 @@ def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_li
 
 
 def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], include_list, parser) -> Program:
-    known_names : Set[str] = {nm.string for nm in walk(ast, Name)}
+    known_names: Set[str] = {nm.string for nm in walk(ast, Name)}
 
-    known_floaters : Set[str] = set()
+    known_floaters: Set[str] = set()
     for esp in ast.children:
         stmt = ast_utils.singular(ast_utils.children_of_type(esp, NAMED_STMTS_OF_INTEREST_TYPES))
-        known_floaters.add(find_name(stmt))
+        name = find_name(stmt)
+        if name:
+            known_floaters.add(name)
 
-    known_sub_asts : Dict[str, Program] = {}
+    known_sub_asts: Dict[str, Program] = {}
     for src, content in source_list.items():
         reader = fsr(content, include_dirs=include_list)
         try:
@@ -3634,7 +3649,7 @@ def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], incl
                 if not stmt:
                     continue
                 name = find_name(stmt)
-                if name in known_names and name not in known_floaters:
+                if name and name in known_names and name not in known_floaters:
                     # We have found a new floating subprogram that's needed.
                     known_floaters.add(name)
                     known_names.update({nm.string for nm in walk(esp, Name)})
