@@ -701,12 +701,10 @@ class CallToArray(NodeTransformer):
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         if isinstance(node.name, str):
             return node
-        if node.name is None:
-            raise ValueError("Call_Expr_Node name is None")
-            return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
+        assert node.name is not None, f"not a valid call expression, got: {node} / {type(node)}"
+        name = node.name.name
 
-        if node.name.name in self.excepted_funcs or node.name.name in [i.name for i in
-                                                                       self.funcs.names] or node.name.name in self.funcs.iblocks:
+        if name in self.excepted_funcs or name in [i.name for i in self.funcs.names] or name in self.funcs.iblocks:
             processed_args = []
             for i in node.args:
                 arg = CallToArray(self.funcs).visit(i)
@@ -714,6 +712,8 @@ class CallToArray(NodeTransformer):
             node.args = processed_args
             return node
         indices = [CallToArray(self.funcs).visit(i) for i in node.args]
+        # Array subscript cannot be empty.
+        assert indices
         return ast_internal_classes.Array_Subscript_Node(name=node.name, type=node.type, indices=indices,
                                                          line_number=node.line_number)
 

@@ -5,8 +5,10 @@ from fparser.common.readfortran import FortranStringReader
 from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 
+from dace.frontend.fortran.ast_utils import UseAllPruneList
 from dace.frontend.fortran.fortran_parser import deconstruct_procedure_calls, recursive_ast_improver, \
-    prune_unused_children, simplified_dependency_graph, deconstruct_associations, correct_for_function_calls
+    prune_unused_children, simplified_dependency_graph, deconstruct_associations, correct_for_function_calls, \
+    deconstruct_enums
 from tests.fortran.fotran_test_helper import SourceCodeBuilder
 
 
@@ -70,10 +72,6 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Square
     REAL :: side
-    CONTAINS
-    PROCEDURE :: area
-    PROCEDURE :: area_alt => area
-    PROCEDURE :: get_area
   END TYPE Square
   CONTAINS
   REAL FUNCTION area(this, m)
@@ -183,13 +181,9 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Value
     REAL :: val
-    CONTAINS
-    PROCEDURE :: get_value
   END TYPE Value
   TYPE :: Square
     TYPE(Value) :: side
-    CONTAINS
-    PROCEDURE :: get_area
   END TYPE Square
   CONTAINS
   REAL FUNCTION get_value(this)
@@ -284,8 +278,6 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Square
     REAL :: side
-    CONTAINS
-    PROCEDURE :: area
   END TYPE Square
   CONTAINS
   REAL FUNCTION area(this, m)
@@ -389,27 +381,10 @@ end subroutine main
 
     got = ast.tofortran()
     want = """
-MODULE lib_2
-  IMPLICIT NONE
-  TYPE :: Circle
-    REAL :: rad
-    CONTAINS
-    PROCEDURE :: area
-  END TYPE Circle
-  CONTAINS
-  REAL FUNCTION area(this, m)
-    IMPLICIT NONE
-    CLASS(Circle), INTENT(IN) :: this
-    REAL, INTENT(IN) :: m
-    area = m * this % rad * this % rad
-  END FUNCTION area
-END MODULE lib_2
 MODULE lib_1
   IMPLICIT NONE
   TYPE :: Square
     REAL :: side
-    CONTAINS
-    PROCEDURE :: area
   END TYPE Square
   CONTAINS
   REAL FUNCTION area(this, m)
@@ -419,6 +394,19 @@ MODULE lib_1
     area = m * this % side * this % side
   END FUNCTION area
 END MODULE lib_1
+MODULE lib_2
+  IMPLICIT NONE
+  TYPE :: Circle
+    REAL :: rad
+  END TYPE Circle
+  CONTAINS
+  REAL FUNCTION area(this, m)
+    IMPLICIT NONE
+    CLASS(Circle), INTENT(IN) :: this
+    REAL, INTENT(IN) :: m
+    area = m * this % rad * this % rad
+  END FUNCTION area
+END MODULE lib_2
 SUBROUTINE main
   USE lib_2, ONLY: area_deconproc_1 => area
   USE lib_1, ONLY: area_deconproc_0 => area
@@ -516,10 +504,6 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Square
     REAL :: side
-    CONTAINS
-    PROCEDURE :: area_real
-    PROCEDURE :: area_integer
-    GENERIC :: g_area => area_real, area_integer
   END TYPE Square
   CONTAINS
   REAL FUNCTION area_real(this, m)
@@ -702,6 +686,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
 
@@ -711,8 +696,6 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Square
     REAL :: sides(2, 2)
-    CONTAINS
-    PROCEDURE :: area => perim
   END TYPE Square
   CONTAINS
   REAL FUNCTION perim(this, m)
@@ -809,8 +792,6 @@ MODULE lib
   IMPLICIT NONE
   TYPE :: Square
     REAL :: sides(2, 2)
-    CONTAINS
-    PROCEDURE :: area => perim
   END TYPE Square
   CONTAINS
   REAL FUNCTION perim(this, m)
@@ -862,3 +843,158 @@ END SUBROUTINE main
 
     assert name_dict == {'lib': ['Square', 'perim']}
     assert rename_dict == {'lib': {}}
+
+
+def test_uses_allows_indirect_aliasing():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type Square
+    real :: sides(2, 2)
+  contains
+    procedure :: area => perim
+  end type Square
+contains
+  real function perim(this, m)
+    implicit none
+    class(Square), intent(in) :: this
+    real, intent(in) :: m
+    perim = m * sum(this%sides)
+  end function perim
+end module lib
+""").add_file("""
+module lib2
+  use lib
+  implicit none
+end module lib2
+""").add_file("""
+subroutine main
+  use lib2, only: Square, perim
+  implicit none
+  type(Square) :: s
+  real :: a
+
+  associate(sides => s%sides(:, 1))
+    s%sides = 0.5
+    s%sides(1, 1) = 1.0
+    sides(2) = 1.0
+    a = perim(s, 1.0)
+    a = s%area(1.0)
+  end associate
+end subroutine main
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast = deconstruct_associations(ast)
+    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  TYPE :: Square
+    REAL :: sides(2, 2)
+  END TYPE Square
+  CONTAINS
+  REAL FUNCTION perim(this, m)
+    IMPLICIT NONE
+    CLASS(Square), INTENT(IN) :: this
+    REAL, INTENT(IN) :: m
+    perim = m * SUM(this % sides)
+  END FUNCTION perim
+END MODULE lib
+MODULE lib2
+  USE lib
+  IMPLICIT NONE
+END MODULE lib2
+SUBROUTINE main
+  USE lib, ONLY: perim_deconproc_0 => perim
+  USE lib2, ONLY: Square, perim
+  IMPLICIT NONE
+  TYPE(Square) :: s
+  REAL :: a
+  s % sides = 0.5
+  s % sides(1, 1) = 1.0
+  s % sides(2, 1) = 1.0
+  a = perim(s, 1.0)
+  a = perim_deconproc_0(s, 1.0)
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert set(dep_graph.nodes) == {'lib', 'lib2', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib2'), ('lib2', 'lib')}
+    assert (set('*' if isinstance(u, UseAllPruneList) else u.string for u in dep_graph.edges['main', 'lib2']['obj_list'])
+            == {'Square', 'perim'})
+    assert (set('*' if isinstance(u, UseAllPruneList) else u.string for u in dep_graph.edges['lib2', 'lib']['obj_list'])
+            == {'*'})
+    assert not interface_blocks
+    assert set(asts.keys()) == {'lib', 'lib2'}
+
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
+
+    # Nothing changed here.
+    assert set(dep_graph.nodes) == {'lib', 'lib2', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib2'), ('lib2', 'lib')}
+    assert (set('*' if isinstance(u, UseAllPruneList) else u.string for u in dep_graph.edges['main', 'lib2']['obj_list'])
+            == {'Square', 'perim'})
+    assert (set('*' if isinstance(u, UseAllPruneList) else u.string for u in dep_graph.edges['lib2', 'lib']['obj_list'])
+            == {'*'})
+    assert not interface_blocks
+    assert set(asts.keys()) == {'lib', 'lib2'}
+
+    assert ({k: set(v) for k, v in actually_used_in_module.items()}
+            == {'lib': {'perim', 'Square'}, 'lib2': {'perim', 'Square'}, 'main': set()})
+
+    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    got = ast.tofortran()
+    # Still want the same program, because nothing should have been pruned.
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert {k: set(v) for k, v in name_dict.items()} == {'lib': {'Square', 'perim'}, 'lib2': {'Square', 'perim'}}
+    assert rename_dict == {'lib': {}, 'lib2': {}}
+
+
+def test_enum_bindings_become_constants():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main
+  implicit none
+  integer, parameter :: k = 42
+  enum, bind(c)
+    enumerator :: a, b, c
+  end enum
+  enum, bind(c)
+    enumerator :: d = a, e, f
+  end enum
+  enum, bind(c)
+    enumerator :: g = k, h = k, i = k + 1
+  end enum
+end subroutine main
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast = deconstruct_enums(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  INTEGER, PARAMETER :: k = 42
+  INTEGER, PARAMETER :: a = 0 + 0
+  INTEGER, PARAMETER :: b = 0 + 1
+  INTEGER, PARAMETER :: c = 0 + 2
+  INTEGER, PARAMETER :: d = a + 0
+  INTEGER, PARAMETER :: e = a + 1
+  INTEGER, PARAMETER :: f = a + 2
+  INTEGER, PARAMETER :: g = k + 0
+  INTEGER, PARAMETER :: h = k + 0
+  INTEGER, PARAMETER :: i = k + 1 + 0
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert not set(dep_graph.nodes)
+    assert not set(dep_graph.edges)
+    assert not interface_blocks
+    assert not asts

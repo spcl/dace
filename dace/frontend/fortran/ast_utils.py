@@ -477,7 +477,7 @@ class TaskletWriter:
             self.depth -= 1
             return string_to_return
         else:
-            raise NameError("Error in code generation" + node.__class__.__name__)
+            raise NameError("Error in code generation: " + node.__class__.__name__)
 
     def dataref2string(self, node: ast_internal_classes.Data_Ref_Node):
         return self.write_code(node.parent_ref) + "." + self.write_code(node.part_ref)

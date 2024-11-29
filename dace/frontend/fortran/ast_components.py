@@ -532,9 +532,11 @@ class InternalFortranAst:
         return children
 
     def function_reference(self, node: FASTNode):
-        children = self.create_children(node)
+        name, args = self.create_children(node)
         line = get_line(node)
-        return ast_internal_classes.Call_Expr_Node(name=children[0], args=children[1].args, type="VOID",
+        return ast_internal_classes.Call_Expr_Node(name=name,
+                                                   args=args.args if args else [],
+                                                   type="VOID",
                                                    line_number=line)
 
     def end_associate_stmt(self, node: FASTNode):
@@ -1305,8 +1307,7 @@ class InternalFortranAst:
                                                               type=testtype,
                                                               alloc=alloc,
                                                               init=init,
-                                                              optional=optional,
-                                                              line_number=node.item.span))
+                                                              optional=optional))
                 elif attr_size is not None:
                     vardecls.append(
                         ast_internal_classes.Symbol_Array_Decl_Node(name=actual_name.name,
@@ -1329,7 +1330,7 @@ class InternalFortranAst:
                                                                     init=init,
                                                                     optional=optional,
                                                                     line_number=node.item.span))
-        return ast_internal_classes.Decl_Stmt_Node(vardecl=vardecls, line_number=node.item.span)
+        return ast_internal_classes.Decl_Stmt_Node(vardecl=vardecls)
 
     def entity_decl(self, node: FASTNode):
         raise NotImplementedError("Entity decl is not supported yet")

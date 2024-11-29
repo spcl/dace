@@ -258,7 +258,7 @@ class Function_Stmt_Node(FNode):
 
 
 class Prefix_Node(FNode):
-    _attributes = ('elemental','recursive','pure')
+    _attributes = ('elemental', 'recursive', 'pure')
     _fields = ()
 
 
@@ -309,10 +309,13 @@ class Statement_Node(FNode):
 
 
 class Array_Subscript_Node(FNode):
-    _attributes = (
-        'name',
-        'type',
-    )
+    def __init__(self, name: Name_Node, type: str, indices: List[FNode], **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.type = type
+        self.indices = indices
+
+    _attributes = ('name', 'type')
     _fields = ('indices',)
 
 
@@ -377,20 +380,26 @@ class Symbol_Array_Decl_Node(Statement_Node):
 
 
 class Var_Decl_Node(Statement_Node):
-    _attributes = (
-        'name',
-        'type',
-        'alloc',
-        'kind',
-        'optional'
-    )
-    _fields = (
-        'sizes',
-        'offsets',
-        'actual_offsets'
-        'typeref',
-        'init',
-    )
+    def __init__(self, name: str, type: str,
+                 alloc: Optional[bool] = None, optional: Optional[bool] = None,
+                 sizes: Optional[List] = None, offsets: Optional[List] = None,
+                 init: Optional[FNode] = None, actual_offsets: Optional[List] = None,
+                 typeref: Optional[Any] = None, kind: Optional[Any] = None,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.type = type
+        self.alloc = alloc
+        self.kind = kind
+        self.optional = optional
+        self.sizes = sizes
+        self.offsets = offsets
+        self.actual_offsets = actual_offsets
+        self.typeref = typeref
+        self.init = init
+
+    _attributes = ('name', 'type', 'alloc', 'kind', 'optional')
+    _fields = ('sizes', 'offsets', 'actual_offsets', 'typeref', 'init')
 
 
 class Arg_List_Node(FNode):

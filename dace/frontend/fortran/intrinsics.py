@@ -411,10 +411,6 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
 
         # supports syntax func(arr)
         if isinstance(arg, ast_internal_classes.Name_Node):
-            # TODO: missing line number here!
-            array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent, type='VOID', line_number=42)
-            array_node.name = arg
-
             # If we access SUM(arr) where arr has many dimensions,
             # We need to create a ParDecl_Node for each dimension
             # array_sizes = self.scope_vars.get_var(node.parent, arg.name).sizes
@@ -422,7 +418,9 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
             if array_sizes is None:
                 return None
             dims = len(array_sizes)
-            array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+            array_node = ast_internal_classes.Array_Subscript_Node(
+                name=arg, parent=arg.parent, type='VOID',
+                indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims)
 
             return array_node
 
