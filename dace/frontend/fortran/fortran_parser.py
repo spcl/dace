@@ -2544,7 +2544,7 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     ast = parser(cfg.main)
     assert isinstance(ast, Program)
 
-    ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, cfg.sources, cfg.includes, parser)
+    ast, dep_graph, interface_blocks = recursive_ast_improver(ast, cfg.sources, cfg.includes, parser)
     assert isinstance(ast, Program)
     assert not any(nx.simple_cycles(dep_graph))
 
@@ -3521,10 +3521,8 @@ def deconstruct_associations(ast: Program) -> Program:
 
 def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_list, parser):
     dep_graph = nx.DiGraph()
-    asts = {}
     interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
     exclude = set()
-    missing_modules = set()
 
     NAME_REPLACEMENTS = {
         'mo_restart_nml_and_att': 'mo_restart_nmls_and_atts',
@@ -3580,7 +3578,7 @@ def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_li
             mod_file = [srcf for srcf in source_list if os.path.basename(srcf).lower() == f"{name}.f90"]
             assert len(mod_file) <= 1, f"Found multiple files for the same module `{mod}`: {mod_file}"
             if not mod_file:
-                missing_modules.add(mod)
+                print(f"Ignoring error: cannot find a file for `{mod}`")
                 continue
             mod_file = mod_file[0]
 
@@ -3601,11 +3599,8 @@ def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_li
                 exclude.add(c_name)
 
         for mod in reversed(added_modules):
-            mod_stmt = mod.children[0]
-            mod_name = ast_utils.singular(ast_utils.children_of_type(mod_stmt, Name)).string
             if mod not in _ast.children:
                 _ast.children.append(mod)
-            asts[mod_name] = mod
 
     _recursive_ast_improver(ast)
 
@@ -3614,7 +3609,7 @@ def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_li
     # Sort the modules in the order of their dependency.
     ast = sort_modules(ast)
 
-    return ast, dep_graph, interface_blocks, asts
+    return ast, dep_graph, interface_blocks
 
 
 def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], include_list, parser) -> Program:
@@ -3876,7 +3871,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = parser(reader)
     if isinstance(source_list, list):
         source_list = {src: Path(src).read_text() for src in source_list}
-    ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, source_list, include_list, parser)
+    ast, dep_graph, interface_blocks = recursive_ast_improver(ast, source_list, include_list, parser)
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = correct_for_function_calls(ast)
@@ -4042,7 +4037,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             for j in i.children[1].children:
                 if j.__class__.__name__ == "Type_Declaration_Stmt":
                     # if j.children[0].__class__.__name__!="Declaration_Type_Spec":
-                    #    new_spec_children.append(j)    
+                    #    new_spec_children.append(j)
                     # else:
                     entity_decls = []
                     for k in j.children[2].children:
@@ -4158,6 +4153,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     # Why would you ever name a file differently than the module? Especially just one random file out of thousands???
     # asts["mo_restart_nml_and_att"]=asts["mo_restart_nmls_and_atts"]
     partial_ast.to_parse_list = what_to_parse_list
+    asts = {find_name(m).lower() : m for m in walk(ast, Module_Stmt)}
     for i in parse_order:
         partial_ast.current_ast = i
 
