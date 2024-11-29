@@ -998,3 +998,78 @@ END SUBROUTINE main
     assert not set(dep_graph.edges)
     assert not interface_blocks
     assert not asts
+
+
+def test_aliasing_through_module_procedure():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  interface fun
+    module procedure real_fun
+  end interface fun
+contains
+  real function real_fun()
+    implicit none
+    real_fun = 1.0
+  end function real_fun
+end module lib
+""").add_file("""
+subroutine main
+  use lib, only: fun
+  implicit none
+  real d(4)
+  d(2) = fun()
+end subroutine main
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast = deconstruct_associations(ast)
+    ast = correct_for_function_calls(ast)
+    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  INTERFACE fun
+    MODULE PROCEDURE real_fun
+  END INTERFACE fun
+  CONTAINS
+  REAL FUNCTION real_fun()
+    IMPLICIT NONE
+    real_fun = 1.0
+  END FUNCTION real_fun
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: fun
+  IMPLICIT NONE
+  REAL :: d(4)
+  d(2) = fun()
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert set(dep_graph.nodes) == {'lib', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib')}
+    assert ({k1: {k2: {v.string for v in vs} for k2, vs in k2v.items()} for k1, k2v in interface_blocks.items()}
+            == {'lib': {'fun': {'real_fun'}}})
+    assert set(asts.keys()) == {'lib'}
+
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
+
+    # Nothing changed here.
+    assert set(dep_graph.nodes) == {'lib', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib')}
+    assert ({k1: {k2: {v.string for v in vs} for k2, vs in k2v.items()} for k1, k2v in interface_blocks.items()}
+            == {'lib': {'fun': {'real_fun'}}})
+    assert set(asts.keys()) == {'lib'}
+    assert ({k: set(v) for k, v in actually_used_in_module.items()} == {'lib': {'real_fun'}, 'main': set()})
+
+    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    got = ast.tofortran()
+    # Still want the same program, because nothing should have been pruned.
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert {k: set(v) for k, v in name_dict.items()} == {'lib': {'real_fun'}}
+    assert rename_dict == {'lib': {}}
