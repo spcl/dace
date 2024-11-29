@@ -2940,7 +2940,7 @@ def identifier_specs(ast: Program) -> Dict[Tuple[str, ...], NAMED_STMTS_OF_INTER
     """
     ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES] = {}
     for stmt in walk(ast, NAMED_STMTS_OF_INTEREST_TYPES):
-        if isinstance(stmt, Interface_Stmt) and not stmt.children:
+        if isinstance(stmt, Interface_Stmt) and not find_name(stmt):
             # There can be anonymous blocks, e.g., interface blocks, which cannot be identified.
             continue
         ident_map[ident_spec(stmt)] = stmt
