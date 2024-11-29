@@ -1307,8 +1307,7 @@ class InternalFortranAst:
                                                               type=testtype,
                                                               alloc=alloc,
                                                               init=init,
-                                                              optional=optional,
-                                                              line_number=node.item.span))
+                                                              optional=optional))
                 elif attr_size is not None:
                     vardecls.append(
                         ast_internal_classes.Symbol_Array_Decl_Node(name=actual_name.name,
@@ -1331,7 +1330,7 @@ class InternalFortranAst:
                                                                     init=init,
                                                                     optional=optional,
                                                                     line_number=node.item.span))
-        return ast_internal_classes.Decl_Stmt_Node(vardecl=vardecls, line_number=node.item.span)
+        return ast_internal_classes.Decl_Stmt_Node(vardecl=vardecls)
 
     def entity_decl(self, node: FASTNode):
         raise NotImplementedError("Entity decl is not supported yet")
