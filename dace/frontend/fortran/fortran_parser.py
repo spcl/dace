@@ -2887,8 +2887,8 @@ NAMED_STMTS_OF_INTEREST_TYPES = Union[
     Specific_Binding, Generic_Binding, Interface_Stmt]
 
 
-def find_name(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
-    """Find the name of the block/statment if it has one. For anonymous blocks, return `None`."""
+def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
+    """Find the name of the statement if it has one. For anonymous blocks, return `None`."""
     if isinstance(node, Specific_Binding):
         # Ref: https://github.com/stfc/fparser/blob/8c870f84edbf1a24dfbc886e2f7226d1b158d50b/src/fparser/two/Fortran2003.py#L2504
         iname, mylist, dcolon, bname, pname = node.children
@@ -2901,6 +2901,16 @@ def find_name(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
     if name:
         name = name.string
     return name
+
+
+def find_name_of_node(node: Base) -> Optional[str]:
+    """Find the name of the general node if it has one. For anonymous blocks, return `None`."""
+    if isinstance(node, NAMED_STMTS_OF_INTEREST_TYPES):
+        return find_name_of_stmt(node)
+    stmt = ast_utils.atmost_one(ast_utils.children_of_type(node, NAMED_STMTS_OF_INTEREST_TYPES))
+    if stmt:
+        return find_name_of_stmt(stmt)
+    return None
 
 
 def find_named_ancester(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
@@ -2918,7 +2928,7 @@ def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Tuple[str, ...]:
         """
         Constuct a list of identifier strings that can uniquely determine it through the entire AST.
         """
-        ident_base = (find_name(_node),)
+        ident_base = (find_name_of_stmt(_node),)
         # Find the next named ancestor.
         anc = find_named_ancester(_node.parent)
         if not anc:
@@ -2940,7 +2950,7 @@ def identifier_specs(ast: Program) -> Dict[Tuple[str, ...], NAMED_STMTS_OF_INTER
     """
     ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_INTEREST_TYPES] = {}
     for stmt in walk(ast, NAMED_STMTS_OF_INTEREST_TYPES):
-        if isinstance(stmt, Interface_Stmt) and not find_name(stmt):
+        if isinstance(stmt, Interface_Stmt) and not find_name_of_stmt(stmt):
             # There can be anonymous blocks, e.g., interface blocks, which cannot be identified.
             continue
         ident_map[ident_spec(stmt)] = stmt
@@ -3227,7 +3237,7 @@ def sort_modules(ast: Program) -> Program:
             return TOPLEVEL
         else:
             p = ast_utils.singular(ast_utils.children_of_type(p, (Module_Stmt, Program_Stmt)))
-            return find_name(p)
+            return find_name_of_stmt(p)
 
     g = nx.DiGraph()  # An edge u->v means u should come before v, i.e., v depends on u.
     for c in ast.children:
@@ -3617,8 +3627,7 @@ def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], incl
 
     known_floaters: Set[str] = set()
     for esp in ast.children:
-        stmt = ast_utils.singular(ast_utils.children_of_type(esp, NAMED_STMTS_OF_INTEREST_TYPES))
-        name = find_name(stmt)
+        name = find_name_of_node(esp)
         if name:
             known_floaters.add(name)
 
@@ -3640,10 +3649,7 @@ def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], incl
         for src, sub_ast in known_sub_asts.items():
             # Find all the new floating subprograms that are known to be needed so far.
             for esp in sub_ast.children:
-                stmt = ast_utils.atmost_one(ast_utils.children_of_type(esp, NAMED_STMTS_OF_INTEREST_TYPES))
-                if not stmt:
-                    continue
-                name = find_name(stmt)
+                name = find_name_of_node(esp)
                 if name and name in known_names and name not in known_floaters:
                     # We have found a new floating subprogram that's needed.
                     known_floaters.add(name)
@@ -4153,7 +4159,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     # Why would you ever name a file differently than the module? Especially just one random file out of thousands???
     # asts["mo_restart_nml_and_att"]=asts["mo_restart_nmls_and_atts"]
     partial_ast.to_parse_list = what_to_parse_list
-    asts = {find_name(m).lower() : m for m in walk(ast, Module_Stmt)}
+    asts = {find_name_of_stmt(m).lower(): m for m in walk(ast, Module_Stmt)}
     for i in parse_order:
         partial_ast.current_ast = i
 
