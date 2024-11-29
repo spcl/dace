@@ -3506,7 +3506,7 @@ def deconstruct_associations(ast: Program) -> Program:
     return ast
 
 
-def recursive_ast_improver(ast: Program, source_list: Union[List, Dict], include_list, parser):
+def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_list, parser):
     dep_graph = nx.DiGraph()
     asts = {}
     interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
@@ -3571,12 +3571,11 @@ def recursive_ast_improver(ast: Program, source_list: Union[List, Dict], include
                 continue
             mod_file = mod_file[0]
 
-            if isinstance(source_list, dict):
-                reader = fsr(source_list[mod_file])
+            reader = fsr(source_list[mod_file], include_dirs=include_list)
+            try:
                 next_ast = parser(reader)
-            else:
-                reader = ffr(file_candidate=mod_file, include_dirs=include_list, source_only=source_list)
-                next_ast = parser(reader)
+            except Exception as e:
+                raise RuntimeError(f"{mod_file} could not be parsed: {e}") from e
 
             _recursive_ast_improver(next_ast)
 
@@ -3599,8 +3598,61 @@ def recursive_ast_improver(ast: Program, source_list: Union[List, Dict], include
 
     # Sort the modules in the order of their dependency.
     ast = sort_modules(ast)
+    # Add all the free-floating subprograms from other source files in case we missed them.
+    ast = collect_floating_subprograms(ast, source_list, include_list, parser)
 
     return ast, dep_graph, interface_blocks, asts
+
+
+def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], include_list, parser) -> Program:
+    known_names : Set[str] = {nm.string for nm in walk(ast, Name)}
+
+    known_floaters : Set[str] = set()
+    for esp in walk(ast, (Function_Subprogram, Subroutine_Subprogram)):
+        stmt = ast_utils.singular(ast_utils.children_of_type(esp, NAMED_STMTS_OF_INTEREST_TYPES))
+        known_floaters.add(find_name(stmt))
+
+    known_sub_asts : Dict[str, Program] = {}
+    for src, content in source_list.items():
+        reader = fsr(content, include_dirs=include_list)
+        try:
+            sub_ast = parser(reader)
+        except Exception as e:
+            print(f"Ignoring {src} due to error: {e}")
+            continue
+        # Drop non-floaters.
+        sub_ast.content = list(ast_utils.children_of_type(sub_ast, (Function_Subprogram, Subroutine_Subprogram)))
+        _reparent_children(sub_ast)
+        known_sub_asts[src] = sub_ast
+
+    # Since the order is not topological, we need to incrementally find more connected floating subprograms.
+    changed = True
+    while changed:
+        changed = False
+        new_floaters = []
+        for src, sub_ast in known_sub_asts.items():
+            # Find all the new floating subprograms that are known to be needed so far.
+            local_new_floaters = []
+            for esp in sub_ast.children:
+                assert isinstance(esp, (Function_Subprogram, Subroutine_Subprogram))
+                stmt = ast_utils.singular(ast_utils.children_of_type(esp, NAMED_STMTS_OF_INTEREST_TYPES))
+                name = find_name(stmt)
+                if name in known_names and name not in known_floaters:
+                    # We have found a new floating subprogram that's needed.
+                    known_floaters.add(name)
+                    known_names.update({nm.string for nm in walk(esp, Name)})
+                    local_new_floaters.append(esp)
+            if local_new_floaters:
+                new_floaters.extend(local_new_floaters)
+                # Trim down the candidate floating subprograms.
+                sub_ast.content = [esp for esp in sub_ast.children if esp not in local_new_floaters]
+                _reparent_children(sub_ast)
+        if new_floaters:
+            # Append the new floating subprograms to our main AST.
+            ast.content = ast.children + new_floaters
+            _reparent_children(ast)
+            changed = True
+    return ast
 
 
 def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[str, Dict[str, List[Name]]]) \
@@ -3815,6 +3867,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     reader = ffr(file_candidate=source_string, include_dirs=include_list, source_only=source_list)
 
     ast = parser(reader)
+    if isinstance(source_list, list):
+        source_list = {src: Path(src).read_text() for src in source_list}
     ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, source_list, include_list, parser)
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
@@ -4228,18 +4282,18 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             prop.replacements) + " If: " + str(if_eval.replacements))
         step += 1
 
-    unusedFunctionFinder = ast_transforms.FindUnusedFunctions("radiation",parse_order)
-    unusedFunctionFinder.visit(program)    
-    used_funcs=unusedFunctionFinder.used_names
-    needed=[]
-    current_list=used_funcs['radiation']
-    current_list+='radiation'   
-    #current_list+='calc_no_scattering_transmittance_lw'
-    #needed.append(['radiation_twostreams','calc_no_scattering_transmittance_lw'])
-    needed.append(['radiation_interface','radiation'])
-    skip_list=[]
-    skip_list=['radiation_monochromatic','radiation_cloudless_sw',
-               'radiation_tripleclods_sw','radiation_homogeneous_sw']
+    unusedFunctionFinder = ast_transforms.FindUnusedFunctions("radiation", parse_order)
+    unusedFunctionFinder.visit(program)
+    used_funcs = unusedFunctionFinder.used_names
+    needed = []
+    current_list = used_funcs['radiation']
+    current_list += 'radiation'
+    # current_list+='calc_no_scattering_transmittance_lw'
+    # needed.append(['radiation_twostreams','calc_no_scattering_transmittance_lw'])
+    needed.append(['radiation_interface', 'radiation'])
+    skip_list = []
+    skip_list = ['radiation_monochromatic', 'radiation_cloudless_sw',
+                 'radiation_tripleclods_sw', 'radiation_homogeneous_sw']
     for i in reversed(parse_order):
         for j in program.modules:
             if j.name.name in skip_list:
