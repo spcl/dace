@@ -3168,6 +3168,9 @@ def correct_for_function_calls(ast: Program):
         else:
             pr_name, _ = pr.children
             if isinstance(pr_name, Name):
+                if pr_name.string.startswith('nf90_'):
+                    # TODO: Create an empty stub for netcdf to allow producing compilable AST.
+                    continue
                 pr_spec = find_real_ident_spec(pr_name.string, scope_spec, ident_map, alias_map)
                 pr_type_spec = find_type_entity(ident_map[pr_spec], ident_map, alias_map)
             elif isinstance(pr_name, Data_Ref):
