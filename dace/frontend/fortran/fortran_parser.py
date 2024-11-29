@@ -2951,8 +2951,8 @@ def alias_specs(ast: Program, ident_map: Dict[Tuple[str, ...], NAMED_STMTS_OF_IN
         use_spec = scope_spec + (mod_name,)
 
         if mod_spec not in ident_map:
-            # TODO: `netcdf` is somehow not present. Create a stub for `netcdf`.
-            #assert mod_name == 'netcdf'
+            # TODO: `netcdf` and a few more modules are somehow not present. Create stubs for them?
+            assert mod_name == 'netcdf', f"Cannot find module: {mod_name}"
             continue
         # The module's name cannot be used as an identifier in this scope anymore, so just point to the module.
         alias_map[use_spec] = ident_map[mod_spec]
@@ -3596,10 +3596,10 @@ def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_li
 
     _recursive_ast_improver(ast)
 
-    # Sort the modules in the order of their dependency.
-    ast = sort_modules(ast)
     # Add all the free-floating subprograms from other source files in case we missed them.
     ast = collect_floating_subprograms(ast, source_list, include_list, parser)
+    # Sort the modules in the order of their dependency.
+    ast = sort_modules(ast)
 
     return ast, dep_graph, interface_blocks, asts
 
@@ -3608,7 +3608,7 @@ def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], incl
     known_names : Set[str] = {nm.string for nm in walk(ast, Name)}
 
     known_floaters : Set[str] = set()
-    for esp in walk(ast, (Function_Subprogram, Subroutine_Subprogram)):
+    for esp in ast.children:
         stmt = ast_utils.singular(ast_utils.children_of_type(esp, NAMED_STMTS_OF_INTEREST_TYPES))
         known_floaters.add(find_name(stmt))
 
@@ -3620,9 +3620,6 @@ def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], incl
         except Exception as e:
             print(f"Ignoring {src} due to error: {e}")
             continue
-        # Drop non-floaters.
-        sub_ast.content = list(ast_utils.children_of_type(sub_ast, (Function_Subprogram, Subroutine_Subprogram)))
-        _reparent_children(sub_ast)
         known_sub_asts[src] = sub_ast
 
     # Since the order is not topological, we need to incrementally find more connected floating subprograms.
@@ -3632,21 +3629,14 @@ def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], incl
         new_floaters = []
         for src, sub_ast in known_sub_asts.items():
             # Find all the new floating subprograms that are known to be needed so far.
-            local_new_floaters = []
             for esp in sub_ast.children:
-                assert isinstance(esp, (Function_Subprogram, Subroutine_Subprogram))
                 stmt = ast_utils.singular(ast_utils.children_of_type(esp, NAMED_STMTS_OF_INTEREST_TYPES))
                 name = find_name(stmt)
                 if name in known_names and name not in known_floaters:
                     # We have found a new floating subprogram that's needed.
                     known_floaters.add(name)
                     known_names.update({nm.string for nm in walk(esp, Name)})
-                    local_new_floaters.append(esp)
-            if local_new_floaters:
-                new_floaters.extend(local_new_floaters)
-                # Trim down the candidate floating subprograms.
-                sub_ast.content = [esp for esp in sub_ast.children if esp not in local_new_floaters]
-                _reparent_children(sub_ast)
+                    new_floaters.append(esp)
         if new_floaters:
             # Append the new floating subprograms to our main AST.
             ast.content = ast.children + new_floaters

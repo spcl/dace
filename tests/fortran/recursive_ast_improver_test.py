@@ -765,3 +765,135 @@ END PROGRAM main
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
     assert not set(simple_graph.nodes)
     assert not actually_used_in_module
+
+
+def test_floaters_are_brought_in():
+    """
+    The same simple program, but this time the subroutine is defined inside the main program that calls it.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine fun(z)
+  implicit none
+  real, intent(out) :: z
+  z = 5.5
+end subroutine fun
+""", 'floater').add_file("""
+program main
+  implicit none
+
+  interface
+    subroutine fun(z)
+      implicit none
+      real, intent(out) :: z
+    end subroutine fun
+  end interface
+
+  real d(4)
+  call fun(d(2))
+end program main
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+
+    got = ast.tofortran()
+    want = """
+PROGRAM main
+  IMPLICIT NONE
+  INTERFACE
+    SUBROUTINE fun(z)
+      IMPLICIT NONE
+      REAL, INTENT(OUT) :: z
+    END SUBROUTINE fun
+  END INTERFACE
+  REAL :: d(4)
+  CALL fun(d(2))
+END PROGRAM main
+SUBROUTINE fun(z)
+  IMPLICIT NONE
+  REAL, INTENT(OUT) :: z
+  z = 5.5
+END SUBROUTINE fun
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert not set(dep_graph.nodes)
+    assert not set(dep_graph.edges)
+    assert not asts
+    assert not interface_blocks
+
+    # Verify simplification of the dependency graph.
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
+    assert not set(simple_graph.nodes)
+    assert not set(simple_graph.edges)
+    assert not actually_used_in_module
+
+
+def test_floaters_can_bring_in_more_modules():
+    """
+    The same simple program, but this time the subroutine is defined inside the main program that calls it.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  real, parameter :: zzz = 5.5
+end module lib
+subroutine fun(z)
+  use lib
+  implicit none
+  real, intent(out) :: z
+  z = zzz
+end subroutine fun
+""", 'floater').add_file("""
+program main
+  implicit none
+
+  interface
+    subroutine fun(z)
+      implicit none
+      real, intent(out) :: z
+    end subroutine fun
+  end interface
+
+  real d(4)
+  call fun(d(2))
+end program main
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  REAL, PARAMETER :: zzz = 5.5
+END MODULE lib
+PROGRAM main
+  IMPLICIT NONE
+  INTERFACE
+    SUBROUTINE fun(z)
+      IMPLICIT NONE
+      REAL, INTENT(OUT) :: z
+    END SUBROUTINE fun
+  END INTERFACE
+  REAL :: d(4)
+  CALL fun(d(2))
+END PROGRAM main
+SUBROUTINE fun(z)
+  USE lib
+  IMPLICIT NONE
+  REAL, INTENT(OUT) :: z
+  z = zzz
+END SUBROUTINE fun
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert not set(dep_graph.nodes)
+    assert not set(dep_graph.edges)
+    assert not asts
+    assert not interface_blocks
+
+    # Verify simplification of the dependency graph.
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
+    assert not set(simple_graph.nodes)
+    assert not set(simple_graph.edges)
+    assert not actually_used_in_module
