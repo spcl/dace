@@ -3630,7 +3630,9 @@ def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], incl
         for src, sub_ast in known_sub_asts.items():
             # Find all the new floating subprograms that are known to be needed so far.
             for esp in sub_ast.children:
-                stmt = ast_utils.singular(ast_utils.children_of_type(esp, NAMED_STMTS_OF_INTEREST_TYPES))
+                stmt = ast_utils.atmost_one(ast_utils.children_of_type(esp, NAMED_STMTS_OF_INTEREST_TYPES))
+                if not stmt:
+                    continue
                 name = find_name(stmt)
                 if name in known_names and name not in known_floaters:
                     # We have found a new floating subprogram that's needed.
