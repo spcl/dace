@@ -1057,7 +1057,7 @@ END SUBROUTINE main
     assert rename_dict == {'lib': {}}
 
 
-def test_interface_replacer():
+def test_interface_replacer_with_module_procedures():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
   implicit none
@@ -1142,3 +1142,73 @@ END SUBROUTINE main
 
     assert {k: set(v) for k, v in name_dict.items()} == {'lib': {'real_fun', 'not_real_fun'}}
     assert rename_dict == {'lib': {}}
+
+
+def test_interface_replacer_with_subroutine_decls():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  interface
+    subroutine fun(z)
+      implicit none
+      real, intent(out) :: z
+    end subroutine fun
+  end interface
+end module lib
+""").add_file("""
+subroutine main
+  use lib, only: no_fun => fun
+  implicit none
+  real d(4)
+  call no_fun(d(3))
+end subroutine main
+
+subroutine fun(z)
+  implicit none
+  real, intent(out) :: z
+  z = 1.0
+end subroutine fun
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
+    ast = correct_for_function_calls(ast)
+    ast = deconstruct_interface_calls(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+END MODULE lib
+SUBROUTINE main
+  IMPLICIT NONE
+  REAL :: d(4)
+  CALL fun(d(3))
+END SUBROUTINE main
+SUBROUTINE fun(z)
+  IMPLICIT NONE
+  REAL, INTENT(OUT) :: z
+  z = 1.0
+END SUBROUTINE fun
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert set(dep_graph.nodes) == {'lib', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib')}
+    assert not interface_blocks
+
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
+
+    # Nothing changed here.
+    assert set(dep_graph.nodes) == {'lib', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib')}
+    assert not interface_blocks
+    assert {k: set(v) for k, v in actually_used_in_module.items()} == {'main': set(), 'lib': {'no_fun', 'fun'}}
+
+    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    got = ast.tofortran()
+    # Still want the same program, because nothing should have been pruned.
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert {k: set(v) for k, v in name_dict.items()} == {'lib': {'fun'}}
+    assert rename_dict == {'lib': {'fun': 'no_fun'}}
