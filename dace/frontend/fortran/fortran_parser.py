@@ -3244,6 +3244,33 @@ def correct_for_function_calls(ast: Program):
             par.items = [fnref if c == sc else c for c in par.children]
             _reparent_children(par)
 
+    # These can also be intrinsic function calls.
+    for fref in walk(ast, (Function_Reference, Call_Stmt)):
+        scope = find_named_ancester(fref.parent)
+        assert scope
+        scope_spec = ident_spec(scope)
+
+        name, args = fref.children
+        name = name.string
+        if not Intrinsic_Name.match(name):
+            # There is no way this is an intrinsic call.
+            continue
+        fref_spec = scope_spec + (name,)
+        if fref_spec in alias_map:
+            # This is already an alias, so intrinsic object is shadowed.
+            continue
+        if isinstance(fref, Function_Reference):
+            par = fref.par
+            repl = Intrinsic_Function_Reference(fref.tofortran())
+            # Set the arguments ourselves, just in case the parser messes it up.
+            repl.items = (Intrinsic_Name(name), args)
+            _reparent_children(repl)
+            par.content = [repl if c == fref else c for c in par.children]
+            _reparent_children(par)
+        else:
+            fref.items = (Intrinsic_Name(name), args)
+            _reparent_children(fref)
+
     return ast
 
 
