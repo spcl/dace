@@ -3159,6 +3159,36 @@ def generic_specs(ast: Program) -> Dict[Tuple[str, ...], Tuple[Tuple[str, ...], 
     return genc_map
 
 
+def interface_specs(ast: Program) -> Dict[Tuple[str, ...], Tuple[Tuple[str, ...], ...]]:
+    iface_map: Dict[Tuple[str, ...], Tuple[Tuple[str, ...], ...]] = {}
+    for ifs in walk(ast, Interface_Stmt):
+        assert isinstance(ifs, Interface_Stmt)
+        ib = ifs.parent
+        scope = find_named_ancester(ib)
+        assert scope
+        scope_spec = ident_spec(scope)
+        name = find_name_of_stmt(ifs)
+        if not name:
+            # TODO: How to deal with anonymous interface blocks?
+            # Only named interfaces can be called.
+            continue
+        ifspec = scope_spec + (name,)
+
+        # Get the spec of all the callable things in this block that may end up as a resolution for this interface.
+        fns: List[str] = []
+        for fn in walk(ib, (Function_Stmt, Procedure_Stmt)):
+            if isinstance(fn, Function_Stmt):
+                fns.append(find_name_of_stmt(fn))
+            elif isinstance(fn, Procedure_Stmt):
+                for nm in walk(fn, Name):
+                    fns.append(nm.string)
+
+        fn_specs = tuple(scope_spec + (f,) for f in fns)
+        iface_map[ifspec] = fn_specs
+
+    return iface_map
+
+
 def correct_for_function_calls(ast: Program):
     """Look for function calls that may have been misidentified as array access and fix them."""
     ident_map = identifier_specs(ast)
@@ -3273,6 +3303,187 @@ def deconstruct_enums(ast: Program) -> Program:
     return ast
 
 
+def _compute_argument_signature(args, fnref: Union[Function_Reference, Call_Stmt], scope_spec: Tuple[str, ...],
+                                alias_map: SPEC_TABLE):
+    if not args:
+        return tuple()
+
+    args_sig = []
+    for c in args.children:
+        def _deduct_type(x):
+            if isinstance(x, (Real_Literal_Constant, Signed_Real_Literal_Constant)):
+                return ('REAL',)
+            elif isinstance(x, (Int_Literal_Constant, Signed_Int_Literal_Constant)):
+                return ('INTEGER',)
+            elif isinstance(x, Char_Literal_Constant):
+                return ('CHARACTER',)
+            elif isinstance(x, Logical_Literal_Constant):
+                return ('LOGICAL',)
+            elif isinstance(x, Name):
+                x_spec = scope_spec + (x.string,)
+                assert x_spec in alias_map, f"cannot find: {x_spec} / {x}"
+                return find_type_entity(alias_map[x_spec], alias_map)
+            elif isinstance(x, Data_Ref):
+                return find_type_dataref(x, scope_spec, alias_map)
+            elif isinstance(x, Part_Ref):
+                # TODO: Add ref.
+                part_name, _ = x.children
+                return find_type_dataref(part_name, scope_spec, alias_map)
+            elif isinstance(x, Actual_Arg_Spec):
+                kw, val = x.children
+                return _deduct_type(val)
+            elif isinstance(x, BinaryOpBase):
+                # TODO: Figure out the actual type.
+                return ('*',)
+            elif isinstance(x, Intrinsic_Function_Reference):
+                # TODO: Figure out the actual type.
+                return ('*',)
+
+        c_type = _deduct_type(c)
+        assert c_type, f"got: {c} / {type(c)} : {fnref}"
+        args_sig.append(c_type)
+
+    return tuple(args_sig)
+
+
+def deconstruct_interface_calls(ast: Program) -> Program:
+    SUFFIX, COUNTER = 'deconiface', 0
+
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast, ident_map)
+    iface_map = interface_specs(ast)
+
+    for fref in walk(ast, (Function_Reference, Call_Stmt)):
+        scope = find_named_ancester(fref.parent)
+        assert scope
+        scope_spec = ident_spec(scope)
+
+        name, args = fref.children
+        if isinstance(name, Intrinsic_Name):
+            continue
+        fref_spec = find_real_ident_spec(name.string, scope_spec, alias_map)
+        assert fref_spec in alias_map, f"cannot find: {fref_spec}"
+        if not isinstance(alias_map[fref_spec], Interface_Stmt):
+            # We are only interested in calls to interfaces here.
+            continue
+
+        # Find the nearest execution and its correpsonding specification parts.
+        execution_part = fref.parent
+        while not isinstance(execution_part, Execution_Part):
+            execution_part = execution_part.parent
+        subprog = execution_part.parent
+        specification_part = ast_utils.atmost_one(ast_utils.children_of_type(subprog, Specification_Part))
+
+        ifc_spec = ident_spec(alias_map[fref_spec])
+        args_sig = _compute_argument_signature(args, fref, scope_spec, alias_map)
+        conc_spec = None
+        for cand in iface_map[ifc_spec]:
+            assert cand in alias_map
+            cand_stmt = alias_map[cand]
+            assert isinstance(cand_stmt, (Function_Stmt, Subroutine_Stmt))
+            cand_spec = ident_spec(cand_stmt)
+            # TODO: Add ref.
+            _, _, cand_args, _ = cand_stmt.children
+            cand_args_sig = []
+            if cand_args:
+                for ca in cand_args.children:
+                    ca_type_spec = find_type_entity(ident_map[cand_spec + (ca.string,)], alias_map)
+                    assert ca_type_spec
+                    cand_args_sig.append(ca_type_spec)
+            cand_args_sig = tuple(cand_args_sig)
+
+            def _eq_(a_sig: Tuple[Tuple[str, ...]], b_sig: Tuple[Tuple[str, ...]]):
+                if len(a_sig) != len(b_sig):
+                    return False
+                for a, b in zip(a_sig, b_sig):
+                    if ('*',) in {a, b}:
+                        # Consider them matched.
+                        continue
+                    if a != b:
+                        return False
+                return True
+
+            if _eq_(args_sig, cand_args_sig):
+                conc_spec = cand
+                break
+        assert conc_spec and conc_spec in alias_map, f"[in: {fref_spec}] {ifc_spec} should have been among {set(alias_map.keys())}"
+
+        # We are assumping that it's a subprogram defined directly inside a module.
+        assert len(conc_spec) == 2
+        mod, pname = conc_spec
+
+        if mod == scope_spec[0]:
+            # Since `pname` must have been already defined at the module level, there is no need for aliasing.
+            pname_alias = pname
+        else:
+            # If we are importing it from a different module, we should create an alias to avoid name collision.
+            pname_alias, COUNTER = f"{pname}_{SUFFIX}_{COUNTER}", COUNTER + 1
+            if not specification_part:
+                specification_part = Specification_Part(get_reader(f"use {mod}, only: {pname_alias} => {pname}"))
+                subprog.content = subprog.children + [specification_part]
+                _reparent_children(subprog)
+            else:
+                use_stmt = Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}")
+                specification_part.content = [use_stmt] + specification_part.children
+                _reparent_children(specification_part)
+
+        # For both function and subroutine calls, replace `bname` with `pname_alias`, and add `dref` as the first arg.
+        _, args = fref.children
+        pname_alias = Name(pname_alias)
+        fref.items = (pname_alias, args)
+        _reparent_children(fref)
+
+    # TODO: Figure out a way without rebuilding here.
+    # Rebuild the maps because aliasing may have changed.
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast, ident_map)
+
+    # At this point, we must have replaced all the interface calls with concrete calls.
+    for use in walk(ast, Use_Stmt):
+        mod_name = ast_utils.singular(ast_utils.children_of_type(use, Name)).string
+        mod_spec = (mod_name,)
+
+        olist = ast_utils.atmost_one(ast_utils.children_of_type(use, 'Only_List'))
+        if not olist:
+            # There is nothing directly referring to the interface.
+            continue
+        scope = find_named_ancester(use.parent)
+        assert scope
+        scope_spec = ident_spec(scope)
+
+        survivors = []
+        for c in olist.children:
+            assert isinstance(c, (Name, Rename))
+            if isinstance(c, Name):
+                src, tgt = c, c
+            elif isinstance(c, Rename):
+                _, src, tgt = c.children
+            src, tgt = src.string, tgt.string
+            src_spec, tgt_spec = scope_spec + (src,), mod_spec + (tgt,)
+            assert tgt_spec in alias_map
+            if not isinstance(alias_map[tgt_spec], Interface_Stmt):
+                # Leave the non-interface usages alone.
+                survivors.append(c)
+
+        if survivors:
+            olist.items = survivors
+            _reparent_children(olist)
+        else:
+            par = use.parent
+            par.content = [c for c in par.children if c != use]
+            _reparent_children(par)
+
+    # At this point, we must have replaced all references to the interfaces.
+    for k in iface_map.keys():
+        assert k in alias_map and isinstance(alias_map[k], Interface_Stmt)
+        ib = alias_map[k].parent
+        par = ib.parent
+        par.content = [c for c in par.children if c != ib]
+        _reparent_children(par)
+
+    return ast
+
+
 def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program, nx.DiGraph):
     SUFFIX, COUNTER = 'deconproc', 0
 
@@ -3323,41 +3534,7 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
             fnref = pd.parent
             assert isinstance(fnref, (Function_Reference, Call_Stmt))
             _, args = fnref.children
-            args_sig = []
-            for c in args.children:
-                def _deduct_type(x):
-                    if isinstance(x, (Real_Literal_Constant, Signed_Real_Literal_Constant)):
-                        return ('REAL',)
-                    elif isinstance(x, (Int_Literal_Constant, Signed_Int_Literal_Constant)):
-                        return ('INTEGER',)
-                    elif isinstance(x, Char_Literal_Constant):
-                        return ('CHARACTER',)
-                    elif isinstance(x, Logical_Literal_Constant):
-                        return ('LOGICAL',)
-                    elif isinstance(x, Name):
-                        x_spec = scope_spec + (x.string,)
-                        assert x_spec in ident_map
-                        return find_type_entity(ident_map[x_spec], ident_map, alias_map)
-                    elif isinstance(x, Data_Ref):
-                        return find_type_dataref(x, scope_spec, ident_map, alias_map)
-                    elif isinstance(x, Part_Ref):
-                        # TODO: Add ref.
-                        part_name, _ = x.children
-                        return find_type_dataref(part_name, scope_spec, ident_map, alias_map)
-                    elif isinstance(x, Actual_Arg_Spec):
-                        kw, val = x.children
-                        return _deduct_type(val)
-                    elif isinstance(x, BinaryOpBase):
-                        # TODO: Figure out the actual type.
-                        return ('*',)
-                    elif isinstance(x, Intrinsic_Function_Reference):
-                        # TODO: Figure out the actual type.
-                        return ('*',)
-
-                c_type = _deduct_type(c)
-                assert c_type, f"got: {c} / {type(c)} : {fnref}"
-                args_sig.append(c_type)
-            args_sig = tuple(args_sig)
+            args_sig = _compute_argument_signature(args, fnref, scope_spec, alias_map)
 
             for cand in genc_map[bspec]:
                 cand_stmt = ident_map[proc_map[cand]]
