@@ -20,7 +20,7 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Intrinsic_Type_Spec, Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, \
     Signed_Int_Literal_Constant, Char_Literal_Constant, Logical_Literal_Constant, Actual_Arg_Spec, \
     Intrinsic_Function_Reference, Section_Subscript_List, Subscript_Triplet, Structure_Constructor, Enum_Def, \
-    Enumerator_List, Enumerator, Expr, Type_Bound_Procedure_Part, Interface_Stmt, Intrinsic_Name
+    Enumerator_List, Enumerator, Expr, Type_Bound_Procedure_Part, Interface_Stmt, Intrinsic_Name, Access_Stmt
 from fparser.two.Fortran2008 import Type_Declaration_Stmt, Procedure_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -3498,6 +3498,33 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         else:
             par = use.parent
             par.content = [c for c in par.children if c != use]
+            _reparent_children(par)
+
+    # We also remove any access statement that makes these interfaces public/private.
+    for acc in walk(ast, Access_Stmt):
+        # TODO: Add ref.
+        kind, alist = acc.children
+        if not alist:
+            continue
+        scope = find_named_ancester(acc.parent)
+        assert scope
+        scope_spec = ident_spec(scope)
+
+        survivors = []
+        for c in alist.children:
+            assert isinstance(c, Name)
+            c_spec = scope_spec + (c.string,)
+            assert c_spec in alias_map
+            if not isinstance(alias_map[c_spec], Interface_Stmt):
+                # Leave the non-interface usages alone.
+                survivors.append(c)
+
+        if survivors:
+            alist.items = survivors
+            _reparent_children(alist)
+        else:
+            par = acc.parent
+            par.content = [c for c in par.children if c != acc]
             _reparent_children(par)
 
     # At this point, we must have replaced all references to the interfaces.

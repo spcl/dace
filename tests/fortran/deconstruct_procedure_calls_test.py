@@ -8,7 +8,7 @@ from fparser.two.parser import ParserFactory
 from dace.frontend.fortran.ast_utils import UseAllPruneList
 from dace.frontend.fortran.fortran_parser import deconstruct_procedure_calls, recursive_ast_improver, \
     prune_unused_children, simplified_dependency_graph, deconstruct_associations, correct_for_function_calls, \
-    deconstruct_enums
+    deconstruct_enums, deconstruct_interface_calls
 from tests.fortran.fotran_test_helper import SourceCodeBuilder
 
 
@@ -1054,4 +1054,91 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     assert {k: set(v) for k, v in name_dict.items()} == {'lib': {'real_fun'}}
+    assert rename_dict == {'lib': {}}
+
+
+def test_interface_replacer():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  public :: fun
+  interface fun
+    module procedure real_fun
+  end interface fun
+  interface not_fun
+    module procedure not_real_fun
+  end interface not_fun
+contains
+  real function real_fun()
+    implicit none
+    real_fun = 1.0
+  end function real_fun
+  subroutine not_real_fun(a)
+    implicit none
+    real, intent(out) :: a
+    a = 1.0
+  end subroutine not_real_fun
+end module lib
+""").add_file("""
+subroutine main
+  use lib, only: fun, not_fun
+  implicit none
+  real d(4)
+  d(2) = fun()
+  call not_fun(d(3))
+end subroutine main
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
+    ast = correct_for_function_calls(ast)
+    ast = deconstruct_interface_calls(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  REAL FUNCTION real_fun()
+    IMPLICIT NONE
+    real_fun = 1.0
+  END FUNCTION real_fun
+  SUBROUTINE not_real_fun(a)
+    IMPLICIT NONE
+    REAL, INTENT(OUT) :: a
+    a = 1.0
+  END SUBROUTINE not_real_fun
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: not_real_fun_deconiface_1 => not_real_fun
+  USE lib, ONLY: real_fun_deconiface_0 => real_fun
+  IMPLICIT NONE
+  REAL :: d(4)
+  d(2) = real_fun_deconiface_0()
+  CALL not_real_fun_deconiface_1(d(3))
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert set(dep_graph.nodes) == {'lib', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib')}
+    assert ({k1: {k2: {v.string for v in vs} for k2, vs in k2v.items()} for k1, k2v in interface_blocks.items()}
+            == {'lib': {'fun': {'real_fun'}, 'not_fun': {'not_real_fun'}}})
+
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
+
+    # Nothing changed here.
+    assert set(dep_graph.nodes) == {'lib', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib')}
+    assert ({k1: {k2: {v.string for v in vs} for k2, vs in k2v.items()} for k1, k2v in interface_blocks.items()}
+            == {'lib': {'fun': {'real_fun'}, 'not_fun': {'not_real_fun'}}})
+    assert ({k: set(v) for k, v in actually_used_in_module.items()}
+            == {'lib': {'real_fun', 'not_real_fun'}, 'main': set()})
+
+    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    got = ast.tofortran()
+    # Still want the same program, because nothing should have been pruned.
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert {k: set(v) for k, v in name_dict.items()} == {'lib': {'real_fun', 'not_real_fun'}}
     assert rename_dict == {'lib': {}}
