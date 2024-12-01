@@ -695,9 +695,9 @@ class CallToArray(NodeTransformer):
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.excepted_funcs = [
             "malloc", "pow", "cbrt", "__dace_sign", "__dace_allocated", "tanh", "atan2",
-            "__dace_epsilon","__dace_exit", *FortranIntrinsics.function_names()
+            "__dace_epsilon","__dace_exit","surrtpk","surrtab","surrtrf","abor1", *FortranIntrinsics.function_names()
         ]
-        #"surrtpk","surrtab","surrtrf","abor1"
+        #
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         if isinstance(node.name, str):
@@ -2779,7 +2779,7 @@ class IfEvaluator(NodeTransformer):
         try:
             evaluated = sym.evaluate(sym.pystr_to_symbolic(text), {})
         except:
-            #print("Failed: " + text)
+            print("Failed: " + text)
             return self.generic_visit(node)
 
         if evaluated == sp.true:
@@ -2849,6 +2849,18 @@ class AssignmentPropagator(NodeTransformer):
                             old_value = i[1]
                             self.replacements += 1
                             break
+                        elif isinstance(old_value, ast_internal_classes.Name_Node) and isinstance(i[0],ast_internal_classes.Name_Node):
+                            if old_value.name == i[0].name:
+                                old_value = i[1]
+                                self.replacements += 1
+                                break
+                        elif isinstance(old_value,ast_internal_classes.Data_Ref_Node) and isinstance(i[0], ast_internal_classes.Data_Ref_Node):
+                            if isinstance(old_value.part_ref,ast_internal_classes.Name_Node) and isinstance(i[0].part_ref,ast_internal_classes.Name_Node) and isinstance(old_value.parent_ref,ast_internal_classes.Name_Node) and isinstance(i[0].parent_ref,ast_internal_classes.Name_Node):
+                                if old_value.part_ref.name == i[0].part_ref.name and old_value.parent_ref.name == i[0].parent_ref.name:
+                                    old_value = i[1]
+                                    self.replacements += 1
+                                    break
+
                     new_node = self.visit(old_value)
 
                 if new_node is None:

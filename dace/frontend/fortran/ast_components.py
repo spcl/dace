@@ -802,7 +802,7 @@ class InternalFortranAst:
     def array_constructor(self, node: FASTNode):
         children = self.create_children(node)
         value_list = get_child(children, ast_internal_classes.Ac_Value_List_Node)
-        return ast_internal_classes.Array_Constructor_Node(value_list=value_list.value_list)
+        return ast_internal_classes.Array_Constructor_Node(value_list=value_list.value_list, type="VOID")
 
     def allocate_stmt(self, node: FASTNode):
         children = self.create_children(node)

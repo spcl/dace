@@ -14,6 +14,7 @@ from dace.frontend.fortran import fortran_parser
 
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
+import dace.frontend.fortran.ast_internal_classes as ast_internal
 
 
 def find_path_recursive(base_dir):
@@ -68,6 +69,7 @@ if __name__ == "__main__":
 
     parkind_ast = parser(ffr(file_candidate="/home/alex/icon-model/src/shared/mo_kind.f90"))
     parkinds = ast_builder.create_ast(parkind_ast)
+   
 
     reader = ffr(file_candidate="/home/alex/icon-model/src/namelists/mo_radiation_nml.f90")
     namelist_ast = parser(reader)
@@ -119,6 +121,15 @@ if __name__ == "__main__":
         print("Made " + str(replacements) + " replacements in step " + str(step) + " Prop: " + str(
             prop.replacements) + " If: " + str(if_eval.replacements))
         step += 1
+
+    #TODO: a couple of manual replacements
+    lister2.simple_assignments.append(
+        (ast_internal.Data_Ref_Node(parent_ref=ast_internal.Name_Node(name="ecrad_conf"), part_ref=ast_internal.Name_Node(name="do_save_radiative_properties")),
+         ast_internal.Bool_Literal_Node(value='False')))
+    lister2.simple_assignments.append(
+        (ast_internal.Name_Node(name="lhook"),
+         ast_internal.Bool_Literal_Node(value='False')))
+
 
     #namelist_internal_ast=IfEvaluator().visit(namelist_internal_ast)
     base_dir = "/home/alex/icon-model/externals/ecrad/"
