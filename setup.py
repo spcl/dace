@@ -38,7 +38,7 @@ try:
         output = subprocess.check_output([cmake_path, '--version']).decode('utf-8')
         cmake_version = tuple(int(t) for t in output.splitlines()[0].split(' ')[-1].split('.'))
         # If version meets minimum requirements, CMake is not necessary
-        if cmake_version >= (3, 15):
+        if cmake_version >= (3, 17):
             cmake_requires = []
 except (subprocess.CalledProcessError, OSError, IndexError, ValueError):
     # Any failure in getting the CMake version counts as "not found"

@@ -97,24 +97,24 @@ def run_mandelbrot1(device_type: dace.dtypes.DeviceType):
         Z, N = sdfg(xmin, xmax, ymin, ymax, maxiter, horizon)
 
     # Compute ground truth and validate
-    Z_ref, N_ref = ground_truth(xmin, xmax, ymin, ymax, xn, yn, maxiter)
+    Z_ref, N_ref = ground_truth(xmin, xmax, ymin, ymax, XN, YN, maxiter)
     assert np.allclose(Z, Z_ref)
     assert np.allclose(N, N_ref)
     return sdfg
 
 
-@pytest.mark.skip(reason="Parsing error")
+@pytest.mark.skip(reason="Parsing error (see issue #1139)")
 def test_cpu():
     run_mandelbrot1(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Parsing error")
+@pytest.mark.skip(reason="Parsing error (see issue #1139)")
 @pytest.mark.gpu
 def test_gpu():
     run_mandelbrot1(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Parsing error")
+@pytest.mark.skip(reason="Parsing error (see issue #1139)")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_mandelbrot1(dace.dtypes.DeviceType.FPGA)
