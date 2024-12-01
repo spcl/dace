@@ -118,7 +118,7 @@ ASCEND_SCHEDULES = [
     ScheduleType.Ascend_AiCore
 ]
 
-ASCNED_STORAGES = [
+ASCEND_STORAGES = [
     StorageType.Ascend_Global,
     StorageType.Ascend_A1,
     StorageType.Ascend_A2,

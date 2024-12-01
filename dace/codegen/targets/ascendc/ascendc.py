@@ -741,7 +741,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                 copysize += " * sizeof(%s)" % dtype.ctype
 
                 callsite_stream.write(
-                    "DACE_ACL_CHECK(aclrtMemcpy(%s, %s, %s, %s, ACL_MEMCPY_%s_TO_%s));\n"
+                    "DACE_ACL_CHECK(aclrtMemcpy(reinterpret_cast<void*>(%s), %s, reinterpret_cast<const void*>(%s), %s, ACL_MEMCPY_%s_TO_%s));\n"
                     % (
                         dst_expr,
                         copysize,

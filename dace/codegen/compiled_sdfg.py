@@ -190,7 +190,8 @@ class CompiledSDFG(object):
         self._libhandle = ctypes.c_void_p(0)
         self._lastargs = ()
         self.do_not_execute = False
-
+        from dace.codegen import common
+        common.get_ascend_runtime()
         lib.load()  # Explicitly load the library
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
         self._init.restype = ctypes.c_void_p
@@ -224,6 +225,17 @@ class CompiledSDFG(object):
             for node, _ in self._sdfg.all_nodes_recursive():
                 if getattr(node, 'schedule', False) in dtypes.GPU_SCHEDULES:
                     self.has_gpu_code = True
+                    break
+
+        self.has_ascend_code = False
+        for _, _, aval in self._sdfg.arrays_recursive():
+            if aval.storage in dtypes.ASCEND_STORAGES:
+                self.has_ascned_code = True
+                break
+        if not self.has_ascend_code:
+            for node, _ in self._sdfg.all_nodes_recursive():
+                if getattr(node, 'schedule', False) in dtypes.ASCEND_SCHEDULES:
+                    self.has_ascend_code = True
                     break
 
     def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
@@ -377,6 +389,8 @@ class CompiledSDFG(object):
                 result = common.get_gpu_runtime().get_error_string(result)
             return (f'{result}. Consider enabling synchronous debugging mode (environment variable: '
                     'DACE_compiler_cuda_syncdebug=1) to see where the issue originates from.')
+        #elif self.has_ascend_code:
+        #
         else:
             return result
 

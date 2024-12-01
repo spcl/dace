@@ -6,7 +6,7 @@ from dace import config, data, dtypes, sdfg as sd, symbolic
 from dace.sdfg import SDFG
 from dace.properties import CodeBlock
 from dace.codegen import cppunparse
-from dace.codegen.tools import gpu_runtime
+from dace.codegen.tools import gpu_runtime, ascend_runtime
 from functools import lru_cache
 from io import StringIO
 import os
@@ -173,7 +173,7 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
     return gpu_runtime.GPURuntime(backend, libpath)
 
 @lru_cache()
-def get_ascend_runtime() -> AscendRuntime:
+def get_ascend_runtime():
     """
     Returns the Ascend runtime library. The result is cached for performance.
 
@@ -190,6 +190,9 @@ def get_ascend_runtime() -> AscendRuntime:
 
     # Construct runtime library path
     libpath = os.path.join(ascend_home, 'lib64', 'libruntime.so')
+    libfolder = os.path.join(ascend_home, 'lib64')
+
+    os.environ['LD_LIBRARY_PATH'] = libfolder + ':' + os.environ.get('LD_LIBRARY_PATH', '')
 
     # Check if library exists
     if not os.path.exists(libpath):
@@ -211,7 +214,7 @@ def get_ascend_runtime() -> AscendRuntime:
                 '\nPlease set ASCEND_HOME_PATH or ensure the library is installed.'
             )
 
-    return AscendRuntime(libpath)
+    return ascend_runtime.AscendRuntime(libpath)
 
 def is_ascend_available() -> bool:
     """
