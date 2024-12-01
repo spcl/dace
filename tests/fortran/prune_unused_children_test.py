@@ -18,7 +18,7 @@ def parse_improve_and_simplify(sources: Dict[str, str]):
     ast = parser(reader)
     assert isinstance(ast, Program)
 
-    ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, sources, [], parser)
+    ast, dep_graph, interface_blocks = recursive_ast_improver(ast, sources, [], parser)
     assert isinstance(ast, Program)
     assert not any(nx.simple_cycles(dep_graph))
 
@@ -28,7 +28,7 @@ def parse_improve_and_simplify(sources: Dict[str, str]):
 
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
 
-    return ast, simple_graph, actually_used_in_module, asts
+    return ast, simple_graph, actually_used_in_module
 
 
 def test_minimal_no_pruning():
@@ -43,11 +43,10 @@ program main
   d(2) = 5.5
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
     # `recursive_ast_improver_test.py`.
-    assert not asts
     assert not set(simple_graph.nodes)
     assert not actually_used_in_module
 
@@ -90,11 +89,10 @@ subroutine fun(d)
   d(2) = 5.5
 end subroutine fun
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
     # `recursive_ast_improver_test.py`.
-    assert not asts
     assert not set(simple_graph.nodes)
     assert not actually_used_in_module
 
@@ -140,11 +138,10 @@ contains
   end subroutine fun
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
     # `recursive_ast_improver_test.py`.
-    assert not asts
     assert not set(simple_graph.nodes)
     assert not actually_used_in_module
 
@@ -184,11 +181,10 @@ subroutine fun(d)
   d(2) = 5.5
 end subroutine fun
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
     # `recursive_ast_improver_test.py`.
-    assert not asts
     assert not set(simple_graph.nodes)
     assert not actually_used_in_module
 
@@ -235,11 +231,10 @@ subroutine fun(d)
   d(2) = val
 end subroutine fun
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
     # `recursive_ast_improver_test.py`.
-    assert set(asts.keys()) == {'lib'}
     assert set(simple_graph.nodes) == {'lib', 'main'}
     assert actually_used_in_module == {'lib': ['val'], 'main': []}
 
@@ -306,11 +301,10 @@ program main
   call fun_indirect(d)
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
     # `recursive_ast_improver_test.py`.
-    assert set(asts.keys()) == {'lib', 'lib_indirect'}
     assert set(simple_graph.nodes) == {'main', 'lib', 'lib_indirect'}
     assert set(simple_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
     assert actually_used_in_module == {'lib': ['fun'], 'lib_indirect': ['fun_indirect', 'fun'], 'main': []}
@@ -389,11 +383,10 @@ program main
   d(2) = fun()
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
     # `recursive_ast_improver_test.py`.
-    assert set(asts.keys()) == {'lib', 'lib_indirect'}
     assert set(simple_graph.nodes) == {'main', 'lib', 'lib_indirect'}
     assert set(simple_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
     assert actually_used_in_module == {'lib': ['fun'], 'lib_indirect': ['fun', 'fun2'], 'main': []}
@@ -471,10 +464,9 @@ program main
   call fun(d)
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph.
-    assert set(asts.keys()) == {'lib'}
     assert set(simple_graph.nodes) == {'main', 'lib'}
     assert set(simple_graph.edges) == {('main', 'lib')}
     assert actually_used_in_module == {'lib': ['fun'], 'main': []}
@@ -546,10 +538,9 @@ contains
   end subroutine type_test_function
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph.
-    assert set(asts.keys()) == {'lib'}
     assert set(simple_graph.nodes) == {'main', 'lib'}
     assert set(simple_graph.edges) == {('main', 'lib')}
     assert actually_used_in_module == {'main': [], 'lib': ['used_type']}
@@ -616,10 +607,9 @@ contains
   end subroutine type_test_function
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph.
-    assert set(asts.keys()) == {'lib'}
     assert set(simple_graph.nodes) == {'main', 'lib'}
     assert set(simple_graph.edges) == {('main', 'lib')}
     assert actually_used_in_module == {'main': [], 'lib': ['used']}
@@ -681,10 +671,9 @@ contains
   end subroutine type_test_function
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph.
-    assert set(asts.keys()) == {'lib'}
     assert set(simple_graph.nodes) == {'main', 'lib'}
     assert set(simple_graph.edges) == {('main', 'lib')}
     assert actually_used_in_module == {'main': [], 'lib': ['used']}
@@ -749,10 +738,9 @@ contains
   end subroutine type_test_function
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph.
-    assert set(asts.keys()) == {'lib'}
     assert set(simple_graph.nodes) == {'main', 'lib'}
     assert set(simple_graph.edges) == {('main', 'lib')}
     assert actually_used_in_module == {'main': [], 'lib': ['a', 'b']}
@@ -820,10 +808,9 @@ contains
   end subroutine type_test_function
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph.
-    assert set(asts.keys()) == {'lib'}
     assert set(simple_graph.nodes) == {'main', 'lib'}
     assert set(simple_graph.edges) == {('main', 'lib')}
     assert actually_used_in_module == {'main': [], 'lib': ['a', 'b']}
@@ -891,10 +878,9 @@ program main
   call fun(d)
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module, asts = parse_improve_and_simplify(sources)
+    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
 
     # Verify simplification of the dependency graph.
-    assert set(asts.keys()) == {'lib'}
     assert set(simple_graph.nodes) == {'main', 'lib'}
     assert set(simple_graph.edges) == {('main', 'lib')}
     # TODO: `fun2` should actually _not_ be here, since it is not a top-level member of the module. Should investigate.
