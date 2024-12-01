@@ -18,7 +18,7 @@ def parse_and_improve(sources: Dict[str, str]):
     ast = parser(reader)
     assert isinstance(ast, Program)
 
-    ast, dep_graph, interface_blocks, asts = recursive_ast_improver(ast, sources, [], parser)
+    ast, dep_graph, interface_blocks = recursive_ast_improver(ast, sources, [], parser)
     assert isinstance(ast, Program)
     assert not any(nx.simple_cycles(dep_graph))
 
@@ -26,7 +26,7 @@ def parse_and_improve(sources: Dict[str, str]):
     assert isinstance(ast, Program)
     assert not any(nx.simple_cycles(dep_graph))
 
-    return ast, dep_graph, interface_blocks, asts
+    return ast, dep_graph, interface_blocks
 
 
 def test_minimal():
@@ -40,7 +40,7 @@ program main
   d(2) = 5.5
 end program main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -56,7 +56,6 @@ END PROGRAM main
     # Verify that there is not much else to the program.
     assert not set(dep_graph.nodes)
     assert not interface_blocks
-    assert not asts
 
     # Verify simplification of the dependency graph.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
@@ -82,7 +81,7 @@ subroutine fun(d)
   d(2) = 5.5
 end subroutine fun
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -103,7 +102,6 @@ END SUBROUTINE fun
     # Verify that there is not much else to the program.
     assert not set(dep_graph.nodes)
     assert not interface_blocks
-    assert not asts
 
     # Verify simplification of the dependency graph.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
@@ -122,7 +120,7 @@ subroutine fun(d)
   d(2) = 5.5
 end subroutine fun
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -138,7 +136,6 @@ END SUBROUTINE fun
     # Verify that there is not much else to the program.
     assert not set(dep_graph.nodes)
     assert not interface_blocks
-    assert not asts
 
     # Verify simplification of the dependency graph.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
@@ -167,7 +164,7 @@ contains
   end function fun2
 end program main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -193,7 +190,6 @@ END PROGRAM main
     # Verify that there is not much else to the program.
     assert not set(dep_graph.nodes)
     assert not interface_blocks
-    assert not asts
 
     # Verify simplification of the dependency graph.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
@@ -230,7 +226,7 @@ program main
   call fun(d)
 end program main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -262,7 +258,6 @@ END PROGRAM main
     assert set(dep_graph.nodes) == {'lib', 'main'}
     assert set(dep_graph.edges) == {('main', 'lib')}
     assert not interface_blocks
-    assert set(asts.keys()) == {'lib'}
 
     # Verify simplification of the dependency graph.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
@@ -303,7 +298,7 @@ real function fun()
   fun = 5.5
 end function fun
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -335,7 +330,6 @@ END FUNCTION fun
     }
     # Verify that there is not much else to the program.
     assert not set(dep_graph.nodes)
-    assert not asts
 
     # Verify simplification of the dependency graph.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
@@ -375,7 +369,7 @@ real function fun()
   fun = 5.5
 end function fun
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -410,7 +404,6 @@ END FUNCTION fun
     # Verify that there is not much else to the program.
     assert set(dep_graph.nodes) == {'lib', 'main'}
     assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(asts.keys()) == {'lib'}
 
     # Verify simplification of the dependency graph.
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph.copy(), interface_blocks)
@@ -441,7 +434,7 @@ program main
   call fun(d)
 end program main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -466,7 +459,6 @@ END PROGRAM main
     # This time we have a module dependency.
     assert set(dep_graph.nodes) == {'lib', 'main'}
     assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(asts.keys()) == {'lib'}
 
     # Verify that there is not much else to the program.
     assert not interface_blocks
@@ -511,7 +503,7 @@ program main
   call fun_indirect(d)
 end program main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -545,7 +537,6 @@ END PROGRAM main
     # This time we have a module dependency.
     assert set(dep_graph.nodes) == {'lib', 'lib_indirect', 'main'}
     assert set(dep_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
-    assert set(asts.keys()) == {'lib', 'lib_indirect'}
 
     # Verify that there is not much else to the program.
     assert not interface_blocks
@@ -583,7 +574,7 @@ program main
   d(2) = fun()
 end program main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -610,7 +601,6 @@ END PROGRAM main
 
     assert set(dep_graph.nodes) == {'lib', 'main'}
     assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(asts.keys()) == {'lib'}
     assert interface_blocks == {
         'main': {'xi': [Name('fun')]},
     }
@@ -658,7 +648,7 @@ program main
   d(2) = fun()
 end program main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -694,7 +684,6 @@ END PROGRAM main
 
     assert set(dep_graph.nodes) == {'main', 'lib', 'lib_indirect'}
     assert set(dep_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
-    assert set(asts.keys()) == {'lib', 'lib_indirect'}
     assert interface_blocks == {
         'lib_indirect': {'xi': [Name('fun')]},
     }
@@ -732,7 +721,7 @@ contains
   end subroutine type_test_function
 end program main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -758,7 +747,6 @@ END PROGRAM main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
     assert not set(dep_graph.nodes)
-    assert not asts
     assert not interface_blocks
 
     # Verify simplification of the dependency graph.
@@ -792,7 +780,7 @@ program main
   call fun(d(2))
 end program main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -818,7 +806,6 @@ END SUBROUTINE fun
 
     assert not set(dep_graph.nodes)
     assert not set(dep_graph.edges)
-    assert not asts
     assert not interface_blocks
 
     # Verify simplification of the dependency graph.
@@ -858,7 +845,7 @@ program main
   call fun(d(2))
 end program main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks, asts = parse_and_improve(sources)
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
 
     got = ast.tofortran()
     want = """
@@ -889,7 +876,6 @@ END SUBROUTINE fun
 
     assert not set(dep_graph.nodes)
     assert not set(dep_graph.edges)
-    assert not asts
     assert not interface_blocks
 
     # Verify simplification of the dependency graph.
