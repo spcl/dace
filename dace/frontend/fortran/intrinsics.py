@@ -1581,7 +1581,14 @@ class FortranIntrinsics:
             "MINLOC": "__dace_minloc",
             "LEN": "__dace_len",
             "SCAN": "__dace_scan",
+            "RANDOM_SEED": "__dace_random_seed",
+            "RANDOM_NUMBER": "__dace_random_number",
+            "DATE_AND_TIME": "__dace_date_and_time",
+
         }
+        if not DirectReplacement.replacable_name(func_name) and not MathFunctions.replacable(func_name) and func_name not in self.IMPLEMENTATIONS_AST:
+            replacements[func_name]="__dace_"+func_name
+            print(f"Function {func_name} not supported yet, intrinsics required!")
         if func_name in replacements:
             if func_name == "__dace_allocated":
                 print("ALLOCATED ", node.parent)
@@ -1603,6 +1610,7 @@ class FortranIntrinsics:
 
             return MathFunctions.replace(func_name)
 
+        
         if self.IMPLEMENTATIONS_AST[func_name].has_transformation():
 
             if hasattr(self.IMPLEMENTATIONS_AST[func_name], "Transformation"):

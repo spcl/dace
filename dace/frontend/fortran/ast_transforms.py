@@ -258,23 +258,29 @@ class FindFunctionAndSubroutines(NodeVisitor):
 
     def __init__(self):
         self.names: List[ast_internal_classes.Name_Node] = []
+        self.module_based_names: Dict[str,List[ast_internal_classes.Name_Node]] = {}
         self.nodes: Dict[str, ast_internal_classes.FNode] = {}
         self.iblocks: Dict[str, List[str]] = {}
+        self.current_module = None
 
     def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
         ret = node.name
         ret.elemental = node.elemental
         self.names.append(ret)
         self.nodes[ret.name] = node
+        self.module_based_names[self.current_module].append(ret)
 
     def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
         ret = node.name
         ret.elemental = node.elemental
         self.names.append(ret)
         self.nodes[ret.name] = node
+        self.module_based_names[self.current_module].append(ret)
 
     def visit_Module_Node(self, node: ast_internal_classes.Module_Node):
         self.iblocks.update(node.interface_blocks)
+        self.current_module = node.name.name
+        self.module_based_names[self.current_module] = []
         self.generic_visit(node)
 
     @staticmethod
@@ -689,8 +695,9 @@ class CallToArray(NodeTransformer):
     create array expressions for the others.
     """
 
-    def __init__(self, funcs: FindFunctionAndSubroutines):
+    def __init__(self, funcs: FindFunctionAndSubroutines, dict=None):
         self.funcs = funcs
+        self.rename_dict=dict
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.excepted_funcs = [
@@ -705,7 +712,20 @@ class CallToArray(NodeTransformer):
         assert node.name is not None, f"not a valid call expression, got: {node} / {type(node)}"
         name = node.name.name
 
-        if name.startswith("__dace_") or  name in self.excepted_funcs or name in [i.name for i in self.funcs.names] or name in self.funcs.iblocks:
+        found_in_names= name in [i.name for i in self.funcs.names]
+        found_in_renames = False
+        if self.rename_dict is not None:
+            for k,v in self.rename_dict.items():
+                for original_name,replacement_names in v.items():
+                    if name in replacement_names:
+                        found_in_renames = True
+                        module=k
+                        original_one=original_name
+                        node.name.name=original_name
+                        print(f"Found {name} in {module} with original name {original_one}")
+                        break
+
+        if name.startswith("__dace_") or  name in self.excepted_funcs or found_in_renames or found_in_names or name in self.funcs.iblocks:
             processed_args = []
             for i in node.args:
                 arg = CallToArray(self.funcs).visit(i)

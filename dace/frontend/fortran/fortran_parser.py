@@ -3817,6 +3817,50 @@ def deconstruct_associations(ast: Program) -> Program:
     return ast
 
 
+def compute_dep_graph(ast: Base, start_point: str) -> nx.DiGraph:
+    dep_graph = nx.DiGraph()
+    interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
+    exclude = set()
+
+    to_process= [start_point]
+    defined_modules = ast_utils.get_defined_modules(ast)
+    while (len(to_process) > 0):
+        parent_module = to_process.pop(0)
+
+        mod_ast = None
+        for i in ast.children:
+            if isinstance(i, Module):
+                if i.children[0].children[1].string == parent_module:
+                    mod_ast = i
+                    break
+        if mod_ast is None:
+            print(f"Could not find module {parent_module}")
+            continue
+        fandsl = ast_utils.FunctionSubroutineLister()
+        fandsl.get_functions_and_subroutines(mod_ast)
+        
+        dep_graph.add_node(parent_module.lower(), info_list=fandsl)
+
+        used_modules, objects_in_modules = ast_utils.get_used_modules(mod_ast)
+        for mod in used_modules:
+            if mod not in dep_graph.nodes:
+                dep_graph.add_node(mod.lower())
+            obj_list = []
+            if dep_graph.has_edge(parent_module.lower(), mod.lower()):
+                edge = dep_graph.get_edge_data(parent_module.lower(), mod.lower())
+                if 'obj_list' in edge:
+                    obj_list = edge.get('obj_list')
+                    assert isinstance(obj_list, list)
+            if mod in objects_in_modules:
+                ast_utils.extend_with_new_items_from(obj_list, objects_in_modules[mod])
+            dep_graph.add_edge(parent_module.lower(), mod.lower(), obj_list=obj_list)
+            if mod not in exclude:
+                to_process.append(mod)
+                exclude.add(mod)            
+        
+       
+    return dep_graph          
+
 def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_list, parser):
     dep_graph = nx.DiGraph()
     interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
@@ -4175,6 +4219,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = deconstruct_associations(ast)
     ast = correct_for_function_calls(ast)
     ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    dep_graph = compute_dep_graph(ast,'radiation_interface')
+    print("redone")
 
     for mod, blocks in interface_blocks.items():
 
@@ -4378,6 +4424,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                         if j.children[0].children[1].string.lower() in what_to_parse_list[
                             i.children[0].children[1].string.lower()]:
                             subroutinesandfunctions.append(j)
+    
                         else:
                             print("Removing " + j.children[0].children[1].string + " from module " +
                                   i.children[0].children[1].string)
@@ -4524,7 +4571,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
-    #program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
+    program = ast_transforms.CallToArray(functions_and_subroutines_builder,rename_dict).visit(program)
     # program = ast_transforms.TypeInterference(program).visit(program)
     # program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
