@@ -3904,6 +3904,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
             dep_graph[in_mod][mod]['obj_list'] = new_weights
 
+
+
     complete_interface_blocks = {}
     for mod, blocks in interface_blocks.items():
         complete_interface_blocks.update(blocks)
@@ -4227,7 +4229,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
+    #program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     # program = ast_transforms.TypeInterference(program).visit(program)
     # program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
@@ -4268,8 +4270,16 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     # adding enums from radiotion config
     parkind_ast = parser(ffr(file_candidate="/home/alex/icon-model/src/shared/mo_kind.f90"))
     parkinds = partial_ast.create_ast(parkind_ast)
+
+    parkind2 = parser(
+        ffr(file_candidate="/home/alex/icon-model/externals/ecrad/ifsaux/parkind1.F90"))
+    parkinds2 = partial_ast.create_ast(parkind2)
+    ecradhook = parser(
+        ffr(file_candidate="/home/alex/icon-model/externals/ecrad/ifsaux/ecradhook.F90"))
+    ecradhook = partial_ast.create_ast(ecradhook)
+
     radiation_config_ast = parser(
-        ffr(file_candidate="/home/alex/icon-model/src/configure_model/mo_radiation_config.f90"))
+        ffr(file_candidate="/home/alex/icon-model/externals/ecrad/radiation/radiation_config.F90"))
     radiation_config_internal_ast = partial_ast.create_ast(radiation_config_ast)
     enum_propagator = ast_transforms.PropagateEnums()
     enum_propagator.visit(radiation_config_internal_ast)
@@ -4300,7 +4310,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     needed.append(['radiation_interface', 'radiation'])
     skip_list = []
     skip_list = ['radiation_monochromatic', 'radiation_cloudless_sw',
-                 'radiation_tripleclods_sw', 'radiation_homogeneous_sw']
+                 'radiation_tripleclouds_sw', 'radiation_homogeneous_sw']
     for i in reversed(parse_order):
         for j in program.modules:
             if j.name.name in skip_list:
