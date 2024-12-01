@@ -3,7 +3,9 @@
 #define __DACE_TYPES_H
 
 #include <cstdint>
+#ifndef DACE_ASCEND
 #include <complex>
+#endif
 
 #ifdef _MSC_VER
     //#define DACE_ALIGN(N) __declspec( align(N) )
@@ -50,11 +52,11 @@
     #define DACE_HFI __host__ __forceinline__
     #define DACE_DFI __device__ __forceinline__
     #define DACE_HostDev __host__ __device__
-    #define DACE_Host __host__ 
+    #define DACE_Host __host__
     #define DACE_Dev __device__
 #else
     #define DACE_HostDev
-    #define DACE_Host 
+    #define DACE_Host
     #define DACE_Dev
     #define DACE_HDFI inline
     #define DACE_HFI inline
@@ -108,8 +110,10 @@ namespace dace
     #elif defined(__HIPCC__)
     typedef half float16;
     #else
+    #ifndef DACE_ASCEND
     typedef std::complex<float> complex64;
     typedef std::complex<double> complex128;
+    #endif
     typedef half float16;
     #endif
 

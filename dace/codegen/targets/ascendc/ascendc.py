@@ -246,9 +246,10 @@ class AscendCCodeGen(TargetCodeGenerator):
 #ifdef DACE_ASCEND
 #ifndef __CCE_KT_TEST__
 #endif
+#include  "kernel_operator.h"
 
-#include <iostream>
-#include <dace/dace.h>
+#include <dace/ascendc/ascendccommon.h>
+#include <dace/types.h>
 
 {file_header}
 
@@ -1420,13 +1421,16 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
             prototype_kernel_args[aname] = arg
 
+        print(prototype_kernel_args)
+        for k, v in prototype_kernel_args.items():
+            assert(isinstance(v, dace.data.Array) or isinstance(v, dace.data.Scalar))
         # No const-args allowed
         kernel_args_typed = [
-            "GM_ADDR " + k
+            "GM_ADDR " + k if isinstance(v, dace.data.Array) else v.dtype.ctype + " " + k
             for k, v in prototype_kernel_args.items()
         ]
         kernel_args_entry_typed = [
-            "uint8_t* " + k
+            "uint8_t* " + k if isinstance(v, dace.data.Array) else v.dtype.ctype + " " + k
             for k, v in prototype_kernel_args.items()
         ]
 
@@ -1447,6 +1451,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             self._globalcode,
             kernel_stream,
         )
+        #raise Exception(kernel_args_typed)
 
         self._dispatcher.defined_vars.exit_scope(scope_entry)
 
@@ -1528,13 +1533,19 @@ void __dace_runkernel_{fname}({fargs})
 
             return new_arg
 
+        print("KARGS", kernel_args)
         kargs = str(
             ", ".join(
-                [f"reinterpret_cast<GM_ADDR>({a})" for a in kernel_args]
-                + [f"reinterpret_cast<GM_ADDR>({a})" for a in extra_call_args]
+                [f"reinterpret_cast<GM_ADDR>({k})" if isinstance(v, dace.data.Array) else f"{k}" for k,v in kernel_args.items()]
+
             )
         )  # join makes them into a tuple of strings somehow if one of them is empty
         # The types here can contain GM_ADDR, they are passed as uint8_t*, we need to cast them
+
+        if len(extra_call_args) != 0:
+            raise Exception("TODO, support for: extra_call_args not empty")
+        #+ [f"reinterpret_cast<GM_ADDR>({k})" if isinstance(v, dace.data.Array) else f"{k}" for k,v in extra_call_args.items()]
+
 
         self._localcode.write(
             f"""
@@ -1587,7 +1598,7 @@ void __dace_runkernel_{fname}({fargs})
                 ", ".join(
                     ["__state"]
                     + [
-                        add_cast(cpp.ptr(aname, arg, sdfg, self._frame))
+                        add_cast(cpp.ptr(aname, arg, sdfg, self._frame)) if isinstance(arg, dace.data.Array) else cpp.ptr(aname, arg, sdfg, self._frame)
                         for aname, arg in kernel_args.items()
                     ]
                     + extra_call_args
