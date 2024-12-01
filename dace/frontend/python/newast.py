@@ -1319,7 +1319,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.sdfg.replace_dict(repl_dict)
 
         propagate_states(self.sdfg)
-        for state, memlet, inner_indices in itertools.chain(self.inputs.values(), self.outputs.values()):
+        for state, memlet, _inner_indices in itertools.chain(self.inputs.values(), self.outputs.values()):
             if state is not None and state.dynamic_executions:
                 memlet.dynamic = True
 

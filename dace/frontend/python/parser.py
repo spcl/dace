@@ -490,9 +490,6 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param validate: If True, validates the resulting SDFG after creation.
         :return: The generated SDFG object.
         """
-        # Avoid import loop
-        from dace.transformation.passes import scalar_to_symbol as scal2sym
-        from dace.transformation import helpers as xfh
 
         # Obtain DaCe program as SDFG
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
