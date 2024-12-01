@@ -173,7 +173,7 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
     return gpu_runtime.GPURuntime(backend, libpath)
 
 @lru_cache()
-def get_ascend_runtime():
+def get_ascend_runtime() -> ascend_runtime.AscendRuntime:
     """
     Returns the Ascend runtime library. The result is cached for performance.
 

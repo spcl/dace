@@ -349,6 +349,8 @@ class CPPUnparser:
                             # if the veclen is greater than one, this should be defined with a vector data type
                             self.write("{}{} ".format(dace.dtypes._OCL_VECTOR_TYPES[inferred_type.type],
                                                       inferred_type.veclen))
+                        elif self.language == dace.dtypes.Language.OpenCL:
+                            self.write(dace.dtypes._OCL_TYPES[inferred_type.type] + " ")
                         else:
                             self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                     else:
