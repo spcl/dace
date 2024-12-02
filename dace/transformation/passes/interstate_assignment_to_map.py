@@ -22,7 +22,6 @@ class InterstateAssignmentToMap(ppl.Pass):
         expr = SymExpr(expression_str)
         simplified_expr = expr.simplify()
         is_constant = simplified_expr.is_number
-        print(is_constant)
         return is_constant, simplified_expr
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
@@ -30,8 +29,6 @@ class InterstateAssignmentToMap(ppl.Pass):
             for in_edge in sdfg.in_edges(state):
                 assignments = in_edge.data._assignments
                 condition = in_edge.data._cond_sympy
-                print(in_edge, in_edge.__dict__, in_edge.data, in_edge.data.__dict__)
-                print(assignments, condition)
                 simplifiable_assignments = []
                 for var, assignment in assignments.items():
                     is_constant, constant = InterstateAssignmentToMap._is_simple_assignment(expression_str=assignment)
