@@ -334,7 +334,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
-            declaration_stream.write(f'{nodedesc.dtype.ctype} *{name} = nullptr;//u2\n', cfg, state_id, node)
+            declaration_stream.write(f'{nodedesc.dtype.ctype} *{name} = nullptr;\n', cfg, state_id, node)
             self._dispatcher.declared_arrays.add(name, DefinedType.Pointer, ctypedef)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
