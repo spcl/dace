@@ -335,11 +335,9 @@ def _check_symbol_assignments_and_array_size(sdfg):
     symbol_assignments = defaultdict(int)
     for e in sdfg.edges():
         for key in e.data.assignments.keys():
-            symbol = symbolic.symbol(key)
-            symbol_assignments[symbol] += 1
+            symbol_assignments[key] += 1
     for arg in sdfg.arglist():
-        symbol = symbolic.symbol(arg)
-        symbol_assignments[symbol] += 1
+        symbol_assignments[arg] += 1
 
     reassigned_symbols = {key: value for key, value in symbol_assignments.items() if value > 1}
 
