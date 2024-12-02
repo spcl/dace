@@ -896,7 +896,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
 
-        outside_symbols = sdfg.free_symbols if is_top_level else set()
+        outside_symbols = sdfg.arglist() if is_top_level else set()
 
         # Define constants as top-level-allocated
         for cname, (ctype, _) in sdfg.constants_prop.items():
@@ -959,6 +959,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if isvarName not in outside_symbols:
                     callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
                     self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
+                else:
+                    callsite_stream.write('//%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
         callsite_stream.write('\n', sdfg)
 
         #######################################################################
