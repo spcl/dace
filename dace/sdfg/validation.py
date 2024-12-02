@@ -724,7 +724,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                                  if isinstance(dst_node, nd.AccessNode) and e.data.data != dst_node.data else src_node)
 
             if isinstance(subset_node, nd.AccessNode):
-                arr = sdfg.arrays[subset_node.data]
+                arr = sdfg.arrays[e.data.data]
                 # Dimensionality
                 if e.data.subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(
