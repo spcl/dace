@@ -261,7 +261,8 @@ class FindFunctionAndSubroutines(NodeVisitor):
         self.module_based_names: Dict[str,List[ast_internal_classes.Name_Node]] = {}
         self.nodes: Dict[str, ast_internal_classes.FNode] = {}
         self.iblocks: Dict[str, List[str]] = {}
-        self.current_module = None
+        self.current_module = "_dace_default"
+        self.module_based_names[self.current_module] = []
 
     def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
         ret = node.name
