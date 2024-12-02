@@ -2525,6 +2525,10 @@ class ParseConfig:
             main = FortranFileReader(main)
         else:
             main = FortranStringReader(main)
+        if not sources:
+            sources: Dict[str, str] = {}
+        if not includes:
+            includes: List[Path] = []
         # TODO: This should be done, but for now `recursive_ast_improver()` isn't happy with it. Should be fixed.
         # if isinstance(sources, list):
         #     sources = [FortranFileReader(p) for p in sources]
