@@ -350,7 +350,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
     def all_nodes_recursive(self, predicate = None) -> Iterator[Tuple[NodeT, GraphT]]:
         for node in self.nodes():
             yield node, self
-            if isinstance(node, nd.NestedSDFG):
+            if isinstance(node, nd.NestedSDFG) and node.sdfg:
                 if predicate is None or predicate(node, self):
                     yield from node.sdfg.all_nodes_recursive(predicate)
 
@@ -1380,7 +1380,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if not isinstance(node, nd.Node):
             raise TypeError("Expected Node, got " + type(node).__name__ + " (" + str(node) + ")")
         # Correct nested SDFG's parent attributes
-        if isinstance(node, nd.NestedSDFG):
+        if isinstance(node, nd.NestedSDFG) and node.sdfg is not None:
             node.sdfg.parent = self
             node.sdfg.parent_sdfg = self.sdfg
             node.sdfg.parent_nsdfg_node = node
@@ -1667,7 +1667,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
     def add_nested_sdfg(
         self,
-        sdfg: 'SDFG',
+        sdfg: Optional['SDFG'],
         parent,
         inputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
@@ -1676,16 +1676,21 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         schedule=dtypes.ScheduleType.Default,
         location=None,
         debuginfo=None,
+        external_path: Optional[str] = None,
     ):
         """ Adds a nested SDFG to the SDFG state. """
         if name is None:
             name = sdfg.label
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
 
-        sdfg.parent = self
-        sdfg.parent_sdfg = self.sdfg
+        if sdfg is None and external_path is None:
+            raise ValueError('Neither an SDFG nor an external SDFG path has been provided')
 
-        sdfg.update_cfg_list([])
+        if sdfg is not None:
+            sdfg.parent = self
+            sdfg.parent_sdfg = self.sdfg
+
+            sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
         if isinstance(inputs, (set, collections.abc.KeysView)):
@@ -1702,35 +1707,37 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             schedule=schedule,
             location=location,
             debuginfo=debuginfo,
+            path=external_path,
         )
         self.add_node(s)
 
-        sdfg.parent_nsdfg_node = s
+        if sdfg is not None:
+            sdfg.parent_nsdfg_node = s
 
-        # Add "default" undefined symbols if None are given
-        symbols = sdfg.free_symbols
-        if symbol_mapping is None:
-            symbol_mapping = {s: s for s in symbols}
-            s.symbol_mapping = symbol_mapping
+            # Add "default" undefined symbols if None are given
+            symbols = sdfg.free_symbols
+            if symbol_mapping is None:
+                symbol_mapping = {s: s for s in symbols}
+                s.symbol_mapping = symbol_mapping
 
-        # Validate missing symbols
-        missing_symbols = [s for s in symbols if s not in symbol_mapping]
-        if missing_symbols and parent:
-            # If symbols are missing, try to get them from the parent SDFG
-            parent_mapping = {s: s for s in missing_symbols if s in parent.symbols}
-            symbol_mapping.update(parent_mapping)
-            s.symbol_mapping = symbol_mapping
+            # Validate missing symbols
             missing_symbols = [s for s in symbols if s not in symbol_mapping]
-        if missing_symbols:
-            raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
+            if missing_symbols and parent:
+                # If symbols are missing, try to get them from the parent SDFG
+                parent_mapping = {s: s for s in missing_symbols if s in parent.symbols}
+                symbol_mapping.update(parent_mapping)
+                s.symbol_mapping = symbol_mapping
+                missing_symbols = [s for s in symbols if s not in symbol_mapping]
+            if missing_symbols:
+                raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
 
-        # Add new global symbols to nested SDFG
-        from dace.codegen.tools.type_inference import infer_expr_type
-        for sym, symval in s.symbol_mapping.items():
-            if sym not in sdfg.symbols:
-                # TODO: Think of a better way to avoid calling
-                # symbols_defined_at in this moment
-                sdfg.add_symbol(sym, infer_expr_type(symval, self.sdfg.symbols) or dtypes.typeclass(int))
+            # Add new global symbols to nested SDFG
+            from dace.codegen.tools.type_inference import infer_expr_type
+            for sym, symval in s.symbol_mapping.items():
+                if sym not in sdfg.symbols:
+                    # TODO: Think of a better way to avoid calling
+                    # symbols_defined_at in this moment
+                    sdfg.add_symbol(sym, infer_expr_type(symval, self.sdfg.symbols) or dtypes.typeclass(int))
 
         return s
 
@@ -2818,23 +2825,27 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
     ###################################################################
     # Traversal methods
 
-    def all_control_flow_regions(self, recursive=False) -> Iterator['ControlFlowRegion']:
+    def all_control_flow_regions(self, recursive=False, load_ext=False) -> Iterator['ControlFlowRegion']:
         """ Iterate over this and all nested control flow regions. """
         yield self
         for block in self.nodes():
             if isinstance(block, SDFGState) and recursive:
                 for node in block.nodes():
                     if isinstance(node, nd.NestedSDFG):
-                        yield from node.sdfg.all_control_flow_regions(recursive=recursive)
+                        if node.sdfg:
+                            yield from node.sdfg.all_control_flow_regions(recursive=recursive, load_ext=load_ext)
+                        elif load_ext:
+                            node.load_external(block)
+                            yield from node.sdfg.all_control_flow_regions(recursive=recursive, load_ext=load_ext)
             elif isinstance(block, ControlFlowRegion):
-                yield from block.all_control_flow_regions(recursive=recursive)
+                yield from block.all_control_flow_regions(recursive=recursive, load_ext=load_ext)
             elif isinstance(block, ConditionalBlock):
                 for _, branch in block.branches:
-                    yield from branch.all_control_flow_regions(recursive=recursive)
+                    yield from branch.all_control_flow_regions(recursive=recursive, load_ext=load_ext)
 
-    def all_sdfgs_recursive(self) -> Iterator['SDFG']:
+    def all_sdfgs_recursive(self, load_ext=False) -> Iterator['SDFG']:
         """ Iterate over this and all nested SDFGs. """
-        for cfg in self.all_control_flow_regions(recursive=True):
+        for cfg in self.all_control_flow_regions(recursive=True, load_ext=load_ext):
             if isinstance(cfg, dace.SDFG):
                 yield cfg
 
