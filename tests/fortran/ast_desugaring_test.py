@@ -1212,3 +1212,110 @@ END SUBROUTINE fun
 
     assert {k: set(v) for k, v in name_dict.items()} == {'lib': {'fun'}}
     assert rename_dict == {'lib': {'fun': 'no_fun'}}
+
+
+def test_generic_replacer_deducing_array_types():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type T
+    real :: val(2, 2)
+  contains
+    procedure :: copy_array
+    procedure :: copy_scalar
+    generic :: copy => copy_array, copy_scalar
+  end type T
+contains
+  subroutine copy_scalar(this, m)
+    implicit none
+    class(T), intent(in) :: this
+    real, intent(out) :: m
+    m = this%val(1,1)
+  end subroutine copy_scalar
+  subroutine copy_array(this, m)
+    implicit none
+    class(T), intent(in) :: this
+    real, dimension(:, :), intent(out) :: m
+    m = this%val(1,1)
+  end subroutine copy_array
+end module lib
+""").add_file("""
+subroutine main
+  use lib, only: T
+  implicit none
+  type(T) :: s
+  real, dimension(4, 4) :: a
+  real :: b(4, 4)
+
+  s%val = 1.0
+  call s%copy(a)
+  call s%copy(a(2,2))
+  call s%copy(b(:,:))
+end subroutine main
+""").check_with_gfortran().get()
+    ast, dep_graph, interface_blocks = parse_and_improve(sources)
+    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  TYPE :: T
+    REAL :: val(2, 2)
+  END TYPE T
+  CONTAINS
+  SUBROUTINE copy_scalar(this, m)
+    IMPLICIT NONE
+    CLASS(T), INTENT(IN) :: this
+    REAL, INTENT(OUT) :: m
+    m = this % val(1, 1)
+  END SUBROUTINE copy_scalar
+  SUBROUTINE copy_array(this, m)
+    IMPLICIT NONE
+    CLASS(T), INTENT(IN) :: this
+    REAL, DIMENSION(:, :), INTENT(OUT) :: m
+    m = this % val(1, 1)
+  END SUBROUTINE copy_array
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: copy_array_deconproc_2 => copy_array
+  USE lib, ONLY: copy_scalar_deconproc_1 => copy_scalar
+  USE lib, ONLY: copy_array_deconproc_0 => copy_array
+  USE lib, ONLY: T
+  IMPLICIT NONE
+  TYPE(T) :: s
+  REAL, DIMENSION(4, 4) :: a
+  REAL :: b(4, 4)
+  s % val = 1.0
+  CALL copy_array_deconproc_0(s, a)
+  CALL copy_scalar_deconproc_1(s, a(2, 2))
+  CALL copy_array_deconproc_2(s, b(:, :))
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert set(dep_graph.nodes) == {'lib', 'main'}
+    assert set(dep_graph.edges) == {('main', 'lib')}
+    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'T', 'copy_array', 'copy_scalar'}
+    assert not interface_blocks
+
+    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
+
+    # Nothing changed here.
+    assert set(simple_graph.nodes) == {'lib', 'main'}
+    assert set(simple_graph.edges) == {('main', 'lib')}
+    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'T', 'copy_array', 'copy_scalar'}
+    assert not interface_blocks
+
+    assert ({k: set(v) for k, v in actually_used_in_module.items()}
+            == {'lib': {'copy_array', 'copy_scalar', 'T'}, 'main': set()})
+
+    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    got = ast.tofortran()
+    # Still want the same program, because nothing should have been pruned.
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+    assert name_dict == {'lib': ['T', 'copy_array', 'copy_scalar']}
+    assert rename_dict == {'lib': {}}
