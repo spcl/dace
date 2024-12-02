@@ -120,22 +120,22 @@ class SoftHierCodeGen(TargetCodeGenerator):
                 dispatcher.register_copy_dispatcher(other_storage, storage, None, self)
 
         # Register illegal copies
-        cpu_unpinned_storage = [dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal]
-        gpu_private_storage = [dtypes.StorageType.GPU_Shared]
-        illegal_copy = IllegalCopy()
-        for st in cpu_unpinned_storage:
-            for gst in gpu_private_storage:
-                dispatcher.register_copy_dispatcher(st, gst, None, illegal_copy)
-                dispatcher.register_copy_dispatcher(gst, st, None, illegal_copy)
-        for st in cpu_unpinned_storage:
-            for sched_type in [dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock]:
-                # NOTE: Only reading to GPU has an exception (for Scalar inputs)
-                dispatcher.register_copy_dispatcher(st,
-                                                    dtypes.StorageType.Register,
-                                                    sched_type,
-                                                    illegal_copy,
-                                                    predicate=cpu_to_gpu_cpred)
-                dispatcher.register_copy_dispatcher(dtypes.StorageType.Register, st, sched_type, illegal_copy)
+        # cpu_unpinned_storage = [dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal]
+        # gpu_private_storage = [dtypes.StorageType.GPU_Shared]
+        # illegal_copy = IllegalCopy()
+        # for st in cpu_unpinned_storage:
+        #     for gst in gpu_private_storage:
+        #         dispatcher.register_copy_dispatcher(st, gst, None, illegal_copy)
+        #         dispatcher.register_copy_dispatcher(gst, st, None, illegal_copy)
+        # for st in cpu_unpinned_storage:
+        #     for sched_type in [dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_ThreadBlock]:
+        #         # NOTE: Only reading to GPU has an exception (for Scalar inputs)
+        #         dispatcher.register_copy_dispatcher(st,
+        #                                             dtypes.StorageType.Register,
+        #                                             sched_type,
+        #                                             illegal_copy,
+        #                                             predicate=cpu_to_gpu_cpred)
+        #         dispatcher.register_copy_dispatcher(dtypes.StorageType.Register, st, sched_type, illegal_copy)
         # End of illegal copies
         # End of dispatcher registration
         ######################################
@@ -403,16 +403,16 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
     def state_dispatch_predicate(self, sdfg, state):
         if self._toplevel_schedule in dtypes.SOFTHIER_SCHEDULES:
             return True
-        for node in state.sink_nodes():
-            if hasattr(node, '_cuda_stream'):
-                return True
-            else:
-                for e in state.in_edges(node):
-                    if hasattr(e.src, '_cuda_stream'):
-                        return True
-        for s, _ in self.pool_release.values():
-            if s is state:
-                return True
+        # for node in state.sink_nodes():
+        #     if hasattr(node, '_cuda_stream'):
+        #         return True
+        #     else:
+        #         for e in state.in_edges(node):
+        #             if hasattr(e.src, '_cuda_stream'):
+        #                 return True
+        # for s, _ in self.pool_release.values():
+        #     if s is state:
+        #         return True
         return False
 
     @property
@@ -1065,7 +1065,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     and dst_storage == dtypes.StorageType.SoftHier_TCDM
                 ):
                     callsite_stream.write("// SoftHier_TCDM -> SoftHier_TCDM")
-                    if src_expr == dst_expr:
+                    # when src_node name is same as dst_node name then no need to copy
+                    if src_name == dst_name:
                         # do nothing
                         # print("src_expr == dst_expr")
                         # callsite_stream.write("/* src_expr == dst_expr */")
@@ -1149,26 +1150,27 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     and dst_storage == dtypes.StorageType.SoftHier_TCDM
                 ):
                     callsite_stream.write("// SoftHier_TCDM -> SoftHier_TCDM")
-                    if src_expr == dst_expr:
+                    if src_name == dst_name:
                         # do nothing
                         pass
-                    callsite_stream.write(
-                        "if(flex_is_dm_core())"
-                    )
-                    callsite_stream.write("{", cfg, state_id, src_node)
-                    funcname = "flex_dma_async_2d"
-                    callsite_stream.write(('    {func}({args});').format(
-                            func=funcname,
-                            args=', '.join([f'local({dst_expr})'] + 
-                                           [f'local({src_expr})'] + 
-                                           [f'{length_1}*{data_size}'] +
-                                           [f'{src_strides[0]}*{data_size}'] +
-                                           [f'{dst_strides[0]}*{data_size}'] +
-                                           [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
-                    )
-                    callsite_stream.write("flex_dma_async_wait_all();")
-                    callsite_stream.write("}", cfg, state_id, src_node)
-                    callsite_stream.write("flex_intra_cluster_sync();")
+                    else:
+                        callsite_stream.write(
+                            "if(flex_is_dm_core())"
+                        )
+                        callsite_stream.write("{", cfg, state_id, src_node)
+                        funcname = "flex_dma_async_2d"
+                        callsite_stream.write(('    {func}({args});').format(
+                                func=funcname,
+                                args=', '.join([f'local({dst_expr})'] + 
+                                            [f'local({src_expr})'] + 
+                                            [f'{length_1}*{data_size}'] +
+                                            [f'{src_strides[0]}*{data_size}'] +
+                                            [f'{dst_strides[0]}*{data_size}'] +
+                                            [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
+                        )
+                        callsite_stream.write("flex_dma_async_wait_all();")
+                        callsite_stream.write("}", cfg, state_id, src_node)
+                        callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_HBM
@@ -1226,7 +1228,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     src_node: Union[nodes.Tasklet, nodes.AccessNode], dst_node: Union[nodes.CodeNode, nodes.AccessNode],
                     memlet: Memlet, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         state = cfg.state(state_id)
-        print(f'copy_memory: {src_node} -> {dst_node}')
+        # print(f'copy_memory: {src_node} -> {dst_node}')
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register
             src_parent = state.entry_node(src_node)
@@ -2526,9 +2528,19 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                         self._dispatcher.defined_vars.add(edge.dst_conn, DefinedType.Pointer, ctype)
                     else:
                         # Find the source Access Node
-                        desc = sdfg.arrays[memlet.data]
-                        ptr = cpp.ptr(memlet.data, desc, sdfg, self._frame)
-                        assign_str = (f"{write_type} {edge.dst_conn} = {ptr};")
+                        desc = sdfg.arrays[memlet.data]  
+                        src_subset = memlet.get_src_subset(edge, state_dfg)
+                        is_src_write = not memlet._is_data_src
+                        src_expr = cpp.copy_expr(self._dispatcher,
+                             sdfg,
+                             src_node.data,
+                             memlet,
+                             is_write=is_src_write,
+                             offset=src_subset,
+                             relative_offset=False,
+                             packed_types=self._cpu_codegen._packed_types)
+                        # print (f"Src Expr: {src_expr}")
+                        assign_str = (f"{write_type} {edge.dst_conn} = {src_expr};")
                         inner_stream.write(
                             assign_str,
                             cfg,
