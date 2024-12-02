@@ -737,8 +737,8 @@ class CallToArray(NodeTransformer):
                                 break
                     else:
                         raise ValueError(f"Invalid type {type(replacement_names)} for {replacement_names}")    
-
-        if name.startswith("__dace_") or  name in self.excepted_funcs or found_in_renames or found_in_names or name in self.funcs.iblocks:
+        #TODO Deconproc is a special case, we need to handle it differently - this is just s quick workaround
+        if name.startswith("__dace_") or "deconproc" in name or  name in self.excepted_funcs or found_in_renames or found_in_names or name in self.funcs.iblocks:
             processed_args = []
             for i in node.args:
                 arg = CallToArray(self.funcs).visit(i)
@@ -2005,8 +2005,8 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                     Offset is handled by always subtracting the lower boundary.
                 """
                 current_lower_boundary = main_iterator_ranges[currentindex][0]
-                #current_lower_boundary = main_iterator_ranges[0][0]
-
+                
+                
                 indices.append(
                     ast_internal_classes.BinOp_Node(
                         lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)),
