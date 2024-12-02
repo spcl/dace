@@ -2005,7 +2005,6 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                     Offset is handled by always subtracting the lower boundary.
                 """
                 current_lower_boundary = main_iterator_ranges[currentindex][0]
-                #current_lower_boundary = main_iterator_ranges[0][0]
 
                 indices.append(
                     ast_internal_classes.BinOp_Node(
@@ -2018,9 +2017,9 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                         )
                     )
                 )
+            currentindex += 1
         else:
             indices.append(i)
-        currentindex += 1
 
     node.indices = indices
 
