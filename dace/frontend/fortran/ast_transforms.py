@@ -717,13 +717,25 @@ class CallToArray(NodeTransformer):
         if self.rename_dict is not None:
             for k,v in self.rename_dict.items():
                 for original_name,replacement_names in v.items():
-                    if name in replacement_names:
+                    if isinstance(replacement_names,str):
+                      if name == replacement_names:
                         found_in_renames = True
                         module=k
                         original_one=original_name
                         node.name.name=original_name
                         print(f"Found {name} in {module} with original name {original_one}")
                         break
+                    elif isinstance(replacement_names,list):
+                        for repl in replacement_names:  
+                            if name == repl:
+                                found_in_renames = True
+                                module=k
+                                original_one=original_name
+                                node.name.name=original_name
+                                print(f"Found in list {name} in {module} with original name {original_one}")
+                                break
+                    else:
+                        raise ValueError(f"Invalid type {type(replacement_names)} for {replacement_names}")    
 
         if name.startswith("__dace_") or  name in self.excepted_funcs or found_in_renames or found_in_names or name in self.funcs.iblocks:
             processed_args = []
@@ -1992,6 +2004,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                     Offset is handled by always subtracting the lower boundary.
                 """
                 current_lower_boundary = main_iterator_ranges[currentindex][0]
+                #current_lower_boundary = main_iterator_ranges[0][0]
 
                 indices.append(
                     ast_internal_classes.BinOp_Node(
