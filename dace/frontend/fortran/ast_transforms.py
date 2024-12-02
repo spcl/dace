@@ -2049,39 +2049,42 @@ class ArrayToLoop(NodeTransformer):
             if res is not None and len(res) > 0:
 
                 current = child.lval
-                val = child.rval
                 ranges = []
                 rangepos = []
                 par_Decl_Range_Finder(current, ranges, rangepos, [], self.count, newbody, self.scope_vars,
                                       self.ast.structures, True)
 
-                if res_range is not None and len(res_range) > 0:
-                    rvals = [i for i in mywalk(val) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
-                    for i in rvals:
-                        rangeposrval = []
-                        rangesrval = []
+                #if res_range is not None and len(res_range) > 0:
 
-                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars,
-                                              self.ast.structures, False, ranges)
+                # catch cases where an array is used as name, without range expression
+                visitor = ReplaceImplicitParDecls(self.scope_vars)
+                child.rval = visitor.visit(child.rval)
 
-                        for i, j in zip(ranges, rangesrval):
-                            if i != j:
-                                if isinstance(i, list) and isinstance(j, list) and len(i) == len(j):
-                                    for k, l in zip(i, j):
-                                        if k != l:
-                                            if isinstance(k, ast_internal_classes.Name_Range_Node) and isinstance(
-                                                    l, ast_internal_classes.Name_Range_Node):
-                                                if k.name != l.name:
-                                                    raise NotImplementedError("Ranges must be the same")
-                                            else:
-                                                # this is not actually illegal.
-                                                #raise NotImplementedError("Ranges must be the same")
-                                                continue
-                                else:
-                                    raise NotImplementedError("Ranges must be identical")
+                rvals = [i for i in mywalk(child.rval) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
+                for i in rvals:
+                    rangeposrval = []
+                    rangesrval = []
+
+                    par_Decl_Range_Finder(i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars,
+                                            self.ast.structures, False, ranges)
+                    for i, j in zip(ranges, rangesrval):
+                        if i != j:
+                            if isinstance(i, list) and isinstance(j, list) and len(i) == len(j):
+                                for k, l in zip(i, j):
+                                    if k != l:
+                                        if isinstance(k, ast_internal_classes.Name_Range_Node) and isinstance(
+                                                l, ast_internal_classes.Name_Range_Node):
+                                            if k.name != l.name:
+                                                raise NotImplementedError("Ranges must be the same")
+                                        else:
+                                            # this is not actually illegal.
+                                            #raise NotImplementedError("Ranges must be the same")
+                                            continue
+                            else:
+                                raise NotImplementedError("Ranges must be identical")
 
                 range_index = 0
-                body = ast_internal_classes.BinOp_Node(lval=current, op="=", rval=val, line_number=child.line_number)
+                body = ast_internal_classes.BinOp_Node(lval=current, op="=", rval=child.rval, line_number=child.line_number)
                 for i in ranges:
                     initrange = i[0]
                     finalrange = i[1]
@@ -2927,3 +2930,25 @@ class FindUnusedFunctions(NodeVisitor):
         used_calls = getacall.calls
         self.used_names[node.name.name] = used_calls
         return
+
+class ReplaceImplicitParDecls(NodeTransformer):
+
+    def __init__(self, scope_vars):
+        self.scope_vars = scope_vars
+
+    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
+
+        var = self.scope_vars.get_var(node.parent, node.name)
+        if var.sizes is not None:
+
+            indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
+            return ast_internal_classes.Array_Subscript_Node(
+                name=node,
+                type=var.type,
+                parent=node.parent,
+                indices=indices,
+                line_number=node.line_number
+            )
+        else:
+            return node
+

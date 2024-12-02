@@ -15,7 +15,7 @@ We test for the following patterns:
   flux_dn(:,1:i_cloud_top) = flux_dn_clear(:,1:i_cloud_top)
 * Extended ECRAD pattern with different loop starting positions.
 * Arrays with offsets
-* Arrays with ALL range and offsets (WiP)
+* Assignment with arrays that have no range expression on the right
 """
 
 def test_fortran_frontend_multiple_ranges_all():
@@ -368,6 +368,66 @@ def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex_offsets():
         for j in range(length):
             assert res[i - 1, iter_1 + j - 1] == input1[i - 1, iter_2 + j - 1] + input1[i - 1, iter_3 + j - 1]
 
+def test_fortran_frontend_array_assignment():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM multiple_ranges_ecrad
+                    implicit none
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: input2
+                    double precision, dimension(7, 7) :: res
+                    integer, dimension(2) :: pos
+                    CALL multiple_ranges_ecrad_function(input1, input2, res, pos)
+                    end
+
+                    SUBROUTINE multiple_ranges_ecrad_function(input1, input2, res, pos)
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: input2
+                    double precision, dimension(7, 7) :: res
+                    integer, dimension(2) :: pos
+                    integer :: nlev
+
+                    nlev = input1(1)
+
+                    ! write 5 to column 2
+                    res(:, pos(1)) = nlev
+
+                    ! write input1 values to column 3
+                    res(:, pos(1) + 1) = input1
+
+                    res(:, pos(1) + 2) = input1 + input2
+
+                    res(:, pos(1) + 3) = input1 + input2(:)
+
+                    END SUBROUTINE multiple_ranges_ecrad_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_ecrad", True)
+    #sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 7
+    input1 = np.full([size], 0, order="F", dtype=np.float64)
+    input2 = np.full([size], 0, order="F", dtype=np.float64)
+    for i in range(size):
+        input1[i] = i + 5
+        input2[i] = i + 6
+
+    pos = np.full([2], 0, order="F", dtype=np.int32)
+    pos[0] = 2
+    pos[1] = 5
+
+    res = np.full([size, size], 42, order="F", dtype=np.float64)
+    sdfg(input1=input1, input2=input2, pos=pos, res=res, outside_init=False)
+
+    for i in range(size):
+        assert res[i, 1] == input1[0]
+        assert res[i, 2] == input1[i]
+        assert res[i, 3] == input1[i] + input2[i]
+        assert res[i, 4] == input1[i] + input2[i]
+
 if __name__ == "__main__":
 
     test_fortran_frontend_multiple_ranges_all()
@@ -378,3 +438,4 @@ if __name__ == "__main__":
     test_fortran_frontend_multiple_ranges_ecrad_pattern()
     test_fortran_frontend_multiple_ranges_ecrad_pattern_complex()
     test_fortran_frontend_multiple_ranges_ecrad_pattern_complex_offsets()
+    test_fortran_frontend_array_assignment()
