@@ -16,7 +16,7 @@ from dace.sdfg.propagation import align_memlet, propagate_memlet, propagate_subs
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.sdfg import SDFG, memlets_in_ast
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.subsets import Range, SubsetUnion
+from dace.subsets import Range, SubsetUnion, intersection
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.helpers import unsqueeze_memlet
@@ -542,21 +542,24 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                 symbols_at_loop.update(new_symbols)
             pivot = pivot.parent_graph
         defined_symbols = [symbolic.pystr_to_symbolic(s) for s in symbols_at_loop.keys()]
-        repos_to_propagate = [(loop._certain_reads, False),
-                            (loop._certain_writes, True),
-                            (loop._possible_reads, False),
-                            (loop._possible_writes, True)]
         # Propagate memlet subsets through the loop variable and its range.
-        for (memlet_repo, use_dst) in repos_to_propagate:
+        for memlet_repo in [loop._certain_reads, loop._possible_reads]:
             for dat in memlet_repo.keys():
-                memlet = memlet_repo[dat]
+                read = memlet_repo[dat]
                 arr = loop.sdfg.data(dat)
-                if memlet in deps:
-                    dep_write = deps[memlet]
-                    print(memlet)
+                if read in deps:
+                    dep_write = deps[read]
+                    inters = intersection(dep_write.subset, read.subset)
+                    ...
                 else:
-                    new_memlet = propagate_subset([memlet], arr, [itvar], loop_range, defined_symbols, use_dst)
-                    memlet_repo[dat] = new_memlet
+                    new_read = propagate_subset([read], arr, [itvar], loop_range, defined_symbols, use_dst=False)
+                    memlet_repo[dat] = new_read
+        for memlet_repo in [loop._certain_writes, loop._possible_writes]:
+            for dat in memlet_repo.keys():
+                write = memlet_repo[dat]
+                arr = loop.sdfg.data(dat)
+                new_write = propagate_subset([write], arr, [itvar], loop_range, defined_symbols, use_dst=True)
+                memlet_repo[dat] = new_write
 
     def _propagate_cfg(self, cfg: ControlFlowRegion) -> None:
         cfg._possible_reads = {}

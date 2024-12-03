@@ -1,4 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+from copy import deepcopy
 import dace.serialize
 from dace import symbolic
 import re
@@ -820,7 +821,7 @@ class Range(Subset):
                               rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs)
             self.tile_sizes[i] = (ts.subs(repl_dict) if symbolic.issymbolic(ts) else ts)
 
-    def intersection(self, other: 'Range') -> 'Range':
+    def intersection(self, other: 'Range') -> Optional['Range']:
         type_error = False
         expected_length = len(self.ranges)
         if expected_length != len(other.ranges):
@@ -830,7 +831,7 @@ class Range(Subset):
         for i, (rng, orng) in enumerate(zip(self.ranges, other.ranges)):
             if (rng[2] != 1 or orng[2] != 1 or self.tile_sizes[i] != 1 or other.tile_sizes[i] != 1):
                 # TODO: This function does not consider strides or tiles
-                return None
+                raise NotImplementedError('^This function does not yet consider strides or tiles')
 
             # Special case: ranges match
             if rng[0] == orng[0] and rng[1] == orng[1]:
@@ -852,9 +853,9 @@ class Range(Subset):
                     return None
 
                 if cond3 == True:
-                    rng_start = rng[0]
-                else:
                     rng_start = orng[0]
+                else:
+                    rng_start = rng[0]
                 if cond4 == True:
                     rng_end = rng[1]
                 else:
@@ -873,6 +874,44 @@ class Range(Subset):
 
     def intersects(self, other: 'Range'):
         return self.intersection(other) is not None
+
+    def difference(self, other: 'Range') -> Subset:
+        isect = self.intersection(other)
+        if isect is None:
+            return self
+        diff_ranges = [[]]
+        for i, (r1, r2) in enumerate(zip(self.ranges, isect.ranges)):
+            if r2[0] == r1[0]:
+                # Intersection over the start of the current range.
+                if r2[1] == r1[1]:
+                    return Range([])
+                else:
+                    for dr in diff_ranges:
+                        dr.append((r2[1] + self.ranges[i][2], r1[1], r1[2]))
+            elif r2[1] == r1[1]:
+                # Intersection over the end of the current range.
+                if r2[0] == r1[0]:
+                    return Range([])
+                else:
+                    for dr in diff_ranges:
+                        dr.append((r1[0], r2[0] - self.ranges[i][2], r1[2]))
+            else:
+                # Intersection completely contained inside the current range, split into subset union is necessary.
+                split_left = (r1[0], r2[0] - self.ranges[i][2], r1[2])
+                split_right = (r2[1] + self.ranges[i][2], r1[1], r1[2])
+                for dr in diff_ranges:
+                    dr.append(split_left)
+                dr_copy = deepcopy(diff_ranges)
+                for dr in dr_copy:
+                    dr[-1] = split_right
+                    diff_ranges.append(dr)
+        if len(diff_ranges) == 1:
+            return Range(diff_ranges[0])
+        else:
+            subset_list = []
+            for dr in diff_ranges:
+                subset_list.append(Range(dr))
+            return SubsetUnion(subset_list)
 
 
 @dace.serialize.serializable
@@ -1246,6 +1285,40 @@ class SubsetUnion(Subset):
     def intersects(self, other: Subset):
         return self.intersection(other) is not None
 
+    def difference(self, other: Subset) -> 'SubsetUnion':
+        try:
+            if isinstance(other, SubsetUnion):
+                differences = []
+                for subs in self.subset_list:
+                    sub_diff = subs
+                    for osubs in other.subset_list:
+                        sub_diff = difference(sub_diff, osubs)
+                    if sub_diff is not None:
+                        if isinstance(sub_diff, SubsetUnion):
+                            for s in sub_diff.subset_list:
+                                differences.append(s)
+                        else:
+                            differences.append(sub_diff)
+                if differences:
+                    return SubsetUnion(differences)
+            elif isinstance(other, (Indices, Range)):
+                differences = []
+                for subs in self.subset_list:
+                    diff = difference(subs, other)
+                    if diff is not None:
+                        if isinstance(diff, SubsetUnion):
+                            for sub_diff in diff.subset_list:
+                                differences.append(sub_diff)
+                        else:
+                            differences.append(diff)
+                if differences:
+                    return SubsetUnion(differences)
+            else:
+                raise TypeError
+        except TypeError:
+            return None
+        pass
+
     @property
     def free_symbols(self) -> Set[str]:
         result = set()
@@ -1457,6 +1530,24 @@ def intersection(subset_a: Subset, subset_b: Subset) -> Optional[Subset]:
             return subset_a.intersection(subset_b)
         elif isinstance(subset_b, SubsetUnion):
             return subset_b.intersection(subset_a)
+        return None
+    except TypeError:
+        return None
+
+def difference(subset_a: Subset, subset_b: Subset) -> Optional[Subset]:
+    try:
+        if subset_a is None or subset_b is None:
+            return None
+        if isinstance(subset_a, Indices):
+            subset_a = Range.from_indices(subset_a)
+        if isinstance(subset_b, Indices):
+            subset_b = Range.from_indices(subset_b)
+        if type(subset_a) is type(subset_b):
+            return subset_a.difference(subset_b)
+        elif isinstance(subset_a, SubsetUnion):
+            return subset_a.difference(subset_b)
+        elif isinstance(subset_b, SubsetUnion):
+            return subset_b.difference(subset_a)
         return None
     except TypeError:
         return None
