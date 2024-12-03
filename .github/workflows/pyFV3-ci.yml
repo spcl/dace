@@ -2,11 +2,11 @@ name: NASA/NOAA pyFV3 repository build test
 
 on:
   push:
-    branches: [ main, ci-fix ]
+    branches: [ v1/maintenance, ci-fix ]
   pull_request:
-    branches: [ main, ci-fix ]
+    branches: [ v1/maintenance, ci-fix ]
   merge_group:
-    branches: [ main, ci-fix ]
+    branches: [ v1/maintenance, ci-fix ]
 
 defaults:
     run:
