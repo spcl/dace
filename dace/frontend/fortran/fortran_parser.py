@@ -2951,9 +2951,10 @@ def find_name_of_node(node: Base) -> Optional[str]:
 
 
 def find_named_ancester(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
+    NAMED_ANCESTOR_STMT_TYPES = Union[Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt]
     anc = node.parent
     while anc:
-        stmt = ast_utils.atmost_one(ast_utils.children_of_type(anc, NAMED_STMTS_OF_INTEREST_TYPES))
+        stmt = ast_utils.atmost_one(ast_utils.children_of_type(anc, NAMED_ANCESTOR_STMT_TYPES))
         if stmt:
             return stmt
         anc = anc.parent
