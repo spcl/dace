@@ -729,6 +729,35 @@ def test_double_index_bug():
                         assert getattr(sympy_node, "name", None) != "indices"
 
 
+def test_reversed_order():
+    """
+    Tests a failure reported in issue #1727.
+    """
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('inputs', [1], dace.int32)
+    sdfg.add_transient('a', [1], dace.int32)
+    sdfg.add_transient('b', [1], dace.int32)
+    sdfg.add_array('output', [1], dace.int32)
+    initstate = sdfg.add_state()
+    state = sdfg.add_state_after(initstate)
+    finistate = sdfg.add_state_after(state)
+
+    # Note the order here
+    w = state.add_write('b')
+    t = state.add_tasklet('assign', {'inp'}, {'out'}, 'out = inp')
+    r = state.add_read('a')
+    state.add_edge(t, 'out', w, None, dace.Memlet('b'))
+    state.add_edge(r, None, t, 'inp', dace.Memlet('a'))
+
+    initstate.add_nedge(initstate.add_read('inputs'), initstate.add_write('a'), dace.Memlet('inputs'))
+    finistate.add_nedge(finistate.add_read('b'), finistate.add_write('output'), dace.Memlet('output'))
+
+    sdfg.validate()
+    promoted = scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    assert promoted == {'a', 'b'}
+    sdfg.compile()
+
+
 if __name__ == '__main__':
     test_find_promotable()
     test_promote_simple()
@@ -753,3 +782,4 @@ if __name__ == '__main__':
     test_ternary_expression(False)
     test_ternary_expression(True)
     test_double_index_bug()
+    test_reversed_order()

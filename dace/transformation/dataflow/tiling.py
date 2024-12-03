@@ -34,6 +34,8 @@ class MapTiling(transformation.SingleStateTransformation):
     tile_trivial = Property(dtype=bool, default=False, desc="Tiles even if tile_size is 1")
     skew = Property(dtype=bool, default=False, desc="If True, offsets inner tile back such that it starts with zero")
 
+    skew = Property(dtype=bool, default=False, desc="If True, offsets inner tile back such that it starts with zero")
+
     @staticmethod
     def annotates_memlets():
         return True

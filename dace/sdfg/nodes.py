@@ -55,6 +55,16 @@ class Node(object):
         else:
             return type(self).__name__
 
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k == 'guid': # Skip ID
+                continue
+            setattr(result, k, dcpy(v, memo))
+        return result
+
     def validate(self, sdfg, state):
         pass
 
@@ -535,6 +545,8 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
+    ext_sdfg_path = Property(dtype=str, default=None, allow_none=True,
+                             desc='Path to a file containing the SDFG for this nested SDFG')
     schedule = EnumProperty(dtype=dtypes.ScheduleType,
                             desc="SDFG schedule",
                             allow_none=True,
@@ -559,21 +571,29 @@ class NestedSDFG(CodeNode):
 
     def __init__(self,
                  label,
-                 sdfg,
+                 sdfg: Optional['dace.SDFG'],
                  inputs: Set[str],
                  outputs: Set[str],
                  symbol_mapping: Dict[str, Any] = None,
                  schedule=dtypes.ScheduleType.Default,
                  location=None,
-                 debuginfo=None):
-        from dace.sdfg import SDFG
+                 debuginfo=None,
+                 path: Optional[str] = None):
         super(NestedSDFG, self).__init__(label, location, inputs, outputs)
 
         # Properties
-        self.sdfg: SDFG = sdfg
+        self.sdfg: 'dace.SDFG' = sdfg
+        self.ext_sdfg_path = path
         self.symbol_mapping = symbol_mapping or {}
         self.schedule = schedule
         self.debuginfo = debuginfo
+
+    def load_external(self, context: Optional['dace.SDFGState']) -> None:
+        if self.sdfg is None and self.ext_sdfg_path is not None:
+            self.sdfg = dace.SDFG.from_file(self.ext_sdfg_path)
+            self.sdfg.parent_nsdfg_node = self
+            self.sdfg.parent = context
+            self.sdfg.parent_sdfg = context.sdfg if context else None
 
     def __deepcopy__(self, memo):
         cls = self.__class__
@@ -597,14 +617,14 @@ class NestedSDFG(CodeNode):
 
         dace.serialize.set_properties_from_json(ret, json_obj, context)
 
-        if context and 'sdfg_state' in context:
-            ret.sdfg.parent = context['sdfg_state']
-        if context and 'sdfg' in context:
-            ret.sdfg.parent_sdfg = context['sdfg']
+        if ret.sdfg is not None:
+            if context and 'sdfg_state' in context:
+                ret.sdfg.parent = context['sdfg_state']
+            if context and 'sdfg' in context:
+                ret.sdfg.parent_sdfg = context['sdfg']
+            ret.sdfg.parent_nsdfg_node = ret
 
-        ret.sdfg.parent_nsdfg_node = ret
-
-        ret.sdfg.update_cfg_list([])
+            ret.sdfg.update_cfg_list([])
 
         return ret
 
@@ -654,28 +674,29 @@ class NestedSDFG(CodeNode):
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
-        if self.sdfg.parent_nsdfg_node is not self:
-            raise ValueError('Parent nested SDFG node not properly set')
-        if self.sdfg.parent is not state:
-            raise ValueError('Parent state not properly set for nested SDFG node')
-        if self.sdfg.parent_sdfg is not sdfg:
-            raise ValueError('Parent SDFG not properly set for nested SDFG node')
+        if self.sdfg:
+            if self.sdfg.parent_nsdfg_node is not self:
+                raise ValueError('Parent nested SDFG node not properly set')
+            if self.sdfg.parent is not state:
+                raise ValueError('Parent state not properly set for nested SDFG node')
+            if self.sdfg.parent_sdfg is not sdfg:
+                raise ValueError('Parent SDFG not properly set for nested SDFG node')
 
-        connectors = self.in_connectors.keys() | self.out_connectors.keys()
-        for conn in connectors:
-            if conn in self.sdfg.symbols:
-                raise ValueError(
-                    f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
-                    'To pass symbols use "symbol_mapping".')
-            if conn not in self.sdfg.arrays:
-                raise NameError(
-                    f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
-                    'Example: parameter passed to a function without a matching array within it.')
-        for dname, desc in self.sdfg.arrays.items():
-            if not desc.transient and dname not in connectors:
-                raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
-            if dname in connectors and desc.transient:
-                raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
+            connectors = self.in_connectors.keys() | self.out_connectors.keys()
+            for conn in connectors:
+                if conn in self.sdfg.symbols:
+                    raise ValueError(
+                        f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
+                        'To pass symbols use "symbol_mapping".')
+                if conn not in self.sdfg.arrays:
+                    raise NameError(
+                        f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
+                        'Example: parameter passed to a function without a matching array within it.')
+            for dname, desc in self.sdfg.arrays.items():
+                if not desc.transient and dname not in connectors:
+                    raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
+                if dname in connectors and desc.transient:
+                    raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
 
         # Validate inout connectors
         from dace.sdfg import utils  # Avoids circular import
@@ -696,17 +717,18 @@ class NestedSDFG(CodeNode):
                                  f"output ({outputs}) arrays")
 
         # Validate undefined symbols
-        symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
-        missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
-        if missing_symbols:
-            raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))
-        extra_symbols = self.symbol_mapping.keys() - symbols
-        if len(extra_symbols) > 0:
-            # TODO: Elevate to an error?
-            warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
+        if self.sdfg:
+            symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
+            missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
+            if missing_symbols:
+                raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))
+            extra_symbols = self.symbol_mapping.keys() - symbols
+            if len(extra_symbols) > 0:
+                # TODO: Elevate to an error?
+                warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
-        # Recursively validate nested SDFG
-        self.sdfg.validate(references, **context)
+            # Recursively validate nested SDFG
+            self.sdfg.validate(references, **context)
 
 
 # ------------------------------------------------------------------------------
@@ -919,6 +941,8 @@ class Map(object):
                                  "enables the statement if block size is not symbolic, and any other value "
                                  "(including tuples) sets it explicitly.",
                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
+    gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
 
     def __init__(self,
                  label,
