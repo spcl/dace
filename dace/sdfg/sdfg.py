@@ -773,9 +773,11 @@ class SDFG(ControlFlowRegion):
 
         # Update size descriptors
         # Return_size break things delete it from the arrays
+        # Changes symbol names might not related to arrays
         for arr_name, size_desc_name in size_desc_map.items():
-            arr = self.arrays[arr_name]
-            arr.size_desc_name = size_desc_name if size_desc_name != "__return_size" else None
+            arr = self.arrays[arr_name] if arr_name in self.arrays else None
+            if arr is not None:
+                arr.size_desc_name = size_desc_name if size_desc_name != "__return_size" else None
 
         # Replace inside data descriptors
         for array in self.arrays.values():
