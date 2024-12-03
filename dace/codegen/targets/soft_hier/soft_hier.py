@@ -148,9 +148,9 @@ class SoftHierCodeGen(TargetCodeGenerator):
     def preprocess(self, sdfg: SDFG) -> None:
         # Determine GPU backend
         self.backend = common.get_gpu_backend()
-        self.language = 'cu' if self.backend == 'cuda' else 'cpp'
+        self.language = 'shcc' if self.backend == 'cuda' else 'cpp'
         target_type = "" if self.backend == 'cuda' else self.backend
-        self._codeobject = CodeObject(sdfg.name + '_' + 'cuda',
+        self._codeobject = CodeObject(sdfg.name + '_' + 'soft_hier',
                                       '',
                                       self.language,
                                       SoftHierCodeGen,
@@ -346,9 +346,10 @@ class SoftHierCodeGen(TargetCodeGenerator):
 '''
 
         self._codeobject.code = """
-#include <{backend_header}>
-#include <dace/dace.h>
-
+// #include <{backend_header}>
+// #include <dace/dace.h>
+#include <math.h>
+#include "flex_runtime.h"
 {file_header}
 
 DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
@@ -417,11 +418,11 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
 
     @property
     def has_initializer(self):
-        return True
+        return False
 
     @property
     def has_finalizer(self):
-        return True
+        return False
 
     @staticmethod
     def cmake_options():
@@ -1653,10 +1654,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Write callback function definition
         self._localcode.write(
             """
-DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
-void __dace_runkernel_{fname}({fargs})
+DACE_EXPORTED void main({fargs});
+void main({fargs})
 {{
-""".format(fname=kernel_name, fargs=', '.join(state_param + kernel_args_typed + extra_call_args_typed)), cfg, state_id,
+""".format(fargs=', '.join(state_param + kernel_args_typed + extra_call_args_typed)), cfg, state_id,
             node)
 
         if is_persistent:
@@ -1728,28 +1729,47 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 emptygrid_warning = (f'printf("Warning: Skipping launching kernel \\"{kernel_name}\\" '
                                      'due to an empty grid.\\n");')
 
-            self._localcode.write(
-                f'''
-                if ({dimcheck}) {{
-                    {emptygrid_warning}
-                    return;
-                }}''', cfg, state_id, scope_entry)
+            # self._localcode.write(
+            #     f'''
+            #     if ({dimcheck}) {{
+            #         {emptygrid_warning}
+            #         return;
+            #     }}''', cfg, state_id, scope_entry)
 
-        self._localcode.write(
+#         self._localcode.write(
+#             '''
+# void  *{kname}_args[] = {{ {kargs} }};
+# gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''
+#             .format(kname=kernel_name,
+#                     kargs=', '.join(['(void *)&' + arg for arg in prototype_kernel_args] + extra_kernel_args),
+#                     gdims=gdims,
+#                     bdims=bdims,
+#                     dynsmem=_topy(dynsmem_size),
+#                     stream=cudastream,
+#                     backend=self.backend), cfg, state_id, scope_entry)
+
+
+            self._localcode.write(
             '''
-void  *{kname}_args[] = {{ {kargs} }};
-gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''
+            uint32_t eoc_val = 0;
+            flex_barrier_xy_init();
+            flex_global_barrier_xy();
+            flex_timer_start();
+            {kname}({kargs});
+            flex_global_barrier_xy();
+            flex_timer_end();
+            flex_eoc(eoc_val);
+            return 0;'''
             .format(kname=kernel_name,
-                    kargs=', '.join(['(void *)&' + arg for arg in prototype_kernel_args] + extra_kernel_args),
+                    kargs=', '.join([arg for arg in prototype_kernel_args] + extra_kernel_args),
                     gdims=gdims,
                     bdims=bdims,
                     dynsmem=_topy(dynsmem_size),
                     stream=cudastream,
                     backend=self.backend), cfg, state_id, scope_entry)
-
         # Check kernel launch for errors
-        self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK(__err, "{kernel_name}", {gdims}, {bdims});')
-
+        # self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK(__err, "{kernel_name}", {gdims}, {bdims});')
+        
         self._emit_sync(self._localcode)
 
         # Close the runkernel function
@@ -1757,7 +1777,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         #######################
         # Add invocation to calling code (in another file)
         function_stream.write(
-            'DACE_EXPORTED void __dace_runkernel_%s(%s);\n' %
+            '// DACE_EXPORTED void __dace_runkernel_%s(%s);\n' %
             (kernel_name, ', '.join(state_param + kernel_args_typed + extra_call_args_typed)), cfg, state_id,
             scope_entry)
 
@@ -1778,7 +1798,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # Invoke kernel call
         callsite_stream.write(
-            '__dace_runkernel_%s(%s);\n' %
+            '// __dace_runkernel_%s(%s);\n' %
             (kernel_name,
              ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg, self._frame)
                                       for aname, arg in kernel_args.items()] + extra_call_args)), cfg, state_id,

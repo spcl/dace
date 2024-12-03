@@ -32,6 +32,10 @@ set(DACE_INTELFPGA_KERNEL_FLAGS "" CACHE STRING "Extra flags to kernel compiler.
 set(DACE_INTELFPGA_TARGET_BOARD "a10gx" CACHE STRING "Target FPGA board.")
 set(DACE_INTELFPGA_ENABLE_DEBUGGING OFF CACHE STRING "Enable debugging.")
 
+# SoftHier options
+set(DACE_SOFTHIER_SHCC_CMAKE_PATH ${CMAKE_SOURCE_DIR}/targets/soft_hier)
+list(APPEND CMAKE_MODULE_PATH ${DACE_SOFTHIER_SHCC_CMAKE_PATH})
+
 # Target detection
 set(DACE_ENABLE_MPI OFF)
 set(DACE_ENABLE_CUDA OFF)
@@ -39,6 +43,7 @@ set(DACE_ENABLE_HIP OFF)
 set(DACE_ENABLE_XILINX OFF)
 set(DACE_ENABLE_INTELFPGA OFF)
 set(DACE_ENABLE_RTL OFF)
+set(DACE_ENABLE_SOFTHIER OFF)
 
 # Split list by target
 foreach(DACE_FILE ${DACE_FILES})
@@ -91,6 +96,13 @@ foreach(DACE_FILE ${DACE_FILES})
     set(DACE_ENABLE_RTL ON)
     if(DACE_FILE_EXT MATCHES ".v" OR DACE_FILE_EXT MATCHES ".sv")
       set(DACE_RTL_FILES ${DACE_RTL_FILES} ${DACE_FILE})
+    elseif(DACE_FILE_EXT MATCHES ".cpp")
+      set(DACE_HOST_FILES ${DACE_HOST_FILES} ${DACE_FILE})
+    endif()
+  elseif(${DACE_FILE_TARGET} STREQUAL "soft_hier")
+    set(DACE_ENABLE_SOFTHIER ON)
+    if(DACE_FILE_EXT MATCHES ".shcc")
+      set(DACE_SOFTHIER_FILES ${DACE_SOFTHIER_FILES} ${DACE_FILE})
     elseif(DACE_FILE_EXT MATCHES ".cpp")
       set(DACE_HOST_FILES ${DACE_HOST_FILES} ${DACE_FILE})
     endif()
@@ -262,6 +274,20 @@ if (DACE_ENABLE_RTL AND DACE_ENABLE_XILINX)
   set(DACE_RTLLIB_DIR ${CMAKE_SOURCE_DIR}/../external/rtllib)
   include ("${DACE_RTLLIB_DIR}/cmake/rtl_target.cmake")
 endif()
+
+if(DACE_ENABLE_SOFTHIER)
+  message(STATUS "11111111111")
+  enable_language(SHCC)
+  message(STATUS "2222222222")
+  add_definitions(-DDACE_SOFTHIER)
+  set_source_files_properties(${DACE_SOFTHIER_FILES} PROPERTIES LANGUAGE SHCC)
+  # set_source_files_properties(${DACE_HOST_FILES} PROPERTIES LANGUAGE SHCC)
+  set(DACE_SOFTHIER_DIR /scratch/dace4softhier/gvsoc/soft_hier/flex_cluster_sdk)
+  include_directories(SYSTEM ${DACE_SOFTHIER_DIR}/runtime/include)
+  
+  message(STATUS "3333333333")
+endif()
+
 
 # Create HIP object files
 if(DACE_ENABLE_HIP)
@@ -603,8 +629,29 @@ if(DACE_ENABLE_XILINX)
 endif()
 
 # Create DaCe loader stub
+message(STATUS "Creating DaCe loader stub")
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
+message(STATUS "Linking with ${DACE_LIBS}")
 target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
+message(STATUS "Linking with ${DACE_PROGRAM_NAME}")
+
+# Ascend CCE compiler has problems doing these by itself
+if(DACE_ENABLE_SOFTHIER)
+  # link_directories(${DACE_ASCEND_INSTALL_PATH}/runtime/lib64)
+  # find_library(ASCENDCL_LIB ascendcl HINTS ${DACE_ASCEND_INSTALL_PATH}/runtime/lib64)
+  # find_library(ASCENDCL_RUNTIME_LIB runtime HINTS ${DACE_ASCEND_INSTALL_PATH}/runtime/lib64)
+  # target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${ASCENDCL_LIB} ${ASCENDCL_RUNTIME_LIB})
+  # target_compile_options(${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
+  # target_link_options(${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
+  # target_link_libraries(ascendc_kernels PUBLIC ${ASCENDCL_LIB} ${ASCENDCL_RUNTIME_LIB})
+  # target_compile_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_FLAGS})
+  # target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_LIBRARIES})
+  # target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${CMAKE_DL_LIBS} ascendc_kernels)
+  # target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${ASCENDCL_LIB} ${ASCENDCL_RUNTIME_LIB})
+  # target_compile_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
+  # target_link_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
+endif()
+
 
 # Windows-specific fixes
 if (MSVC_IDE)
