@@ -3873,6 +3873,30 @@ def prune_unused_objects(ast: Program,
         _reparent_children(par)
         killed.add(ns)
 
+    # We also remove any access statement that makes the killed objects public/private.
+    for acc in walk(ast, Access_Stmt):
+        # TODO: Add ref.
+        kind, alist = acc.children
+        if not alist:
+            continue
+        scope = find_named_ancester(acc.parent)
+        assert scope
+        scope_spec = ident_spec(scope)
+        good_children = []
+        for c in alist.children:
+            assert isinstance(c, Name)
+            c_spec = find_real_ident_spec(c.string, scope_spec, alias_map)
+            assert c_spec in ident_map
+            if c_spec not in killed:
+                good_children.append(c)
+        if good_children:
+            alist.items = good_children
+            _reparent_children(alist)
+        else:
+            par = acc.parent
+            par.content = [c for c in par.children if c != acc]
+            _reparent_children(par)
+
     return ast
 
 
