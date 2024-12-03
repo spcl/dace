@@ -688,6 +688,9 @@ class SDFG(ControlFlowRegion):
         """
         return self._arrays
 
+    def size_arrays(self):
+        return [v.size_desc_name for v in self._arrays.values() if v.size_desc_name is not None and v.size_desc_name in self._arrays]
+
     @property
     def arrays(self):
         return self._arrays
