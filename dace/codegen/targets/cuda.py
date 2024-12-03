@@ -613,7 +613,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
                 if nodedesc.transient:
                     size_desc_name = nodedesc.size_desc_name
                     if size_desc_name is not None:
-                        size_nodedesc = sdfg.size_arrays[size_desc_name]
+                        size_nodedesc = sdfg.arrays[size_desc_name]
                         result_decl.write(f'{size_nodedesc.dtype.ctype} {size_desc_name}[{size_nodedesc.shape[0]}]{{{size_str}}};\n')
                         self._dispatcher.defined_vars.add(size_desc_name, DefinedType.Pointer, size_nodedesc.dtype.ctype)
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
@@ -1586,7 +1586,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             if aname in sdfg.arrays:
                 size_arr_name = data_desc.size_desc_name
                 if size_arr_name is not None:
-                    size_arr = sdfg.size_arrays[data_desc.size_desc_name]
+                    size_arr = sdfg.arrays[data_desc.size_desc_name]
                     host_size_args[size_arr_name] = size_arr
 
         kernel_args_typed = [('const ' if k in const_params else '') + v.as_arg(name=k)

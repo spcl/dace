@@ -1,4 +1,6 @@
 import dace
+from dace.transformation.dataflow.redundant_array import RedundantArray, RedundantSecondArray
+from dace.transformation.interstate.state_fusion import StateFusion
 import numpy
 import cupy
 import pytest
@@ -28,7 +30,8 @@ def _get_trivial_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient: bo
     an_1 = state.add_access('A')
     an_1.add_in_connector('_write_size')
 
-    an_2 = state.add_array(name="user_size", shape=(2,), dtype=dace.uint64)
+    sdfg.add_array(name="user_size", shape=(2,), dtype=dace.uint64)
+    an_2 = state.add_access("user_size")
 
     state.add_edge(an_2, None, an_1, '_write_size',
                 dace.Memlet(expr=f"user_size[{write_size}]") )
@@ -48,7 +51,8 @@ def _get_assign_map_sdfg(storage_type: dace.dtypes.StorageType, transient: bool,
     an_1.add_in_connector('_write_size')
     an_1.add_out_connector('_read_size')
 
-    an_2 = state.add_array(name="user_size", shape=(2,), dtype=dace.uint64)
+    sdfg.add_array(name="user_size", shape=(2,), dtype=dace.uint64)
+    an_2 = state.add_access("user_size")
 
     state.add_edge(an_2, None, an_1, '_write_size',
                 dace.Memlet(expr="user_size[0:2]") )
@@ -116,6 +120,11 @@ def test_trivial_realloc(storage_type: dace.dtypes.StorageType, transient: bool)
 
     sdfg.compile()
 
+    sdfg.simplify()
+    sdfg.apply_transformations_repeated([StateFusion, RedundantArray, RedundantSecondArray])
+    sdfg.validate()
+    sdfg.compile()
+
 def test_realloc_use(storage_type: dace.dtypes.StorageType, transient: bool, schedule_type: dace.dtypes.ScheduleType):
     sdfg = _get_assign_map_sdfg(storage_type, transient, schedule_type)
     try:
@@ -133,14 +142,28 @@ def test_realloc_use(storage_type: dace.dtypes.StorageType, transient: bool, sch
     if storage_type == dace.dtypes.StorageType.CPU_Heap:
         arr = numpy.array([-1.0]).astype(numpy.float32)
         user_size = numpy.array([10, 10]).astype(numpy.uint64)
-        compiled_sdfg (user_size=user_size, example_array=arr)
+        compiled_sdfg(user_size=user_size, example_array=arr)
         assert ( arr[0] == 3.0 )
     if storage_type == dace.dtypes.StorageType.GPU_Global:
         arr = cupy.array([-1.0]).astype(cupy.float32)
         user_size = numpy.array([10, 10]).astype(numpy.uint64)
-        compiled_sdfg (user_size=user_size, example_array=arr)
+        compiled_sdfg(user_size=user_size, example_array=arr)
         assert ( arr.get()[0] == 3.0 )
 
+    sdfg.simplify()
+    sdfg.apply_transformations_repeated([StateFusion, RedundantArray, RedundantSecondArray])
+    sdfg.validate()
+    compiled_sdfg = sdfg.compile()
+    if storage_type == dace.dtypes.StorageType.CPU_Heap:
+        arr = numpy.array([-1.0]).astype(numpy.float32)
+        user_size = numpy.array([10, 10]).astype(numpy.uint64)
+        compiled_sdfg(user_size=user_size, example_array=arr)
+        assert ( arr[0] == 3.0 )
+    if storage_type == dace.dtypes.StorageType.GPU_Global:
+        arr = cupy.array([-1.0]).astype(cupy.float32)
+        user_size = numpy.array([10, 10]).astype(numpy.uint64)
+        compiled_sdfg(user_size=user_size, example_array=arr)
+        assert ( arr.get()[0] == 3.0 )
 
 def test_realloc_inside_map():
     pass

@@ -183,6 +183,7 @@ class Data:
                             default=dtypes.AllocationLifetime.Scope)
     location = DictProperty(key_type=str, value_type=str, desc='Full storage location identifier (e.g., rank, GPU ID)')
     debuginfo = DebugInfoProperty(allow_none=True)
+    size_desc_name = Property(dtype=str, default=None, allow_none=True)
 
     def __init__(self, dtype, shape, transient, storage, location, lifetime, debuginfo):
         self.dtype = dtype
@@ -192,6 +193,7 @@ class Data:
         self.location = location if location is not None else {}
         self.lifetime = lifetime
         self.debuginfo = debuginfo
+        self.size_desc_name = None
         self._validate()
 
     def __call__(self):
@@ -1384,9 +1386,6 @@ class Array(Data):
                         'If False, the array must not be None. If option is not set, '
                         'it is inferred by other properties and the OptionalArrayInference pass.')
     pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
-
-    size_desc_name = Property(dtype=str, default=None, allow_none=True, desc='The name of the size array (1D, length is the shape of thte current array)'
-                                                                             'Of the array (usually <name>_size)')
 
     def __init__(self,
                  dtype,

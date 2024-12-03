@@ -325,7 +325,7 @@ def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]
     """
     Helper function that returns False if a data container cannot be accessed in the current SDFG context.
     """
-    storage = sdfg.arrays[container].storage
+    storage = sdfg.arrays[container].storage if container in sdfg.arrays else sdfg.arrays[container].storage
     if storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES:
         return context.get('in_gpu', False)
     if storage == dtypes.StorageType.FPGA_Global or storage in dtypes.FPGA_STORAGES:
@@ -901,10 +901,11 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Check dimensionality of memory access
         if isinstance(e.data.subset, (sbs.Range, sbs.Indices)):
-            if e.data.subset.dims() != len(sdfg.arrays[e.data.data].shape):
+            desc = sdfg.arrays[e.data.data] if e.data.data in sdfg.arrays else sdfg.arrays[e.data.data]
+            if e.data.subset.dims() != len(desc.shape):
                 raise InvalidSDFGEdgeError(
                     "Memlet subset uses the wrong dimensions"
-                    " (%dD for a %dD data node)" % (e.data.subset.dims(), len(sdfg.arrays[e.data.data].shape)),
+                    " (%dD for a %dD data node)" % (e.data.subset.dims(), len(desc.shape)),
                     sdfg,
                     state_id,
                     eid,
@@ -913,8 +914,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Verify that source and destination subsets contain the same
         # number of elements
         if not e.data.allow_oob and e.data.other_subset is not None and not (
-            (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
-            (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
+            (isinstance(src_node, nd.AccessNode) and src_node.data in sdfg.arrays and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
+            (isinstance(dst_node, nd.AccessNode) and src_node.data in sdfg.arrays and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
             src_expr = (e.data.src_subset.num_elements() * sdfg.arrays[src_node.data].veclen)
             dst_expr = (e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen)
             if symbolic.inequal_symbols(src_expr, dst_expr):
