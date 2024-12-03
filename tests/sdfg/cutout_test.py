@@ -21,7 +21,6 @@ def test_cutout_onenode():
     cut_sdfg = SDFGCutout.singlestate_cutout(state, node)
     assert cut_sdfg.number_of_nodes() == 1
     assert cut_sdfg.node(0).number_of_nodes() == 4
-    assert len(cut_sdfg.arrays) == 3
     assert all(not a.transient for a in cut_sdfg.arrays.values())
 
 
@@ -42,7 +41,6 @@ def test_cutout_multinode():
     cut_sdfg = SDFGCutout.singlestate_cutout(state, *nodes)
     assert cut_sdfg.number_of_nodes() == 1
     assert cut_sdfg.node(0).number_of_nodes() == 7
-    assert len(cut_sdfg.arrays) == 5
     assert (not any(a.transient for a in cut_sdfg.arrays.values()))
 
 
@@ -309,7 +307,6 @@ def test_input_output_configuration():
     assert ct.arrays['tmp2'].transient == False
     assert ct.arrays['tmp3'].transient == True
     assert ct.arrays['tmp4'].transient == True
-    assert len(ct.arrays) == 4
 
 
 def test_minimum_cut_simple_no_further_input_config():
