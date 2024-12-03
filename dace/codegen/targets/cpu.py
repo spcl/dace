@@ -344,7 +344,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if nodedesc.transient and nodedesc.storage == dtypes.StorageType.CPU_Heap:
                 size_desc_name = sdfg.arrays[name].size_desc_name
                 if size_desc_name is not None:
-                    size_desc = sdfg.arrays[size_desc_name]
+                    size_desc = sdfg.size_arrays[size_desc_name]
                     size_ctypedef = dtypes.pointer(size_desc.dtype).ctype
                     self._dispatcher.declared_arrays.add(size_desc_name, DefinedType.Pointer, size_ctypedef)
             return
@@ -514,7 +514,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 # Initialize size array
                 size_str = ",".join(["0" if cpp.sym2cpp(dim).startswith("__dace_defer") else cpp.sym2cpp(dim) for dim in nodedesc.shape])
                 size_desc_name = nodedesc.size_desc_name
-                size_nodedesc = sdfg.arrays[size_desc_name]
+                size_nodedesc = sdfg.size_arrays[size_desc_name]
                 declaration_stream.write(f'{size_nodedesc.dtype.ctype} {size_desc_name}[{size_nodedesc.shape[0]}]{{{size_str}}};\n', cfg, state_id, node)
             if deferred_allocation:
                 allocation_stream.write(
@@ -708,7 +708,6 @@ class CPUCodeGen(TargetCodeGenerator):
         data = sdfg.arrays[data_name]
         size_array_name = data.size_desc_name
 
-        new_size_array = sdfg.arrays[new_size_array_name]
         dtype = sdfg.arrays[data_name].dtype
 
         # Only consider the offsets with __dace_defer in original dim

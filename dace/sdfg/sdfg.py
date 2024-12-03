@@ -418,6 +418,10 @@ class SDFG(ControlFlowRegion):
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_nested_arrays_from_json)
+    _size_arrays = Property(dtype=NestedDict,
+                       desc="Data size descriptors for this SDFG",
+                       to_json=_arrays_to_json,
+                       from_json=_nested_arrays_from_json)
     symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -496,6 +500,7 @@ class SDFG(ControlFlowRegion):
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
+        self._size_arrays = NestedDict()
         self.arg_names = []
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -684,6 +689,10 @@ class SDFG(ControlFlowRegion):
         return self._arrays
 
     @property
+    def size_arrays(self):
+        return self._size_arrays
+
+    @property
     def process_grids(self):
         """ Returns a dictionary of process-grid descriptors (`ProcessGrid` objects) used in this SDFG. """
         return self._pgrids
@@ -746,6 +755,7 @@ class SDFG(ControlFlowRegion):
             for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self._arrays, name, new_name)
+                    _replace_dict_keys(self._size_arrays, name + "_size", new_name + "_size")
                     _replace_dict_keys(self.symbols, name, new_name)
                     _replace_dict_keys(self.constants_prop, name, new_name)
                     _replace_dict_keys(self.callback_mapping, name, new_name)
@@ -1151,7 +1161,10 @@ class SDFG(ControlFlowRegion):
                                          f"{name}: it is accessed by node "
                                          f"{node} in state {state}.")
 
+        size_desc_name = self._arrays[name].size_desc_name
         del self._arrays[name]
+        if size_desc_name is not None:
+            del self._size_arrays[size_desc_name]
 
     def reset_sdfg_list(self):
         """
@@ -1676,12 +1689,14 @@ class SDFG(ControlFlowRegion):
         """ Tries to find a new name by adding an underscore and a number. """
 
         names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
-                 | self._rdistrarrays.keys() | self.symbols.keys())
+                 | self._rdistrarrays.keys() | self.symbols.keys() | self._size_arrays.keys())
         return dt.find_new_name(name, names)
 
     def is_name_used(self, name: str) -> bool:
         """ Checks if `name` is already used inside the SDFG."""
         if name in self._arrays:
+            return True
+        if name in self._size_arrays:
             return True
         if name in self.symbols:
             return True
@@ -1787,7 +1802,7 @@ class SDFG(ControlFlowRegion):
         array_name = self.add_datadesc(name, desc, find_new_name=find_new_name)
         if transient:
             size_desc_name = f"{array_name}_size"
-            self.add_datadesc(size_desc_name, size_desc, find_new_name=False)
+            self.add_size_datadesc(size_desc_name, size_desc)
             # In case find_new_name and a new name is returned
             # we need to update the size descriptor name of the array
             desc.size_desc_name = size_desc_name
@@ -2038,6 +2053,16 @@ class SDFG(ControlFlowRegion):
         newdesc.debuginfo = debuginfo
         return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
+    @staticmethod
+    def _add_symbols(sdfg, desc: dt.Data):
+        if isinstance(desc, dt.Structure):
+            for v in desc.members.values():
+                if isinstance(v, dt.Data):
+                    SDFG._add_symbols(sdfg, v)
+        for sym in desc.free_symbols:
+            if sym.name not in sdfg.symbols:
+                sdfg.add_symbol(sym.name, sym.dtype)
+
     def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.
 
@@ -2067,7 +2092,7 @@ class SDFG(ControlFlowRegion):
         else:
             # We do not check for data constant, because there is a link between the constants and
             #  the data descriptors.
-            if name in self.arrays:
+            if name in self.arrays or name in self.size_arrays:
                 raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
             if name in self.symbols:
                 raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
@@ -2078,18 +2103,38 @@ class SDFG(ControlFlowRegion):
             if name in self._pgrids:
                 raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a ProcessGrid.')
 
-        def _add_symbols(sdfg: SDFG, desc: dt.Data):
-            if isinstance(desc, dt.Structure):
-                for v in desc.members.values():
-                    if isinstance(v, dt.Data):
-                        _add_symbols(sdfg, v)
-            for sym in desc.free_symbols:
-                if sym.name not in sdfg.symbols:
-                    sdfg.add_symbol(sym.name, sym.dtype)
-
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc
-        _add_symbols(self, datadesc)
+        SDFG._add_symbols(self, datadesc)
+
+        return name
+
+    def add_size_datadesc(self, name: str, datadesc: dt.Data) -> str:
+        """ Adds an existing data descriptor to the SDFG array store.
+
+            :param name: Name to use.
+            :param datadesc: Data descriptor to add.
+            :param find_new_name: If True and data descriptor with this name
+                                  exists, finds a new name to add.
+            :return: Name of the new data descriptor
+        """
+        if not isinstance(name, str):
+            raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
+
+        if name in self.arrays or name in self.size_arrays:
+            raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
+        if name in self.symbols:
+            raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
+        if name in self._subarrays:
+            raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a subarray.')
+        if name in self._rdistrarrays:
+            raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a RedistrArray.')
+        if name in self._pgrids:
+            raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a ProcessGrid.')
+
+        # Add the data descriptor to the SDFG and all symbols that are not yet known.
+        self._size_arrays[name] = datadesc
+        SDFG._add_symbols(self, datadesc)
 
         return name
 
