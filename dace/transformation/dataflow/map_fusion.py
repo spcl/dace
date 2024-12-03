@@ -20,14 +20,19 @@ class MapFusion(transformation.SingleStateTransformation):
     connections appropriately. Depending on the situation the transformation will
     either fully remove or make the intermediate a new output of the second map.
 
-    By default, the transformation does not use the strict data flow mode. However,
-    it might be useful in come cases to enable it.
+    By default `strict_dataflow` is enabled. In this mode, the transformation
+    will not fuse maps that could potentially lead to a data race, because the
+    resulting combined map reads and writes from the same underlying data.
+    If strict dataflow is disabled, then the transformation might fuse such maps.
+    However, it will ensure that the accesses are point wise, this means that
+    in each iteration the map only accesses the same location that it also writes
+    to. Note that this could still lead to data races, because the order in which
+    DaCe generates the reads and writes is indeterministic.
 
     Args:
         only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
         only_toplevel_maps: Only consider Maps that are at the top.
-        strict_dataflow: If `True`, the transformation ensures a more
-            stricter version of the data flow.
+        strict_dataflow: Which dataflow mode should be used, see above.
 
     Notes:
         - This transformation modifies more nodes than it matches.
@@ -302,17 +307,6 @@ class MapFusion(transformation.SingleStateTransformation):
         # Set of intermediate nodes that we have already processed.
         processed_inter_nodes: Set[nodes.Node] = set()
 
-        # These are the data that is written to multiple times in _this_ state.
-        #  If a data is written to multiple time in a state, it could be
-        #  classified as shared. However, it might happen that the node has zero
-        #  degree. This is not a problem as the maps also induced a before-after
-        #  relationship. But some DaCe transformations do not catch this.
-        #  Thus we will never modify such intermediate nodes and fail instead.
-        if self.strict_dataflow:
-            multi_write_data: Set[str] = self._compute_multi_write_data(state, sdfg)
-        else:
-            multi_write_data = set()
-
         # Now scan all output edges of the first exit and classify them
         for out_edge in state.out_edges(map_exit_1):
             intermediate_node: nodes.Node = out_edge.dst
@@ -354,16 +348,6 @@ class MapFusion(transformation.SingleStateTransformation):
             if not isinstance(intermediate_node, nodes.AccessNode):
                 return None
             if self.is_view(intermediate_node, sdfg):
-                return None
-
-            # Checks if the intermediate node refers to data that is accessed by
-            #  _other_ access nodes in _this_ state. If this is the case then never
-            #  touch this intermediate node.
-            #  TODO(phimuell): Technically it would be enough to turn the node into
-            #   a shared output node, because this will still fulfil the dependencies.
-            #   However, some DaCe transformation can not handle this properly, so we
-            #   are _forced_ to reject this node.
-            if intermediate_node.data in multi_write_data:
                 return None
 
             # Empty Memlets are only allowed if they are in `\mathbb{P}`, which
@@ -1033,11 +1017,6 @@ class MapFusion(transformation.SingleStateTransformation):
         if not real_write_map_1.isdisjoint(real_write_map_2):
             return True
 
-        # If there is no overlap in what is (totally) read and written, there will be no conflict.
-        #  This must come before the check of disjoint write.
-        if (real_read_map_1 | real_read_map_2).isdisjoint(real_write_map_1 | real_write_map_2):
-            return False
-
         # These are the names (unresolved) and the access nodes of the data that is used
         #  to transmit information between the maps. The partition function ensures that
         #  these nodes are directly connected to the two maps.
@@ -1062,10 +1041,28 @@ class MapFusion(transformation.SingleStateTransformation):
         if any(self.is_view(read_map_1[name], sdfg) for name in fused_inout_data_names):
             return True
 
+        # In strict data flow mode we require that the input and the output of
+        #  the fused map is distinct.
+        # NOTE: The code below is able to handle cases were an input to map 1
+        #   is also used as output of map 2. In this case the function check
+        #   if they are point wise, i.e. every iteration reads from the same
+        #   location it later writes to. However, even then it might cause
+        #   problems because in which order the reads and writes are done is
+        #   indeterministic. But if this is handled through other means, then
+        #   it allows powerful optimizations.
+        if self.strict_dataflow:
+            if len(fused_inout_data_names) != 0:
+                return True
+
         # A data container can be used as input and output. But we do not allow that
-        #  it is also used as intermediate or exchange data. This is an important check.
+        #  it is also used as intermediate or exchange data.
         if not fused_inout_data_names.isdisjoint(exchange_names):
             return True
+
+        # If there is no intersection between the input and output data, then we can
+        #  we have nothing to check.
+        if len(fused_inout_data_names) == 0:
+            return False
 
         # Get the replacement dict for changing the map variables from the subsets of
         #  the second map.
@@ -1249,43 +1246,6 @@ class MapFusion(transformation.SingleStateTransformation):
         # Compute the final set of shared data and update the internal cache.
         shared_data.update(data_read_in_interstate_edges)
         self._shared_data[sdfg] = shared_data
-
-
-    def _compute_multi_write_data(
-        self,
-        state: SDFGState,
-        sdfg: SDFG,
-    ) -> Set[str]:
-        """Computes data inside a _single_ state, that is written multiple times.
-
-        Essentially this function computes the set of data that does not follow
-        the single static assignment idiom. The function also resolves views.
-        If an access node, refers to a view, not only the view itself, but also
-        the data it refers to is added to the set.
-
-        Args:
-            state: The state that should be examined.
-            sdfg: The SDFG object.
-
-        Note:
-            This information is used by the partition function (in case strict data
-            flow mode is enabled), in strict data flow mode only. The current
-            implementation is rather simple as it only checks if a data is written
-            to multiple times in the same state.
-        """
-        data_written_to: Set[str] = set()
-        multi_write_data: Set[str] = set()
-
-        for access_node in state.data_nodes():
-            if state.in_degree(access_node) == 0:
-                continue
-            if access_node.data in data_written_to:
-                multi_write_data.add(access_node.data)
-            elif self.is_view(access_node, sdfg):
-                # This is an over approximation.
-                multi_write_data.update([access_node.data, self.track_view(access_node, state, sdfg).data])
-            data_written_to.add(access_node.data)
-        return multi_write_data
 
 
     def find_parameter_remapping(self, first_map: nodes.Map, second_map: nodes.Map) -> Union[Dict[str, str], None]:

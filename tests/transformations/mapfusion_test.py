@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Union
+from typing import Any, Union, Tuple, Optional
 
 import numpy as np
 import os
 import dace
 import copy
+import uuid
 
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
@@ -719,7 +720,119 @@ def test_different_offsets():
     assert np.allclose(ref, res)
 
 
+def _make_strict_dataflow_sdfg_pointwise(
+        input_data: str = "A",
+        intermediate_data: str = "T",
+        output_data: Optional[str] = None,
+        input_read: str = "__i0",
+        output_write: Optional[str] = None,
+) -> Tuple[dace.SDFG, dace.SDFGState]:
+    """
+    Creates the SDFG for the strict data flow tests.
+
+    The SDFG will read and write into `A`, but it is pointwise, thus the Maps can
+    be fused. Furthermore, this particular SDFG guarantees that no data race occurs.
+    """
+    if output_data is None:
+        output_data = input_data
+    if output_write is None:
+        output_write = input_read
+
+    sdfg = dace.SDFG(f"strict_dataflow_sdfg_pointwise_{str(uuid.uuid1()).replace('-', '_')}")
+    state = sdfg.add_state(is_start_block=True)
+    for name in {input_data, intermediate_data, output_data}:
+        sdfg.add_array(
+                name,
+                shape=(10,),
+                dtype=dace.float64,
+                transient=False,
+        )
+
+    if intermediate_data not in {input_data, output_data}:
+        sdfg.arrays[intermediate_data].transient = True
+
+    input_node, intermediate_node, output_node = (state.add_access(name) for name in [input_data, intermediate_data, output_data])
+
+    state.add_mapped_tasklet(
+            "first_comp",
+            map_ranges={"__i0": "0:10"},
+            inputs={"__in1": dace.Memlet(f"{input_data}[{input_read}]")},
+            code="__out = __in1 + 2.0",
+            outputs={"__out": dace.Memlet(f"{intermediate_data}[__i0]")},
+            input_nodes={input_node},
+            output_nodes={intermediate_node},
+            external_edges=True,
+    )
+    state.add_mapped_tasklet(
+            "second_comp",
+            map_ranges={"__i1": "0:10"},
+            inputs={"__in1": dace.Memlet(f"{intermediate_data}[__i1]")},
+            code="__out = __in1 + 3.0",
+            outputs={"__out": dace.Memlet(f"{output_data}[{output_write}]")},
+            input_nodes={intermediate_node},
+            output_nodes={output_node},
+            external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg, state
+
+
+def test_fusion_strict_dataflow_pointwise():
+    sdfg, state = _make_strict_dataflow_sdfg_pointwise(input_data="A")
+
+    # Because `A` is used as input and output in strict data flow mode,
+    #  the maps can not be fused.
+    count = sdfg.apply_transformations_repeated(
+            MapFusion(strict_dataflow=True),
+            validate=True,
+            validate_all=True,
+    )
+    assert count == 0
+
+    # However, if strict dataflow is disabled, then it will be able to fuse.
+    count = sdfg.apply_transformations_repeated(
+            MapFusion(strict_dataflow=False),
+            validate=True,
+            validate_all=True,
+    )
+    assert count == 1
+
+
+def test_fusion_strict_dataflow_not_pointwise():
+    sdfg, state = _make_strict_dataflow_sdfg_pointwise(
+            input_data="A",
+            input_read="__i0",
+            output_write="9 - __i0",
+    )
+
+    # Because the dependency is not pointwise even disabling strict dataflow
+    #  will not make it work.
+    count = sdfg.apply_transformations_repeated(
+            MapFusion(strict_dataflow=False),
+            validate=True,
+            validate_all=True,
+    )
+    assert count == 0
+
+
+def test_fusion_dataflow_intermediate():
+    sdfg, _ = _make_strict_dataflow_sdfg_pointwise(
+            input_data="A",
+            intermediate_data="O",
+            output_data="O",
+    )
+    count = sdfg.apply_transformations_repeated(
+            MapFusion(strict_dataflow=True),
+            validate=True,
+            validate_all=True,
+    )
+    assert count == 0
+
+
 if __name__ == '__main__':
+    test_fusion_strict_dataflow_pointwise()
+    test_fusion_strict_dataflow_not_pointwise()
+    test_fusion_dataflow_intermediate()
     test_indirect_accesses()
     test_fusion_shared()
     test_fusion_with_transient()
