@@ -1,6 +1,22 @@
 import dace
 import numpy
 import cupy
+import pytest
+
+@pytest.fixture(params=[dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.GPU_Global])
+def storage_type(request):
+    return request.param
+
+@pytest.fixture(params=[True, False])
+def transient(request):
+    return request.param
+
+@pytest.fixture
+def schedule_type(storage_type):
+    if storage_type == dace.dtypes.StorageType.CPU_Heap:
+        return dace.dtypes.ScheduleType.Sequential
+    elif storage_type == dace.dtypes.StorageType.GPU_Global:
+        return dace.dtypes.ScheduleType.GPU_Device
 
 def _get_trivial_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient: bool, write_size="0:2"):
     sdfg = dace.sdfg.SDFG(name="deferred_alloc_test")
@@ -126,26 +142,32 @@ def test_realloc_use(storage_type: dace.dtypes.StorageType, transient: bool, sch
         assert ( arr.get()[0] == 3.0 )
 
 
-def test_incomplete_write_dimensions_1():
-    sdfg =  _get_trivial_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True, "1:2")
-    try:
-        sdfg.validate()
-    except Exception:
-        return
-
-    raise AssertionError("Realloc-use with transient data and incomplete write did not fail when it was expected to.")
-
-def test_incomplete_write_dimensions_2():
-    sdfg =  _get_trivial_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, False, "1:2")
-    try:
-        sdfg.validate()
-    except Exception:
-        return
-
-    raise AssertionError("Realloc-use with non-transient data and incomplete write did not fail when it was expected to.")
-
 def test_realloc_inside_map():
     pass
+
+
+def test_all_combinations(storage_type, transient, schedule_type):
+    test_trivial_realloc(storage_type, transient)
+    test_realloc_use(storage_type, transient, schedule_type)
+
+def test_incomplete_write_dimensions_1():
+    sdfg = _get_trivial_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True, "1:2")
+    try:
+        sdfg.validate()
+    except Exception:
+        return
+
+    pytest.fail("Realloc-use with transient data and incomplete write did not fail when it was expected to.")
+
+def test_incomplete_write_dimensions_2():
+    sdfg = _get_trivial_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, False, "1:2")
+    try:
+        sdfg.validate()
+    except Exception:
+        return
+
+    pytest.fail("Realloc-use with non-transient data and incomplete write did not fail when it was expected to.")
+
 
 if __name__ == "__main__":
     for storage_type, schedule_type in [(dace.dtypes.StorageType.CPU_Heap, dace.dtypes.ScheduleType.Sequential),

@@ -747,8 +747,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Structure):
             name = None
         # Special case: if the name is the size array of the src_node, then it is ok, checked with the "size_desc_name"
-        src_size_access = isinstance(src_node, nd.AccessNode) and name == sdfg.arrays[src_node.data].size_desc_name
-        dst_size_access = isinstance(dst_node, nd.AccessNode) and name == sdfg.arrays[dst_node.data].size_desc_name
+        src_size_access = isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Array) and name is not None and name == sdfg.arrays[src_node.data].size_desc_name
+        dst_size_access = isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Array) and name is not None and name == sdfg.arrays[dst_node.data].size_desc_name
         sdict = state.scope_dict()
         if src_size_access and dst_size_access:
             raise InvalidSDFGEdgeError(
@@ -766,9 +766,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             )
         if dst_size_access:
             dst_arr = sdfg.arrays[dst_node.data]
-            if dst_arr.storage != dace.dtypes.StorageType.GPU_Global or dst_arr.storage != dace.dtypes.StorageType.CPU_Heap:
+            if (dst_arr.storage != dtypes.StorageType.GPU_Global and
+                dst_arr.storage != dtypes.StorageType.CPU_Heap):
                 raise InvalidSDFGEdgeError(
-                    "Reallocating data (writing to the size connector) within a scope is not valid",
+                    f"Reallocating data is allowed only to GPU_Global or CPU_Heap, the storage type is {dst_arr.storage}",
                     sdfg,
                     state_id,
                     eid,
