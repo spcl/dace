@@ -457,7 +457,11 @@ class InternalFortranAst:
 
     def close_stmt(self, node: FASTNode):
         children = self.create_children(node)
-        return ast_internal_classes.Close_Stmt_Node(args=children[0], line_number=node.item.span)
+        if node.item is None:
+            line='-1'
+        else:
+            line = node.item.span    
+        return ast_internal_classes.Close_Stmt_Node(args=children[0], line_number=line)
 
     def io_control_spec(self, node: FASTNode):
         children = self.create_children(node)
@@ -1305,6 +1309,7 @@ class InternalFortranAst:
                     vardecls.append(
                         ast_internal_classes.Symbol_Decl_Node(name=actual_name.name,
                                                               type=testtype,
+                                                              sizes=None,
                                                               alloc=alloc,
                                                               init=init,
                                                               optional=optional))

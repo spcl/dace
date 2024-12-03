@@ -4401,11 +4401,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = correct_for_function_calls(ast)
     ast = deconstruct_procedure_calls(ast)
     ast = deconstruct_interface_calls(ast)
-    ast = prune_unused_objects(ast, [m for m in walk(ast, Module) if find_name_of_node(m) == 'radiation_interface'])
+    ast = prune_unused_objects(ast, [m for m in walk(ast, Subroutine_Subprogram) if find_name_of_node(m) == 'radiation'])
 
 
     dep_graph = compute_dep_graph(ast, 'radiation_interface')
-    print("redone")
+    """print("redone")
 
     for mod, blocks in interface_blocks.items():
 
@@ -4462,9 +4462,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 node_data['info_list'] = fandsl
                 break
 
-    # print(dep_graph)
+    # print(dep_graph)"""
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
-    simple_graph, actually_used_in_module = ast_utils.eliminate_dependencies(dep_graph)
+    
+    """simple_graph, actually_used_in_module = ast_utils.eliminate_dependencies(dep_graph)
 
     changed = True
     while changed:
@@ -4476,8 +4477,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
 
-    parse_list = {}
+    parse_list = {}"""
     what_to_parse_list = {}
+    """
     type_to_parse_list = {}
     for i in parse_order:
         edges = simple_graph.in_edges(i)
@@ -4617,15 +4619,15 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     ast.children.clear()
     for i in new_children:
-        ast.children.append(i)
+        ast.children.append(i) """
     name_dict = {}
     rename_dict = {}
     for i in parse_order:
         local_rename_dict = {}
-        edges = list(simple_graph.in_edges(i))
+        edges = list(dep_graph.in_edges(i))
         names = []
         for j in edges:
-            list_dict = simple_graph.get_edge_data(j[0], j[1])
+            list_dict = dep_graph.get_edge_data(j[0], j[1])
             if (list_dict['obj_list'] is not None):
                 for k in list_dict['obj_list']:
                     if not k.__class__.__name__ == "Name":
@@ -4688,7 +4690,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         partial_ast.current_ast = i
 
         partial_ast.unsupported_fortran_syntax[i] = []
-        if i in ["mtime", "ISO_C_BINDING", "iso_c_binding", "mo_cdi", "iso_fortran_env"]:
+        if i in ["mtime", "ISO_C_BINDING", "iso_c_binding", "mo_cdi", "iso_fortran_env", "netcdf"]:
             continue
 
         # try:
