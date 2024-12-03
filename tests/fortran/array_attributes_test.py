@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from tests.fortran.fotran_test_helper import SourceCodeBuilder, create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, create_singular_sdfg_from_string
 
 
 def test_fortran_frontend_array_attribute_no_offset():

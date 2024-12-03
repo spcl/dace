@@ -9,7 +9,7 @@ from dace.frontend.fortran.ast_utils import UseAllPruneList
 from dace.frontend.fortran.fortran_parser import deconstruct_procedure_calls, recursive_ast_improver, \
     prune_unused_children, simplified_dependency_graph, deconstruct_associations, correct_for_function_calls, \
     deconstruct_enums, deconstruct_interface_calls
-from tests.fortran.fotran_test_helper import SourceCodeBuilder
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def parse_and_improve(sources: Dict[str, str]):

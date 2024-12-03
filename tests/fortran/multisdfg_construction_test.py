@@ -8,7 +8,7 @@ from dace.frontend.fortran.ast_components import InternalFortranAst
 from dace.frontend.fortran.ast_internal_classes import FNode
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, SDFGConfig, \
     create_sdfg_from_internal_ast
-from tests.fortran.fotran_test_helper import SourceCodeBuilder
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def construct_internal_ast(sources: Dict[str, str]):
