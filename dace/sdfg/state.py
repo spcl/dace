@@ -2857,13 +2857,9 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                             node.load_external(block)
                             yield from node.sdfg.all_control_flow_regions(recursive=recursive, load_ext=load_ext,
                                                                           parent_first=parent_first)
-            elif isinstance(block, ControlFlowRegion):
+            elif isinstance(block, AbstractControlFlowRegion):
                 yield from block.all_control_flow_regions(recursive=recursive, load_ext=load_ext,
                                                           parent_first=parent_first)
-            elif isinstance(block, ConditionalBlock):
-                for _, branch in block.branches:
-                    yield from branch.all_control_flow_regions(recursive=recursive, load_ext=load_ext,
-                                                               parent_first=parent_first)
         if not parent_first:
             yield self
 
