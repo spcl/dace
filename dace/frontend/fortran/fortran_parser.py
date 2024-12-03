@@ -3006,12 +3006,12 @@ def identifier_specs(ast: Program) -> SPEC_TABLE:
     return ident_map
 
 
-def alias_specs(ast: Program, ident_map: SPEC_TABLE):
+def alias_specs(ast: Program):
     """
     Maps each "alias-type" identifier of interest in `ast` to its associated node that defines it.
     """
-    alias_map: SPEC_TABLE \
-        = {k: v for k, v in ident_map.items()}
+    ident_map = identifier_specs(ast)
+    alias_map: SPEC_TABLE = {k: v for k, v in ident_map.items()}
 
     for stmt in walk(ast, Use_Stmt):
         mod_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
@@ -3303,8 +3303,7 @@ def interface_specs(ast: Program) -> Dict[SPEC, Tuple[SPEC, ...]]:
 
 def correct_for_function_calls(ast: Program):
     """Look for function calls that may have been misidentified as array access and fix them."""
-    ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast, ident_map)
+    alias_map = alias_specs(ast)
 
     for pr in walk(ast, Part_Ref):
         scope = find_named_ancester(pr.parent)
@@ -3514,8 +3513,7 @@ def _compute_candidate_argument_signature(args, cand_spec: SPEC, alias_map: SPEC
 def deconstruct_interface_calls(ast: Program) -> Program:
     SUFFIX, COUNTER = 'deconiface', 0
 
-    ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast, ident_map)
+    alias_map = alias_specs(ast)
     iface_map = interface_specs(ast)
 
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
@@ -3606,8 +3604,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
 
     # TODO: Figure out a way without rebuilding here.
     # Rebuild the maps because aliasing may have changed.
-    ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast, ident_map)
+    alias_map = alias_specs(ast)
 
     # At this point, we must have replaced all the interface calls with concrete calls.
     for use in walk(ast, Use_Stmt):
@@ -3715,8 +3712,7 @@ def _does_type_signature_match(got_sig: Tuple[TYPE_SPEC, ...], cand_sig: Tuple[T
 def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program, nx.DiGraph):
     SUFFIX, COUNTER = 'deconproc', 0
 
-    ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast, ident_map)
+    alias_map = alias_specs(ast)
     proc_map = procedure_specs(ast)
     genc_map = generic_specs(ast)
     # We should have removed all the `association`s by now.
@@ -3854,7 +3850,7 @@ def prune_unused_objects(ast: Program,
     PRUNABLE_OBJECT_TYPES = Union[Subroutine_Subprogram, Function_Subprogram, Derived_Type_Def]
 
     ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast, ident_map)
+    alias_map = alias_specs(ast)
     survivors: Set[SPEC] = set()
 
     def _keep_from(node: Base):
