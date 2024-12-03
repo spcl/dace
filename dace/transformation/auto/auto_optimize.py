@@ -58,10 +58,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             # If we have an SDFG, recurse into graphs
             graph_or_subgraph.simplify(validate_all=validate_all)
             # MapFusion for trivial cases
-            #  We have to use `strict_dataflow` because it is known that `CompositeFusion`
-            #  has problems otherwise.
             graph_or_subgraph.apply_transformations_repeated(
-                    MapFusion(strict_dataflow=True),
+                    MapFusion,
                     validate_all=validate_all,
             )
 
