@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from tests.fortran.fotran_test_helper import create_singular_sdfg_from_string, SourceCodeBuilder
+from tests.fortran.fortran_test_helper import create_singular_sdfg_from_string, SourceCodeBuilder
 
 
 def test_fortran_frontend_dot():

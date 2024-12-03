@@ -8,7 +8,7 @@ from fparser.two.parser import ParserFactory
 
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver, simplified_dependency_graph, \
     deconstruct_procedure_calls
-from tests.fortran.fotran_test_helper import SourceCodeBuilder
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def parse_and_improve(sources: Dict[str, str]):

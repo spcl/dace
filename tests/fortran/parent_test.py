@@ -3,7 +3,7 @@ import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 import dace.frontend.fortran.ast_transforms as ast_transforms
 from dace.frontend.fortran.ast_internal_classes import Program_Node
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast
-from tests.fortran.fotran_test_helper import SourceCodeBuilder
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_parent():

@@ -5,7 +5,7 @@ from dace.frontend.fortran.ast_internal_classes import Program_Node, Main_Progra
     Module_Node, Specification_Part_Node
 from dace.frontend.fortran.ast_transforms import Structures, Structure
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast
-from tests.fortran.fotran_test_helper import SourceCodeBuilder, InternalASTMatcher as M
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, InternalASTMatcher as M
 
 
 def construct_internal_ast(sources: Dict[str, str]):

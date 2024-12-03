@@ -6,7 +6,7 @@ from dace import dtypes, symbolic
 from dace.frontend.fortran.fortran_parser import create_sdfg_from_string
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import AccessNode
-from tests.fortran.fotran_test_helper import SourceCodeBuilder, create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, create_singular_sdfg_from_string
 
 
 def test_fortran_frontend_array_access():
