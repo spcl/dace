@@ -35,29 +35,24 @@ def _get_interstate_dependent_sdfg(assignments: Dict, symbols_at_start=False):
         s.add_edge(map_exit, f"OUT_array{sid}", an2, None, dace.memlet.Memlet(f"array{sid}[0:N]"))
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge(None, assignments=assignments))
-    sdfg.save("s1.sdfg")
     sdfg.validate()
     return sdfg
 
 def test_interstate_assignment():
     sdfg = _get_interstate_dependent_sdfg({"N": "5"}, False)
     sdfg.validate()
-    sdfg.save("s0.sdfg")
     sdfg()
     iatm =  InterstateAssignmentToMap()
     iatm.apply_pass(sdfg, {})
-    sdfg.save("s2.sdfg")
     sdfg.validate()
     sdfg()
 
 def test_interstate_assignment_2():
     sdfg = _get_interstate_dependent_sdfg({"N": 5}, True)
     sdfg.validate()
-    sdfg.save("s1.sdfg")
     sdfg(N=10)
     iatm =  InterstateAssignmentToMap()
     iatm.apply_pass(sdfg, {})
-    sdfg.save("s3.sdfg")
     sdfg.validate()
     sdfg(N=10)
 
