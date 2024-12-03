@@ -1,6 +1,6 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.serialize
-from dace import data, symbolic, dtypes
+from dace import symbolic
 import re
 import sympy as sp
 from functools import reduce
@@ -1243,6 +1243,9 @@ class SubsetUnion(Subset):
         except TypeError:
             return None
 
+    def intersects(self, other: Subset):
+        return self.intersection(other) is not None
+
     @property
     def free_symbols(self) -> Set[str]:
         result = set()
@@ -1349,17 +1352,13 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     return Range(result)
 
 
-
-
 def union(subset_a: Subset, subset_b: Subset) -> Subset:
     """ Compute the union of two Subset objects.
-        If the subsets are not of the same type, degenerates to bounding-box
-        union.
+        If the subsets are not of the same type, degenerates to bounding-box union.
         
         :param subset_a: The first subset.
         :param subset_b: The second subset.
-        :return: A Subset object whose size is at least the union of the two
-                 inputs. If union failed, returns None.
+        :return: A Subset object whose size is at least the union of the two inputs. If union failed, returns None.
     """
     try:
 
@@ -1369,8 +1368,7 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
             return subset_b
         elif subset_a is None and subset_b is None:
             raise TypeError('Both subsets cannot be None')
-        elif isinstance(subset_a, SubsetUnion) or isinstance(
-                subset_b, SubsetUnion):
+        elif isinstance(subset_a, SubsetUnion) or isinstance(subset_b, SubsetUnion):
             return list_union(subset_a, subset_b)
         elif type(subset_a) != type(subset_b):
             return bounding_box_union(subset_a, subset_b)
@@ -1437,6 +1435,10 @@ def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
             subset_b = Range.from_indices(subset_b)
         if type(subset_a) is type(subset_b):
             return subset_a.intersects(subset_b)
+        elif isinstance(subset_a, SubsetUnion):
+            return subset_a.intersects(subset_b)
+        elif isinstance(subset_b, SubsetUnion):
+            return subset_b.intersects(subset_a)
         return None
     except TypeError:  # cannot determine truth value of Relational
         return None
@@ -1451,6 +1453,10 @@ def intersection(subset_a: Subset, subset_b: Subset) -> Optional[Subset]:
             subset_b = Range.from_indices(subset_b)
         if type(subset_a) is type(subset_b):
             return subset_a.intersection(subset_b)
+        elif isinstance(subset_a, SubsetUnion):
+            return subset_a.intersection(subset_b)
+        elif isinstance(subset_b, SubsetUnion):
+            return subset_b.intersection(subset_a)
         return None
     except TypeError:
         return None

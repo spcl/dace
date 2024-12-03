@@ -519,6 +519,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         self._propagate_cfg(loop)
 
         # TODO: Remove loop-carried dependencies from the writes (i.e., only the first read would be a true read)
+        deps = loop_analysis.get_loop_carry_dependencies(loop)
 
         # Propagate memlets from inside the loop through the loop ranges.
         # Collect loop information and form the loop variable range first.
@@ -550,8 +551,12 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
             for dat in memlet_repo.keys():
                 memlet = memlet_repo[dat]
                 arr = loop.sdfg.data(dat)
-                new_memlet = propagate_subset([memlet], arr, [itvar], loop_range, defined_symbols, use_dst)
-                memlet_repo[dat] = new_memlet
+                if memlet in deps:
+                    dep_write = deps[memlet]
+                    print(memlet)
+                else:
+                    new_memlet = propagate_subset([memlet], arr, [itvar], loop_range, defined_symbols, use_dst)
+                    memlet_repo[dat] = new_memlet
 
     def _propagate_cfg(self, cfg: ControlFlowRegion) -> None:
         cfg._possible_reads = {}
