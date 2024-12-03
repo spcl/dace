@@ -1,13 +1,11 @@
 from typing import Dict
 
-import networkx as nx
 from fparser.common.readfortran import FortranStringReader
 from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 
-from dace.frontend.fortran.ast_utils import UseAllPruneList
 from dace.frontend.fortran.fortran_parser import deconstruct_procedure_calls, recursive_ast_improver, \
-    prune_unused_children, simplified_dependency_graph, deconstruct_associations, correct_for_function_calls, \
+    deconstruct_associations, correct_for_function_calls, \
     deconstruct_enums, deconstruct_interface_calls
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -17,12 +15,9 @@ def parse_and_improve(sources: Dict[str, str]):
     assert 'main.f90' in sources
     reader = FortranStringReader(sources['main.f90'])
     ast = parser(reader)
+    ast, _, _ = recursive_ast_improver(ast, sources, [], parser)
     assert isinstance(ast, Program)
-
-    ast, dep_graph, interface_blocks = recursive_ast_improver(ast, sources, [], parser)
-    assert isinstance(ast, Program)
-    assert not any(nx.simple_cycles(dep_graph))
-    return ast, dep_graph, interface_blocks
+    return ast
 
 
 def test_procedure_replacer():
@@ -63,8 +58,8 @@ subroutine main
   call s%get_area(a)
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = parse_and_improve(sources)
+    ast = deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -103,31 +98,6 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'Square', 'area', 'get_area'}
-    assert not interface_blocks
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(simple_graph.nodes) == {'lib', 'main'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'Square', 'area', 'get_area'}
-    assert not interface_blocks
-
-    assert ({k: set(v) for k, v in actually_used_in_module.items()}
-            == {'lib': {'get_area', 'area', 'Square'}, 'main': set()})
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert name_dict == {'lib': ['Square', 'area', 'get_area']}
-    assert rename_dict == {'lib': {}}
 
 
 def test_procedure_replacer_nested():
@@ -170,8 +140,8 @@ subroutine main
   a = s%get_area(1.0)
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = parse_and_improve(sources)
+    ast = deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -211,31 +181,6 @@ END SUBROUTINE main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'Square', 'get_area'}
-    assert not interface_blocks
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(simple_graph.nodes) == {'lib', 'main'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'Square', 'get_area'}
-    assert not interface_blocks
-
-    assert ({k: set(v) for k, v in actually_used_in_module.items()}
-            == {'lib': {'get_area', 'Square', 'get_value', 'Value'}, 'main': set()})
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert name_dict == {'lib': ['Square', 'get_area']}
-    assert rename_dict == {'lib': {}}
-
 
 def test_procedure_replacer_name_collision_with_exisiting_var():
     sources, main = SourceCodeBuilder().add_file("""
@@ -265,8 +210,8 @@ subroutine main
   area = s%area(1.0)
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = parse_and_improve(sources)
+    ast = deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -295,31 +240,6 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'Square', 'area'}
-    assert not interface_blocks
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(simple_graph.nodes) == {'lib', 'main'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'Square', 'area'}
-    assert not interface_blocks
-
-    assert ({k: set(v) for k, v in actually_used_in_module.items()}
-            == {'lib': {'area', 'Square'}, 'main': set()})
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert name_dict == {'lib': ['Square', 'area']}
-    assert rename_dict == {'lib': {}}
 
 
 def test_procedure_replacer_name_collision_with_another_import():
@@ -370,8 +290,8 @@ subroutine main
   area = c%area(1.0)
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = parse_and_improve(sources)
+    ast = deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -419,33 +339,6 @@ END SUBROUTINE main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
-    assert set(dep_graph.nodes) == {'lib_1', 'lib_2', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib_1'), ('main', 'lib_2')}
-    assert set(u.string for u in dep_graph.edges['main', 'lib_1']['obj_list']) == {'Square', 'area'}
-    assert set(u.string for u in dep_graph.edges['main', 'lib_2']['obj_list']) == {'Circle', 'area'}
-    assert not interface_blocks
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(simple_graph.nodes) == {'lib_1', 'lib_2', 'main'}
-    assert set(simple_graph.edges) == {('main', 'lib_1'), ('main', 'lib_2')}
-    assert set(u.string for u in dep_graph.edges['main', 'lib_1']['obj_list']) == {'Square', 'area'}
-    assert set(u.string for u in dep_graph.edges['main', 'lib_2']['obj_list']) == {'Circle', 'area'}
-    assert not interface_blocks
-
-    assert ({k: set(v) for k, v in actually_used_in_module.items()}
-            == {'lib_1': {'area', 'Square'}, 'lib_2': {'area', 'Circle'}, 'main': set()})
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert name_dict == {'lib_1': ['Square', 'area'], 'lib_2': ['Circle', 'area']}
-    assert rename_dict == {'lib_1': {}, 'lib_2': {}}
-
 
 def test_generic_replacer():
     sources, main = SourceCodeBuilder().add_file("""
@@ -486,9 +379,9 @@ subroutine main
   a = s%g_area(mi)
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
+    ast = parse_and_improve(sources)
     ast = correct_for_function_calls(ast)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -528,32 +421,6 @@ END SUBROUTINE main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'Square', 'area_integer', 'area_real'}
-    assert not interface_blocks
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(simple_graph.nodes) == {'lib', 'main'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'Square', 'area_integer',
-                                                                                    'area_real'}
-    assert not interface_blocks
-
-    assert ({k: set(v) for k, v in actually_used_in_module.items()}
-            == {'lib': {'Square', 'area_integer', 'area_real'}, 'main': set()})
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert name_dict == {'lib': ['Square', 'area_real', 'area_integer']}
-    assert rename_dict == {'lib': {}}
-
 
 def test_association_replacer():
     sources, main = SourceCodeBuilder().add_file("""
@@ -584,7 +451,7 @@ subroutine main
   end associate
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
+    ast = parse_and_improve(sources)
     ast = deconstruct_associations(ast)
 
     got = ast.tofortran()
@@ -614,31 +481,6 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'Square', 'area'}
-    assert not interface_blocks
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(simple_graph.nodes) == {'lib', 'main'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'Square', 'area'}
-    assert not interface_blocks
-
-    assert ({k: set(v) for k, v in actually_used_in_module.items()}
-            == {'lib': {'area', 'Square'}, 'main': set()})
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert name_dict == {'lib': ['Square', 'area']}
-    assert rename_dict == {'lib': {}}
 
 
 def test_association_replacer_array_access():
@@ -674,10 +516,10 @@ subroutine main
   end associate
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
+    ast = parse_and_improve(sources)
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -709,31 +551,6 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'Square', 'perim'}
-    assert not interface_blocks
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(simple_graph.nodes) == {'lib', 'main'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'Square', 'perim'}
-    assert not interface_blocks
-
-    assert ({k: set(v) for k, v in actually_used_in_module.items()}
-            == {'lib': {'perim', 'Square'}, 'main': set()})
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert name_dict == {'lib': ['Square', 'perim']}
-    assert rename_dict == {'lib': {}}
 
 
 def test_association_replacer_array_access_within_array_access():
@@ -769,9 +586,9 @@ subroutine main
   end associate
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
+    ast = parse_and_improve(sources)
     ast = deconstruct_associations(ast)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -803,31 +620,6 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'Square', 'perim'}
-    assert not interface_blocks
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(simple_graph.nodes) == {'lib', 'main'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'Square', 'perim'}
-    assert not interface_blocks
-
-    assert ({k: set(v) for k, v in actually_used_in_module.items()}
-            == {'lib': {'perim', 'Square'}, 'main': set()})
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert name_dict == {'lib': ['Square', 'perim']}
-    assert rename_dict == {'lib': {}}
 
 
 def test_uses_allows_indirect_aliasing():
@@ -868,9 +660,9 @@ subroutine main
   end associate
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
+    ast = parse_and_improve(sources)
     ast = deconstruct_associations(ast)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -907,39 +699,6 @@ END SUBROUTINE main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
-    assert set(dep_graph.nodes) == {'lib', 'lib2', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib2'), ('lib2', 'lib')}
-    assert (set(
-        '*' if isinstance(u, UseAllPruneList) else u.string for u in dep_graph.edges['main', 'lib2']['obj_list'])
-            == {'Square', 'perim'})
-    assert (set('*' if isinstance(u, UseAllPruneList) else u.string for u in dep_graph.edges['lib2', 'lib']['obj_list'])
-            == {'*'})
-    assert not interface_blocks
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(dep_graph.nodes) == {'lib', 'lib2', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib2'), ('lib2', 'lib')}
-    assert (set(
-        '*' if isinstance(u, UseAllPruneList) else u.string for u in dep_graph.edges['main', 'lib2']['obj_list'])
-            == {'Square', 'perim'})
-    assert (set('*' if isinstance(u, UseAllPruneList) else u.string for u in dep_graph.edges['lib2', 'lib']['obj_list'])
-            == {'*'})
-    assert not interface_blocks
-
-    assert ({k: set(v) for k, v in actually_used_in_module.items()}
-            == {'lib': {'perim', 'Square'}, 'lib2': {'perim', 'Square'}, 'main': set()})
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert {k: set(v) for k, v in name_dict.items()} == {'lib': {'Square', 'perim'}, 'lib2': {'Square', 'perim'}}
-    assert rename_dict == {'lib': {}, 'lib2': {}}
-
 
 def test_enum_bindings_become_constants():
     sources, main = SourceCodeBuilder().add_file("""
@@ -957,7 +716,7 @@ subroutine main
   end enum
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
+    ast = parse_and_improve(sources)
     ast = deconstruct_enums(ast)
 
     got = ast.tofortran()
@@ -978,10 +737,6 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert not set(dep_graph.nodes)
-    assert not set(dep_graph.edges)
-    assert not interface_blocks
 
 
 def test_aliasing_through_module_procedure():
@@ -1005,10 +760,10 @@ subroutine main
   d(2) = fun()
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
+    ast = parse_and_improve(sources)
     ast = deconstruct_associations(ast)
     ast = correct_for_function_calls(ast)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -1032,29 +787,6 @@ END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert ({k1: {k2: {v.string for v in vs} for k2, vs in k2v.items()} for k1, k2v in interface_blocks.items()}
-            == {'lib': {'fun': {'real_fun'}}})
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert ({k1: {k2: {v.string for v in vs} for k2, vs in k2v.items()} for k1, k2v in interface_blocks.items()}
-            == {'lib': {'fun': {'real_fun'}}})
-    assert ({k: set(v) for k, v in actually_used_in_module.items()} == {'lib': {'real_fun'}, 'main': set()})
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert {k: set(v) for k, v in name_dict.items()} == {'lib': {'real_fun'}}
-    assert rename_dict == {'lib': {}}
 
 
 def test_interface_replacer_with_module_procedures():
@@ -1088,7 +820,7 @@ subroutine main
   call not_fun(d(3))
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
+    ast = parse_and_improve(sources)
     ast = correct_for_function_calls(ast)
     ast = deconstruct_interface_calls(ast)
 
@@ -1119,30 +851,6 @@ END SUBROUTINE main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert ({k1: {k2: {v.string for v in vs} for k2, vs in k2v.items()} for k1, k2v in interface_blocks.items()}
-            == {'lib': {'fun': {'real_fun'}, 'not_fun': {'not_real_fun'}}})
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert ({k1: {k2: {v.string for v in vs} for k2, vs in k2v.items()} for k1, k2v in interface_blocks.items()}
-            == {'lib': {'fun': {'real_fun'}, 'not_fun': {'not_real_fun'}}})
-    assert ({k: set(v) for k, v in actually_used_in_module.items()}
-            == {'lib': {'real_fun', 'not_real_fun'}, 'main': set()})
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert {k: set(v) for k, v in name_dict.items()} == {'lib': {'real_fun', 'not_real_fun'}}
-    assert rename_dict == {'lib': {}}
-
 
 def test_interface_replacer_with_subroutine_decls():
     sources, main = SourceCodeBuilder().add_file("""
@@ -1169,7 +877,7 @@ subroutine fun(z)
   z = 1.0
 end subroutine fun
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
+    ast = parse_and_improve(sources)
     ast = correct_for_function_calls(ast)
     ast = deconstruct_interface_calls(ast)
 
@@ -1192,27 +900,6 @@ END SUBROUTINE fun
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert not interface_blocks
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert not interface_blocks
-    assert {k: set(v) for k, v in actually_used_in_module.items()} == {'main': set(), 'lib': {'no_fun', 'fun'}}
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert {k: set(v) for k, v in name_dict.items()} == {'lib': {'fun'}}
-    assert rename_dict == {'lib': {'fun': 'no_fun'}}
-
 
 def test_generic_replacer_deducing_array_types():
     sources, main = SourceCodeBuilder().add_file("""
@@ -1221,40 +908,49 @@ module lib
   type T
     real :: val(2, 2)
   contains
-    procedure :: copy_array
+    procedure :: copy_matrix
+    procedure :: copy_vector
     procedure :: copy_scalar
-    generic :: copy => copy_array, copy_scalar
+    generic :: copy => copy_matrix, copy_vector, copy_scalar
   end type T
 contains
   subroutine copy_scalar(this, m)
     implicit none
     class(T), intent(in) :: this
     real, intent(out) :: m
-    m = this%val(1,1)
+    m = this%val(1, 1)
   end subroutine copy_scalar
-  subroutine copy_array(this, m)
+  subroutine copy_vector(this, m)
+    implicit none
+    class(T), intent(in) :: this
+    real, dimension(:), intent(out) :: m
+    m = this%val(1, 1)
+  end subroutine copy_vector
+  subroutine copy_matrix(this, m)
     implicit none
     class(T), intent(in) :: this
     real, dimension(:, :), intent(out) :: m
-    m = this%val(1,1)
-  end subroutine copy_array
+    m = this%val(1, 1)
+  end subroutine copy_matrix
 end module lib
 """).add_file("""
 subroutine main
   use lib, only: T
   implicit none
-  type(T) :: s
+  type(T) :: s, s1
   real, dimension(4, 4) :: a
   real :: b(4, 4)
 
   s%val = 1.0
   call s%copy(a)
-  call s%copy(a(2,2))
-  call s%copy(b(:,:))
+  call s%copy(a(2, 2))
+  call s%copy(b(:, 2))
+  call s%copy(b(:, :))
+  call s%copy(s1%val(:, 1))
 end subroutine main
 """).check_with_gfortran().get()
-    ast, dep_graph, interface_blocks = parse_and_improve(sources)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = parse_and_improve(sources)
+    ast = deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
     want = """
@@ -1270,52 +966,37 @@ MODULE lib
     REAL, INTENT(OUT) :: m
     m = this % val(1, 1)
   END SUBROUTINE copy_scalar
-  SUBROUTINE copy_array(this, m)
+  SUBROUTINE copy_vector(this, m)
+    IMPLICIT NONE
+    CLASS(T), INTENT(IN) :: this
+    REAL, DIMENSION(:), INTENT(OUT) :: m
+    m = this % val(1, 1)
+  END SUBROUTINE copy_vector
+  SUBROUTINE copy_matrix(this, m)
     IMPLICIT NONE
     CLASS(T), INTENT(IN) :: this
     REAL, DIMENSION(:, :), INTENT(OUT) :: m
     m = this % val(1, 1)
-  END SUBROUTINE copy_array
+  END SUBROUTINE copy_matrix
 END MODULE lib
 SUBROUTINE main
-  USE lib, ONLY: copy_array_deconproc_2 => copy_array
+  USE lib, ONLY: copy_vector_deconproc_4 => copy_vector
+  USE lib, ONLY: copy_matrix_deconproc_3 => copy_matrix
+  USE lib, ONLY: copy_vector_deconproc_2 => copy_vector
   USE lib, ONLY: copy_scalar_deconproc_1 => copy_scalar
-  USE lib, ONLY: copy_array_deconproc_0 => copy_array
+  USE lib, ONLY: copy_matrix_deconproc_0 => copy_matrix
   USE lib, ONLY: T
   IMPLICIT NONE
-  TYPE(T) :: s
+  TYPE(T) :: s, s1
   REAL, DIMENSION(4, 4) :: a
   REAL :: b(4, 4)
   s % val = 1.0
-  CALL copy_array_deconproc_0(s, a)
+  CALL copy_matrix_deconproc_0(s, a)
   CALL copy_scalar_deconproc_1(s, a(2, 2))
-  CALL copy_array_deconproc_2(s, b(:, :))
+  CALL copy_vector_deconproc_2(s, b(:, 2))
+  CALL copy_matrix_deconproc_3(s, b(:, :))
+  CALL copy_vector_deconproc_4(s, s1 % val(:, 1))
 END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert set(dep_graph.nodes) == {'lib', 'main'}
-    assert set(dep_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in dep_graph.edges['main', 'lib']['obj_list']) == {'T', 'copy_array', 'copy_scalar'}
-    assert not interface_blocks
-
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-
-    # Nothing changed here.
-    assert set(simple_graph.nodes) == {'lib', 'main'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert set(u.string for u in simple_graph.edges['main', 'lib']['obj_list']) == {'T', 'copy_array', 'copy_scalar'}
-    assert not interface_blocks
-
-    assert ({k: set(v) for k, v in actually_used_in_module.items()}
-            == {'lib': {'copy_array', 'copy_scalar', 'T'}, 'main': set()})
-
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
-    got = ast.tofortran()
-    # Still want the same program, because nothing should have been pruned.
-    assert got == want
-    SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    assert name_dict == {'lib': ['T', 'copy_array', 'copy_scalar']}
-    assert rename_dict == {'lib': {}}
