@@ -1,17 +1,17 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Dict
+from typing import Dict, List
 
-import networkx as nx
 from fparser.common.readfortran import FortranStringReader
 from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
+from fparser.two.utils import walk
 
-from dace.frontend.fortran.fortran_parser import recursive_ast_improver, simplified_dependency_graph, \
-    prune_unused_children, deconstruct_procedure_calls
+from dace.frontend.fortran.fortran_parser import recursive_ast_improver, prune_unused_objects, ENTRY_POINT_OBJECT_TYPES, \
+    find_name_of_node
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
-def parse_improve_and_simplify(sources: Dict[str, str]):
+def parse_and_improve(sources: Dict[str, str]):
     parser = ParserFactory().create(std="f2008")
     assert 'main.f90' in sources
     reader = FortranStringReader(sources['main.f90'])
@@ -20,15 +20,22 @@ def parse_improve_and_simplify(sources: Dict[str, str]):
 
     ast, dep_graph, interface_blocks = recursive_ast_improver(ast, sources, [], parser)
     assert isinstance(ast, Program)
-    assert not any(nx.simple_cycles(dep_graph))
+    return ast
 
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
-    assert isinstance(ast, Program)
-    assert not any(nx.simple_cycles(dep_graph))
 
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
+def find_entrypoint_objects_named(ast: Program, name: str) -> List[ENTRY_POINT_OBJECT_TYPES]:
+    objs: List[ENTRY_POINT_OBJECT_TYPES] = []
+    for n in walk(ast, ENTRY_POINT_OBJECT_TYPES):
+        assert isinstance(n, ENTRY_POINT_OBJECT_TYPES)
+        if not isinstance(n.parent, Program):
+            continue
+        if find_name_of_node(n) == name:
+            objs.append(n)
+    return objs
 
-    return ast, simple_graph, actually_used_in_module
+
+def prune_from_main(ast: Program) -> Program:
+    return prune_unused_objects(ast, find_entrypoint_objects_named(ast, 'main'))
 
 
 def test_minimal_no_pruning():
@@ -43,15 +50,8 @@ program main
   d(2) = 5.5
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
-    # `recursive_ast_improver_test.py`.
-    assert not set(simple_graph.nodes)
-    assert not actually_used_in_module
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     #  Since there was no module, it should be the exact same AST as the corresponding test in
     #  `recursive_ast_improver_test.py`.
@@ -65,10 +65,6 @@ END PROGRAM main
     """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    # Verify
-    assert not name_dict
-    assert not rename_dict
 
 
 def test_toplevel_subroutine_no_pruning():
@@ -89,15 +85,8 @@ subroutine fun(d)
   d(2) = 5.5
 end subroutine fun
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
-    # `recursive_ast_improver_test.py`.
-    assert not set(simple_graph.nodes)
-    assert not actually_used_in_module
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     got = ast.tofortran()
     want = """
@@ -114,10 +103,6 @@ END SUBROUTINE fun
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    # Verify
-    assert not name_dict
-    assert not rename_dict
 
 
 def test_program_contains_subroutine_no_pruning():
@@ -138,15 +123,8 @@ contains
   end subroutine fun
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
-    # `recursive_ast_improver_test.py`.
-    assert not set(simple_graph.nodes)
-    assert not actually_used_in_module
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     got = ast.tofortran()
     want = """
@@ -165,46 +143,31 @@ END PROGRAM main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
-    # Verify
-    assert not name_dict
-    assert not rename_dict
-
 
 def test_standalone_subroutine_no_pruning():
     """
     A standalone subroutine, with no program or module in sight.
     """
     sources, main = SourceCodeBuilder().add_file("""
-subroutine fun(d)
+subroutine main(d)
   implicit none
   double precision d(4)
   d(2) = 5.5
-end subroutine fun
+end subroutine main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
-    # `recursive_ast_improver_test.py`.
-    assert not set(simple_graph.nodes)
-    assert not actually_used_in_module
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     got = ast.tofortran()
     want = """
-SUBROUTINE fun(d)
+SUBROUTINE main(d)
   IMPLICIT NONE
   DOUBLE PRECISION :: d(4)
   d(2) = 5.5
-END SUBROUTINE fun
+END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    # Verify
-    assert not name_dict
-    assert not rename_dict
 
 
 def test_toplevel_subroutine_uses_another_module_no_pruning():
@@ -231,15 +194,8 @@ subroutine fun(d)
   d(2) = val
 end subroutine fun
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
-    # `recursive_ast_improver_test.py`.
-    assert set(simple_graph.nodes) == {'lib', 'main'}
-    assert actually_used_in_module == {'lib': ['val'], 'main': []}
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     got = ast.tofortran()
     want = """
@@ -261,10 +217,6 @@ END SUBROUTINE fun
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    # Verify
-    assert name_dict == {'lib': ['val']}
-    assert rename_dict == {'lib': {}}
 
 
 def test_uses_module_which_uses_module_no_pruning():
@@ -301,16 +253,8 @@ program main
   call fun_indirect(d)
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
-    # `recursive_ast_improver_test.py`.
-    assert set(simple_graph.nodes) == {'main', 'lib', 'lib_indirect'}
-    assert set(simple_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
-    assert actually_used_in_module == {'lib': ['fun'], 'lib_indirect': ['fun_indirect', 'fun'], 'main': []}
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     got = ast.tofortran()
     want = """
@@ -340,10 +284,6 @@ END PROGRAM main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    # Verify
-    assert name_dict == {'lib': ['fun'], 'lib_indirect': ['fun_indirect']}
-    assert rename_dict == {'lib': {}, 'lib_indirect': {}}
 
 
 def test_module_contains_interface_block_no_pruning():
@@ -383,16 +323,8 @@ program main
   d(2) = fun()
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph. This should already be the case from the corresponding test in
-    # `recursive_ast_improver_test.py`.
-    assert set(simple_graph.nodes) == {'main', 'lib', 'lib_indirect'}
-    assert set(simple_graph.edges) == {('main', 'lib_indirect'), ('lib_indirect', 'lib')}
-    assert actually_used_in_module == {'lib': ['fun'], 'lib_indirect': ['fun', 'fun2'], 'main': []}
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     got = ast.tofortran()
     want = """
@@ -425,10 +357,6 @@ END PROGRAM main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    # Verify
-    assert name_dict == {'lib': ['fun'], 'lib_indirect': ['fun', 'fun2']}
-    assert rename_dict == {'lib': {}, 'lib_indirect': {}}
 
 
 def test_uses_module_but_prunes_unused_defs():
@@ -464,15 +392,8 @@ program main
   call fun(d)
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph.
-    assert set(simple_graph.nodes) == {'main', 'lib'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert actually_used_in_module == {'lib': ['fun'], 'main': []}
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     # `not_fun` and `real_fun` should be gone!
     got = ast.tofortran()
@@ -494,10 +415,6 @@ END PROGRAM main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    # Verify
-    assert name_dict == {'lib': ['fun']}
-    assert rename_dict == {'lib': {}}
 
 
 def test_module_contains_used_and_unused_types_prunes_unused_defs():
@@ -538,15 +455,8 @@ contains
   end subroutine type_test_function
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph.
-    assert set(simple_graph.nodes) == {'main', 'lib'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert actually_used_in_module == {'main': [], 'lib': ['used_type']}
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     # `not_fun` and `real_fun` should be gone!
     got = ast.tofortran()
@@ -576,10 +486,6 @@ END PROGRAM main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
-    # Verify
-    assert name_dict == {'lib': ['used_type']}
-    assert rename_dict == {'lib': {}}
-
 
 def test_module_contains_used_and_unused_variables_doesnt_prune_variables():
     """
@@ -607,15 +513,8 @@ contains
   end subroutine type_test_function
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph.
-    assert set(simple_graph.nodes) == {'main', 'lib'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert actually_used_in_module == {'main': [], 'lib': ['used']}
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     # `not_fun` and `real_fun` should be gone!
     got = ast.tofortran()
@@ -639,10 +538,6 @@ END PROGRAM main
     """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    # Verify
-    assert name_dict == {'lib': ['used']}
-    assert rename_dict == {'lib': {}}
 
 
 def test_module_contains_used_and_unused_variables_with_use_all_prunes_unused():
@@ -671,15 +566,8 @@ contains
   end subroutine type_test_function
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph.
-    assert set(simple_graph.nodes) == {'main', 'lib'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert actually_used_in_module == {'main': [], 'lib': ['used']}
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     # `not_fun` and `real_fun` should be gone!
     got = ast.tofortran()
@@ -703,10 +591,6 @@ END PROGRAM main
     """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    # Verify
-    assert name_dict == {'lib': ['used']}
-    assert rename_dict == {'lib': {}}
 
 
 def test_use_statement_multiple_doesnt_prune_variables():
@@ -738,15 +622,8 @@ contains
   end subroutine type_test_function
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph.
-    assert set(simple_graph.nodes) == {'main', 'lib'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert actually_used_in_module == {'main': [], 'lib': ['a', 'b']}
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     # `not_fun` and `real_fun` should be gone!
     got = ast.tofortran()
@@ -773,10 +650,6 @@ END PROGRAM main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    # Verify
-    assert name_dict == {'lib': ['a', 'b']}
-    assert rename_dict == {'lib': {}}
 
 
 def test_use_statement_multiple_with_useall_prunes_unused():
@@ -808,15 +681,8 @@ contains
   end subroutine type_test_function
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph.
-    assert set(simple_graph.nodes) == {'main', 'lib'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    assert actually_used_in_module == {'main': [], 'lib': ['a', 'b']}
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     # `not_fun` and `real_fun` should be gone!
     got = ast.tofortran()
@@ -843,10 +709,6 @@ END PROGRAM main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    # Verify
-    assert name_dict == {'lib': ['a', 'b']}
-    assert rename_dict == {'lib': {}}
 
 
 def test_subroutine_contains_function_no_pruning():
@@ -878,16 +740,8 @@ program main
   call fun(d)
 end program main
 """).check_with_gfortran().get()
-    ast, simple_graph, actually_used_in_module = parse_improve_and_simplify(sources)
-
-    # Verify simplification of the dependency graph.
-    assert set(simple_graph.nodes) == {'main', 'lib'}
-    assert set(simple_graph.edges) == {('main', 'lib')}
-    # TODO: `fun2` should actually _not_ be here, since it is not a top-level member of the module. Should investigate.
-    assert actually_used_in_module == {'lib': ['fun', 'fun2'], 'main': []}
-
-    # Now the actual operation that we are testing.
-    name_dict, rename_dict = prune_unused_children(ast, simple_graph, actually_used_in_module)
+    ast = parse_and_improve(sources)
+    ast = prune_from_main(ast)
 
     # `not_fun` and `real_fun` should be gone!
     got = ast.tofortran()
@@ -915,7 +769,3 @@ END PROGRAM main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
-
-    # Verify
-    assert name_dict == {'lib': ['fun']}
-    assert rename_dict == {'lib': {}}
