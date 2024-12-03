@@ -2515,11 +2515,44 @@ def create_ast_from_string(
     return program, own_ast
 
 
+NAMED_STMTS_OF_INTEREST_TYPES = Union[
+    Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
+    Specific_Binding, Generic_Binding, Interface_Stmt]
+
+SPEC = Tuple[str, ...]
+
+SPEC_TABLE = Dict[SPEC, NAMED_STMTS_OF_INTEREST_TYPES]
+
+
+class TYPE_SPEC:
+    NO_ATTRS = ''
+
+    def __init__(self,
+                 spec: Union[str, SPEC],
+                 attrs: str = NO_ATTRS):
+        if isinstance(spec, str):
+            spec = (spec,)
+        self.spec: SPEC = spec
+        self.dims: bool = 'DIMENSION' in attrs or 'ALLOCATABLE' in attrs
+        self.optional = 'OPTIONAL' in attrs
+        self.inp = 'INTENT(IN)' in attrs or 'INTENT(INOUT)' in attrs
+        self.out = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
+
+    def __repr__(self):
+        attrs = []
+        if self.dims:
+            attrs.append('array')
+        if not attrs:
+            return f"{self.spec}"
+        return f"{self.spec}[{', '.join(attrs)}]"
+
+
 class ParseConfig:
     def __init__(self,
                  main: Union[None, Path, str] = None,
                  sources: Union[None, List[Path], Dict[str, str]] = None,
-                 includes: Union[None, List[Path], Dict[str, str]] = None):
+                 includes: Union[None, List[Path], Dict[str, str]] = None,
+                 entry_points: Union[None, SPEC, List[SPEC]] = None):
         # Make the configs canonical, by processing the various types upfront.
         if isinstance(main, Path):
             main = FortranFileReader(main)
@@ -2542,6 +2575,10 @@ class ParseConfig:
         self.main = main
         self.sources = sources
         self.includes = includes
+        self.entry_points = entry_points
+
+
+ENTRY_POINT_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram]
 
 
 def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortranAst, FNode]:
@@ -2887,38 +2924,6 @@ def create_sdfg_from_fortran_file(source_string: str):
     return sdfg
 
 
-NAMED_STMTS_OF_INTEREST_TYPES = Union[
-    Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
-    Specific_Binding, Generic_Binding, Interface_Stmt]
-
-SPEC = Tuple[str, ...]
-
-SPEC_TABLE = Dict[SPEC, NAMED_STMTS_OF_INTEREST_TYPES]
-
-
-class TYPE_SPEC:
-    NO_ATTRS = ''
-
-    def __init__(self,
-                 spec: Union[str, SPEC],
-                 attrs: str = NO_ATTRS):
-        if isinstance(spec, str):
-            spec = (spec,)
-        self.spec: SPEC = spec
-        self.dims: bool = 'DIMENSION' in attrs or 'ALLOCATABLE' in attrs
-        self.optional = 'OPTIONAL' in attrs
-        self.inp = 'INTENT(IN)' in attrs or 'INTENT(INOUT)' in attrs
-        self.out = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
-
-    def __repr__(self):
-        attrs = []
-        if self.dims:
-            attrs.append('array')
-        if not attrs:
-            return f"{self.spec}"
-        return f"{self.spec}[{', '.join(attrs)}]"
-
-
 def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
     """Find the name of the statement if it has one. For anonymous blocks, return `None`."""
     if isinstance(node, Specific_Binding):
@@ -3041,12 +3046,19 @@ def alias_specs(ast: Program, ident_map: SPEC_TABLE):
     return alias_map
 
 
-def find_real_ident_spec(ident: str, in_spec: SPEC, alias_map: SPEC_TABLE) -> SPEC:
+def search_real_ident_spec(ident: str, in_spec: SPEC, alias_map: SPEC_TABLE) -> Optional[SPEC]:
     k = in_spec + (ident,)
     if k in alias_map:
         return ident_spec(alias_map[k])
-    assert in_spec, f"cannot find {ident}"
-    return find_real_ident_spec(ident, in_spec[:-1], alias_map)
+    if not in_spec:
+        return None
+    return search_real_ident_spec(ident, in_spec[:-1], alias_map)
+
+
+def find_real_ident_spec(ident: str, in_spec: SPEC, alias_map: SPEC_TABLE) -> SPEC:
+    spec = search_real_ident_spec(ident, in_spec, alias_map)
+    assert spec, f"cannot find {ident} / {in_spec}"
+    return spec
 
 
 def _find_type_decl_node(node: Entity_Decl):
@@ -3803,6 +3815,67 @@ def _reparent_children(node: Base):
             c.parent = node
 
 
+def prune_unused_objects(ast: Program,
+                         keepers: List[Union[Module, Main_Program, Subroutine_Subprogram, Function_Subprogram]]) \
+        -> Program:
+    """
+    Precondition: All the indirections have been taken out of the program.
+    """
+    PRUNABLE_OBJECT_TYPES = Union[Subroutine_Subprogram, Function_Subprogram, Derived_Type_Def]
+
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast, ident_map)
+    survivors: Set[SPEC] = set()
+
+    def _keep_from(node: Base):
+        for nm in walk(node, Name):
+            ob = nm.parent
+            scope = find_named_ancester(ob.parent)
+            if not scope:
+                continue
+            scope_spec = ident_spec(scope)
+
+            for j in reversed(range(len(scope_spec))):
+                anc = scope_spec[:j + 1]
+                if anc not in survivors:
+                    survivors.add(anc)
+                    anc_node = alias_map[anc].parent
+                    if isinstance(anc_node, PRUNABLE_OBJECT_TYPES):
+                        _keep_from(anc_node)
+
+            to_keep = search_real_ident_spec(nm.string, scope_spec, alias_map)
+            if not to_keep or to_keep not in alias_map:
+                continue
+            if to_keep not in survivors:
+                survivors.add(to_keep)
+                keep_node = alias_map[to_keep].parent
+                if isinstance(keep_node, PRUNABLE_OBJECT_TYPES):
+                    _keep_from(keep_node)
+
+    for k in keepers:
+        _keep_from(k)
+
+    # We keep them sorted so that the parent scopes are handled earlier.
+    killed: Set[SPEC] = set()
+    for ns in list(sorted(set(ident_map.keys()) - survivors)):
+        ns_node = ident_map[ns].parent
+        if not isinstance(ns_node, PRUNABLE_OBJECT_TYPES):
+            continue
+        for i in range(len(ns) - 1):
+            anc_spec = ns[:i + 1]
+            if anc_spec in killed:
+                killed.add(ns)
+                break
+        if ns in killed:
+            continue
+        par = ns_node.parent
+        par.content = [c for c in par.children if c != ns_node]
+        _reparent_children(par)
+        killed.add(ns)
+
+    return ast
+
+
 def deconstruct_associations(ast: Program) -> Program:
     for assoc in walk(ast, Associate_Construct):
         # TODO: Add ref.
@@ -3925,6 +3998,7 @@ def compute_dep_graph(ast: Base, start_point: str) -> nx.DiGraph:
                 exclude.add(mod)
 
     return dep_graph
+
 
 def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_list, parser):
     dep_graph = nx.DiGraph()
@@ -4285,7 +4359,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = correct_for_function_calls(ast)
     ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
     ast = deconstruct_interface_calls(ast)
-    dep_graph = compute_dep_graph(ast,'radiation_interface')
+    dep_graph = compute_dep_graph(ast, 'radiation_interface')
     print("redone")
 
     for mod, blocks in interface_blocks.items():
