@@ -2603,9 +2603,8 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = correct_for_function_calls(ast)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = deconstruct_procedure_calls(ast)
     assert isinstance(ast, Program)
-    assert not any(nx.simple_cycles(dep_graph))
 
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
     prune_unused_children(ast, simple_graph, actually_used_in_module)
@@ -3709,7 +3708,7 @@ def _does_type_signature_match(got_sig: Tuple[TYPE_SPEC, ...], cand_sig: Tuple[T
     return True
 
 
-def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program, nx.DiGraph):
+def deconstruct_procedure_calls(ast: Program) -> Program:
     SUFFIX, COUNTER = 'deconproc', 0
 
     alias_map = alias_specs(ast)
@@ -3809,13 +3808,6 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
                 use_stmt = Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}")
                 specification_part.content = [use_stmt] + specification_part.children
                 _reparent_children(specification_part)
-        obj_list = []
-        if dep_graph.has_edge(cmod, mod):
-            edge = dep_graph.get_edge_data(cmod, mod)
-            if 'obj_list' in edge:
-                obj_list = edge.get('obj_list')
-                assert isinstance(obj_list, list)
-        ast_utils.extend_with_new_items_from(obj_list, [Name(pname)])
 
         # For both function and subroutine calls, replace `bname` with `pname_alias`, and add `dref` as the first arg.
         _, args = callsite.children
@@ -3831,7 +3823,7 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         par = tbp.parent
         par.content = [c for c in par.children if c != tbp]
         _reparent_children(par)
-    return ast, dep_graph
+    return ast
 
 
 def _reparent_children(node: Base):
@@ -4407,7 +4399,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = correct_for_function_calls(ast)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = deconstruct_procedure_calls(ast)
     ast = deconstruct_interface_calls(ast)
     dep_graph = compute_dep_graph(ast, 'radiation_interface')
     print("redone")
