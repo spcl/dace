@@ -4383,6 +4383,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = correct_for_function_calls(ast)
     ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
     ast = deconstruct_interface_calls(ast)
+    ast = prune_unused_objects(ast, [m for m in walk(ast, Module) if find_name_of_node(m) == 'radiation_interface'])
+
+
     dep_graph = compute_dep_graph(ast, 'radiation_interface')
     print("redone")
 
