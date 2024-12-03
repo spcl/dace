@@ -2124,7 +2124,6 @@ class SDFG(ControlFlowRegion):
             # we need to update the size descriptor name of the array
             datadesc.size_desc_name = size_desc_name
             self._add_symbols(size_desc)
-            print(self._arrays)
 
         return name
 
