@@ -488,6 +488,29 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         #######################################################
         # Step 7: Wrap free tasklets and nested SDFGs with a GPU map
 
+        # Extend global_code_nodes with tasklets that write/read from an array
+        # Previous steps map all arrays to GPU storage, but only checks tasklets that write to/read from
+        # Scalars to be wrapped in a GPU Map
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.Tasklet):
+                    if node in global_code_nodes[state]:
+                        continue
+                    if state.entry_node(node) is None and not scope.is_devicelevel_gpu_kernel(
+                            state.parent, state, node):
+                        memlet_path_roots = set()
+                        memlet_path_roots = memlet_path_roots.union(
+                            [state.memlet_tree(e).root().edge.src for e in state.in_edges(node)]
+                            )
+                        memlet_path_roots = memlet_path_roots.union(
+                            [state.memlet_tree(e).root().edge.dst for e in state.out_edges(node)]
+                            )
+                        gpu_accesses = [n.data for n in memlet_path_roots
+                                        if isinstance(n, nodes.AccessNode) and
+                                           sdfg.arrays[n.data].storage in gpu_storage]
+                        if len(gpu_accesses) > 0:
+                            global_code_nodes[state].append(node)
+
         for state, gcodes in global_code_nodes.items():
             for gcode in gcodes:
                 if gcode.label in self.exclude_tasklets.split(','):
