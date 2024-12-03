@@ -2372,6 +2372,10 @@ class SDFG(ControlFlowRegion):
             # if the codegen modifies the SDFG (thereby changing its hash)
             sdfg.build_folder = build_folder
 
+            # Ensure external nested SDFGs are loaded.
+            for _ in sdfg.all_sdfgs_recursive(load_ext=True):
+                pass
+
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
             while sdfg.is_loaded():
@@ -2769,7 +2773,9 @@ class SDFG(ControlFlowRegion):
                                   permissive=False,
                                   sequential_innermaps=True,
                                   register_transients=True,
-                                  simplify=True):
+                                  simplify=True,
+                                  host_maps=None,
+                                  host_data=None):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
 
@@ -2786,7 +2792,9 @@ class SDFG(ControlFlowRegion):
         self.apply_transformations(GPUTransformSDFG,
                                    options=dict(sequential_innermaps=sequential_innermaps,
                                                 register_trans=register_transients,
-                                                simplify=simplify),
+                                                simplify=simplify,
+                                                host_maps=host_maps,
+                                                host_data=host_data),
                                    validate=validate,
                                    validate_all=validate_all,
                                    permissive=permissive,

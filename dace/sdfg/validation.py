@@ -810,7 +810,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 elif dst_size_access:
                     arr = sdfg.arrays[sdfg.arrays[dst_node.data].size_desc_name]
                 else:
-                    arr = sdfg.arrays[subset_node.data]
+                    arr = sdfg.arrays[e.data.data]
                 # Dimensionality
                 if e.data.subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(
