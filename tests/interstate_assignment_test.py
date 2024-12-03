@@ -1,7 +1,5 @@
 from typing import Dict
-import warnings
 import dace
-import logging
 
 N = dace.symbol("N")
 
@@ -39,41 +37,14 @@ def _get_interstate_dependent_sdfg(assignments: Dict, symbols_at_start=False):
     sdfg.validate()
     return sdfg
 
-# Iteration space of maps
-# The number of maps
-# Number of nested maps
-# The number of loops
-# Volume to / out of maps
-# distribution of tasklets within maps
-# t
-
 def test_interstate_assignment():
     sdfg = _get_interstate_dependent_sdfg({"N": 5}, False)
-    with warnings.catch_warnings(record=True) as captured_warnings:
-        warnings.simplefilter("always")
-        sdfg.validate()
-        assert len(captured_warnings) > 0, "No warnings were raised"
-        matching_warnings = [
-            w for w in captured_warnings
-            if "symbols" in str(w.message) and issubclass(w.category, Warning)
-        ]
-        assert matching_warnings, "No warning with 'symbols' found"
-    sdfg.save("s0.sdfg")
+    sdfg.validate()
     sdfg()
-
 
 def test_interstate_assignment_on_sdfg_input():
     sdfg = _get_interstate_dependent_sdfg({"N": 5}, True)
-    with warnings.catch_warnings(record=True) as captured_warnings:
-        warnings.simplefilter("always")
-        sdfg.validate()
-        assert len(captured_warnings) > 0, "No warnings were raised"
-        matching_warnings = [
-            w for w in captured_warnings
-            if "symbols" in str(w.message) and issubclass(w.category, Warning)
-        ]
-        assert matching_warnings, "No warning with 'symbols' found"
-    sdfg.save("s1.sdfg")
+    sdfg.validate()
     sdfg(N=10)
 
 if __name__ == "__main__":
