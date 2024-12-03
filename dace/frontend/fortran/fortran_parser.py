@@ -2,6 +2,7 @@
 
 import copy
 import os
+import re
 import warnings
 from copy import deepcopy as dpcp
 from itertools import chain
@@ -2533,18 +2534,27 @@ class TYPE_SPEC:
         if isinstance(spec, str):
             spec = (spec,)
         self.spec: SPEC = spec
-        self.dims: bool = 'DIMENSION' in attrs or 'ALLOCATABLE' in attrs
+        self.shape: Tuple[str, ...] = self._parse_shape(attrs)
         self.optional = 'OPTIONAL' in attrs
         self.inp = 'INTENT(IN)' in attrs or 'INTENT(INOUT)' in attrs
         self.out = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
 
+    @staticmethod
+    def _parse_shape(attrs: str) -> Tuple[str, ...]:
+        if 'DIMENSION' not in attrs:
+            return tuple()
+        dims: re.Match = re.search(r'DIMENSION\(([^)]*)\)', attrs, re.IGNORECASE)
+        assert dims
+        dims: str = dims.group(1)
+        return tuple(p.strip().lower() for p in dims.split(','))
+
     def __repr__(self):
         attrs = []
-        if self.dims:
-            attrs.append('array')
+        if self.shape:
+            attrs.append(f"shape={self.shape}")
         if not attrs:
             return f"{self.spec}"
-        return f"{self.spec}[{', '.join(attrs)}]"
+        return f"{self.spec}[{' | '.join(attrs)}]"
 
 
 class ParseConfig:
@@ -2593,9 +2603,8 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = correct_for_function_calls(ast)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = deconstruct_procedure_calls(ast)
     assert isinstance(ast, Program)
-    assert not any(nx.simple_cycles(dep_graph))
 
     simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
     prune_unused_children(ast, simple_graph, actually_used_in_module)
@@ -2951,9 +2960,10 @@ def find_name_of_node(node: Base) -> Optional[str]:
 
 
 def find_named_ancester(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
+    NAMED_ANCESTOR_STMT_TYPES = Union[Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt]
     anc = node.parent
     while anc:
-        stmt = ast_utils.atmost_one(ast_utils.children_of_type(anc, NAMED_STMTS_OF_INTEREST_TYPES))
+        stmt = ast_utils.atmost_one(ast_utils.children_of_type(anc, NAMED_ANCESTOR_STMT_TYPES))
         if stmt:
             return stmt
         anc = anc.parent
@@ -2995,12 +3005,12 @@ def identifier_specs(ast: Program) -> SPEC_TABLE:
     return ident_map
 
 
-def alias_specs(ast: Program, ident_map: SPEC_TABLE):
+def alias_specs(ast: Program):
     """
     Maps each "alias-type" identifier of interest in `ast` to its associated node that defines it.
     """
-    alias_map: SPEC_TABLE \
-        = {k: v for k, v in ident_map.items()}
+    ident_map = identifier_specs(ast)
+    alias_map: SPEC_TABLE = {k: v for k, v in ident_map.items()}
 
     for stmt in walk(ast, Use_Stmt):
         mod_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
@@ -3070,7 +3080,6 @@ def _find_type_decl_node(node: Entity_Decl):
 
 
 def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TYPE_SPEC]:
-    # TODO: Returning `attrs.tofortran()` is a hack. We should design the type specs better.
     anc = _find_type_decl_node(node)
     if not anc:
         return None
@@ -3086,11 +3095,16 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
         _, typ_name = typ.children
         spec = find_real_ident_spec(typ_name.string, ident_spec(node), alias_map)
 
-    tspec = TYPE_SPEC(spec, attrs)
+    # TODO: This `attrs` manipulation is a hack. We should design the type specs better.
     # TODO: Add ref.
+    attrs = [attrs] if attrs else []
     _, shape, _, _ = node.children
-    if shape is not None or tspec.spec == ('CHARACTER',):
-        tspec.dims = True
+    if shape is not None:
+        attrs.append(f"DIMENSION({shape.tofortran()})")
+    elif spec == ('CHARACTER',):
+        attrs.append('DIMENSION(:)')
+    attrs = ', '.join(attrs)
+    tspec = TYPE_SPEC(spec, attrs)
     return tspec
 
 
@@ -3155,19 +3169,28 @@ def find_dataref_component_spec(dref: Union[Name, Data_Ref], scope_spec: SPEC, a
     return comp_spec
 
 
-def find_type_dataref(dref: Union[Name, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
+def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
     root_type, rest = _dataref_root(dref, scope_spec, alias_map)
-
     cur_type = root_type
     for comp in rest:
         assert isinstance(comp, (Name, Part_Ref))
         if isinstance(comp, Part_Ref):
-            part_name, _ = comp.children[0], comp.children[1:]
+            # TODO: Add ref.
+            part_name, subsc = comp.children
             comp_spec = find_real_ident_spec(part_name.string, cur_type.spec, alias_map)
+            assert comp_spec in alias_map, f"cannot find {comp_spec} / {dref} in {scope_spec}"
+            cur_type = find_type_of_entity(alias_map[comp_spec], alias_map)
+            if not cur_type.shape:
+                # The object was not an array in the first place.
+                assert not subsc, f"{cur_type} / {part_name}, {cur_type.spec}, {comp}"
+            elif subsc:
+                # TODO: This is a hack to deduce a array type instead of scalar.
+                # We may have subscripted away all the dimensions.
+                cur_type.shape = tuple(s.tofortran() for s in subsc.children if ':' in s.tofortran())
         elif isinstance(comp, Name):
             comp_spec = find_real_ident_spec(comp.string, cur_type.spec, alias_map)
-        assert comp_spec in alias_map, f"cannot find {comp_spec} / {dref} in {scope_spec}"
-        cur_type = find_type_of_entity(alias_map[comp_spec], alias_map)
+            assert comp_spec in alias_map, f"cannot find {comp_spec} / {dref} in {scope_spec}"
+            cur_type = find_type_of_entity(alias_map[comp_spec], alias_map)
         assert cur_type
     return cur_type
 
@@ -3279,8 +3302,7 @@ def interface_specs(ast: Program) -> Dict[SPEC, Tuple[SPEC, ...]]:
 
 def correct_for_function_calls(ast: Program):
     """Look for function calls that may have been misidentified as array access and fix them."""
-    ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast, ident_map)
+    alias_map = alias_specs(ast)
 
     for pr in walk(ast, Part_Ref):
         scope = find_named_ancester(pr.parent)
@@ -3290,7 +3312,7 @@ def correct_for_function_calls(ast: Program):
         if isinstance(pr.parent, Data_Ref):
             dref = pr.parent
             comp_spec = find_dataref_component_spec(dref, scope_spec, alias_map)
-            comp_type_spec = find_type_of_entity(ident_map[comp_spec], alias_map)
+            comp_type_spec = find_type_of_entity(alias_map[comp_spec], alias_map)
             if not comp_type_spec:
                 # Cannot find a type, so it must be a function call.
                 par = dref.parent
@@ -3304,7 +3326,7 @@ def correct_for_function_calls(ast: Program):
                     # TODO: Create an empty stub for netcdf to allow producing compilable AST.
                     continue
                 pr_spec = find_real_ident_spec(pr_name.string, scope_spec, alias_map)
-                pr_type_spec = find_type_of_entity(ident_map[pr_spec], alias_map)
+                pr_type_spec = find_type_of_entity(alias_map[pr_spec], alias_map)
             elif isinstance(pr_name, Data_Ref):
                 pr_type_spec = find_type_dataref(pr_name, scope_spec, alias_map)
             if not pr_type_spec:
@@ -3418,8 +3440,7 @@ def deconstruct_enums(ast: Program) -> Program:
     return ast
 
 
-def _compute_argument_signature(args, fnref: Union[Function_Reference, Call_Stmt], scope_spec: SPEC,
-                                alias_map: SPEC_TABLE) -> Tuple[TYPE_SPEC, ...]:
+def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -> Tuple[TYPE_SPEC, ...]:
     if not args:
         return tuple()
 
@@ -3431,8 +3452,7 @@ def _compute_argument_signature(args, fnref: Union[Function_Reference, Call_Stmt
             elif isinstance(x, (Int_Literal_Constant, Signed_Int_Literal_Constant)):
                 return TYPE_SPEC('INTEGER')
             elif isinstance(x, Char_Literal_Constant):
-                str_typ = TYPE_SPEC('CHARACTER')
-                str_typ.dims = True
+                str_typ = TYPE_SPEC('CHARACTER', 'DIMENSION(:)')
                 return str_typ
             elif isinstance(x, Logical_Literal_Constant):
                 return TYPE_SPEC('LOGICAL')
@@ -3449,7 +3469,7 @@ def _compute_argument_signature(args, fnref: Union[Function_Reference, Call_Stmt
                 # TODO: Add ref.
                 part_name, subsc = x.children
                 orig_type = find_type_dataref(part_name, scope_spec, alias_map)
-                if not orig_type.dims:
+                if not orig_type.shape:
                     # The object was not an array in the first place.
                     assert not subsc, f"{orig_type} / {part_name}, {scope_spec}, {x}"
                     return orig_type
@@ -3459,7 +3479,7 @@ def _compute_argument_signature(args, fnref: Union[Function_Reference, Call_Stmt
                 # TODO: This is a hack to deduce a array type instead of scalar.
                 SUBSC_ALL = Subscript_Triplet(':')
                 # We may have subscripted away all the dimensions.
-                orig_type.dims = any(s == SUBSC_ALL for s in subsc.children)
+                orig_type.shape = tuple(s.tofortran() for s in subsc.children if ':' in s.tofortran())
                 return orig_type
             elif isinstance(x, Actual_Arg_Spec):
                 kw, val = x.children
@@ -3469,17 +3489,30 @@ def _compute_argument_signature(args, fnref: Union[Function_Reference, Call_Stmt
                 return MATCH_ALL
 
         c_type = _deduct_type(c)
-        assert c_type, f"got: {c} / {type(c)} : {fnref}"
+        assert c_type, f"got: {c} / {type(c)}"
         args_sig.append(c_type)
 
     return tuple(args_sig)
 
 
+def _compute_candidate_argument_signature(args, cand_spec: SPEC, alias_map: SPEC_TABLE) -> Tuple[TYPE_SPEC, ...]:
+    cand_args_sig: List[TYPE_SPEC] = []
+    for ca in args:
+        ca_decl = alias_map[cand_spec + (ca.string,)]
+        ca_type = find_type_of_entity(ca_decl, alias_map)
+        assert ca_type, f"got: {ca} / {type(ca)}"
+        if ca_type.optional:
+            # TODO: Currently allowing anything to match for optional args. This should be properly matched.
+            cand_args_sig.append(MATCH_ALL)
+        else:
+            cand_args_sig.append(ca_type)
+    return tuple(cand_args_sig)
+
+
 def deconstruct_interface_calls(ast: Program) -> Program:
     SUFFIX, COUNTER = 'deconiface', 0
 
-    ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast, ident_map)
+    alias_map = alias_specs(ast)
     iface_map = interface_specs(ast)
 
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
@@ -3505,7 +3538,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         specification_part = ast_utils.atmost_one(ast_utils.children_of_type(subprog, Specification_Part))
 
         ifc_spec = ident_spec(alias_map[fref_spec])
-        args_sig: Tuple[TYPE_SPEC, ...] = _compute_argument_signature(args, fref, scope_spec, alias_map)
+        args_sig: Tuple[TYPE_SPEC, ...] = _compute_argument_signature(args, scope_spec, alias_map)
         all_cand_sigs: List[Tuple[SPEC, Tuple[TYPE_SPEC, ...]]] = []
 
         conc_spec = None
@@ -3524,28 +3557,20 @@ def deconstruct_interface_calls(ast: Program) -> Program:
 
             # TODO: Add ref.
             _, _, cand_args, _ = cand_stmt.children
-            cand_args_sig: List[TYPE_SPEC] = []
             if cand_args:
-                for ca in cand_args.children:
-                    ca_decl = alias_map[cand_spec + (ca.string,)]
-                    ca_type = find_type_of_entity(ca_decl, alias_map)
-                    assert ca_type
-                    if ca_type.optional:
-                        # TODO: Currently allowing anything to match for optional args. This should be properly matched.
-                        cand_args_sig.append(MATCH_ALL)
-                    else:
-                        cand_args_sig.append(ca_type)
-            cand_args_sig: Tuple[TYPE_SPEC, ...] = tuple(cand_args_sig)
+                cand_args_sig = _compute_candidate_argument_signature(cand_args.children, cand_spec, alias_map)
+            else:
+                cand_args_sig = tuple()
             all_cand_sigs.append((cand_spec, cand_args_sig))
 
             if _does_type_signature_match(args_sig, cand_args_sig):
                 conc_spec = cand_spec
                 break
         if conc_spec not in alias_map:
-            print(f"{conc_spec} / {args_sig}")
+            print(f"{ifc_spec}/{conc_spec} / {args_sig}")
             for c in all_cand_sigs:
                 print(f"...> {c}")
-        assert conc_spec and conc_spec in alias_map, f"[in: {fref_spec}] {conc_spec} not found"
+        assert conc_spec and conc_spec in alias_map, f"[in: {fref_spec}] {ifc_spec}/{conc_spec} not found"
 
         # We are assumping that it's either a toplevel subprogram or a subprogram defined directly inside a module.
         assert 1 <= len(conc_spec) <= 2
@@ -3578,8 +3603,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
 
     # TODO: Figure out a way without rebuilding here.
     # Rebuild the maps because aliasing may have changed.
-    ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast, ident_map)
+    alias_map = alias_specs(ast)
 
     # At this point, we must have replaced all the interface calls with concrete calls.
     for use in walk(ast, Use_Stmt):
@@ -3673,20 +3697,21 @@ def _does_type_signature_match(got_sig: Tuple[TYPE_SPEC, ...], cand_sig: Tuple[T
         if MATCH_ALL in {got, cand}:
             # Consider them matched.
             continue
-        # Either both are arrays, or neither are.
-        if got.dims != cand.dims:
+
+        # Both's ranks must match
+        if len(got.shape) != len(cand.shape):
             return False
+
         # We are done with attribute matching by this point.
         if got.spec != cand.spec:
             return False
     return True
 
 
-def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program, nx.DiGraph):
+def deconstruct_procedure_calls(ast: Program) -> Program:
     SUFFIX, COUNTER = 'deconproc', 0
 
-    ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast, ident_map)
+    alias_map = alias_specs(ast)
     proc_map = procedure_specs(ast)
     genc_map = generic_specs(ast)
     # We should have removed all the `association`s by now.
@@ -3730,7 +3755,7 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         fnref = pd.parent
         assert isinstance(fnref, (Function_Reference, Call_Stmt))
         _, args = fnref.children
-        args_sig: Tuple[TYPE_SPEC, ...] = _compute_argument_signature(args, fnref, scope_spec, alias_map)
+        args_sig: Tuple[TYPE_SPEC, ...] = _compute_argument_signature(args, scope_spec, alias_map)
         all_cand_sigs: List[Tuple[SPEC, Tuple[TYPE_SPEC, ...]]] = []
 
         bspec = dref_type.spec + (bname.string,)
@@ -3783,13 +3808,6 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
                 use_stmt = Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}")
                 specification_part.content = [use_stmt] + specification_part.children
                 _reparent_children(specification_part)
-        obj_list = []
-        if dep_graph.has_edge(cmod, mod):
-            edge = dep_graph.get_edge_data(cmod, mod)
-            if 'obj_list' in edge:
-                obj_list = edge.get('obj_list')
-                assert isinstance(obj_list, list)
-        ast_utils.extend_with_new_items_from(obj_list, [Name(pname)])
 
         # For both function and subroutine calls, replace `bname` with `pname_alias`, and add `dref` as the first arg.
         _, args = callsite.children
@@ -3805,7 +3823,7 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         par = tbp.parent
         par.content = [c for c in par.children if c != tbp]
         _reparent_children(par)
-    return ast, dep_graph
+    return ast
 
 
 def _reparent_children(node: Base):
@@ -3824,7 +3842,7 @@ def prune_unused_objects(ast: Program,
     PRUNABLE_OBJECT_TYPES = Union[Subroutine_Subprogram, Function_Subprogram, Derived_Type_Def]
 
     ident_map = identifier_specs(ast)
-    alias_map = alias_specs(ast, ident_map)
+    alias_map = alias_specs(ast)
     survivors: Set[SPEC] = set()
 
     def _keep_from(node: Base):
@@ -4381,7 +4399,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = correct_for_function_calls(ast)
-    ast, dep_graph = deconstruct_procedure_calls(ast, dep_graph)
+    ast = deconstruct_procedure_calls(ast)
     ast = deconstruct_interface_calls(ast)
     ast = prune_unused_objects(ast, [m for m in walk(ast, Module) if find_name_of_node(m) == 'radiation_interface'])
 
