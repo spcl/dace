@@ -9,7 +9,7 @@ import pytest
 from dace.config import set_temporary
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Xilinx HLS fails due to unresolved phi nodes')
 @xilinx_test(assert_ii_1=False)
 def test_map_unroll_processing_elements():
     # Grab the systolic GEMM implementation the samples directory
@@ -56,7 +56,7 @@ def test_map_unroll_processing_elements():
     return sdfg
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Test no longer achieves II=1')
 @xilinx_test(assert_ii_1=True)
 def test_map_unroll_processing_elements_decoupled():
     # Grab the systolic GEMM implementation the samples directory
@@ -105,3 +105,4 @@ def test_map_unroll_processing_elements_decoupled():
 
 if __name__ == "__main__":
     test_map_unroll_processing_elements(None)
+    test_map_unroll_processing_elements_decoupled(None)

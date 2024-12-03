@@ -2112,7 +2112,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 end_type = None
                             if end_type is not None:
                                 if np.dtype(end_type.dtype.type) > np.dtype('uint32'):
-                                    loop_var_type = end_type.ctype
+                                    v = dace.config.Config.get("compiler", "fpga", "vendor")
+                                    if v.casefold() == 'intel_fpga'.casefold():
+                                        loop_var_type = end_type.ocltype
+                                    else:
+                                        loop_var_type = end_type.ctype
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
