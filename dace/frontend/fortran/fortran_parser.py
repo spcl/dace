@@ -2,6 +2,7 @@
 
 import copy
 import os
+import re
 import warnings
 from copy import deepcopy as dpcp
 from itertools import chain
@@ -2533,18 +2534,27 @@ class TYPE_SPEC:
         if isinstance(spec, str):
             spec = (spec,)
         self.spec: SPEC = spec
-        self.dims: bool = 'DIMENSION' in attrs or 'ALLOCATABLE' in attrs
+        self.shape: Tuple[str, ...] = self._parse_shape(attrs)
         self.optional = 'OPTIONAL' in attrs
         self.inp = 'INTENT(IN)' in attrs or 'INTENT(INOUT)' in attrs
         self.out = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
 
+    @staticmethod
+    def _parse_shape(attrs: str) -> Tuple[str, ...]:
+        if 'DIMENSION' not in attrs:
+            return tuple()
+        dims: re.Match = re.search(r'DIMENSION\(([^)]*)\)', attrs, re.IGNORECASE)
+        assert dims
+        dims: str = dims.group(1)
+        return tuple(p.strip().lower() for p in dims.split(','))
+
     def __repr__(self):
         attrs = []
-        if self.dims:
-            attrs.append('array')
+        if self.shape:
+            attrs.append(f"shape={self.shape}")
         if not attrs:
             return f"{self.spec}"
-        return f"{self.spec}[{', '.join(attrs)}]"
+        return f"{self.spec}[{' | '.join(attrs)}]"
 
 
 class ParseConfig:
@@ -3071,7 +3081,6 @@ def _find_type_decl_node(node: Entity_Decl):
 
 
 def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TYPE_SPEC]:
-    # TODO: Returning `attrs.tofortran()` is a hack. We should design the type specs better.
     anc = _find_type_decl_node(node)
     if not anc:
         return None
@@ -3087,11 +3096,16 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
         _, typ_name = typ.children
         spec = find_real_ident_spec(typ_name.string, ident_spec(node), alias_map)
 
-    tspec = TYPE_SPEC(spec, attrs)
+    # TODO: This `attrs` manipulation is a hack. We should design the type specs better.
     # TODO: Add ref.
+    attrs = [attrs] if attrs else []
     _, shape, _, _ = node.children
-    if shape is not None or tspec.spec == ('CHARACTER',):
-        tspec.dims = True
+    if shape is not None:
+        attrs.append(f"DIMENSION({shape.tofortran()})")
+    elif spec == ('CHARACTER',):
+        attrs.append('DIMENSION(:)')
+    attrs = ', '.join(attrs)
+    tspec = TYPE_SPEC(spec, attrs)
     return tspec
 
 
@@ -3156,19 +3170,28 @@ def find_dataref_component_spec(dref: Union[Name, Data_Ref], scope_spec: SPEC, a
     return comp_spec
 
 
-def find_type_dataref(dref: Union[Name, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
+def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
     root_type, rest = _dataref_root(dref, scope_spec, alias_map)
-
     cur_type = root_type
     for comp in rest:
         assert isinstance(comp, (Name, Part_Ref))
         if isinstance(comp, Part_Ref):
-            part_name, _ = comp.children[0], comp.children[1:]
+            # TODO: Add ref.
+            part_name, subsc = comp.children
             comp_spec = find_real_ident_spec(part_name.string, cur_type.spec, alias_map)
+            assert comp_spec in alias_map, f"cannot find {comp_spec} / {dref} in {scope_spec}"
+            cur_type = find_type_of_entity(alias_map[comp_spec], alias_map)
+            if not cur_type.shape:
+                # The object was not an array in the first place.
+                assert not subsc, f"{cur_type} / {part_name}, {cur_type.spec}, {comp}"
+            elif subsc:
+                # TODO: This is a hack to deduce a array type instead of scalar.
+                # We may have subscripted away all the dimensions.
+                cur_type.shape = tuple(s.tofortran() for s in subsc.children if ':' in s.tofortran())
         elif isinstance(comp, Name):
             comp_spec = find_real_ident_spec(comp.string, cur_type.spec, alias_map)
-        assert comp_spec in alias_map, f"cannot find {comp_spec} / {dref} in {scope_spec}"
-        cur_type = find_type_of_entity(alias_map[comp_spec], alias_map)
+            assert comp_spec in alias_map, f"cannot find {comp_spec} / {dref} in {scope_spec}"
+            cur_type = find_type_of_entity(alias_map[comp_spec], alias_map)
         assert cur_type
     return cur_type
 
@@ -3291,7 +3314,7 @@ def correct_for_function_calls(ast: Program):
         if isinstance(pr.parent, Data_Ref):
             dref = pr.parent
             comp_spec = find_dataref_component_spec(dref, scope_spec, alias_map)
-            comp_type_spec = find_type_of_entity(ident_map[comp_spec], alias_map)
+            comp_type_spec = find_type_of_entity(alias_map[comp_spec], alias_map)
             if not comp_type_spec:
                 # Cannot find a type, so it must be a function call.
                 par = dref.parent
@@ -3305,7 +3328,7 @@ def correct_for_function_calls(ast: Program):
                     # TODO: Create an empty stub for netcdf to allow producing compilable AST.
                     continue
                 pr_spec = find_real_ident_spec(pr_name.string, scope_spec, alias_map)
-                pr_type_spec = find_type_of_entity(ident_map[pr_spec], alias_map)
+                pr_type_spec = find_type_of_entity(alias_map[pr_spec], alias_map)
             elif isinstance(pr_name, Data_Ref):
                 pr_type_spec = find_type_dataref(pr_name, scope_spec, alias_map)
             if not pr_type_spec:
@@ -3419,8 +3442,7 @@ def deconstruct_enums(ast: Program) -> Program:
     return ast
 
 
-def _compute_argument_signature(args, fnref: Union[Function_Reference, Call_Stmt], scope_spec: SPEC,
-                                alias_map: SPEC_TABLE) -> Tuple[TYPE_SPEC, ...]:
+def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -> Tuple[TYPE_SPEC, ...]:
     if not args:
         return tuple()
 
@@ -3432,8 +3454,7 @@ def _compute_argument_signature(args, fnref: Union[Function_Reference, Call_Stmt
             elif isinstance(x, (Int_Literal_Constant, Signed_Int_Literal_Constant)):
                 return TYPE_SPEC('INTEGER')
             elif isinstance(x, Char_Literal_Constant):
-                str_typ = TYPE_SPEC('CHARACTER')
-                str_typ.dims = True
+                str_typ = TYPE_SPEC('CHARACTER', 'DIMENSION(:)')
                 return str_typ
             elif isinstance(x, Logical_Literal_Constant):
                 return TYPE_SPEC('LOGICAL')
@@ -3450,7 +3471,7 @@ def _compute_argument_signature(args, fnref: Union[Function_Reference, Call_Stmt
                 # TODO: Add ref.
                 part_name, subsc = x.children
                 orig_type = find_type_dataref(part_name, scope_spec, alias_map)
-                if not orig_type.dims:
+                if not orig_type.shape:
                     # The object was not an array in the first place.
                     assert not subsc, f"{orig_type} / {part_name}, {scope_spec}, {x}"
                     return orig_type
@@ -3460,7 +3481,7 @@ def _compute_argument_signature(args, fnref: Union[Function_Reference, Call_Stmt
                 # TODO: This is a hack to deduce a array type instead of scalar.
                 SUBSC_ALL = Subscript_Triplet(':')
                 # We may have subscripted away all the dimensions.
-                orig_type.dims = any(s == SUBSC_ALL for s in subsc.children)
+                orig_type.shape = tuple(s.tofortran() for s in subsc.children if ':' in s.tofortran())
                 return orig_type
             elif isinstance(x, Actual_Arg_Spec):
                 kw, val = x.children
@@ -3470,10 +3491,24 @@ def _compute_argument_signature(args, fnref: Union[Function_Reference, Call_Stmt
                 return MATCH_ALL
 
         c_type = _deduct_type(c)
-        assert c_type, f"got: {c} / {type(c)} : {fnref}"
+        assert c_type, f"got: {c} / {type(c)}"
         args_sig.append(c_type)
 
     return tuple(args_sig)
+
+
+def _compute_candidate_argument_signature(args, cand_spec: SPEC, alias_map: SPEC_TABLE) -> Tuple[TYPE_SPEC, ...]:
+    cand_args_sig: List[TYPE_SPEC] = []
+    for ca in args:
+        ca_decl = alias_map[cand_spec + (ca.string,)]
+        ca_type = find_type_of_entity(ca_decl, alias_map)
+        assert ca_type, f"got: {ca} / {type(ca)}"
+        if ca_type.optional:
+            # TODO: Currently allowing anything to match for optional args. This should be properly matched.
+            cand_args_sig.append(MATCH_ALL)
+        else:
+            cand_args_sig.append(ca_type)
+    return tuple(cand_args_sig)
 
 
 def deconstruct_interface_calls(ast: Program) -> Program:
@@ -3506,7 +3541,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         specification_part = ast_utils.atmost_one(ast_utils.children_of_type(subprog, Specification_Part))
 
         ifc_spec = ident_spec(alias_map[fref_spec])
-        args_sig: Tuple[TYPE_SPEC, ...] = _compute_argument_signature(args, fref, scope_spec, alias_map)
+        args_sig: Tuple[TYPE_SPEC, ...] = _compute_argument_signature(args, scope_spec, alias_map)
         all_cand_sigs: List[Tuple[SPEC, Tuple[TYPE_SPEC, ...]]] = []
 
         conc_spec = None
@@ -3525,28 +3560,20 @@ def deconstruct_interface_calls(ast: Program) -> Program:
 
             # TODO: Add ref.
             _, _, cand_args, _ = cand_stmt.children
-            cand_args_sig: List[TYPE_SPEC] = []
             if cand_args:
-                for ca in cand_args.children:
-                    ca_decl = alias_map[cand_spec + (ca.string,)]
-                    ca_type = find_type_of_entity(ca_decl, alias_map)
-                    assert ca_type
-                    if ca_type.optional:
-                        # TODO: Currently allowing anything to match for optional args. This should be properly matched.
-                        cand_args_sig.append(MATCH_ALL)
-                    else:
-                        cand_args_sig.append(ca_type)
-            cand_args_sig: Tuple[TYPE_SPEC, ...] = tuple(cand_args_sig)
+                cand_args_sig = _compute_candidate_argument_signature(cand_args.children, cand_spec, alias_map)
+            else:
+                cand_args_sig = tuple()
             all_cand_sigs.append((cand_spec, cand_args_sig))
 
             if _does_type_signature_match(args_sig, cand_args_sig):
                 conc_spec = cand_spec
                 break
         if conc_spec not in alias_map:
-            print(f"{conc_spec} / {args_sig}")
+            print(f"{ifc_spec}/{conc_spec} / {args_sig}")
             for c in all_cand_sigs:
                 print(f"...> {c}")
-        assert conc_spec and conc_spec in alias_map, f"[in: {fref_spec}] {conc_spec} not found"
+        assert conc_spec and conc_spec in alias_map, f"[in: {fref_spec}] {ifc_spec}/{conc_spec} not found"
 
         # We are assumping that it's either a toplevel subprogram or a subprogram defined directly inside a module.
         assert 1 <= len(conc_spec) <= 2
@@ -3674,9 +3701,11 @@ def _does_type_signature_match(got_sig: Tuple[TYPE_SPEC, ...], cand_sig: Tuple[T
         if MATCH_ALL in {got, cand}:
             # Consider them matched.
             continue
-        # Either both are arrays, or neither are.
-        if got.dims != cand.dims:
+
+        # Both's ranks must match
+        if len(got.shape) != len(cand.shape):
             return False
+
         # We are done with attribute matching by this point.
         if got.spec != cand.spec:
             return False
@@ -3731,7 +3760,7 @@ def deconstruct_procedure_calls(ast: Program, dep_graph: nx.DiGraph) -> (Program
         fnref = pd.parent
         assert isinstance(fnref, (Function_Reference, Call_Stmt))
         _, args = fnref.children
-        args_sig: Tuple[TYPE_SPEC, ...] = _compute_argument_signature(args, fnref, scope_spec, alias_map)
+        args_sig: Tuple[TYPE_SPEC, ...] = _compute_argument_signature(args, scope_spec, alias_map)
         all_cand_sigs: List[Tuple[SPEC, Tuple[TYPE_SPEC, ...]]] = []
 
         bspec = dref_type.spec + (bname.string,)
