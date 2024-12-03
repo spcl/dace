@@ -340,11 +340,13 @@ class CPUCodeGen(TargetCodeGenerator):
             declaration_stream.write(f'{nodedesc.dtype.ctype} *{name} = nullptr;\n', cfg, state_id, node)
             self._dispatcher.declared_arrays.add(name, DefinedType.Pointer, ctypedef)
 
-            size_arr_name = sdfg.arrays[name].size_desc_name
-            size_arr_desc = sdfg.arrays[size_arr_name]
-            size_ctypedef = dtypes.pointer(size_arr_desc.dtype).ctype
-
-            self._dispatcher.declared_arrays.add(size_arr_name, DefinedType.Pointer, size_ctypedef)
+            # Size desc is defined only for transient arrays
+            if nodedesc.transient and nodedesc.storage == dtypes.StorageType.CPU_Heap:
+                size_desc_name = sdfg.arrays[name].size_desc_name
+                if size_desc_name is not None:
+                    size_desc = sdfg.arrays[size_desc_name]
+                    size_ctypedef = dtypes.pointer(size_desc.dtype).ctype
+                    self._dispatcher.declared_arrays.add(size_desc_name, DefinedType.Pointer, size_ctypedef)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Define pointer once
@@ -1070,7 +1072,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         deferred_size_names.append(f"__{memlet.data}_dim{i}_size" if desc.storage == dtypes.StorageType.GPU_Global else f"{desc.size_desc_name}[{i}]")
                     else:
                         deferred_size_names.append(elem)
-        return deferred_size_names if len(deferred_size_names) > 0 else None
+        return deferred_size_names if deferred_size_names is not None and len(deferred_size_names) > 0 else None
 
     def process_out_memlets(self,
                             sdfg: SDFG,

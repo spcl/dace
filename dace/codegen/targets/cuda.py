@@ -610,10 +610,12 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
             if not declared:
                 result_decl.write('%s %s;\n' % (ctypedef, dataname))
                 size_str = ",".join(["0" if cpp.sym2cpp(dim).startswith("__dace_defer") else cpp.sym2cpp(dim) for dim in nodedesc.shape])
-                size_desc_name = nodedesc.size_desc_name
-                size_nodedesc = sdfg.arrays[size_desc_name]
-                result_decl.write(f'{size_nodedesc.dtype.ctype} {size_desc_name}[{size_nodedesc.shape[0]}]{{{size_str}}};\n')
-                self._dispatcher.defined_vars.add(size_desc_name, DefinedType.Pointer, size_nodedesc.dtype.ctype)
+                if nodedesc.transient:
+                    size_desc_name = nodedesc.size_desc_name
+                    if size_desc_name is not None:
+                        size_nodedesc = sdfg.arrays[size_desc_name]
+                        result_decl.write(f'{size_nodedesc.dtype.ctype} {size_desc_name}[{size_nodedesc.shape[0]}]{{{size_str}}};\n')
+                        self._dispatcher.defined_vars.add(size_desc_name, DefinedType.Pointer, size_nodedesc.dtype.ctype)
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
 
@@ -1481,7 +1483,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             if isinstance(node, nodes.AccessNode):
                 nsdfg: SDFG = parent.parent
                 desc = node.desc(nsdfg)
-                sizedesc = nsdfg.arrays[desc.size_desc_name]
                 if (nsdfg, node.data) in visited:
                     continue
                 visited.add((nsdfg, node.data))
@@ -1584,10 +1585,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             if aname in sdfg.arrays:
                 size_arr_name = data_desc.size_desc_name
-                size_arr = sdfg.arrays[data_desc.size_desc_name]
-                size_arr_len = size_arr.shape[0]
-                size_arr_dtype = size_arr.dtype.ctype
-                host_size_args[size_arr_name] = size_arr
+                if size_arr_name is not None:
+                    size_arr = sdfg.arrays[data_desc.size_desc_name]
+                    host_size_args[size_arr_name] = size_arr
 
         kernel_args_typed = [('const ' if k in const_params else '') + v.as_arg(name=k)
                              for k, v in prototype_kernel_args.items()]
