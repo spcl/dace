@@ -7,7 +7,7 @@ import warnings
 from copy import deepcopy as dpcp
 from itertools import chain
 from pathlib import Path
-from typing import List, Optional, Set, Dict, Tuple, Union
+from typing import List, Optional, Set, Dict, Tuple, Union, Iterable
 
 import networkx as nx
 from fparser.api import get_reader
@@ -22,7 +22,7 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Signed_Int_Literal_Constant, Char_Literal_Constant, Logical_Literal_Constant, Actual_Arg_Spec, \
     Intrinsic_Function_Reference, Section_Subscript_List, Subscript_Triplet, Structure_Constructor, Enum_Def, \
     Enumerator_List, Enumerator, Expr, Type_Bound_Procedure_Part, Interface_Stmt, Intrinsic_Name, Access_Stmt, \
-    Interface_Block
+    Interface_Block, End_Function_Stmt, End_Subroutine_Stmt
 from fparser.two.Fortran2008 import Type_Declaration_Stmt, Procedure_Stmt, Attr_Spec
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -3391,37 +3391,37 @@ def correct_for_function_calls(ast: Program):
     """Look for function calls that may have been misidentified as array access and fix them."""
     alias_map = alias_specs(ast)
 
-    for pr in walk(ast, Part_Ref):
-        scope = find_named_ancester(pr.parent)
-        assert scope
-        scope_spec = ident_spec(scope)
-
-        if isinstance(pr.parent, Data_Ref):
-            dref = pr.parent
-            comp_spec = find_dataref_component_spec(dref, scope_spec, alias_map)
-            comp_type_spec = find_type_of_entity(alias_map[comp_spec], alias_map)
-            if not comp_type_spec:
-                # Cannot find a type, so it must be a function call.
-                par = dref.parent
-                fnref = Function_Reference(dref.tofortran())
-                par.items = [fnref if c == dref else c for c in par.children]
-                _reparent_children(par)
-        else:
-            pr_name, _ = pr.children
-            if isinstance(pr_name, Name):
-                if pr_name.string.startswith('nf90_'):
-                    # TODO: Create an empty stub for netcdf to allow producing compilable AST.
-                    continue
-                pr_spec = find_real_ident_spec(pr_name.string, scope_spec, alias_map)
-                pr_type_spec = find_type_of_entity(alias_map[pr_spec], alias_map)
-            elif isinstance(pr_name, Data_Ref):
-                pr_type_spec = find_type_dataref(pr_name, scope_spec, alias_map)
-            if not pr_type_spec:
-                # Cannot find a type, so it must be a function call.
-                par = pr.parent
-                fnref = Function_Reference(pr.tofortran())
-                par.items = [fnref if c == pr else c for c in par.children]
-                _reparent_children(par)
+    # TODO: Looping over and over is not ideal. But `Function_Reference(...)` sometimes generate inner `Part_Ref`s. We
+    #  should figure out a way to avoid this clutter.
+    changed = True
+    while changed:
+        changed = False
+        for pr in walk(ast, Part_Ref):
+            scope_spec = find_scope_spec(pr)
+            if isinstance(pr.parent, Data_Ref):
+                dref = pr.parent
+                comp_spec = find_dataref_component_spec(dref, scope_spec, alias_map)
+                comp_type_spec = find_type_of_entity(alias_map[comp_spec], alias_map)
+                if not comp_type_spec:
+                    # Cannot find a type, so it must be a function call.
+                    replace_node(dref, Function_Reference(dref.tofortran()))
+                    changed = True
+            else:
+                pr_name, _ = pr.children
+                if isinstance(pr_name, Name):
+                    if pr_name.string.startswith('nf90_'):
+                        # TODO: Create an empty stub for netcdf to allow producing compilable AST.
+                        continue
+                    pr_spec = find_real_ident_spec(pr_name.string, scope_spec, alias_map)
+                    if isinstance(alias_map[pr_spec], Function_Stmt):
+                        replace_node(pr, Function_Reference(pr.tofortran()))
+                        changed = True
+                elif isinstance(pr_name, Data_Ref):
+                    pr_type_spec = find_type_dataref(pr_name, scope_spec, alias_map)
+                    if not pr_type_spec:
+                        # Cannot find a type, so it must be a function call.
+                        replace_node(pr, Function_Reference(pr.tofortran()))
+                        changed = True
 
     for sc in walk(ast, Structure_Constructor):
         scope_spec = find_scope_spec(sc)
@@ -4515,7 +4515,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = correct_for_function_calls(ast)
     ast = deconstruct_procedure_calls(ast)
     ast = deconstruct_interface_calls(ast)
-    ast = prune_unused_objects(ast, [m for m in walk(ast, Subroutine_Subprogram) if find_name_of_node(m) == 'radiation'])
+    ast = prune_unused_objects(ast,
+                               [m for m in walk(ast, Subroutine_Subprogram) if find_name_of_node(m) == 'radiation'])
     ast = assign_globally_unique_names(ast, {('radiation_interface', 'radiation')})
     dep_graph = compute_dep_graph(ast, 'radiation_interface')
     """print("redone")
