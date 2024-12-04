@@ -68,7 +68,7 @@ class MapFusion(transformation.SingleStateTransformation):
     )
     strict_dataflow = properties.Property(
         dtype=bool,
-        default=False,
+        default=True,
         desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
     # Maps SDFGs to the set of data that can not be removed,
