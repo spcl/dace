@@ -8,7 +8,7 @@ import networkx as nx
 import sympy
 
 from dace import data as dt
-from dace import properties, symbolic
+from dace import properties, symbolic, subsets
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -16,7 +16,6 @@ from dace.sdfg.propagation import align_memlet, propagate_memlet, propagate_subs
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.sdfg import SDFG, memlets_in_ast
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
-from dace.subsets import Range, SubsetUnion, intersection
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.helpers import unsqueeze_memlet
@@ -151,7 +150,7 @@ class StatePropagation(ppl.ControlFlowRegionPass):
                     else:
                         rng = (start, stop, stride)
                     for blk in region.nodes():
-                        blk.ranges[str(region.loop_variable)] = Range([rng])
+                        blk.ranges[str(region.loop_variable)] = subsets.Range([rng])
 
                     # Get surrounding iteration variables for the case of nested loops.
                     itvar_stack = []
@@ -269,10 +268,10 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                 # nested SDFG. If that's the case, use the entire range.
                 if border_memlet.src_subset is not None:
                     if any(str(s) not in outer_symbols.keys() for s in border_memlet.src_subset.free_symbols):
-                        border_memlet.src_subset = Range.from_array(sdfg.arrays[border_memlet.data])
+                        border_memlet.src_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
                 if border_memlet.dst_subset is not None:
                     if any(str(s) not in outer_symbols.keys() for s in border_memlet.dst_subset.free_symbols):
-                        border_memlet.dst_subset = Range.from_array(sdfg.arrays[border_memlet.data])
+                        border_memlet.dst_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
 
         # Propagate the inside 'border' memlets outside the SDFG by offsetting, and unsqueezing if necessary.
         for iedge in parent_state.in_edges(nsdfg_node):
@@ -280,7 +279,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                 try:
                     inner_memlet = possible_reads[iedge.dst_conn]
                     iedge.data = unsqueeze_memlet(inner_memlet, iedge.data, True)
-                    if isinstance(iedge.data.subset, SubsetUnion):
+                    if isinstance(iedge.data.subset, subsets.SubsetUnion):
                         iedge.data.subset = iedge.data.subset.to_bounding_box_subset()
                     # If no appropriate memlet found, use array dimension
                     for i, (rng, s) in enumerate(zip(iedge.data.subset, parent_sdfg.arrays[iedge.data.data].shape)):
@@ -299,7 +298,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                 try:
                     inner_memlet = possible_writes[oedge.src_conn]
                     oedge.data = unsqueeze_memlet(inner_memlet, oedge.data, True)
-                    if isinstance(oedge.data.subset, SubsetUnion):
+                    if isinstance(oedge.data.subset, subsets.SubsetUnion):
                         oedge.data.subset = oedge.data.subset.to_bounding_box_subset()
                     # If no appropriate memlet found, use array dimension
                     for i, (rng, s) in enumerate(zip(oedge.data.subset, parent_sdfg.arrays[oedge.data.data].shape)):
@@ -347,7 +346,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                         if oedge.data.other_subset is not None:
                             read_subset = oedge.data.other_subset
                         elif isinstance(desc, dt.Scalar) or (isinstance(desc, dt.Array) and desc.total_size == 1):
-                            read_subset = Range([(0, 0, 1)] * len(desc.shape))
+                            read_subset = subsets.Range([(0, 0, 1)] * len(desc.shape))
                         else:
                             raise RuntimeError('Invalid memlet range detected in MemletPropagation')
                     else:
@@ -370,7 +369,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                 for memlet, _ in writes[data]:
                     is_dynamic |= memlet.dynamic
                     if subset is None:
-                        subset = SubsetUnion(memlet.dst_subset or memlet.subset)
+                        subset = subsets.SubsetUnion(memlet.dst_subset or memlet.subset)
                     else:
                         subset.union(memlet.dst_subset or memlet.subset)
                     if memlet.volume == 0:
@@ -395,7 +394,7 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
             for memlet in not_covered_reads[data]:
                 is_dynamic |= memlet.dynamic
                 if subset is None:
-                    subset = SubsetUnion(memlet.dst_subset or memlet.subset)
+                    subset = subsets.SubsetUnion(memlet.dst_subset or memlet.subset)
                 else:
                     subset.union(memlet.dst_subset or memlet.subset)
                 if memlet.volume == 0:
@@ -429,14 +428,14 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                     if isect is not None:
                         propagated_memlet.subset = isect
                     else:
-                        propagated_memlet.subset = SubsetUnion([])
+                        propagated_memlet.subset = subsets.SubsetUnion([])
 
                     propagated_memlet.volume = sympy.Min(memlet.volume, propagated_memlet.volume)
                     propagated_memlet.dynamic |= memlet.dynamic
                 else:
                     mlt_subset = propagated_memlet.subset
-                    if not isinstance(mlt_subset, SubsetUnion):
-                        mlt_subset = SubsetUnion([mlt_subset])
+                    if not isinstance(mlt_subset, subsets.SubsetUnion):
+                        mlt_subset = subsets.SubsetUnion([mlt_subset])
                     mlt_subset.union(memlet.src_subset or memlet.subset)
                     propagated_memlet.subset = mlt_subset
 
@@ -518,9 +517,6 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         # First propagate the contents of the loop for one iteration.
         self._propagate_cfg(loop)
 
-        # TODO: Remove loop-carried dependencies from the writes (i.e., only the first read would be a true read)
-        deps = loop_analysis.get_loop_carry_dependencies(loop)
-
         # Propagate memlets from inside the loop through the loop ranges.
         # Collect loop information and form the loop variable range first.
         itvar = loop.loop_variable
@@ -528,9 +524,11 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         end = loop_analysis.get_loop_end(loop)
         stride = loop_analysis.get_loop_stride(loop)
         if itvar and start is not None and end is not None and stride is not None:
-            loop_range = Range([(start, end, stride)])
+            loop_range = subsets.Range([(start, end, stride)])
+            deps = loop_analysis.get_loop_carry_dependencies(loop)
         else:
             loop_range = None
+            deps = {}
 
         # Collect all symbols defined at this point, particularly by looking at defined loop variables in the parent
         # chain up the control flow tree.
@@ -543,14 +541,24 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
             pivot = pivot.parent_graph
         defined_symbols = [symbolic.pystr_to_symbolic(s) for s in symbols_at_loop.keys()]
         # Propagate memlet subsets through the loop variable and its range.
+        # TODO: Remove loop-carried dependencies from the writes (i.e., only the first read would be a true read)
         for memlet_repo in [loop._certain_reads, loop._possible_reads]:
             for dat in memlet_repo.keys():
                 read = memlet_repo[dat]
                 arr = loop.sdfg.data(dat)
                 if read in deps:
                     dep_write = deps[read]
-                    inters = intersection(dep_write.subset, read.subset)
-                    ...
+                    #diff = subsets.difference(read.subset, dep_write.subset)
+                    #if isinstance(diff, subsets.SubsetUnion):
+                    #    diff = diff.to_bounding_box_subset()
+                    #tgt_expr = symbolic.pystr_to_symbolic(itvar) - loop_range.ranges[0][-1]
+                    #for i in range(diff.dims()):
+                    #    dim = diff.dim_to_string(i)
+                    #    ...
+                    ## Check if the remaining read subset is only in the direction opposing the loop iteration. If
+                    #diff.__getitem__(0)
+                    new_read = propagate_subset([read], arr, [itvar], loop_range, defined_symbols, use_dst=False)
+                    memlet_repo[dat] = new_read
                 else:
                     new_read = propagate_subset([read], arr, [itvar], loop_range, defined_symbols, use_dst=False)
                     memlet_repo[dat] = new_read
@@ -583,10 +591,10 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
                         not nd._certain_writes[read_memlet.data].subset.covers_precise(read_memlet.subset)):
                         if read_memlet.data in nd._possible_reads:
                             existing_memlet = nd._possible_reads[read_memlet.data]
-                            if isinstance(existing_memlet.subset, SubsetUnion):
+                            if isinstance(existing_memlet.subset, subsets.SubsetUnion):
                                 existing_memlet.subset.union(read_memlet.subset)
                             else:
-                                subset = SubsetUnion(read_memlet.subset)
+                                subset = subsets.SubsetUnion(read_memlet.subset)
                                 subset.union(existing_memlet.subset)
                                 existing_memlet.subset = subset
                         else:
@@ -606,14 +614,14 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         for nd in cfg.nodes():
             for cont in nd._possible_writes:
                 if cont in cfg._possible_writes:
-                    union = SubsetUnion(cfg._possible_writes[cont].subset)
+                    union = subsets.SubsetUnion(cfg._possible_writes[cont].subset)
                     union.union(nd._possible_writes[cont].subset)
                     cfg._possible_writes[cont] = Memlet(data=cont, subset=union)
                 else:
                     cfg._possible_writes[cont] = copy.deepcopy(nd._possible_writes[cont])
             for cont in nd._certain_writes:
                 if cont in cfg._certain_writes:
-                    union = SubsetUnion(cfg._certain_writes[cont].subset)
+                    union = subsets.SubsetUnion(cfg._certain_writes[cont].subset)
                     union.union(nd._certain_writes[cont].subset)
                     cfg._certain_writes[cont] = Memlet(data=cont, subset=union)
                 else:

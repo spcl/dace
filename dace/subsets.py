@@ -880,21 +880,28 @@ class Range(Subset):
         if isect is None:
             return self
         diff_ranges = [[]]
+        dims_cleared = []
         for i, (r1, r2) in enumerate(zip(self.ranges, isect.ranges)):
             if r2[0] == r1[0]:
                 # Intersection over the start of the current range.
                 if r2[1] == r1[1]:
-                    return Range([])
+                    for dr in diff_ranges:
+                        dr.append(r1)
+                    dims_cleared.append(True)
                 else:
                     for dr in diff_ranges:
                         dr.append((r2[1] + self.ranges[i][2], r1[1], r1[2]))
+                    dims_cleared.append(False)
             elif r2[1] == r1[1]:
                 # Intersection over the end of the current range.
                 if r2[0] == r1[0]:
-                    return Range([])
+                    for dr in diff_ranges:
+                        dr.append(r1)
+                    dims_cleared.append(True)
                 else:
                     for dr in diff_ranges:
                         dr.append((r1[0], r2[0] - self.ranges[i][2], r1[2]))
+                    dims_cleared.append(False)
             else:
                 # Intersection completely contained inside the current range, split into subset union is necessary.
                 split_left = (r1[0], r2[0] - self.ranges[i][2], r1[2])
@@ -905,7 +912,10 @@ class Range(Subset):
                 for dr in dr_copy:
                     dr[-1] = split_right
                     diff_ranges.append(dr)
-        if len(diff_ranges) == 1:
+                dims_cleared.append(False)
+        if all(dims_cleared):
+            return Range([])
+        elif len(diff_ranges) == 1:
             return Range(diff_ranges[0])
         else:
             subset_list = []
@@ -1239,6 +1249,12 @@ class SubsetUnion(Subset):
 
     def __len__(self):
         return len(self.subset_list[0])
+
+    def __getitem__(self, key):
+        dim_ranges = []
+        for subs in self.subset_list:
+            dim_ranges.append(Range([subs[key]]))
+        return SubsetUnion(dim_ranges)
     
     def dims(self):
         if not self.subset_list:

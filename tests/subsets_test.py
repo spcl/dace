@@ -190,6 +190,8 @@ def test_difference_symbolic():
     rng5 = subsets.Range([(0, 0, 1), (M, M, 1)])
     rng6 = subsets.Range([(0, N, 1), (0, M, 1)])
     rng7 = subsets.Range([(0, N - 1, 1), (N - 1, N, 1)])
+    rng8 = subsets.Range([(0, N, 1), (0, 5, 1)])
+    rng9 = subsets.Range([(0, N, 1), (0, 0, 1)])
     ind1 = subsets.Indices([0, 1])
 
     assert subsets.difference(rng1, rng2) == subsets.Range([(1, N - 1, 1), (1, M - 1, 1)])
@@ -202,6 +204,7 @@ def test_difference_symbolic():
     assert subsets.difference(rng7, rng1) is None
     assert subsets.difference(rng1, ind1) is None
     assert subsets.difference(ind1, rng1) is None
+    assert subsets.difference(rng8, rng9) == subsets.Range([(0, N, 1), (1, 5, 1)])
 
 
 def test_difference_constant():
