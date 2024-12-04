@@ -408,7 +408,7 @@ class SnitchCodeGen(TargetCodeGenerator):
                     #pragma omp parallel
                     {{
                         #error "malloc is not threadsafe"
-                        {name} = new {ctype} [{arrsize}];""".format(ctype=nodedesc.dtype.ctype,
+                        {name} = new {ctype} [std::size_t({arrsize})];""".format(ctype=nodedesc.dtype.ctype,
                                                                     name=alloc_name,
                                                                     arrsize=cpp.sym2cpp(arrsize)),
                     cfg,
@@ -1108,6 +1108,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
         # change new/delete to malloc/free
         code._code = re.sub(r"new (.+) \[(\d*)\];", r"(\1*)malloc(\2*sizeof(\1));", code._code)
+        code._code = re.sub(r"new (.+) \[std::size_t\((\d*)\)\];", r"(\1*)malloc(\2*sizeof(\1));", code._code)
         code._code = re.sub(r"new ([a-zA-Z0-9 _]*);", r"(\1*)malloc(sizeof(\1));", code._code)
         code._code = re.sub(r"delete (.*);", r"free(\1);", code._code)
         code._code = re.sub(r"delete\[\] (.*);", r"free(\1);", code._code)

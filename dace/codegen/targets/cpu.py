@@ -498,7 +498,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
             allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
+                    "%s = new %s DACE_ALIGN(64)[std::size_t(%s)];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
                 state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
@@ -548,7 +548,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 """
                 #pragma omp parallel
                 {{
-                    {name} = new {ctype} DACE_ALIGN(64)[{arrsize}];""".format(ctype=nodedesc.dtype.ctype,
+                    {name} = new {ctype} DACE_ALIGN(64)[std::size_t({arrsize})];""".format(ctype=nodedesc.dtype.ctype,
                                                                               name=alloc_name,
                                                                               arrsize=cpp.sym2cpp(arrsize)),
                 cfg,
