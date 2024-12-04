@@ -780,15 +780,6 @@ def _make_strict_dataflow_sdfg_pointwise(
 def test_fusion_strict_dataflow_pointwise():
     sdfg, state = _make_strict_dataflow_sdfg_pointwise(input_data="A")
 
-    # Because `A` is used as input and output in strict data flow mode,
-    #  the maps can not be fused.
-    count = sdfg.apply_transformations_repeated(
-            MapFusion(strict_dataflow=True),
-            validate=True,
-            validate_all=True,
-    )
-    assert count == 0
-
     # However, if strict dataflow is disabled, then it will be able to fuse.
     count = sdfg.apply_transformations_repeated(
             MapFusion(strict_dataflow=False),
@@ -829,10 +820,81 @@ def test_fusion_dataflow_intermediate():
     assert count == 0
 
 
+def test_fusion_dataflow_intermediate_2():
+    # Because `A` is not also output transformation applies.
+    sdfg, state = _make_strict_dataflow_sdfg_pointwise(
+            input_data="A",
+            intermediate_data="A",
+            output_data="O",
+    )
+    count = sdfg.apply_transformations_repeated(
+            MapFusion(strict_dataflow=True),
+            validate=True,
+            validate_all=True,
+    )
+    assert count == 1
+    map_exit = next(iter(node for node in state.nodes() if isinstance(node, nodes.MapExit)))
+    assert state.out_degree(map_exit) == 2
+    assert {"A", "O"} == {edge.dst.data for edge in state.out_edges(map_exit) if isinstance(edge.dst, nodes.AccessNode)}
+
+
+def test_fusion_dataflow_intermediate_downstream():
+    # Because the intermediate `T` is used downstream again,
+    #  the transformation can not apply.
+    sdfg, state = _make_strict_dataflow_sdfg_pointwise(
+            input_data="A",
+            intermediate_data="T",
+            output_data="output_1",
+    )
+    sdfg.arrays["output_1"].transient = False
+    sdfg.arrays["T"].transient = True
+    output_1 = next(iter(dnode for dnode in state.sink_nodes()))
+    assert isinstance(output_1, nodes.AccessNode) and output_1.data == "output_1"
+
+    # Make the real output node.
+    sdfg.arrays["O"] = sdfg.arrays["A"].clone()
+    state.add_mapped_tasklet(
+            "downstream_computation",
+            map_ranges={"__i0": "0:10"},
+            inputs={"__in1": dace.Memlet("output_1[__i0]")},
+            code="__out = __in1 + 10.0",
+            outputs={"__out": dace.Memlet("T[__i0]")},
+            input_nodes={output_1},
+            external_edges=True,
+    )
+    sdfg.validate()
+
+    count = sdfg.apply_transformations_repeated(
+            MapFusion(strict_dataflow=True),
+            validate=True,
+            validate_all=True,
+    )
+    assert count == 0
+
+    # However without strict dataflow, the merge is possible.
+    count = sdfg.apply_transformations_repeated(
+            MapFusion(strict_dataflow=False),
+            validate=True,
+            validate_all=True,
+    )
+    assert count == 1
+    assert state.in_degree(output_1) == 1
+    assert state.out_degree(output_1) == 1
+    assert all(isinstance(edge.src, nodes.MapExit) for edge in state.in_edges(output_1))
+    assert all(isinstance(edge.dst, nodes.MapEntry) for edge in state.out_edges(output_1))
+
+    upper_map_exit = next(iter(edge.src for edge in state.in_edges(output_1)))
+    assert isinstance(upper_map_exit, nodes.MapExit)
+    assert state.out_degree(upper_map_exit) == 2
+    assert {"T", "output_1"} == {edge.dst.data for edge in state.out_edges(upper_map_exit) if isinstance(edge.dst, nodes.AccessNode)}
+
+
 if __name__ == '__main__':
     test_fusion_strict_dataflow_pointwise()
     test_fusion_strict_dataflow_not_pointwise()
     test_fusion_dataflow_intermediate()
+    test_fusion_dataflow_intermediate_2()
+    test_fusion_dataflow_intermediate_downstream()
     test_indirect_accesses()
     test_fusion_shared()
     test_fusion_with_transient()
