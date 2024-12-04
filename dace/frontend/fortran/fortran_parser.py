@@ -3725,12 +3725,6 @@ def deconstruct_procedure_calls(ast: Program) -> Program:
     assert not walk(ast, Association), f"{walk(ast, Association)}"
 
     for pd in walk(ast, Procedure_Designator):
-        # TODO:
-        #  1. Find the specification part where `dref` would live and where we would insert `use`.
-        #  2. Find the type of `dref`.
-        #  3. Find the bound subprogram from the type of `dref`.
-        #  4. Insert an `use` for that bound subprogram.
-
         # Ref: https://github.com/stfc/fparser/blob/master/src/fparser/two/Fortran2003.py#L12530
         dref, op, bname = pd.children
 
