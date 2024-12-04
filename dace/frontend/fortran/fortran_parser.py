@@ -7,7 +7,7 @@ import warnings
 from copy import deepcopy as dpcp
 from itertools import chain
 from pathlib import Path
-from typing import List, Optional, Set, Dict, Tuple, Union
+from typing import List, Optional, Set, Dict, Tuple, Union, Iterable
 
 import networkx as nx
 from fparser.api import get_reader
@@ -22,7 +22,7 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Signed_Int_Literal_Constant, Char_Literal_Constant, Logical_Literal_Constant, Actual_Arg_Spec, \
     Intrinsic_Function_Reference, Section_Subscript_List, Subscript_Triplet, Structure_Constructor, Enum_Def, \
     Enumerator_List, Enumerator, Expr, Type_Bound_Procedure_Part, Interface_Stmt, Intrinsic_Name, Access_Stmt, \
-    Interface_Block
+    Interface_Block, End_Function_Stmt, End_Subroutine_Stmt
 from fparser.two.Fortran2008 import Type_Declaration_Stmt, Procedure_Stmt, Attr_Spec
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -2596,18 +2596,25 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     ast = parser(cfg.main)
     assert isinstance(ast, Program)
 
-    ast, dep_graph, interface_blocks = recursive_ast_improver(ast, cfg.sources, cfg.includes, parser)
+    ast = recursive_ast_improver(ast, cfg.sources, cfg.includes, parser)
     assert isinstance(ast, Program)
-    assert not any(nx.simple_cycles(dep_graph))
 
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = correct_for_function_calls(ast)
     ast = deconstruct_procedure_calls(ast)
-    assert isinstance(ast, Program)
+    ast = deconstruct_interface_calls(ast)
 
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-    prune_unused_children(ast, simple_graph, actually_used_in_module)
+    if not cfg.entry_points:
+        # Keep all the possible entry points.
+        entry_points = [c for c in ast.children if isinstance(c, ENTRY_POINT_OBJECT_TYPES)]
+    else:
+        eps = cfg.entry_points
+        if isinstance(eps, tuple):
+            eps = [eps]
+        ident_map = identifier_specs(ast)
+        entry_points = [ident_map[ep] for ep in eps if ep in ident_map]
+    ast = prune_unused_objects(ast, entry_points)
     assert isinstance(ast, Program)
 
     iast = ast_components.InternalFortranAst()
@@ -3016,9 +3023,7 @@ def alias_specs(ast: Program):
         mod_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
         mod_spec = (mod_name,)
 
-        scope = find_named_ancester(stmt.parent)
-        assert scope
-        scope_spec = ident_spec(scope)
+        scope_spec = find_scope_spec(stmt)
         use_spec = scope_spec + (mod_name,)
 
         if mod_spec not in ident_map:
@@ -3054,6 +3059,42 @@ def alias_specs(ast: Program):
 
     assert set(ident_map.keys()).issubset(alias_map.keys())
     return alias_map
+
+
+def search_scope_spec(node: Base) -> Optional[SPEC]:
+    scope = find_named_ancester(node.parent)
+    if not scope:
+        return None
+    return ident_spec(scope)
+
+
+def find_scope_spec(node: Base) -> SPEC:
+    spec = search_scope_spec(node)
+    assert spec, f"cannot find scope for: ```\n{node.tofortran()}```"
+    return spec
+
+
+def search_local_alias_spec(node: Name) -> Optional[SPEC]:
+    name, par = node.string, node.parent
+    scope_spec = search_scope_spec(node.parent)
+    if not scope_spec:
+        return None
+    local_spec = scope_spec + (name,)
+    # TODO: THEN WHAT?
+    if isinstance(par, (Part_Ref, Data_Ref)):
+        # If we are in a data-ref then we need to get to the root.
+        if isinstance(par.parent, Data_Ref):
+            par = par.parent
+        assert not isinstance(par.parent, Data_Ref)
+        # TODO: Add ref.
+        par, _ = par.children[0], par.children[1:]
+        if isinstance(par, Part_Ref):
+            # TODO: Add ref.
+            par, _ = par.children[0], par.children[1:]
+        assert isinstance(par, Name)
+        if par != node:
+            return None
+    return local_spec
 
 
 def search_real_ident_spec(ident: str, in_spec: SPEC, alias_map: SPEC_TABLE) -> Optional[SPEC]:
@@ -3233,9 +3274,7 @@ def generic_specs(ast: Program) -> Dict[SPEC, Tuple[SPEC, ...]]:
         else:
             plist = []
 
-        scope = find_named_ancester(gb.parent)
-        assert scope
-        scope_spec = ident_spec(scope)
+        scope_spec = find_scope_spec(gb)
         genc_spec = scope_spec + (bname.string,)
 
         proc_specs = []
@@ -3256,9 +3295,7 @@ def interface_specs(ast: Program) -> Dict[SPEC, Tuple[SPEC, ...]]:
     for ifs in walk(ast, Interface_Stmt):
         assert isinstance(ifs, Interface_Stmt)
         ib = ifs.parent
-        scope = find_named_ancester(ib)
-        assert scope
-        scope_spec = ident_spec(scope)
+        scope_spec = find_scope_spec(ib)
         name = find_name_of_stmt(ifs)
         if not name:
             # Only named interfaces can be called.
@@ -3282,9 +3319,7 @@ def interface_specs(ast: Program) -> Dict[SPEC, Tuple[SPEC, ...]]:
     for ifs in walk(ast, Interface_Stmt):
         assert isinstance(ifs, Interface_Stmt)
         ib = ifs.parent
-        scope = find_named_ancester(ib)
-        assert scope
-        scope_spec = ident_spec(scope)
+        scope_spec = find_scope_spec(ib)
         name = find_name_of_stmt(ifs)
         if name:
             # Only anonymous interface blocks.
@@ -3300,46 +3335,96 @@ def interface_specs(ast: Program) -> Dict[SPEC, Tuple[SPEC, ...]]:
     return iface_map
 
 
+def set_children(par: Base, children: Iterable[Base]):
+    assert hasattr(par, 'content') != hasattr(par, 'items')
+    if hasattr(par, 'items'):
+        par.items = tuple(children)
+    elif hasattr(par, 'content'):
+        par.content = list(children)
+    _reparent_children(par)
+
+
+def replace_node(node: Base, subst: Union[Base, Iterable[Base]]):
+    # A lot of hacky stuff to make sure that the new nodes are not just the same objects over and over.
+    par = node.parent
+    only_child = bool([c for c in par.children if c == node])
+    repls = []
+    for c in par.children:
+        if c != node:
+            repls.append(c)
+            continue
+        if isinstance(subst, Base):
+            subst = [subst]
+        if not only_child:
+            subst = [Base.__new__(type(t), t.tofortran()) for t in subst]
+        repls.extend(subst)
+    set_children(par, repls)
+
+
+def append_children(par: Base, children: Union[Base, List[Base]]):
+    if isinstance(children, Base):
+        children = [children]
+    set_children(par, list(par.children) + children)
+
+
+def prepend_children(par: Base, children: Union[Base, List[Base]]):
+    if isinstance(children, Base):
+        children = [children]
+    set_children(par, children + list(par.children))
+
+
+def remove_children(par: Base, children: Union[Base, List[Base]]):
+    if isinstance(children, Base):
+        children = [children]
+    repl = [c for c in par.children if c not in children]
+    set_children(par, repl)
+
+
+def remove_self(nodes: Union[Base, List[Base]]):
+    if isinstance(nodes, Base):
+        nodes = [nodes]
+    for n in nodes:
+        remove_children(n.parent, n)
+
+
 def correct_for_function_calls(ast: Program):
     """Look for function calls that may have been misidentified as array access and fix them."""
     alias_map = alias_specs(ast)
 
-    for pr in walk(ast, Part_Ref):
-        scope = find_named_ancester(pr.parent)
-        assert scope
-        scope_spec = ident_spec(scope)
-
-        if isinstance(pr.parent, Data_Ref):
-            dref = pr.parent
-            comp_spec = find_dataref_component_spec(dref, scope_spec, alias_map)
-            comp_type_spec = find_type_of_entity(alias_map[comp_spec], alias_map)
-            if not comp_type_spec:
-                # Cannot find a type, so it must be a function call.
-                par = dref.parent
-                fnref = Function_Reference(dref.tofortran())
-                par.items = [fnref if c == dref else c for c in par.children]
-                _reparent_children(par)
-        else:
-            pr_name, _ = pr.children
-            if isinstance(pr_name, Name):
-                if pr_name.string.startswith('nf90_'):
-                    # TODO: Create an empty stub for netcdf to allow producing compilable AST.
-                    continue
-                pr_spec = find_real_ident_spec(pr_name.string, scope_spec, alias_map)
-                pr_type_spec = find_type_of_entity(alias_map[pr_spec], alias_map)
-            elif isinstance(pr_name, Data_Ref):
-                pr_type_spec = find_type_dataref(pr_name, scope_spec, alias_map)
-            if not pr_type_spec:
-                # Cannot find a type, so it must be a function call.
-                par = pr.parent
-                fnref = Function_Reference(pr.tofortran())
-                par.items = [fnref if c == pr else c for c in par.children]
-                _reparent_children(par)
+    # TODO: Looping over and over is not ideal. But `Function_Reference(...)` sometimes generate inner `Part_Ref`s. We
+    #  should figure out a way to avoid this clutter.
+    changed = True
+    while changed:
+        changed = False
+        for pr in walk(ast, Part_Ref):
+            scope_spec = find_scope_spec(pr)
+            if isinstance(pr.parent, Data_Ref):
+                dref = pr.parent
+                comp_spec = find_dataref_component_spec(dref, scope_spec, alias_map)
+                comp_type_spec = find_type_of_entity(alias_map[comp_spec], alias_map)
+                if not comp_type_spec:
+                    # Cannot find a type, so it must be a function call.
+                    replace_node(dref, Function_Reference(dref.tofortran()))
+                    changed = True
+            else:
+                pr_name, _ = pr.children
+                if isinstance(pr_name, Name):
+                    if pr_name.string.startswith('nf90_'):
+                        # TODO: Create an empty stub for netcdf to allow producing compilable AST.
+                        continue
+                    pr_spec = find_real_ident_spec(pr_name.string, scope_spec, alias_map)
+                    if isinstance(alias_map[pr_spec], Function_Stmt):
+                        replace_node(pr, Function_Reference(pr.tofortran()))
+                        changed = True
+                elif isinstance(pr_name, Data_Ref):
+                    pr_type_spec = find_type_dataref(pr_name, scope_spec, alias_map)
+                    if not pr_type_spec:
+                        # Cannot find a type, so it must be a function call.
+                        replace_node(pr, Function_Reference(pr.tofortran()))
+                        changed = True
 
     for sc in walk(ast, Structure_Constructor):
-        scope = find_named_ancester(sc.parent)
-        assert scope
-        scope_spec = ident_spec(scope)
+        scope_spec = find_scope_spec(sc)
 
         # TODO: Add ref.
         sc_type, _ = sc.children
@@ -3349,16 +3434,11 @@ def correct_for_function_calls(ast: Program):
         sc_type_spec = find_real_ident_spec(sc_type.string, scope_spec, alias_map)
         if isinstance(alias_map[sc_type_spec], (Function_Stmt, Interface_Stmt)):
             # Now we know that this identifier actually refers to a function.
-            par = sc.parent
-            fnref = Function_Reference(sc.tofortran())
-            par.items = [fnref if c == sc else c for c in par.children]
-            _reparent_children(par)
+            replace_node(sc, Function_Reference(sc.tofortran()))
 
     # These can also be intrinsic function calls.
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
-        scope = find_named_ancester(fref.parent)
-        assert scope
-        scope_spec = ident_spec(scope)
+        scope_spec = find_scope_spec(fref)
 
         name, args = fref.children
         name = name.string
@@ -3370,13 +3450,12 @@ def correct_for_function_calls(ast: Program):
             # This is already an alias, so intrinsic object is shadowed.
             continue
         if isinstance(fref, Function_Reference):
-            par = fref.par
+            # We need to replace with this exact node structure, and cannot rely on FParser to parse it right.
             repl = Intrinsic_Function_Reference(fref.tofortran())
             # Set the arguments ourselves, just in case the parser messes it up.
             repl.items = (Intrinsic_Name(name), args)
             _reparent_children(repl)
-            par.content = [repl if c == fref else c for c in par.children]
-            _reparent_children(par)
+            replace_node(fref, repl)
         else:
             fref.items = (Intrinsic_Name(name), args)
             _reparent_children(fref)
@@ -3434,9 +3513,7 @@ def deconstruct_enums(ast: Program) -> Program:
                 en_dict[c_name] = Expr(f"{next_val} + {next_offset}")
                 next_offset = next_offset + 1
         type_decls = [Type_Declaration_Stmt(f"integer, parameter :: {k} = {v}") for k, v in en_dict.items()]
-        par = en.parent
-        par.content = list(chain(*(type_decls if c == en else [c] for c in par.children)))
-        _reparent_children(par)
+        replace_node(en, [Type_Declaration_Stmt(f"integer, parameter :: {k} = {v}") for k, v in en_dict.items()])
     return ast
 
 
@@ -3477,7 +3554,6 @@ def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -
                     # No further subscription, so retain the original type of the object.
                     return orig_type
                 # TODO: This is a hack to deduce a array type instead of scalar.
-                SUBSC_ALL = Subscript_Triplet(':')
                 # We may have subscripted away all the dimensions.
                 orig_type.shape = tuple(s.tofortran() for s in subsc.children if ':' in s.tofortran())
                 return orig_type
@@ -3516,10 +3592,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
     iface_map = interface_specs(ast)
 
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
-        assert isinstance(fref, (Function_Reference, Call_Stmt))
-        scope = find_named_ancester(fref.parent)
-        assert scope
-        scope_spec = ident_spec(scope)
+        scope_spec = find_scope_spec(fref)
 
         name, args = fref.children
         if isinstance(name, Intrinsic_Name):
@@ -3587,19 +3660,12 @@ def deconstruct_interface_calls(ast: Program) -> Program:
             # If we are importing it from a different module, we should create an alias to avoid name collision.
             pname_alias, COUNTER = f"{pname}_{SUFFIX}_{COUNTER}", COUNTER + 1
             if not specification_part:
-                specification_part = Specification_Part(get_reader(f"use {mod}, only: {pname_alias} => {pname}"))
-                subprog.content = subprog.children + [specification_part]
-                _reparent_children(subprog)
+                append_children(subprog, Specification_Part(get_reader(f"use {mod}, only: {pname_alias} => {pname}")))
             else:
-                use_stmt = Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}")
-                specification_part.content = [use_stmt] + specification_part.children
-                _reparent_children(specification_part)
+                prepend_children(specification_part, Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}"))
 
         # For both function and subroutine calls, replace `bname` with `pname_alias`, and add `dref` as the first arg.
-        _, args = fref.children
-        pname_alias = Name(pname_alias)
-        fref.items = (pname_alias, args)
-        _reparent_children(fref)
+        replace_node(name, Name(pname_alias))
 
     # TODO: Figure out a way without rebuilding here.
     # Rebuild the maps because aliasing may have changed.
@@ -3609,14 +3675,10 @@ def deconstruct_interface_calls(ast: Program) -> Program:
     for use in walk(ast, Use_Stmt):
         mod_name = ast_utils.singular(ast_utils.children_of_type(use, Name)).string
         mod_spec = (mod_name,)
-
         olist = ast_utils.atmost_one(ast_utils.children_of_type(use, 'Only_List'))
         if not olist:
             # There is nothing directly referring to the interface.
             continue
-        scope = find_named_ancester(use.parent)
-        assert scope
-        scope_spec = ident_spec(scope)
 
         survivors = []
         for c in olist.children:
@@ -3636,9 +3698,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
             olist.items = survivors
             _reparent_children(olist)
         else:
-            par = use.parent
-            par.content = [c for c in par.children if c != use]
-            _reparent_children(par)
+            remove_self(use)
 
     # We also remove any access statement that makes these interfaces public/private.
     for acc in walk(ast, Access_Stmt):
@@ -3646,9 +3706,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         kind, alist = acc.children
         if not alist:
             continue
-        scope = find_named_ancester(acc.parent)
-        assert scope
-        scope_spec = ident_spec(scope)
+        scope_spec = find_scope_spec(acc)
 
         survivors = []
         for c in alist.children:
@@ -3663,9 +3721,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
             alist.items = survivors
             _reparent_children(alist)
         else:
-            par = acc.parent
-            par.content = [c for c in par.children if c != acc]
-            _reparent_children(par)
+            remove_self(acc)
 
     # At this point, we must have replaced all references to the interfaces.
     for k in iface_map.keys():
@@ -3676,9 +3732,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         elif isinstance(alias_map[k], (Function_Stmt, Subroutine_Stmt)):
             ib = alias_map[k].parent.parent
         assert isinstance(ib, Interface_Block)
-        par = ib.parent
-        par.content = [c for c in par.children if c != ib]
-        _reparent_children(par)
+        remove_self(ib)
 
     return ast
 
@@ -3718,12 +3772,6 @@ def deconstruct_procedure_calls(ast: Program) -> Program:
     assert not walk(ast, Association), f"{walk(ast, Association)}"
 
     for pd in walk(ast, Procedure_Designator):
-        # TODO:
-        #  1. Find the specification part where `dref` would live and where we would insert `use`.
-        #  2. Find the type of `dref`.
-        #  3. Find the bound subprogram from the type of `dref`.
-        #  4. Insert an `use` for that bound subprogram.
-
         # Ref: https://github.com/stfc/fparser/blob/master/src/fparser/two/Fortran2003.py#L12530
         dref, op, bname = pd.children
 
@@ -3750,7 +3798,7 @@ def deconstruct_procedure_calls(ast: Program) -> Program:
         subprog = execution_part.parent
         specification_part = ast_utils.atmost_one(ast_utils.children_of_type(subprog, Specification_Part))
 
-        scope_spec = ident_spec(find_named_ancester(callsite.parent))
+        scope_spec = find_scope_spec(callsite)
         dref_type = find_type_dataref(dref, scope_spec, alias_map)
         fnref = pd.parent
         assert isinstance(fnref, (Function_Reference, Call_Stmt))
@@ -3765,19 +3813,10 @@ def deconstruct_procedure_calls(ast: Program) -> Program:
                 cand_spec = ident_spec(cand_stmt)
                 # TODO: Add ref.
                 _, _, cand_args, _ = cand_stmt.children
-                cand_args_sig: List[TYPE_SPEC] = []
                 if cand_args:
-                    # We can skip the first argument because that's already known.
-                    for ca in cand_args.children[1:]:
-                        ca_decl = alias_map[cand_spec + (ca.string,)]
-                        ca_type = find_type_of_entity(ca_decl, alias_map)
-                        assert ca_type
-                        if ca_type.optional:
-                            # TODO: Currently allowing anything to match for optional args. Should be properly matched.
-                            cand_args_sig.append(MATCH_ALL)
-                        else:
-                            cand_args_sig.append(ca_type)
-                cand_args_sig: Tuple[TYPE_SPEC, ...] = tuple(cand_args_sig)
+                    cand_args_sig = _compute_candidate_argument_signature(cand_args.children[1:], cand_spec, alias_map)
+                else:
+                    cand_args_sig = tuple()
                 all_cand_sigs.append((cand_spec, cand_args_sig))
 
                 if _does_type_signature_match(args_sig, cand_args_sig):
@@ -3801,13 +3840,9 @@ def deconstruct_procedure_calls(ast: Program) -> Program:
             # If we are importing it from a different module, we should create an alias to avoid name collision.
             pname_alias, COUNTER = f"{pname}_{SUFFIX}_{COUNTER}", COUNTER + 1
             if not specification_part:
-                specification_part = Specification_Part(get_reader(f"use {mod}, only: {pname_alias} => {pname}"))
-                subprog.content = subprog.children + [specification_part]
-                _reparent_children(subprog)
+                append_children(subprog, Specification_Part(get_reader(f"use {mod}, only: {pname_alias} => {pname}")))
             else:
-                use_stmt = Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}")
-                specification_part.content = [use_stmt] + specification_part.children
-                _reparent_children(specification_part)
+                prepend_children(specification_part, Use_Stmt(f"use {mod}, only: {pname_alias} => {pname}"))
 
         # For both function and subroutine calls, replace `bname` with `pname_alias`, and add `dref` as the first arg.
         _, args = callsite.children
@@ -3815,14 +3850,11 @@ def deconstruct_procedure_calls(ast: Program) -> Program:
             args = Actual_Arg_Spec_List(f"{dref}")
         else:
             args = Actual_Arg_Spec_List(f"{dref}, {args}")
-        pname_alias = Name(pname_alias)
-        callsite.items = (pname_alias, args)
+        callsite.items = (Name(pname_alias), args)
         _reparent_children(callsite)
 
     for tbp in walk(ast, Type_Bound_Procedure_Part):
-        par = tbp.parent
-        par.content = [c for c in par.children if c != tbp]
-        _reparent_children(par)
+        remove_self(tbp)
     return ast
 
 
@@ -3848,27 +3880,27 @@ def prune_unused_objects(ast: Program,
     def _keep_from(node: Base):
         for nm in walk(node, Name):
             ob = nm.parent
-            scope = find_named_ancester(ob.parent)
-            if not scope:
+            sc_spec = search_scope_spec(ob)
+            if not sc_spec:
                 continue
-            scope_spec = ident_spec(scope)
 
-            for j in reversed(range(len(scope_spec))):
-                anc = scope_spec[:j + 1]
-                if anc not in survivors:
-                    survivors.add(anc)
-                    anc_node = alias_map[anc].parent
-                    if isinstance(anc_node, PRUNABLE_OBJECT_TYPES):
-                        _keep_from(anc_node)
+            for j in reversed(range(len(sc_spec))):
+                anc = sc_spec[:j + 1]
+                if anc in survivors:
+                    continue
+                survivors.add(anc)
+                anc_node = alias_map[anc].parent
+                if isinstance(anc_node, PRUNABLE_OBJECT_TYPES):
+                    _keep_from(anc_node)
 
-            to_keep = search_real_ident_spec(nm.string, scope_spec, alias_map)
-            if not to_keep or to_keep not in alias_map:
+            to_keep = search_real_ident_spec(nm.string, sc_spec, alias_map)
+            if not to_keep or to_keep not in alias_map or to_keep in survivors:
+                # If we don't have a valid `to_keep` or `to_keep` is already kept, we move on.
                 continue
-            if to_keep not in survivors:
-                survivors.add(to_keep)
-                keep_node = alias_map[to_keep].parent
-                if isinstance(keep_node, PRUNABLE_OBJECT_TYPES):
-                    _keep_from(keep_node)
+            survivors.add(to_keep)
+            keep_node = alias_map[to_keep].parent
+            if isinstance(keep_node, PRUNABLE_OBJECT_TYPES):
+                _keep_from(keep_node)
 
     for k in keepers:
         _keep_from(k)
@@ -3886,9 +3918,7 @@ def prune_unused_objects(ast: Program,
                 break
         if ns in killed:
             continue
-        par = ns_node.parent
-        par.content = [c for c in par.children if c != ns_node]
-        _reparent_children(par)
+        remove_self(ns_node)
         killed.add(ns)
 
     # We also remove any access statement that makes the killed objects public/private.
@@ -3897,9 +3927,7 @@ def prune_unused_objects(ast: Program,
         kind, alist = acc.children
         if not alist:
             continue
-        scope = find_named_ancester(acc.parent)
-        assert scope
-        scope_spec = ident_spec(scope)
+        scope_spec = find_scope_spec(acc)
         good_children = []
         for c in alist.children:
             assert isinstance(c, Name)
@@ -3911,9 +3939,7 @@ def prune_unused_objects(ast: Program,
             alist.items = good_children
             _reparent_children(alist)
         else:
-            par = acc.parent
-            par.content = [c for c in par.children if c != acc]
-            _reparent_children(par)
+            remove_self(acc)
 
     return ast
 
@@ -3932,8 +3958,8 @@ def deconstruct_associations(ast: Program) -> Program:
         for al in assoc_list:
             for a in al.children:
                 # TODO: Add ref.
-                a_src, _, a_tgt = a.children
-                local_map[a_src.string] = a_tgt
+                src, _, tgt = a.children
+                local_map[src.string] = tgt
 
         for node in rest:
             # Replace the data-ref roots as appropriate.
@@ -3970,9 +3996,7 @@ def deconstruct_associations(ast: Program) -> Program:
                             free_comps = {i: c for i, c in free_comps}
                             access.items = [free_comps.get(i, c) for i, c in enumerate(access.children)]
                             # Now replace the entire `pr` with `repl`.
-                            par = pr.parent
-                            par.items = [repl if c == pr else c for c in par.children]
-                            _reparent_children(par)
+                            replace_node(pr, repl)
                             continue
                     # Otherwise, just replace normally.
                     pr.items = (repl, subsc)
@@ -3986,55 +4010,183 @@ def deconstruct_associations(ast: Program) -> Program:
                     continue
                 if nm.string not in local_map:
                     continue
-                repl = local_map[nm.string]
-                repl = type(repl)(repl.tofortran())
-                par.items = tuple(repl if c == nm else c for c in par.children)
-                _reparent_children(par)
-
-        par = assoc.parent
-        par.content = list(chain(*([rest if c == assoc else [c] for c in par.children])))
-        _reparent_children(par)
+                replace_node(nm, local_map[nm.string])
+        replace_node(assoc, rest)
 
     return ast
 
 
-def compute_dep_graph(ast: Base, start_point: str) -> nx.DiGraph:
-    dep_graph = nx.DiGraph()
-    interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
-    exclude = set()
+def assign_globally_unique_names(ast: Program, keepers: Set[SPEC]) -> Program:
+    """
+    Precondition: All indirections are already removed from the program, except for the explicit renames.
+    TODO: Make structure names unique too. And possibly variables?
+    """
+    SUFFIX, COUNTER = 'deconglobal', 0
 
-    to_process = [start_point]
-    defined_modules = ast_utils.get_defined_modules(ast)
-    while (len(to_process) > 0):
-        parent_module = to_process.pop(0)
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast)
 
-        mod_ast = None
-        for i in ast.children:
-            if isinstance(i, Module):
-                if i.children[0].children[1].string == parent_module:
-                    mod_ast = i
-                    break
-        if mod_ast is None:
-            print(f"Could not find module {parent_module}")
+    # Make new unique names for the identifiers.
+    uident_map: Dict[SPEC, str] = {}
+    for k in ident_map.keys():
+        if k in keepers or k[0] == 'netcdf':
             continue
+        uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
+        uident_map[k] = uname
+
+    # PHASE 1: Update the callsites for functions.
+    # PHASE 1.a: Remove all the places where that function is imported.
+    for use in walk(ast, Use_Stmt):
+        mod_name = ast_utils.singular(ast_utils.children_of_type(use, Name)).string
+        mod_spec = (mod_name,)
+        olist = ast_utils.atmost_one(ast_utils.children_of_type(use, 'Only_List'))
+        if not olist:
+            continue
+        survivors = []
+        for c in olist.children:
+            assert isinstance(c, (Name, Rename))
+            if isinstance(c, Name):
+                src, tgt = c, c
+            elif isinstance(c, Rename):
+                _, src, tgt = c.children
+            src, tgt = src.string, tgt.string
+            tgt_spec = find_real_ident_spec(tgt, mod_spec, alias_map)
+            assert tgt_spec in ident_map
+            if not isinstance(ident_map[tgt_spec], (Function_Stmt, Subroutine_Stmt)):
+                survivors.append(c)
+        if survivors:
+            olist.items = survivors
+            _reparent_children(olist)
+        else:
+            par = use.parent
+            par.content = [c for c in par.children if c != use]
+            _reparent_children(par)
+    # PHASE 1.b: Replaces all the callsites.
+    for fref in walk(ast, (Function_Reference, Call_Stmt)):
+        scope_spec = find_scope_spec(fref)
+
+        # TODO: Add ref.
+        name, _ = fref.children
+        if not isinstance(name, Name):
+            # Intrinsics are not to be renamed.
+            continue
+        fspec = find_real_ident_spec(name.string, scope_spec, alias_map)
+        assert fspec in ident_map
+        assert isinstance(ident_map[fspec], (Function_Stmt, Subroutine_Stmt))
+        if fspec not in uident_map:
+            continue
+        uname = uident_map[fspec]
+        ufspec = fspec[:-1] + (uname,)
+        name.string = uname
+
+        # Find the nearest execution and its correpsonding specification parts.
+        execution_part = fref.parent
+        while not isinstance(execution_part, Execution_Part):
+            execution_part = execution_part.parent
+        subprog = execution_part.parent
+        specification_part = ast_utils.atmost_one(ast_utils.children_of_type(subprog, Specification_Part))
+
+        # Find out the module name.
+        cmod = fref.parent
+        while cmod and not isinstance(cmod, (Module, Main_Program)):
+            cmod = cmod.parent
+        if cmod:
+            stmt, _, _, _ = _get_module_or_program_parts(cmod)
+            cmod = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string.lower()
+        else:
+            subp = list(ast_utils.children_of_type(ast, Subroutine_Subprogram))
+            assert subp
+            stmt = ast_utils.singular(ast_utils.children_of_type(subp[0], Subroutine_Stmt))
+            cmod = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string.lower()
+
+        # We are assumping that it's either a toplevel subprogram or a subprogram defined directly inside a module.
+        assert 1 <= len(ufspec) <= 2
+        if len(ufspec) == 1:
+            # Nothing to do for the toplevel subprograms. They are already available.
+            continue
+        mod = ufspec[0]
+        if mod == cmod:
+            # Since this function is already defined at the current module, there is nothing to import.
+            continue
+
+        if not specification_part:
+            append_children(subprog, Specification_Part(get_reader(f"use {mod}, only: {uname}")))
+        else:
+            prepend_children(specification_part, Use_Stmt(f"use {mod}, only: {uname}"))
+    # PHASE 1.c: Replace any access statments that made these functions public/private.
+    for acc in walk(ast, Access_Stmt):
+        # TODO: Add ref.
+        kind, alist = acc.children
+        if not alist:
+            continue
+        scope_spec = find_scope_spec(acc)
+        for c in alist.children:
+            assert isinstance(c, Name)
+            c_spec = find_real_ident_spec(c.string, scope_spec, alias_map)
+            if not isinstance(alias_map[c_spec], (Function_Stmt, Subroutine_Stmt)):
+                continue
+            if c_spec in uident_map:
+                c.string = uident_map[c_spec]
+    # PHASE 1.d: Replaces actual function names.
+    for k, v in ident_map.items():
+        if not isinstance(v, (Function_Stmt, Subroutine_Stmt)) or k not in uident_map:
+            continue
+        oname, uname = k[-1], uident_map[k]
+        ast_utils.singular(ast_utils.children_of_type(v, Name)).string = uname
+        # Fix the tail too.
+        fdef = v.parent
+        end_stmt = ast_utils.singular(ast_utils.children_of_type(fdef, (End_Function_Stmt, End_Subroutine_Stmt)))
+        ast_utils.singular(ast_utils.children_of_type(end_stmt, Name)).string = uname
+        # For functions, the function name is also available as a variable inside.
+        if isinstance(v, Function_Stmt):
+            vspec = ast_utils.atmost_one(ast_utils.children_of_type(fdef, Specification_Part))
+            vexec = ast_utils.atmost_one(ast_utils.children_of_type(fdef, Execution_Part))
+            for nm in walk([n for n in [vspec, vexec] if n], Name):
+                if nm.string != oname:
+                    continue
+                local_spec = search_local_alias_spec(nm)
+                # We need to do a bit of surgery, since we have the `oname` inide the scope ending with `uname`.
+                local_spec = local_spec[:-2] + local_spec[-1:]
+                assert local_spec in ident_map and ident_map[local_spec] == v
+                nm.string = uname
+
+    return ast
+
+
+def compute_dep_graph(ast: Program, start_point: Union[str, List[str]]) -> nx.DiGraph:
+    """
+    Compute a dependency graph among all the top level objects in the program.
+    """
+    if isinstance(start_point, str):
+        start_point = [start_point]
+
+    dep_graph = nx.DiGraph()
+    exclude = set()
+    to_process = start_point
+    while to_process:
+        item_name, to_process = to_process[0], to_process[1:]
+        item = ast_utils.atmost_one(c for c in ast.children if find_name_of_node(c) == item_name)
+        if not item:
+            print(f"Could not find: {item}")
+            continue
+
         fandsl = ast_utils.FunctionSubroutineLister()
-        fandsl.get_functions_and_subroutines(mod_ast)
+        fandsl.get_functions_and_subroutines(item)
+        dep_graph.add_node(item_name, info_list=fandsl)
 
-        dep_graph.add_node(parent_module.lower(), info_list=fandsl)
-
-        used_modules, objects_in_modules = ast_utils.get_used_modules(mod_ast)
+        used_modules, objects_in_modules = ast_utils.get_used_modules(item)
         for mod in used_modules:
             if mod not in dep_graph.nodes:
-                dep_graph.add_node(mod.lower())
+                dep_graph.add_node(mod)
             obj_list = []
-            if dep_graph.has_edge(parent_module.lower(), mod.lower()):
-                edge = dep_graph.get_edge_data(parent_module.lower(), mod.lower())
+            if dep_graph.has_edge(item_name, mod):
+                edge = dep_graph.get_edge_data(item_name, mod)
                 if 'obj_list' in edge:
                     obj_list = edge.get('obj_list')
                     assert isinstance(obj_list, list)
             if mod in objects_in_modules:
                 ast_utils.extend_with_new_items_from(obj_list, objects_in_modules[mod])
-            dep_graph.add_edge(parent_module.lower(), mod.lower(), obj_list=obj_list)
+            dep_graph.add_edge(item_name, mod, obj_list=obj_list)
             if mod not in exclude:
                 to_process.append(mod)
                 exclude.add(mod)
@@ -4043,8 +4195,6 @@ def compute_dep_graph(ast: Base, start_point: str) -> nx.DiGraph:
 
 
 def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_list, parser):
-    dep_graph = nx.DiGraph()
-    interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
     exclude = set()
 
     NAME_REPLACEMENTS = {
@@ -4054,42 +4204,7 @@ def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_li
 
     def _recursive_ast_improver(_ast: Base):
         defined_modules = ast_utils.get_defined_modules(_ast)
-        main_program_mode = False
-        if len(defined_modules) != 1:
-            print("Defined modules: ", defined_modules)
-            print("Assumption failed: Only one module per file")
-            if len(defined_modules) == 0 and isinstance(_ast, Program):
-                main_program_mode = True
-
-        fandsl = ast_utils.FunctionSubroutineLister()
-        fandsl.get_functions_and_subroutines(_ast)
-        if fandsl.interface_blocks:
-            mod = _ast.children[0]  # NOTE: We are assuming that only a single top-level object exists.
-            mod_stmt = mod.children[0]
-            mod_name = ast_utils.singular(ast_utils.children_of_type(mod_stmt, Name)).string
-            interface_blocks[mod_name] = fandsl.interface_blocks
-
-        if not main_program_mode:
-            parent_module = defined_modules[0]
-        else:
-            parent_module = _ast.children[0].children[0].children[1].string
-        for mod in defined_modules:
-            exclude.add(mod)
-            dep_graph.add_node(mod.lower(), info_list=fandsl)
-
         used_modules, objects_in_modules = ast_utils.get_used_modules(_ast)
-        for mod in used_modules:
-            if mod not in dep_graph.nodes:
-                dep_graph.add_node(mod.lower())
-            obj_list = []
-            if dep_graph.has_edge(parent_module.lower(), mod.lower()):
-                edge = dep_graph.get_edge_data(parent_module.lower(), mod.lower())
-                if 'obj_list' in edge:
-                    obj_list = edge.get('obj_list')
-                    assert isinstance(obj_list, list)
-            if mod in objects_in_modules:
-                ast_utils.extend_with_new_items_from(obj_list, objects_in_modules[mod])
-            dep_graph.add_edge(parent_module.lower(), mod.lower(), obj_list=obj_list)
 
         modules_to_parse = [mod for mod in used_modules if mod not in chain(defined_modules, exclude)]
         added_modules = []
@@ -4132,7 +4247,7 @@ def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_li
     # Sort the modules in the order of their dependency.
     ast = sort_modules(ast)
 
-    return ast, dep_graph, interface_blocks
+    return ast
 
 
 def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], include_list, parser) -> Program:
@@ -4175,8 +4290,7 @@ def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], incl
                     new_floaters.append(esp)
         if new_floaters:
             # Append the new floating subprograms to our main AST.
-            ast.content = ast.children + new_floaters
-            _reparent_children(ast)
+            append_children(ast, new_floaters)
             changed = True
     return ast
 
@@ -4395,15 +4509,15 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = parser(reader)
     if isinstance(source_list, list):
         source_list = {src: Path(src).read_text() for src in source_list}
-    ast, dep_graph, interface_blocks = recursive_ast_improver(ast, source_list, include_list, parser)
+    ast = recursive_ast_improver(ast, source_list, include_list, parser)
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = correct_for_function_calls(ast)
     ast = deconstruct_procedure_calls(ast)
     ast = deconstruct_interface_calls(ast)
-    ast = prune_unused_objects(ast, [m for m in walk(ast, Subroutine_Subprogram) if find_name_of_node(m) == 'radiation'])
-
-
+    ast = prune_unused_objects(ast,
+                               [m for m in walk(ast, Subroutine_Subprogram) if find_name_of_node(m) == 'radiation'])
+    ast = assign_globally_unique_names(ast, {('radiation_interface', 'radiation')})
     dep_graph = compute_dep_graph(ast, 'radiation_interface')
     """print("redone")
 
@@ -4464,7 +4578,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     # print(dep_graph)"""
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
-    
+
     """simple_graph, actually_used_in_module = ast_utils.eliminate_dependencies(dep_graph)
 
     changed = True

@@ -6,7 +6,7 @@ from fparser.two.parser import ParserFactory
 
 from dace.frontend.fortran.fortran_parser import deconstruct_procedure_calls, recursive_ast_improver, \
     deconstruct_associations, correct_for_function_calls, \
-    deconstruct_enums, deconstruct_interface_calls
+    deconstruct_enums, deconstruct_interface_calls, assign_globally_unique_names
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
@@ -15,7 +15,7 @@ def parse_and_improve(sources: Dict[str, str]):
     assert 'main.f90' in sources
     reader = FortranStringReader(sources['main.f90'])
     ast = parser(reader)
-    ast, _, _ = recursive_ast_improver(ast, sources, [], parser)
+    ast = recursive_ast_improver(ast, sources, [], parser)
     assert isinstance(ast, Program)
     return ast
 
@@ -996,6 +996,90 @@ SUBROUTINE main
   CALL copy_vector_deconproc_2(s, b(:, 2))
   CALL copy_matrix_deconproc_3(s, b(:, :))
   CALL copy_vector_deconproc_4(s, s1 % val(:, 1))
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_globally_unique_names():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type :: Square
+    real :: sides(2, 2)
+  end type Square
+contains
+  real function perim(this, m)
+    implicit none
+    class(Square), intent(IN) :: this
+    real, intent(IN) :: m
+    perim = m*sum(this%sides)
+  end function perim
+  function area(this, m)
+    implicit none
+    class(Square), intent(IN) :: this
+    real, intent(IN) :: m
+    real, dimension(2, 2) :: area
+    area = m*sum(this%sides)
+  end function area
+end module lib
+""").add_file("""
+subroutine main
+  use lib
+  use lib, only: perim
+  use lib, only: p2 => perim
+  implicit none
+  type(Square) :: s
+  real :: a
+  s%sides = 0.5
+  s%sides(1, 1) = 1.0
+  s%sides(2, 1) = 1.0
+  a = perim(s, 1.0)
+  a = p2(s, 1.0)
+  s%sides = area(s, 4.1)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = correct_for_function_calls(ast)
+    ast = assign_globally_unique_names(ast, {('main',)})
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  TYPE :: Square
+    REAL :: sides(2, 2)
+  END TYPE Square
+  CONTAINS
+  REAL FUNCTION perim_deconglobal_3(this, m)
+    IMPLICIT NONE
+    CLASS(Square), INTENT(IN) :: this
+    REAL, INTENT(IN) :: m
+    perim_deconglobal_3 = m * SUM(this % sides)
+  END FUNCTION perim_deconglobal_3
+  FUNCTION area_deconglobal_6(this, m)
+    IMPLICIT NONE
+    CLASS(Square), INTENT(IN) :: this
+    REAL, INTENT(IN) :: m
+    REAL, DIMENSION(2, 2) :: area_deconglobal_6
+    area_deconglobal_6 = m * SUM(this % sides)
+  END FUNCTION area_deconglobal_6
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: area_deconglobal_6
+  USE lib, ONLY: perim_deconglobal_3
+  USE lib, ONLY: perim_deconglobal_3
+  USE lib
+  IMPLICIT NONE
+  TYPE(Square) :: s
+  REAL :: a
+  s % sides = 0.5
+  s % sides(1, 1) = 1.0
+  s % sides(2, 1) = 1.0
+  a = perim_deconglobal_3(s, 1.0)
+  a = perim_deconglobal_3(s, 1.0)
+  s % sides = area_deconglobal_6(s, 4.1)
 END SUBROUTINE main
 """.strip()
     assert got == want

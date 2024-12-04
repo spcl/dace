@@ -11,9 +11,10 @@ from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_as
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
-def construct_internal_ast(sources: Dict[str, str]):
+def construct_internal_ast(sources: Dict[str, str], entry_points: List[str]):
     assert 'main.f90' in sources
-    cfg = ParseConfig(sources['main.f90'], sources, [])
+    entry_points = [tuple(ep.split('.')) for ep in entry_points]
+    cfg = ParseConfig(sources['main.f90'], sources, [], entry_points=entry_points)
     iast, prog = create_internal_ast(cfg)
     return iast, prog
 
@@ -43,8 +44,9 @@ subroutine fun(d)
 end subroutine fun
 """).check_with_gfortran().get()
     # Construct
-    iast, prog = construct_internal_ast(sources)
-    gmap = construct_sdfg(iast, prog, ['main', 'fun'])
+    entry_points = ['main', 'fun']
+    iast, prog = construct_internal_ast(sources, entry_points)
+    gmap = construct_sdfg(iast, prog, entry_points)
 
     # Verify
     assert gmap.keys() == {'main', 'fun'}
@@ -71,8 +73,9 @@ subroutine not_fun(d, val)
 end subroutine not_fun
 """).check_with_gfortran().get()
     # Construct
-    iast, prog = construct_internal_ast(sources)
-    gmap = construct_sdfg(iast, prog, ['fun', 'not_fun'])
+    entry_points = ['fun', 'not_fun']
+    iast, prog = construct_internal_ast(sources, entry_points)
+    gmap = construct_sdfg(iast, prog, entry_points)
 
     # Verify
     assert gmap.keys() == {'fun', 'not_fun'}
@@ -114,8 +117,9 @@ program main
 end program main
 """).check_with_gfortran().get()
     # Construct
-    iast, prog = construct_internal_ast(sources)
-    gmap = construct_sdfg(iast, prog, ['lib.fun', 'lib.not_fun'])
+    entry_points = ['lib.fun', 'lib.not_fun']
+    iast, prog = construct_internal_ast(sources, entry_points)
+    gmap = construct_sdfg(iast, prog, entry_points)
 
     # Verify
     assert gmap.keys() == {'fun', 'not_fun'}
@@ -144,8 +148,9 @@ subroutine fun(d)
 end subroutine fun
 """).check_with_gfortran().get()
     # Construct
-    iast, prog = construct_internal_ast(sources)
-    gmap = construct_sdfg(iast, prog, ['fun'])
+    entry_points = ['fun']
+    iast, prog = construct_internal_ast(sources, entry_points)
+    gmap = construct_sdfg(iast, prog, entry_points)
 
     # Verify
     assert gmap.keys() == {'fun'}

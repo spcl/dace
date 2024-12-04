@@ -795,7 +795,7 @@ class FunctionSubroutineLister:
         self.names_in_subroutines = {}
         self.list_of_types = []
         self.names_in_types = {}
-        
+
         self.list_of_module_vars = []
         self.interface_blocks: Dict[str, List[Name]] = {}
 
@@ -814,7 +814,7 @@ class FunctionSubroutineLister:
                 self.names_in_types[name] = list_descendent_names(i)
                 self.names_in_types[name] += list_descendent_typenames(i)
                 self.list_of_types.append(name)
-                
+
 
             elif isinstance(i, Function_Stmt):
                 fn_name = singular(children_of_type(i, Name)).string
@@ -915,15 +915,15 @@ def get_used_modules(node: Base) -> Tuple[List[str], Dict[str, List[Union[UseAll
                 # Subtree may have `use` statements.
                 _get_used_modules(m)
                 continue
-            if m.children[0] is not None:
+            nature, _, mod_name, _, olist = m.children
+            if nature is not None:
                 # TODO: Explain why intrinsic nodes are avoided.
-                if m.children[0].string.lower() == "intrinsic":
+                if nature.string.lower() == "intrinsic":
                     continue
 
-            mod_name = singular(children_of_type(m, Name)).string
+            mod_name = mod_name.string
             used_modules.append(mod_name)
-            olist = list(children_of_type(m, 'Only_List'))
-            assert len(olist) <= 1, f"{m} can have at most one only-list, got {olist}."
+            olist = atmost_one(children_of_type(m, 'Only_List'))
             if not olist:
                 # TODO: Have better/clearer semantics.
                 if mod_name not in objects_in_use:
@@ -934,13 +934,14 @@ def get_used_modules(node: Base) -> Tuple[List[str], Dict[str, List[Union[UseAll
                 # Add a special symbol to indicate that everything needs to be imported.
                 objects_in_use[mod_name].append(UseAllPruneList(mod_name, refs))
             else:
-                olist = olist[0]
-                if not olist.children:
+                assert all(isinstance(c, (Name, Rename)) for c in olist.children)
+                used = [c if isinstance(c, Name) else c.children[2] for c in olist.children]
+                if not used:
                     continue
                 # Merge all the used item in one giant list.
                 if mod_name not in objects_in_use:
                     objects_in_use[mod_name] = []
-                extend_with_new_items_from(objects_in_use[mod_name], olist.children)
+                extend_with_new_items_from(objects_in_use[mod_name], used)
                 assert len(set([str(o) for o in objects_in_use[mod_name]])) == len(objects_in_use[mod_name])
 
     _get_used_modules(node)

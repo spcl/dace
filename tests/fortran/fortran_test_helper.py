@@ -5,9 +5,9 @@ from os import path
 from tempfile import TemporaryDirectory
 from typing import Dict, Optional, Self, Tuple, Type, Union, List, LiteralString, Sequence, Collection
 
-from dace.frontend.fortran.ast_internal_classes import Name_Node
 from fparser.two.Fortran2003 import Name
 
+from dace.frontend.fortran.ast_internal_classes import Name_Node
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, SDFGConfig, \
     create_sdfg_from_internal_ast
 
@@ -274,10 +274,11 @@ def create_singular_sdfg_from_string(
         sources: Dict[str, str],
         entry_point: str,
         normalize_offsets: bool = True):
-    cfg = ParseConfig(main=sources['main.f90'], sources=sources)
+    entry_point = entry_point.split('.')
+
+    cfg = ParseConfig(main=sources['main.f90'], sources=sources, entry_points=tuple(entry_point))
     own_ast, program = create_internal_ast(cfg)
 
-    entry_point = entry_point.split('.')
     cfg = SDFGConfig({entry_point[-1]: entry_point}, normalize_offsets, False)
     gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
     assert gmap.keys() == {entry_point[-1]}
