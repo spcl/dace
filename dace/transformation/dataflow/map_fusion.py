@@ -20,14 +20,12 @@ class MapFusion(transformation.SingleStateTransformation):
     connections appropriately. Depending on the situation the transformation will
     either fully remove or make the intermediate a new output of the second map.
 
-    By default `strict_dataflow` is enabled. In this mode, the transformation
-    will not fuse maps that could potentially lead to a data race, because the
-    resulting combined map reads and writes from the same underlying data.
-    If strict dataflow is disabled, then the transformation might fuse such maps.
-    However, it will ensure that the accesses are point wise, this means that
-    in each iteration the map only accesses the same location that it also writes
-    to. Note that this could still lead to data races, because the order in which
-    DaCe generates the reads and writes is indeterministic.
+    By default `strict_dataflow` is enabled. In this mode the transformation is
+    more conservative. The main difference is, that it will not adjust the
+    subsets of the intermediate, i.e. turning an array with shape `(1, 1, 1, 1)`
+    into a scalar.
+    Furthermore, shared intermediates, see `partition_first_outputs()` will only
+    be created if the data is not referred downstream in the dataflow.
 
     Args:
         only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
@@ -1050,27 +1048,21 @@ class MapFusion(transformation.SingleStateTransformation):
         # This is the names of the node that are used as input of the first map and
         #  as output of the second map. We have to ensure that there is no data
         #  dependency between these nodes.
+        # NOTE: This set is not required to be empty. It might look as this would
+        #   create a data race, but it is save. The reason is because all data has
+        #   to pass through the intermediate we create, this will separate the reads
+        #   from the writes.
         fused_inout_data_names: Set[str] = set(read_map_1.keys()).intersection(write_map_2.keys())
 
         # If a data container is used as input and output then it can not be a view (simplicity)
         if any(self.is_view(read_map_1[name], sdfg) for name in fused_inout_data_names):
             return True
 
-        # In strict data flow mode we require that the input and the output of
-        #  the fused map is distinct.
-        # NOTE: The code below is able to handle cases were an input to map 1
-        #   is also used as output of map 2. In this case the function check
-        #   if they are point wise, i.e. every iteration reads from the same
-        #   location it later writes to. However, even then it might cause
-        #   problems because in which order the reads and writes are done is
-        #   indeterministic. But if this is handled through other means, then
-        #   it allows powerful optimizations.
-        if self.strict_dataflow:
-            if len(fused_inout_data_names) != 0:
-                return True
-
-        # A data container can be used as input and output. But we do not allow that
-        #  it is also used as intermediate or exchange data.
+        # A data container can not be used as output (of the second as well as the
+        #  combined map) and as intermediate. If we would allow that the map would
+        #  have two output nodes one the original one and the second is the created
+        #  node that is created because the intermediate is shared.
+        # TODO(phimuell): Handle this case.
         if not fused_inout_data_names.isdisjoint(exchange_names):
             return True
 
