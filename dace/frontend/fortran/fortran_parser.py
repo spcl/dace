@@ -4010,14 +4010,145 @@ def deconstruct_associations(ast: Program) -> Program:
                     continue
                 if nm.string not in local_map:
                     continue
-                repl = local_map[nm.string]
-                repl = type(repl)(repl.tofortran())
-                par.items = tuple(repl if c == nm else c for c in par.children)
-                _reparent_children(par)
+                replace_node(nm, local_map[nm.string])
+        replace_node(assoc, rest)
 
-        par = assoc.parent
-        par.content = list(chain(*([rest if c == assoc else [c] for c in par.children])))
-        _reparent_children(par)
+    return ast
+
+
+def assign_globally_unique_names(ast: Program, keepers: Set[SPEC]) -> Program:
+    """
+    Precondition: All indirections are already removed from the program, except for the explicit renames.
+    TODO: Make structure names unique too. And possibly variables?
+    """
+    SUFFIX, COUNTER = 'deconglobal', 0
+
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast)
+
+    # Make new unique names for the identifiers.
+    uident_map: Dict[SPEC, str] = {}
+    for k in ident_map.keys():
+        if k in keepers or k[0] == 'netcdf':
+            continue
+        uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
+        uident_map[k] = uname
+
+    # PHASE 1: Update the callsites for functions.
+    # PHASE 1.a: Remove all the places where that function is imported.
+    for use in walk(ast, Use_Stmt):
+        mod_name = ast_utils.singular(ast_utils.children_of_type(use, Name)).string
+        mod_spec = (mod_name,)
+        olist = ast_utils.atmost_one(ast_utils.children_of_type(use, 'Only_List'))
+        if not olist:
+            continue
+        survivors = []
+        for c in olist.children:
+            assert isinstance(c, (Name, Rename))
+            if isinstance(c, Name):
+                src, tgt = c, c
+            elif isinstance(c, Rename):
+                _, src, tgt = c.children
+            src, tgt = src.string, tgt.string
+            tgt_spec = find_real_ident_spec(tgt, mod_spec, alias_map)
+            assert tgt_spec in ident_map
+            if not isinstance(ident_map[tgt_spec], (Function_Stmt, Subroutine_Stmt)):
+                survivors.append(c)
+        if survivors:
+            olist.items = survivors
+            _reparent_children(olist)
+        else:
+            par = use.parent
+            par.content = [c for c in par.children if c != use]
+            _reparent_children(par)
+    # PHASE 1.b: Replaces all the callsites.
+    for fref in walk(ast, (Function_Reference, Call_Stmt)):
+        scope_spec = find_scope_spec(fref)
+
+        # TODO: Add ref.
+        name, _ = fref.children
+        if not isinstance(name, Name):
+            # Intrinsics are not to be renamed.
+            continue
+        fspec = find_real_ident_spec(name.string, scope_spec, alias_map)
+        assert fspec in ident_map
+        assert isinstance(ident_map[fspec], (Function_Stmt, Subroutine_Stmt))
+        if fspec not in uident_map:
+            continue
+        uname = uident_map[fspec]
+        ufspec = fspec[:-1] + (uname,)
+        name.string = uname
+
+        # Find the nearest execution and its correpsonding specification parts.
+        execution_part = fref.parent
+        while not isinstance(execution_part, Execution_Part):
+            execution_part = execution_part.parent
+        subprog = execution_part.parent
+        specification_part = ast_utils.atmost_one(ast_utils.children_of_type(subprog, Specification_Part))
+
+        # Find out the module name.
+        cmod = fref.parent
+        while cmod and not isinstance(cmod, (Module, Main_Program)):
+            cmod = cmod.parent
+        if cmod:
+            stmt, _, _, _ = _get_module_or_program_parts(cmod)
+            cmod = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string.lower()
+        else:
+            subp = list(ast_utils.children_of_type(ast, Subroutine_Subprogram))
+            assert subp
+            stmt = ast_utils.singular(ast_utils.children_of_type(subp[0], Subroutine_Stmt))
+            cmod = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string.lower()
+
+        # We are assumping that it's either a toplevel subprogram or a subprogram defined directly inside a module.
+        assert 1 <= len(ufspec) <= 2
+        if len(ufspec) == 1:
+            # Nothing to do for the toplevel subprograms. They are already available.
+            continue
+        mod = ufspec[0]
+        if mod == cmod:
+            # Since this function is already defined at the current module, there is nothing to import.
+            continue
+
+        if not specification_part:
+            append_children(subprog, Specification_Part(get_reader(f"use {mod}, only: {uname}")))
+        else:
+            prepend_children(specification_part, Use_Stmt(f"use {mod}, only: {uname}"))
+    # PHASE 1.c: Replace any access statments that made these functions public/private.
+    for acc in walk(ast, Access_Stmt):
+        # TODO: Add ref.
+        kind, alist = acc.children
+        if not alist:
+            continue
+        scope_spec = find_scope_spec(acc)
+        for c in alist.children:
+            assert isinstance(c, Name)
+            c_spec = find_real_ident_spec(c.string, scope_spec, alias_map)
+            if not isinstance(alias_map[c_spec], (Function_Stmt, Subroutine_Stmt)):
+                continue
+            if c_spec in uident_map:
+                c.string = uident_map[c_spec]
+    # PHASE 1.d: Replaces actual function names.
+    for k, v in ident_map.items():
+        if not isinstance(v, (Function_Stmt, Subroutine_Stmt)) or k not in uident_map:
+            continue
+        oname, uname = k[-1], uident_map[k]
+        ast_utils.singular(ast_utils.children_of_type(v, Name)).string = uname
+        # Fix the tail too.
+        fdef = v.parent
+        end_stmt = ast_utils.singular(ast_utils.children_of_type(fdef, (End_Function_Stmt, End_Subroutine_Stmt)))
+        ast_utils.singular(ast_utils.children_of_type(end_stmt, Name)).string = uname
+        # For functions, the function name is also available as a variable inside.
+        if isinstance(v, Function_Stmt):
+            vspec = ast_utils.atmost_one(ast_utils.children_of_type(fdef, Specification_Part))
+            vexec = ast_utils.atmost_one(ast_utils.children_of_type(fdef, Execution_Part))
+            for nm in walk([n for n in [vspec, vexec] if n], Name):
+                if nm.string != oname:
+                    continue
+                local_spec = search_local_alias_spec(nm)
+                # We need to do a bit of surgery, since we have the `oname` inide the scope ending with `uname`.
+                local_spec = local_spec[:-2] + local_spec[-1:]
+                assert local_spec in ident_map and ident_map[local_spec] == v
+                nm.string = uname
 
     return ast
 
@@ -4385,8 +4516,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = deconstruct_procedure_calls(ast)
     ast = deconstruct_interface_calls(ast)
     ast = prune_unused_objects(ast, [m for m in walk(ast, Subroutine_Subprogram) if find_name_of_node(m) == 'radiation'])
-
-
+    ast = assign_globally_unique_names(ast, {('radiation_interface', 'radiation')})
     dep_graph = compute_dep_graph(ast, 'radiation_interface')
     """print("redone")
 

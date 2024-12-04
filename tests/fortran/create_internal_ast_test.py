@@ -113,6 +113,9 @@ end module lib
 program main
   use lib
   implicit none
+  double precision :: d(4)
+  call fun(d)
+  call not_fun(d, 2.1d0)
 end program main
 """).check_with_gfortran().get()
     # Construct
