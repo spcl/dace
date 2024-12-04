@@ -22,7 +22,8 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Signed_Int_Literal_Constant, Char_Literal_Constant, Logical_Literal_Constant, Actual_Arg_Spec, \
     Intrinsic_Function_Reference, Section_Subscript_List, Subscript_Triplet, Structure_Constructor, Enum_Def, \
     Enumerator_List, Enumerator, Expr, Type_Bound_Procedure_Part, Interface_Stmt, Intrinsic_Name, Access_Stmt, \
-    Interface_Block, End_Function_Stmt, End_Subroutine_Stmt
+    Interface_Block, End_Function_Stmt, End_Subroutine_Stmt, Level_2_Unary_Expr, Level_3_Expr, Level_2_Expr, \
+    Parenthesis, And_Operand, Array_Constructor
 from fparser.two.Fortran2008 import Type_Declaration_Stmt, Procedure_Stmt, Attr_Spec
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -3080,7 +3081,6 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
     if not scope_spec:
         return None
     local_spec = scope_spec + (name,)
-    # TODO: THEN WHAT?
     if isinstance(par, (Part_Ref, Data_Ref)):
         # If we are in a data-ref then we need to get to the root.
         if isinstance(par.parent, Data_Ref):
@@ -3413,7 +3413,7 @@ def correct_for_function_calls(ast: Program):
                         # TODO: Create an empty stub for netcdf to allow producing compilable AST.
                         continue
                     pr_spec = find_real_ident_spec(pr_name.string, scope_spec, alias_map)
-                    if isinstance(alias_map[pr_spec], Function_Stmt):
+                    if isinstance(alias_map[pr_spec], (Function_Stmt, Interface_Stmt)):
                         replace_node(pr, Function_Reference(pr.tofortran()))
                         changed = True
                 elif isinstance(pr_name, Data_Ref):
@@ -3560,6 +3560,46 @@ def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -
             elif isinstance(x, Actual_Arg_Spec):
                 kw, val = x.children
                 return _deduct_type(val)
+            elif isinstance(x, Intrinsic_Function_Reference):
+                fname, _ = x.children
+                if fname.string in {'TRIM'}:
+                    return TYPE_SPEC('CHARACTER', 'DIMENSION(:)')
+                elif fname.string in {'SIZE'}:
+                    return TYPE_SPEC('INTEGER')
+                elif fname.string in {'REAL'}:
+                    return TYPE_SPEC('REAL')
+                elif fname.string in {'INT'}:
+                    return TYPE_SPEC('INTEGER')
+                # TODO: Figure out the actual type.
+                return MATCH_ALL
+            elif isinstance(x, (Level_2_Unary_Expr, And_Operand)):
+                op, dref = x.children
+                if op in {'+', '-', '.NOT.'}:
+                    return _deduct_type(dref)
+                # TODO: Figure out the actual type.
+                return MATCH_ALL
+            elif isinstance(x, Parenthesis):
+                _, exp, _ = x.children
+                return _deduct_type(exp)
+            elif isinstance(x, (Level_2_Expr, Level_3_Expr)):
+                lval, op, rval = x.children
+                if op in {'+', '-'}:
+                    tl, tr = _deduct_type(lval), _deduct_type(rval)
+                    if len(tl.shape) < len(tr.shape):
+                        return tr
+                    else:
+                        return tl
+                elif op in {'//'}:
+                    return TYPE_SPEC('CHARACTER', 'DIMENSION(:)')
+                # TODO: Figure out the actual type.
+                return MATCH_ALL
+            elif isinstance(x, Array_Constructor):
+                b, items, e = x.children
+                items = items.children
+                # TODO: We are assuming there is an element. What if there isn't?
+                t = _deduct_type(items[0])
+                t.shape += (':',)
+                return t
             else:
                 # TODO: Figure out the actual type.
                 return MATCH_ALL
@@ -3593,7 +3633,6 @@ def deconstruct_interface_calls(ast: Program) -> Program:
 
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
         scope_spec = find_scope_spec(fref)
-
         name, args = fref.children
         if isinstance(name, Intrinsic_Name):
             continue
