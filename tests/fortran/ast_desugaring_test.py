@@ -15,7 +15,7 @@ def parse_and_improve(sources: Dict[str, str]):
     assert 'main.f90' in sources
     reader = FortranStringReader(sources['main.f90'])
     ast = parser(reader)
-    ast, _, _ = recursive_ast_improver(ast, sources, [], parser)
+    ast = recursive_ast_improver(ast, sources, [], parser)
     assert isinstance(ast, Program)
     return ast
 

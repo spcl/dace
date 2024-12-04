@@ -2596,18 +2596,25 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     ast = parser(cfg.main)
     assert isinstance(ast, Program)
 
-    ast, dep_graph, interface_blocks = recursive_ast_improver(ast, cfg.sources, cfg.includes, parser)
+    ast = recursive_ast_improver(ast, cfg.sources, cfg.includes, parser)
     assert isinstance(ast, Program)
-    assert not any(nx.simple_cycles(dep_graph))
 
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = correct_for_function_calls(ast)
     ast = deconstruct_procedure_calls(ast)
-    assert isinstance(ast, Program)
+    ast = deconstruct_interface_calls(ast)
 
-    simple_graph, actually_used_in_module = simplified_dependency_graph(dep_graph, interface_blocks)
-    prune_unused_children(ast, simple_graph, actually_used_in_module)
+    if not cfg.entry_points:
+        # Keep all the possible entry points.
+        entry_points = [c for c in ast.children if isinstance(c, ENTRY_POINT_OBJECT_TYPES)]
+    else:
+        eps = cfg.entry_points
+        if isinstance(eps, tuple):
+            eps = [eps]
+        ident_map = identifier_specs(ast)
+        entry_points = [ident_map[ep] for ep in eps if ep in ident_map]
+    ast = prune_unused_objects(ast, entry_points)
     assert isinstance(ast, Program)
 
     iast = ast_components.InternalFortranAst()
@@ -4043,8 +4050,6 @@ def compute_dep_graph(ast: Base, start_point: str) -> nx.DiGraph:
 
 
 def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_list, parser):
-    dep_graph = nx.DiGraph()
-    interface_blocks: Dict[str, Dict[str, List[Name]]] = {}
     exclude = set()
 
     NAME_REPLACEMENTS = {
@@ -4054,42 +4059,7 @@ def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_li
 
     def _recursive_ast_improver(_ast: Base):
         defined_modules = ast_utils.get_defined_modules(_ast)
-        main_program_mode = False
-        if len(defined_modules) != 1:
-            print("Defined modules: ", defined_modules)
-            print("Assumption failed: Only one module per file")
-            if len(defined_modules) == 0 and isinstance(_ast, Program):
-                main_program_mode = True
-
-        fandsl = ast_utils.FunctionSubroutineLister()
-        fandsl.get_functions_and_subroutines(_ast)
-        if fandsl.interface_blocks:
-            mod = _ast.children[0]  # NOTE: We are assuming that only a single top-level object exists.
-            mod_stmt = mod.children[0]
-            mod_name = ast_utils.singular(ast_utils.children_of_type(mod_stmt, Name)).string
-            interface_blocks[mod_name] = fandsl.interface_blocks
-
-        if not main_program_mode:
-            parent_module = defined_modules[0]
-        else:
-            parent_module = _ast.children[0].children[0].children[1].string
-        for mod in defined_modules:
-            exclude.add(mod)
-            dep_graph.add_node(mod.lower(), info_list=fandsl)
-
         used_modules, objects_in_modules = ast_utils.get_used_modules(_ast)
-        for mod in used_modules:
-            if mod not in dep_graph.nodes:
-                dep_graph.add_node(mod.lower())
-            obj_list = []
-            if dep_graph.has_edge(parent_module.lower(), mod.lower()):
-                edge = dep_graph.get_edge_data(parent_module.lower(), mod.lower())
-                if 'obj_list' in edge:
-                    obj_list = edge.get('obj_list')
-                    assert isinstance(obj_list, list)
-            if mod in objects_in_modules:
-                ast_utils.extend_with_new_items_from(obj_list, objects_in_modules[mod])
-            dep_graph.add_edge(parent_module.lower(), mod.lower(), obj_list=obj_list)
 
         modules_to_parse = [mod for mod in used_modules if mod not in chain(defined_modules, exclude)]
         added_modules = []
@@ -4132,7 +4102,7 @@ def recursive_ast_improver(ast: Program, source_list: Dict[str, str], include_li
     # Sort the modules in the order of their dependency.
     ast = sort_modules(ast)
 
-    return ast, dep_graph, interface_blocks
+    return ast
 
 
 def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], include_list, parser) -> Program:
@@ -4395,7 +4365,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = parser(reader)
     if isinstance(source_list, list):
         source_list = {src: Path(src).read_text() for src in source_list}
-    ast, dep_graph, interface_blocks = recursive_ast_improver(ast, source_list, include_list, parser)
+    ast = recursive_ast_improver(ast, source_list, include_list, parser)
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = correct_for_function_calls(ast)
@@ -4464,7 +4434,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     # print(dep_graph)"""
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
-    
+
     """simple_graph, actually_used_in_module = ast_utils.eliminate_dependencies(dep_graph)
 
     changed = True
