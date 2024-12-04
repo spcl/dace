@@ -738,14 +738,14 @@ class CallToArray(NodeTransformer):
                     else:
                         raise ValueError(f"Invalid type {type(replacement_names)} for {replacement_names}")    
         #TODO Deconproc is a special case, we need to handle it differently - this is just s quick workaround
-        if name.startswith("__dace_") or "deconproc" in name or  name in self.excepted_funcs or found_in_renames or found_in_names or name in self.funcs.iblocks:
+        if name.startswith("__dace_") or  name in self.excepted_funcs or found_in_renames or found_in_names or name in self.funcs.iblocks:
             processed_args = []
             for i in node.args:
-                arg = CallToArray(self.funcs).visit(i)
+                arg = CallToArray(self.funcs,self.rename_dict).visit(i)
                 processed_args.append(arg)
             node.args = processed_args
             return node
-        indices = [CallToArray(self.funcs).visit(i) for i in node.args]
+        indices = [CallToArray(self.funcs,self.rename_dict).visit(i) for i in node.args]
         # Array subscript cannot be empty.
         assert indices
         return ast_internal_classes.Array_Subscript_Node(name=node.name, type=node.type, indices=indices,

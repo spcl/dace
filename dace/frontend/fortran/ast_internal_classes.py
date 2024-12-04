@@ -152,7 +152,7 @@ class Internal_Subprogram_Part_Node(FNode):
 
 class Actual_Arg_Spec_Node(FNode):
     _fields = (
-        'arg_name'
+        'arg_name',
         'arg',
     )
 
@@ -373,7 +373,7 @@ class Symbol_Array_Decl_Node(Statement_Node):
     )
     _fields = (
         'sizes',
-        'offsets'
+        'offsets',
         'typeref',
         'init',
     )
