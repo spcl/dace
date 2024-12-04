@@ -464,6 +464,21 @@ class MapFusion(transformation.SingleStateTransformation):
             #  output of the second map.
             if self.is_shared_data(intermediate_node, sdfg):
                 # The intermediate data is used somewhere else, either in this or another state.
+                # NOTE: If the intermediate is shared, then we will turn it into a
+                #   sink node attached to the combined map exit. Technically this
+                #   should be enough, even if the same data appears again in the
+                #   dataflow down streams. However, some DaCe transformations,
+                #   I am looking at you `auto_optimizer()` do not like that. Thus
+                #   if the intermediate is used further down in the same datadflow,
+                #   then we consider that the maps can not be fused. But we only
+                #   do this in the strict data flow mode.
+                if self.strict_dataflow:
+                    if self._is_data_accessed_downstream(
+                            data=intermediate_node.data,
+                            graph=state,
+                            begin=intermediate_node,  # is ignored itself.
+                    ):
+                        return None
                 shared_outputs.add(out_edge)
             else:
                 # The intermediate can be removed, as it is not used anywhere else.
@@ -1404,6 +1419,40 @@ class MapFusion(transformation.SingleStateTransformation):
             seen.add(node)
 
         # We never found `end`
+        return False
+
+
+    def _is_data_accessed_downstream(
+        self,
+        data: str,
+        graph: dace.SDFGState,
+        begin: nodes.Node,
+    ) -> bool:
+        """Tests if there is an AccessNode for `data` downstream of `begin`.
+
+        Essentially, this function starts a DFS at `begin` and checks every
+        AccessNode that is reachable from it. If it finds such a node it will
+        check if it refers to `data` and if so, it will return `True`.
+        If no such node is found it will return `False`.
+        Note that the node `begin` will be ignored.
+
+        Args:
+            data: The name of the data to look for.
+            graph: The graph to explore.
+            begin: The node to start exploration; The node itself is ignored.
+        """
+        def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
+            return (edge.dst for edge in graph.out_edges(node))
+
+        # Dataflow graph is acyclic, so we do not need to keep a list of
+        #  what we have visited.
+        to_visit: List[nodes.Node] = list(next_nodes(begin))
+        while len(to_visit) > 0:
+            node = to_visit.pop()
+            if isinstance(node, nodes.AccessNode) and node.data == data:
+                return True
+            to_visit.extend(next_nodes(node))
+
         return False
 
 
