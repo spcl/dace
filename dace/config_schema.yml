@@ -449,6 +449,21 @@ required:
 
 
             #############################################
+            # Ascend flags
+            ascendc:
+                type: dict
+                title: AscendC
+                description: "Common preferences for AscendC compilation."
+                required:
+
+                    max_concurrent_streams:
+                        type: int
+                        title: Concurrent execution streams
+                        description: >
+                            Maximum number of concurrent AscendC streams
+                        default: 1
+
+            #############################################
             # General FPGA flags
             fpga:
                 type: dict

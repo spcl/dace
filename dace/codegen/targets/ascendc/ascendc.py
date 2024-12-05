@@ -107,6 +107,7 @@ class AscendCCodeGen(TargetCodeGenerator):
         return self._access_type.get(type_str, "")
 
     def _get_ascendc_type(self, data: data.Data, storage: dtypes.StorageType):
+        """
         print("Data", data, type(data))
         print(
             "Data2",
@@ -118,6 +119,7 @@ class AscendCCodeGen(TargetCodeGenerator):
             ", ",
             storage,
         )
+        """
         return self._c_type_to_ascend_decl_type[(data.dtype, storage)]
 
     def _get_templated_type(self, data: data.Data, storage: dtypes.StorageType):
@@ -218,7 +220,7 @@ class AscendCCodeGen(TargetCodeGenerator):
     def get_generated_codeobjects(self):
         fileheader = CodeIOStream()
 
-        self._frame.generate_fileheader(self._global_sdfg, fileheader, "cuda")
+        self._frame.generate_fileheader(self._global_sdfg, fileheader, "ascend")
 
         initcode = CodeIOStream()
         for sd in self._global_sdfg.all_sdfgs_recursive():
@@ -258,7 +260,7 @@ DACE_EXPORTED int __dace_exit_ascendc({sdfg_state_name} *__state);
 
 {other_globalcode}
 
-int __dace_init_ascendc({sdfg_state_name} *__state{params}) {{
+DACE_EXPORTED int __dace_init_ascendc({sdfg_state_name} *__state{params}) {{
     __state->acl_context = new dace::ascendc::Context({nstreams}, {nevents});
     DACE_ACL_CHECK(aclInit({{}}));
     DACE_ACL_CHECK(aclrtSetDevice(0));
@@ -283,7 +285,7 @@ int __dace_init_ascendc({sdfg_state_name} *__state{params}) {{
     return 0;
 }}
 
-int __dace_exit_ascendc({sdfg_state_name} *__state) {{
+DACE_EXPORTED int __dace_exit_ascendc({sdfg_state_name} *__state) {{
     {exitcode}
     // Destroy aclrt streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
@@ -293,7 +295,10 @@ int __dace_exit_ascendc({sdfg_state_name} *__state) {{
     //    DACE_ACL_CHECK(aclrtDestroyEvent(__state->acl_context->events[i]));
     //}}
 
+    DACE_ACL_CHECK(aclFinalize());
+
     delete __state->acl_context;
+
     return 0;
 }}
 
@@ -408,7 +413,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             )
         else:
             raise NotImplementedError(
-                "CUDA: Unimplemented storage type " + str(nodedesc.storage)
+                "ascend: Unimplemented storage type " + str(nodedesc.storage)
             )
 
         declaration_stream.write(result_decl.getvalue() + "//8", cfg, state_id, node)
@@ -620,7 +625,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         else:
             raise LookupError("Memlet does not point to any of the nodes")
 
-        print(src_storage, dst_storage)
+        #print(src_storage, dst_storage)
 
         if (
             isinstance(src_node, nodes.AccessNode)
@@ -651,25 +656,25 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
             syncwith = {}  # Dictionary of {stream: event}
             is_sync = False
-            max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
+            max_streams = int(Config.get("compiler", "ascendc", "max_concurrent_streams"))
 
             if hasattr(src_node, "_acl_stream"):
-                cudastream = src_node._acl_stream
+                ascendstream = src_node._acl_stream
                 if not hasattr(dst_node, "_acl_stream"):
                     # Copy after which data is needed by the host
                     is_sync = True
                 elif dst_node._acl_stream != src_node._acl_stream:
-                    syncwith[dst_node._acl_stream] = getattr(edge, "_cuda_event", None)
+                    syncwith[dst_node._acl_stream] = getattr(edge, "_ascend_event", None)
                 else:
                     pass  # Otherwise, no need to synchronize
             elif hasattr(dst_node, "_acl_stream"):
-                cudastream = dst_node._acl_stream
+                ascendstream = dst_node._acl_stream
             else:
                 if max_streams >= 0:
                     print("WARNING: Undefined stream, reverting to default")
                 if dst_location == "Host":
                     is_sync = True
-                cudastream = "nullptr"
+                ascendstream = "nullptr"
 
             # Handle case of impending kernel/tasklet on another stream
             if max_streams >= 0:
@@ -678,13 +683,13 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                         continue
                     if not hasattr(e.dst, "_acl_stream"):
                         is_sync = True
-                    elif not hasattr(e, "_cuda_event"):
+                    elif not hasattr(e, "_ascend_event"):
                         is_sync = True
-                    elif e.dst._acl_stream != cudastream:
-                        syncwith[e.dst._acl_stream] = e._cuda_event
+                    elif e.dst._acl_stream != ascendstream:
+                        syncwith[e.dst._acl_stream] = e._ascend_event
 
-                if cudastream != "nullptr":
-                    cudastream = "__state->acl_context->streams[%d]" % cudastream
+                if ascendstream != "nullptr":
+                    ascendstream = "__state->acl_context->streams[%d]" % ascendstream
 
             if memlet.wcr is not None:
                 raise NotImplementedError(
@@ -829,7 +834,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                 callsite_stream.write(
                     f"outQueue_{dst_name}.EnQue<{nodedesc.dtype.ctype}>({dst_name});"
                 )
-                callsite_stream.write(f"inQueue_{src_name}.FreeTensor({src_name}) ;\n")
+                callsite_stream.write(f"inQueue_{src_name}.FreeTensor({src_name});\n")
             elif (
                 src_storage == dtypes.StorageType.Ascend_VECOUT
                 and dst_storage == dtypes.StorageType.Ascend_Global
@@ -852,6 +857,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                     f"Unimplemented copy type: {src_storage} -> {dst_storage}"
                 )
         else:
+            """
             print(
                 sdfg,
                 cfg,
@@ -864,6 +870,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                 callsite_stream,
             )
             print("DSC", src_storage, "; ", dst_storage)
+            """
             self.copy_memory_as_ref(
                 sdfg,
                 cfg,
@@ -1056,11 +1063,11 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         # LocalTensor<half> a1Local = inQueueA1.AllocTensor<half>();
         cdtype = src_node.out_connectors[edge.src_conn]
         desc = sdfg.arrays[edge.data.data]
-        print("DDD", desc, type(desc))
+        #print("DDD", desc, type(desc))
         ascend_type = self._get_ascendc_type(desc, desc.storage)
         access_type = self._get_access_type(ascend_type)
         assert isinstance(cdtype, dtypes.pointer)
-        print("Define out memlet", ascend_type, access_type)
+        #print("Define out memlet", ascend_type, access_type)
 
         # If reference set, do not emit initial assignment
         is_refset = (
@@ -1243,11 +1250,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         )
 
         # Comprehend grid/block dimensions from scopes
-        grid_dims, block_dims, tbmap, dtbmap, _ = self.get_kernel_dimensions(dfg_scope)
-        is_persistent = (
-            dfg_scope.source_nodes()[0].map.schedule
-            == dtypes.ScheduleType.GPU_Persistent
-        )
+        block_dims = self.get_kernel_dimensions(dfg_scope)
 
         # Get parameters of subgraph
         kernel_args = self._arglists[scope_entry]
@@ -1421,7 +1424,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
             prototype_kernel_args[aname] = arg
 
-        print(prototype_kernel_args)
+        #print(prototype_kernel_args)
         for k, v in prototype_kernel_args.items():
             assert(isinstance(v, dace.data.Array) or isinstance(v, dace.data.Scalar))
         # No const-args allowed
@@ -1443,10 +1446,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             state_id,
             scope_entry.map,
             kernel_name,
-            grid_dims,
             block_dims,
-            tbmap,
-            dtbmap,
             kernel_args_typed,
             self._globalcode,
             kernel_stream,
@@ -1459,7 +1459,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
         # Write kernel prototype
         self._localcode.write(
-            "__global__ __aicore__ void %s(%s) {\n"
+            "DACE_EXPORTED __global__ __aicore__ void %s(%s) {\n"
             % (kernel_name, ", ".join(kernel_args_typed + extra_kernel_args_typed)),
             sdfg,
             state_id,
@@ -1487,7 +1487,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         self._localcode.write(
             """
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
-void __dace_runkernel_{fname}({fargs})
+DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
 {{
 """.format(
                 fname=kernel_name,
@@ -1513,11 +1513,6 @@ void __dace_runkernel_{fname}({fargs})
                 scope_entry,
             )
 
-        gdims = (
-            "dace_number_blocks, 1, 1" if is_persistent else ", ".join(_topy(grid_dims))
-        )
-        bdims = ", ".join(_topy(block_dims))
-
         def replace_input_name(arg, cast_pattern="uint8_t*"):
             new_arg = re.sub(
                 r"\bconst " + re.escape(cast_pattern) + r"(\w+)",
@@ -1533,7 +1528,7 @@ void __dace_runkernel_{fname}({fargs})
 
             return new_arg
 
-        print("KARGS", kernel_args)
+        #print("KARGS", kernel_args)
         kargs = str(
             ", ".join(
                 [f"reinterpret_cast<GM_ADDR>({k})" if isinstance(v, dace.data.Array) else f"{k}" for k,v in kernel_args.items()]
@@ -1647,263 +1642,7 @@ void __dace_runkernel_{fname}({fargs})
         return res
 
     def get_kernel_dimensions(self, dfg_scope):
-        """
-        Determines a GPU kernel's grid/block dimensions from map scopes.
-
-        Ruleset for kernel dimensions:
-
-            1. If only one map (device-level) exists, of an integer set ``S``,
-                the block size is ``32x1x1`` and grid size is ``ceil(|S|/32)`` in
-                1st dimension.
-            2. If nested thread-block maps exist ``(T_1,...,T_n)``, grid
-                size is ``|S|`` and block size is ``max(|T_1|,...,|T_n|)`` with
-                block specialization.
-            3. If block size can be overapproximated, it is (for
-                dynamically-sized blocks that are bounded by a
-                predefined size).
-            4. If nested device maps exist, they generate extra grid dimensions (block size 1)
-                as the sum of all their sizes ``(|T_1| + ... + |T_n|)``
-
-        :note: Kernel dimensions are separate from the map
-                variables, and they should be treated as such.
-        :note: To make use of the grid/block 3D registers, we use multi-
-                dimensional kernels up to 3 dimensions, and flatten the
-                rest into the third dimension.
-        """
-
-        kernelmap_entry: nodes.MapEntry = dfg_scope.source_nodes()[0]
-        grid_size = kernelmap_entry.map.range.size(True)[::-1]
-        block_size = None
-        is_persistent = False
-        int_ceil = symbolic.int_ceil
-
-        # Obtain thread-block maps from nested SDFGs
-        subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
-        sub_maps = self.get_tb_maps_recursive(subgraph)
-
-        # Introduce extra grid dimensions based on device sub-maps
-        extra_dim_offsets: Dict[nodes.Map, symbolic.SymbolicType] = {}
-        extra_grid_dims: List[symbolic.SymbolicType] = None
-        for submap, sym_map in sub_maps:
-            submap: nodes.Map
-            if (
-                submap.schedule != dtypes.ScheduleType.GPU_Device
-                or submap is kernelmap_entry.map
-            ):
-                continue
-            if extra_grid_dims is not None and len(submap.params) != len(
-                extra_grid_dims
-            ):
-                raise NotImplementedError(
-                    "Multiple GPU_Device sub-ranges with different dimensionality not yet implemented (found: "
-                    f"{len(submap.params)}, existing: {len(extra_grid_dims)}, map: {kernelmap_entry})"
-                )
-
-            # Add and overapproximate sizes
-            gsize = [s.subs(list(sym_map.items())) for s in submap.range.size()[::-1]]
-            gsize = [symbolic.overapproximate(s) for s in gsize]
-            if extra_grid_dims is None:
-                extra_grid_dims = gsize
-                extra_dim_offsets[submap] = [0] * len(submap.params)
-            else:
-                extra_dim_offsets[submap] = extra_grid_dims
-                extra_grid_dims = [
-                    (sz + gsz) for sz, gsz in zip(extra_grid_dims, gsize)
-                ]
-        if extra_grid_dims is None:
-            extra_grid_dims = []
-        grid_size.extend(extra_grid_dims)
-
-        # Linearize (flatten) rest of dimensions to third
-        if len(grid_size) > 3:
-            grid_size[2] = functools.reduce(sympy.Mul, grid_size[2:], 1)
-            del grid_size[3:]
-
-        # Extend to 3 dimensions if necessary
-        grid_size = grid_size + [1] * (3 - len(grid_size))
-
-        # Thread-block map cases
-        has_dtbmap = (
-            len(
-                [
-                    tbmap
-                    for tbmap, _ in sub_maps
-                    if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
-                ]
-            )
-            > 0
-        )
-
-        # keep only thread-block maps
-        tb_maps_sym_map = [
-            (tbmap, sym_map)
-            for tbmap, sym_map in sub_maps
-            if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock
-        ]
-
-        # Map thread-block size override
-        block_size = kernelmap_entry.map.gpu_block_size
-        if block_size is not None:
-            # Complement to three dimensions
-            block_size += [1] * (3 - len(block_size))
-            # Linearize (flatten) rest of dimensions to third
-            if len(block_size) > 3:
-                block_size[2] = functools.reduce(sympy.Mul, block_size[2:], 1)
-                del block_size[3:]
-
-        # No thread-block maps
-        if len(tb_maps_sym_map) == 0:
-            if block_size is None:
-                if has_dtbmap:
-                    if (
-                        Config.get("compiler", "cuda", "dynamic_map_block_size")
-                        == "max"
-                    ):
-                        raise NotImplementedError(
-                            "max dynamic block size unimplemented"
-                        )
-                    else:
-                        block_size = [
-                            int(b)
-                            for b in Config.get(
-                                "compiler", "cuda", "dynamic_map_block_size"
-                            ).split(",")
-                        ]
-                else:
-                    def_bsize = Config.get("compiler", "cuda", "default_block_size")
-                    warnings.warn(
-                        f'No `gpu_block_size` property specified on map "{kernelmap_entry.map.label}". '
-                        f"Falling back to the configuration entry `compiler.cuda.default_block_size`: {def_bsize}. "
-                        "You can either specify the block size to use with the gpu_block_size property, "
-                        "or by adding nested `GPU_ThreadBlock` maps, which map work to individual threads. "
-                        "For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html"
-                    )
-
-                    if Config.get("compiler", "cuda", "default_block_size") == "max":
-                        raise NotImplementedError(
-                            "max dynamic block size unimplemented"
-                        )
-                    else:
-                        block_size = [
-                            int(b)
-                            for b in Config.get(
-                                "compiler", "cuda", "default_block_size"
-                            ).split(",")
-                        ]
-
-                    block_ndim = max(1, sum(1 if b != 1 else 0 for b in block_size))
-                    grid_ndim = max(1, sum(1 if g != 1 else 0 for g in grid_size))
-                    if block_ndim > grid_ndim:
-                        linearized_remainder = prod(block_size[grid_ndim:])
-                        block_size = block_size[:grid_ndim] + [1] * (3 - grid_ndim)
-                        block_size[grid_ndim - 1] *= linearized_remainder
-                        warnings.warn(
-                            f"Default block size has more dimensions ({block_ndim}) than kernel dimensions "
-                            f'({grid_ndim}) in map "{kernelmap_entry.map.label}". Linearizing block '
-                            f"size to {block_size}. Consider setting the ``gpu_block_size`` property."
-                        )
-
-            assert len(block_size) >= 1 and len(block_size) <= 3
-
-            # Grid size = ceil(|S|/32) for first dimension, rest = |S|
-            grid_size = [int_ceil(gs, bs) for gs, bs in zip(grid_size, block_size)]
-
-        else:
-            # Find all thread-block maps to determine overall block size
-            detected_block_sizes = [block_size] if block_size is not None else []
-            for tbmap, sym_map in tb_maps_sym_map:
-                tbsize = [
-                    s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]
-                ]
-
-                # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
-                # The partial trailing thread-block is emitted as an if-condition
-                # that returns on some of the participating threads
-                tbsize = [symbolic.overapproximate(s) for s in tbsize]
-
-                # Linearize (flatten) rest of dimensions to third
-                if len(tbsize) > 3:
-                    tbsize[2] = functools.reduce(sympy.Mul, tbsize[2:], 1)
-                    del tbsize[3:]
-
-                # Extend to 3 dimensions if necessary
-                tbsize = tbsize + [1] * (3 - len(tbsize))
-
-                if len(detected_block_sizes) == 0:
-                    block_size = tbsize
-                else:
-                    block_size = [
-                        sympy.Max(sz, bbsz) for sz, bbsz in zip(block_size, tbsize)
-                    ]
-
-                if block_size != tbsize or len(detected_block_sizes) == 0:
-                    detected_block_sizes.append(tbsize)
-
-            # TODO: If grid/block sizes contain elements only defined within the
-            #       kernel, raise an invalid SDFG exception and recommend
-            #       overapproximation.
-
-            if len(detected_block_sizes) > 1:
-
-                # Error when both gpu_block_size and thread-block maps were defined and conflict
-                if kernelmap_entry.map.gpu_block_size is not None:
-                    raise ValueError(
-                        "Both the `gpu_block_size` property and internal thread-block "
-                        "maps were defined with conflicting sizes for kernel "
-                        f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
-                        "Use `gpu_block_size` only if you do not need access to individual "
-                        "thread-block threads, or explicit block-level synchronization (e.g., "
-                        "`__syncthreads`). Otherwise, use internal maps with the `GPU_Threadblock` or "
-                        "`GPU_ThreadBlock_Dynamic` schedules. For more information, see "
-                        "https://spcldace.readthedocs.io/en/latest/optimization/gpu.html"
-                    )
-
-                warnings.warn(
-                    "Multiple thread-block maps with different sizes detected for "
-                    f'kernel "{kernelmap_entry.map.label}": {detected_block_sizes}. '
-                    f"Over-approximating to block size {block_size}.\n"
-                    "If this was not the intent, try tiling one of the thread-block maps to match."
-                )
-
-            # both thread-block map and dynamic thread-block map exist at the same
-            # time
-            if has_dtbmap:
-                raise NotImplementedError(
-                    "GPU_ThreadBlock and GPU_ThreadBlock_Dynamic are currently "
-                    "not supported in the same scope"
-                )
-
-        if is_persistent:
-            grid_size = ["gridDim.x", "1", "1"]
-
-        # Check block size against configured maximum values, if those can be determined
-        total_bsize = prod(block_size)
-        total_limit = Config.get("compiler", "cuda", "block_size_limit")
-        lastdim_limit = Config.get("compiler", "cuda", "block_size_lastdim_limit")
-        if (total_bsize > total_limit) == True:
-            raise ValueError(
-                f'Block size for kernel "{kernelmap_entry.map.label}" ({block_size}) '
-                f"is larger than the possible number of threads per block ({total_limit}). "
-                "The kernel will potentially not run, please reduce the thread-block size. "
-                "To increase this limit, modify the `compiler.cuda.block_size_limit` "
-                "configuration entry."
-            )
-        if (block_size[-1] > lastdim_limit) == True:
-            raise ValueError(
-                f'Last block size dimension for kernel "{kernelmap_entry.map.label}" ({block_size}) '
-                "is larger than the possible number of threads in the last block dimension "
-                f"({lastdim_limit}). The kernel will potentially not run, please reduce the "
-                "thread-block size. To increase this limit, modify the "
-                "`compiler.cuda.block_size_lastdim_limit` configuration entry."
-            )
-
-        return (
-            grid_size,
-            block_size,
-            len(tb_maps_sym_map) > 0,
-            has_dtbmap,
-            extra_dim_offsets,
-        )
+        return (32, 1, 1)
 
     def generate_kernel_scope(
         self,
@@ -1913,10 +1652,7 @@ void __dace_runkernel_{fname}({fargs})
         state_id: int,
         kernel_map: nodes.Map,
         kernel_name: str,
-        grid_dims: list,
         block_dims: list,
-        has_tbmap: bool,
-        has_dtbmap: bool,
         kernel_params: list,
         function_stream: CodeIOStream,
         kernel_stream: CodeIOStream,
@@ -1976,8 +1712,8 @@ void __dace_runkernel_{fname}({fargs})
                 aicore_group_map_entry = node
                 break
 
-        print(state.in_edges(aicore_group_map_entry))
-        print(state.out_edges(aicore_group_map_entry))
+        #print(state.in_edges(aicore_group_map_entry))
+        #print(state.out_edges(aicore_group_map_entry))
         for name, arr in self._used_arr_set:
             if arr.storage in [
                 dtypes.StorageType.Ascend_VECIN,
@@ -2005,7 +1741,8 @@ void __dace_runkernel_{fname}({fargs})
                             )
                             break
                         else:
-                            print(e, e.data, e.data.data, name)
+                            #print(e, e.data, e.data.data, name)
+                            pass
                     else:
                         raise Exception(
                             f"One of the out edges need to cover this array we accessed, check impl for: {name}"
@@ -2067,7 +1804,6 @@ void __dace_runkernel_{fname}({fargs})
         self._kernel_map = node
         self._kernel_state = sdfg.node(state_id)
         self._block_dims = block_dims
-        self._grid_dims = grid_dims
 
         # Emit internal array allocation (deallocation handled at MapExit)
         self._frame.allocate_arrays_in_scope(

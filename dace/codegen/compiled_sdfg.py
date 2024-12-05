@@ -85,7 +85,15 @@ class ReloadableDLL(object):
         if self._lib is not None and self._lib.value is not None:
             return
 
-        ctypes.CDLL('/scratch1/ybudanaz/local/ascend-toolkit/latest/runtime/lib64/libruntime.so', mode=ctypes.RTLD_GLOBAL)
+        try:
+            from dace.codegen import common
+            if common.is_ascend_available():
+                ascend_runtime = common.get_ascend_runtime()
+                kernel_lib_path = os.path.join(os.path.dirname(os.path.realpath(self._library_filename)), 'libascendc_kernels.so')
+                ascend_runtime.load_kernel_lib(kernel_lib_path=kernel_lib_path)
+        except OSError as e:
+            print(f"Library load error: {e}")
+            print(f"Error details: {os.strerror(e.errno)}")
         self._stub = ctypes.CDLL(self._stub_filename)
 
         # Set return types of stub functions
@@ -122,10 +130,10 @@ class ReloadableDLL(object):
             # Try to understand why the library is not loading, if dynamic
             # linker is used
             reason = ''
-            if os.name == 'posix':
-                result = subprocess.run(['ld', self._library_filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                stderr = result.stderr.decode('utf-8')
-                reason = 'Reason:\n' + '\n'.join([l for l in stderr.split('\n') if '_start' not in l])
+            #if os.name == 'posix':
+            result = subprocess.run(['ld', self._library_filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stderr = result.stderr.decode('utf-8')
+            reason = 'Reason:\n' + '\n'.join([l for l in stderr.split('\n') if '_start' not in l])
             raise RuntimeError(f'Could not load library {os.path.basename(self._library_filename)}. {reason}')
 
     def unload(self):
@@ -191,7 +199,8 @@ class CompiledSDFG(object):
         self._lastargs = ()
         self.do_not_execute = False
         from dace.codegen import common
-        common.get_ascend_runtime()
+        if common.is_ascend_available():
+            self._ascend_runtime = common.get_ascend_runtime()
         lib.load()  # Explicitly load the library
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
         self._init.restype = ctypes.c_void_p

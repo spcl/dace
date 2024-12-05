@@ -3,9 +3,6 @@
  * Stub library that can load other libraries for use in as DaCe programs
  **/
 
-#ifdef DACE_ASCEND
-#ifndef __CCE_KT_TEST__
-#endif
 
 #ifdef _WIN32
     #include <windows.h>
@@ -86,7 +83,3 @@ DACE_EXPORTED void unload_library(void *hLibrary) {
     dlclose(hLibrary);
 #endif
 }
-
-#ifdef DACE_ASCEND
-#endif
-#endif

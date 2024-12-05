@@ -1001,7 +1001,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             params = sdfg.signature(arglist=self.arglist)
             if params:
                 params = ', ' + params
-            function_signature = f'void __program_{sdfg.name}_internal({mangle_dace_state_struct_name(sdfg)}*__state{params})\n{{'
+            function_signature = f'DACE_EXPORTED void __program_{sdfg.name}_internal({mangle_dace_state_struct_name(sdfg)}*__state{params})\n{{'
 
             self.generate_footer(sdfg, footer_global_stream, footer_stream)
             self.generate_external_memory_management(sdfg, footer_stream)

@@ -58,6 +58,8 @@ set(DACE_ENABLE_INTELFPGA OFF)
 set(DACE_ENABLE_RTL OFF)
 set(DACE_ENABLE_ASCEND OFF)
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # Split list by target
 foreach(DACE_FILE ${DACE_FILES})
   # Extract the target from the folder name
@@ -291,23 +293,21 @@ endif()
 if (DACE_ENABLE_ASCEND)
   add_definitions(-DDACE_ASCEND)
   enable_language(CCE)
+
   set_source_files_properties(${DACE_ASCEND_FILES} PROPERTIES LANGUAGE CCE)
   set_source_files_properties(${DACE_HOST_FILES} PROPERTIES LANGUAGE CCE)
 
   add_library(ascendc_kernels SHARED ${DACE_ASCEND_FILES})
-  target_compile_definitions(ascendc_kernels PRIVATE TILING_KEY_VAR=0)
-  target_compile_options(ascendc_kernels PRIVATE
-    -O2
+  target_compile_definitions(ascendc_kernels PUBLIC TILING_KEY_VAR=0)
+  target_compile_options(ascendc_kernels PUBLIC
+    -O3
     -std=c++17
     ${OpenMP_CXX_FLAGS}
   )
-  add_compile_options(-std=c++17 ${OpenMP_CXX_FLAGS})
+  set_target_properties(ascendc_kernels PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_compile_features(ascendc_kernels PUBLIC cxx_std_17)
   list(APPEND DACE_LIBS ascendc_kernels)
   target_link_libraries(ascendc_kernels PUBLIC OpenMP::OpenMP_CXX ${OpenMP_CXX_LIBRARIES})
-  message(STATUS "OpenMP_CXX_FLAGS: ${OpenMP_CXX_FLAGS}")
-  message(STATUS "OpenMP_CXX_LIBRARIES: ${OpenMP_CXX_LIBRARIES}")
-  add_link_options(-Wl,--as-needed)
 endif()
 
 # Create HIP object files
@@ -610,15 +610,16 @@ endif()
 include("targets/mlir/mlir.cmake")
 
 # Create DaCe library file
-add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_ASCEND_FILES} ${DACE_HOST_FILES} ${DACE_OBJECTS})
+add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_HOST_FILES} ${DACE_OBJECTS})
 set_target_properties(${DACE_PROGRAM_NAME} PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED YES
-    LANGUAGE CCE
+    LANGUAGE CXX
     LINKER_LANGUAGE CXX)
 target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
 target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ascendc_kernels)
 target_compile_features(${DACE_PROGRAM_NAME} PUBLIC cxx_std_17)
+set_target_properties(${DACE_PROGRAM_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 
 # Add additional required files
@@ -666,18 +667,20 @@ if(DACE_ENABLE_ASCEND)
   link_directories(${DACE_ASCEND_INSTALL_PATH}/runtime/lib64)
   find_library(ASCENDCL_LIB ascendcl HINTS ${DACE_ASCEND_INSTALL_PATH}/runtime/lib64)
   find_library(ASCENDCL_RUNTIME_LIB runtime HINTS ${DACE_ASCEND_INSTALL_PATH}/runtime/lib64)
-  target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${ASCENDCL_LIB} ${ASCENDCL_RUNTIME_LIB})
+  target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ascendc_kernels ${ASCENDCL_LIB})
   target_compile_options(${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
   target_link_options(${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
-  target_link_libraries(ascendc_kernels PUBLIC ${ASCENDCL_LIB} ${ASCENDCL_RUNTIME_LIB})
-  target_compile_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_FLAGS})
-  target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_LIBRARIES})
-  target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${CMAKE_DL_LIBS} ascendc_kernels)
-  target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${ASCENDCL_LIB} ${ASCENDCL_RUNTIME_LIB})
-  target_compile_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
+  target_compile_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_FLAGS} -fopenmp)
+  target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ascendc_kernels ${OpenMP_CXX_LIBRARIES} ${CMAKE_DL_LIBS} ${ASCENDCL_LIB} ${ASCENDCL_RUNTIME_LIB})
   target_link_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
+  set(PRELOAD_PATH "LD_PRELOAD=${ASCEND_HOME_PATH}/runtime/lib64/libruntime.so:${ASCEND_HOME_PATH}/runtime/lib64/libascendcl.so")
+  set_target_properties(dacestub_${DACE_PROGRAM_NAME} PROPERTIES
+    ENVIRONMENT "${PRELOAD_PATH}"
+  )
+  set_target_properties(${DACE_PROGRAM_NAME} PROPERTIES
+    ENVIRONMENT "${PRELOAD_PATH}"
+  )
 endif()
-
 
 # Windows-specific fixes
 if (MSVC_IDE)

@@ -189,32 +189,34 @@ def get_ascend_runtime() -> ascend_runtime.AscendRuntime:
         raise RuntimeError('ASCEND_HOME_PATH environment variable is not set')
 
     # Construct runtime library path
-    libpath = os.path.join(ascend_home, 'lib64', 'libruntime.so')
+    runtime_lib_path = os.path.join(ascend_home, 'lib64', 'libruntime.so')
+    acl_lib_path = os.path.join(ascend_home, 'lib64', 'libascendcl.so')
     libfolder = os.path.join(ascend_home, 'lib64')
 
     os.environ['LD_LIBRARY_PATH'] = libfolder + ':' + os.environ.get('LD_LIBRARY_PATH', '')
 
     # Check if library exists
-    if not os.path.exists(libpath):
-        # Alternative paths to try
-        alternative_paths = [
-            '/usr/local/Ascend/ascend-toolkit/latest/runtime/lib64/libruntime.so',
-            '/opt/Ascend/ascend-toolkit/latest/runtime/lib64/libruntime.so'
-        ]
+    for libpath in [runtime_lib_path, acl_lib_path]:
+        if not os.path.exists(libpath):
+            # Alternative paths to try
+            alternative_paths = [
+                '/usr/local/Ascend/ascend-toolkit/latest/runtime/lib64',
+                '/opt/Ascend/ascend-toolkit/latest/runtime/lib64'
+            ]
 
-        for alt_path in alternative_paths:
-            if os.path.exists(alt_path):
-                libpath = alt_path
-                break
-        else:
-            raise RuntimeError(
-                f'Ascend runtime library not found. '
-                f'Checked paths:\n- {libpath}\n' +
-                '\n'.join(f'- {path}' for path in alternative_paths) +
-                '\nPlease set ASCEND_HOME_PATH or ensure the library is installed.'
-            )
+            for alt_path in alternative_paths:
+                if os.path.exists(alt_path):
+                    lib_path = alt_path
+                    break
+            else:
+                raise RuntimeError(
+                    f'Ascend runtime library not found. '
+                    f'Checked paths:\n- {libpath}\n' +
+                    '\n'.join(f'- {path}' for path in alternative_paths) +
+                    '\nPlease set ASCEND_HOME_PATH or ensure the library is installed.'
+                )
 
-    return ascend_runtime.AscendRuntime(libpath)
+    return ascend_runtime.AscendRuntime(runtime_lib_path, acl_lib_path)
 
 def is_ascend_available() -> bool:
     """
