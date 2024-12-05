@@ -156,7 +156,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                  recompile: bool = True,
                  distributed_compilation: bool = False,
                  method: bool = False,
-                 use_experimental_cfg_blocks: bool = False):
+                 use_experimental_cfg_blocks: bool = True):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
@@ -496,7 +496,6 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         if not self.use_experimental_cfg_blocks:
             for nsdfg in sdfg.all_sdfgs_recursive():
-                sdutils.inline_conditional_blocks(nsdfg)
                 sdutils.inline_control_flow_regions(nsdfg)
         sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
 

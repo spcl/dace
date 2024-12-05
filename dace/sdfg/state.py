@@ -8,10 +8,8 @@ import copy
 import inspect
 import itertools
 import warnings
-from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union,
+from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type, Union,
                     overload)
-
-import sympy
 
 import dace
 from dace.frontend.python import astutils
@@ -22,8 +20,8 @@ from dace import memlet as mm
 from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
-from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
-                             CodeProperty, make_properties)
+from dace.properties import (CodeBlock, DebugInfoProperty, DictProperty, EnumProperty, Property, SubsetProperty,
+                             SymbolicProperty, CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import (MultiConnectorEdge, NodeNotFoundError, OrderedMultiDiConnectorGraph, SubgraphView,
                              OrderedDiGraph, Edge, generate_element_id)
@@ -728,8 +726,12 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     defined_syms[str(sym)] = sym.dtype
 
         # Add inter-state symbols
-        for edge in sdfg.dfs_edges(sdfg.start_state):
+        if isinstance(sdfg.start_block, LoopRegion):
+            update_if_not_none(defined_syms, sdfg.start_block.new_symbols(defined_syms))
+        for edge in sdfg.all_interstate_edges():
             update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
+            if isinstance(edge.dst, LoopRegion):
+                update_if_not_none(defined_syms, edge.dst.new_symbols(defined_syms))
 
         # Add scope symbols all the way to the subgraph
         sdict = state.scope_dict()
@@ -1029,6 +1031,18 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
         ...
 
+    @overload
+    def in_edges(self, node: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        ...
+
+    @overload
+    def out_edges(self, node: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        ...
+
+    @overload
+    def all_edges(self, node: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        ...
+
     ###################################################################
     # Traversal methods
 
@@ -1146,6 +1160,8 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     def replace(self, name: str, new_name: str):
         for n in self.nodes():
             n.replace(name, new_name)
+        for e in self.edges():
+            e.data.replace(name, new_name)
 
     def replace_dict(self,
                      repl: Dict[str, str],
@@ -1177,12 +1193,23 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     pre_conditions = DictProperty(key_type=str, value_type=list, desc='Pre-conditions for this block')
     post_conditions = DictProperty(key_type=str, value_type=list, desc='Post-conditions for this block')
     invariant_conditions = DictProperty(key_type=str, value_type=list, desc='Invariant conditions for this block')
+    ranges = DictProperty(key_type=str, value_type=Range, default={},
+                          desc='Variable ranges across this block, typically within loops')
+
+    executions = SymbolicProperty(default=0,
+                                  desc="The number of times this block gets executed (0 stands for unbounded)")
+    dynamic_executions = Property(dtype=bool, default=True, desc="The number of executions of this block is dynamic")
 
     _label: str
 
     _default_lineinfo: Optional[dace.dtypes.DebugInfo] = None
     _sdfg: Optional['SDFG'] = None
     _parent_graph: Optional['ControlFlowRegion'] = None
+
+    _certain_reads: Dict[str, mm.Memlet]
+    _possible_reads: Dict[str, mm.Memlet]
+    _certain_writes: Dict[str, mm.Memlet]
+    _possible_writes: Dict[str, mm.Memlet]
 
     def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None, parent: Optional['ControlFlowRegion'] = None):
         super(ControlFlowBlock, self).__init__()
@@ -1194,6 +1221,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.pre_conditions = {}
         self.post_conditions = {}
         self.invariant_conditions = {}
+        self._certain_reads = dict()
+        self._possible_reads = dict()
+        self._certain_writes = dict()
+        self._possible_writes = dict()
 
         self.guid = generate_element_id(self)
 
@@ -1249,7 +1280,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k in ('_parent_graph', '_sdfg', 'guid'):  # Skip derivative attributes and GUID
+            if k in ('_parent_graph', '_sdfg', '_cfg_list', 'guid'):  # Skip derivative attributes and GUID
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
 
@@ -1310,17 +1341,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                                      default=dtypes.DataInstrumentationType.No_Instrumentation)
     symbol_instrument_condition = CodeProperty(desc="Condition under which to trigger the symbol instrumentation",
                                                default=CodeBlock("1", language=dtypes.Language.CPP))
-
-    executions = SymbolicProperty(default=0,
-                                  desc="The number of times this state gets "
-                                  "executed (0 stands for unbounded)")
-    dynamic_executions = Property(dtype=bool, default=True, desc="The number of executions of this state "
-                                  "is dynamic")
-
-    ranges = DictProperty(key_type=symbolic.symbol,
-                          value_type=Range,
-                          default={},
-                          desc='Variable ranges, typically within loops')
 
     location = DictProperty(key_type=str,
                             value_type=symbolic.pystr_to_symbolic,
@@ -2565,13 +2585,14 @@ class StateSubgraphView(SubgraphView, DataflowGraphView):
 
 
 @make_properties
-class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView,
-                        ControlFlowBlock):
+class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView,
+                                ControlFlowBlock, abc.ABC):
 
-    def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None):
+    def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None,
+                 parent: Optional['AbstractControlFlowRegion'] = None):
         OrderedDiGraph.__init__(self)
         ControlGraphView.__init__(self)
-        ControlFlowBlock.__init__(self, label, sdfg)
+        ControlFlowBlock.__init__(self, label, sdfg, parent)
 
         self._labels: Set[str] = set()
         self._start_block: Optional[int] = None
@@ -2585,7 +2606,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             raise RuntimeError('Root CFG is not of type SDFG')
         return self.cfg_list[0]
 
-    def reset_cfg_list(self) -> List['ControlFlowRegion']:
+    def reset_cfg_list(self) -> List['AbstractControlFlowRegion']:
         """
         Reset the CFG list when changes have been made to the SDFG's CFG tree.
         This collects all control flow graphs recursively and propagates the collection to all CFGs as the new CFG list.
@@ -2747,9 +2768,13 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self._cached_start_block = None
         node.parent_graph = self
         if isinstance(self, dace.SDFG):
-            node.sdfg = self
+            sdfg = self
         else:
-            node.sdfg = self.sdfg
+            sdfg = self.sdfg
+        node.sdfg = sdfg
+        if isinstance(node, AbstractControlFlowRegion):
+            for n in node.all_control_flow_blocks():
+                n.sdfg = self.sdfg
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
@@ -2825,23 +2850,27 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
     ###################################################################
     # Traversal methods
 
-    def all_control_flow_regions(self, recursive=False, load_ext=False) -> Iterator['ControlFlowRegion']:
+    def all_control_flow_regions(self, recursive=False, load_ext=False,
+                                 parent_first=True) -> Iterator['AbstractControlFlowRegion']:
         """ Iterate over this and all nested control flow regions. """
-        yield self
+        if parent_first:
+            yield self
         for block in self.nodes():
             if isinstance(block, SDFGState) and recursive:
                 for node in block.nodes():
                     if isinstance(node, nd.NestedSDFG):
                         if node.sdfg:
-                            yield from node.sdfg.all_control_flow_regions(recursive=recursive, load_ext=load_ext)
+                            yield from node.sdfg.all_control_flow_regions(recursive=recursive, load_ext=load_ext,
+                                                                          parent_first=parent_first)
                         elif load_ext:
                             node.load_external(block)
-                            yield from node.sdfg.all_control_flow_regions(recursive=recursive, load_ext=load_ext)
-            elif isinstance(block, ControlFlowRegion):
-                yield from block.all_control_flow_regions(recursive=recursive, load_ext=load_ext)
-            elif isinstance(block, ConditionalBlock):
-                for _, branch in block.branches:
-                    yield from branch.all_control_flow_regions(recursive=recursive, load_ext=load_ext)
+                            yield from node.sdfg.all_control_flow_regions(recursive=recursive, load_ext=load_ext,
+                                                                          parent_first=parent_first)
+            elif isinstance(block, AbstractControlFlowRegion):
+                yield from block.all_control_flow_regions(recursive=recursive, load_ext=load_ext,
+                                                          parent_first=parent_first)
+        if not parent_first:
+            yield self
 
     def all_sdfgs_recursive(self, load_ext=False) -> Iterator['SDFG']:
         """ Iterate over this and all nested SDFGs. """
@@ -2854,11 +2883,8 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         for block in self.nodes():
             if isinstance(block, SDFGState):
                 yield block
-            elif isinstance(block, ControlFlowRegion):
+            elif isinstance(block, AbstractControlFlowRegion):
                 yield from block.all_states()
-            elif isinstance(block, ConditionalBlock):
-                for _, region in block.branches:
-                    yield from region.all_states()
 
     def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
         """ Iterate over all control flow blocks in this control flow graph. """
@@ -3028,7 +3054,14 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         if block_id < 0 or block_id >= self.number_of_nodes():
             raise ValueError('Invalid state ID')
         self._start_block = block_id
-        self._cached_start_block = self.node(block_id)
+        self._cached_start_block = None
+
+
+@make_properties
+class ControlFlowRegion(AbstractControlFlowRegion):
+
+    def __init__(self, label = '', sdfg = None, parent = None):
+        super().__init__(label, sdfg, parent)
 
 
 @make_properties
@@ -3141,7 +3174,8 @@ class LoopRegion(ControlFlowRegion):
         # and return are inlined correctly.
         def recursive_inline_cf_regions(region: ControlFlowRegion) -> None:
             for block in region.nodes():
-                if (isinstance(block, ControlFlowRegion) or isinstance(block, ConditionalBlock)) and not isinstance(block, LoopRegion):
+                if ((isinstance(block, ControlFlowRegion) or isinstance(block, ConditionalBlock))
+                    and not isinstance(block, LoopRegion)):
                     recursive_inline_cf_regions(block)
                     block.inline()
         recursive_inline_cf_regions(self)
@@ -3247,7 +3281,9 @@ class LoopRegion(ControlFlowRegion):
             free_syms |= self.init_statement.get_free_symbols()
         if self.update_statement is not None:
             free_syms |= self.update_statement.get_free_symbols()
-        free_syms |= self.loop_condition.get_free_symbols()
+        cond_free_syms = self.loop_condition.get_free_symbols()
+        if self.loop_variable and self.loop_variable in cond_free_syms:
+            cond_free_syms.remove(self.loop_variable)
 
         b_free_symbols, b_defined_symbols, b_used_before_assignment = super()._used_symbols_internal(
             all_symbols, keep_defined_in_mapping=keep_defined_in_mapping)
@@ -3258,8 +3294,31 @@ class LoopRegion(ControlFlowRegion):
 
         defined_syms -= used_before_assignment
         free_syms -= defined_syms
+        free_syms |= cond_free_syms
 
         return free_syms, defined_syms, used_before_assignment
+
+    def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
+        """
+        Returns a mapping between the symbol defined by this loop and its type, if it exists.
+        """
+        # Avoid cyclic import
+        from dace.codegen.tools.type_inference import infer_expr_type
+        from dace.transformation.passes.analysis import loop_analysis
+
+        if self.init_statement and self.loop_variable:
+            alltypes = copy.copy(symbols)
+            alltypes.update({k: v.dtype for k, v in self.sdfg.arrays.items()})
+            l_end = loop_analysis.get_loop_end(self)
+            l_start = loop_analysis.get_init_assignment(self)
+            l_step = loop_analysis.get_loop_stride(self)
+            inferred_type = dtypes.result_type_of(infer_expr_type(l_start, alltypes),
+                                                  infer_expr_type(l_step, alltypes),
+                                                  infer_expr_type(l_end, alltypes))
+            init_rhs = loop_analysis.get_init_assignment(self)
+            if self.loop_variable not in symbolic.free_symbols_and_functions(init_rhs):
+                return {self.loop_variable: inferred_type}
+        return {}
 
     def replace_dict(self,
                      repl: Dict[str, str],
@@ -3267,11 +3326,11 @@ class LoopRegion(ControlFlowRegion):
                      replace_in_graph: bool = True,
                      replace_keys: bool = True):
         if replace_keys:
-            from dace.sdfg.replace import replace_properties_dict
-            replace_properties_dict(self, repl, symrepl)
-
             if self.loop_variable and self.loop_variable in repl:
                 self.loop_variable = repl[self.loop_variable]
+
+        from dace.sdfg.replace import replace_properties_dict
+        replace_properties_dict(self, repl, symrepl)
 
         super().replace_dict(repl, symrepl, replace_in_graph)
 
@@ -3312,7 +3371,7 @@ class LoopRegion(ControlFlowRegion):
 
 
 @make_properties
-class ConditionalBlock(ControlFlowBlock, ControlGraphView):
+class ConditionalBlock(AbstractControlFlowRegion):
 
     _branches: List[Tuple[Optional[CodeBlock], ControlFlowRegion]]
 
@@ -3332,14 +3391,15 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
 
     def add_branch(self, condition: Optional[CodeBlock], branch: ControlFlowRegion):
         self._branches.append([condition, branch])
-        branch.parent_graph = self.parent_graph
+        branch.parent_graph = self
         branch.sdfg = self.sdfg
 
-    def nodes(self) -> List['ControlFlowBlock']:
-        return [node for _, node in self._branches if node is not None]
-
-    def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
-        return []
+    def remove_branch(self, branch: ControlFlowRegion):
+        filtered_branches = []
+        for c, b in self._branches:
+            if b is not branch:
+                filtered_branches.append((c, b))
+        self._branches = filtered_branches
     
     def _used_symbols_internal(self,
                                all_symbols: bool,
@@ -3370,12 +3430,17 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
                      symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
                      replace_in_graph: bool = True,
                      replace_keys: bool = True):
+        # Avoid circular imports
+        from dace.sdfg.replace import replace_in_codeblock
+
         if replace_keys:
             from dace.sdfg.replace import replace_properties_dict
             replace_properties_dict(self, repl, symrepl)
 
-        for _, region in self._branches:
+        for cond, region in self._branches:
             region.replace_dict(repl, symrepl, replace_in_graph)
+            if cond is not None:
+                replace_in_codeblock(cond, repl)
 
     def to_json(self, parent=None):
         json = super().to_json(parent)
@@ -3396,9 +3461,9 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
 
         for condition, region in json_obj['branches']:
             if condition is not None:
-                ret._branches.append((CodeBlock.from_json(condition), ControlFlowRegion.from_json(region, context)))
+                ret.add_branch(CodeBlock.from_json(condition), ControlFlowRegion.from_json(region, context))
             else:
-                ret._branches.append((None, ControlFlowRegion.from_json(region, context)))
+                ret.add_branch(None, ControlFlowRegion.from_json(region, context))
         return ret
     
     def inline(self) -> Tuple[bool, Any]:
@@ -3457,6 +3522,42 @@ class ConditionalBlock(ControlFlowBlock, ControlGraphView):
         sdfg.reset_cfg_list()
 
         return True, (guard_state, end_state)
+
+    # Abstract control flow region overrides
+
+    @property
+    def start_block(self):
+        return None
+
+    @start_block.setter
+    def start_block(self, _):
+        pass
+
+    # Graph API overrides.
+
+    def node_id(self, node: 'ControlFlowBlock') -> int:
+        try:
+            return next(i for i, (_, b) in enumerate(self._branches) if b is node)
+        except StopIteration:
+            raise NodeNotFoundError(node)
+
+    def nodes(self) -> List['ControlFlowBlock']:
+        return [node for _, node in self._branches]
+
+    def number_of_nodes(self):
+        return len(self._branches)
+
+    def edges(self) -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return []
+
+    def in_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return []
+
+    def out_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return []
+
+    def all_edges(self, _: 'ControlFlowBlock') -> List[Edge['dace.sdfg.InterstateEdge']]:
+        return []
 
 
 @make_properties
