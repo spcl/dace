@@ -165,7 +165,6 @@ class DirectReplacement(IntrinsicTransformation):
         rank_value = int(rank.value)
 
         is_assumed = not isinstance(var_decl.offsets[rank_value-1], int) and var_decl.offsets[rank_value-1].name.startswith("__f2dace_")
-        print(is_assumed, var_decl.alloc)
 
         if func == 'lbound':
 
