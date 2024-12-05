@@ -45,14 +45,57 @@ class IntrinsicNodeTransformer(NodeTransformer):
         self.scope_vars.visit(ast)
         self.ast = ast
 
-    def get_var_declaration(self, parent_name: str, name: str):
+    def _parse_struct_ref(self, node: ast_internal_classes.Data_Ref_Node) -> ast_internal_classes.FNode:
 
-        if self.scope_vars.contains_var(parent_name, name):
-            return self.scope_vars.get_var(parent_name, name)
+        # we assume starting from the top (left-most) data_ref_node
+        # for struct1 % struct2 % struct3 % var
+        # we find definition of struct1, then we iterate until we find the var
+
+        struct_type = self.scope_vars.get_var(node.parent, node.parent_ref.name).type
+        struct_def = self.ast.structures.structures[struct_type]
+        cur_node = node
+
+        while True:
+            cur_node = cur_node.part_ref
+
+            if isinstance(cur_node, ast_internal_classes.Array_Subscript_Node):
+                struct_def = self.ast.structures.structures[struct_type]
+                return struct_def.vars[cur_node.name.name]
+
+            elif isinstance(cur_node, ast_internal_classes.Name_Node):
+                struct_def = self.ast.structures.structures[struct_type]
+                return struct_def.vars[cur_node.name]
+
+            elif isinstance(cur_node, ast_internal_classes.Data_Ref_Node):
+                struct_type = struct_def.vars[cur_node.parent_ref.name].type
+                struct_def = self.ast.structures.structures[struct_type]
+
+            else:
+                raise NotImplementedError()
+
+    def get_var_declaration(self, parent: ast_internal_classes.FNode, variable: ast_internal_classes.FNode):
+
+        if isinstance(variable, ast_internal_classes.Data_Ref_Node):
+
+            variable = self._parse_struct_ref(variable)
+            print(type(variable))
+            return variable
+
+        name = ""
+        if isinstance(variable, ast_internal_classes.Name_Node):
+            name = variable.name
+        elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
+            name = variable.name.name
+        else:
+            print(type(variable))
+            raise NotImplementedError()
+
+        if self.scope_vars.contains_var(parent, name):
+            return self.scope_vars.get_var(parent, name)
         elif name in self.ast.module_declarations:
             return self.ast.module_declarations[name]
         else:
-            raise RuntimeError(f"Couldn't find the declaration of variable {name} in function {parent_name}!")
+            raise RuntimeError(f"Couldn't find the declaration of variable {name} in function {parent.name.name}!")
 
     @staticmethod
     @abstractmethod
@@ -95,11 +138,7 @@ class DirectReplacement(IntrinsicTransformation):
 
                 # replace types of return variable - LHS of the binary operator
                 var = binop_node.lval
-                if isinstance(var.name, ast_internal_classes.Name_Node):
-                    name = var.name.name
-                else:
-                    name = var.name
-                var_decl = self.get_var_declaration(var.parent, name)
+                var_decl = self.get_var_declaration(var.parent, var)
                 var.type = input_type
                 var_decl.type = input_type
 
@@ -111,7 +150,7 @@ class DirectReplacement(IntrinsicTransformation):
             raise RuntimeError()
 
         # get variable declaration for the first argument
-        var_decl = transformer.get_var_declaration(var.parent, var.args[0].name)
+        var_decl = transformer.get_var_declaration(var.parent, var.args[0])
 
         # one arg to SIZE? compute the total number of elements
         if len(var.args) == 1:
@@ -150,7 +189,7 @@ class DirectReplacement(IntrinsicTransformation):
             raise RuntimeError()
 
         # get variable declaration for the first argument
-        var_decl = transformer.get_var_declaration(var.parent, var.args[0].name)
+        var_decl = transformer.get_var_declaration(var.parent, var.args[0])
 
         # one arg to LBOUND/UBOUND? not needed currently 
         if len(var.args) == 1:
@@ -217,7 +256,7 @@ class DirectReplacement(IntrinsicTransformation):
             raise RuntimeError()
 
         # get variable declaration for the first argument
-        var_decl = transformer.get_var_declaration(var.parent, var.args[0].name)
+        var_decl = transformer.get_var_declaration(var.parent, var.args[0])
 
         dace_type = fortrantypes2dacetypes[var_decl.type]
         type_size = dace_type().itemsize * 8
@@ -442,7 +481,7 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
             # If we access SUM(arr) where arr has many dimensions,
             # We need to create a ParDecl_Node for each dimension
             # array_sizes = self.scope_vars.get_var(node.parent, arg.name).sizes
-            array_sizes = self.get_var_declaration(node.parent, arg.name).sizes
+            array_sizes = self.get_var_declaration(node.parent, arg).sizes
             if array_sizes is None:
                 return None
             dims = len(array_sizes)
@@ -638,9 +677,9 @@ class SumProduct(LoopBasedReplacementTransformation):
         """
             For both SUM and PRODUCT, the result type depends on the input variable.
         """
-        input_type = self.get_var_declaration(var.parent, self.argument_variable.name.name)
+        input_type = self.get_var_declaration(var.parent, self.argument_variable)
 
-        var_decl = self.get_var_declaration(var.parent, var.name)
+        var_decl = self.get_var_declaration(var.parent, var)
         var.type = input_type.type
         var_decl.type = input_type.type
 
@@ -753,7 +792,7 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
             Theoretically, we should return LOGICAL for ANY and ALL,
             but we no longer use booleans on DaCe side.
         """
-        var_decl = self.get_var_declaration(var.parent, var.name)
+        var_decl = self.get_var_declaration(var.parent, var)
         var.type = "INTEGER"
         var_decl.type = "INTEGER"
 
@@ -960,9 +999,9 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
             For both MINVAL and MAXVAL, the result type depends on the input variable.
         """
 
-        input_type = self.get_var_declaration(var.parent, self.argument_variable.name.name)
+        input_type = self.get_var_declaration(var.parent, self.argument_variable)
 
-        var_decl = self.get_var_declaration(var.parent, var.name)
+        var_decl = self.get_var_declaration(var.parent, var)
         var.type = input_type.type
         var_decl.type = input_type.type
 
@@ -1030,7 +1069,7 @@ class MinVal(LoopBasedReplacement):
 
         def _result_init_value(self, array: ast_internal_classes.Array_Subscript_Node):
 
-            var_decl = self.get_var_declaration(array.parent, array.name.name)
+            var_decl = self.get_var_declaration(array.parent, array)
 
             # TODO: this should be used as a call to HUGE
             fortran_type = var_decl.type
@@ -1062,7 +1101,7 @@ class MaxVal(LoopBasedReplacement):
 
         def _result_init_value(self, array: ast_internal_classes.Array_Subscript_Node):
 
-            var_decl = self.get_var_declaration(array.parent, array.name.name)
+            var_decl = self.get_var_declaration(array.parent, array)
 
             # TODO: this should be used as a call to HUGE
             fortran_type = var_decl.type
@@ -1422,11 +1461,11 @@ class MathFunctions(IntrinsicTransformation):
             elif isinstance(arg, ast_internal_classes.Call_Expr_Node):
                 return arg.type
             elif isinstance(arg, ast_internal_classes.Name_Node):
-                return self.get_var_declaration(node.parent, arg.name).type
+                return self.get_var_declaration(node.parent, arg).type
             elif isinstance(arg, ast_internal_classes.Data_Ref_Node):
                 return self._parse_struct_ref(arg)
             else:
-                return self.get_var_declaration(node.parent, arg.name.name).type
+                return self.get_var_declaration(node.parent, arg).type
 
         def replace_call(self, old_call: ast_internal_classes.Call_Expr_Node, new_call: ast_internal_classes.FNode):
 
@@ -1489,12 +1528,7 @@ class MathFunctions(IntrinsicTransformation):
 
             # replace types of return variable - LHS of the binary operator
             var = binop_node.lval
-            name = None
-            if isinstance(var.name, ast_internal_classes.Name_Node):
-                name = var.name.name
-            else:
-                name = var.name
-            var_decl = self.get_var_declaration(var.parent, name)
+            var_decl = self.get_var_declaration(var.parent, var)
             var.type = input_type
             var_decl.type = input_type
 

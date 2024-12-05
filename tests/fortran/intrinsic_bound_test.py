@@ -161,7 +161,6 @@ END SUBROUTINE intrinsic_bound_test_function2
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)
     sdfg(res=res)
-    print(res)
 
     assert np.allclose(res, [1, 1, 4, 7])
 
@@ -215,6 +214,50 @@ END SUBROUTINE intrinsic_bound_test_function3
 
     assert np.allclose(res, [42, 13, 45, 19])
 
+def test_fortran_frontend_bound_structure():
+    sources, main = SourceCodeBuilder().add_file("""
+MODULE test_types
+    IMPLICIT NONE
+    TYPE array_container
+        INTEGER, DIMENSION(2:5, 3:9) :: data
+    END TYPE array_container
+END MODULE
+
+MODULE test_bounds
+    USE test_types
+    IMPLICIT NONE
+
+    CONTAINS
+
+    SUBROUTINE intrinsic_bound_test_function( res)
+        TYPE(array_container) :: container
+        INTEGER, DIMENSION(4) :: res
+
+        CALL intrinsic_bound_test_function_impl(container, res)
+    END SUBROUTINE
+
+    SUBROUTINE intrinsic_bound_test_function_impl(container, res)
+        TYPE(array_container), INTENT(IN) :: container
+        INTEGER, DIMENSION(4) :: res
+
+        res(1) = LBOUND(container%data, 1)  ! Should return 2
+        res(2) = LBOUND(container%data, 2)  ! Should return 3
+        res(3) = UBOUND(container%data, 1)  ! Should return 5
+        res(4) = UBOUND(container%data, 2)  ! Should return 9
+    END SUBROUTINE
+END MODULE
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'test_bounds.intrinsic_bound_test_function', normalize_offsets=True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 4
+    res = np.full([size], 42, order="F", dtype=np.int32)
+    sdfg(res=res)
+    print(res)
+
+    assert np.allclose(res, [2, 3, 5, 9])
+
 if __name__ == "__main__":
 
     test_fortran_frontend_bound()
@@ -222,3 +265,4 @@ if __name__ == "__main__":
     test_fortran_frontend_bound_assumed()
     test_fortran_frontend_bound_assumed_offsets()
     test_fortran_frontend_bound_allocatable_offsets()
+    test_fortran_frontend_bound_structure()
