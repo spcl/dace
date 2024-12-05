@@ -113,45 +113,6 @@ class DirectReplacement(IntrinsicTransformation):
         # get variable declaration for the first argument
         var_decl = transformer.get_var_declaration(var.parent, var.args[0].name)
 
-        # one arg to LBOUND/UBOUND? compute the total number of elements
-        if len(var.args) == 1:
-
-            if len(var_decl.sizes) == 1:
-                return (var_decl.sizes[0], "INTEGER")
-
-            ret = ast_internal_classes.BinOp_Node(
-                lval=var_decl.sizes[0],
-                rval=None,
-                op="*"
-            )
-            cur_node = ret
-            for i in range(1, len(var_decl.sizes) - 1):
-                cur_node.rval = ast_internal_classes.BinOp_Node(
-                    lval=var_decl.sizes[i],
-                    rval=None,
-                    op="*"
-                )
-                cur_node = cur_node.rval
-
-            cur_node.rval = var_decl.sizes[-1]
-            return (ret, "INTEGER")
-
-        # two arguments? We return number of elements in a given rank
-        rank = var.args[1]
-        # we do not support symbolic argument to DIM - it must be a literal
-        if not isinstance(rank, ast_internal_classes.Int_Literal_Node):
-            raise NotImplementedError()
-        value = int(rank.value)
-        return (var_decl.sizes[value - 1], "INTEGER")
-
-    def replace_lbound_ubound(transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
-
-        if len(var.args) not in [1, 2]:
-            raise RuntimeError()
-
-        # get variable declaration for the first argument
-        var_decl = transformer.get_var_declaration(var.parent, var.args[0].name)
-
         # one arg to SIZE? compute the total number of elements
         if len(var.args) == 1:
 
@@ -182,6 +143,74 @@ class DirectReplacement(IntrinsicTransformation):
             raise NotImplementedError()
         value = int(rank.value)
         return (var_decl.sizes[value - 1], "INTEGER")
+
+    def _replace_lbound_ubound(func: str, transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
+
+        if len(var.args) not in [1, 2]:
+            raise RuntimeError()
+
+        # get variable declaration for the first argument
+        var_decl = transformer.get_var_declaration(var.parent, var.args[0].name)
+
+        # one arg to LBOUND/UBOUND? not needed currently 
+        if len(var.args) == 1:
+            raise NotImplementedError()
+
+        # two arguments? We return number of elements in a given rank
+        rank = var.args[1]
+        # we do not support symbolic argument to DIM - it must be a literal
+        if not isinstance(rank, ast_internal_classes.Int_Literal_Node):
+            raise NotImplementedError()
+
+        rank_value = int(rank.value)
+
+        is_assumed = not isinstance(var_decl.offsets[rank_value-1], int) and var_decl.offsets[rank_value-1].name.startswith("__f2dace_")
+        print(is_assumed, var_decl.alloc)
+
+        if func == 'lbound':
+
+            if is_assumed and not var_decl.alloc:
+                value = ast_internal_classes.Int_Literal_Node(value="1")
+            elif isinstance(var_decl.offsets[rank_value-1], int):
+                value = ast_internal_classes.Int_Literal_Node(value=str(var_decl.offsets[rank_value-1]))
+            else:
+                value = var_decl.offsets[rank_value-1]
+
+        else:
+            if isinstance(var_decl.sizes[rank_value-1], ast_internal_classes.FNode):
+                size = var_decl.sizes[rank_value-1] 
+            else:
+                size= ast_internal_classes.Int_Literal_Node(value=var_decl.sizes[rank_value-1])
+
+            if is_assumed and not var_decl.alloc:
+                value = size
+            else:
+                if isinstance(var_decl.offsets[rank_value-1], ast_internal_classes.FNode):
+                    offset = var_decl.offsets[rank_value-1] 
+                elif isinstance(var_decl.offsets[rank_value-1], int):
+                    offset = ast_internal_classes.Int_Literal_Node(value=str(var_decl.offsets[rank_value-1]))
+                else:
+                    offset = ast_internal_classes.Int_Literal_Node(value=var_decl.offsets[rank_value-1])
+
+                value = ast_internal_classes.BinOp_Node(
+                    op="+",
+                    lval=size,
+                    rval=ast_internal_classes.BinOp_Node(
+                        op="-",
+                        lval=offset,
+                        rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                        line_number=line
+                    ),
+                    line_number=line
+                )
+
+        return (value, "INTEGER")
+
+    def replace_lbound(transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
+        return DirectReplacement._replace_lbound_ubound("lbound", transformer, var, line)
+
+    def replace_ubound(transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
+        return DirectReplacement._replace_lbound_ubound("ubound", transformer, var, line)
 
     def replace_bit_size(transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
 
@@ -263,8 +292,8 @@ class DirectReplacement(IntrinsicTransformation):
         "EPSILON": Replacement(replacement_epsilon),
         "BIT_SIZE": Transformation(replace_bit_size),
         "SIZE": Transformation(replace_size),
-        "LBOUND": Transformation(replace_lbound_ubound),
-        "UBOUND": Transformation(replace_lbound_ubound),
+        "LBOUND": Transformation(replace_lbound),
+        "UBOUND": Transformation(replace_ubound),
         "PRESENT": Transformation(replace_present)
     }
 
