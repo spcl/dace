@@ -3029,10 +3029,7 @@ def alias_specs(ast: Program):
         scope_spec = find_scope_spec(stmt)
         use_spec = scope_spec + (mod_name,)
 
-        if mod_spec not in ident_map:
-            # TODO: `netcdf` and a few more modules are somehow not present. Create stubs for them?
-            assert mod_name == 'netcdf', f"Cannot find module: {mod_name}"
-            continue
+        assert mod_spec in ident_map
         # The module's name cannot be used as an identifier in this scope anymore, so just point to the module.
         alias_map[use_spec] = ident_map[mod_spec]
 
@@ -3456,9 +3453,6 @@ def correct_for_function_calls(ast: Program):
             else:
                 pr_name, _ = pr.children
                 if isinstance(pr_name, Name):
-                    if pr_name.string.startswith('nf90_'):
-                        # TODO: Create an empty stub for netcdf to allow producing compilable AST.
-                        continue
                     pr_spec = find_real_ident_spec(pr_name.string, scope_spec, alias_map)
                     if isinstance(alias_map[pr_spec], (Function_Stmt, Interface_Stmt)):
                         replace_node(pr, Function_Reference(pr.tofortran()))
@@ -3475,9 +3469,6 @@ def correct_for_function_calls(ast: Program):
 
         # TODO: Add ref.
         sc_type, _ = sc.children
-        if sc_type.string.startswith('nf90_'):
-            # TODO: Create an empty stub for netcdf to allow producing compilable AST.
-            continue
         sc_type_spec = find_real_ident_spec(sc_type.string, scope_spec, alias_map)
         if isinstance(alias_map[sc_type_spec], (Function_Stmt, Interface_Stmt)):
             # Now we know that this identifier actually refers to a function.
@@ -4178,7 +4169,7 @@ def assign_globally_unique_names(ast: Program, keepers: Set[SPEC]) -> Program:
     # Make new unique names for the identifiers.
     uident_map: Dict[SPEC, str] = {}
     for k in ident_map.keys():
-        if k in keepers or k[0] == 'netcdf':
+        if k in keepers:
             continue
         uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
         uident_map[k] = uname
