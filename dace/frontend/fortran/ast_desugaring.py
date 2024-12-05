@@ -632,6 +632,8 @@ def remove_access_statements(ast: Program):
         assert kind.upper() in {'PUBLIC', 'PRIVATE'}
         spec = acc.parent
         remove_self(acc)
+        if not spec.children:
+            remove_self(spec)
 
     return ast
 
