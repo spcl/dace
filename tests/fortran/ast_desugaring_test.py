@@ -4,9 +4,9 @@ from fparser.common.readfortran import FortranStringReader
 from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 
-from dace.frontend.fortran.fortran_parser import deconstruct_procedure_calls, recursive_ast_improver, \
-    deconstruct_associations, correct_for_function_calls, \
-    deconstruct_enums, deconstruct_interface_calls, assign_globally_unique_names
+from dace.frontend.fortran.fortran_parser import recursive_ast_improver
+from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, deconstruct_enums, \
+    deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, assign_globally_unique_names
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
