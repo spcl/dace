@@ -1,6 +1,7 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
+import math
 import os
 import re
 import warnings
@@ -23,8 +24,8 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Intrinsic_Function_Reference, Section_Subscript_List, Subscript_Triplet, Structure_Constructor, Enum_Def, \
     Enumerator_List, Enumerator, Expr, Type_Bound_Procedure_Part, Interface_Stmt, Intrinsic_Name, Access_Stmt, \
     Interface_Block, End_Function_Stmt, End_Subroutine_Stmt, Level_2_Unary_Expr, Level_3_Expr, Level_2_Expr, \
-    Parenthesis, And_Operand, Array_Constructor, Length_Selector
-from fparser.two.Fortran2008 import Type_Declaration_Stmt, Procedure_Stmt, Attr_Spec
+    Parenthesis, And_Operand, Array_Constructor, Length_Selector, Kind_Selector, Initialization
+from fparser.two.Fortran2008 import Type_Declaration_Stmt, Procedure_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
 from fparser.two.utils import Base, walk
@@ -3121,6 +3122,53 @@ def _find_type_decl_node(node: Entity_Decl):
     return anc
 
 
+def _eval_selected_int_kind(p: int) -> int:
+    # Copied logic from `replace_int_kind()` elsewhere in the project.
+    return int(math.ceil((math.log2(10 ** p) + 1) / 8))
+
+
+def _eval_selected_real_kind(p: int, r: int) -> int:
+    # Copied logic from `replace_real_kind()` elsewhere in the project.
+    if p >= 9 or r > 126:
+        return 8
+    elif p >= 3 or r > 14:
+        return 4
+    return 2
+
+
+def _const_eval_int(expr: Base, alias_map: SPEC_TABLE) -> Optional[int]:
+    if isinstance(expr, Name):
+        scope_spec = find_scope_spec(expr)
+        spec = find_real_ident_spec(expr.string, scope_spec, alias_map)
+        decl = alias_map[spec]
+        assert isinstance(decl, Entity_Decl)
+        init = ast_utils.atmost_one(ast_utils.children_of_type(decl, Initialization))
+        # TODO: Add ref.
+        _, iexpr = init.children
+        return _const_eval_int(iexpr, alias_map)
+    elif isinstance(expr, Intrinsic_Function_Reference):
+        intr, args = expr.children
+        if args:
+            args = args.children
+        if intr.string == 'SELECTED_REAL_KIND':
+            assert len(args) == 2
+            p, r = args
+            p, r = _const_eval_int(p, alias_map), _const_eval_int(r, alias_map)
+            assert p is not None and r is not None
+            return _eval_selected_real_kind(p, r)
+        elif intr.string == 'SELECTED_INT_KIND':
+            assert len(args) == 1
+            p, = args
+            p = _const_eval_int(p, alias_map)
+            assert p is not None
+            return _eval_selected_int_kind(p)
+    elif isinstance(expr, Int_Literal_Constant):
+        return int(expr.tofortran())
+
+    # TODO: Add other evaluations.
+    return None
+
+
 def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TYPE_SPEC]:
     anc = _find_type_decl_node(node)
     if not anc:
@@ -3136,6 +3184,14 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
         # TODO: How should we handle character lengths? Just treat it as an extra dimension?
         if isinstance(kind, Length_Selector):
             extra_dim = (':',)
+        elif isinstance(kind, Kind_Selector):
+            _, kind, _ = kind.children
+            kind = _const_eval_int(kind, alias_map)
+            if kind:
+                # TODO: We should always be able to evlauate a kind. I.e., this should be an assert.
+                # TODO: Perhaps not attach it as a string?
+                # If not a default kind, attach it to the type.
+                typ_name = f"{typ_name}{kind}"
         spec = (typ_name,)
     elif isinstance(typ, Declaration_Type_Spec):
         _, typ_name = typ.children
@@ -3555,15 +3611,31 @@ def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -
                     t.keyword = kw.string
                 return t
             elif isinstance(x, Intrinsic_Function_Reference):
-                fname, _ = x.children
+                fname, args = x.children
+                if args:
+                    args = args.children
                 if fname.string in {'TRIM'}:
                     return TYPE_SPEC('CHARACTER', 'DIMENSION(:)')
                 elif fname.string in {'SIZE'}:
                     return TYPE_SPEC('INTEGER')
                 elif fname.string in {'REAL'}:
-                    return TYPE_SPEC('REAL')
+                    assert 1 <= len(args) <= 2
+                    kind = None
+                    if len(args) == 2:
+                        kind = _const_eval_int(args[-1], alias_map)
+                    if kind:
+                        return TYPE_SPEC(f"REAL{kind}")
+                    else:
+                        return TYPE_SPEC('REAL')
                 elif fname.string in {'INT'}:
-                    return TYPE_SPEC('INTEGER')
+                    assert 1 <= len(args) <= 2
+                    kind = None
+                    if len(args) == 2:
+                        kind = _const_eval_int(args[-1], alias_map)
+                    if kind:
+                        return TYPE_SPEC(f"INTEGER{kind}")
+                    else:
+                        return TYPE_SPEC('INTEGER')
                 # TODO: Figure out the actual type.
                 return MATCH_ALL
             elif isinstance(x, (Level_2_Unary_Expr, And_Operand)):
@@ -3777,7 +3849,36 @@ def _does_part_matches(g: TYPE_SPEC, c: TYPE_SPEC) -> bool:
     if len(g.shape) != len(c.shape):
         # Both's ranks must match
         return False
-    return g.spec == c.spec
+
+    def _real_num_type(t: str) -> Tuple[str, int]:
+        if t == 'DOUBLE PRECISION':
+            return 'REAL', 8
+        elif t == 'REAL':
+            return 'REAL', 4
+        elif t.startswith('REAL'):
+            w = int(t.removeprefix('REAL'))
+            return 'REAL', w
+        elif t == 'INTEGER':
+            return 'INTEGER', 4
+        elif t.startswith('INTEGER'):
+            w = int(t.removeprefix('INTEGER'))
+            return 'INTEGER', w
+        return t, 1
+
+    def _subsumes(b: SPEC, s: SPEC) -> bool:
+        """If `b` subsumes `s`."""
+        if b == s:
+            return True
+        if len(b) != 1 or len(s) != 1:
+            # TODO: We don't know how to evaluate this?
+            return False
+        b, s = b[0], s[0]
+        b, bw = _real_num_type(b)
+        s, sw = _real_num_type(s)
+        return b == s and bw >= sw
+
+    return _subsumes(c.spec, g.spec)
+
 
 def _does_type_signature_match(got_sig: Tuple[TYPE_SPEC, ...], cand_sig: Tuple[TYPE_SPEC, ...]):
     # Assumptions (Fortran rules):
