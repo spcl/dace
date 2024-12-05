@@ -24,7 +24,7 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Intrinsic_Function_Reference, Section_Subscript_List, Subscript_Triplet, Structure_Constructor, Enum_Def, \
     Enumerator_List, Enumerator, Expr, Type_Bound_Procedure_Part, Interface_Stmt, Intrinsic_Name, Access_Stmt, \
     Interface_Block, End_Function_Stmt, End_Subroutine_Stmt, Level_2_Unary_Expr, Level_3_Expr, Level_2_Expr, \
-    Parenthesis, And_Operand, Array_Constructor, Length_Selector, Kind_Selector, Initialization
+    Parenthesis, And_Operand, Array_Constructor, Length_Selector, Kind_Selector, Initialization, Section_Subscript
 from fparser.two.Fortran2008 import Type_Declaration_Stmt, Procedure_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -3029,10 +3029,7 @@ def alias_specs(ast: Program):
         scope_spec = find_scope_spec(stmt)
         use_spec = scope_spec + (mod_name,)
 
-        if mod_spec not in ident_map:
-            # TODO: `netcdf` and a few more modules are somehow not present. Create stubs for them?
-            assert mod_name == 'netcdf', f"Cannot find module: {mod_name}"
-            continue
+        assert mod_spec in ident_map
         # The module's name cannot be used as an identifier in this scope anymore, so just point to the module.
         alias_map[use_spec] = ident_map[mod_spec]
 
@@ -3456,9 +3453,6 @@ def correct_for_function_calls(ast: Program):
             else:
                 pr_name, _ = pr.children
                 if isinstance(pr_name, Name):
-                    if pr_name.string.startswith('nf90_'):
-                        # TODO: Create an empty stub for netcdf to allow producing compilable AST.
-                        continue
                     pr_spec = find_real_ident_spec(pr_name.string, scope_spec, alias_map)
                     if isinstance(alias_map[pr_spec], (Function_Stmt, Interface_Stmt)):
                         replace_node(pr, Function_Reference(pr.tofortran()))
@@ -3475,9 +3469,6 @@ def correct_for_function_calls(ast: Program):
 
         # TODO: Add ref.
         sc_type, _ = sc.children
-        if sc_type.string.startswith('nf90_'):
-            # TODO: Create an empty stub for netcdf to allow producing compilable AST.
-            continue
         sc_type_spec = find_real_ident_spec(sc_type.string, scope_spec, alias_map)
         if isinstance(alias_map[sc_type_spec], (Function_Stmt, Interface_Stmt)):
             # Now we know that this identifier actually refers to a function.
@@ -3506,6 +3497,21 @@ def correct_for_function_calls(ast: Program):
         else:
             fref.items = (Intrinsic_Name(name), args)
             _reparent_children(fref)
+
+    return ast
+
+
+def remove_access_statements(ast: Program):
+    """Look for public/private access statements and just remove them."""
+    # TODO: This can get us into ambiguity and unintended shadowing.
+
+    # We also remove any access statement that makes these interfaces public/private.
+    for acc in walk(ast, Access_Stmt):
+        # TODO: Add ref.
+        kind, alist = acc.children
+        assert kind.upper() in {'PUBLIC', 'PRIVATE'}
+        spec = acc.parent
+        remove_self(acc)
 
     return ast
 
@@ -3602,7 +3608,11 @@ def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -
                     return orig_type
                 # TODO: This is a hack to deduce a array type instead of scalar.
                 # We may have subscripted away all the dimensions.
-                orig_type.shape = tuple(s.tofortran() for s in subsc.children if ':' in s.tofortran())
+                subsc = subsc.children
+                # TODO: Can we avoid padding the missing dimensions? This happens when the type itself is array-ish too.
+                subsc = tuple([Section_Subscript(':')] * (len(orig_type.shape) - len(subsc))) + subsc
+                assert len(subsc) == len(orig_type.shape)
+                orig_type.shape = tuple(s.tofortran() for s in subsc if ':' in s.tofortran())
                 return orig_type
             elif isinstance(x, Actual_Arg_Spec):
                 kw, val = x.children
@@ -4178,7 +4188,7 @@ def assign_globally_unique_names(ast: Program, keepers: Set[SPEC]) -> Program:
     # Make new unique names for the identifiers.
     uident_map: Dict[SPEC, str] = {}
     for k in ident_map.keys():
-        if k in keepers or k[0] == 'netcdf':
+        if k in keepers:
             continue
         uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
         uident_map[k] = uname
@@ -4661,6 +4671,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = recursive_ast_improver(ast, source_list, include_list, parser)
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
+    ast = remove_access_statements(ast)
     ast = correct_for_function_calls(ast)
     ast = deconstruct_procedure_calls(ast)
     ast = deconstruct_interface_calls(ast)
