@@ -62,8 +62,8 @@ import networkx as nx
 import sympy as sp
 from dace import dtypes
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion,
-                             ReturnBlock, SDFGState)
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion,
+                             LoopRegion, ReturnBlock, SDFGState)
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.properties import CodeBlock
@@ -536,10 +536,14 @@ class GeneralLoopScope(RegionBlock):
         expr = ''
 
         if self.loop.update_statement and self.loop.init_statement and self.loop.loop_variable:
-            init = unparse_interstate_edge(self.loop.init_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
+            lsyms = {}
+            lsyms.update(symbols)
+            if codegen.dispatcher.defined_vars.has(self.loop.loop_variable) and not self.loop.loop_variable in lsyms:
+                lsyms[self.loop.loop_variable] = codegen.dispatcher.defined_vars.get(self.loop.loop_variable)[1]
+            init = unparse_interstate_edge(self.loop.init_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
             init = init.strip(';')
 
-            update = unparse_interstate_edge(self.loop.update_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
+            update = unparse_interstate_edge(self.loop.update_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
             update = update.strip(';')
 
             if self.loop.inverted:
@@ -1095,13 +1099,14 @@ def _structured_control_flow_traversal_with_regions(cfg: ControlFlowRegion,
     return visited - {stop}
 
 
-def structured_control_flow_tree_with_regions(sdfg: SDFG, dispatch_state: Callable[[SDFGState], str]) -> ControlFlow:
+def structured_control_flow_tree_with_regions(cfg: ControlFlowRegion,
+                                              dispatch_state: Callable[[SDFGState], str]) -> ControlFlow:
     """
-    Returns a structured control-flow tree (i.e., with constructs such as branches and loops) from an SDFG based on the
+    Returns a structured control-flow tree (i.e., with constructs such as branches and loops) from a CFG based on the
     control flow regions it contains.
     
-    :param sdfg: The SDFG to iterate over.
-    :return: Control-flow block representing the entire SDFG.
+    :param cfg: The graph to iterate over.
+    :return: Control-flow block representing the entire graph.
     """
     root_block = GeneralBlock(dispatch_state=dispatch_state,
                               parent=None,
@@ -1113,7 +1118,7 @@ def structured_control_flow_tree_with_regions(sdfg: SDFG, dispatch_state: Callab
                               gotos_to_break=[],
                               assignments_to_ignore=[],
                               sequential=True)
-    _structured_control_flow_traversal_with_regions(sdfg, dispatch_state, root_block)
+    _structured_control_flow_traversal_with_regions(cfg, dispatch_state, root_block)
     _reset_block_parents(root_block)
     return root_block
 

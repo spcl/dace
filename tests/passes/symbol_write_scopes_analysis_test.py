@@ -1,7 +1,5 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the symbol write scopes analysis pass. """
-
-import pytest
 
 import dace
 from dace.transformation.pass_pipeline import Pipeline

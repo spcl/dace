@@ -5,7 +5,7 @@ import networkx as nx
 from dace import properties
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.sdfg.utils import dfs_conditional
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.loop_lifting import LoopLifting
@@ -31,6 +31,9 @@ class ControlFlowRaising(ppl.Pass):
         n_cond_regions_pre = len([x for x in sdfg.all_control_flow_blocks() if isinstance(x, ConditionalBlock)])
 
         for region in cfgs:
+            if isinstance(region, ConditionalBlock):
+                continue
+
             sinks = region.sink_nodes()
             dummy_exit = region.add_state('__DACE_DUMMY')
             for s in sinks:
@@ -58,6 +61,8 @@ class ControlFlowRaising(ppl.Pass):
                         conditional.add_branch(oe.data.condition, branch)
                         if oe.dst is merge_block:
                             # Empty branch.
+                            branch.add_state('noop')
+                            graph.remove_edge(oe)
                             continue
 
                         branch_nodes = set(dfs_conditional(graph, [oe.dst], lambda _, x: x is not merge_block))
@@ -83,7 +88,10 @@ class ControlFlowRaising(ppl.Pass):
             region.remove_node(dummy_exit)
 
         n_cond_regions_post = len([x for x in sdfg.all_control_flow_blocks() if isinstance(x, ConditionalBlock)])
-        return n_cond_regions_post - n_cond_regions_pre
+        lifted = n_cond_regions_post - n_cond_regions_pre
+        if lifted:
+            sdfg.root_sdfg.using_experimental_blocks = True
+        return lifted
 
     def apply_pass(self, top_sdfg: SDFG, _) -> Optional[Tuple[int, int]]:
         lifted_loops = 0
@@ -93,4 +101,5 @@ class ControlFlowRaising(ppl.Pass):
             lifted_branches += self._lift_conditionals(sdfg)
         if lifted_branches == 0 and lifted_loops == 0:
             return None
+        top_sdfg.reset_cfg_list()
         return lifted_loops, lifted_branches

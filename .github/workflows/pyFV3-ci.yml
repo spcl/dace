@@ -1,12 +1,17 @@
 name: NASA/NOAA pyFV3 repository build test
 
+# Temporarily disabled for main, and instead applied to a specific DaCe v1 maintenance branch (v1/maintenance). Once
+# the FV3 bridge has been adapted to DaCe v1, this will need to be reverted back to apply to main.
 on:
   push:
-    branches: [ main, ci-fix ]
+    #branches: [ main, ci-fix ]
+    branches: [ v1/maintenance, ci-fix ]
   pull_request:
-    branches: [ main, ci-fix ]
+    #branches: [ main, ci-fix ]
+    branches: [ v1/maintenance, ci-fix ]
   merge_group:
-    branches: [ main, ci-fix ]
+    #branches: [ main, ci-fix ]
+    branches: [ v1/maintenance, ci-fix ]
 
 defaults:
     run:
