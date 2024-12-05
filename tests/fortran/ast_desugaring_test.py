@@ -901,6 +901,148 @@ END SUBROUTINE fun
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
+def test_interface_replacer_with_optional_args():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  public :: fun
+  interface fun
+    module procedure real_fun, integer_fun
+  end interface fun
+contains
+  real function real_fun(x)
+    implicit none
+    real, intent(in), optional :: x
+    if (.not.(present(x))) then
+      real_fun = 1.0
+    else
+      real_fun = x
+    end if
+  end function real_fun
+  integer function integer_fun(x)
+    implicit none
+    integer, intent(in) :: x
+    integer_fun = x * 2
+  end function integer_fun
+end module lib
+""").add_file("""
+subroutine main
+  use lib, only: fun
+  implicit none
+  real d(4)
+  d(2) = fun()
+  d(3) = fun(x=4)
+  d(4) = fun(x=5.0)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = correct_for_function_calls(ast)
+    ast = deconstruct_interface_calls(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  REAL FUNCTION real_fun(x)
+    IMPLICIT NONE
+    REAL, INTENT(IN), OPTIONAL :: x
+    IF (.NOT. (PRESENT(x))) THEN
+      real_fun = 1.0
+    ELSE
+      real_fun = x
+    END IF
+  END FUNCTION real_fun
+  INTEGER FUNCTION integer_fun(x)
+    IMPLICIT NONE
+    INTEGER, INTENT(IN) :: x
+    integer_fun = x * 2
+  END FUNCTION integer_fun
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: real_fun_deconiface_2 => real_fun
+  USE lib, ONLY: integer_fun_deconiface_1 => integer_fun
+  USE lib, ONLY: real_fun_deconiface_0 => real_fun
+  IMPLICIT NONE
+  REAL :: d(4)
+  d(2) = real_fun_deconiface_0()
+  d(3) = integer_fun_deconiface_1(x = 4)
+  d(4) = real_fun_deconiface_2(x = 5.0)
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_interface_replacer_with_keyworded_args():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  public :: fun
+  interface fun
+    module procedure real_fun
+  end interface fun
+contains
+  real function real_fun(w, x, y, z)
+    implicit none
+    real, intent(in) :: w
+    real, intent(in), optional :: x
+    real, intent(in) :: y
+    real, intent(in), optional :: z
+    if (.not.(present(x))) then
+      real_fun = 1.0
+    else
+      real_fun = w + y
+    end if
+  end function real_fun
+end module lib
+""").add_file("""
+subroutine main
+  use lib, only: fun
+  implicit none
+  real d(3)
+  d(1) = fun(1.0, 2.0, 3.0, 4.0)  ! all present, no keyword
+  d(2) = fun(y=1.1, w=3.1)  ! only required ones, keyworded
+  d(3) = fun(1.2, 2.2, y=3.2)  ! partially keyworded, last optional omitted.
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = correct_for_function_calls(ast)
+    ast = deconstruct_interface_calls(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  REAL FUNCTION real_fun(w, x, y, z)
+    IMPLICIT NONE
+    REAL, INTENT(IN) :: w
+    REAL, INTENT(IN), OPTIONAL :: x
+    REAL, INTENT(IN) :: y
+    REAL, INTENT(IN), OPTIONAL :: z
+    IF (.NOT. (PRESENT(x))) THEN
+      real_fun = 1.0
+    ELSE
+      real_fun = w + y
+    END IF
+  END FUNCTION real_fun
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: real_fun_deconiface_2 => real_fun
+  USE lib, ONLY: real_fun_deconiface_1 => real_fun
+  USE lib, ONLY: real_fun_deconiface_0 => real_fun
+  IMPLICIT NONE
+  REAL :: d(3)
+  d(1) = real_fun_deconiface_0(1.0, 2.0, 3.0, 4.0)
+  d(2) = real_fun_deconiface_1(y = 1.1, w = 3.1)
+  d(3) = real_fun_deconiface_2(1.2, 2.2, y = 3.2)
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
 def test_generic_replacer_deducing_array_types():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
