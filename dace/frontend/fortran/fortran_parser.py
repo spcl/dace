@@ -23,7 +23,7 @@ from fparser.two.Fortran2003 import Program, Entity_Decl, Declaration_Type_Spec,
     Intrinsic_Function_Reference, Section_Subscript_List, Subscript_Triplet, Structure_Constructor, Enum_Def, \
     Enumerator_List, Enumerator, Expr, Type_Bound_Procedure_Part, Interface_Stmt, Intrinsic_Name, Access_Stmt, \
     Interface_Block, End_Function_Stmt, End_Subroutine_Stmt, Level_2_Unary_Expr, Level_3_Expr, Level_2_Expr, \
-    Parenthesis, And_Operand, Array_Constructor
+    Parenthesis, And_Operand, Array_Constructor, Length_Selector
 from fparser.two.Fortran2008 import Type_Declaration_Stmt, Procedure_Stmt, Attr_Spec
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -2536,9 +2536,10 @@ class TYPE_SPEC:
             spec = (spec,)
         self.spec: SPEC = spec
         self.shape: Tuple[str, ...] = self._parse_shape(attrs)
-        self.optional = 'OPTIONAL' in attrs
-        self.inp = 'INTENT(IN)' in attrs or 'INTENT(INOUT)' in attrs
-        self.out = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
+        self.optional: bool = 'OPTIONAL' in attrs
+        self.inp: bool = 'INTENT(IN)' in attrs or 'INTENT(INOUT)' in attrs
+        self.out: bool = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
+        self.keyword: Optional[str] = None
 
     @staticmethod
     def _parse_shape(attrs: str) -> Tuple[str, ...]:
@@ -3129,8 +3130,12 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
     assert isinstance(typ, (Intrinsic_Type_Spec, Declaration_Type_Spec))
     attrs = attrs.tofortran() if attrs else ''
 
+    extra_dim = None
     if isinstance(typ, Intrinsic_Type_Spec):
-        typ_name, _ = typ.children
+        typ_name, kind = typ.children
+        # TODO: How should we handle character lengths? Just treat it as an extra dimension?
+        if isinstance(kind, Length_Selector):
+            extra_dim = (':',)
         spec = (typ_name,)
     elif isinstance(typ, Declaration_Type_Spec):
         _, typ_name = typ.children
@@ -3142,25 +3147,11 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
     _, shape, _, _ = node.children
     if shape is not None:
         attrs.append(f"DIMENSION({shape.tofortran()})")
-    elif spec == ('CHARACTER',):
-        attrs.append('DIMENSION(:)')
     attrs = ', '.join(attrs)
     tspec = TYPE_SPEC(spec, attrs)
+    if extra_dim:
+        tspec.shape += extra_dim
     return tspec
-
-
-def _is_optional_argument(node: Entity_Decl) -> Optional[bool]:
-    anc = _find_type_decl_node(node)
-    if not anc:
-        return None
-    # TODO: Add ref.
-    _, attrs, _ = anc.children
-    if not attrs or not attrs.children:
-        return False
-    for attr in walk(attrs, Attr_Spec):
-        if attr.string.upper() == 'OPTIONAL':
-            return True
-    return False
 
 
 def _dataref_root(dref: Union[Name, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE):
@@ -3559,7 +3550,10 @@ def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -
                 return orig_type
             elif isinstance(x, Actual_Arg_Spec):
                 kw, val = x.children
-                return _deduct_type(val)
+                t = _deduct_type(val)
+                if isinstance(kw, Name):
+                    t.keyword = kw.string
+                return t
             elif isinstance(x, Intrinsic_Function_Reference):
                 fname, _ = x.children
                 if fname.string in {'TRIM'}:
@@ -3616,12 +3610,9 @@ def _compute_candidate_argument_signature(args, cand_spec: SPEC, alias_map: SPEC
     for ca in args:
         ca_decl = alias_map[cand_spec + (ca.string,)]
         ca_type = find_type_of_entity(ca_decl, alias_map)
+        ca_type.keyword = ca.string
         assert ca_type, f"got: {ca} / {type(ca)}"
-        if ca_type.optional:
-            # TODO: Currently allowing anything to match for optional args. This should be properly matched.
-            cand_args_sig.append(MATCH_ALL)
-        else:
-            cand_args_sig.append(ca_type)
+        cand_args_sig.append(ca_type)
     return tuple(cand_args_sig)
 
 
@@ -3779,24 +3770,42 @@ def deconstruct_interface_calls(ast: Program) -> Program:
 MATCH_ALL = TYPE_SPEC(('*',), '')  # TODO: Hacky; `_does_type_signature_match()` will match anything with this.
 
 
-def _does_type_signature_match(got_sig: Tuple[TYPE_SPEC, ...], cand_sig: Tuple[TYPE_SPEC, ...]):
-    # TODO: Currently just padding with wildcard. This should also be properly matched.
-    if len(got_sig) < len(cand_sig):
-        got_sig = got_sig + tuple([MATCH_ALL] * (len(cand_sig) - len(got_sig)))
-    if len(got_sig) != len(cand_sig):
-        return False
-    for got, cand in zip(got_sig, cand_sig):
-        # TODO: How to avoid hacks?
-        if MATCH_ALL in {got, cand}:
-            # Consider them matched.
-            continue
-
+def _does_part_matches(g: TYPE_SPEC, c: TYPE_SPEC) -> bool:
+    if c == MATCH_ALL:
+        # Consider them matched.
+        return True
+    if len(g.shape) != len(c.shape):
         # Both's ranks must match
-        if len(got.shape) != len(cand.shape):
-            return False
+        return False
+    return g.spec == c.spec
 
-        # We are done with attribute matching by this point.
-        if got.spec != cand.spec:
+def _does_type_signature_match(got_sig: Tuple[TYPE_SPEC, ...], cand_sig: Tuple[TYPE_SPEC, ...]):
+    # Assumptions (Fortran rules):
+    # 1. `got_sig` will not have any positional argument after keyworded arguments start.
+    # 2. `got_sig` may have keyworded arguments that are actually required arguments, and in different orders.
+    # 3. `got_sig` will not have any repeated keywords.
+
+    got_pos, got_kwd = tuple(x for x in got_sig if not x.keyword), {x.keyword: x for x in got_sig if x.keyword}
+    if len(got_sig) > len(cand_sig):
+        # Cannot have more arguments than needed.
+        return False
+
+    cand_pos, cand_kwd = cand_sig[:len(got_pos)], {x.keyword: x for x in cand_sig[len(got_pos):]}
+    # Positional arguments are must all match in order.
+    for c, g in zip(cand_pos, got_pos):
+        if not _does_part_matches(g, c):
+            return False
+    # Now, we just need to check if `cand_kwd` matches `got_kwd`.
+
+    # All the provided keywords must show up and match in the candidate list.
+    for k, g in got_kwd.items():
+        if k not in cand_kwd or not _does_part_matches(g, cand_kwd[k]):
+            return False
+    # All the required candidates must have been provided as keywords.
+    for k, c in cand_kwd.items():
+        if c.optional:
+            continue
+        if k not in got_kwd or not _does_part_matches(got_kwd[k], c):
             return False
     return True
 
@@ -4073,8 +4082,8 @@ def assign_globally_unique_names(ast: Program, keepers: Set[SPEC]) -> Program:
         uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
         uident_map[k] = uname
 
-    # PHASE 1: Update the callsites for functions.
-    # PHASE 1.a: Remove all the places where that function is imported.
+    # PHASE 1: Update the callsites for functions (and interchangeably, subroutines).
+    # PHASE 1.a: Remove all the places where any function is imported.
     for use in walk(ast, Use_Stmt):
         mod_name = ast_utils.singular(ast_utils.children_of_type(use, Name)).string
         mod_spec = (mod_name,)
@@ -4100,7 +4109,7 @@ def assign_globally_unique_names(ast: Program, keepers: Set[SPEC]) -> Program:
             par = use.parent
             par.content = [c for c in par.children if c != use]
             _reparent_children(par)
-    # PHASE 1.b: Replaces all the callsites.
+    # PHASE 1.b: Replaces all the function callsites.
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
         scope_spec = find_scope_spec(fref)
 
