@@ -3,7 +3,7 @@ import subprocess
 from dataclasses import dataclass, field
 from os import path
 from tempfile import TemporaryDirectory
-from typing import Dict, Optional, Self, Tuple, Type, Union, List, LiteralString, Sequence, Collection
+from typing import Dict, Optional, Tuple, Type, Union, List, Sequence, Collection
 
 from fparser.two.Fortran2003 import Name
 
@@ -36,7 +36,7 @@ class SourceCodeBuilder:
     """
     sources: Dict[str, str] = field(default_factory=dict)
 
-    def add_file(self, content: str, name: Optional[str] = None) -> Self:
+    def add_file(self, content: str, name: Optional[str] = None):
         """Add source file contents in the order you'd pass them to `gfortran`."""
         if not name:
             name = SourceCodeBuilder._identify_name(content)
@@ -45,7 +45,7 @@ class SourceCodeBuilder:
         self.sources[key] = content
         return self
 
-    def check_with_gfortran(self) -> Self:
+    def check_with_gfortran(self):
         """Assert that it all compiles with `gfortran -Wall -c`."""
         with TemporaryDirectory() as td:
             # Create temporary Fortran source-file structure.
@@ -115,9 +115,9 @@ class FortranASTMatcher:
 
     def __init__(self,
                  is_type: Union[None, Type, str] = None,
-                 has_children: Union[None, List[Self]] = None,
-                 has_attr: Optional[Dict[str, Union[Self, List[Self]]]] = None,
-                 has_value: Optional[LiteralString] = None):
+                 has_children: Union[None, list] = None,
+                 has_attr: Optional[Dict[str, Union["FortranASTMatcher", List["FortranASTMatcher"]]]] = None,
+                 has_value: Optional[str] = None):
         # TODO: Include Set[Self] to `has_children` type?
         assert not ((set() if has_attr is None else has_attr.keys())
                     & {'children'})
@@ -157,7 +157,7 @@ class FortranASTMatcher:
                     subm.check(attr)
 
     @classmethod
-    def IGNORE(cls, times: Optional[int] = None) -> Union[Self, List[Self]]:
+    def IGNORE(cls, times: Optional[int] = None) -> Union["FortranASTMatcher", List["FortranASTMatcher"]]:
         """
         A placeholder matcher to not check further down the tree.
         If `times` is `None` (which is the default), returns a single matcher.
@@ -170,7 +170,7 @@ class FortranASTMatcher:
             return [cls()] * times
 
     @classmethod
-    def NAMED(cls, name: LiteralString):
+    def NAMED(cls, name: str):
         return cls(Name, has_attr={'string': cls(has_value=name)})
 
 
@@ -214,9 +214,9 @@ class InternalASTMatcher:
 
     def __init__(self,
                  is_type: Optional[Type] = None,
-                 has_attr: Optional[Dict[str, Union[Self, List[Self], Dict[str, Self]]]] = None,
+                 has_attr: Optional[Dict[str, Union["InternalASTMatcher", List["InternalASTMatcher"], Dict[str, "InternalASTMatcher"]]]] = None,
                  has_empty_attr: Optional[Collection[str]] = None,
-                 has_value: Optional[LiteralString] = None):
+                 has_value: Optional[str] = None):
         # TODO: Include Set[Self] to `has_children` type?
         assert not ((set() if has_attr is None else has_attr.keys())
                     & (set() if has_empty_attr is None else has_empty_attr))
@@ -253,7 +253,7 @@ class InternalASTMatcher:
                     subm.check(attr)
 
     @classmethod
-    def IGNORE(cls, times: Optional[int] = None) -> Union[Self, List[Self]]:
+    def IGNORE(cls, times: Optional[int] = None) -> Union["InternalASTMatcher", List["InternalASTMatcher"]]:
         """
         A placeholder matcher to not check further down the tree.
         If `times` is `None` (which is the default), returns a single matcher.
@@ -266,7 +266,7 @@ class InternalASTMatcher:
             return [cls()] * times
 
     @classmethod
-    def NAMED(cls, name: LiteralString):
+    def NAMED(cls, name: str):
         return cls(Name_Node, {'name': cls(has_value=name)})
 
 
