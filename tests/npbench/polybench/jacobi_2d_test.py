@@ -47,6 +47,7 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
         # Parse the SDFG and apply autopot
         sdfg = kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
+
         sdfg(A=A, B=B, TSTEPS=TSTEPS, N=N)
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
