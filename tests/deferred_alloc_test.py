@@ -39,7 +39,7 @@ def _get_trivial_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient: bo
 
 
 def _get_assign_map_sdfg(storage_type: dace.dtypes.StorageType, transient: bool, schedule_type: dace.dtypes.ScheduleType.Default):
-    sdfg = dace.sdfg.SDFG(name="deferred_alloc_test_4")
+    sdfg = dace.sdfg.SDFG(name="deferred_alloc_test_2")
 
     sdfg.add_array(name="A", shape=(15, "__dace_defer"), dtype=dace.float32, storage=storage_type,
                     lifetime=dace.dtypes.AllocationLifetime.SDFG, transient=transient)

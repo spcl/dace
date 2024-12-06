@@ -1626,8 +1626,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             for i in range(size_arr.shape[0]):
                 if f"__{arr_name}_dim{i}_size" not in dyn_args:
                     dyn_args.append(f"__{arr_name}_dim{i}_size")
-                    dyn_args_typed.append(f"const {dace.uint64} __{arr_name}_dim{i}_size")
-                    needed_size_scalars_declaration.append(f"const {dace.uint64} __{arr_name}_dim{i}_size = {size_desc_name}[{i}];")
+                    dyn_args_typed.append(f"const {arg.dtype.ctype} __{arr_name}_dim{i}_size")
+                    needed_size_scalars_declaration.append(f"const {arg.dtype.ctype} __{arr_name}_dim{i}_size = {size_desc_name}[{i}];")
 
         self._localcode.write(
             '__global__ void %s %s(%s) {\n' %
