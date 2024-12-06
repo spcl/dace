@@ -779,13 +779,13 @@ class SDFG(ControlFlowRegion):
             arr = self.arrays[arr_name] if arr_name in self.arrays else None
             if arr is not None:
                 size_desc_name_before = arr.size_desc_name
-                if arr.transient and isinstance(arr, dt.Array):
+                if arr.transient and type(arr) == dt.Array:
                     arr.size_desc_name = size_desc_name if "__return" not in new_name else None
                 else:
                     arr.size_desc_name = None
                 if arr.size_desc_name is None and size_desc_name_before is not None:
                     size_ararys_to_rm.add(size_desc_name_before)
-        for size_arr_name in size_ararys_to_rm:
+        for size_arr_name in size_ararys_to_rm and size_arr_name in self.arrays:
             del self.arrays[size_arr_name]
 
         # Replace inside data descriptors
@@ -2109,7 +2109,7 @@ class SDFG(ControlFlowRegion):
         self._add_symbols(datadesc)
         if (
             datadesc.transient is True and
-            isinstance(datadesc, dt.Array) and
+            type(datadesc) == dt.Array and
             "__return" not in name and
             datadesc.lifetime is not dtypes.AllocationLifetime.External and
             datadesc.lifetime is not dtypes.AllocationLifetime.Persistent

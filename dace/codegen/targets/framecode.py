@@ -971,6 +971,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             array = [v for v in sdfg.arrays.values() if v.size_desc_name is not None and v.size_desc_name == size_desc_name]
             assert (len(array) == 1)
             array = array[0]
+            print("AA", array, array.shape, sdfg.arrays)
             size_str = ",".join(["0" if cpp.sym2cpp(dim).startswith("__dace_defer") else cpp.sym2cpp(dim) for dim in array.shape])
             alloc_str = f'{ctypedef} {size_desc_name}[{size_nodedesc.shape[0]}]{{{size_str}}};\n'
             callsite_stream.write(alloc_str)
