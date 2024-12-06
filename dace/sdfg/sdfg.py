@@ -689,7 +689,8 @@ class SDFG(ControlFlowRegion):
         return self._arrays
 
     def size_arrays(self):
-        return [v.size_desc_name for v in self._arrays.values() if v.size_desc_name is not None and v.size_desc_name in self._arrays]
+        size_arrays = [k for k, v in self.arrays.items() if hasattr(v, "is_size_array") and v.is_size_array is True]
+        return size_arrays
 
     @property
     def arrays(self):
@@ -752,9 +753,7 @@ class SDFG(ControlFlowRegion):
         }
 
         # Replace in arrays and symbols (if a variable name)
-        size_arrays =  {v.size_desc_name for v in self.arrays.values()
-                        if v.size_desc_name is not None and v.size_desc_name in self.arrays
-                        and v.transient}
+        size_arrays =  self.sdfg.size_arrays()
         non_size_arrays = {k for k in self.arrays if k not in size_arrays}
         size_desc_map = dict()
 
@@ -775,13 +774,19 @@ class SDFG(ControlFlowRegion):
         # Update size descriptors
         # Return_size break things (it is collected to the tuple of return) delete it from the arrays
         # If this is called because array's properties had been changed then set the size desc to none
+        size_ararys_to_rm = set()
         for arr_name, size_desc_name in size_desc_map.items():
             arr = self.arrays[arr_name] if arr_name in self.arrays else None
             if arr is not None:
+                size_desc_name_before = arr.size_desc_name
                 if arr.transient and isinstance(arr, dt.Array):
                     arr.size_desc_name = size_desc_name if "__return" not in new_name else None
                 else:
                     arr.size_desc_name = None
+                if arr.size_desc_name is None and size_desc_name_before is not None:
+                    size_ararys_to_rm.add(size_desc_name_before)
+        for size_arr_name in size_ararys_to_rm:
+            del self.arrays[size_arr_name]
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -2112,9 +2117,13 @@ class SDFG(ControlFlowRegion):
         if (
             datadesc.transient is True and
             isinstance(datadesc, dt.Array) and
-            "__return" not in name
+            "__return" not in name and
+            datadesc.lifetime is not dtypes.AllocationLifetime.External and
+            datadesc.lifetime is not dtypes.AllocationLifetime.Persistent
             ):
             size_desc_name = f"{name}_size"
+            # Regardless it is allocated as a register array
+            # It is to prevent optimizations to putting them to FPGA/GPU storage
             size_desc = dt.Array(dtype=dace.uint64,
                                 shape=(len(datadesc.shape),),
                                 storage=dtypes.StorageType.CPU_Heap,
@@ -2123,12 +2132,13 @@ class SDFG(ControlFlowRegion):
                                 transient=True,
                                 strides=(1,),
                                 offset=(0,),
-                                lifetime=datadesc.lifetime,
+                                lifetime=dtypes.AllocationLifetime.SDFG,
                                 alignment=datadesc.alignment,
                                 debuginfo=datadesc.debuginfo,
                                 total_size=len(datadesc.shape),
                                 may_alias=False,
                                 size_desc_name=None)
+            size_desc.is_size_array = True
             self._arrays[size_desc_name] = size_desc
             # In case find_new_name and a new name is returned
             # we need to update the size descriptor name of the array

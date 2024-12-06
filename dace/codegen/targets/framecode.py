@@ -909,11 +909,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
 
         # Allocate size arrays (always check as name and array changes affect size descriptor names)
-        size_arrays = {(v.size_desc_name, sdfg.arrays[v.size_desc_name])
-                       for v in sdfg.arrays.values()
-                       if v.size_desc_name is not None and v.size_desc_name in sdfg.arrays}
+        size_arrays = sdfg.size_arrays()
         callsite_stream.write(f'//Declare size arrays\n', sdfg)
-        for size_desc_name, size_nodedesc in size_arrays:
+        for size_desc_name in size_arrays:
+            size_nodedesc = sdfg.arrays[size_desc_name]
             assert ("__return" not in size_desc_name)
             ctypedef = size_nodedesc.dtype.ctype
             from dace.codegen.targets import cpp

@@ -1387,6 +1387,8 @@ class Array(Data):
                         'it is inferred by other properties and the OptionalArrayInference pass.')
     pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
 
+    is_size_array = Property(dtype=bool, default=False, desc='Special array that is used to track the size of an another array')
+
     def __init__(self,
                  dtype,
                  shape,
@@ -1412,6 +1414,9 @@ class Array(Data):
         self.may_alias = may_alias
         self.alignment = alignment
         self.size_desc_name = size_desc_name
+        self.is_size_array = False
+        if size_desc_name is not None:
+            assert self.is_size_array is False
 
         if start_offset is not None:
             self.start_offset = start_offset
