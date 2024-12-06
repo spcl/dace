@@ -25,14 +25,14 @@ def test_simple_tasklet_access():
     state.add_edge(t1, 'o1', write, None, dace.Memlet('Z'))
 
     assert len(state.nodes()) == 3
-    assert len(sdfg.arrays) == 2
+    assert len(sdfg.arrays) - len(sdfg.size_arrays()) == 2
 
     res = LiftStructViews().apply_pass(sdfg, {})
 
     assert len(res['A']) == 1
     assert len(res['Z']) == 1
     assert len(state.nodes()) == 5
-    assert len(sdfg.arrays) == 4
+    assert len(sdfg.arrays) - len(sdfg.size_arrays()) == 4
     assert sdfg.is_valid()
 
 
@@ -55,14 +55,14 @@ def test_sliced_tasklet_access():
     state.add_edge(t1, 'o1', write, None, dace.Memlet('Z'))
 
     assert len(state.nodes()) == 3
-    assert len(sdfg.arrays) == 2
+    assert len(sdfg.arrays) - len(sdfg.size_arrays()) == 2
 
     res = LiftStructViews().apply_pass(sdfg, {})
 
     assert len(res['A']) == 1
     assert len(res['Z']) == 1
     assert len(state.nodes()) == 5
-    assert len(sdfg.arrays) == 4
+    assert len(sdfg.arrays) - len(sdfg.size_arrays()) == 4
     assert sdfg.is_valid()
 
 
@@ -91,12 +91,12 @@ def test_sliced_multi_tasklet_access():
     state.add_edge(t1, 'o1', write, None, dace.Memlet('Z'))
 
     assert len(state.nodes()) == 3
-    assert len(sdfg.arrays) == 2
+    assert len(sdfg.arrays) - len(sdfg.size_arrays()) == 2
 
     FixedPointPipeline([LiftStructViews()]).apply_pass(sdfg, {})
 
     assert len(state.nodes()) == 9
-    assert len(sdfg.arrays) == 8
+    assert len(sdfg.arrays) - len(sdfg.size_arrays()) == 8
     assert sdfg.is_valid()
 
 
@@ -121,12 +121,12 @@ def test_tasklet_access_to_cont_array():
     state.add_edge(t1, 'o1', write, None, dace.Memlet('Z[0]'))
 
     assert len(state.nodes()) == 3
-    assert len(sdfg.arrays) == 2
+    assert len(sdfg.arrays) - len(sdfg.size_arrays()) == 2
 
     FixedPointPipeline([LiftStructViews()]).apply_pass(sdfg, {})
 
     assert len(state.nodes()) == 7
-    assert len(sdfg.arrays) == 6
+    assert len(sdfg.arrays) - len(sdfg.size_arrays()) == 6
     assert sdfg.is_valid()
 
 
@@ -157,12 +157,12 @@ def test_sliced_multi_tasklet_access_to_cont_array():
     state.add_edge(t1, 'o1', write, None, dace.Memlet('Z[0]'))
 
     assert len(state.nodes()) == 3
-    assert len(sdfg.arrays) == 2
+    assert len(sdfg.arrays) - len(sdfg.size_arrays()) == 2
 
     FixedPointPipeline([LiftStructViews()]).apply_pass(sdfg, {})
 
     assert len(state.nodes()) == 11
-    assert len(sdfg.arrays) == 10
+    assert len(sdfg.arrays) - len(sdfg.size_arrays()) == 10
     assert sdfg.is_valid()
 
 

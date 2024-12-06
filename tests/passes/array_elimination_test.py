@@ -30,7 +30,7 @@ def test_redundant_simple():
     sdutil.inline_sdfgs(sdfg)
     sdutil.fuse_states(sdfg)
     Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
-    assert len(sdfg.arrays) == 4
+    assert len(sdfg.arrays) - len(sdfg.size_arrays()) == 4
 
 
 def test_merge_simple():

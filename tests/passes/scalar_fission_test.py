@@ -102,7 +102,7 @@ def test_scalar_fission():
     # Both interstate edges should be different now.
     assert tmp1_edge.assignments != tmp2_edge.assignments
     # There should now be 5 arrays in the SDFG, i.e. 2 more than before since two isolated scopes of tmp exist.
-    assert len(sdfg.arrays.keys()) == 5
+    assert len(sdfg.arrays.keys()) - len(sdfg.size_arrays()) == 5
     # Assert all accesses per scope are identical.
     assert all([n.data == list(tmp1_edge.assignments.values())[0] for n in [tmp1_write, loop1_read_tmp]])
     assert all([n.data == list(tmp2_edge.assignments.values())[0] for n in [tmp2_write, loop2_read_tmp]])
@@ -187,7 +187,7 @@ def test_branch_subscopes_nofission():
 
     Pipeline([ScalarFission()]).apply_pass(sdfg, {})
 
-    assert set(sdfg.arrays.keys()) == {'A', 'B', 'C'}
+    assert set(sdfg.arrays.keys()).difference(sdfg.size_arrays()) == {'A', 'B', 'C'}
 
 def test_branch_subscopes_fission():
     sdfg = dace.SDFG('branch_subscope_fission')
@@ -279,7 +279,7 @@ def test_branch_subscopes_fission():
 
     Pipeline([ScalarFission()]).apply_pass(sdfg, {})
 
-    assert set(sdfg.arrays.keys()) == {'A', 'B', 'C', 'B_0', 'B_1'}
+    assert set(sdfg.arrays.keys()).difference(set(sdfg.size_arrays())) == {'A', 'B', 'C', 'B_0', 'B_1'}
 
 if __name__ == '__main__':
     test_scalar_fission()
