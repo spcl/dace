@@ -74,7 +74,7 @@ def test_reshaping_with_redundant_arrays():
         )
         sdfg.validate()
         assert state.number_of_nodes() == 4
-        assert len(sdfg.arrays) == 4
+        assert len(sdfg.arrays) - len(sdfg.size_arrays()) == 4
         return sdfg, a_an, b_an, output_an
 
     def apply_trafo(
@@ -89,7 +89,7 @@ def test_reshaping_with_redundant_arrays():
         candidate = {type(trafo).in_array: in_array, type(trafo).out_array: out_array}
         state = sdfg.start_block
         state_id = sdfg.node_id(state)
-        initial_arrays = len(sdfg.arrays)
+        initial_arrays = len(sdfg.arrays) - len(sdfg.size_arrays())
         initial_access_nodes = state.number_of_nodes()
 
         trafo.setup_match(sdfg, sdfg.cfg_id, state_id, candidate, 0, override=True)
@@ -101,7 +101,7 @@ def test_reshaping_with_redundant_arrays():
                 assert False, f"A view was created instead removing '{in_array.data}'."
             sdfg.validate()
             assert state.number_of_nodes() == initial_access_nodes - 1
-            assert len(sdfg.arrays) == initial_arrays - 1
+            assert len(sdfg.arrays) - len(sdfg.size_arrays()) == initial_arrays - 1
             assert in_array.data not in sdfg.arrays
             return sdfg
 

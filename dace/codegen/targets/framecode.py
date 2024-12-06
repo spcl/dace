@@ -105,7 +105,7 @@ class DaCeCodeGenerator(object):
     def preprocess(self, sdfg: SDFG) -> None:
         """
         Called before code generation. Used for making modifications on the SDFG prior to code generation.
-        
+
         :note: Post-conditions assume that the SDFG will NOT be changed after this point.
         :param sdfg: The SDFG to modify in-place.
         """
@@ -834,6 +834,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             self._dispatcher.dispatch_allocate(tsdfg, cfg if state is None else state.parent_graph, state, state_id,
                                                node, desc, function_stream, callsite_stream, declare, allocate)
 
+
     def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
                                                                                           SDFG],
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream):
@@ -906,6 +907,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Allocate inter-state variables
         global_symbols = copy.deepcopy(sdfg.symbols)
         global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
+
         interstate_symbols = {}
         for cfr in sdfg.all_control_flow_regions():
             for e in cfr.dfs_edges(cfr.start_block):
@@ -956,6 +958,33 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
 
         callsite_stream.write('\n', sdfg)
+
+        # After the symbols
+        # Allocate size arrays (always check as name and array changes affect size descriptor names)
+        # Only allocate arrays that really require deferred allocation (symbol has __dace_defer)
+        # Reshaping these arrays are not allowed
+        size_arrays = sdfg.size_arrays()
+        callsite_stream.write(f'//Declare size arrays\n', sdfg)
+        for size_desc_name in size_arrays:
+            size_nodedesc = sdfg.arrays[size_desc_name]
+            assert ("__return" not in size_desc_name)
+            ctypedef = size_nodedesc.dtype.ctype
+            from dace.codegen.targets import cpp
+            array = [v for v in sdfg.arrays.values() if v.size_desc_name is not None and v.size_desc_name == size_desc_name]
+            if len(array) != 1:
+                print(array)
+            assert len(array) <= 1
+            if len(array) == 1:
+                array = array[0]
+                if any(["__dace_defer" in str(dim) for dim in array.shape]):
+                    dimensions = ["0" if cpp.sym2cpp(dim).startswith("__dace_defer") else cpp.sym2cpp(dim) for dim in array.shape]
+                    if any(["__dace_defer" in cpp.sym2cpp(dim) for dim in array.shape]):
+                        size_str = ",".join(dimensions)
+                        assert len(size_nodedesc.shape) == 1
+                        print("BB", size_nodedesc.shape, dimensions, array.shape)
+                        alloc_str = f'{ctypedef} {size_desc_name}[{size_nodedesc.shape[0]}]{{{size_str}}};\n'
+                        callsite_stream.write(alloc_str)
+                        self.dispatcher.defined_vars.add(size_desc_name, disp.DefinedType.Pointer, ctypedef)
 
         #######################################################################
         # Generate actual program body
