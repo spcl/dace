@@ -101,8 +101,8 @@ def _nested_arrays_from_json(obj, context=None):
     return NestedDict({k: dace.serialize.from_json(v, context) for k, v in obj.items()})
 
 
-def _replace_dict_keys(d, old, new, filter=None):
-    if old in d and (filter is None or old in filter):
+def _replace_dict_keys(d, old, new, filter_set=None):
+    if old in d and (filter_set is None or old in filter_set):
         if new in d:
             warnings.warn('"%s" already exists in SDFG' % new)
         d[new] = d[old]
@@ -763,26 +763,24 @@ class SDFG(ControlFlowRegion):
             for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self.arrays, name, new_name, non_size_arrays)
+                    # Size desc names are updated later
                     if "__return" not in new_name: # To catch __return_0, __return_1, gpu__return
                         size_desc_map[new_name] = new_name + "_size"
-                        _replace_dict_keys(self.arrays, name + "_size", new_name + "_size", size_arrays)
                     _replace_dict_keys(self.symbols, name, new_name)
                     _replace_dict_keys(self.constants_prop, name, new_name)
                     _replace_dict_keys(self.callback_mapping, name, new_name)
                     _replace_dict_values(self.callback_mapping, name, new_name)
 
         # Update size descriptors
-        # Return_size break things (it is collected to the tuple of return) delete it from the arrays
+        # Having return_size break things (it is collected to the tuple of return) delete it from the arrays
         # If this is called because array's properties had been changed then set the size desc to none
         size_ararys_to_rm = set()
         for arr_name, size_desc_name in size_desc_map.items():
             arr = self.arrays[arr_name] if arr_name in self.arrays else None
             if arr is not None:
                 size_desc_name_before = arr.size_desc_name
-                if arr.transient and type(arr) == dt.Array:
+                if arr.transient and type(arr) == dt.Array and size_desc_name_before is not None:
                     arr.size_desc_name = size_desc_name if "__return" not in new_name else None
-                else:
-                    arr.size_desc_name = None
                 if arr.size_desc_name is None and size_desc_name_before is not None:
                     size_ararys_to_rm.add(size_desc_name_before)
         for size_arr_name in size_ararys_to_rm and size_arr_name in self.arrays:
@@ -2112,7 +2110,8 @@ class SDFG(ControlFlowRegion):
             type(datadesc) == dt.Array and
             "__return" not in name and
             datadesc.lifetime is not dtypes.AllocationLifetime.External and
-            datadesc.lifetime is not dtypes.AllocationLifetime.Persistent
+            datadesc.lifetime is not dtypes.AllocationLifetime.Persistent and
+            any(["__dace_defer" in str(dim) for dim in datadesc.shape])
             ):
             size_desc_name = f"{name}_size"
             # Regardless of the scope and storage it is allocated as a register array
@@ -2120,7 +2119,7 @@ class SDFG(ControlFlowRegion):
             # from failing. To lifetime and storage are set explicitly to
             # to prevent optimizations to putting them to FPGA/GPU storage
             size_desc = dt.Array(dtype=dace.uint64,
-                                shape=(len(datadesc.shape),),
+                                shape=(len(list(datadesc.shape)),),
                                 storage=dtypes.StorageType.CPU_Heap,
                                 location=None,
                                 allow_conflicts=False,
@@ -2130,7 +2129,6 @@ class SDFG(ControlFlowRegion):
                                 lifetime=dtypes.AllocationLifetime.State,
                                 alignment=datadesc.alignment,
                                 debuginfo=datadesc.debuginfo,
-                                total_size=len(datadesc.shape),
                                 may_alias=False,
                                 size_desc_name=None)
             size_desc.is_size_array = True

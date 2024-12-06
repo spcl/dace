@@ -1582,7 +1582,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if arr.transient and arr.storage == dtypes.StorageType.GPU_Global and arr.size_desc_name is not None:
                     size_arr_name = data_desc.size_desc_name
                     if size_arr_name is not None:
-                        size_arr = sdfg.arrays[data_desc.size_desc_name]
+                        size_arr = sdfg.arrays[size_arr_name]
                         host_size_args[size_arr_name] = size_arr
 
         kernel_args_typed = [('const ' if k in const_params else '') + v.as_arg(name=k)
