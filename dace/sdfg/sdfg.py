@@ -1776,13 +1776,6 @@ class SDFG(ControlFlowRegion):
                   alignment=0,
                   may_alias=False) -> Tuple[str, dt.Array]:
         """ Adds an array to the SDFG data descriptor store. """
-
-
-        # Every Array also supports reallocation, we need to create a secondary size array
-        # The array size is constant and not changeable, yet the values in the array can change
-        if name.endswith("_size"):
-            raise InvalidSDFGError("Array names are not allowed to end with _size")
-
         # convert strings to int if possible, unless it is not the reserved symbol for deferred allocation
         newshape = []
         for i, s in enumerate(shape):
@@ -2122,8 +2115,10 @@ class SDFG(ControlFlowRegion):
             datadesc.lifetime is not dtypes.AllocationLifetime.Persistent
             ):
             size_desc_name = f"{name}_size"
-            # Regardless it is allocated as a register array
-            # It is to prevent optimizations to putting them to FPGA/GPU storage
+            # Regardless of the scope and storage it is allocated as a register array
+            # And at the start of the SDFG (or nested SDFG), not setting SDFG prevents to_gpu assertions
+            # from failing. To lifetime and storage are set explicitly to
+            # to prevent optimizations to putting them to FPGA/GPU storage
             size_desc = dt.Array(dtype=dace.uint64,
                                 shape=(len(datadesc.shape),),
                                 storage=dtypes.StorageType.CPU_Heap,
@@ -2132,7 +2127,7 @@ class SDFG(ControlFlowRegion):
                                 transient=True,
                                 strides=(1,),
                                 offset=(0,),
-                                lifetime=dtypes.AllocationLifetime.SDFG,
+                                lifetime=dtypes.AllocationLifetime.State,
                                 alignment=datadesc.alignment,
                                 debuginfo=datadesc.debuginfo,
                                 total_size=len(datadesc.shape),
