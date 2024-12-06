@@ -259,9 +259,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     'rather than using multiple references to the same one', sdfg, None)
             references.add(id(desc))
 
-            if name.endswith("_size") and not hasattr(desc, "is_size_array"):
+            if name.endswith("_size") and hasattr(desc, "is_size_array") and desc.is_size_array is False:
                 raise InvalidSDFGEdgeError(
-                    f'Only size arrays allowed to end with _size'
+                    f'Only size arrays allowed to end with _size', sdfg, None
                 )
 
             # Because of how the code generator works Scalars can not be return values.
