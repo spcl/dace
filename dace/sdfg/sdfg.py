@@ -753,7 +753,8 @@ class SDFG(ControlFlowRegion):
 
         # Replace in arrays and symbols (if a variable name)
         size_arrays =  {v.size_desc_name for v in self.arrays.values()
-                        if v.size_desc_name is not None and v.size_desc_name in self.arrays}
+                        if v.size_desc_name is not None and v.size_desc_name in self.arrays
+                        and v.transient}
         non_size_arrays = {k for k in self.arrays if k not in size_arrays}
         size_desc_map = dict()
 
@@ -763,7 +764,7 @@ class SDFG(ControlFlowRegion):
             for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self.arrays, name, new_name, non_size_arrays)
-                    if new_name != "__return":
+                    if "__return" not in new_name: # To catch __return_0, __return_1, gpu__return
                         size_desc_map[new_name] = new_name + "_size"
                         _replace_dict_keys(self.arrays, name + "_size", new_name + "_size", size_arrays)
                     _replace_dict_keys(self.symbols, name, new_name)
@@ -772,12 +773,15 @@ class SDFG(ControlFlowRegion):
                     _replace_dict_values(self.callback_mapping, name, new_name)
 
         # Update size descriptors
-        # Return_size break things delete it from the arrays
-        # Changes symbol names might not related to arrays
+        # Return_size break things (it is collected to the tuple of return) delete it from the arrays
+        # If this is called because array's properties had been changed then set the size desc to none
         for arr_name, size_desc_name in size_desc_map.items():
             arr = self.arrays[arr_name] if arr_name in self.arrays else None
             if arr is not None:
-                arr.size_desc_name = size_desc_name if size_desc_name != "__return_size" else None
+                if arr.transient and isinstance(arr, dt.Array):
+                    arr.size_desc_name = size_desc_name if "__return" not in new_name else None
+                else:
+                    arr.size_desc_name = None
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -1771,6 +1775,8 @@ class SDFG(ControlFlowRegion):
 
         # Every Array also supports reallocation, we need to create a secondary size array
         # The array size is constant and not changeable, yet the values in the array can change
+        if name.endswith("_size"):
+            raise InvalidSDFGError("Array names are not allowed to end with _size")
 
         # convert strings to int if possible, unless it is not the reserved symbol for deferred allocation
         newshape = []
@@ -2103,16 +2109,15 @@ class SDFG(ControlFlowRegion):
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc
         self._add_symbols(datadesc)
-
         if (
             datadesc.transient is True and
             isinstance(datadesc, dt.Array) and
-            name != "__return"
+            "__return" not in name
             ):
             size_desc_name = f"{name}_size"
             size_desc = dt.Array(dtype=dace.uint64,
                                 shape=(len(datadesc.shape),),
-                                storage=dtypes.StorageType.Default,
+                                storage=dtypes.StorageType.CPU_Heap,
                                 location=None,
                                 allow_conflicts=False,
                                 transient=True,
@@ -2468,8 +2473,8 @@ class SDFG(ControlFlowRegion):
 
         # Omit return values from arguments
         expected_args = collections.OrderedDict([(k, v) for k, v in expected_args.items()
-                                                 if not k.startswith('__return')])
-        kwargs = {k: v for k, v in kwargs.items() if not k.startswith('__return')}
+                                                 if '__return' not in k])
+        kwargs = {k: v for k, v in kwargs.items() if '__return' not in k}
 
         num_args_passed = len(args) + len(kwargs)
         num_args_expected = len(expected_args)

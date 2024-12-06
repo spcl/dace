@@ -299,7 +299,9 @@ class CUDACodeGen(TargetCodeGenerator):
 
                 # Add sink as terminator state
                 for arr in unfreed:
-                    self.pool_release[(sdfg, arr)] = (sink, set())
+                    if (sdfg.arrays[arr].storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]
+                        and arr not in sdfg.size_arrays()): # Do put size arrays to pool release
+                        self.pool_release[(sdfg, arr)] = (sink, set())
 
     # Generate final code
     def get_generated_codeobjects(self):
@@ -578,6 +580,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
 
         # Check if array is already declared
         declared = False
+        size_declared = False
         try:
             self._dispatcher.declared_arrays.get(dataname)
             declared = True  # Array was already declared in this or upper scopes
@@ -608,16 +611,8 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if not declared:
-                result_decl.write('%s %s;\n' % (ctypedef, dataname))
-                size_str = ",".join(["0" if cpp.sym2cpp(dim).startswith("__dace_defer") else cpp.sym2cpp(dim) for dim in nodedesc.shape])
-                if nodedesc.transient:
-                    size_desc_name = nodedesc.size_desc_name
-                    if size_desc_name is not None:
-                        size_nodedesc = sdfg.arrays[size_desc_name]
-                        result_decl.write(f'{size_nodedesc.dtype.ctype} {size_desc_name}[{size_nodedesc.shape[0]}]{{{size_str}}};\n')
-                        self._dispatcher.defined_vars.add(size_desc_name, DefinedType.Pointer, size_nodedesc.dtype.ctype)
+                declaration_stream.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
-
 
             if deferred_allocation:
                 result_alloc.write(
@@ -765,7 +760,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if not nodedesc.pool:  # If pooled, will be freed somewhere else
-                callsite_stream.write('DACE_GPU_CHECK(%sFree(%s));\n' % (self.backend, dataname), cfg, state_id, node)
+                callsite_stream.write('DACE_GPU_CHECK(%sFree(%s));//a1\n' % (self.backend, dataname), cfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
             callsite_stream.write('DACE_GPU_CHECK(%sFreeHost(%s));\n' % (self.backend, dataname), cfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
@@ -1286,8 +1281,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 ptrname = cpp.ptr(name, desc, sd, self._frame)
                 if isinstance(desc, dt.Array) and desc.start_offset != 0:
                     ptrname = f'({ptrname} - {cpp.sym2cpp(desc.start_offset)})'
-
-                callsite_stream.write(f'DACE_GPU_CHECK({backend}Free({ptrname}));\n', sd)
+                callsite_stream.write(f'DACE_GPU_CHECK({backend}Free({ptrname}));//a2\n', sd)
                 self._emit_sync(callsite_stream)
                 to_remove.add((sd, name))
             for sd, name in to_remove:
@@ -1584,10 +1578,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             prototype_kernel_args[aname] = arg
 
             if aname in sdfg.arrays:
-                size_arr_name = data_desc.size_desc_name
-                if size_arr_name is not None:
-                    size_arr = sdfg.arrays[data_desc.size_desc_name]
-                    host_size_args[size_arr_name] = size_arr
+                arr = sdfg.arrays[aname]
+                if arr.transient and arr.storage == dtypes.StorageType.GPU_Global and arr.size_desc_name is not None:
+                    size_arr_name = data_desc.size_desc_name
+                    if size_arr_name is not None:
+                        size_arr = sdfg.arrays[data_desc.size_desc_name]
+                        host_size_args[size_arr_name] = size_arr
 
         kernel_args_typed = [('const ' if k in const_params else '') + v.as_arg(name=k)
                              for k, v in prototype_kernel_args.items()]
@@ -1626,18 +1622,16 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Size arrays
         needed_size_scalars_declaration = []
         for size_desc_name, arg in host_size_args.items():
-            if isinstance(arg, dt.Array):
-                size_arr = arg
-                arr_name = size_desc_name.removesuffix("_size")
-                for i in range(size_arr.shape[0]):
-                    if f"__{arr_name}_dim{i}_size" not in dyn_args:
-                        dyn_args.append(f"__{arr_name}_dim{i}_size")
-                        dyn_args_typed.append(f"const {dace.uint64} __{arr_name}_dim{i}_size")
-                        needed_size_scalars_declaration.append(f"const {dace.uint64} __{arr_name}_dim{i}_size = {size_desc_name}[{i}];")
+            arr_name = size_desc_name.removesuffix("_size")
+            for i in range(size_arr.shape[0]):
+                if f"__{arr_name}_dim{i}_size" not in dyn_args:
+                    dyn_args.append(f"__{arr_name}_dim{i}_size")
+                    dyn_args_typed.append(f"const {dace.uint64} __{arr_name}_dim{i}_size")
+                    needed_size_scalars_declaration.append(f"const {dace.uint64} __{arr_name}_dim{i}_size = {size_desc_name}[{i}];")
 
         self._localcode.write(
             '__global__ void %s %s(%s) {\n' %
-            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed + dyn_args_typed)), sdfg, state_id, node)
+            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + dyn_args_typed + extra_kernel_args_typed)), sdfg, state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
@@ -1713,7 +1707,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             self._localcode.write(
                 memlet_definition,
                 cfg, state_id, scope_entry)
-        self._localcode.write("// Array sizes of arrays are passed to the kernel even if not used in maps")
+        self._localcode.write("// Array sizes of arrays used are passed here if needed to the kernel even")
         for decl in needed_size_scalars_declaration:
             self._localcode.write(decl, cfg, state_id, scope_entry)
 

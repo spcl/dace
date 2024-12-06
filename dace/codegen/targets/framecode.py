@@ -834,6 +834,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             self._dispatcher.dispatch_allocate(tsdfg, cfg if state is None else state.parent_graph, state, state_id,
                                                node, desc, function_stream, callsite_stream, declare, allocate)
 
+
     def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
                                                                                           SDFG],
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream):
@@ -906,6 +907,20 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Allocate inter-state variables
         global_symbols = copy.deepcopy(sdfg.symbols)
         global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
+
+        # Allocate size arrays (always check as name and array changes affect size descriptor names)
+        size_arrays = {(v.size_desc_name, sdfg.arrays[v.size_desc_name])
+                       for v in sdfg.arrays.values()
+                       if v.size_desc_name is not None and v.size_desc_name in sdfg.arrays}
+        callsite_stream.write(f'//Declare size arrays\n', sdfg)
+        for size_desc_name, size_nodedesc in size_arrays:
+            assert ("__return" not in size_desc_name)
+            ctypedef = size_nodedesc.dtype.ctype
+            from dace.codegen.targets import cpp
+            size_str = ",".join(["0" if cpp.sym2cpp(dim).startswith("__dace_defer") else cpp.sym2cpp(dim) for dim in size_nodedesc.shape])
+            alloc_str = f'{ctypedef} {size_desc_name}[{len(size_nodedesc.shape)}]{{{size_str}}};\n'
+            callsite_stream.write(alloc_str)
+            self.dispatcher.defined_vars.add(size_desc_name, disp.DefinedType.Pointer, ctypedef)
 
         interstate_symbols = {}
         for cfr in sdfg.all_control_flow_regions():

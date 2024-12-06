@@ -2,7 +2,6 @@ import dace
 from dace.transformation.dataflow.redundant_array import RedundantArray, RedundantSecondArray
 from dace.transformation.interstate.state_fusion import StateFusion
 import numpy
-import cupy
 import pytest
 
 @pytest.fixture(params=[dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.GPU_Global])
@@ -145,6 +144,11 @@ def test_realloc_use(storage_type: dace.dtypes.StorageType, transient: bool, sch
         compiled_sdfg(user_size=user_size, example_array=arr)
         assert ( arr[0] == 3.0 )
     if storage_type == dace.dtypes.StorageType.GPU_Global:
+        try:
+            import cupy
+        except Exception:
+            return
+
         arr = cupy.array([-1.0]).astype(cupy.float32)
         user_size = numpy.array([10, 10]).astype(numpy.uint64)
         compiled_sdfg(user_size=user_size, example_array=arr)
@@ -160,6 +164,11 @@ def test_realloc_use(storage_type: dace.dtypes.StorageType, transient: bool, sch
         compiled_sdfg(user_size=user_size, example_array=arr)
         assert ( arr[0] == 3.0 )
     if storage_type == dace.dtypes.StorageType.GPU_Global:
+        try:
+            import cupy
+        except Exception:
+            return
+
         arr = cupy.array([-1.0]).astype(cupy.float32)
         user_size = numpy.array([10, 10]).astype(numpy.uint64)
         compiled_sdfg(user_size=user_size, example_array=arr)
