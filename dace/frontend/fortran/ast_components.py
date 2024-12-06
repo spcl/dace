@@ -951,7 +951,7 @@ class InternalFortranAst:
         name = get_child(children, ast_internal_classes.Name_Node)
         only_list = get_child(children, ast_internal_classes.Only_List_Node)
         if only_list is None:
-            return ast_internal_classes.Use_Stmt_Node(name=name.name, list=None, list_all=True)
+            return ast_internal_classes.Use_Stmt_Node(name=name.name, list=[], list_all=True)
         return ast_internal_classes.Use_Stmt_Node(name=name.name, list=only_list.names, list_all=False)
 
     def implicit_part(self, node: FASTNode):
@@ -1175,6 +1175,8 @@ class InternalFortranAst:
                 for spec in specification:
                     if spec.string.lower() == "optional":
                         optional = True
+                    if spec.string.lower() == "allocatable":
+                        alloc = True
 
                 dimension_spec = get_children(i, "Dimension_Attr_Spec")
                 if len(dimension_spec) == 0:
@@ -1203,6 +1205,8 @@ class InternalFortranAst:
                 for spec in specification:
                     if spec.string.lower() == "optional":
                         optional = True
+                    if spec.string.lower() == "allocatable":
+                        alloc = True
 
                 dimension_spec = get_children(i, "Dimension_Component_Attr_Spec")
                 if len(dimension_spec) == 0:
