@@ -14,12 +14,17 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Level_2_Unary_Expr, And_Operand, Parenthesis, Level_2_Expr, Level_3_Expr, Array_Constructor, Execution_Part, \
     Specification_Part, Interface_Block, Association, Procedure_Designator, Type_Bound_Procedure_Part, \
     Associate_Construct, Subscript_Triplet, End_Function_Stmt, End_Subroutine_Stmt, Module_Subprogram_Part, \
-    Enumerator_List, Actual_Arg_Spec_List, Section_Subscript_List
+    Enumerator_List, Actual_Arg_Spec_List, Only_List, Section_Subscript_List, Char_Selector, Data_Pointer_Object, \
+    Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base, walk
 
-from dace.frontend.fortran import ast_utils as ast_utils
+from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
+ENTRY_POINT_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram]
+SCOPE_OBJECT_TYPES = Union[
+    Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def, Interface_Block,
+    Subroutine_Body, Function_Body]
 NAMED_STMTS_OF_INTEREST_TYPES = Union[
     Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
     Specific_Binding, Generic_Binding, Interface_Stmt]
@@ -55,26 +60,26 @@ class TYPE_SPEC:
         attrs = []
         if self.shape:
             attrs.append(f"shape={self.shape}")
+        if self.optional:
+            attrs.append("optional")
         if not attrs:
             return f"{self.spec}"
         return f"{self.spec}[{' | '.join(attrs)}]"
-
-
-ENTRY_POINT_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram]
 
 
 def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
     """Find the name of the statement if it has one. For anonymous blocks, return `None`."""
     if isinstance(node, Specific_Binding):
         # Ref: https://github.com/stfc/fparser/blob/8c870f84edbf1a24dfbc886e2f7226d1b158d50b/src/fparser/two/Fortran2003.py#L2504
-        iname, mylist, dcolon, bname, pname = node.children
+        _, _, _, bname, _ = node.children
         name = bname
     elif isinstance(node, Interface_Stmt):
         name, = node.children
     else:
         # TODO: Test out other type specific ways of finding names.
-        name = ast_utils.singular(ast_utils.children_of_type(node, Name))
+        name = singular(children_of_type(node, Name))
     if name:
+        assert isinstance(name, Name)
         name = name.string
     return name
 
@@ -83,21 +88,68 @@ def find_name_of_node(node: Base) -> Optional[str]:
     """Find the name of the general node if it has one. For anonymous blocks, return `None`."""
     if isinstance(node, NAMED_STMTS_OF_INTEREST_TYPES):
         return find_name_of_stmt(node)
-    stmt = ast_utils.atmost_one(ast_utils.children_of_type(node, NAMED_STMTS_OF_INTEREST_TYPES))
-    if stmt:
-        return find_name_of_stmt(stmt)
-    return None
+    stmt = atmost_one(children_of_type(node, NAMED_STMTS_OF_INTEREST_TYPES))
+    if not stmt:
+        return None
+    return find_name_of_stmt(stmt)
 
 
-def find_named_ancester(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
-    NAMED_ANCESTOR_STMT_TYPES = Union[Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt]
+def find_scope_ancestor(node: Base) -> Optional[SCOPE_OBJECT_TYPES]:
     anc = node.parent
-    while anc:
-        stmt = ast_utils.atmost_one(ast_utils.children_of_type(anc, NAMED_ANCESTOR_STMT_TYPES))
-        if stmt:
-            return stmt
+    while anc and not isinstance(anc, SCOPE_OBJECT_TYPES):
         anc = anc.parent
-    return None
+    return anc
+
+
+def find_named_ancestor(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
+    anc = find_scope_ancestor(node)
+    if not anc:
+        return None
+    return atmost_one(children_of_type(anc, NAMED_STMTS_OF_INTEREST_TYPES))
+
+
+def lineage(anc: Base, des: Base) -> Optional[Tuple[Base, ...]]:
+    if anc == des:
+        return (anc,)
+    if not des.parent:
+        return None
+    lin = lineage(anc, des.parent)
+    if not lin:
+        return None
+    return lin + (des,)
+
+
+def search_scope_spec(node: Base) -> Optional[SPEC]:
+    scope = find_scope_ancestor(node)
+    if not scope:
+        return None
+    lin = lineage(scope, node)
+    assert lin
+    par = node.parent
+    # TODO: How many other such cases can there be?
+    if (isinstance(scope, Derived_Type_Def)
+            and any(
+                isinstance(x, (Explicit_Shape_Spec, Component_Initialization, Kind_Selector, Char_Selector))
+                for x in lin)):
+        # We're using `node` to describe a shape, an initialization etc. inside a type def. So, `node`` must have been
+        # defined earlier.
+        return search_scope_spec(scope)
+    elif isinstance(par, Actual_Arg_Spec):
+        kw, _ = par.children
+        if kw == node:
+            # We're describing a keyword, which is not really an identifiable object.
+            return None
+    stmt = singular(children_of_type(scope, NAMED_STMTS_OF_INTEREST_TYPES))
+    if not find_name_of_stmt(stmt):
+        # If this is an anonymous object, the scope has to be outside.
+        return search_scope_spec(scope.parent)
+    return ident_spec(stmt)
+
+
+def find_scope_spec(node: Base) -> SPEC:
+    spec = search_scope_spec(node)
+    assert spec, f"cannot find scope for: ```\n{node.tofortran()}```"
+    return spec
 
 
 def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> SPEC:
@@ -107,7 +159,7 @@ def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> SPEC:
         """
         ident_base = (find_name_of_stmt(_node),)
         # Find the next named ancestor.
-        anc = find_named_ancester(_node.parent)
+        anc = find_named_ancestor(_node.parent)
         if not anc:
             return ident_base
         assert isinstance(anc, NAMED_STMTS_OF_INTEREST_TYPES)
@@ -116,9 +168,54 @@ def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> SPEC:
     spec = _ident_spec(node)
     # The last part of the spec cannot be nothing, because we cannot refer to the anonymous blocks.
     assert spec and spec[-1]
-    # For the rest, the anonymous blocks puts their contend onto their parents.
+    # For the rest, the anonymous blocks puts their content onto their parents.
     spec = tuple(c for c in spec if c)
     return spec
+
+
+def search_local_alias_spec(node: Name) -> Optional[SPEC]:
+    name, par = node.string, node.parent
+    scope_spec = search_scope_spec(node)
+    if scope_spec is None:
+        return None
+    if isinstance(par, (Part_Ref, Data_Ref, Data_Pointer_Object)):
+        # If we are in a data-ref then we need to get to the root.
+        while isinstance(par.parent, Data_Ref):
+            par = par.parent
+        while isinstance(par, Data_Ref):
+            # TODO: Add ref.
+            par, _ = par.children[0], par.children[1:]
+        if isinstance(par, (Part_Ref, Data_Pointer_Object)):
+            # TODO: Add ref.
+            par, _ = par.children[0], par.children[1:]
+        assert isinstance(par, Name)
+        if par != node:
+            # Components do not really have a local alias.
+            return None
+    elif isinstance(par, Kind_Selector):
+        # Reserved name in this context.
+        if name.upper() == 'KIND':
+            return None
+    elif isinstance(par, Char_Selector):
+        # Reserved name in this context.
+        if name.upper() in {'KIND', 'LEN'}:
+            return None
+    elif isinstance(par, Actual_Arg_Spec):
+        # Keywords cannot be aliased.
+        kw, _ = par.children
+        if kw == node:
+            return None
+    return scope_spec + (name,)
+
+
+def search_real_local_alias_spec(node: Name, alias_map: SPEC_TABLE) -> Optional[SPEC]:
+    loc = search_local_alias_spec(node)
+    if not loc:
+        return None
+    while len(loc) > 1 and loc not in alias_map:
+        # The name is not immediately available in the current scope, but may be it is in the parent's scope.
+        loc = loc[:-2] + (loc[-1],)
+    return loc if loc in alias_map else None
 
 
 def identifier_specs(ast: Program) -> SPEC_TABLE:
@@ -131,7 +228,9 @@ def identifier_specs(ast: Program) -> SPEC_TABLE:
         if isinstance(stmt, Interface_Stmt) and not find_name_of_stmt(stmt):
             # There can be anonymous blocks, e.g., interface blocks, which cannot be identified.
             continue
-        ident_map[ident_spec(stmt)] = stmt
+        spec = ident_spec(stmt)
+        assert spec not in ident_map, f"{spec} / {stmt.parent.parent.parent.parent} / {ident_map[spec].parent.parent.parent.parent}"
+        ident_map[spec] = stmt
     return ident_map
 
 
@@ -143,7 +242,7 @@ def alias_specs(ast: Program):
     alias_map: SPEC_TABLE = {k: v for k, v in ident_map.items()}
 
     for stmt in walk(ast, Use_Stmt):
-        mod_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
+        mod_name = singular(children_of_type(stmt, Name)).string
         mod_spec = (mod_name,)
 
         scope_spec = find_scope_spec(stmt)
@@ -153,7 +252,7 @@ def alias_specs(ast: Program):
         # The module's name cannot be used as an identifier in this scope anymore, so just point to the module.
         alias_map[use_spec] = ident_map[mod_spec]
 
-        olist = ast_utils.atmost_one(ast_utils.children_of_type(stmt, 'Only_List'))
+        olist = atmost_one(children_of_type(stmt, Only_List))
         if not olist:
             # If there is no only list, all the top level (public) symbols are considered aliased.
             alias_updates: SPEC_TABLE = {}
@@ -181,41 +280,6 @@ def alias_specs(ast: Program):
     return alias_map
 
 
-def search_scope_spec(node: Base) -> Optional[SPEC]:
-    scope = find_named_ancester(node.parent)
-    if not scope:
-        return None
-    return ident_spec(scope)
-
-
-def find_scope_spec(node: Base) -> SPEC:
-    spec = search_scope_spec(node)
-    assert spec, f"cannot find scope for: ```\n{node.tofortran()}```"
-    return spec
-
-
-def search_local_alias_spec(node: Name) -> Optional[SPEC]:
-    name, par = node.string, node.parent
-    scope_spec = search_scope_spec(node.parent)
-    if not scope_spec:
-        return None
-    local_spec = scope_spec + (name,)
-    if isinstance(par, (Part_Ref, Data_Ref)):
-        # If we are in a data-ref then we need to get to the root.
-        if isinstance(par.parent, Data_Ref):
-            par = par.parent
-        assert not isinstance(par.parent, Data_Ref)
-        # TODO: Add ref.
-        par, _ = par.children[0], par.children[1:]
-        if isinstance(par, Part_Ref):
-            # TODO: Add ref.
-            par, _ = par.children[0], par.children[1:]
-        assert isinstance(par, Name)
-        if par != node:
-            return None
-    return local_spec
-
-
 def search_real_ident_spec(ident: str, in_spec: SPEC, alias_map: SPEC_TABLE) -> Optional[SPEC]:
     k = in_spec + (ident,)
     if k in alias_map:
@@ -233,8 +297,8 @@ def find_real_ident_spec(ident: str, in_spec: SPEC, alias_map: SPEC_TABLE) -> SP
 
 def _find_type_decl_node(node: Entity_Decl):
     anc = node.parent
-    while anc and not ast_utils.atmost_one(
-            ast_utils.children_of_type(anc, (Intrinsic_Type_Spec, Declaration_Type_Spec))):
+    while anc and not atmost_one(
+            children_of_type(anc, (Intrinsic_Type_Spec, Declaration_Type_Spec))):
         anc = anc.parent
     return anc
 
@@ -259,7 +323,7 @@ def _const_eval_int(expr: Base, alias_map: SPEC_TABLE) -> Optional[int]:
         spec = find_real_ident_spec(expr.string, scope_spec, alias_map)
         decl = alias_map[spec]
         assert isinstance(decl, Entity_Decl)
-        init = ast_utils.atmost_one(ast_utils.children_of_type(decl, Initialization))
+        init = atmost_one(children_of_type(decl, Initialization))
         # TODO: Add ref.
         _, iexpr = init.children
         return _const_eval_int(iexpr, alias_map)
@@ -409,14 +473,14 @@ def procedure_specs(ast: Program) -> Dict[SPEC, SPEC]:
         proc_spec, subp_spec = [bname.string], [pname.string if pname else bname.string]
 
         typedef: Derived_Type_Def = pb.parent.parent
-        typedef_stmt: Derived_Type_Stmt = ast_utils.singular(ast_utils.children_of_type(typedef, Derived_Type_Stmt))
-        typedef_name: str = ast_utils.singular(ast_utils.children_of_type(typedef_stmt, Type_Name)).string
+        typedef_stmt: Derived_Type_Stmt = singular(children_of_type(typedef, Derived_Type_Stmt))
+        typedef_name: str = singular(children_of_type(typedef_stmt, Type_Name)).string
         proc_spec.insert(0, typedef_name)
 
         # TODO: Generalize.
         # We assume that the type is defined inside a module (i.e., not another subprogram).
         mod: Module = typedef.parent.parent
-        mod_stmt: Module_Stmt = ast_utils.singular(ast_utils.children_of_type(mod, (Module_Stmt, Program_Stmt)))
+        mod_stmt: Module_Stmt = singular(children_of_type(mod, (Module_Stmt, Program_Stmt)))
         # TODO: Add ref.
         _, mod_name = mod_stmt.children
         proc_spec.insert(0, mod_name.string)
@@ -452,18 +516,17 @@ def generic_specs(ast: Program) -> Dict[SPEC, Tuple[SPEC, ...]]:
     return genc_map
 
 
-def interface_specs(ast: Program) -> Dict[SPEC, Tuple[SPEC, ...]]:
+def interface_specs(ast: Program, alias_map: SPEC_TABLE) -> Dict[SPEC, Tuple[SPEC, ...]]:
     iface_map: Dict[SPEC, Tuple[SPEC, ...]] = {}
 
     # First, we deal with named interface blocks.
     for ifs in walk(ast, Interface_Stmt):
-        assert isinstance(ifs, Interface_Stmt)
-        ib = ifs.parent
-        scope_spec = find_scope_spec(ib)
         name = find_name_of_stmt(ifs)
         if not name:
             # Only named interfaces can be called.
             continue
+        ib = ifs.parent
+        scope_spec = find_scope_spec(ib)
         ifspec = scope_spec + (name,)
 
         # Get the spec of all the callable things in this block that may end up as a resolution for this interface.
@@ -475,26 +538,33 @@ def interface_specs(ast: Program) -> Dict[SPEC, Tuple[SPEC, ...]]:
                 for nm in walk(fn, Name):
                     fns.append(nm.string)
 
-        fn_specs = tuple(scope_spec + (f,) for f in fns)
+        fn_specs = tuple(find_real_ident_spec(f, scope_spec, alias_map) for f in fns)
+        assert ifspec not in fn_specs
         iface_map[ifspec] = fn_specs
 
-    # Then, we try to put anonymous interface blocks' content onto their parents' scopes, but only if that identifier
-    # is not already taken.
+    # Then, we try to resolve anonymous interface blocks' content onto their parents' scopes.
     for ifs in walk(ast, Interface_Stmt):
-        assert isinstance(ifs, Interface_Stmt)
-        ib = ifs.parent
-        scope_spec = find_scope_spec(ib)
         name = find_name_of_stmt(ifs)
         if name:
             # Only anonymous interface blocks.
             continue
+        ib = ifs.parent
+        scope_spec = find_scope_spec(ib)
+        assert not walk(ib, Procedure_Stmt)
 
         # Get the spec of all the callable things in this block that may end up as a resolution for this interface.
         for fn in walk(ib, (Function_Stmt, Subroutine_Stmt)):
-            fn_spec = ident_spec(fn)
-            if fn_spec in iface_map:
-                continue
-            iface_map[fn_spec] = (fn_spec,)
+            fn_name = find_name_of_stmt(fn)
+            ifspec = ident_spec(fn)
+            cscope = scope_spec
+            fn_spec = find_real_ident_spec(fn_name, cscope, alias_map)
+            # If we are resolving the interface back to itself, we need to search a level above.
+            while ifspec == fn_spec:
+                assert cscope
+                cscope = cscope[:-1]
+                fn_spec = find_real_ident_spec(fn_name, cscope, alias_map)
+            assert ifspec != fn_spec
+            iface_map[ifspec] = (fn_spec,)
 
     return iface_map
 
@@ -573,8 +643,8 @@ def correct_for_function_calls(ast: Program):
             else:
                 pr_name, _ = pr.children
                 if isinstance(pr_name, Name):
-                    pr_spec = find_real_ident_spec(pr_name.string, scope_spec, alias_map)
-                    if isinstance(alias_map[pr_spec], (Function_Stmt, Interface_Stmt)):
+                    pr_spec = search_real_local_alias_spec(pr_name, alias_map)
+                    if pr_spec in alias_map and isinstance(alias_map[pr_spec], (Function_Stmt, Interface_Stmt)):
                         replace_node(pr, Function_Reference(pr.tofortran()))
                         changed = True
                 elif isinstance(pr_name, Data_Ref):
@@ -648,7 +718,7 @@ def sort_modules(ast: Program) -> Program:
         if not p:
             return TOPLEVEL
         else:
-            p = ast_utils.singular(ast_utils.children_of_type(p, (Module_Stmt, Program_Stmt)))
+            p = singular(children_of_type(p, (Module_Stmt, Program_Stmt)))
             return find_name_of_stmt(p)
 
     g = nx.DiGraph()  # An edge u->v means u should come before v, i.e., v depends on u.
@@ -656,7 +726,7 @@ def sort_modules(ast: Program) -> Program:
         g.add_node(_get_module(c))
 
     for u in walk(ast, Use_Stmt):
-        u_name = ast_utils.singular(ast_utils.children_of_type(u, Name)).string
+        u_name = singular(children_of_type(u, Name)).string
         v_name = _get_module(u)
         g.add_edge(u_name, v_name)
 
@@ -824,7 +894,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
     SUFFIX, COUNTER = 'deconiface', 0
 
     alias_map = alias_specs(ast)
-    iface_map = interface_specs(ast)
+    iface_map = interface_specs(ast, alias_map)
 
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
         scope_spec = find_scope_spec(fref)
@@ -842,7 +912,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         while not isinstance(execution_part, Execution_Part):
             execution_part = execution_part.parent
         subprog = execution_part.parent
-        specification_part = ast_utils.atmost_one(ast_utils.children_of_type(subprog, Specification_Part))
+        specification_part = atmost_one(children_of_type(subprog, Specification_Part))
 
         ifc_spec = ident_spec(alias_map[fref_spec])
         args_sig: Tuple[TYPE_SPEC, ...] = _compute_argument_signature(args, scope_spec, alias_map)
@@ -907,9 +977,9 @@ def deconstruct_interface_calls(ast: Program) -> Program:
 
     # At this point, we must have replaced all the interface calls with concrete calls.
     for use in walk(ast, Use_Stmt):
-        mod_name = ast_utils.singular(ast_utils.children_of_type(use, Name)).string
+        mod_name = singular(children_of_type(use, Name)).string
         mod_spec = (mod_name,)
-        olist = ast_utils.atmost_one(ast_utils.children_of_type(use, 'Only_List'))
+        olist = atmost_one(children_of_type(use, Only_List))
         if not olist:
             # There is nothing directly referring to the interface.
             continue
@@ -1065,19 +1135,19 @@ def deconstruct_procedure_calls(ast: Program) -> Program:
             cmod = cmod.parent
         if cmod:
             stmt, _, _, _ = _get_module_or_program_parts(cmod)
-            cmod = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string.lower()
+            cmod = singular(children_of_type(stmt, Name)).string.lower()
         else:
-            subp = list(ast_utils.children_of_type(ast, Subroutine_Subprogram))
+            subp = list(children_of_type(ast, Subroutine_Subprogram))
             assert subp
-            stmt = ast_utils.singular(ast_utils.children_of_type(subp[0], Subroutine_Stmt))
-            cmod = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string.lower()
+            stmt = singular(children_of_type(subp[0], Subroutine_Stmt))
+            cmod = singular(children_of_type(stmt, Name)).string.lower()
 
         # Find the nearest execution and its correpsonding specification parts.
         execution_part = callsite.parent
         while not isinstance(execution_part, Execution_Part):
             execution_part = execution_part.parent
         subprog = execution_part.parent
-        specification_part = ast_utils.atmost_one(ast_utils.children_of_type(subprog, Specification_Part))
+        specification_part = atmost_one(children_of_type(subprog, Specification_Part))
 
         scope_spec = find_scope_spec(callsite)
         dref_type = find_type_dataref(dref, scope_spec, alias_map)
@@ -1297,12 +1367,15 @@ def deconstruct_associations(ast: Program) -> Program:
     return ast
 
 
-def assign_globally_unique_names(ast: Program, keepers: Set[SPEC]) -> Program:
+def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) -> Program:
     """
-    Precondition: All indirections are already removed from the program, except for the explicit renames.
-    TODO: Make structure names unique too. And possibly variables?
+    Update the functions (and interchangeably, subroutines) to have globally unique names.
+    Precondition:
+    1. All indirections are already removed from the program, except for the explicit renames.
+    2. All public/private access statements were cleanly removed.
+    TODO: Make structure names unique too.
     """
-    SUFFIX, COUNTER = 'deconglobal', 0
+    SUFFIX, COUNTER = 'deconglobalfn', 0
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
@@ -1315,12 +1388,11 @@ def assign_globally_unique_names(ast: Program, keepers: Set[SPEC]) -> Program:
         uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
         uident_map[k] = uname
 
-    # PHASE 1: Update the callsites for functions (and interchangeably, subroutines).
     # PHASE 1.a: Remove all the places where any function is imported.
     for use in walk(ast, Use_Stmt):
-        mod_name = ast_utils.singular(ast_utils.children_of_type(use, Name)).string
+        mod_name = singular(children_of_type(use, Name)).string
         mod_spec = (mod_name,)
-        olist = ast_utils.atmost_one(ast_utils.children_of_type(use, 'Only_List'))
+        olist = atmost_one(children_of_type(use, Only_List))
         if not olist:
             continue
         survivors = []
@@ -1342,6 +1414,7 @@ def assign_globally_unique_names(ast: Program, keepers: Set[SPEC]) -> Program:
             par = use.parent
             par.content = [c for c in par.children if c != use]
             _reparent_children(par)
+
     # PHASE 1.b: Replaces all the function callsites.
     for fref in walk(ast, (Function_Reference, Call_Stmt)):
         scope_spec = find_scope_spec(fref)
@@ -1366,7 +1439,7 @@ def assign_globally_unique_names(ast: Program, keepers: Set[SPEC]) -> Program:
         while not isinstance(execution_part, Execution_Part):
             execution_part = execution_part.parent
         subprog = execution_part.parent
-        specification_part = ast_utils.atmost_one(ast_utils.children_of_type(subprog, Specification_Part))
+        specification_part = atmost_one(children_of_type(subprog, Specification_Part))
 
         # Find out the module name.
         cmod = fref.parent
@@ -1374,15 +1447,14 @@ def assign_globally_unique_names(ast: Program, keepers: Set[SPEC]) -> Program:
             cmod = cmod.parent
         if cmod:
             stmt, _, _, _ = _get_module_or_program_parts(cmod)
-            cmod = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string.lower()
+            cmod = singular(children_of_type(stmt, Name)).string.lower()
         else:
-            subp = list(ast_utils.children_of_type(ast, Subroutine_Subprogram))
+            subp = list(children_of_type(ast, Subroutine_Subprogram))
             assert subp
-            stmt = ast_utils.singular(ast_utils.children_of_type(subp[0], Subroutine_Stmt))
-            cmod = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string.lower()
+            stmt = singular(children_of_type(subp[0], Subroutine_Stmt))
+            cmod = singular(children_of_type(stmt, Name)).string.lower()
 
-        # We are assumping that it's either a toplevel subprogram or a subprogram defined directly inside a module.
-        assert 1 <= len(ufspec) <= 2
+        assert 1 <= len(ufspec)
         if len(ufspec) == 1:
             # Nothing to do for the toplevel subprograms. They are already available.
             continue
@@ -1395,42 +1467,197 @@ def assign_globally_unique_names(ast: Program, keepers: Set[SPEC]) -> Program:
             append_children(subprog, Specification_Part(get_reader(f"use {mod}, only: {uname}")))
         else:
             prepend_children(specification_part, Use_Stmt(f"use {mod}, only: {uname}"))
-    # PHASE 1.c: Replace any access statments that made these functions public/private.
-    for acc in walk(ast, Access_Stmt):
-        # TODO: Add ref.
-        kind, alist = acc.children
-        if not alist:
-            continue
-        scope_spec = find_scope_spec(acc)
-        for c in alist.children:
-            assert isinstance(c, Name)
-            c_spec = find_real_ident_spec(c.string, scope_spec, alias_map)
-            if not isinstance(alias_map[c_spec], (Function_Stmt, Subroutine_Stmt)):
-                continue
-            if c_spec in uident_map:
-                c.string = uident_map[c_spec]
+
     # PHASE 1.d: Replaces actual function names.
     for k, v in ident_map.items():
         if not isinstance(v, (Function_Stmt, Subroutine_Stmt)) or k not in uident_map:
             continue
         oname, uname = k[-1], uident_map[k]
-        ast_utils.singular(ast_utils.children_of_type(v, Name)).string = uname
+        singular(children_of_type(v, Name)).string = uname
         # Fix the tail too.
         fdef = v.parent
-        end_stmt = ast_utils.singular(ast_utils.children_of_type(fdef, (End_Function_Stmt, End_Subroutine_Stmt)))
-        ast_utils.singular(ast_utils.children_of_type(end_stmt, Name)).string = uname
+        end_stmt = singular(children_of_type(fdef, (End_Function_Stmt, End_Subroutine_Stmt)))
+        singular(children_of_type(end_stmt, Name)).string = uname
         # For functions, the function name is also available as a variable inside.
         if isinstance(v, Function_Stmt):
-            vspec = ast_utils.atmost_one(ast_utils.children_of_type(fdef, Specification_Part))
-            vexec = ast_utils.atmost_one(ast_utils.children_of_type(fdef, Execution_Part))
+            vspec = atmost_one(children_of_type(fdef, Specification_Part))
+            vexec = atmost_one(children_of_type(fdef, Execution_Part))
             for nm in walk([n for n in [vspec, vexec] if n], Name):
                 if nm.string != oname:
                     continue
                 local_spec = search_local_alias_spec(nm)
                 # We need to do a bit of surgery, since we have the `oname` inide the scope ending with `uname`.
                 local_spec = local_spec[:-2] + local_spec[-1:]
+                local_spec = tuple(x.split('_deconglobalfn_')[0] for x in local_spec)
                 assert local_spec in ident_map and ident_map[local_spec] == v
                 nm.string = uname
+
+    return ast
+
+
+def add_use_to_specification(scdef: SCOPE_OBJECT_TYPES, clause: str):
+    specification_part = atmost_one(children_of_type(scdef, Specification_Part))
+    if not specification_part:
+        append_children(scdef, Specification_Part(get_reader(clause)))
+    else:
+        prepend_children(specification_part, Use_Stmt(clause))
+
+
+def assign_globally_unique_variable_names(ast: Program) -> Program:
+    """
+    Update the variable declarations to have globally unique names.
+    Precondition:
+    1. All indirections are already removed from the program, except for the explicit renames.
+    2. All public/private access statements were cleanly removed.
+    """
+    SUFFIX, COUNTER = 'deconglobalvar', 0
+
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast)
+
+    # Make new unique names for the identifiers.
+    uident_map: Dict[SPEC, str] = {}
+    for k in ident_map.keys():
+        uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
+        uident_map[k] = uname
+
+    # PHASE 1.a: Remove all the places where any variable is imported.
+    for use in walk(ast, Use_Stmt):
+        mod_name = singular(children_of_type(use, Name)).string
+        mod_spec = (mod_name,)
+        olist = atmost_one(children_of_type(use, Only_List))
+        if not olist:
+            continue
+        survivors = []
+        for c in olist.children:
+            assert isinstance(c, (Name, Rename))
+            if isinstance(c, Name):
+                src, tgt = c, c
+            elif isinstance(c, Rename):
+                _, src, tgt = c.children
+            src, tgt = src.string, tgt.string
+            tgt_spec = find_real_ident_spec(tgt, mod_spec, alias_map)
+            assert tgt_spec in ident_map
+            if not isinstance(ident_map[tgt_spec], Entity_Decl):
+                survivors.append(c)
+        if survivors:
+            olist.items = survivors
+            _reparent_children(olist)
+        else:
+            par = use.parent
+            par.content = [c for c in par.children if c != use]
+            _reparent_children(par)
+
+    # PHASE 1.b: Replaces all the keywords when calling the functions. This must be done earlier than resolving other
+    # references, because otherwise we cannot distinguish the two `kw`s in `fn(kw=kw)`.
+    for kv in walk(ast, Actual_Arg_Spec):
+        fref = kv.parent.parent
+        if not isinstance(fref, (Function_Reference, Call_Stmt)):
+            # Not a user defined function, so we are not renaming its internal variables anyway.
+            continue
+        callee, _ = fref.children
+        if isinstance(callee, Intrinsic_Name):
+            # Not a user defined function, so we are not renaming its internal variables anyway.
+            continue
+        cspec = search_real_local_alias_spec(callee, alias_map)
+        cspec = ident_spec(alias_map[cspec])
+        assert cspec
+        k, _ = kv.children
+        assert isinstance(k, Name)
+        kspec = find_real_ident_spec(k.string, cspec, alias_map)
+        if kspec not in uident_map:
+            # If we haven't planned to rename it, then skip.
+            continue
+        k.string = uident_map[kspec]
+
+    # PHASE 1.c: Replaces all the direct references.
+    for vref in walk(ast, Name):
+        if isinstance(vref.parent, Entity_Decl):
+            # Do not change the variable declarations themselves just yet.
+            continue
+        vspec = search_real_local_alias_spec(vref, alias_map)
+        if not vspec:
+            # It was not a valid alias (e.g., a sturcture component).
+            continue
+        if not isinstance(alias_map[vspec], Entity_Decl):
+            # Does not refer to a variable.
+            continue
+        edcl = alias_map[vspec]
+        fdef = find_scope_ancestor(edcl)
+        if isinstance(fdef, Function_Subprogram) and find_name_of_node(fdef) == find_name_of_node(edcl):
+            # Function return variables must retain their names.
+            continue
+
+        scope_spec = find_scope_spec(vref)
+        vspec = find_real_ident_spec(vspec[-1], scope_spec, alias_map)
+        assert vspec in ident_map and vspec in uident_map
+        uname = uident_map[vspec]
+        vref.string = uname
+
+        if len(vspec) > 2:
+            # If the variable is not defined in a toplevel object, so we're done.
+            continue
+        assert len(vspec) == 2
+        mod, _ = vspec
+        if not isinstance(alias_map[(mod,)], Module_Stmt):
+            # We can only import modules.
+            continue
+
+        # Find the nearest specification part (or lack thereof).
+        scdef = alias_map[scope_spec].parent
+        # Find out the current module name.
+        cmod = scdef
+        while not isinstance(cmod.parent, Program):
+            cmod = cmod.parent
+        if find_name_of_node(cmod) == mod:
+            # Since this variable is already defined at the current module, there is nothing to import.
+            continue
+        add_use_to_specification(scdef, f"use {mod}, only: {uname}")
+
+    # PHASE 1.d: Replaces all the literals where a variable can be used as a "kind".
+    for lit in walk(ast, Real_Literal_Constant):
+        val, kind = lit.children
+        if not kind:
+            continue
+        # Strangely, we get a plain `str` instead of a `Name`.
+        assert isinstance(kind, str)
+        scope_spec = find_scope_spec(lit)
+        kind_spec = search_real_ident_spec(kind, scope_spec, alias_map)
+        if not kind_spec or kind_spec not in uident_map:
+            continue
+        uname = uident_map[kind_spec]
+        lit.items = (val, uname)
+
+        if len(kind_spec) > 2:
+            # If the variable is not defined in a toplevel object, so we're done.
+            continue
+        assert len(kind_spec) == 2
+        mod, _ = kind_spec
+        if not isinstance(alias_map[(mod,)], Module_Stmt):
+            # We can only import modules.
+            continue
+
+        # Find the nearest specification part (or lack thereof).
+        scdef = alias_map[scope_spec].parent
+        # Find out the current module name.
+        cmod = scdef
+        while not isinstance(cmod.parent, Program):
+            cmod = cmod.parent
+        if find_name_of_node(cmod) == mod:
+            # Since this variable is already defined at the current module, there is nothing to import.
+            continue
+        add_use_to_specification(scdef, f"use {mod}, only: {uname}")
+
+    # PHASE 1.e: Replaces actual variable names.
+    for k, v in ident_map.items():
+        if not isinstance(v, Entity_Decl):
+            continue
+        oname, uname = k[-1], uident_map[k]
+        fdef = find_scope_ancestor(v)
+        if isinstance(fdef, Function_Subprogram) and find_name_of_node(fdef) == oname:
+            # Function return variables must retain their names.
+            continue
+        singular(children_of_type(v, Name)).string = uname
 
     return ast
 
@@ -1443,17 +1670,41 @@ def _get_module_or_program_parts(mod: Union[Module, Main_Program]) \
             Optional[Module_Subprogram_Part],
         ]:
     # There must exist a module statment.
-    stmt = ast_utils.singular(ast_utils.children_of_type(mod, Module_Stmt if isinstance(mod, Module) else Program_Stmt))
+    stmt = singular(children_of_type(mod, Module_Stmt if isinstance(mod, Module) else Program_Stmt))
     # There may or may not exist a specification part.
-    spec = list(ast_utils.children_of_type(mod, Specification_Part))
+    spec = list(children_of_type(mod, Specification_Part))
     assert len(spec) <= 1, f"A module/program cannot have more than one specification parts, found {spec} in {mod}"
     spec = spec[0] if spec else None
     # There may or may not exist an execution part.
-    exec = list(ast_utils.children_of_type(mod, Execution_Part))
+    exec = list(children_of_type(mod, Execution_Part))
     assert len(exec) <= 1, f"A module/program cannot have more than one execution parts, found {spec} in {mod}"
     exec = exec[0] if exec else None
     # There may or may not exist a subprogram part.
-    subp = list(ast_utils.children_of_type(mod, Module_Subprogram_Part))
+    subp = list(children_of_type(mod, Module_Subprogram_Part))
     assert len(subp) <= 1, f"A module/program cannot have more than one subprogram parts, found {subp} in {mod}"
     subp = subp[0] if subp else None
     return stmt, spec, exec, subp
+
+
+def consolidate_uses(ast: Program) -> Program:
+    for sp in reversed(walk(ast, Specification_Part)):
+        all_use: Set[str] = set()
+        use_map: Dict[str, Set[str]] = {}
+        # Build the table.
+        for u in children_of_type(sp, Use_Stmt):
+            name = singular(children_of_type(u, Name)).string
+            olist = atmost_one(children_of_type(u, Only_List))
+            if not olist:
+                all_use.add(name)
+            else:
+                if name not in use_map:
+                    use_map[name] = set()
+                use_map[name].update(c.tofortran() for c in olist.children)
+        # Build new use statements.
+        nuses: List[Use_Stmt] = [
+            Use_Stmt(f"use {k}") if k in all_use else Use_Stmt(f"use {k}, only: {', '.join(use_map[k])}")
+            for k in use_map.keys() | all_use]
+        # Remove the old ones, and prepend the new ones.
+        sp.content = nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
+        _reparent_children(sp)
+    return ast

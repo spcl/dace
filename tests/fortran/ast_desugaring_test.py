@@ -6,7 +6,8 @@ from fparser.two.parser import ParserFactory
 
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, deconstruct_enums, \
-    deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, assign_globally_unique_names
+    deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, \
+    assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, consolidate_uses
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
@@ -1151,6 +1152,8 @@ module lib
   type :: Square
     real :: sides(2, 2)
   end type Square
+  integer, parameter :: k = 4
+  real :: circle = 2.0_k
 contains
   real function perim(this, m)
     implicit none
@@ -1171,20 +1174,29 @@ subroutine main
   use lib
   use lib, only: perim
   use lib, only: p2 => perim
+  use lib, only: circle
   implicit none
   type(Square) :: s
   real :: a
+  integer :: i, j
   s%sides = 0.5
   s%sides(1, 1) = 1.0
   s%sides(2, 1) = 1.0
+  do i = 1, 2
+    do j = 1, 2
+      s%sides(i, j) = 7.0
+    end do
+  end do
   a = perim(s, 1.0)
   a = p2(s, 1.0)
   s%sides = area(s, 4.1)
+  circle = 5.0
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
     ast = correct_for_function_calls(ast)
-    ast = assign_globally_unique_names(ast, {('main',)})
+    ast = assign_globally_unique_subprogram_names(ast, {('main',)})
+    ast = assign_globally_unique_variable_names(ast)
 
     got = ast.tofortran()
     want = """
@@ -1193,35 +1205,45 @@ MODULE lib
   TYPE :: Square
     REAL :: sides(2, 2)
   END TYPE Square
+  INTEGER, PARAMETER :: k_deconglobalvar_3 = 4
+  REAL :: circle_deconglobalvar_4 = 2.0_k_deconglobalvar_3
   CONTAINS
-  REAL FUNCTION perim_deconglobal_3(this, m)
+  REAL FUNCTION perim_deconglobalfn_5(this_deconglobalvar_6, m_deconglobalvar_7)
     IMPLICIT NONE
-    CLASS(Square), INTENT(IN) :: this
-    REAL, INTENT(IN) :: m
-    perim_deconglobal_3 = m * SUM(this % sides)
-  END FUNCTION perim_deconglobal_3
-  FUNCTION area_deconglobal_6(this, m)
+    CLASS(Square), INTENT(IN) :: this_deconglobalvar_6
+    REAL, INTENT(IN) :: m_deconglobalvar_7
+    perim_deconglobalfn_5 = m_deconglobalvar_7 * SUM(this_deconglobalvar_6 % sides)
+  END FUNCTION perim_deconglobalfn_5
+  FUNCTION area_deconglobalfn_8(this_deconglobalvar_9, m_deconglobalvar_10)
     IMPLICIT NONE
-    CLASS(Square), INTENT(IN) :: this
-    REAL, INTENT(IN) :: m
-    REAL, DIMENSION(2, 2) :: area_deconglobal_6
-    area_deconglobal_6 = m * SUM(this % sides)
-  END FUNCTION area_deconglobal_6
+    CLASS(Square), INTENT(IN) :: this_deconglobalvar_9
+    REAL, INTENT(IN) :: m_deconglobalvar_10
+    REAL, DIMENSION(2, 2) :: area_deconglobalfn_8
+    area_deconglobalfn_8 = m_deconglobalvar_10 * SUM(this_deconglobalvar_9 % sides)
+  END FUNCTION area_deconglobalfn_8
 END MODULE lib
 SUBROUTINE main
-  USE lib, ONLY: area_deconglobal_6
-  USE lib, ONLY: perim_deconglobal_3
-  USE lib, ONLY: perim_deconglobal_3
+  USE lib, ONLY: circle_deconglobalvar_4
+  USE lib, ONLY: area_deconglobalfn_8
+  USE lib, ONLY: perim_deconglobalfn_5
+  USE lib, ONLY: perim_deconglobalfn_5
   USE lib
   IMPLICIT NONE
-  TYPE(Square) :: s
-  REAL :: a
-  s % sides = 0.5
-  s % sides(1, 1) = 1.0
-  s % sides(2, 1) = 1.0
-  a = perim_deconglobal_3(s, 1.0)
-  a = perim_deconglobal_3(s, 1.0)
-  s % sides = area_deconglobal_6(s, 4.1)
+  TYPE(Square) :: s_deconglobalvar_13
+  REAL :: a_deconglobalvar_14
+  INTEGER :: i_deconglobalvar_15, j_deconglobalvar_16
+  s_deconglobalvar_13 % sides = 0.5
+  s_deconglobalvar_13 % sides(1, 1) = 1.0
+  s_deconglobalvar_13 % sides(2, 1) = 1.0
+  DO i_deconglobalvar_15 = 1, 2
+    DO j_deconglobalvar_16 = 1, 2
+      s_deconglobalvar_13 % sides(i_deconglobalvar_15, j_deconglobalvar_16) = 7.0
+    END DO
+  END DO
+  a_deconglobalvar_14 = perim_deconglobalfn_5(s_deconglobalvar_13, 1.0)
+  a_deconglobalvar_14 = perim_deconglobalfn_5(s_deconglobalvar_13, 1.0)
+  s_deconglobalvar_13 % sides = area_deconglobalfn_8(s_deconglobalvar_13, 4.1)
+  circle_deconglobalvar_4 = 5.0
 END SUBROUTINE main
 """.strip()
     assert got == want

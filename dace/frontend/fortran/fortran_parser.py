@@ -11,9 +11,7 @@ from typing import List, Optional, Set, Dict, Tuple, Union
 import networkx as nx
 from fparser.common.readfortran import FortranFileReader as ffr, FortranStringReader, FortranFileReader
 from fparser.common.readfortran import FortranStringReader as fsr
-from fparser.two.Fortran2003 import Program, Name, \
-    Subroutine_Subprogram, Module_Stmt, Module, Main_Program, Type_Declaration_Stmt, Declaration_Type_Spec, Entity_Decl, \
-    Derived_Type_Def, Function_Subprogram, Rename, Subroutine_Stmt, Function_Stmt
+from fparser.two.Fortran2003 import Program, Name, Subroutine_Subprogram, Module_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
 from fparser.two.utils import Base, walk
@@ -32,7 +30,8 @@ from dace.data import Scalar, Structure
 from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES, find_name_of_stmt, find_name_of_node, \
     identifier_specs, append_children, correct_for_function_calls, remove_access_statements, sort_modules, \
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
-    deconstruct_associations, assign_globally_unique_names, _get_module_or_program_parts
+    deconstruct_associations, assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, \
+    consolidate_uses
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import UseAllPruneList
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
@@ -3231,7 +3230,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = deconstruct_interface_calls(ast)
     ast = prune_unused_objects(ast,
                                [m for m in walk(ast, Subroutine_Subprogram) if find_name_of_node(m) == 'radiation'])
-    ast = assign_globally_unique_names(ast, {('radiation_interface', 'radiation')})
+    ast = assign_globally_unique_subprogram_names(ast, {('radiation_interface', 'radiation')})
+    ast = assign_globally_unique_variable_names(ast)
+    ast = consolidate_uses(ast)
     dep_graph = compute_dep_graph(ast, 'radiation_interface')
     """print("redone")
 
