@@ -59,9 +59,10 @@ def _get_locals_and_globals(f):
     result.update(f.__globals__)
     # grab the free variables (i.e. locals)
     if f.__closure__ is not None:
-        result.update(
-            {k: v
-             for k, v in zip(f.__code__.co_freevars, [_get_cell_contents_or_none(x) for x in f.__closure__])})
+        result.update({
+            k: v
+            for k, v in zip(f.__code__.co_freevars, [_get_cell_contents_or_none(x) for x in f.__closure__])
+        })
 
     return result
 
@@ -142,6 +143,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
 class DaceProgram(pycommon.SDFGConvertible):
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
+
     def __init__(self,
                  f,
                  args,
@@ -405,9 +407,10 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Update arguments with symbols in data shapes
         result.update(
-            infer_symbols_from_datadescriptor(
-                sdfg, {k: create_datadescriptor(v)
-                       for k, v in result.items() if k not in self.constant_args}))
+            infer_symbols_from_datadescriptor(sdfg, {
+                k: create_datadescriptor(v)
+                for k, v in result.items() if k not in self.constant_args
+            }))
         return result
 
     def __call__(self, *args, **kwargs):
@@ -487,9 +490,6 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param validate: If True, validates the resulting SDFG after creation.
         :return: The generated SDFG object.
         """
-        # Avoid import loop
-        from dace.transformation.passes import scalar_to_symbol as scal2sym
-        from dace.transformation import helpers as xfh
 
         # Obtain DaCe program as SDFG
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
@@ -812,7 +812,9 @@ class DaceProgram(pycommon.SDFGConvertible):
         _, key = self._load_sdfg(None, *args, **kwargs)
         return key
 
-    def _generate_pdp(self, args: Tuple[Any], kwargs: Dict[str, Any],
+    def _generate_pdp(self,
+                      args: Tuple[Any],
+                      kwargs: Dict[str, Any],
                       simplify: Optional[bool] = None) -> Tuple[SDFG, bool]:
         """ Generates the parsed AST representation of a DaCe program.
         
