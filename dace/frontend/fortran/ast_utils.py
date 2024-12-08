@@ -434,6 +434,7 @@ class TaskletWriter:
             ast_internal_classes.Call_Expr_Node: self.call2string,
             ast_internal_classes.ParDecl_Node: self.pardecl2string,
             ast_internal_classes.Data_Ref_Node: self.dataref2string,
+            ast_internal_classes.Array_Constructor_Node: self.arrayconstructor2string,
         }
 
     def pardecl2string(self, node: ast_internal_classes.ParDecl_Node):
@@ -443,6 +444,14 @@ class TaskletWriter:
 
     def actualarg2string(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
         return self.write_code(node.arg)
+    
+    def arrayconstructor2string(self, node: ast_internal_classes.Array_Constructor_Node):
+        str_to_return = "[ "
+        for i in node.value_list:
+            str_to_return += self.write_code(i) + ", "
+        str_to_return = str_to_return[:-2]
+        str_to_return += " ]"
+        return str_to_return
 
     def write_code(self, node: ast_internal_classes.FNode):
         """
@@ -462,7 +471,7 @@ class TaskletWriter:
                 raise NameError("Error in code generation")
             if "ERRORALL" in text and self.depth == 1:
                 print(text)
-                raise NameError("Error in code generation")
+                #raise NameError("Error in code generation")
             self.depth -= 1
             return text
         elif isinstance(node, int):
@@ -605,7 +614,7 @@ class TaskletWriter:
         if node.name.name == "__dace_epsilon":
             return str(finf(fl).eps)
         if node.name.name == "pow":
-            return " ( " + self.write_code(node.args[0]) + " ** " + self.write_code(node.args[1]) + "  ) "
+            return "( " + self.write_code(node.args[0]) + " ** " + self.write_code(node.args[1]) + "  )"
         return_str = self.write_code(node.name) + "(" + self.write_code(node.args[0])
         for i in node.args[1:]:
             return_str += ", " + self.write_code(i)
