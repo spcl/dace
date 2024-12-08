@@ -2599,11 +2599,12 @@ class PointerRemoval(NodeTransformer):
                 for var_decl in i.vardecl:
 
                     if var_decl.name in self.nodes:
-
-                        for symbol in var_decl.sizes:
-                            symbols_to_remove.add(symbol.name)
-                        for symbol in var_decl.offsets:
-                            symbols_to_remove.add(symbol.name)
+                        if var_decl.sizes is not None:
+                            for symbol in var_decl.sizes:
+                                symbols_to_remove.add(symbol.name)
+                        if var_decl.offsets is not None:        
+                            for symbol in var_decl.offsets:
+                                symbols_to_remove.add(symbol.name)
 
                     else:
                         newdecls.append(var_decl)
