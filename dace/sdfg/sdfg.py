@@ -764,8 +764,10 @@ class SDFG(ControlFlowRegion):
                 if validate_name(new_name):
                     _replace_dict_keys(self.arrays, name, new_name, non_size_arrays)
                     # Size desc names are updated later
-                    if "__return" not in new_name: # To catch __return_0, __return_1, gpu__return
+                    if "__return" not in new_name: # To catch __return_0, __return_1, gpu__return, fpga__return
                         size_desc_map[new_name] = new_name + "_size"
+                    else:
+                        size_desc_map[new_name] = None
                     _replace_dict_keys(self.symbols, name, new_name)
                     _replace_dict_keys(self.constants_prop, name, new_name)
                     _replace_dict_keys(self.callback_mapping, name, new_name)
@@ -779,12 +781,28 @@ class SDFG(ControlFlowRegion):
             arr = self.arrays[arr_name] if arr_name in self.arrays else None
             if arr is not None:
                 size_desc_name_before = arr.size_desc_name
-                if arr.transient and type(arr) == dt.Array and size_desc_name_before is not None:
-                    arr.size_desc_name = size_desc_name if "__return" not in new_name else None
+                # If we change the name of an array, then we need to change its size array accordingly
+                if (arr.transient and type(arr) == dt.Array and size_desc_name_before is not None
+                    and size_desc_name is not None):
+                    arr.size_desc_name = size_desc_name
+                    assert (arr.size_desc_name == size_desc_name)
+                    self.arrays[size_desc_name]  = self.arrays.pop(size_desc_name_before)
+                # If the new size array is None, then we can remove the previous (and now unused size array)
                 if arr.size_desc_name is None and size_desc_name_before is not None:
                     size_ararys_to_rm.add(size_desc_name_before)
-        for size_arr_name in size_ararys_to_rm and size_arr_name in self.arrays:
-            del self.arrays[size_arr_name]
+                # If the new size array is not None, but it was non before we need to add the size array
+                if size_desc_name_before is None and arr.size_desc_name is not None:
+                    retval = self._get_size_arr(arr_name, arr)
+                    if retval is not None:
+                        size_desc_name, size_desc = retval
+                        assert (size_desc_name == arr.size_desc_name)
+                        self._arrays[size_desc_name] = size_desc
+                        self._add_symbols(size_desc)
+
+        # Rm any size array we need to remove
+        for size_arr_name in size_ararys_to_rm:
+            if size_arr_name in self.arrays:
+                del self.arrays[size_arr_name]
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -2062,6 +2080,37 @@ class SDFG(ControlFlowRegion):
             if sym.name not in self.symbols:
                 self.add_symbol(sym.name, sym.dtype)
 
+    def _get_size_arr(self, name: str, datadesc: dt.Data):
+        if (
+            datadesc.transient is True and
+            type(datadesc) == dt.Array and
+            "__return" not in name and
+            datadesc.lifetime is not dtypes.AllocationLifetime.External and
+            datadesc.lifetime is not dtypes.AllocationLifetime.Persistent and
+            datadesc.is_deferred_array
+            ):
+            size_desc_name = f"{name}_size"
+            # Regardless of the scope and storage it is allocated as a register array
+            # And at the start of the SDFG (or nested SDFG), not setting SDFG prevents to_gpu assertions
+            # from failing. To lifetime and storage are set explicitly to
+            # to prevent optimizations to putting them to FPGA/GPU storage
+            size_desc = dt.Array(dtype=dace.uint64,
+                                shape=(len(datadesc.shape),),
+                                storage=dtypes.StorageType.CPU_Heap,
+                                location=None,
+                                allow_conflicts=False,
+                                transient=True,
+                                strides=(1,),
+                                offset=(0,),
+                                lifetime=dtypes.AllocationLifetime.State,
+                                alignment=datadesc.alignment,
+                                debuginfo=datadesc.debuginfo,
+                                may_alias=False,
+                                size_desc_name=None)
+            size_desc.is_size_array = True
+            return size_desc_name, size_desc
+        return None
+
     def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.
 
@@ -2105,33 +2154,10 @@ class SDFG(ControlFlowRegion):
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc
         self._add_symbols(datadesc)
-        if (
-            datadesc.transient is True and
-            type(datadesc) == dt.Array and
-            "__return" not in name and
-            datadesc.lifetime is not dtypes.AllocationLifetime.External and
-            datadesc.lifetime is not dtypes.AllocationLifetime.Persistent and
-            any(["__dace_defer" in str(dim) for dim in datadesc.shape])
-            ):
-            size_desc_name = f"{name}_size"
-            # Regardless of the scope and storage it is allocated as a register array
-            # And at the start of the SDFG (or nested SDFG), not setting SDFG prevents to_gpu assertions
-            # from failing. To lifetime and storage are set explicitly to
-            # to prevent optimizations to putting them to FPGA/GPU storage
-            size_desc = dt.Array(dtype=dace.uint64,
-                                shape=(len(list(datadesc.shape)),),
-                                storage=dtypes.StorageType.CPU_Heap,
-                                location=None,
-                                allow_conflicts=False,
-                                transient=True,
-                                strides=(1,),
-                                offset=(0,),
-                                lifetime=dtypes.AllocationLifetime.State,
-                                alignment=datadesc.alignment,
-                                debuginfo=datadesc.debuginfo,
-                                may_alias=False,
-                                size_desc_name=None)
-            size_desc.is_size_array = True
+
+        retval = self._get_size_arr(name, datadesc)
+        if retval is not None:
+            size_desc_name, size_desc = retval
             self._arrays[size_desc_name] = size_desc
             # In case find_new_name and a new name is returned
             # we need to update the size descriptor name of the array

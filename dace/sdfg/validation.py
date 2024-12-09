@@ -306,6 +306,24 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                             "Arrays that use a multibank access pattern must have the size of the first dimension equal"
                             f" the number of banks and have at least 2 dimensions for array {name}", sdfg, None)
 
+            # Check the size array shapes match
+            if type(desc) == dt.Array:
+                if desc.is_size_array is False and desc.size_desc_name is not None:
+                    # It is an array which is not a size array and needs to have a size array
+                    size_desc = sdfg._arrays[desc.size_desc_name]
+                    size_arr_len = size_desc.shape[0]
+                    if not isinstance(size_arr_len, int) and  (isinstance(size_arr_len, dace.symbolic.symbol) and not size_arr_len.is_integer):
+                        raise InvalidSDFGError(
+                            f"Size arrays need to be one-dimensional and have an integer length known at compile time. {desc.size_desc_name}: {size_desc.shape}"
+                            , sdfg, None
+                        )
+                    # TODO: This check can be implemented as part of a getter/setter on the dimensions of the array?
+                    if int(size_arr_len) != len(desc.shape):
+                        raise InvalidSDFGError(
+                            f"Size arrays size needs to match to shape of its array: {desc.size_desc_name}, {size_desc.shape}: {name}, {desc.shape}"
+                            , sdfg, None
+                        )
+
         # Check if SDFG is located within a GPU kernel
         context['in_gpu'] = is_devicelevel_gpu(sdfg, None, None)
         context['in_fpga'] = is_devicelevel_fpga(sdfg, None, None)

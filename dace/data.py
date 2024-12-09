@@ -1388,6 +1388,7 @@ class Array(Data):
     pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
 
     is_size_array = Property(dtype=bool, default=False, desc='Special array that is used to track the size of an another array')
+    is_deferred_array = Property(dtype=bool, default=False, desc='Array that requires deferred allocation')
 
     def __init__(self,
                  dtype,
@@ -1440,6 +1441,9 @@ class Array(Data):
             self.offset = cp.copy(offset)
         else:
             self.offset = [0] * len(shape)
+
+        self.is_deferred_array = any(["__dace_defer" in str(dim) for dim in self.shape])
+
         self.validate()
 
     def __repr__(self):
