@@ -10,6 +10,7 @@ from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, P
     ScopeVarsDeclarations, par_Decl_Range_Finder, mywalk
 from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 from dace.libraries.blas.nodes.dot import dot_libnode
+from dace.libraries.blas.nodes.gemm import gemm_libnode
 from dace.libraries.standard.nodes import Transpose
 from dace.sdfg import SDFGState, SDFG, nodes
 from dace.sdfg.graph import OrderedDiGraph
@@ -1271,6 +1272,20 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
     def blas_dot(self, state: SDFGState, sdfg: SDFG):
         dot_libnode(None, sdfg, state, self.array1.data, self.array2.data, self.out.data)
 
+    def blas_matmul(self, state: SDFGState, sdfg: SDFG):
+        gemm_libnode(
+            None,
+            sdfg,
+            state,
+            self.array1.data,
+            self.array2.data,
+            self.out.data,
+            1.0,
+            0.0,
+            False,
+            False
+        )
+
     def transpose(self, state: SDFGState, sdfg: SDFG):
 
         input_arr = state.add_read(self.array1.data)
@@ -1284,7 +1299,8 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
 
     LIBRARY_NODE_TRANSFORMATIONS = {
         "__dace_blas_dot": blas_dot,
-        "__dace_transpose": transpose
+        "__dace_transpose": transpose,
+        "__dace_matmul": blas_matmul
     }
 
     @classmethod
@@ -1446,6 +1462,7 @@ class MathFunctions(IntrinsicTransformation):
         "ATAN2": MathTransformation("atan2", "FIRST_ARG"),
         "DOT_PRODUCT": MathTransformation("__dace_blas_dot", "FIRST_ARG"),
         "TRANSPOSE": MathTransformation("__dace_transpose", "FIRST_ARG"),
+        "MATMUL": MathTransformation("__dace_matmul", "FIRST_ARG"),
     }
 
     class TypeTransformer(IntrinsicNodeTransformer):
@@ -1615,7 +1632,9 @@ class FortranIntrinsics:
     # All functions return an array
     # Our call extraction transformation only supports scalars
     EXEMPTED_FROM_CALL_EXTRACTION = [
-        Merge.Transformation.func_name(), "__dace_transpose"
+        Merge.Transformation.func_name(),
+        "__dace_TRANSPOSE",
+        "__dace_MATMUL",
     ]
 
     def __init__(self):
@@ -1650,7 +1669,6 @@ class FortranIntrinsics:
             "ALLOCATED": "__dace_allocated",
             "TRIM": "__dace_trim",
             "IEOR": "__dace_ieor",
-            "TRANSPOSE": "__dace_transpose",
             "BTEST": "__dace_btest",
             "LEN_TRIM": "__dace_len_trim",
             "ASSOCIATED": "__dace_associated",
@@ -1663,21 +1681,17 @@ class FortranIntrinsics:
             "FRACTION": "__dace_fraction",
             "NEW_LINE": "__dace_new_line",
             "PRECISION": "__dace_precision",
-            "MATMUL": "__dace_matmul",
             "MINLOC": "__dace_minloc",
             "LEN": "__dace_len",
             "SCAN": "__dace_scan",
             "RANDOM_SEED": "__dace_random_seed",
             "RANDOM_NUMBER": "__dace_random_number",
             "DATE_AND_TIME": "__dace_date_and_time",
-
         }
         if not DirectReplacement.replacable_name(func_name) and not MathFunctions.replacable(func_name) and func_name not in self.IMPLEMENTATIONS_AST:
             replacements[func_name]="__dace_"+func_name
             print(f"Function {func_name} not supported yet, intrinsics required!")
         if func_name in replacements:
-            if func_name == "__dace_allocated":
-                print("ALLOCATED ", node.parent)
             return ast_internal_classes.Name_Node(name=replacements[func_name])
         elif DirectReplacement.replacable_name(func_name):
 
