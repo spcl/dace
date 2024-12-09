@@ -23,7 +23,7 @@ from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
-
+from dace.codegen.targets import cpp
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
     if callable(func):
@@ -969,12 +969,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             size_nodedesc = sdfg.arrays[size_desc_name]
             assert ("__return" not in size_desc_name)
             ctypedef = size_nodedesc.dtype.ctype
-            from dace.codegen.targets import cpp
             array = [v for v in sdfg.arrays.values() if v.size_desc_name is not None and v.size_desc_name == size_desc_name]
             assert len(array) <= 1
             if len(array) == 1:
                 array = array[0]
-                if type(array) == dace.data.Array and array.is_deferred_array:
+                if type(array) == data.Array and array.is_deferred_array:
                     dimensions = ["0" if cpp.sym2cpp(dim).startswith("__dace_defer") else cpp.sym2cpp(dim) for dim in array.shape]
                     size_str = ",".join(dimensions)
                     assert len(size_nodedesc.shape) == 1
