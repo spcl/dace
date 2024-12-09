@@ -10,6 +10,7 @@ from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, P
     ScopeVarsDeclarations, par_Decl_Range_Finder, mywalk
 from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 from dace.libraries.blas.nodes.dot import dot_libnode
+from dace.libraries.standard.nodes import Transpose
 from dace.sdfg import SDFGState, SDFG, nodes
 from dace.sdfg.graph import OrderedDiGraph
 from dace.transformation import transformation as xf
@@ -78,7 +79,6 @@ class IntrinsicNodeTransformer(NodeTransformer):
         if isinstance(variable, ast_internal_classes.Data_Ref_Node):
 
             variable = self._parse_struct_ref(variable)
-            print(type(variable))
             return variable
 
         name = ""
@@ -87,7 +87,6 @@ class IntrinsicNodeTransformer(NodeTransformer):
         elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
             name = variable.name.name
         else:
-            print(type(variable))
             raise NotImplementedError()
 
         if self.scope_vars.contains_var(parent, name):
@@ -1272,13 +1271,28 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
     def blas_dot(self, state: SDFGState, sdfg: SDFG):
         dot_libnode(None, sdfg, state, self.array1.data, self.array2.data, self.out.data)
 
+    def transpose(self, state: SDFGState, sdfg: SDFG):
+
+        input_arr = state.add_read(self.array1.data)
+        res = state.add_write(self.out.data)
+
+        libnode = Transpose("transpose", dtype=sdfg.arrays[self.array1.data].dtype)
+        state.add_node(libnode)
+
+        state.add_edge(input_arr, None, libnode, "_inp", sdfg.make_array_memlet(self.array1.data))
+        state.add_edge(libnode, "_out", res, None, sdfg.make_array_memlet(self.out.data))
+
     LIBRARY_NODE_TRANSFORMATIONS = {
-        "__dace_blas_dot": blas_dot
+        "__dace_blas_dot": blas_dot,
+        "__dace_transpose": transpose
     }
 
     @classmethod
     def expressions(cls):
 
+        graphs = []
+
+        # Match tasklets with two inputs, like dot
         g = OrderedDiGraph()
         g.add_node(cls.array1)
         g.add_node(cls.array2)
@@ -1287,7 +1301,18 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
         g.add_edge(cls.array1, cls.tasklet, None)
         g.add_edge(cls.array2, cls.tasklet, None)
         g.add_edge(cls.tasklet, cls.out, None)
-        return [g]
+        graphs.append(g)
+
+        # Match tasklets with one input, like transpose
+        g = OrderedDiGraph()
+        g.add_node(cls.array1)
+        g.add_node(cls.tasklet)
+        g.add_node(cls.out)
+        g.add_edge(cls.array1, cls.tasklet, None)
+        g.add_edge(cls.tasklet, cls.out, None)
+        graphs.append(g)
+
+        return graphs
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
 
@@ -1420,6 +1445,7 @@ class MathFunctions(IntrinsicTransformation):
         "ATAN": MathTransformation("atan", "FIRST_ARG"),
         "ATAN2": MathTransformation("atan2", "FIRST_ARG"),
         "DOT_PRODUCT": MathTransformation("__dace_blas_dot", "FIRST_ARG"),
+        "TRANSPOSE": MathTransformation("__dace_transpose", "FIRST_ARG"),
     }
 
     class TypeTransformer(IntrinsicNodeTransformer):
@@ -1583,12 +1609,13 @@ class FortranIntrinsics:
         "ALL": All,
         "MINVAL": MinVal,
         "MAXVAL": MaxVal,
-        "MERGE": Merge,
-
+        "MERGE": Merge
     }
 
+    # All functions return an array
+    # Our call extraction transformation only supports scalars
     EXEMPTED_FROM_CALL_EXTRACTION = [
-        Merge
+        Merge.Transformation.func_name(), "__dace_transpose"
     ]
 
     def __init__(self):
@@ -1611,10 +1638,7 @@ class FortranIntrinsics:
 
     @staticmethod
     def call_extraction_exemptions() -> List[str]:
-        return [
-            *[func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION]
-            # *MathFunctions.temporary_functions()
-        ]
+        return FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION
 
     def replace_function_name(self, node: FASTNode) -> ast_internal_classes.Name_Node:
 
