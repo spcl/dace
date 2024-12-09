@@ -492,7 +492,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Direct edges among source and sink access nodes must pass through a tasklet.
         # We first gather them and handle them later.
-        direct_edges: Set[gr.Edge[memlet.Memlet]] = set()
+        direct_edges: Set[gr.MultiConnectorEdge[memlet.Memlet]] = set()
         for n1 in source_nodes:
             if not isinstance(n1, nodes.AccessNode):
                 continue

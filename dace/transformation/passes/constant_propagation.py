@@ -82,7 +82,6 @@ class ConstantPropagation(ppl.Pass):
                     if isinstance(v, data.Structure):
                         _add_nested_datanames(f'{name}.{k}', v)
                     elif isinstance(v, data.ContainerArray):
-                        # TODO: How are we handling this?
                         pass
                     arrays.add(f'{name}.{k}')
 
@@ -91,11 +90,11 @@ class ConstantPropagation(ppl.Pass):
                     _add_nested_datanames(name, desc)
 
             # Trace all constants and symbols through blocks
-            in_consts: BlockConstsT = { sdfg: initial_symbols }
-            pre_consts: BlockConstsT = {}
-            post_consts: BlockConstsT = {}
-            out_consts: BlockConstsT = {}
-            self._collect_constants_for_region(sdfg, arrays, in_consts, pre_consts, post_consts, out_consts)
+            in_constants: BlockConstsT = { sdfg: initial_symbols }
+            pre_constants: BlockConstsT = {}
+            post_constants: BlockConstsT = {}
+            out_constants: BlockConstsT = {}
+            self._collect_constants_for_region(sdfg, arrays, in_constants, pre_constants, post_constants, out_constants)
 
             # Keep track of replaced and ambiguous symbols
             symbols_replaced: Dict[str, Any] = {}
@@ -103,11 +102,11 @@ class ConstantPropagation(ppl.Pass):
 
             # Collect symbols from symbol-dependent data descriptors
             # If there can be multiple values over the SDFG, the symbols are not propagated
-            desc_symbols, multivalue_desc_symbols = self._find_desc_symbols(sdfg, in_consts)
+            desc_symbols, multivalue_desc_symbols = self._find_desc_symbols(sdfg, in_constants)
 
             # Replace constants per state
-            for block, mapping in optional_progressbar(in_consts.items(), 'Propagating constants', n=len(in_consts),
-                                                       progress=self.progress):
+            for block, mapping in optional_progressbar(in_constants.items(), 'Propagating constants',
+                                                       n=len(in_constants), progress=self.progress):
                 if block is sdfg:
                     continue
 
@@ -120,7 +119,8 @@ class ConstantPropagation(ppl.Pass):
                 }
                 out_mapping = {
                     k: v
-                    for k, v in out_consts[block].items() if v is not _UnknownValue and k not in multivalue_desc_symbols
+                    for k, v in out_constants[block].items()
+                    if v is not _UnknownValue and k not in multivalue_desc_symbols
                 }
 
                 if mapping:
@@ -139,20 +139,7 @@ class ConstantPropagation(ppl.Pass):
                         e.data.replace_dict(out_mapping, replace_keys=False)
                 
                 if isinstance(block, LoopRegion):
-                    if block in post_consts and post_consts[block] is not None:
-                        if block.update_statement is not None and (block.inverted and block.update_before_condition or
-                                                                   not block.inverted):
-                            # Replace the RHS of the update experssion
-                            post_mapping = {
-                                k: v
-                                for k, v in post_consts[block].items()
-                                if v is not _UnknownValue and k not in multivalue_desc_symbols
-                            }
-                            update_stmt = block.update_statement
-                            updates = update_stmt.code if isinstance(update_stmt.code, list) else [update_stmt.code]
-                            for update in updates:
-                                astutils.ASTReplaceAssignmentRHS(post_mapping).visit(update)
-                            block.update_statement.code = updates
+                    self._propagate_loop(block, post_constants, multivalue_desc_symbols)
 
             # Gather initial propagated symbols
             result = {k: v for k, v in symbols_replaced.items() if k not in remaining_unknowns}
@@ -204,6 +191,23 @@ class ConstantPropagation(ppl.Pass):
 
     def report(self, pass_retval: Set[str]) -> str:
         return f'Propagated {len(pass_retval)} constants.'
+
+    def _propagate_loop(self, loop: LoopRegion, post_constants: BlockConstsT,
+                        multivalue_desc_symbols: Set[str]) -> None:
+        if loop in post_constants and post_constants[loop] is not None:
+            if loop.update_statement is not None and (loop.inverted and loop.update_before_condition or
+                                                      not loop.inverted):
+                # Replace the RHS of the update experssion
+                post_mapping = {
+                    k: v
+                    for k, v in post_constants[loop].items()
+                    if v is not _UnknownValue and k not in multivalue_desc_symbols
+                }
+                update_stmt = loop.update_statement
+                updates = update_stmt.code if isinstance(update_stmt.code, list) else [update_stmt.code]
+                for update in updates:
+                    astutils.ASTReplaceAssignmentRHS(post_mapping).visit(update)
+                loop.update_statement.code = updates
 
     def _collect_constants_for_conditional(self, conditional: ConditionalBlock, arrays: Set[str],
                                            in_const_dict: BlockConstsT, pre_const_dict: BlockConstsT,

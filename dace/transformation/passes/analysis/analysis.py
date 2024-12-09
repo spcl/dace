@@ -240,6 +240,19 @@ class AccessSets(ppl.Pass):
         # If access nodes were modified, reapply
         return modified & ppl.Modifies.AccessNodes
 
+    def _get_loop_region_readset(self, loop: LoopRegion, arrays: Set[str]) -> Set[str]:
+        readset = set()
+        exprs = { loop.loop_condition.as_string }
+        update_stmt = loop_analysis.get_update_assignment(loop)
+        init_stmt = loop_analysis.get_init_assignment(loop)
+        if update_stmt:
+            exprs.add(update_stmt)
+        if init_stmt:
+            exprs.add(init_stmt)
+        for expr in exprs:
+            readset |= symbolic.free_symbols_and_functions(expr) & arrays
+        return readset
+
     def apply_pass(self, top_sdfg: SDFG, _) -> Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]:
         """
         :return: A dictionary mapping each control flow block to a tuple of its (read, written) data descriptors.
@@ -263,15 +276,7 @@ class AccessSets(ppl.Pass):
                             if state.out_degree(anode) > 0:
                                 readset.add(anode.data)
                     if isinstance(block, LoopRegion):
-                        exprs = set([ block.loop_condition.as_string ])
-                        update_stmt = loop_analysis.get_update_assignment(block)
-                        init_stmt = loop_analysis.get_init_assignment(block)
-                        if update_stmt:
-                            exprs.add(update_stmt)
-                        if init_stmt:
-                            exprs.add(init_stmt)
-                        for expr in exprs:
-                            readset |= symbolic.free_symbols_and_functions(expr) & arrays
+                        readset |= self._get_loop_region_readset(block, arrays)
                     elif isinstance(block, ConditionalBlock):
                         for cond, _ in block.branches:
                             if cond is not None:

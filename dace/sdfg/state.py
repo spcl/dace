@@ -726,11 +726,11 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     defined_syms[str(sym)] = sym.dtype
 
         # Add inter-state symbols
-        if isinstance(sdfg.start_block, LoopRegion):
+        if isinstance(sdfg.start_block, AbstractControlFlowRegion):
             update_if_not_none(defined_syms, sdfg.start_block.new_symbols(defined_syms))
         for edge in sdfg.all_interstate_edges():
             update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
-            if isinstance(edge.dst, LoopRegion):
+            if isinstance(edge.dst, AbstractControlFlowRegion):
                 update_if_not_none(defined_syms, edge.dst.new_symbols(defined_syms))
 
         # Add scope symbols all the way to the subgraph
@@ -2722,6 +2722,12 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 
         return False, None
 
+    def new_symbols(self, symbols: dict) -> Dict[str, dtypes.typeclass]:
+        """
+        Returns a mapping between the symbol defined by this control flow region and its type, if it exists.
+        """
+        return {}
+
     ###################################################################
     # CFG API methods
 
@@ -3306,9 +3312,6 @@ class LoopRegion(ControlFlowRegion):
         return free_syms, defined_syms, used_before_assignment
 
     def new_symbols(self, symbols) -> Dict[str, dtypes.typeclass]:
-        """
-        Returns a mapping between the symbol defined by this loop and its type, if it exists.
-        """
         # Avoid cyclic import
         from dace.codegen.tools.type_inference import infer_expr_type
         from dace.transformation.passes.analysis import loop_analysis
@@ -3402,11 +3405,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
         branch.sdfg = self.sdfg
 
     def remove_branch(self, branch: ControlFlowRegion):
-        filtered_branches = []
-        for c, b in self._branches:
-            if b is not branch:
-                filtered_branches.append((c, b))
-        self._branches = filtered_branches
+        self._branches = [(c, b) for c, b in self._branches if b is not branch]
     
     def _used_symbols_internal(self,
                                all_symbols: bool,
