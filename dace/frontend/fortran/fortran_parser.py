@@ -3392,8 +3392,8 @@ def create_sdfg_from_fortran_file_with_options(
     program.iblocks = functions_and_subroutines_builder.iblocks
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder, rename_dict).visit(program)
+    #program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
+    #program = ast_transforms.CallToArray(functions_and_subroutines_builder, rename_dict).visit(program)
     # program = ast_transforms.TypeInterference(program).visit(program)
     # program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)

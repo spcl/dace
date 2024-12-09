@@ -216,7 +216,7 @@ class Subroutine_Subprogram_Node(FNode):
 
 
 class Interface_Block_Node(FNode):
-    _attributes = ('name')
+    _attributes = ('name',)
     _fields = (
         'subroutines',
     )
@@ -229,17 +229,17 @@ class Interface_Stmt_Node(FNode):
 
 class Procedure_Name_List_Node(FNode):
     _attributes = ()
-    _fields = ('subroutines')
+    _fields = ('subroutines',)
 
 
 class Procedure_Statement_Node(FNode):
     _attributes = ()
-    _fields = ('namelists')
+    _fields = ('namelists',)
 
 
 class Module_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('functions')
+    _fields = ('functions',)
 
 
 class Program_Stmt_Node(FNode):
@@ -254,49 +254,49 @@ class Subroutine_Stmt_Node(FNode):
 
 class Function_Stmt_Node(FNode):
     _attributes = ('name',)
-    _fields = ('args', 'ret')
+    _fields = ('args', 'ret',)
 
 
 class Prefix_Node(FNode):
-    _attributes = ('elemental', 'recursive', 'pure')
+    _attributes = ('elemental', 'recursive', 'pure',)
     _fields = ()
 
 
 class Name_Node(FNode):
-    _attributes = ('name', 'type')
+    _attributes = ('name', 'type',)
     _fields = ()
 
 
 class Name_Range_Node(FNode):
-    _attributes = ('name', 'type', 'arrname', 'pos')
+    _attributes = ('name', 'type', 'arrname', 'pos',)
     _fields = ()
 
 
 class Where_Construct_Node(FNode):
     _attributes = ()
-    _fields = ('main_body', 'main_cond', 'else_body', 'elifs_body', 'elifs_cond')
+    _fields = ('main_body', 'main_cond', 'else_body', 'elifs_body', 'elifs_cond',)
 
 
 class Type_Name_Node(FNode):
-    _attributes = ('name', 'type')
+    _attributes = ('name', 'type',)
     _fields = ()
 
 
 class Generic_Binding_Node(FNode):
     _attributes = ()
-    _fields = ('name', 'binding')
+    _fields = ('name', 'binding',)
 
 
 class Specification_Part_Node(FNode):
-    _fields = ('specifications', 'symbols', 'interface_blocks', 'typedecls', 'enums')
+    _fields = ('specifications', 'symbols', 'interface_blocks', 'typedecls', 'enums',)
 
 
 class Stop_Stmt_Node(FNode):
-    _attributes = ('code')
+    _attributes = ('code',)
 
 
 class Error_Stmt_Node(FNode):
-    _fields = ('error')
+    _fields = ('error',)
 
 
 class Execution_Part_Node(FNode):
@@ -315,8 +315,8 @@ class Array_Subscript_Node(FNode):
         self.type = type
         self.indices = indices
 
-    _attributes = ('name', 'type')
-    _fields = ('indices',)
+    _attributes = ( 'type',)
+    _fields = ('name','indices',)
 
 
 class Type_Decl_Node(Statement_Node):
