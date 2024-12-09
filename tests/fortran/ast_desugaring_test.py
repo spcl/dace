@@ -1196,7 +1196,7 @@ end subroutine main
     ast = parse_and_improve(sources)
     ast = correct_for_function_calls(ast)
     ast = assign_globally_unique_subprogram_names(ast, {('main',)})
-    ast = assign_globally_unique_variable_names(ast)
+    ast = assign_globally_unique_variable_names(ast, set())
 
     got = ast.tofortran()
     want = """

@@ -1429,6 +1429,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
         assert fspec in ident_map
         assert isinstance(ident_map[fspec], (Function_Stmt, Subroutine_Stmt))
         if fspec not in uident_map:
+            # We have chosen to not rename it.
             continue
         uname = uident_map[fspec]
         ufspec = fspec[:-1] + (uname,)
@@ -1470,7 +1471,10 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
 
     # PHASE 1.d: Replaces actual function names.
     for k, v in ident_map.items():
-        if not isinstance(v, (Function_Stmt, Subroutine_Stmt)) or k not in uident_map:
+        if not isinstance(v, (Function_Stmt, Subroutine_Stmt)):
+            continue
+        if k not in uident_map:
+            # We have chosen to not rename it.
             continue
         oname, uname = k[-1], uident_map[k]
         singular(children_of_type(v, Name)).string = uname
@@ -1503,7 +1507,7 @@ def add_use_to_specification(scdef: SCOPE_OBJECT_TYPES, clause: str):
         prepend_children(specification_part, Use_Stmt(clause))
 
 
-def assign_globally_unique_variable_names(ast: Program) -> Program:
+def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Program:
     """
     Update the variable declarations to have globally unique names.
     Precondition:
@@ -1518,6 +1522,8 @@ def assign_globally_unique_variable_names(ast: Program) -> Program:
     # Make new unique names for the identifiers.
     uident_map: Dict[SPEC, str] = {}
     for k in ident_map.keys():
+        if k[-1] in keepers:
+            continue
         uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
         uident_map[k] = uname
 
@@ -1590,7 +1596,10 @@ def assign_globally_unique_variable_names(ast: Program) -> Program:
 
         scope_spec = find_scope_spec(vref)
         vspec = find_real_ident_spec(vspec[-1], scope_spec, alias_map)
-        assert vspec in ident_map and vspec in uident_map
+        assert vspec in ident_map
+        if vspec not in uident_map:
+            # We have chosen to not rename it.
+            continue
         uname = uident_map[vspec]
         vref.string = uname
 
@@ -1651,6 +1660,9 @@ def assign_globally_unique_variable_names(ast: Program) -> Program:
     # PHASE 1.e: Replaces actual variable names.
     for k, v in ident_map.items():
         if not isinstance(v, Entity_Decl):
+            continue
+        if k not in uident_map:
+            # We have chosen to not rename it.
             continue
         oname, uname = k[-1], uident_map[k]
         fdef = find_scope_ancestor(v)

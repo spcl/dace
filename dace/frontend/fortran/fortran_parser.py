@@ -1506,9 +1506,9 @@ class AST_translator:
                                         element_type = array.stype
                                         # print("get stype")
                             elif isinstance(array, dat.Array):
-                                element_type = array.dtype 
+                                element_type = array.dtype
                             elif isinstance(array, dat.Scalar):
-                                element_type = array.dtype                
+                                element_type = array.dtype
 
                             else:
                                 if hasattr(array, "dtype"):
@@ -2188,8 +2188,8 @@ class AST_translator:
                     special_list_in[retval.name.name] = pointer(self.get_dace_type(rettype))
                     special_list_out.append(retval.name.name + "_out")
                 else:
-                    raise NotImplementedError("Return type not implemented")        
-                
+                    raise NotImplementedError("Return type not implemented")
+
                 text = tw.write_code(
                     ast_internal_classes.BinOp_Node(lval=retval, op="=", rval=node, line_number=node.line_number))
 
@@ -3260,7 +3260,7 @@ def name_and_rename_dict_creator(parse_order: list,dep_graph:nx.DiGraph)->Tuple[
                             names.append(k.string)
         rename_dict[i] = local_rename_dict
         name_dict[i] = names
-    return name_dict, rename_dict    
+    return name_dict, rename_dict
 
 
 def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir,
@@ -3295,7 +3295,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     what_to_parse_list = {}
     name_dict, rename_dict = name_and_rename_dict_creator(parse_order,dep_graph)
-    
+
 
     tables = SymbolTable
     partial_ast = ast_components.InternalFortranAst()
@@ -3492,7 +3492,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
-    
+
 
     print("Before intrinsics")
     for transformation in partial_ast.fortran_intrinsics().transformations():
@@ -3662,8 +3662,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             #if j.name.name != "solver_homogeneous_lw":
             # if j.name.name != "tspectralplanck_init":
             #if j.name.name != "radiation":
-            if not "solver_mcica_sw" in j.name.name :    
-                
+            if not "solver_mcica_sw" in j.name.name :
+
             #if j.name.name != "calc_no_scattering_transmittance_lw":
                 # if j.name.name != "radiation_scheme":
                 # if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
