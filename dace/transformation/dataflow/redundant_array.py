@@ -1675,7 +1675,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
 class RemoveIntermediateWrite(pm.SingleStateTransformation):
     """ Moves intermediate writes insde a Map's subgraph outside the Map.
-    
+
     Currently, the transformation supports only the case `WriteAccess -> MapExit`, where the edge has an empty Memlet.
     """
 

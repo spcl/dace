@@ -9,6 +9,7 @@ import functools
 import itertools
 import math
 import numbers
+import re
 import sys
 import warnings
 
@@ -230,6 +231,14 @@ def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
             copy_shape, dst_strides = reshape_strides(src_subset, src_strides, dst_strides, copy_shape)
         elif memlet.data == dst_node.data:
             copy_shape, src_strides = reshape_strides(dst_subset, dst_strides, src_strides, copy_shape)
+
+    def replace_dace_defer_dim(string, arrname):
+        pattern = r"__dace_defer_dim(\d+)"
+        return re.sub(pattern, r"A_size[\1]", string)
+
+    # TODO: do this better?
+    dst_expr = replace_dace_defer_dim(dst_expr, dst_node.data) if dst_expr is not None else None
+    src_expr = replace_dace_defer_dim(src_expr, src_node.data) if src_expr is not None else None
 
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
@@ -539,7 +548,8 @@ def ndcopy_to_strided_copy(
         return None
 
 
-def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed_veclen=1, indices=None):
+def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed_veclen=1, indices=None,
+                    deferred_size_names=None):
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
 
@@ -569,7 +579,16 @@ def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed
     if packed_veclen > 1:
         index /= packed_veclen
 
-    return sym2cpp(index)
+    if not (deferred_size_names is None):
+        access_str_with_deferred_vars = sym2cpp(index)
+        def replace_pattern(match):
+            number = match.group(1)
+            return deferred_size_names[int(number)]
+        pattern = r'__dace_defer_dim(\d+)'
+        access_str = re.sub(pattern, replace_pattern, access_str_with_deferred_vars)
+        return access_str
+    else:
+        return sym2cpp(index)
 
 
 def cpp_array_expr(sdfg,
@@ -581,13 +600,15 @@ def cpp_array_expr(sdfg,
                    use_other_subset=False,
                    indices=None,
                    referenced_array=None,
-                   codegen=None):
+                   codegen=None,
+                   deferred_size_names=None):
     """ Converts an Indices/Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
-    offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
+    desc : dace.Data = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
+    desc_name = memlet.data
+    offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices, deferred_size_names=deferred_size_names)
 
     # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
     # TODO: Study this when changing Structures to be (optionally?) non-pointers.
@@ -763,7 +784,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
     Detects whether a write-conflict-resolving edge can be emitted without
     using atomics or critical sections, returning the node or SDFG that caused
     the decision.
-    
+
     :return: None if the conflict is nonatomic, otherwise returns the scope entry
              node or SDFG that caused the decision to be made.
     """

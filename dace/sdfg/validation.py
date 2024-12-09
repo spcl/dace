@@ -192,7 +192,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
     """ Verifies the correctness of an SDFG by applying multiple tests.
-    
+
         :param sdfg: The SDFG to verify.
         :param references: An optional set keeping seen IDs for object
                            miscopy validation.
@@ -259,6 +259,12 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     'rather than using multiple references to the same one', sdfg, None)
             references.add(id(desc))
 
+            if (name.endswith("_size") and desc.transient and type(desc) == dt.Array and
+                hasattr(desc, "is_size_array") and desc.is_size_array is False):
+                raise InvalidSDFGError(
+                    f'Only size arrays allowed to end with _size, desc: {desc}, storage: {desc.storage}, transient: {desc.transient}', sdfg, None
+                )
+
             # Because of how the code generator works Scalars can not be return values.
             #  TODO: Remove this limitation as the CompiledSDFG contains logic for that.
             if isinstance(desc, dt.Scalar) and name.startswith("__return") and not desc.transient:
@@ -300,6 +306,24 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                             "Arrays that use a multibank access pattern must have the size of the first dimension equal"
                             f" the number of banks and have at least 2 dimensions for array {name}", sdfg, None)
 
+            # Check the size array shapes match
+            if type(desc) == dt.Array:
+                if desc.is_size_array is False and desc.size_desc_name is not None:
+                    # It is an array which is not a size array and needs to have a size array
+                    size_desc = sdfg._arrays[desc.size_desc_name]
+                    size_arr_len = size_desc.shape[0]
+                    if not isinstance(size_arr_len, int) and  (isinstance(size_arr_len, dace.symbolic.symbol) and not size_arr_len.is_integer):
+                        raise InvalidSDFGError(
+                            f"Size arrays need to be one-dimensional and have an integer length known at compile time. {desc.size_desc_name}: {size_desc.shape}"
+                            , sdfg, None
+                        )
+                    # TODO: This check can be implemented as part of a getter/setter on the dimensions of the array?
+                    if int(size_arr_len) != len(desc.shape):
+                        raise InvalidSDFGError(
+                            f"Size arrays size needs to match to shape of its array: {desc.size_desc_name}, {size_desc.shape}: {name}, {desc.shape}"
+                            , sdfg, None
+                        )
+
         # Check if SDFG is located within a GPU kernel
         context['in_gpu'] = is_devicelevel_gpu(sdfg, None, None)
         context['in_fpga'] = is_devicelevel_fpga(sdfg, None, None)
@@ -325,7 +349,7 @@ def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]
     """
     Helper function that returns False if a data container cannot be accessed in the current SDFG context.
     """
-    storage = sdfg.arrays[container].storage
+    storage = sdfg.arrays[container].storage if container in sdfg.arrays else sdfg.arrays[container].storage
     if storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES:
         return context.get('in_gpu', False)
     if storage == dtypes.StorageType.FPGA_Global or storage in dtypes.FPGA_STORAGES:
@@ -542,6 +566,59 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                             'written to, but only given to nested SDFG as an '
                             'input connector' % node.data, sdfg, state_id, nid)
 
+            # Deferred allocation related tests
+            insize = "_write_size"
+            outsize = "_read_size"
+            read_size_edges = list(state.edges_by_connector(node, outsize))
+            write_size_edges = list(state.edges_by_connector(node, insize))
+
+            # Reading-Writing the size is valid only if the array is transient and has the storage type CPU_Heap or GPU_Global
+            has_writes_or_reads = len(read_size_edges) + len(write_size_edges) > 0
+            size_access_allowed = arr.transient and (arr.storage == dtypes.StorageType.CPU_Heap or arr.storage == dtypes.StorageType.GPU_Global)
+            if has_writes_or_reads and not size_access_allowed:
+                raise InvalidSDFGNodeError('Reading the size of an array, or changing (writing to) the size of an array '
+                                           'is only valid if the array is transient and the storage is CPU_Heap or GPU_Global', sdfg, state_id, nid)
+
+            if len(write_size_edges) > 1:
+                raise InvalidSDFGNodeError('One node can have at maximum one edge writing to its size descriptior', sdfg, state_id, nid)
+
+            # The write needs to always have the same length of the dimension of the node
+            if len(write_size_edges) == 1:
+                write_size_edge = write_size_edges[0]
+                edge_id = state.edge_id(write_size_edge)
+                required_range = len(arr.shape)
+                try:
+                    elements = int(write_size_edge.data.num_elements())
+                    if elements != required_range or write_size_edge.data.subset.dims() != 1:
+                        raise Exception
+                except Exception:
+                    raise InvalidSDFGEdgeError('The write to a node needs to match the length of the array shape '
+                                                'the volume needs to be integer (not symbolic) and the shape one dimensional', sdfg, state_id, edge_id)
+
+            # Reads to map can be only scalars-sized
+            for read_size_edge in read_size_edges:
+                edge_id = state.edge_id(read_size_edge)
+                from dace import nodes
+                if (isinstance(read_size_edge.dst, nodes.EntryNode) or
+                    isinstance(read_size_edge.dst, nodes.AccessNode) or
+                    isinstance(read_size_edge.dst, nodes.Tasklet)):
+                    if isinstance(read_size_edge.dst, nodes.MapEntry):
+                        required_range = 1
+                        try:
+                            elements = int(read_size_edge.data.num_elements())
+                            if elements != required_range and read_size_edge.data.subset.dims() != 1:
+                                raise Exception()
+                        except Exception:
+                            raise InvalidSDFGEdgeError('The read to a map entry needs have dimension 1'
+                                                        'If reading multiple dimensions, multiple edges need to go to the map entry', sdfg, state_id, edge_id)
+                else:
+                    raise InvalidSDFGEdgeError('The read size should connect to an entry node, access node, or tasklet (this can be changed)'
+                                                , sdfg, state_id, edge_id)
+
+
+
+
+
         if (isinstance(node, nd.ConsumeEntry) and "IN_stream" not in node.in_connectors):
             raise InvalidSDFGNodeError("Consume entry node must have an input stream", sdfg, state_id, nid)
         if (isinstance(node, nd.ConsumeEntry) and "OUT_stream" not in node.out_connectors):
@@ -693,9 +770,38 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             name = None
         if isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Structure):
             name = None
+        # Special case: if the name is the size array of the src_node, then it is ok, checked with the "size_desc_name"
+        src_size_access = isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Array) and name is not None and name == sdfg.arrays[src_node.data].size_desc_name
+        dst_size_access = isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Array) and name is not None and name == sdfg.arrays[dst_node.data].size_desc_name
+        sdict = state.scope_dict()
+        if src_size_access and dst_size_access:
+            raise InvalidSDFGEdgeError(
+                "Reading from the size connector and writing to the size connector at the same time of same data is not valid",
+                sdfg,
+                state_id,
+                eid,
+            )
+        if dst_size_access and sdict[dst_node] is not None:
+            raise InvalidSDFGEdgeError(
+                "Reallocating data (writing to the size connector) within a scope is not valid",
+                sdfg,
+                state_id,
+                eid,
+            )
+        if dst_size_access:
+            dst_arr = sdfg.arrays[dst_node.data]
+            if (dst_arr.storage != dtypes.StorageType.GPU_Global and
+                dst_arr.storage != dtypes.StorageType.CPU_Heap):
+                raise InvalidSDFGEdgeError(
+                    f"Reallocating data is allowed only to GPU_Global or CPU_Heap, the storage type is {dst_arr.storage}",
+                    sdfg,
+                    state_id,
+                    eid,
+                )
         if (name is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
-                and (not isinstance(src_node, nd.AccessNode) or (name != src_node.data and name != e.src_conn))
-                and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn))):
+                and (not isinstance(src_node, nd.AccessNode) or (name != src_node.data and name != e.src_conn and not src_size_access))
+                and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn and not dst_size_access))
+            ):
             raise InvalidSDFGEdgeError(
                 "Memlet data does not match source or destination "
                 "data nodes)",
@@ -724,7 +830,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                                  if isinstance(dst_node, nd.AccessNode) and e.data.data != dst_node.data else src_node)
 
             if isinstance(subset_node, nd.AccessNode):
-                arr = sdfg.arrays[e.data.data]
+                if src_size_access:
+                    arr = sdfg.arrays[sdfg.arrays[src_node.data].size_desc_name]
+                elif dst_size_access:
+                    arr = sdfg.arrays[sdfg.arrays[dst_node.data].size_desc_name]
+                else:
+                    arr = sdfg.arrays[e.data.data]
                 # Dimensionality
                 if e.data.subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(
@@ -814,10 +925,11 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Check dimensionality of memory access
         if isinstance(e.data.subset, (sbs.Range, sbs.Indices)):
-            if e.data.subset.dims() != len(sdfg.arrays[e.data.data].shape):
+            desc = sdfg.arrays[e.data.data] if e.data.data in sdfg.arrays else sdfg.arrays[e.data.data]
+            if e.data.subset.dims() != len(desc.shape):
                 raise InvalidSDFGEdgeError(
                     "Memlet subset uses the wrong dimensions"
-                    " (%dD for a %dD data node)" % (e.data.subset.dims(), len(sdfg.arrays[e.data.data].shape)),
+                    " (%dD for a %dD data node)" % (e.data.subset.dims(), len(desc.shape)),
                     sdfg,
                     state_id,
                     eid,
@@ -826,8 +938,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Verify that source and destination subsets contain the same
         # number of elements
         if not e.data.allow_oob and e.data.other_subset is not None and not (
-            (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
-            (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
+            (isinstance(src_node, nd.AccessNode) and src_node.data in sdfg.arrays and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
+            (isinstance(dst_node, nd.AccessNode) and src_node.data in sdfg.arrays and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
             src_expr = (e.data.src_subset.num_elements() * sdfg.arrays[src_node.data].veclen)
             dst_expr = (e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen)
             if symbolic.inequal_symbols(src_expr, dst_expr):

@@ -54,7 +54,7 @@ def _replsym(symlist, symrepl):
 def replace_dict(subgraph: 'StateSubgraphView',
                  repl: Dict[str, str],
                  symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
-    """ 
+    """
     Finds and replaces all occurrences of a set of symbols/arrays in the given subgraph.
 
     :param subgraph: The given graph or subgraph to replace in.
@@ -86,7 +86,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
 def replace(subgraph: 'StateSubgraphView', name: str, new_name: str):
     """
     Finds and replaces all occurrences of a symbol or array in the given subgraph.
-    
+
     :param subgraph: The given graph or subgraph to replace in.
     :param name: Name to find.
     :param new_name: Name to replace.
