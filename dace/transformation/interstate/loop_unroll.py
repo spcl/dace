@@ -26,7 +26,7 @@ class LoopUnroll(xf.MultiStateTransformation):
     )
 
     inline_iterations = Property(dtype=bool, default=True,
-                                 desc='Whether or not to inline individual iteration\'s CFGs after unrolling')
+                                 desc="Whether or not to inline individual iterations' CFGs after unrolling")
 
     @classmethod
     def expressions(cls):
