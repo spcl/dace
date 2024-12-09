@@ -52,7 +52,7 @@ class BlockFusion(transformation.MultiStateTransformation):
         if out_edges[0].data.assignments:
             if not in_edges:
                 return False
-            # If the first block is a control flow region, no absorbtion is possible.
+            # If the first block is a control flow region, no absorption is possible.
             if isinstance(self.first_block, AbstractControlFlowRegion):
                 return False
             # Fail if symbol is set before the block to fuse
