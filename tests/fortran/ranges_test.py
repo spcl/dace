@@ -484,6 +484,42 @@ def test_fortran_frontend_multiple_ranges_ecrad_bug():
         iter_1 += 1
         iter_2 += 1
 
+def test_fortran_frontend_ranges_array_bug():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM multiple_ranges_ecrad_bug
+                    implicit none
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: res
+                    CALL multiple_ranges_ecrad_function(input1, res)
+                    end
+
+                    SUBROUTINE multiple_ranges_ecrad_function(input1, res)
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: res
+
+                    res(:) = input1(2) * input1(:)
+
+                    END SUBROUTINE multiple_ranges_ecrad_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_ecrad_bug", True)
+    #sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 7
+    input1 = np.full([size], 0, order="F", dtype=np.float64)
+    for i in range(size):
+        input1[i] = i + 2
+
+    res = np.full([size], 42, order="F", dtype=np.float64)
+    sdfg(input1=input1, res=res, outside_init=False)
+
+    assert np.all(res == input1 * input1[1])
+
+
 if __name__ == "__main__":
 
     test_fortran_frontend_multiple_ranges_all()
@@ -496,3 +532,4 @@ if __name__ == "__main__":
     test_fortran_frontend_multiple_ranges_ecrad_pattern_complex_offsets()
     test_fortran_frontend_array_assignment()
     test_fortran_frontend_multiple_ranges_ecrad_bug()
+    test_fortran_frontend_ranges_array_bug()

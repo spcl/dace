@@ -2936,6 +2936,12 @@ class ReplaceImplicitParDecls(NodeTransformer):
     def __init__(self, scope_vars):
         self.scope_vars = scope_vars
 
+    def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
+        return node
+
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+        return node
+
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
 
         var = self.scope_vars.get_var(node.parent, node.name)
