@@ -1,6 +1,7 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
+from dataclasses import dataclass
 import os
 import warnings
 from copy import deepcopy as dpcp
@@ -3262,9 +3263,25 @@ def name_and_rename_dict_creator(parse_order: list,dep_graph:nx.DiGraph)->Tuple[
         name_dict[i] = names
     return name_dict, rename_dict
 
+@dataclass
+class FindUsedFunctionsConfig:
 
-def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir,
-                                               icon_sdfgs_dir, normalize_offsets: bool = False, propagation_info=None):
+    root: str
+    needed_functions: List[str]
+    skip_functions: List[str]
+
+def create_sdfg_from_fortran_file_with_options(
+    source_string: str,
+    source_list, include_list,
+    sdfgs_dir,
+    subroutine_name: Optional[str] = None,
+    normalize_offsets: bool = True, 
+    propagation_info = None,
+    enum_propagator_files: Optional[List[str]] = None,
+    enum_propagator_ast = None,
+    used_functions_config: Optional[FindUsedFunctionsConfig] = None
+):
+
     """
     Creates an SDFG from a fortran file
     :param source_string: The fortran file name
@@ -3415,77 +3432,66 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         i.function_definitions = []
     program.function_definitions = []
 
-    # let's fix the propagation info for ECRAD
-
-    for i in propagation_info:
-        if isinstance(i[0], ast_internal_classes.Data_Ref_Node):
-            i[0].parent_ref.name = i[0].parent_ref.name.replace("ecrad_conf", "config")
 
     # time to trim the ast using the propagation info
     # adding enums from radiotion config
-    parkind_ast = parser(ffr(file_candidate="/home/alex/icon-model/src/shared/mo_kind.f90"))
-    parkinds = partial_ast.create_ast(parkind_ast)
+    if enum_propagator_files is not None:
 
-    parkind2 = parser(
-        ffr(file_candidate="/home/alex/icon-model/externals/ecrad/ifsaux/parkind1.F90"))
-    parkinds2 = partial_ast.create_ast(parkind2)
-    ecradhook = parser(
-        ffr(file_candidate="/home/alex/icon-model/externals/ecrad/ifsaux/ecradhook.F90"))
-    ecradhook = partial_ast.create_ast(ecradhook)
+        if enum_propagator_files is not None:
+            for file in enum_propagator_files:
 
-    radiation_config_ast = parser(
-        ffr(file_candidate="/home/alex/icon-model/externals/ecrad/radiation/radiation_config.F90"))
-    radiation_config_internal_ast = partial_ast.create_ast(radiation_config_ast)
-    enum_propagator = ast_transforms.PropagateEnums()
-    enum_propagator.visit(radiation_config_internal_ast)
+                config_ast = parser(ffr(file_candidate=file))
+                partial_ast.create_ast(config_ast)
 
-    program = enum_propagator.generic_visit(program)
-    replacements = 1
-    step = 1
-    while replacements > 0:
+        radiation_config_internal_ast = partial_ast.create_ast(enum_propagator_ast)
+        enum_propagator = ast_transforms.PropagateEnums()
+        enum_propagator.visit(radiation_config_internal_ast)
+
         program = enum_propagator.generic_visit(program)
-        prop = ast_transforms.AssignmentPropagator(propagation_info)
-        program = prop.visit(program)
-        replacements = prop.replacements
-        if_eval = ast_transforms.IfEvaluator()
-        program = if_eval.visit(program)
-        replacements += if_eval.replacements
-        print("Made " + str(replacements) + " replacements in step " + str(step) + " Prop: " + str(
-            prop.replacements) + " If: " + str(if_eval.replacements))
-        step += 1
+        replacements = 1
+        step = 1
+        while replacements > 0:
+            program = enum_propagator.generic_visit(program)
+            prop = ast_transforms.AssignmentPropagator(propagation_info)
+            program = prop.visit(program)
+            replacements = prop.replacements
+            if_eval = ast_transforms.IfEvaluator()
+            program = if_eval.visit(program)
+            replacements += if_eval.replacements
+            print("Made " + str(replacements) + " replacements in step " + str(step) + " Prop: " + str(
+                prop.replacements) + " If: " + str(if_eval.replacements))
+            step += 1
 
-    unusedFunctionFinder = ast_transforms.FindUnusedFunctions("radiation", parse_order)
-    unusedFunctionFinder.visit(program)
-    used_funcs = unusedFunctionFinder.used_names
-    needed = []
-    current_list = used_funcs['radiation']
-    current_list += 'radiation'
-    # current_list+='calc_no_scattering_transmittance_lw'
-    # needed.append(['radiation_twostreams','calc_no_scattering_transmittance_lw'])
-    needed.append(['radiation_interface', 'radiation'])
-    skip_list = []
-    skip_list = ['radiation_monochromatic', 'radiation_cloudless_sw',
-                 'radiation_tripleclouds_sw', 'radiation_homogeneous_sw']
-    for i in reversed(parse_order):
-        for j in program.modules:
-            if j.name.name in skip_list:
-                continue
-            if j.name.name == i:
+    if used_functions_config is not None:
 
-                for k in j.subroutine_definitions:
-                    if k.name.name in current_list:
-                        current_list += used_funcs[k.name.name]
-                        needed.append([j.name.name, k.name.name])
+        unusedFunctionFinder = ast_transforms.FindUnusedFunctions(used_functions_config.root, parse_order)
+        unusedFunctionFinder.visit(program)
+        used_funcs = unusedFunctionFinder.used_names
+        current_list = used_funcs[used_functions_config.root]
+        current_list += used_functions_config.root
 
-    for i in program.modules:
-        subroutines = []
-        for j in needed:
-            if i.name.name == j[0]:
+        needed = used_functions_config.needed_functions
 
-                for k in i.subroutine_definitions:
-                    if k.name.name == j[1]:
-                        subroutines.append(k)
-        i.subroutine_definitions = subroutines
+        for i in reversed(parse_order):
+            for j in program.modules:
+                if j.name.name in used_functions_config.skip_functions:
+                    continue
+                if j.name.name == i:
+
+                    for k in j.subroutine_definitions:
+                        if k.name.name in current_list:
+                            current_list += used_funcs[k.name.name]
+                            needed.append([j.name.name, k.name.name])
+
+        for i in program.modules:
+            subroutines = []
+            for j in needed:
+                if i.name.name == j[0]:
+
+                    for k in i.subroutine_definitions:
+                        if k.name.name == j[1]:
+                            subroutines.append(k)
+            i.subroutine_definitions = subroutines
 
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
@@ -3599,25 +3605,18 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     # arg_pruner = ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes)
     # arg_pruner.visit(program)
 
-
     for j in program.subroutine_definitions:
-        # if j.name.name!="cloudscouter":
-        # if j.name.name != "tspectralplanck_init":
-        #if j.name.name != "radiation":
-        if not "solver_mcica_sw" in j.name.name:
-        #if j.name.name != "calc_no_scattering_transmittance_lw":
-            # if j.name.name != "solver_homogeneous_lw":
-            # if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
-            # if j.name.name!="rot_vertex_ri":
-            # if j.name.name!="velocity_tendencies":
-            # if j.name.name!="cells2verts_scalar_ri":
-            # if j.name.name!="get_indices_c":
-            continue
+
+        if subroutine_name is not None:
+            if not subroutine_name in j.name.name:
+                continue
+
         if j.execution_part is None:
             continue
+
         print(f"Building SDFG {j.name.name}")
         startpoint = j
-        ast2sdfg = AST_translator(__file__, multiple_sdfgs=False, startpoint=startpoint, sdfg_path=icon_sdfgs_dir,
+        ast2sdfg = AST_translator(__file__, multiple_sdfgs=False, startpoint=startpoint, sdfg_path=sdfgs_dir,
                                   normalize_offsets=normalize_offsets)
         sdfg = SDFG(j.name.name)
         ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
@@ -3630,7 +3629,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
         ast2sdfg.translate(program, sdfg)
 
-        sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
+        print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz")}')
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
 
         sdfg.apply_transformations(IntrinsicSDFGTransformation)
 
@@ -3641,37 +3641,30 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             continue
 
         sdfg.validate()
-        sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated_f.sdfgz"), compress=True)
+        print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_validated_f.sdfgz")}')
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_f.sdfgz"), compress=True)
 
         sdfg.simplify(verbose=True)
-        print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-        sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_f.sdfgz"), compress=True)
+        print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
+        sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_f.sdfgz"), compress=True)
 
-        print(f'Compiling SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
+        print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
         sdfg.compile()
 
     for i in program.modules:
+
         for path in source_list:
 
             if path.lower().find(i.name.name.lower()) != -1:
                 mypath = path
                 break
-        # copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
-        for j in i.subroutine_definitions:
-            # if j.name.name!="cloudscouter":
-            #if j.name.name != "solver_homogeneous_lw":
-            # if j.name.name != "tspectralplanck_init":
-            #if j.name.name != "radiation":
-            if not "solver_mcica_sw" in j.name.name :
 
-            #if j.name.name != "calc_no_scattering_transmittance_lw":
-                # if j.name.name != "radiation_scheme":
-                # if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
-                # if j.name.name!="rot_vertex_ri":
-                # if j.name.name!="velocity_tendencies":
-                # if j.name.name!="cells2verts_scalar_ri":
-                # if j.name.name!="get_indices_c":
-                continue
+        for j in i.subroutine_definitions:
+
+            if subroutine_name is not None:
+                if not subroutine_name in j.name.name :
+                    continue
+
             if j.execution_part is None:
                 continue
             print(f"Building SDFG {j.name.name}")
@@ -3680,7 +3673,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 __file__,
                 multiple_sdfgs=False,
                 startpoint=startpoint,
-                sdfg_path=icon_sdfgs_dir,
+                sdfg_path=sdfgs_dir,
                 # toplevel_subroutine_arg_names=arg_pruner.visited_funcs[toplevel_subroutine],
                 # subroutine_used_names=arg_pruner.used_in_all_functions,
                 normalize_offsets=normalize_offsets
@@ -3695,7 +3688,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             ast2sdfg.globalsdfg = sdfg
             ast2sdfg.translate(program, sdfg)
 
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
+            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
 
             sdfg.apply_transformations(IntrinsicSDFGTransformation)
 
@@ -3706,13 +3699,13 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
 
             sdfg.validate()
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated_f.sdfgz"), compress=True)
+            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_f.sdfgz"), compress=True)
 
             sdfg.simplify(verbose=True)
-            print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified_f.sdfgz"), compress=True)
+            print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
+            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_f.sdfgz"), compress=True)
 
-            print(f'Compiling SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
+            print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
             sdfg.compile()
 
     # return sdfg
