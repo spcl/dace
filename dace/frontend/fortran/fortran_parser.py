@@ -3287,7 +3287,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     ast = prune_unused_objects(ast,
                                [m for m in walk(ast, Subroutine_Subprogram) if find_name_of_node(m) == 'radiation'])
     ast = assign_globally_unique_subprogram_names(ast, {('radiation_interface', 'radiation')})
-    ast = assign_globally_unique_variable_names(ast)
+    ast = assign_globally_unique_variable_names(ast, {'config'})
     ast = consolidate_uses(ast)
 
     dep_graph = compute_dep_graph(ast, 'radiation_interface')
