@@ -3276,8 +3276,8 @@ def create_sdfg_from_fortran_file_with_options(
     sdfgs_dir,
     subroutine_name: Optional[str] = None,
     normalize_offsets: bool = True, 
-    propagation_info=None,
-    enum_propagator_files: List[str] = None,
+    propagation_info = None,
+    enum_propagator_files: Optional[List[str]] = None,
     enum_propagator_ast = None,
     used_functions_config: Optional[FindUsedFunctionsConfig] = None
 ):
