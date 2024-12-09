@@ -1,6 +1,7 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
+from dataclasses import dataclass
 import os
 import warnings
 from copy import deepcopy as dpcp
@@ -3262,6 +3263,12 @@ def name_and_rename_dict_creator(parse_order: list,dep_graph:nx.DiGraph)->Tuple[
         name_dict[i] = names
     return name_dict, rename_dict
 
+@dataclass
+class FindUsedFunctionsConfig:
+
+    root: str
+    needed_functions: List[str]
+    skip_functions: List[str]
 
 def create_sdfg_from_fortran_file_with_options(
     source_string: str,
@@ -3271,7 +3278,8 @@ def create_sdfg_from_fortran_file_with_options(
     normalize_offsets: bool = True, 
     propagation_info=None,
     enum_propagator_files: List[str] = None,
-    enum_propagator_ast = None
+    enum_propagator_ast = None,
+    used_functions_config: Optional[FindUsedFunctionsConfig] = None
 ):
 
     """
@@ -3454,39 +3462,36 @@ def create_sdfg_from_fortran_file_with_options(
                 prop.replacements) + " If: " + str(if_eval.replacements))
             step += 1
 
-    unusedFunctionFinder = ast_transforms.FindUnusedFunctions("radiation", parse_order)
-    unusedFunctionFinder.visit(program)
-    used_funcs = unusedFunctionFinder.used_names
-    needed = []
-    current_list = used_funcs['radiation']
-    current_list += 'radiation'
-    # current_list+='calc_no_scattering_transmittance_lw'
-    # needed.append(['radiation_twostreams','calc_no_scattering_transmittance_lw'])
-    needed.append(['radiation_interface', 'radiation'])
-    skip_list = []
-    skip_list = ['radiation_monochromatic', 'radiation_cloudless_sw',
-                 'radiation_tripleclouds_sw', 'radiation_homogeneous_sw']
+    if used_functions_config is not None:
 
-    for i in reversed(parse_order):
-        for j in program.modules:
-            if j.name.name in skip_list:
-                continue
-            if j.name.name == i:
+        unusedFunctionFinder = ast_transforms.FindUnusedFunctions(used_functions_config.root, parse_order)
+        unusedFunctionFinder.visit(program)
+        used_funcs = unusedFunctionFinder.used_names
+        current_list = used_funcs[used_functions_config.root]
+        current_list += used_functions_config.root
 
-                for k in j.subroutine_definitions:
-                    if k.name.name in current_list:
-                        current_list += used_funcs[k.name.name]
-                        needed.append([j.name.name, k.name.name])
+        needed = root.needed_functions
 
-    for i in program.modules:
-        subroutines = []
-        for j in needed:
-            if i.name.name == j[0]:
+        for i in reversed(parse_order):
+            for j in program.modules:
+                if j.name.name in root.skip_functions:
+                    continue
+                if j.name.name == i:
 
-                for k in i.subroutine_definitions:
-                    if k.name.name == j[1]:
-                        subroutines.append(k)
-        i.subroutine_definitions = subroutines
+                    for k in j.subroutine_definitions:
+                        if k.name.name in current_list:
+                            current_list += used_funcs[k.name.name]
+                            needed.append([j.name.name, k.name.name])
+
+        for i in program.modules:
+            subroutines = []
+            for j in needed:
+                if i.name.name == j[0]:
+
+                    for k in i.subroutine_definitions:
+                        if k.name.name == j[1]:
+                            subroutines.append(k)
+            i.subroutine_definitions = subroutines
 
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)

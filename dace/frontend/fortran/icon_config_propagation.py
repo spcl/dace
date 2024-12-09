@@ -179,6 +179,13 @@ if __name__ == "__main__":
         f"{base_icon_path}/externals/ecrad/ifsaux/ecradhook.F90"
     ]
 
+    cfg = fortran_parser.FindUsedFunctionsConfig(
+        root = 'radiation',
+        needed_functions = ['radiation_interface', 'radiation'],
+        skip_functions = ['radiation_monochromatic', 'radiation_cloudless_sw',
+                    'radiation_tripleclouds_sw', 'radiation_homogeneous_sw']
+    )
+
     # previous steps were used to generate the initial list of assignments for ECRAD
     # this includes user config and internal enumerations of ICON
     # the previous ASTs can be now disregarded
@@ -193,5 +200,6 @@ if __name__ == "__main__":
         normalize_offsets=True,
         propagation_info=propagation_info,
         enum_propagator_ast=radiation_config_ast,
-        enum_propagator_files=enum_propagator_files
+        enum_propagator_files=enum_propagator_files,
+        used_functions_config=cfg
     )
