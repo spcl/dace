@@ -90,6 +90,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     Ascend_AiCore = ()
     SoftHier_Device = ()
     SoftHier_Cluster = ()
+    SoftHier_Sequential = ()
     SoftHier_Snitch = ()
     SoftHier_Redmule = ()
 
@@ -140,6 +141,7 @@ ASCNED_STORAGES = [
 SOFTHIER_SCHEDULES = [
     ScheduleType.SoftHier_Device,
     ScheduleType.SoftHier_Cluster,
+    ScheduleType.SoftHier_Sequential,
     ScheduleType.SoftHier_Snitch,
     ScheduleType.SoftHier_Redmule,
 ]

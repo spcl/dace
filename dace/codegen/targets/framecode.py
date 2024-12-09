@@ -189,9 +189,9 @@ class DaCeCodeGenerator(object):
         # Write state struct
         structstr = '\n'.join(self.statestruct)
         global_stream.write(f'''
-struct {mangle_dace_state_struct_name(sdfg)} {{
+typedef struct {mangle_dace_state_struct_name(sdfg)} {{
     {structstr}
-}};
+}}{mangle_dace_state_struct_name(sdfg)};
 
 ''', sdfg)
 
@@ -413,14 +413,15 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                        global_stream: CodeIOStream,
                        callsite_stream: CodeIOStream,
                        generate_state_footer: bool = True):
-        # print(f'Framecode generating state {state.label}...')
+        print(f'Framecode generating state {state.label}...')
+        callsite_stream.write(f'//Framecode generating state {state.label}...', sdfg)
         sid = state.block_id
         # Emit internal transient array allocation
-        callsite_stream.write("// Start allocate arrays in scope\n")
+        # callsite_stream.write("// Start allocate arrays in scope\n")
         # print(f'Allocating arrays in scope for state {state.label}...')
         self.allocate_arrays_in_scope(sdfg, cfg, state, global_stream, callsite_stream)
         # print(f'Finished allocating arrays in scope for state {state.label}.')
-        callsite_stream.write("// Finish allocate arrays in scope\n")
+        # callsite_stream.write("// Finish allocate arrays in scope\n")
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -437,7 +438,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         components = dace.sdfg.concurrent_subgraphs(state)
 
         if len(components) <= 1:
-            # print(f"len(components) <= 1: {len(components)}")
+            print(f"len(components) <= 1: {len(components)}")
             self._dispatcher.dispatch_subgraph(sdfg,
                                                cfg,
                                                state,
@@ -447,7 +448,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                                                skip_entry_node=False)
             # print(f'Finished Framecode dispatch_subgraph {state.label}.')
         else:
-            # print(f"len(components) > 1: {len(components)}")
+            print(f"len(components) > 1: {len(components)}")
             if sdfg.openmp_sections:
                 callsite_stream.write("#pragma omp parallel sections\n{")
             for c in components:
@@ -843,7 +844,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 state_id = -1
 
             desc = node.desc(tsdfg)
-
             self._dispatcher.dispatch_allocate(tsdfg, cfg if state is None else state.parent_graph, state, state_id,
                                                node, desc, function_stream, callsite_stream, declare, allocate)
 

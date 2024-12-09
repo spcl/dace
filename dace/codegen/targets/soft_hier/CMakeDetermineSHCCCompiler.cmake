@@ -16,20 +16,20 @@ find_program(SHCC_COMPILER
 # Check if the compiler was found
 if(SHCC_COMPILER)
     # Set CMake variables to use the SHCC compiler
-    set(CMAKE_SHCC_COMPILER "${SHCC_COMPILER}" CACHE FILEPATH "SHCC compiler path" FORCE)
+    set(CMAKE_SHCC_COMPILER "${SHCC_COMPILER}" CACHE FILEPATH "SHCC compiler path")
     set(CMAKE_SHCC_COMPILER_ENV_VAR "SHCC" CACHE INTERNAL "Environment variable for SHCC compiler")
     set(CMAKE_SHCC_COMPILER_WORKS TRUE CACHE INTERNAL "Flag indicating that SHCC compiler works")
-
+    set(SOFTHIER_INSTALL_PATH /scratch/dace4softhier/dace_soft_hier/dace/runtime/include/dace/soft_hier CACHE PATH "Path to SoftHier installation")
     # Log a message to indicate the SHCC compiler was found
     message(STATUS "SHCC compiler found at: ${SHCC_COMPILER}")
 
     # Set default compiler flags (adjust as necessary for your use case)
     if(NOT CMAKE_SHCC_FLAGS_INIT)
-        set(CMAKE_SHCC_FLAGS_INIT "-Wall" CACHE STRING "Initial SHCC compiler flags" FORCE)
+        set(CMAKE_SHCC_FLAGS_INIT "-Wall" CACHE STRING "Initial SHCC compiler flags")
     endif()
 
     # Add any specific additional settings for the SHCC compiler here
-    set(CMAKE_SHCC_FLAGS "${CMAKE_SHCC_FLAGS_INIT}" CACHE STRING "Compiler flags for SHCC" FORCE)
+    set(CMAKE_SHCC_FLAGS "${CMAKE_SHCC_FLAGS_INIT}" CACHE STRING "Compiler flags for SHCC")
 
     # Get CMake version components to generate the correct path for CMakeSHCCCompiler.cmake
     if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.0")
@@ -46,9 +46,20 @@ if(SHCC_COMPILER)
     if(NOT EXISTS "${SHCC_COMPILER_FILE_PATH}")
         message(STATUS "Generating missing CMakeSHCCCompiler.cmake at: ${SHCC_COMPILER_FILE_PATH}")
         file(WRITE "${SHCC_COMPILER_FILE_PATH}" "
+            # Auto-generated CMake SHCC Compiler Config
             set(CMAKE_SHCC_COMPILER \"${SHCC_COMPILER}\")
             set(CMAKE_SHCC_COMPILER_WORKS TRUE)
             set(CMAKE_SHCC_FLAGS_INIT \"${CMAKE_SHCC_FLAGS_INIT}\")
+            set(SOFTHIER_INSTALL_PATH \"${SOFTHIER_INSTALL_PATH}\")
+            # Compilation rule for SHCC source files to object files
+            set(CMAKE_SHCC_COMPILE_OBJECT \"<CMAKE_SHCC_COMPILER> <FLAGS> -c <SOURCE> -o <OBJECT>\")
+
+            # Linking rule for SHCC object files to executable (using the provided linker script)
+            set(CMAKE_SHCC_LINK_EXECUTABLE \"<CMAKE_SHCC_COMPILER> <FLAGS> -T ${SOFTHIER_INSTALL_PATH}/flex_memory.ld <OBJECTS> -o <TARGET>\")
+
+            # Additional variables for SRC_DIR and linker script
+            set(CMAKE_SHCC_SRC_DIR \"${SRC_DIR}\")
+            set(CMAKE_SHCC_LINKER_SCRIPT \"${LINKER_SCRIPT}\")
         ")
 
         # Verify if the file was successfully generated
@@ -58,6 +69,24 @@ if(SHCC_COMPILER)
             message(WARNING "Failed to generate CMakeSHCCCompiler.cmake")
         endif()
     endif()
+
+    # # Define custom commands for compiling and linking SHCC files
+    # add_custom_command(
+    #     OUTPUT softhier.elf
+    #     COMMAND ${SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${INCLUDE_DIRS} -T ${CMAKE_SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s ${SOURCES}
+    #     COMMENT "Generating softhier.elf"
+    # )
+
+    # add_custom_target(build_output ALL DEPENDS softhier.elf)
+
+    # add_custom_command(
+    #     OUTPUT softhier.dump
+    #     DEPENDS softhier.elf
+    #     COMMAND ${OBJDUMPER} -D softhier.elf > softhier.dump
+    #     COMMENT "Creating disassembly output.dump"
+    # )
+
+    # add_custom_target(dump ALL DEPENDS softhier.dump)
 
 else()
     # Fatal error if the compiler is not found

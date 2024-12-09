@@ -34,6 +34,7 @@ class CPUCodeGen(TargetCodeGenerator):
     title = "CPU"
     target_name = "cpu"
     language = "cpp"
+    is_soft_hier = False
 
     def _define_sdfg_arguments(self, sdfg, arglist):
 
@@ -184,7 +185,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise NodeNotExpandedError(sdfg, state_id, dfg.node_id(node))
             raise
         gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-
+        # if self.is_soft_hier:
+        #     callsite_stream.write("// 4444444444444444444444444444444444444\n")
         # Mark node as "generated"
         self._generated_nodes.add(node)
         self._locals.clear_scope(self._ldepth + 1)
@@ -1401,7 +1403,6 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet = edge.data
                 src_node = state_dfg.memlet_path(edge)[0].src
                 dst_node = state_dfg.memlet_path(edge)[-1].dst
-
                 if edge.dst_conn:  # Not (None or "")
                     if edge.dst_conn in arrays:  # Disallow duplicates
                         raise SyntaxError("Duplicates found in memlets")
@@ -2176,7 +2177,8 @@ class CPUCodeGen(TargetCodeGenerator):
             instr.on_scope_exit(sdfg, state_dfg, node, outer_stream, callsite_stream, function_stream)
 
         self.generate_scope_postamble(sdfg, dfg, state_id, function_stream, outer_stream, callsite_stream)
-
+        # if self.is_soft_hier:
+        #     callsite_stream.write("flex_intra_cluster_sync();", cfg, state_id, node)
         if map_node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
             result.write("}", cfg, state_id, node)
         else:

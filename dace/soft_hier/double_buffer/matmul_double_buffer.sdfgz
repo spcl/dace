@@ -71,6 +71,29 @@
           "debuginfo": null
         }
       },
+      "gpu_B": {
+        "type": "Array",
+        "attributes": {
+          "strides": [
+            "N",
+            "1"
+          ],
+          "total_size": "K*N",
+          "offset": [
+            "0",
+            "0"
+          ],
+          "optional": false,
+          "dtype": "float64",
+          "shape": [
+            "K",
+            "N"
+          ],
+          "transient": true,
+          "storage": "GPU_Global",
+          "debuginfo": null
+        }
+      },
       "gpu_C": {
         "type": "Array",
         "attributes": {
@@ -111,29 +134,6 @@
           "shape": [
             "M",
             "K"
-          ],
-          "transient": true,
-          "storage": "GPU_Global",
-          "debuginfo": null
-        }
-      },
-      "gpu_B": {
-        "type": "Array",
-        "attributes": {
-          "strides": [
-            "N",
-            "1"
-          ],
-          "total_size": "K*N",
-          "offset": [
-            "0",
-            "0"
-          ],
-          "optional": false,
-          "dtype": "float64",
-          "shape": [
-            "K",
-            "N"
           ],
           "transient": true,
           "storage": "GPU_Global",
@@ -237,6 +237,29 @@
               "debuginfo": null
             }
           },
+          "gpu_B": {
+            "type": "Array",
+            "attributes": {
+              "strides": [
+                "N",
+                "1"
+              ],
+              "total_size": "K*N",
+              "offset": [
+                "0",
+                "0"
+              ],
+              "optional": false,
+              "dtype": "float64",
+              "shape": [
+                "K",
+                "N"
+              ],
+              "transient": true,
+              "storage": "GPU_Global",
+              "debuginfo": null
+            }
+          },
           "gpu_C": {
             "type": "Array",
             "attributes": {
@@ -282,29 +305,6 @@
               "storage": "GPU_Global",
               "debuginfo": null
             }
-          },
-          "gpu_B": {
-            "type": "Array",
-            "attributes": {
-              "strides": [
-                "N",
-                "1"
-              ],
-              "total_size": "K*N",
-              "offset": [
-                "0",
-                "0"
-              ],
-              "optional": false,
-              "dtype": "float64",
-              "shape": [
-                "K",
-                "N"
-              ],
-              "transient": true,
-              "storage": "GPU_Global",
-              "debuginfo": null
-            }
           }
         },
         "symbols": {
@@ -336,9 +336,9 @@
           "end_line": 48,
           "start_column": 0,
           "end_column": 0,
-          "filename": "/tmp/ipykernel_2758375/1663175887.py"
+          "filename": "/tmp/ipykernel_3161316/1663175887.py"
         },
-        "guid": "832cc780-ca85-4c4a-a4b0-eea55e79121a"
+        "guid": "7546823a-0ddc-4955-971b-0a54870e41d6"
       },
       "nodes": [
         {
@@ -400,7 +400,7 @@
                   "end_line": 39,
                   "start_column": 4,
                   "end_column": 4,
-                  "filename": "/tmp/ipykernel_2758375/1663175887.py"
+                  "filename": "/tmp/ipykernel_3161316/1663175887.py"
                 },
                 "in_connectors": {
                   "IN_A": null,
@@ -410,7 +410,7 @@
                   "OUT_A": null,
                   "OUT_B": null
                 },
-                "guid": "aeafd9fe-a2b4-43f5-b529-9c94f68a6986"
+                "guid": "fad3aae2-69b2-4552-be08-4466ebf8d396"
               },
               "id": 0,
               "scope_entry": null,
@@ -426,7 +426,7 @@
                 "out_connectors": {
                   "OUT___tmp0": null
                 },
-                "guid": "e7234df5-d60a-42ec-a394-1b732011a54d"
+                "guid": "33cdc655-32ff-4bad-a3c9-8d5b72913005"
               },
               "id": 1,
               "scope_entry": "0",
@@ -442,10 +442,10 @@
                   "end_line": 39,
                   "start_column": 4,
                   "end_column": 4,
-                  "filename": "/tmp/ipykernel_2758375/1663175887.py"
+                  "filename": "/tmp/ipykernel_3161316/1663175887.py"
                 },
                 "data": "gpu_A",
-                "guid": "9bcd63a2-c1fa-46f0-ae45-3a284d979f49"
+                "guid": "51e1b333-654b-4083-a58b-30f4f12ce6b9"
               },
               "id": 2,
               "scope_entry": null,
@@ -461,10 +461,10 @@
                   "end_line": 39,
                   "start_column": 4,
                   "end_column": 4,
-                  "filename": "/tmp/ipykernel_2758375/1663175887.py"
+                  "filename": "/tmp/ipykernel_3161316/1663175887.py"
                 },
                 "data": "gpu_B",
-                "guid": "5168b615-42e9-4b6d-871d-4e6a8158f24f"
+                "guid": "79561000-d111-46c3-8914-5b3a22767211"
               },
               "id": 3,
               "scope_entry": null,
@@ -480,10 +480,10 @@
                   "end_line": 48,
                   "start_column": 61,
                   "end_column": 61,
-                  "filename": "/tmp/ipykernel_2758375/1663175887.py"
+                  "filename": "/tmp/ipykernel_3161316/1663175887.py"
                 },
                 "data": "gpu_C",
-                "guid": "ffb51975-36c8-4b2e-8daa-ca1309343ec3"
+                "guid": "050d632e-0ac3-452e-9b68-cb93e3ef3996"
               },
               "id": 4,
               "scope_entry": null,
@@ -503,7 +503,7 @@
                   "end_line": 45,
                   "start_column": 8,
                   "end_column": 12,
-                  "filename": "/tmp/ipykernel_2758375/1663175887.py"
+                  "filename": "/tmp/ipykernel_3161316/1663175887.py"
                 },
                 "label": "matmul_40",
                 "in_connectors": {
@@ -513,7 +513,7 @@
                 "out_connectors": {
                   "out": null
                 },
-                "guid": "72fcab5e-8ddc-4973-bed3-a97a99db635c"
+                "guid": "7480eb64-6344-41ed-a066-b0323f08b56d"
               },
               "id": 5,
               "scope_entry": "0",
@@ -525,7 +525,7 @@
               "attributes": {
                 "debuginfo": null,
                 "data": "C",
-                "guid": "699d9914-440c-4060-9129-8112613931b0"
+                "guid": "25127656-8e91-409b-a38f-9b7067fb12a4"
               },
               "id": 6,
               "scope_entry": null,
@@ -559,7 +559,7 @@
                     },
                     "data": "C",
                     "debuginfo": null,
-                    "guid": "c571e621-6b5d-4ddc-baf1-7fa5bf82331e",
+                    "guid": "8957a2e2-b565-4154-821c-cf5e582c594b",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -614,7 +614,7 @@
                     },
                     "data": "gpu_A",
                     "debuginfo": null,
-                    "guid": "0e4abba5-ee62-4e1c-a604-0b2b4aef9a5a",
+                    "guid": "baa98a10-d33d-42ef-992b-9ba015291357",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -669,7 +669,7 @@
                     },
                     "data": "gpu_B",
                     "debuginfo": null,
-                    "guid": "66fd9228-8cd8-4d9a-99dc-a8c8fde2bf47",
+                    "guid": "1af4a1ef-f515-4e52-a179-afe3ddbaa789",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -724,7 +724,7 @@
                     },
                     "data": "gpu_A",
                     "debuginfo": null,
-                    "guid": "9de899e7-ec79-4935-9514-852b9fc15ff7",
+                    "guid": "f3b69bb2-4c2f-4344-8922-d19999c607bf",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -779,7 +779,7 @@
                     },
                     "data": "gpu_B",
                     "debuginfo": null,
-                    "guid": "6804e575-508b-453d-9b57-5de50d9340ba",
+                    "guid": "4437c5dc-8147-481d-9fca-0ab22bf04a58",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -835,7 +835,7 @@
                     "data": "gpu_C",
                     "wcr": "(lambda a, b: (a + b))",
                     "debuginfo": null,
-                    "guid": "8c561750-02cd-4b92-a0c7-f29be9ed628a",
+                    "guid": "41720533-81fe-4cc1-85c3-58396bebabbe",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -891,7 +891,7 @@
                     "data": "gpu_C",
                     "wcr": "(lambda a, b: (a + b))",
                     "debuginfo": null,
-                    "guid": "e28b6b03-24df-480a-94ad-07d5d4b3f147",
+                    "guid": "6be6c25c-a0c7-4d1a-ab25-8ac8659797a5",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -924,7 +924,7 @@
           "attributes": {
             "executions": "1",
             "dynamic_executions": false,
-            "guid": "57b85777-c7ef-4dd4-ac7c-351c30cfba5d"
+            "guid": "c2562066-1734-4827-a357-93d3d15c8569"
           }
         },
         {
@@ -976,9 +976,9 @@
                   "end_line": 137,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/scratch/dace4softhier/dace/dace/transformation/dataflow/mapreduce.py"
+                  "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/dataflow/mapreduce.py"
                 },
-                "guid": "1d7ad8a5-5bd5-464e-a854-9ab909360776"
+                "guid": "cb58b329-00fe-4003-804d-f2eb9cc43a0f"
               },
               "id": 0,
               "scope_entry": null,
@@ -998,13 +998,13 @@
                   "end_line": 137,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/scratch/dace4softhier/dace/dace/transformation/dataflow/mapreduce.py"
+                  "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/dataflow/mapreduce.py"
                 },
                 "label": "freduce_init",
                 "out_connectors": {
                   "__out": null
                 },
-                "guid": "bcca22b1-a878-486b-b445-a471788a4c53"
+                "guid": "2330fb08-4e70-479b-84e6-91d7c8be47a6"
               },
               "id": 1,
               "scope_entry": "0",
@@ -1020,7 +1020,7 @@
                 "out_connectors": {
                   "OUT_C": null
                 },
-                "guid": "a819572d-a47b-4189-aa2d-170983a974fd"
+                "guid": "1c1795bd-83e8-4cc3-ab39-531fb64ee504"
               },
               "id": 2,
               "scope_entry": "0",
@@ -1036,10 +1036,10 @@
                   "end_line": 1899,
                   "start_column": 0,
                   "end_column": 0,
-                  "filename": "/scratch/dace4softhier/dace/dace/sdfg/state.py"
+                  "filename": "/scratch/dace4softhier/dace_soft_hier/dace/sdfg/state.py"
                 },
                 "data": "gpu_C",
-                "guid": "22c624ba-51e8-48ca-a5af-2f32dffa0e17"
+                "guid": "46ded666-dc68-4c75-b5e3-c6d5f2e7d7a7"
               },
               "id": 3,
               "scope_entry": null,
@@ -1055,7 +1055,7 @@
                   "attributes": {
                     "volume": "1",
                     "debuginfo": null,
-                    "guid": "1bb9822c-eb67-4092-998b-a4def2540b6f",
+                    "guid": "315e4970-9bb5-44f0-8af9-16c3d4f1ea0e",
                     "src_subset": null,
                     "dst_subset": null,
                     "is_data_src": false,
@@ -1094,7 +1094,7 @@
                     },
                     "data": "gpu_C",
                     "debuginfo": null,
-                    "guid": "9c99a72b-5823-4641-8de9-ec0f97bd9891",
+                    "guid": "b85530ce-a475-4cae-ae6c-167d7d0ddb43",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -1149,7 +1149,7 @@
                     },
                     "data": "gpu_C",
                     "debuginfo": null,
-                    "guid": "f3b39838-e34b-474b-a5cc-4e7cbab7ab01",
+                    "guid": "2c2db879-3c87-4e37-9bdd-a322fe885ff4",
                     "src_subset": null,
                     "dst_subset": {
                       "type": "Range",
@@ -1182,7 +1182,7 @@
           "attributes": {
             "executions": "1",
             "dynamic_executions": false,
-            "guid": "12432391-714e-4574-9661-465cd30fd703"
+            "guid": "120d4ef7-e159-4737-b173-fabc8c88399c"
           }
         },
         {
@@ -1207,7 +1207,7 @@
               "attributes": {
                 "debuginfo": null,
                 "data": "A",
-                "guid": "11c85a53-a566-49ac-8c1e-d5debf58dff6"
+                "guid": "55d253aa-0d1c-48f5-8c8d-b9781b93ef12"
               },
               "id": 0,
               "scope_entry": null,
@@ -1219,7 +1219,7 @@
               "attributes": {
                 "debuginfo": null,
                 "data": "gpu_A",
-                "guid": "5f0f8df9-ffcd-42f9-a2c7-75373074f1ce"
+                "guid": "924443ca-364e-4bac-b6de-668e52f2b185"
               },
               "id": 1,
               "scope_entry": null,
@@ -1231,7 +1231,7 @@
               "attributes": {
                 "debuginfo": null,
                 "data": "B",
-                "guid": "17fc39cc-d1be-45d2-b45b-c7620036500e"
+                "guid": "90a8c184-1ffc-47f3-85d8-0bae7f39a201"
               },
               "id": 2,
               "scope_entry": null,
@@ -1243,7 +1243,7 @@
               "attributes": {
                 "debuginfo": null,
                 "data": "gpu_B",
-                "guid": "9152f5c3-e6de-46c9-8ae2-60c5b6e677ea"
+                "guid": "bf5a1074-71a7-4ace-b934-04fa60d62dec"
               },
               "id": 3,
               "scope_entry": null,
@@ -1255,7 +1255,7 @@
               "attributes": {
                 "debuginfo": null,
                 "data": "C",
-                "guid": "abee2f25-569c-405f-8e32-8568b6716c38"
+                "guid": "5b9e5518-e581-4384-84a3-46c43cdeec1a"
               },
               "id": 4,
               "scope_entry": null,
@@ -1267,7 +1267,7 @@
               "attributes": {
                 "debuginfo": null,
                 "data": "gpu_C",
-                "guid": "33063c34-672a-476a-a4b6-c59d6c83c7da"
+                "guid": "65cca177-5563-4de6-81a7-2e6a5d4a7d2a"
               },
               "id": 5,
               "scope_entry": null,
@@ -1301,7 +1301,7 @@
                     },
                     "data": "A",
                     "debuginfo": null,
-                    "guid": "f1436b55-d8db-4ba5-99a4-1f5f7c463ebc",
+                    "guid": "c99f85d6-736b-4f9f-942e-fa6a1b8c5165",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -1356,7 +1356,7 @@
                     },
                     "data": "B",
                     "debuginfo": null,
-                    "guid": "2f536725-1461-45d6-b4bc-505284450026",
+                    "guid": "8fe1ebd0-ea11-4984-8a59-49e5d24b3c3e",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -1411,7 +1411,7 @@
                     },
                     "data": "C",
                     "debuginfo": null,
-                    "guid": "f49017c5-a012-4fae-ae07-16f85daadedd",
+                    "guid": "6684dc27-d45f-4144-80c2-2cc188b2630c",
                     "src_subset": {
                       "type": "Range",
                       "ranges": [
@@ -1442,7 +1442,7 @@
             }
           ],
           "attributes": {
-            "guid": "22a99554-a79b-4687-8e5c-f40ee60a8e04"
+            "guid": "aeb5899c-1cb6-437e-a41a-b53acf8f9619"
           }
         }
       ],
@@ -1453,7 +1453,7 @@
             "data": {
               "type": "InterstateEdge",
               "attributes": {
-                "guid": "4ecdc850-3e87-42a8-9878-612e7d598b12"
+                "guid": "bd3acc9e-cae2-4519-8034-679226e5c2c1"
               },
               "label": ""
             }
@@ -1467,7 +1467,7 @@
             "data": {
               "type": "InterstateEdge",
               "attributes": {
-                "guid": "c0d7bb9b-0e00-4283-b322-db770dc9e827"
+                "guid": "1036a4e5-46a9-4e72-945c-c01cc33d642e"
               },
               "label": ""
             }
@@ -1627,10 +1627,10 @@
       "end_line": 48,
       "start_column": 0,
       "end_column": 0,
-      "filename": "/tmp/ipykernel_2758375/1663175887.py"
+      "filename": "/tmp/ipykernel_3161316/1663175887.py"
     },
-    "guid": "832cc780-ca85-4c4a-a4b0-eea55e79121a",
-    "hash": "3ef583e9414d42c68b00a3c411de6db10f386af93d0f96633053d5811623d923"
+    "guid": "7546823a-0ddc-4955-971b-0a54870e41d6",
+    "hash": "7c825ddbf3c381f2395214b0de70f77cca8620d7309ab44fb73c5aacb93dcaab"
   },
   "nodes": [
     {
@@ -1662,10 +1662,10 @@
               "end_line": 39,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/tmp/ipykernel_2758375/1663175887.py"
+              "filename": "/tmp/ipykernel_3161316/1663175887.py"
             },
             "data": "gpu_A",
-            "guid": "49c8b249-7688-4abc-a3da-e12b33acca4f"
+            "guid": "204ea59e-aab7-4e05-a179-a0a384994d4f"
           },
           "id": 0,
           "scope_entry": null,
@@ -1681,10 +1681,10 @@
               "end_line": 39,
               "start_column": 4,
               "end_column": 4,
-              "filename": "/tmp/ipykernel_2758375/1663175887.py"
+              "filename": "/tmp/ipykernel_3161316/1663175887.py"
             },
             "data": "gpu_B",
-            "guid": "aebaa97b-92a0-4330-922d-a8255f38d9a3"
+            "guid": "00cc5358-dcda-41d9-84ba-0e46eb0146e2"
           },
           "id": 1,
           "scope_entry": null,
@@ -1700,10 +1700,10 @@
               "end_line": 48,
               "start_column": 61,
               "end_column": 61,
-              "filename": "/tmp/ipykernel_2758375/1663175887.py"
+              "filename": "/tmp/ipykernel_3161316/1663175887.py"
             },
             "data": "gpu_C",
-            "guid": "65dfc70a-e34e-4942-9bff-7477a8a2db45"
+            "guid": "26735cfa-7df3-4f73-8c8e-34a50e48d961"
           },
           "id": 2,
           "scope_entry": null,
@@ -1715,7 +1715,7 @@
           "attributes": {
             "debuginfo": null,
             "data": "C",
-            "guid": "6e10ec0d-372e-4978-981d-b9c4c7797957"
+            "guid": "ee26637b-1635-4db6-a4e3-59bd9fd45fbc"
           },
           "id": 3,
           "scope_entry": null,
@@ -1757,7 +1757,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "c4aaed8d-432d-49c7-92a2-e33e80ff799f"
+            "guid": "184119ce-eec3-4562-af0d-6cd1ddf23789"
           },
           "id": 4,
           "scope_entry": null,
@@ -1773,7 +1773,7 @@
             "out_connectors": {
               "OUT___tmp0": null
             },
-            "guid": "d05544fc-cdd0-4a0c-9edc-5d3553bfddc9"
+            "guid": "7c75adae-3bfb-47d3-92f6-11d2aea81aa5"
           },
           "id": 5,
           "scope_entry": "4",
@@ -1788,28 +1788,6 @@
               "attributes": {
                 "name": "nested_MapState",
                 "_arrays": {
-                  "trans_gpu_C": {
-                    "type": "Array",
-                    "attributes": {
-                      "strides": [
-                        "4",
-                        "1"
-                      ],
-                      "total_size": "32",
-                      "offset": [
-                        "0",
-                        "0"
-                      ],
-                      "optional": false,
-                      "dtype": "float64",
-                      "shape": [
-                        "8",
-                        "4"
-                      ],
-                      "transient": true,
-                      "debuginfo": null
-                    }
-                  },
                   "trans_trans_gpu_A": {
                     "type": "Array",
                     "attributes": {
@@ -1832,14 +1810,14 @@
                       "debuginfo": null
                     }
                   },
-                  "trans_trans_gpu_B": {
+                  "trans_gpu_C": {
                     "type": "Array",
                     "attributes": {
                       "strides": [
                         "4",
                         "1"
                       ],
-                      "total_size": "4",
+                      "total_size": "32",
                       "offset": [
                         "0",
                         "0"
@@ -1847,7 +1825,7 @@
                       "optional": false,
                       "dtype": "float64",
                       "shape": [
-                        "1",
+                        "8",
                         "4"
                       ],
                       "transient": true,
@@ -1877,6 +1855,28 @@
                       ],
                       "transient": true,
                       "storage": "GPU_Shared",
+                      "debuginfo": null
+                    }
+                  },
+                  "trans_trans_gpu_B": {
+                    "type": "Array",
+                    "attributes": {
+                      "strides": [
+                        "4",
+                        "1"
+                      ],
+                      "total_size": "4",
+                      "offset": [
+                        "0",
+                        "0"
+                      ],
+                      "optional": false,
+                      "dtype": "float64",
+                      "shape": [
+                        "1",
+                        "4"
+                      ],
+                      "transient": true,
                       "debuginfo": null
                     }
                   },
@@ -1996,7 +1996,7 @@
                     "language": "CPP"
                   }
                 },
-                "guid": "d9e3570c-9053-489e-b302-abd2b15cb005"
+                "guid": "2720dde7-8f5d-4f12-85d2-79593c65909b"
               },
               "nodes": [
                 {
@@ -2023,10 +2023,10 @@
                           "end_line": 553,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "/scratch/dace4softhier/dace/dace/transformation/helpers.py"
+                          "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                         },
                         "data": "gpu_A",
-                        "guid": "40cd5729-7ad5-47d8-aa7a-e978df3d086a"
+                        "guid": "92f5b6bd-1e79-4b6c-b801-39fb00b7ff9b"
                       },
                       "id": 0,
                       "scope_entry": null,
@@ -2042,10 +2042,10 @@
                           "end_line": 135,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "/scratch/dace4softhier/dace/dace/transformation/dataflow/double_buffering.py"
+                          "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/dataflow/double_buffering.py"
                         },
                         "data": "trans_gpu_A",
-                        "guid": "ab90a7aa-2277-4f20-ba08-18da4614cdc8"
+                        "guid": "4f104cf8-0bcd-43ce-8d24-7559ed4fd998"
                       },
                       "id": 1,
                       "scope_entry": null,
@@ -2061,10 +2061,10 @@
                           "end_line": 553,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "/scratch/dace4softhier/dace/dace/transformation/helpers.py"
+                          "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                         },
                         "data": "gpu_B",
-                        "guid": "400a3ef8-71f8-4c55-8876-2ab34a6027aa"
+                        "guid": "c46f4925-2c8f-48c7-ade9-3b57256661d6"
                       },
                       "id": 2,
                       "scope_entry": null,
@@ -2080,10 +2080,10 @@
                           "end_line": 135,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "/scratch/dace4softhier/dace/dace/transformation/dataflow/double_buffering.py"
+                          "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/dataflow/double_buffering.py"
                         },
                         "data": "trans_gpu_B",
-                        "guid": "87b660e4-fc91-4a07-8040-af8d04105cf4"
+                        "guid": "19d4a08e-9a8f-41cf-abc3-2486504cd3ec"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -2140,7 +2140,7 @@
                             },
                             "data": "gpu_A",
                             "debuginfo": null,
-                            "guid": "80009e63-c06d-4bac-b2e1-6a8935f9749c",
+                            "guid": "1ffbf0bc-b16c-441e-822d-ad126c151b34",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -2240,7 +2240,7 @@
                             },
                             "data": "gpu_B",
                             "debuginfo": null,
-                            "guid": "abab1db7-0f90-44df-86e8-44b174da4d8e",
+                            "guid": "7c0925f6-694c-4627-a84d-987ce5ce7905",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -2295,7 +2295,7 @@
                   "attributes": {
                     "executions": "1",
                     "dynamic_executions": false,
-                    "guid": "083fe334-393b-41dd-8a63-985f88066170"
+                    "guid": "673bba67-a179-41b9-b87e-90b94dd34860"
                   }
                 },
                 {
@@ -2324,7 +2324,7 @@
                         ]
                       }
                     },
-                    "guid": "3636b737-efb0-4bb1-a7a5-05c3663cccc0"
+                    "guid": "4b60d718-5491-4a9a-81d4-ab6d3e9e0af7"
                   }
                 },
                 {
@@ -2382,7 +2382,7 @@
                           "end_line": 39,
                           "start_column": 4,
                           "end_column": 4,
-                          "filename": "/tmp/ipykernel_2758375/1663175887.py"
+                          "filename": "/tmp/ipykernel_3161316/1663175887.py"
                         },
                         "in_connectors": {
                           "IN_A": null,
@@ -2392,7 +2392,7 @@
                           "OUT_A": null,
                           "OUT_B": null
                         },
-                        "guid": "aeafd9fe-a2b4-43f5-b529-9c94f68a6986"
+                        "guid": "fad3aae2-69b2-4552-be08-4466ebf8d396"
                       },
                       "id": 0,
                       "scope_entry": "3",
@@ -2408,7 +2408,7 @@
                         "out_connectors": {
                           "OUT___tmp0": null
                         },
-                        "guid": "e7234df5-d60a-42ec-a394-1b732011a54d"
+                        "guid": "33cdc655-32ff-4bad-a3c9-8d5b72913005"
                       },
                       "id": 1,
                       "scope_entry": "0",
@@ -2428,7 +2428,7 @@
                           "end_line": 45,
                           "start_column": 8,
                           "end_column": 12,
-                          "filename": "/tmp/ipykernel_2758375/1663175887.py"
+                          "filename": "/tmp/ipykernel_3161316/1663175887.py"
                         },
                         "label": "matmul_40",
                         "in_connectors": {
@@ -2438,7 +2438,7 @@
                         "out_connectors": {
                           "out": null
                         },
-                        "guid": "72fcab5e-8ddc-4973-bed3-a97a99db635c"
+                        "guid": "7480eb64-6344-41ed-a066-b0323f08b56d"
                       },
                       "id": 2,
                       "scope_entry": "7",
@@ -2480,7 +2480,7 @@
                           "OUT_A": null,
                           "OUT_B": null
                         },
-                        "guid": "83a642af-3dd9-4012-ac56-5c620c3f26e8"
+                        "guid": "f038b4c7-ba20-4fb5-b654-66dbf9223000"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -2496,7 +2496,7 @@
                         "out_connectors": {
                           "OUT___tmp0": null
                         },
-                        "guid": "847f419e-7a2b-43a4-bc84-fbfb63ca9122"
+                        "guid": "24023860-f993-4a35-87c2-338431c6ecdc"
                       },
                       "id": 4,
                       "scope_entry": "3",
@@ -2508,7 +2508,7 @@
                       "attributes": {
                         "debuginfo": null,
                         "data": "trans_gpu_A",
-                        "guid": "00712a03-cf10-4e59-b8ab-45700a5faa3c"
+                        "guid": "7cae95f1-ee72-4d84-b1f6-5f050d412825"
                       },
                       "id": 5,
                       "scope_entry": null,
@@ -2520,7 +2520,7 @@
                       "attributes": {
                         "debuginfo": null,
                         "data": "trans_gpu_B",
-                        "guid": "4583a8d4-6c38-437c-97a4-3816d4837537"
+                        "guid": "230eea13-54b9-42b2-8831-5dbc2d5ab842"
                       },
                       "id": 6,
                       "scope_entry": null,
@@ -2563,7 +2563,7 @@
                           "OUT_trans_gpu_A": null,
                           "OUT_trans_gpu_B": null
                         },
-                        "guid": "d032d03a-a6e6-425f-9cf1-fb1e6dc934aa"
+                        "guid": "563b9c94-d868-4d9d-9327-3156900de4a4"
                       },
                       "id": 7,
                       "scope_entry": "0",
@@ -2579,7 +2579,7 @@
                         "out_connectors": {
                           "OUT_gpu_C": null
                         },
-                        "guid": "2a6558d8-eff3-429d-9557-8814b384c7d8"
+                        "guid": "928754e1-c437-4b49-a72a-57e54d34fcbe"
                       },
                       "id": 8,
                       "scope_entry": "7",
@@ -2591,7 +2591,7 @@
                       "attributes": {
                         "debuginfo": null,
                         "data": "trans_trans_gpu_A",
-                        "guid": "5aa3ea15-5881-415f-96f6-de47d205025e"
+                        "guid": "6ada08de-0917-4d38-a79e-57c17127124b"
                       },
                       "id": 9,
                       "scope_entry": "0",
@@ -2603,7 +2603,7 @@
                       "attributes": {
                         "debuginfo": null,
                         "data": "trans_trans_gpu_B",
-                        "guid": "04b467db-167e-496c-baf2-88e2dcdb3919"
+                        "guid": "4d78e2df-f5b7-4ea1-9011-860ae8b18628"
                       },
                       "id": 10,
                       "scope_entry": "0",
@@ -2616,7 +2616,7 @@
                         "setzero": true,
                         "debuginfo": null,
                         "data": "trans_gpu_C",
-                        "guid": "e29c0597-2ef7-4d86-b355-09cc5614a103"
+                        "guid": "9fe1a718-e82f-4e78-ba2e-d0bc5a83f14c"
                       },
                       "id": 11,
                       "scope_entry": "3",
@@ -2632,10 +2632,10 @@
                           "end_line": 558,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "/scratch/dace4softhier/dace/dace/transformation/helpers.py"
+                          "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                         },
                         "data": "gpu_C",
-                        "guid": "cd72b775-065c-4443-8b47-071d9e5dbbd2"
+                        "guid": "f8e11dda-e8d4-4f5e-8a36-bf628126068f"
                       },
                       "id": 12,
                       "scope_entry": null,
@@ -2675,7 +2675,7 @@
                             },
                             "data": "trans_gpu_A",
                             "debuginfo": null,
-                            "guid": "8370762b-5834-423a-8812-1c628733d30e",
+                            "guid": "dd82a651-7ea5-4a64-9843-0cffe772ec78",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -2742,7 +2742,7 @@
                             },
                             "data": "trans_gpu_B",
                             "debuginfo": null,
-                            "guid": "bcea9d7d-e197-4815-99f0-51ee7c5bb384",
+                            "guid": "e37fcffd-21cd-4479-a72f-4ab39e064fae",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -2804,7 +2804,7 @@
                             "data": "gpu_C",
                             "wcr": "(lambda a, b: (a + b))",
                             "debuginfo": null,
-                            "guid": "3ff8c355-69f0-4a0d-a918-06546b45a545",
+                            "guid": "0b2d9f9c-90b8-4e29-91e6-a3e18fb8c882",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -2859,7 +2859,7 @@
                             },
                             "data": "trans_trans_gpu_A",
                             "debuginfo": null,
-                            "guid": "5808df65-4fae-426f-9499-5cb5829232dc",
+                            "guid": "5ad4a228-3824-49ff-980d-4e8fd0acbd69",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -2914,7 +2914,7 @@
                             },
                             "data": "trans_trans_gpu_B",
                             "debuginfo": null,
-                            "guid": "81a59117-0da2-4fbe-a571-8f592bc3aa2d",
+                            "guid": "750d325b-0c49-4f24-bffd-fd267e08efed",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -2975,7 +2975,7 @@
                             },
                             "data": "trans_gpu_A",
                             "debuginfo": null,
-                            "guid": "8370762b-5834-423a-8812-1c628733d30e",
+                            "guid": "dd82a651-7ea5-4a64-9843-0cffe772ec78",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -3042,7 +3042,7 @@
                             },
                             "data": "trans_gpu_A",
                             "debuginfo": null,
-                            "guid": "8370762b-5834-423a-8812-1c628733d30e",
+                            "guid": "dd82a651-7ea5-4a64-9843-0cffe772ec78",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -3109,7 +3109,7 @@
                             },
                             "data": "trans_gpu_B",
                             "debuginfo": null,
-                            "guid": "bcea9d7d-e197-4815-99f0-51ee7c5bb384",
+                            "guid": "e37fcffd-21cd-4479-a72f-4ab39e064fae",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -3176,7 +3176,7 @@
                             },
                             "data": "trans_gpu_B",
                             "debuginfo": null,
-                            "guid": "bcea9d7d-e197-4815-99f0-51ee7c5bb384",
+                            "guid": "e37fcffd-21cd-4479-a72f-4ab39e064fae",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -3238,7 +3238,7 @@
                             "data": "trans_gpu_C",
                             "wcr": "(lambda a, b: (a + b))",
                             "debuginfo": null,
-                            "guid": "06db2ff9-2a73-4d62-b463-bea7ca2e46ac",
+                            "guid": "f3472651-bb68-49a6-a8c4-6bd1615701f4",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -3294,7 +3294,7 @@
                             "data": "gpu_C",
                             "wcr": "(lambda a, b: (a + b))",
                             "debuginfo": null,
-                            "guid": "3ff8c355-69f0-4a0d-a918-06546b45a545",
+                            "guid": "0b2d9f9c-90b8-4e29-91e6-a3e18fb8c882",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -3350,7 +3350,7 @@
                             "data": "trans_gpu_C",
                             "wcr": "(lambda a, b: (a + b))",
                             "debuginfo": null,
-                            "guid": "06db2ff9-2a73-4d62-b463-bea7ca2e46ac",
+                            "guid": "f3472651-bb68-49a6-a8c4-6bd1615701f4",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -3405,7 +3405,7 @@
                             },
                             "data": "trans_trans_gpu_A",
                             "debuginfo": null,
-                            "guid": "5808df65-4fae-426f-9499-5cb5829232dc",
+                            "guid": "5ad4a228-3824-49ff-980d-4e8fd0acbd69",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -3460,7 +3460,7 @@
                             },
                             "data": "trans_trans_gpu_B",
                             "debuginfo": null,
-                            "guid": "81a59117-0da2-4fbe-a571-8f592bc3aa2d",
+                            "guid": "750d325b-0c49-4f24-bffd-fd267e08efed",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -3516,7 +3516,7 @@
                             "data": "trans_gpu_C",
                             "wcr": "(lambda a, b: (a + b))",
                             "debuginfo": null,
-                            "guid": "06db2ff9-2a73-4d62-b463-bea7ca2e46ac",
+                            "guid": "f3472651-bb68-49a6-a8c4-6bd1615701f4",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -3549,7 +3549,7 @@
                   "attributes": {
                     "executions": "1",
                     "dynamic_executions": false,
-                    "guid": "60f73713-2192-4a6d-8801-c923075849ef"
+                    "guid": "cc34dc39-e777-474b-b996-d859a418aa32"
                   }
                 },
                 {
@@ -3578,7 +3578,7 @@
                         ]
                       }
                     },
-                    "guid": "98159bd4-3ee9-4ec3-8b86-71f5e52d7993"
+                    "guid": "79377ab7-28f0-4bba-8fc8-54e62ef747f5"
                   }
                 },
                 {
@@ -3639,7 +3639,7 @@
                           "end_line": 39,
                           "start_column": 4,
                           "end_column": 4,
-                          "filename": "/tmp/ipykernel_2758375/1663175887.py"
+                          "filename": "/tmp/ipykernel_3161316/1663175887.py"
                         },
                         "in_connectors": {
                           "IN_A": null,
@@ -3649,7 +3649,7 @@
                           "OUT_A": null,
                           "OUT_B": null
                         },
-                        "guid": "aeafd9fe-a2b4-43f5-b529-9c94f68a6986"
+                        "guid": "fad3aae2-69b2-4552-be08-4466ebf8d396"
                       },
                       "id": 0,
                       "scope_entry": "3",
@@ -3665,7 +3665,7 @@
                         "out_connectors": {
                           "OUT___tmp0": null
                         },
-                        "guid": "e7234df5-d60a-42ec-a394-1b732011a54d"
+                        "guid": "33cdc655-32ff-4bad-a3c9-8d5b72913005"
                       },
                       "id": 1,
                       "scope_entry": "0",
@@ -3685,7 +3685,7 @@
                           "end_line": 45,
                           "start_column": 8,
                           "end_column": 12,
-                          "filename": "/tmp/ipykernel_2758375/1663175887.py"
+                          "filename": "/tmp/ipykernel_3161316/1663175887.py"
                         },
                         "label": "matmul_40",
                         "in_connectors": {
@@ -3695,7 +3695,7 @@
                         "out_connectors": {
                           "out": null
                         },
-                        "guid": "72fcab5e-8ddc-4973-bed3-a97a99db635c"
+                        "guid": "7480eb64-6344-41ed-a066-b0323f08b56d"
                       },
                       "id": 2,
                       "scope_entry": "7",
@@ -3737,7 +3737,7 @@
                           "OUT_A": null,
                           "OUT_B": null
                         },
-                        "guid": "83a642af-3dd9-4012-ac56-5c620c3f26e8"
+                        "guid": "f038b4c7-ba20-4fb5-b654-66dbf9223000"
                       },
                       "id": 3,
                       "scope_entry": null,
@@ -3747,7 +3747,7 @@
                       "type": "MapExit",
                       "label": "matmul_39[tile1_i=0:64:8, tile1_j=0:64:4]",
                       "attributes": {
-                        "guid": "847f419e-7a2b-43a4-bc84-fbfb63ca9122"
+                        "guid": "24023860-f993-4a35-87c2-338431c6ecdc"
                       },
                       "id": 4,
                       "scope_entry": "3",
@@ -3759,7 +3759,7 @@
                       "attributes": {
                         "debuginfo": null,
                         "data": "trans_gpu_A",
-                        "guid": "b7743927-8a6e-4a24-bdf4-ba2e2ce461bb"
+                        "guid": "c97b91d3-8a66-460f-84bf-2b61f6f1e846"
                       },
                       "id": 5,
                       "scope_entry": null,
@@ -3771,7 +3771,7 @@
                       "attributes": {
                         "debuginfo": null,
                         "data": "trans_gpu_B",
-                        "guid": "2401d081-e7f8-4299-a30a-2c4b7c71ae8b"
+                        "guid": "8a84060f-6344-41c8-85aa-638a93db4bb9"
                       },
                       "id": 6,
                       "scope_entry": null,
@@ -3814,7 +3814,7 @@
                           "OUT_trans_gpu_A": null,
                           "OUT_trans_gpu_B": null
                         },
-                        "guid": "d032d03a-a6e6-425f-9cf1-fb1e6dc934aa"
+                        "guid": "563b9c94-d868-4d9d-9327-3156900de4a4"
                       },
                       "id": 7,
                       "scope_entry": "0",
@@ -3830,7 +3830,7 @@
                         "out_connectors": {
                           "OUT_gpu_C": null
                         },
-                        "guid": "2a6558d8-eff3-429d-9557-8814b384c7d8"
+                        "guid": "928754e1-c437-4b49-a72a-57e54d34fcbe"
                       },
                       "id": 8,
                       "scope_entry": "7",
@@ -3842,7 +3842,7 @@
                       "attributes": {
                         "debuginfo": null,
                         "data": "trans_trans_gpu_A",
-                        "guid": "bf24c74b-f143-4b11-8ab1-12f40d7c1dbd"
+                        "guid": "523a0788-548d-48aa-be4f-dbbc1c0ea2b5"
                       },
                       "id": 9,
                       "scope_entry": "0",
@@ -3854,7 +3854,7 @@
                       "attributes": {
                         "debuginfo": null,
                         "data": "trans_trans_gpu_B",
-                        "guid": "ac072056-35fd-489c-a092-7120a8e14497"
+                        "guid": "8dd9b447-0ff7-45bd-a93a-7c3fa9d4fe5f"
                       },
                       "id": 10,
                       "scope_entry": "0",
@@ -3867,7 +3867,7 @@
                         "setzero": true,
                         "debuginfo": null,
                         "data": "trans_gpu_C",
-                        "guid": "d0635d6f-f116-4a21-9322-825547a4ec24"
+                        "guid": "22e1a7c6-6d61-4b5b-89dc-74a2c0e4c9c1"
                       },
                       "id": 11,
                       "scope_entry": "3",
@@ -3883,10 +3883,10 @@
                           "end_line": 553,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "/scratch/dace4softhier/dace/dace/transformation/helpers.py"
+                          "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                         },
                         "data": "gpu_A",
-                        "guid": "f3636a6f-fc6e-4439-a70e-21a39e7883fa"
+                        "guid": "514d6530-0d88-4317-970a-bba9e8947678"
                       },
                       "id": 12,
                       "scope_entry": null,
@@ -3902,10 +3902,10 @@
                           "end_line": 175,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "/scratch/dace4softhier/dace/dace/transformation/dataflow/double_buffering.py"
+                          "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/dataflow/double_buffering.py"
                         },
                         "data": "trans_gpu_A",
-                        "guid": "d7e22bca-7e44-4383-ad71-9c46e7474392"
+                        "guid": "23f264bd-dfee-4818-ac0f-e59d258caedc"
                       },
                       "id": 13,
                       "scope_entry": null,
@@ -3921,10 +3921,10 @@
                           "end_line": 553,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "/scratch/dace4softhier/dace/dace/transformation/helpers.py"
+                          "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
                         },
                         "data": "gpu_B",
-                        "guid": "7fba307d-59b2-48dd-b575-883ff2dae343"
+                        "guid": "32f5199f-a5e3-4ee2-8aeb-f99f1e62aa3a"
                       },
                       "id": 14,
                       "scope_entry": null,
@@ -3940,10 +3940,10 @@
                           "end_line": 175,
                           "start_column": 0,
                           "end_column": 0,
-                          "filename": "/scratch/dace4softhier/dace/dace/transformation/dataflow/double_buffering.py"
+                          "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/dataflow/double_buffering.py"
                         },
                         "data": "trans_gpu_B",
-                        "guid": "009c9ad2-5a87-451a-85b6-ec6959bd2d97"
+                        "guid": "b9497e21-699a-40f7-9197-12c26dcf8682"
                       },
                       "id": 15,
                       "scope_entry": null,
@@ -3959,7 +3959,7 @@
                           "attributes": {
                             "volume": "1",
                             "debuginfo": null,
-                            "guid": "9b110f85-b22d-4f08-9ede-a55b8ac312bc",
+                            "guid": "bfd9caeb-32d9-4fed-a043-14ee3a0a89b8",
                             "src_subset": null,
                             "dst_subset": null,
                             "is_data_src": false,
@@ -4021,7 +4021,7 @@
                             },
                             "data": "gpu_A",
                             "debuginfo": null,
-                            "guid": "f1a92c63-0421-4e21-9578-013891cbf268",
+                            "guid": "455350bc-767f-460f-a192-b222a8a31e7b",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -4121,7 +4121,7 @@
                             },
                             "data": "gpu_B",
                             "debuginfo": null,
-                            "guid": "ec13d5fd-a5a7-42c0-8d0d-7b9c6d048ca8",
+                            "guid": "af3d0239-a374-4f8d-94f6-53b939dc3c47",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -4204,7 +4204,7 @@
                             },
                             "data": "trans_gpu_A",
                             "debuginfo": null,
-                            "guid": "faaca0eb-193e-4e75-995d-6d7264b6176a",
+                            "guid": "d9a384ef-e334-4120-8565-1e225e014bfb",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -4271,7 +4271,7 @@
                             },
                             "data": "trans_gpu_B",
                             "debuginfo": null,
-                            "guid": "a3b06e99-58fc-4436-8993-ed8fae1d6a73",
+                            "guid": "dc1cd774-dc7c-46eb-b426-01de1fca90af",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -4332,7 +4332,7 @@
                             },
                             "data": "trans_trans_gpu_A",
                             "debuginfo": null,
-                            "guid": "4ecd9d50-0b87-4ebd-bbaf-de60e927e0c5",
+                            "guid": "13a41d88-51c7-49f5-831c-4a83fde988ca",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -4387,7 +4387,7 @@
                             },
                             "data": "trans_trans_gpu_B",
                             "debuginfo": null,
-                            "guid": "6099a25f-c64b-4fbd-9d01-c2411d68b718",
+                            "guid": "c1755033-4af9-473f-a34b-e27592684698",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -4448,7 +4448,7 @@
                             },
                             "data": "trans_gpu_A",
                             "debuginfo": null,
-                            "guid": "faaca0eb-193e-4e75-995d-6d7264b6176a",
+                            "guid": "d9a384ef-e334-4120-8565-1e225e014bfb",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -4515,7 +4515,7 @@
                             },
                             "data": "trans_gpu_A",
                             "debuginfo": null,
-                            "guid": "faaca0eb-193e-4e75-995d-6d7264b6176a",
+                            "guid": "d9a384ef-e334-4120-8565-1e225e014bfb",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -4582,7 +4582,7 @@
                             },
                             "data": "trans_gpu_B",
                             "debuginfo": null,
-                            "guid": "a3b06e99-58fc-4436-8993-ed8fae1d6a73",
+                            "guid": "dc1cd774-dc7c-46eb-b426-01de1fca90af",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -4649,7 +4649,7 @@
                             },
                             "data": "trans_gpu_B",
                             "debuginfo": null,
-                            "guid": "a3b06e99-58fc-4436-8993-ed8fae1d6a73",
+                            "guid": "dc1cd774-dc7c-46eb-b426-01de1fca90af",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -4711,7 +4711,7 @@
                             "data": "trans_gpu_C",
                             "wcr": "(lambda a, b: (a + b))",
                             "debuginfo": null,
-                            "guid": "7da20282-ab24-4998-a47d-6d2afc25a6f8",
+                            "guid": "df3a63ef-0852-4c9a-b3fc-7c886647e76a",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -4767,7 +4767,7 @@
                             "data": "trans_gpu_C",
                             "wcr": "(lambda a, b: (a + b))",
                             "debuginfo": null,
-                            "guid": "7da20282-ab24-4998-a47d-6d2afc25a6f8",
+                            "guid": "df3a63ef-0852-4c9a-b3fc-7c886647e76a",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -4822,7 +4822,7 @@
                             },
                             "data": "trans_trans_gpu_A",
                             "debuginfo": null,
-                            "guid": "4ecd9d50-0b87-4ebd-bbaf-de60e927e0c5",
+                            "guid": "13a41d88-51c7-49f5-831c-4a83fde988ca",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -4877,7 +4877,7 @@
                             },
                             "data": "trans_trans_gpu_B",
                             "debuginfo": null,
-                            "guid": "6099a25f-c64b-4fbd-9d01-c2411d68b718",
+                            "guid": "c1755033-4af9-473f-a34b-e27592684698",
                             "src_subset": {
                               "type": "Range",
                               "ranges": [
@@ -4933,7 +4933,7 @@
                             "data": "trans_gpu_C",
                             "wcr": "(lambda a, b: (a + b))",
                             "debuginfo": null,
-                            "guid": "7da20282-ab24-4998-a47d-6d2afc25a6f8",
+                            "guid": "df3a63ef-0852-4c9a-b3fc-7c886647e76a",
                             "src_subset": null,
                             "dst_subset": {
                               "type": "Range",
@@ -4979,7 +4979,7 @@
                         ]
                       }
                     },
-                    "guid": "a2fc1c00-9dcb-49e6-bfee-b377abfc6ea6"
+                    "guid": "f0bfb790-73fb-4b65-963c-d8beae2c0dab"
                   }
                 }
               ],
@@ -4993,7 +4993,7 @@
                         "assignments": {
                           "tile_k": "0"
                         },
-                        "guid": "20b6bb5e-acd3-4545-af54-dce88c538faa"
+                        "guid": "79c3c030-3075-4ae1-8413-e618dffad0cb"
                       },
                       "label": "tile_k=0"
                     }
@@ -5010,7 +5010,7 @@
                         "assignments": {
                           "tile_k": "(tile_k + 8)"
                         },
-                        "guid": "f1406cf7-e547-4b96-81ea-6865320e408e"
+                        "guid": "e69ee1da-4254-4ba5-8afa-c4555a03e602"
                       },
                       "label": "tile_k=(tile_k + 8)"
                     }
@@ -5028,7 +5028,7 @@
                           "string_data": "(not (tile_k < (K - 8)))",
                           "language": "Python"
                         },
-                        "guid": "5ba47587-0829-4aed-84ae-2bad7f413d24"
+                        "guid": "abaaf256-9a2e-4604-9aa6-a6a7153586c6"
                       },
                       "label": "(not (tile_k < (K - 8)))"
                     }
@@ -5046,7 +5046,7 @@
                           "string_data": "(tile_k < (K - 8))",
                           "language": "Python"
                         },
-                        "guid": "6d458457-c796-465b-8a6a-13fef7f55864"
+                        "guid": "e268d28b-4874-4fa9-b5dc-483153ffb594"
                       },
                       "label": "(tile_k < (K - 8))"
                     }
@@ -5060,7 +5060,7 @@
                     "data": {
                       "type": "InterstateEdge",
                       "attributes": {
-                        "guid": "676ab013-ada3-4ecd-84a3-4d096770714e"
+                        "guid": "f06e3e7f-1b7b-4180-9d76-ad91c4a2f423"
                       },
                       "label": ""
                     }
@@ -5086,7 +5086,7 @@
               "end_line": 572,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace/dace/transformation/helpers.py"
+              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/helpers.py"
             },
             "label": "nested_MapState",
             "in_connectors": {
@@ -5096,7 +5096,7 @@
             "out_connectors": {
               "gpu_C": null
             },
-            "guid": "80a9d0b9-bfef-488d-8da6-846dd6c703be"
+            "guid": "e9694f27-2536-4657-abf3-cd41c0448d66"
           },
           "id": 6,
           "scope_entry": "4",
@@ -5130,7 +5130,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "90ccfa49-3dd6-4d36-a8ef-f3a3084653e7",
+                "guid": "3c7c3deb-edde-4a11-be72-af5ada77222a",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -5185,7 +5185,7 @@
                 },
                 "data": "gpu_A",
                 "debuginfo": null,
-                "guid": "b0b606f6-923a-486c-a3d0-d5f6f2e8b260",
+                "guid": "9a1d24b7-01fa-4a60-b446-d6dc386775f4",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -5240,7 +5240,7 @@
                 },
                 "data": "gpu_B",
                 "debuginfo": null,
-                "guid": "cf65c700-6bf9-48c7-869c-bb39e5d8482b",
+                "guid": "b27b16c0-9ba4-40c8-bc39-468740170a02",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -5295,7 +5295,7 @@
                 },
                 "data": "gpu_A",
                 "debuginfo": null,
-                "guid": "b0b606f6-923a-486c-a3d0-d5f6f2e8b260",
+                "guid": "9a1d24b7-01fa-4a60-b446-d6dc386775f4",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -5350,7 +5350,7 @@
                 },
                 "data": "gpu_B",
                 "debuginfo": null,
-                "guid": "cf65c700-6bf9-48c7-869c-bb39e5d8482b",
+                "guid": "b27b16c0-9ba4-40c8-bc39-468740170a02",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -5406,7 +5406,7 @@
                 "data": "gpu_C",
                 "wcr": "(lambda a, b: (a + b))",
                 "debuginfo": null,
-                "guid": "ad0ae80f-4458-4392-9d04-c12aae3a9d71",
+                "guid": "db9c498a-852d-4820-bf02-1e81fcde64f2",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -5462,7 +5462,7 @@
                 "data": "gpu_C",
                 "wcr": "(lambda a, b: (a + b))",
                 "debuginfo": null,
-                "guid": "ad0ae80f-4458-4392-9d04-c12aae3a9d71",
+                "guid": "db9c498a-852d-4820-bf02-1e81fcde64f2",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -5495,7 +5495,7 @@
       "attributes": {
         "executions": "1",
         "dynamic_executions": false,
-        "guid": "57b85777-c7ef-4dd4-ac7c-351c30cfba5d"
+        "guid": "c2562066-1734-4827-a357-93d3d15c8569"
       }
     },
     {
@@ -5547,9 +5547,9 @@
               "end_line": 137,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace/dace/transformation/dataflow/mapreduce.py"
+              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/dataflow/mapreduce.py"
             },
-            "guid": "1d7ad8a5-5bd5-464e-a854-9ab909360776"
+            "guid": "cb58b329-00fe-4003-804d-f2eb9cc43a0f"
           },
           "id": 0,
           "scope_entry": null,
@@ -5569,13 +5569,13 @@
               "end_line": 137,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace/dace/transformation/dataflow/mapreduce.py"
+              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/transformation/dataflow/mapreduce.py"
             },
             "label": "freduce_init",
             "out_connectors": {
               "__out": null
             },
-            "guid": "bcca22b1-a878-486b-b445-a471788a4c53"
+            "guid": "2330fb08-4e70-479b-84e6-91d7c8be47a6"
           },
           "id": 1,
           "scope_entry": "0",
@@ -5591,7 +5591,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "a819572d-a47b-4189-aa2d-170983a974fd"
+            "guid": "1c1795bd-83e8-4cc3-ab39-531fb64ee504"
           },
           "id": 2,
           "scope_entry": "0",
@@ -5607,10 +5607,10 @@
               "end_line": 1899,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace/dace/sdfg/state.py"
+              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/sdfg/state.py"
             },
             "data": "gpu_C",
-            "guid": "3c45818b-ab74-4cb9-857f-367065a82b45"
+            "guid": "1c1744f3-6808-4061-bafc-cf83d33cee66"
           },
           "id": 3,
           "scope_entry": null,
@@ -5626,7 +5626,7 @@
               "attributes": {
                 "volume": "1",
                 "debuginfo": null,
-                "guid": "c21089b3-ad24-4003-adf7-2fdf5567a455",
+                "guid": "58360a39-0361-4e2f-975d-c736770a8314",
                 "src_subset": null,
                 "dst_subset": null,
                 "is_data_src": false,
@@ -5665,7 +5665,7 @@
                 },
                 "data": "gpu_C",
                 "debuginfo": null,
-                "guid": "bcdd22d4-1e4e-4633-82e2-91f187204c12",
+                "guid": "2f6e74b1-ca71-449f-8251-8743641db238",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -5720,7 +5720,7 @@
                 },
                 "data": "gpu_C",
                 "debuginfo": null,
-                "guid": "bcdd22d4-1e4e-4633-82e2-91f187204c12",
+                "guid": "2f6e74b1-ca71-449f-8251-8743641db238",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -5753,7 +5753,7 @@
       "attributes": {
         "executions": "1",
         "dynamic_executions": false,
-        "guid": "12432391-714e-4574-9661-465cd30fd703"
+        "guid": "120d4ef7-e159-4737-b173-fabc8c88399c"
       }
     },
     {
@@ -5778,7 +5778,7 @@
           "attributes": {
             "debuginfo": null,
             "data": "A",
-            "guid": "ffc37d83-1282-4138-8aba-e25f1fbdc244"
+            "guid": "d787a1a2-a308-4461-9741-fce5ba8da87b"
           },
           "id": 0,
           "scope_entry": null,
@@ -5790,7 +5790,7 @@
           "attributes": {
             "debuginfo": null,
             "data": "gpu_A",
-            "guid": "23b3479f-e5d3-442f-9054-e380a30c1bca"
+            "guid": "145ebea6-3c72-4931-870d-d4a10336cbbc"
           },
           "id": 1,
           "scope_entry": null,
@@ -5802,7 +5802,7 @@
           "attributes": {
             "debuginfo": null,
             "data": "B",
-            "guid": "15109836-7ed9-4d5d-8b21-40be0f4bc234"
+            "guid": "85dca28b-63eb-463a-bcba-3e783d67fb16"
           },
           "id": 2,
           "scope_entry": null,
@@ -5814,7 +5814,7 @@
           "attributes": {
             "debuginfo": null,
             "data": "gpu_B",
-            "guid": "e43ddecf-4489-4dae-866b-851542ee209a"
+            "guid": "e05fb82f-8094-44d4-9cd6-572380d7d771"
           },
           "id": 3,
           "scope_entry": null,
@@ -5826,7 +5826,7 @@
           "attributes": {
             "debuginfo": null,
             "data": "C",
-            "guid": "5238180d-1167-4b64-a60d-cf7f6e334373"
+            "guid": "d117b6c2-4b31-4673-9682-4ecbb59d5b39"
           },
           "id": 4,
           "scope_entry": null,
@@ -5838,7 +5838,7 @@
           "attributes": {
             "debuginfo": null,
             "data": "gpu_C",
-            "guid": "b8697b26-70c9-4f16-bac4-29e9e093e83d"
+            "guid": "488e6f2a-184e-4b58-8617-ef4ebada8d5d"
           },
           "id": 5,
           "scope_entry": null,
@@ -5872,7 +5872,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "0c8d802e-ffb9-4666-b1f4-2f73118ff5ac",
+                "guid": "95641f1b-bd74-4a15-b8e2-0de1bff523c3",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -5927,7 +5927,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "2696c9a9-6cae-4919-95b4-0d83e0bbfbff",
+                "guid": "35286714-5758-430d-a368-653d3e3ba90c",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -5982,7 +5982,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "16350751-73e2-4649-b560-daba8fe7d937",
+                "guid": "b9a25bb1-38a1-4999-a19c-75b5acdb4453",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -6015,7 +6015,7 @@
       "attributes": {
         "executions": "1",
         "dynamic_executions": false,
-        "guid": "22a99554-a79b-4687-8e5c-f40ee60a8e04"
+        "guid": "aeb5899c-1cb6-437e-a41a-b53acf8f9619"
       }
     }
   ],
@@ -6026,7 +6026,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "4ecdc850-3e87-42a8-9878-612e7d598b12"
+            "guid": "bd3acc9e-cae2-4519-8034-679226e5c2c1"
           },
           "label": ""
         }
@@ -6040,7 +6040,7 @@
         "data": {
           "type": "InterstateEdge",
           "attributes": {
-            "guid": "c0d7bb9b-0e00-4283-b322-db770dc9e827"
+            "guid": "1036a4e5-46a9-4e72-945c-c01cc33d642e"
           },
           "label": ""
         }

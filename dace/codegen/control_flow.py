@@ -178,10 +178,16 @@ class BasicCFBlock(ControlFlow):
 
         expr = '__state_{}_{}:;\n'.format(cfg.cfg_id, self.state.label)
         if self.state.number_of_nodes() > 0:
-            # print(f"state {self.state.label} has {self.state.number_of_nodes()} nodes")
+            print(f"state {self.state.label} has {self.state.number_of_nodes()} nodes")
+            print(f"cfg_id {cfg.cfg_id}")
             expr += '{\n'
+            expr += f'// Start of state {self.state.label}\n'
             expr += self.dispatch_state(self.state)
+            expr += f'// End of state {self.state.label}\n'
             expr += '\n}\n'
+            # check whether the cfg is a subgraph of SoftHier_Cluster map
+            # if isinstance(cfg, SDFG) and cfg.parent is not None and cfg.parent.parent is not None:
+            #     print(f"state {self.state.label} has {self.state.number_of_nodes()} nodes")
         else:
             # Dispatch empty state in any case in order to register that the state was dispatched.
             # print(f"state {self.state.label} has no nodes")

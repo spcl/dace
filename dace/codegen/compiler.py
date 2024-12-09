@@ -125,7 +125,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     if program_name is None:
         program_name = os.path.basename(program_folder)
     program_folder = os.path.abspath(program_folder)
-    print(f"[program_folder] {program_folder}")
+
     src_folder = os.path.join(program_folder, "src")
 
     # Prepare build folder
@@ -152,8 +152,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
             path = os.path.join(target_name, file_name)
         files.append(path)
         targets[target_name] = next(k for k, v in TargetCodeGenerator.extensions().items() if v['name'] == target_name)
-    print(f"[files] {files}")
-    print(f"[targets] {targets}")
+    
     # Windows-only workaround: Override Visual C++'s linker to use
     # Multi-Threaded (MT) mode. This fixes linkage in CUDA applications where
     # CMake fails to do so.
@@ -166,7 +165,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     # Start forming CMake command
     dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cmake_command = [
-        "cmake-3.18.1",
+        "cmake",
         "-A x64" if os.name == 'nt' else "",  # Windows-specific flag
         '"' + os.path.join(dace_path, "codegen") + '"',
         "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
@@ -223,7 +222,6 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     # Configure
     try:
         if not identical_file_exists(cmake_filename, cmake_command):
-            print(f"cmake_command: {cmake_command}")
             _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
     except subprocess.CalledProcessError as ex:
         # Clean CMake directory and try once more

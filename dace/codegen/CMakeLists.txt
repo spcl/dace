@@ -54,6 +54,8 @@ foreach(DACE_FILE ${DACE_FILES})
   get_filename_component(DACE_FILE_DIR "${DACE_FILE_SUBDIR}" DIRECTORY)
   get_filename_component(DACE_FILE_TARGET "${DACE_FILE_DIR}" NAME)
   get_filename_component(DACE_FILE_TARGET_TYPE "${DACE_FILE_SUBDIR}" NAME)
+  message(STATUS "TARGET: ${DACE_FILE_TARGET}")
+  message(STATUS "TARGET_TYPE: ${DACE_FILE_TARGET_TYPE}")
   if(DACE_FILE_TARGET STREQUAL "")
     # If there is no subtype, the directory of the file is the target directly
     set(DACE_FILE_TARGET ${DACE_FILE_TARGET_TYPE})
@@ -61,6 +63,7 @@ foreach(DACE_FILE ${DACE_FILES})
   endif()
   # Make the path absolute
   set(DACE_FILE ${DACE_SRC_DIR}/${DACE_FILE})
+  message(STATUS "FILE: ${DACE_FILE}")
   # Now treat the file according to the deduced target
   if(${DACE_FILE_TARGET} STREQUAL "cuda")
     if(${DACE_FILE_TARGET_TYPE} MATCHES "hip")
@@ -103,13 +106,22 @@ foreach(DACE_FILE ${DACE_FILES})
     set(DACE_ENABLE_SOFTHIER ON)
     if(DACE_FILE_EXT MATCHES ".shcc")
       set(DACE_SOFTHIER_FILES ${DACE_SOFTHIER_FILES} ${DACE_FILE})
+      message(STATUS "Adding SHCC file: ${DACE_FILE}")
+      message(STATUS "Adding SHCC files: ${DACE_SOFTHIER_FILES}")
     elseif(DACE_FILE_EXT MATCHES ".cpp")
       set(DACE_HOST_FILES ${DACE_HOST_FILES} ${DACE_FILE})
+      message(STATUS "Adding host file: ${DACE_FILE}")
+      message(STATUS "Adding host files: ${DACE_HOST_FILES}")
     endif()
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
   endif()
 endforeach()
+
+message(STATUS "DACE_FILES: ${DACE_FILES}")
+message(STATUS "DACE_CPP_FILES: ${DACE_CPP_FILES}")
+message(STATUS "DACE_HOST_FILES: ${DACE_HOST_FILES}")
+message(STATUS "DACE_SOFTHIER_FILES: ${DACE_SOFTHIER_FILES}")
 
 # Internal dependencies
 set(DACE_RUNTIME_DIR ${CMAKE_SOURCE_DIR}/../runtime)
@@ -282,9 +294,6 @@ if(DACE_ENABLE_SOFTHIER)
   add_definitions(-DDACE_SOFTHIER)
   set_source_files_properties(${DACE_SOFTHIER_FILES} PROPERTIES LANGUAGE SHCC)
   # set_source_files_properties(${DACE_HOST_FILES} PROPERTIES LANGUAGE SHCC)
-  set(DACE_SOFTHIER_DIR /scratch/dace4softhier/gvsoc/soft_hier/flex_cluster_sdk)
-  include_directories(SYSTEM ${DACE_SOFTHIER_DIR}/runtime/include)
-  
   message(STATUS "3333333333")
 endif()
 
@@ -635,21 +644,31 @@ message(STATUS "Linking with ${DACE_LIBS}")
 target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
 message(STATUS "Linking with ${DACE_PROGRAM_NAME}")
 
-# Ascend CCE compiler has problems doing these by itself
+# SoftHier executable
 if(DACE_ENABLE_SOFTHIER)
-  # link_directories(${DACE_ASCEND_INSTALL_PATH}/runtime/lib64)
-  # find_library(ASCENDCL_LIB ascendcl HINTS ${DACE_ASCEND_INSTALL_PATH}/runtime/lib64)
-  # find_library(ASCENDCL_RUNTIME_LIB runtime HINTS ${DACE_ASCEND_INSTALL_PATH}/runtime/lib64)
-  # target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${ASCENDCL_LIB} ${ASCENDCL_RUNTIME_LIB})
-  # target_compile_options(${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
-  # target_link_options(${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
-  # target_link_libraries(ascendc_kernels PUBLIC ${ASCENDCL_LIB} ${ASCENDCL_RUNTIME_LIB})
-  # target_compile_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_FLAGS})
-  # target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_LIBRARIES})
-  # target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${CMAKE_DL_LIBS} ascendc_kernels)
-  # target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${ASCENDCL_LIB} ${ASCENDCL_RUNTIME_LIB})
-  # target_compile_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
-  # target_link_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
+  # Set the linker script
+  set(SHCC_LINKER_SCRIPT ${SOFTHIER_INSTALL_PATH}/flex_memory.ld)
+
+  if (NOT SOFTHIER_INCLUDE_DIRS)
+    set(SOFTHIER_INCLUDE_DIRS "")
+  endif()
+
+  add_custom_command(
+      OUTPUT softhier.elf
+      COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s -x c ${DACE_SOFTHIER_FILES}
+      COMMENT "Generating softhier.elf"
+  )
+
+  add_custom_target(build_output ALL DEPENDS softhier.elf)
+
+  # add_custom_command(
+  #     OUTPUT softhier.dump
+  #     DEPENDS softhier.elf
+  #     COMMAND ${OBJDUMPER} -D softhier.elf > softhier.dump
+  #     COMMENT "Creating disassembly output.dump"
+  # )
+
+  # add_custom_target(dump ALL DEPENDS softhier.dump)
 endif()
 
 

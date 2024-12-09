@@ -119,6 +119,8 @@ class SoftHierCodeGen(TargetCodeGenerator):
                 dispatcher.register_copy_dispatcher(storage, other_storage, None, self)
                 dispatcher.register_copy_dispatcher(other_storage, storage, None, self)
 
+        # Note down all allocated SoftHier_TCDM arrays with their sizes
+        self.tcdm_offset = 0
         # Register illegal copies
         # cpu_unpinned_storage = [dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal]
         # gpu_private_storage = [dtypes.StorageType.GPU_Shared]
@@ -350,28 +352,31 @@ class SoftHierCodeGen(TargetCodeGenerator):
 // #include <dace/dace.h>
 #include <math.h>
 #include "flex_runtime.h"
+#include "flex_redmule.h"
+#include "flex_cluster_arch.h"
+#include "flex_dma_pattern.h"
 {file_header}
 
-DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
-DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
+int __dace_init_cuda(struct {sdfg_state_name} *__state{params});
+int __dace_exit_cuda(struct {sdfg_state_name} *__state);
 
 {other_globalcode}
 
-int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
+int __dace_init_cuda(struct {sdfg_state_name} *__state{params}) {{
     
     {pool_header}
 
-    __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
+    // __state->gpu_context = new dace::cuda::Context({nstreams}, {nevents});
 
     {initcode}
 
     return 0;
 }}
 
-int __dace_exit_cuda({sdfg_state_name} *__state) {{
+int __dace_exit_cuda(struct {sdfg_state_name} *__state) {{
     {exitcode}
     int __err = 0;
-    delete __state->gpu_context;
+    // delete __state->gpu_context;
     return __err;
 }}
 
@@ -402,6 +407,7 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
         return False
 
     def state_dispatch_predicate(self, sdfg, state):
+        print(f"SoftHier: State dispatch predicate for {state.label}")
         if self._toplevel_schedule in dtypes.SOFTHIER_SCHEDULES:
             return True
         # for node in state.sink_nodes():
@@ -546,18 +552,21 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
             if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
                 result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
         elif nodedesc.storage == dtypes.StorageType.SoftHier_TCDM:
+            write_type = 'uint32_t'
             if not declared:
-                result_decl.write('%s %s;\n' % (ctypedef, dataname))
+                result_decl.write('%s %s;\n' % (write_type, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
-
+            data_size = nodedesc.dtype.bytes  # Number of bytes per element
+            total_size = arrsize * data_size  # Total size in bytes
             # Strides are left to the user's discretion
-            result_alloc.write('DACE_ACL_CHECK(aclrtMalloc((void**)&%s, %s));\n' %
-                                ( dataname, arrsize_malloc))
-
+            # result_alloc.write('DACE_ACL_CHECK(aclrtMalloc((void**)&%s, %s));\n' %
+            #                     ( dataname, arrsize_malloc))
+            result_alloc.write(f"{dataname} = {self.tcdm_offset};\n")
             if node.setzero:
-                result_alloc.write('DACE_ACL_CHECK(aclrtMemset(%s, 0, %s));\n' % ( dataname, arrsize_malloc))
+                result_alloc.write('// DACE_ACL_CHECK(aclrtMemset(%s, 0, %s));\n' % ( dataname, arrsize_malloc))
             if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
                 result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
+            self.tcdm_offset += total_size
         else:
             raise NotImplementedError("SoftHier: Unimplemented storage type " + str(nodedesc.storage))
 
@@ -1021,6 +1030,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 self._dispatcher, sdfg, state, edge, src_node, dst_node, self._cpu_codegen._packed_types))
             name = memlet.data
             nodedesc = sdfg.arrays[name]
+            data_size = nodedesc.dtype.bytes
             dims = len(copy_shape)
             # print(f'copy_memory: {src_node} -> {dst_node}, {copy_shape}, {src_strides}, {dst_strides}, {src_expr}, {dst_expr}')
             callsite_stream.write(f'// copy_memory: {src_node} -> {dst_node}, {copy_shape}, {src_strides}, {dst_strides}, {src_expr}, {dst_expr}')
@@ -1038,6 +1048,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 src_name = u.data
             #src_name = name
             # assert len(subset.string_list()) == 1
+            if src_expr != src_name:
+                src_expr = f"{src_expr} * {data_size}"
+            if dst_expr != dst_name:
+                dst_expr = f"{dst_expr} * {data_size}"
+            is_sync = False
+            # check whether the dst node has a out edge
+            if len(state.out_edges(dst_node)) > 0:
+                is_sync = True
+            if len(state.in_edges(src_node)) > 0:
+                is_sync = True
+            callsite_stream.write(f'// is_sync = {is_sync}')
             if dims == 1:
                 beg, end, step = subset.ranges[0]
                 length = (end + 1) - beg
@@ -1060,7 +1081,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     )
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
-                    callsite_stream.write("flex_intra_cluster_sync();")
+                    if is_sync:
+                        callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_TCDM
@@ -1084,7 +1106,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         )
                         callsite_stream.write("flex_dma_async_wait_all();")
                         callsite_stream.write("}", cfg, state_id, src_node)
-                        callsite_stream.write("flex_intra_cluster_sync();")
+                        if is_sync:
+                            callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_HBM
@@ -1105,7 +1128,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     )
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
-                    callsite_stream.write("flex_intra_cluster_sync();")
+                    if is_sync:
+                        callsite_stream.write("flex_intra_cluster_sync();")
                 else:
                     raise NotImplementedError(
                         f"Unimplemented copy type: {src_storage} -> {dst_storage}"
@@ -1145,7 +1169,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     )
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
-                    callsite_stream.write("flex_intra_cluster_sync();")
+                    if is_sync:
+                        callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_TCDM
@@ -1171,7 +1196,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         )
                         callsite_stream.write("flex_dma_async_wait_all();")
                         callsite_stream.write("}", cfg, state_id, src_node)
-                        callsite_stream.write("flex_intra_cluster_sync();")
+                        if is_sync:
+                            callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_HBM
@@ -1195,7 +1221,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     )
                     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
-                    callsite_stream.write("flex_intra_cluster_sync();")
+                    if is_sync:
+                        callsite_stream.write("flex_intra_cluster_sync();")
                 elif (
                     src_storage == dtypes.StorageType.SoftHier_HBM
                     and dst_storage == dtypes.StorageType.SoftHier_HBM
@@ -1283,7 +1310,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                        callsite_stream: CodeIOStream,
                        generate_state_footer: bool = False) -> None:
         # Two modes: device-level state and if this state has active streams
-        # print('SoftHier: Generating state', state.label)
+        print('SoftHier: Generating state', state.label)
         if SoftHierCodeGen._in_device_code:
             self.generate_devicelevel_state(sdfg, cfg, state, function_stream, callsite_stream)
         else:
@@ -1349,12 +1376,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             for instr in self._frame._dispatcher.instrumentation.values():
                 if instr is not None:
                     instr.on_state_end(sdfg, state, callsite_stream, function_stream)
-
+        
     def generate_devicelevel_state(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState,
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         # Special case: if this is a GPU grid state and something is reading
         # from a possible result of a collaborative write, sync first
-        # print('SoftHier: Generating device-level state', state.label)
+        print('SoftHier: Generating device-level state', state.label)
         if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device:
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
@@ -1363,80 +1390,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         callsite_stream.write('__syncthreads();', cfg, state.block_id)
                     break
 
-        # In GPU_Persistent scopes, states need global barriers between them,
-        # the DFGs inside of a state are independent, so they don't need
-        # synchronization. DFGs in a GPU_Persistent scope are per se executed
-        # by a single thread only. (Device) Maps however can be distributed
-        # across multiple threads
-        elif self._toplevel_schedule == dtypes.ScheduleType.GPU_Persistent:
-
-            # reset streams in GPU persistent maps if the lifetime is scope,
-            # otherwise streams do not behave as expected becasue they are
-            # allocated on host side
-            streams_to_reset = [
-                node for node in state.data_nodes() if isinstance(node.desc(sdfg), dace.nodes.data.Stream)
-                and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
-            ]
-            for stream in streams_to_reset:
-                ptrname = cpp.ptr(stream.data, stream.desc(sdfg), sdfg, self._frame)
-                callsite_stream.write("{}.reset();".format(ptrname), cfg, state.block_id)
-
-            components = dace.sdfg.concurrent_subgraphs(state)
-            for c in components:
-
-                has_map = any(isinstance(node, dace.nodes.MapEntry) for node in c.nodes())
-                # If a global is modified, execute once per global state,
-                # if a shared memory element is modified, execute once per block,
-                # if a local scalar is modified, execute in every thread.
-                if not has_map:
-                    written_nodes = [n for n in c if state.in_degree(n) > 0 and isinstance(n, dace.nodes.AccessNode)]
-
-                    # The order of the branching below matters - it reduces the scope with every detected write
-                    write_scope = 'thread'  # General case acts in every thread
-                    if any(sdfg.arrays[n.data].storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
-                           for n in written_nodes):
-                        write_scope = 'grid'
-                    if any(sdfg.arrays[n.data].storage == dtypes.StorageType.GPU_Shared for n in written_nodes):
-                        write_scope = 'block'
-                    if any(sdfg.arrays[n.data].storage == dtypes.StorageType.Register for n in written_nodes):
-                        write_scope = 'thread'
-
-                    if write_scope == 'grid':
-                        callsite_stream.write("if (blockIdx.x == 0 "
-                                              "&& threadIdx.x == 0) "
-                                              "{  // sub-graph begin", cfg, state.block_id)
-                    elif write_scope == 'block':
-                        callsite_stream.write("if (threadIdx.x == 0) " "{  // sub-graph begin", cfg, state.block_id)
-                    else:
-                        callsite_stream.write("{  // subgraph begin", cfg, state.block_id)
-                else:
-                    callsite_stream.write("{  // subgraph begin", cfg, state.block_id)
-
-                # Need to skip certain entry nodes to make sure that they are
-                # not processed twice
-                # TODO this is not robust, replace by better solution
-                #  (or wait for new codegen)
-                entry_nodes = list(v for v in c.nodes() if len(list(c.predecessors(v))) == 0)
-                comp_same_entry = [comp for comp in components if comp != c and entry_nodes[0] in comp.nodes()]
-                skip_entry = len(comp_same_entry) > 0 and has_map
-
-                self._dispatcher.dispatch_subgraph(sdfg,
-                                                   cfg,
-                                                   c,
-                                                   state.block_id,
-                                                   function_stream,
-                                                   callsite_stream,
-                                                   skip_entry_node=skip_entry)
-
-                callsite_stream.write("}  // subgraph end", cfg, state.block_id)
-
-            callsite_stream.write('__gbar.Sync();', cfg, state.block_id)
-
-            # done here, code is generated
-            return
-
         self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream)
-
+        callsite_stream.write('flex_intra_cluster_sync();')
     # NOTE: This function is ONLY called from the CPU side. Therefore, any
     # schedule that is out of the ordinary will raise an exception
     def generate_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg_scope: StateSubgraphView, state_id: int,
@@ -1654,7 +1609,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Write callback function definition
         self._localcode.write(
             """
-DACE_EXPORTED void main({fargs});
+void main({fargs});
 void main({fargs})
 {{
 """.format(fargs=', '.join(state_param + kernel_args_typed + extra_call_args_typed)), cfg, state_id,
@@ -1712,42 +1667,12 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         bdims = ', '.join(_topy(block_dims))
 
         # Prepare an empty-grid check for runtime grids
-        dimcheck = ''
-        if is_persistent:
-            dimcheck = 'dace_number_blocks == 0'
-        else:
-            for gdim in grid_dims:
-                if symbolic.issymbolic(gdim) and (gdim > 0) != True:
-                    if not dimcheck:
-                        dimcheck = f'({_topy(gdim)}) == 0'
-                    else:
-                        dimcheck += f' || ({_topy(gdim)}) == 0'
-
+        dimcheck = True
         if dimcheck:
             emptygrid_warning = ''
             if Config.get('debugprint') == 'verbose' or Config.get_bool('compiler', 'cuda', 'syncdebug'):
                 emptygrid_warning = (f'printf("Warning: Skipping launching kernel \\"{kernel_name}\\" '
                                      'due to an empty grid.\\n");')
-
-            # self._localcode.write(
-            #     f'''
-            #     if ({dimcheck}) {{
-            #         {emptygrid_warning}
-            #         return;
-            #     }}''', cfg, state_id, scope_entry)
-
-#         self._localcode.write(
-#             '''
-# void  *{kname}_args[] = {{ {kargs} }};
-# gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''
-#             .format(kname=kernel_name,
-#                     kargs=', '.join(['(void *)&' + arg for arg in prototype_kernel_args] + extra_kernel_args),
-#                     gdims=gdims,
-#                     bdims=bdims,
-#                     dynsmem=_topy(dynsmem_size),
-#                     stream=cudastream,
-#                     backend=self.backend), cfg, state_id, scope_entry)
-
 
             self._localcode.write(
             '''
@@ -1795,7 +1720,14 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             callsite_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id, node)
+        callsite_stream.write("printf(\"Start Running Kernel\");")
+        # system("bash -c 'cd /scratch/dace4softhier/gvsoc && source sourceme.sh && ./install/bin/gvsoc --target=pulp.chips.flex_cluster.flex_cluster --binary ./sw_build/softhier.elf run --trace=/chip/cluster_0/redmule'");
 
+        callsite_stream.write(
+            'int result = system("cd /scratch/dace4softhier/gvsoc && ./dace.sh");'
+        )
+        callsite_stream.write("printf(\"Result: %d\", result);")
+        callsite_stream.write("printf(\"Finish Running Kernel\");")
         # Invoke kernel call
         callsite_stream.write(
             '// __dace_runkernel_%s(%s);\n' %
@@ -1813,6 +1745,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # Instrumentation (post-kernel)
         if instr is not None:
             callsite_stream.write(outer_stream.getvalue())
+        
+        self.tcdm_offset = 0
         # print("################################Finish Using SoftHierCodeGen Scope######################################")
 
     def get_tb_maps_recursive(self, subgraph):
@@ -2102,7 +2036,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         scope_entry = dfg_scope.source_nodes()[0]
 
-        kernel_stream.write("flex_global_barrier_xy();\n", cfg, state_id, node)
+        # kernel_stream.write("flex_global_barrier_xy();\n", cfg, state_id, node)
         self._dispatcher.dispatch_subgraph(sdfg,
                                            cfg,
                                            dfg_scope,
@@ -2142,13 +2076,20 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                                    state_id: int, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         # Sanity check
         assert SoftHierCodeGen._in_device_code == True
-
+        print("################################Using SoftHierCodeGen Devicelevel Scope######################################")
         dfg = cfg.state(state_id)
         scope_entry = dfg_scope.source_nodes()[0]
         scope_exit = dfg_scope.sink_nodes()[0]
         scope_map = scope_entry.map
         next_scopes = self.get_next_scope_entries(dfg, scope_entry)
-
+        if scope_map.schedule == dtypes.ScheduleType.SoftHier_Sequential:
+            old_codegen = self._cpu_codegen.calling_codegen
+            self._cpu_codegen.calling_codegen = self
+            self._cpu_codegen.is_soft_hier = True
+            self._cpu_codegen.generate_scope(sdfg, cfg, dfg_scope, state_id, function_stream, callsite_stream)
+            self._cpu_codegen.is_soft_hier = False
+            self._cpu_codegen.calling_codegen = old_codegen
+            return
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
         callsite_stream.write('{', cfg, state_id, scope_entry)
@@ -2156,44 +2097,43 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # Emit internal array allocation (deallocation handled at MapExit)
         
         # Collect arrays to allocate
-        arrays_to_allocate = []
-        for node, parent in dfg_scope.all_nodes_recursive():
-            # print(f"NODE: {node}")
-            if isinstance(node, nodes.AccessNode):
-                desc = node.desc(sdfg)
-                if desc.storage == dtypes.StorageType.SoftHier_TCDM and (node.data, desc) not in arrays_to_allocate:
-                    arrays_to_allocate.append((node.data, desc))
-        # Generate size and address macros
-        current_address = '0'  # Base address is 0
-        array_addresses = {}
-        for desc_name, desc in arrays_to_allocate:
-            # Compute total size in bytes without using sizeof()
-            data_size = desc.dtype.bytes  # Number of bytes per element
-            total_size = desc.total_size * data_size  # Total size in bytes
+        # arrays_to_allocate = []
+        # for node, parent in dfg_scope.all_nodes_recursive():
+        #     if isinstance(node, nodes.AccessNode):
+        #         desc = node.desc(parent)
+        #         if desc.storage == dtypes.StorageType.SoftHier_TCDM and (node.data, desc) not in arrays_to_allocate and desc.transient == True:
+        #             arrays_to_allocate.append((node.data, desc))
+        # # Generate size and address macros
+        # current_address = '0'  # Base address is 0
+        # array_addresses = {}
+        # for desc_name, desc in arrays_to_allocate:
+        #     # Compute total size in bytes without using sizeof()
+        #     data_size = desc.dtype.bytes  # Number of bytes per element
+        #     total_size = desc.total_size * data_size  # Total size in bytes
 
-            # Convert total_size to C++ code (string), accounting for symbolic expressions
-            size_expr = cpp.sym2cpp(total_size)
-            size_macro = f'#define {desc_name.upper()}_SIZE ({size_expr})\n'
-            address_macro = f'#define {desc_name.upper()}_ADDR ({current_address})\n'
-            current_address = f'({current_address} + {desc_name.upper()}_SIZE)'
+        #     # Convert total_size to C++ code (string), accounting for symbolic expressions
+        #     size_expr = cpp.sym2cpp(total_size)
+        #     size_macro = f'#define {desc_name.upper()}_SIZE ({size_expr})\n'
+        #     address_macro = f'#define {desc_name.upper()}_ADDR ({current_address})\n'
+        #     current_address = f'({current_address} + {desc_name.upper()}_SIZE)'
 
-            self._globalcode.write(size_macro, sdfg, state_id, scope_entry)
-            self._globalcode.write(address_macro, sdfg, state_id, scope_entry)
+        #     self._globalcode.write(size_macro, sdfg, state_id, scope_entry)
+        #     self._globalcode.write(address_macro, sdfg, state_id, scope_entry)
 
-            array_addresses[desc_name] = f'{desc_name.upper()}_ADDR'
+        #     array_addresses[desc_name] = f'{desc_name.upper()}_ADDR'
 
-        # Proceed to declare addresses in the device kernel
-        for desc_name, desc in arrays_to_allocate:
-            ptr_name = cpp.ptr(desc_name, desc, sdfg, self._frame)
-            ctypedef = f'{desc.dtype.ctype} *'
+        # # Proceed to declare addresses in the device kernel
+        # for desc_name, desc in arrays_to_allocate:
+        #     ptr_name = cpp.ptr(desc_name, desc, sdfg, self._frame)
+        #     ctypedef = f'{desc.dtype.ctype} *'
 
-            # Declare the pointer (if needed)
-            self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer, ctypedef)
+        #     # Declare the pointer (if needed)
+        #     # self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer, ctypedef)
 
-            # Declare uint32_t address variable and assign from macro
-            address_macro = array_addresses[desc_name]
-            addr_var = f'{desc_name}'
-            callsite_stream.write(f'uint32_t {addr_var} = {address_macro};', sdfg, state_id, scope_entry)
+        #     # Declare uint32_t address variable and assign from macro
+        #     address_macro = array_addresses[desc_name]
+        #     addr_var = f'{desc_name}'
+        #     callsite_stream.write(f'uint32_t {addr_var} = {address_macro};', sdfg, state_id, scope_entry)
 
         self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
@@ -2259,56 +2199,29 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             for node, parent in dfg_scope.all_nodes_recursive():
                 if isinstance(node, nodes.Tasklet):
                     if node.name == 'mmad_redmule':
-                        # check every input memlets to get the shape
-                        redmule_dims = []
-                        for edge in dfg.in_edges(node):
-                            if edge.dst_conn == '_in_local_a':
-                                # add the shape of A
-                                redmule_dims.append(edge.data.subset.size())
-                            elif edge.dst_conn == '_in_local_b':
-                                # add the shape of B
-                                redmule_dims.append(edge.data.subset.size())
-                        print(f"RedMule Dims: {redmule_dims}")
-                        if len(redmule_dims) == 2 and redmule_dims[0][1] == redmule_dims[1][0]:
-                            # We have a matrix multiplication
-                            callsite_stream.write(f'// Configure RedMule Here\n')
-                            callsite_stream.write(f'if(flex_is_first_core())')
-                            callsite_stream.write('{', cfg, state_id, scope_entry)
-                            callsite_stream.write(f'flex_redmule_config({redmule_dims[0][0]}, {redmule_dims[0][1]}, {redmule_dims[1][1]});')
-                            callsite_stream.write('}', cfg, state_id, scope_entry)
-                            # # callsite_stream.write(f'flex_global_barrier_xy();')
-                            
+                        if node in parent.nodes():
+                            # check every input memlets to get the shape
+                            redmule_dims = []
+                            for edge in parent.in_edges(node):
+                                if edge.dst_conn == '_in_local_a':
+                                    # add the shape of A
+                                    redmule_dims.append(edge.data.subset.size())
+                                elif edge.dst_conn == '_in_local_b':
+                                    # add the shape of B
+                                    redmule_dims.append(edge.data.subset.size())
+                            if len(redmule_dims) == 2 and redmule_dims[0][-1] == redmule_dims[1][-2]:
+                                # We have a matrix multiplication
+                                callsite_stream.write(f'// Configure RedMule Here\n')
+                                callsite_stream.write(f'if(flex_is_first_core())')
+                                callsite_stream.write('{', cfg, state_id, scope_entry)
+                                callsite_stream.write(f'flex_redmule_config({redmule_dims[0][-1]}, {redmule_dims[0][-2]}, {redmule_dims[1][-2]});')
+                                callsite_stream.write('}', cfg, state_id, scope_entry)
+                                break
+                            else:
+                                raise Exception("RedMule only supports matrix multiplication")
                         else:
-                            raise Exception("RedMule only supports matrix multiplication")
-              
-            # for i, (v, minel, maxel) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
-            #     print(f"V: {v}, Minel: {minel}, Maxel: {maxel}")
-            #     condition = ''
-
-            #     # Optimize conditions if they are always true
-            #     #############################################
-
-            #     # Block range start
-            #     if i >= 3 or (dsym[i] >= minel) != True:
-            #         condition += '%s >= %s' % (v, _topy(minel))
-
-            #     # Special case: block size is exactly the range of the map (0:b)
-            #     if i >= 3:
-            #         skipcond = False
-            #     else:
-            #         skipcond = dsym_end[i].subs({dsym[i]: minel}) == maxel
-
-            #     # Block range end
-            #     if i >= 3 or (not skipcond and (dsym_end[i] < maxel) != True):
-            #         if len(condition) > 0:
-            #             condition += ' && '
-            #         condition += '%s < %s' % (v, _topy(maxel + 1))
-
-            #     # Emit condition in code
-            #     if len(condition) > 0:
-            #         callsite_stream.write('if (%s) {' % condition, cfg, state_id, scope_entry)
-            #     else:
-            #         callsite_stream.write('{', cfg, state_id, scope_entry)
+                            print(f"Tasklet {node} not found in subgraph")
+            callsite_stream.write(f"flex_intra_cluster_sync();\n", cfg, state_id, scope_entry)
 
         ##########################################################
 
@@ -2320,8 +2233,9 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                                             function_stream,
                                             callsite_stream,
                                             skip_entry_node=True)
-        callsite_stream.write("flex_global_barrier_xy();\n", cfg, state_id, node)
-        callsite_stream.write("// Finished deivelevel scope\n", cfg, state_id, node)
+        # callsite_stream.write("flex_global_barrier_xy();\n")
+        callsite_stream.write("flex_intra_cluster_sync();\n")
+        callsite_stream.write("// Finished deivelevel scope\n")
         # If there are any other threadblock maps down the road,
         # synchronize the thread-block / grid
         # parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
@@ -2399,8 +2313,12 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
     def _generate_NestedSDFG(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                              node: nodes.NestedSDFG, function_stream: CodeIOStream,
                              callsite_stream: CodeIOStream) -> None:
+        print("Generating NestedSDFG using SoftHierCodeGen")
+        callsite_stream.write(f'// Nested SDFG {node.label} begin', cfg, state_id, node)
         old_schedule = self._toplevel_schedule
         self._toplevel_schedule = node.schedule
+        print(f"Node: {node}")
+        print(f"Node Schedule: {node.schedule}")
         old_codegen = self._cpu_codegen.calling_codegen
         self._cpu_codegen.calling_codegen = self
 
@@ -2484,6 +2402,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                         codegen=None):
 
         print("Generating Tasklet Using RedMule Codegen")
+        is_sync = False
         # Allow other code generators to call this with a callback
         codegen = codegen or self
         write_type = 'uint32_t'
@@ -2516,7 +2435,11 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
             memlet = edge.data
             src_node = state_dfg.memlet_path(edge)[0].src
             dst_node = state_dfg.memlet_path(edge)[-1].dst
-
+            # print(f"Src Node: {src_node}")
+            # print(f"Dst Node: {dst_node}")
+            # if there is a memlet path for src_node, then is_sync = True
+            if len(state_dfg.in_edges(src_node)) > 0:
+                is_sync = True
             if edge.dst_conn:  # Not (None or "")
                 if edge.dst_conn in arrays:  # Disallow duplicates
                     raise SyntaxError("Duplicates found in memlets")
@@ -2572,7 +2495,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 # Also define variables in the C++ unparser scope
                 self._locals.define(edge.dst_conn, -1, self._ldepth + 1, ctype)
                 arrays.add(edge.dst_conn)
-
+        # print(f"Is Sync: {is_sync}")
         # Use outgoing edges to preallocate output local vars
         # in two stages: first we preallocate for data<->code cases,
         # followed by code<->code
@@ -2680,7 +2603,8 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         callsite_stream.write(inner_stream.getvalue(), cfg, state_id, node)
         callsite_stream.write(after_memlets_stream.getvalue())
         callsite_stream.write('}', cfg, state_id, node)
-        callsite_stream.write('flex_intra_cluster_sync();', cfg, state_id, node)
+        if is_sync:
+            callsite_stream.write("flex_intra_cluster_sync();", cfg, state_id, node)
         callsite_stream.write(outer_stream_end.getvalue(), cfg, state_id, node)
 
         # self._locals.clear_scope(self._ldepth + 1)
