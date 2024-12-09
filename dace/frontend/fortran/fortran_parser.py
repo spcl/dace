@@ -3470,11 +3470,11 @@ def create_sdfg_from_fortran_file_with_options(
         current_list = used_funcs[used_functions_config.root]
         current_list += used_functions_config.root
 
-        needed = root.needed_functions
+        needed = used_functions_config.needed_functions
 
         for i in reversed(parse_order):
             for j in program.modules:
-                if j.name.name in root.skip_functions:
+                if j.name.name in used_functions_config.skip_functions:
                     continue
                 if j.name.name == i:
 
