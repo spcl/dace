@@ -317,12 +317,9 @@ def test_symbol_dump():
 
     assert len(dreport.keys()) == 1
     assert 'i' in dreport.keys()
-    assert len(dreport['i']) == 22
-    desired = list(range(1, 19))
-    s_idx = dreport['i'].index(1)
-    e_idx = dreport['i'].index(18)
-    assert np.allclose(dreport['i'][s_idx:e_idx+1], desired)
-    assert 19 in dreport['i']
+    assert len(dreport['i']) == 19
+    desired = list(range(0, 19))
+    assert np.allclose(dreport['i'], desired)
 
 
 @pytest.mark.datainstrument
@@ -356,7 +353,10 @@ def test_symbol_restore():
         for i in range(j):
             A[i] = 0
 
-    sdfg = dinstr.to_sdfg(simplify=True)
+    # Simplification is turned off to avoid killing the initial start state, since symbol instrumentation can for now
+    # only be triggered on SDFG states.
+    # TODO(later): Make it so symbols can be instrumented on any Control flow block
+    sdfg = dinstr.to_sdfg(simplify=False)
     sdfg.start_state.symbol_instrument = dace.DataInstrumentationType.Save
     A = np.ones((20, ))
     sdfg(A, j=15)
