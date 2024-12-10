@@ -181,7 +181,7 @@ if __name__ == "__main__":
 
     cfg = fortran_parser.FindUsedFunctionsConfig(
         root = 'radiation',
-        needed_functions = ['radiation_interface', 'radiation'],
+        needed_functions = [['radiation_interface', 'radiation']],
         skip_functions = ['radiation_monochromatic', 'radiation_cloudless_sw',
                     'radiation_tripleclouds_sw', 'radiation_homogeneous_sw']
     )
@@ -196,7 +196,7 @@ if __name__ == "__main__":
         include_list=inc_list,
         source_list=fortran_files,
         sdfgs_dir=sdfgs_dir,
-        subroutine_name="solver_mcica_sw",
+        subroutine_name="radiation",
         normalize_offsets=True,
         propagation_info=propagation_info,
         enum_propagator_ast=radiation_config_ast,
