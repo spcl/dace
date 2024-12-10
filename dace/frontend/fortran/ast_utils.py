@@ -365,19 +365,23 @@ def finish_add_state_to_sdfg(state: SDFGState, top_sdfg: SDFG, substate: SDFGSta
 
 
 def get_name(node: ast_internal_classes.FNode):
-    if isinstance(node, ast_internal_classes.Name_Node):
-        return node.name
-    elif isinstance(node, ast_internal_classes.Array_Subscript_Node):
-        return node.name.name
-    elif isinstance(node, ast_internal_classes.Data_Ref_Node):
-        view_name = node.parent_ref.name
-        while isinstance(node.part_ref, ast_internal_classes.Data_Ref_Node):
-            if isinstance(node.part_ref.parent_ref, ast_internal_classes.Name_Node):
-                view_name = view_name + "_" + node.part_ref.parent_ref.name
-            elif isinstance(node.part_ref.parent_ref, ast_internal_classes.Array_Subscript_Node):
-                view_name = view_name + "_" + node.part_ref.parent_ref.name.name
-            node = node.part_ref
-        view_name = view_name + "_" + get_name(node.part_ref)
+    if isinstance(node, ast_internal_classes.Actual_Arg_Spec_Node):
+        actual_node = node.arg
+    else:
+        actual_node = node    
+    if isinstance(actual_node, ast_internal_classes.Name_Node):
+        return actual_node.name
+    elif isinstance(actual_node, ast_internal_classes.Array_Subscript_Node):
+        return actual_node.name.name
+    elif isinstance(actual_node, ast_internal_classes.Data_Ref_Node):
+        view_name = actual_node.parent_ref.name
+        while isinstance(actual_node.part_ref, ast_internal_classes.Data_Ref_Node):
+            if isinstance(actual_node.part_ref.parent_ref, ast_internal_classes.Name_Node):
+                view_name = view_name + "_" + actual_node.part_ref.parent_ref.name
+            elif isinstance(actual_node.part_ref.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                view_name = view_name + "_" + actual_node.part_ref.parent_ref.name.name
+            actual_node = actual_node.part_ref
+        view_name = view_name + "_" + get_name(actual_node.part_ref)
         return view_name
 
     else:
