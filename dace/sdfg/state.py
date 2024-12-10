@@ -2706,15 +2706,6 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 
                 for node in to_connect:
                     parent.add_edge(node, end_state, dace.InterstateEdge())
-            else:
-                # TODO: Move this to dead state elimination.
-                dead_blocks = [succ for succ in parent.successors(self) if parent.in_degree(succ) == 1]
-                while dead_blocks:
-                    layer = list(dead_blocks)
-                    dead_blocks.clear()
-                    for u in layer:
-                        dead_blocks.extend([succ for succ in parent.successors(u) if parent.in_degree(succ) == 1])
-                        parent.remove_node(u)
             # Remove the original control flow region (self) from the parent graph.
             parent.remove_node(self)
 
@@ -3515,6 +3506,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 parent.add_node(region)
                 parent.add_edge(guard_state, region, InterstateEdge(condition=condition))
                 parent.add_edge(region, end_state, InterstateEdge())
+                region.inline()
         if full_cond_expression is not None:
             negative_full_cond = astutils.negate_expr(full_cond_expression)
             negative_cond = CodeBlock([negative_full_cond])
@@ -3524,7 +3516,8 @@ class ConditionalBlock(AbstractControlFlowRegion):
         if else_branch is not None:
             parent.add_node(else_branch)
             parent.add_edge(guard_state, else_branch, InterstateEdge(condition=negative_cond))
-            parent.add_edge(region, end_state, InterstateEdge())
+            parent.add_edge(else_branch, end_state, InterstateEdge())
+            else_branch.inline()
         else:
             parent.add_edge(guard_state, end_state, InterstateEdge(condition=negative_cond))
 
