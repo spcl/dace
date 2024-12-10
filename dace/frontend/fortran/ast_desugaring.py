@@ -19,7 +19,8 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Associate_Construct, Subscript_Triplet, End_Function_Stmt, End_Subroutine_Stmt, Module_Subprogram_Part, \
     Enumerator_List, Actual_Arg_Spec_List, Only_List, Section_Subscript_List, Char_Selector, Data_Pointer_Object, \
     Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, Else_If_Stmt, \
-    Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, Assignment_Stmt
+    Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, Assignment_Stmt, \
+    Loop_Control
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
@@ -835,6 +836,14 @@ def replace_node(node: Base, subst: Union[Base, Iterable[Base]]):
         if not only_child:
             subst = [Base.__new__(type(t), t.tofortran()) for t in subst]
         repls.extend(subst)
+    if isinstance(par, Loop_Control) and isinstance(subst, Base):
+        _, cntexpr, _, _ = par.children
+        if cntexpr:
+            loopvar, looprange = cntexpr
+            for i in range(len(looprange)):
+                if looprange[i] == node:
+                    looprange[i] = subst
+                    subst.parent = par
     set_children(par, repls)
 
 
@@ -2063,4 +2072,9 @@ def const_eval_nodes(ast: Program) -> Program:
     for knode in reversed(walk(ast, Kind_Selector)):
         _, kind, _ = knode.children
         _const_eval_node(kind)
+    for node in reversed(walk(ast,
+                              (Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization))):
+        for nm in reversed(walk(node, Name)):
+            _const_eval_node(nm)
+
     return ast
