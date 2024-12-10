@@ -4,6 +4,7 @@ from dace.transformation.interstate.state_fusion import StateFusion
 import numpy
 import pytest
 
+
 @pytest.fixture(params=[dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.GPU_Global])
 def storage_type(request):
     return request.param
@@ -73,7 +74,7 @@ def _get_assign_map_sdfg(storage_type: dace.dtypes.StorageType, transient: bool,
     arrn = state.add_access(arr_name)
 
     if storage_type == dace.dtypes.StorageType.CPU_Heap:
-        assert (schedule_type == dace.dtypes.ScheduleType.Sequential)
+        assert (schedule_type == dace.dtypes.ScheduleType.Sequential or schedule_type == dace.dtypes.ScheduleType.CPU_Multicore)
     elif storage_type == dace.dtypes.StorageType.GPU_Global:
         assert (schedule_type == dace.dtypes.ScheduleType.GPU_Device)
 
@@ -188,8 +189,54 @@ def test_trivial_realloc_cpu(transient: bool):
     _test_trivial_realloc(dace.dtypes.StorageType.CPU_Heap, transient)
 
 
-def test_realloc_inside_map():
+def _add_realloc_inside_map(sdfg: dace.SDFG, schedule_type: dace.dtypes.ScheduleType):
+    pre_state = sdfg.states()[0]
+    state = sdfg.add_state("s2")
+    sdfg.add_edge(pre_state, state, dace.InterstateEdge(None, None))
+
+    map_entry, map_exit = state.add_map(name="map2",ndrange={"i":dace.subsets.Range([(0,4,1)])},
+                                        schedule=schedule_type)
+    an_2 = state.add_access('A')
+    an_2.add_in_connector("_write_size")
+
+    t1 = state.add_tasklet(name="assign", inputs={}, outputs={"__out"}, code="_out=8")
+    t1.add_out_connector("__out")
+
+    _, _ = sdfg.add_array("tmp0", shape=(2, ), dtype=numpy.uint64, transient=True)
+    sca = state.add_access("tmp0")
+
+    state.add_edge(map_entry, None, t1, None, dace.Memlet(None))
+    state.add_edge(t1, "__out", sca, None, dace.Memlet("tmp0[0]"))
+    state.add_edge(sca, None, an_2, "_write_size", dace.Memlet("tmp0"))
+    state.add_edge(an_2, None, map_exit, None, dace.Memlet(None))
+
+
+def test_realloc_inside_map_gpu():
+    sdfg =_get_assign_map_sdfg(dace.dtypes.StorageType.GPU_Global, True, dace.dtypes.ScheduleType.GPU_Device)
+    _add_realloc_inside_map(sdfg, dace.dtypes.ScheduleType.GPU_Device)
+    try:
+        sdfg.validate()
+    except Exception:
+        return
+
+    pytest.fail("Realloc-use with non-transient data and incomplete write did not fail when it was expected to.")
+
+def test_realloc_inside_map_cpu():
+    sdfg =_get_assign_map_sdfg(dace.dtypes.StorageType.CPU_Heap, True, dace.dtypes.ScheduleType.CPU_Multicore)
+    _add_realloc_inside_map(sdfg, dace.dtypes.ScheduleType.CPU_Multicore)
+    try:
+        sdfg.validate()
+    except Exception:
+        return
+
+    pytest.fail("Realloc-use with non-transient data and incomplete write did not fail when it was expected to.")
+
+def test_conditional_alloc_gpu():
     pass
+
+def test_conditional_alloc_cpu():
+    pass
+
 
 def test_incomplete_write_dimensions_1():
     sdfg = _get_trivial_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True, "1:2")
@@ -211,23 +258,28 @@ def test_incomplete_write_dimensions_2():
 
 
 if __name__ == "__main__":
+    print(f"Trivial Realloc within map {dace.dtypes.StorageType.CPU_Multicore}")
+    test_realloc_inside_map_cpu()
+    print(f"Trivial Realloc within map {dace.dtypes.StorageType.GPU_Device}")
+    test_realloc_inside_map_gpu()
+
     print(f"Trivial Realloc with storage {dace.dtypes.StorageType.CPU_Heap}")
-    test_trivial_realloc_cpu(dace.dtypes.StorageType.CPU_Heap, True)
+    test_trivial_realloc_cpu(True)
     print(f"Trivial Realloc-Use with storage {dace.dtypes.StorageType.CPU_Heap}")
-    test_realloc_use_cpu(dace.dtypes.StorageType.CPU_Heap, True, dace.dtypes.ScheduleType.Sequential)
+    test_realloc_use_cpu(True)
     print(f"Trivial Realloc with storage {dace.dtypes.StorageType.GPU_Global}")
-    test_trivial_realloc_gpu(dace.dtypes.StorageType.GPU_Global, True)
+    test_trivial_realloc_gpu(True)
     print(f"Trivial Realloc-Use with storage {dace.dtypes.StorageType.GPU_Global}")
-    test_realloc_use_gpu(dace.dtypes.StorageType.GPU_Global, True, dace.dtypes.ScheduleType.GPU_Device)
+    test_realloc_use_gpu(True)
 
     print(f"Trivial Realloc with storage {dace.dtypes.StorageType.CPU_Heap}  on non-transient data")
-    test_trivial_realloc_cpu(dace.dtypes.StorageType.CPU_Heap, False)
+    test_trivial_realloc_cpu(False)
     print(f"Trivial Realloc-Use with storage {dace.dtypes.StorageType.CPU_Heap}  on non-transient data")
-    test_realloc_use_cpu(dace.dtypes.StorageType.CPU_Heap, False, dace.dtypes.ScheduleType.Sequential)
+    test_realloc_use_cpu(False)
     print(f"Trivial Realloc with storage {dace.dtypes.StorageType.GPU_Global}  on non-transient data")
-    test_trivial_realloc_gpu(dace.dtypes.StorageType.GPU_Global, False)
+    test_trivial_realloc_gpu(False)
     print(f"Trivial Realloc-Use with storage {dace.dtypes.StorageType.GPU_Global}  on non-transient data")
-    test_realloc_use_gpu(dace.dtypes.StorageType.GPU_Global, False, dace.dtypes.ScheduleType.GPU_Device)
+    test_realloc_use_gpu(False)
 
     print(f"Realloc with incomplete write 1")
     test_incomplete_write_dimensions_1()

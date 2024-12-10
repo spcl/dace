@@ -1795,7 +1795,7 @@ class SDFG(ControlFlowRegion):
         # convert strings to int if possible, unless it is not the reserved symbol for deferred allocation
         newshape = []
         for i, s in enumerate(shape):
-            if isinstance(s, str) and s == "__dace_defer":
+            if isinstance(s, str) and s.startswith("__dace_defer"):
                 newshape.append(dace.symbolic.pystr_to_symbolic(f"{s}_dim{i}"))
             else:
                 try:

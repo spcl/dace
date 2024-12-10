@@ -1503,7 +1503,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # make dynamic map inputs constant
         # TODO move this into _get_const_params(dfg_scope)
         # Do not add src as const if the size is being red (src_conn is _read_size)
-        const_params |= set((str(e.src)) for e in dace.sdfg.dynamic_map_inputs(state, scope_entry) if not e.src_conn.endswith("size"))
+        const_params |= set((str(e.src)) for e in dace.sdfg.dynamic_map_inputs(state, scope_entry) if e.src_conn is None or (e.src_conn is not None and e.src_conn == "_read_size"))
 
         # Store init/exit code streams
         old_entry_stream = self.scope_entry_stream
@@ -1626,8 +1626,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             for i in range(size_arr.shape[0]):
                 if f"__{arr_name}_dim{i}_size" not in dyn_args:
                     dyn_args.append(f"__{arr_name}_dim{i}_size")
-                    dyn_args_typed.append(f"const {arg.dtype.ctype} __{arr_name}_dim{i}_size")
-                    needed_size_scalars_declaration.append(f"const {arg.dtype.ctype} __{arr_name}_dim{i}_size = {size_desc_name}[{i}];")
+                    size_desc = sdfg.arrays[size_desc_name]
+                    dyn_args_typed.append(f"const {size_desc.dtype.ctype} __{arr_name}_dim{i}_size")
+                    needed_size_scalars_declaration.append(f"const {size_desc.dtype.ctype} __{arr_name}_dim{i}_size = {size_desc_name}[{i}];")
 
         self._localcode.write(
             '__global__ void %s %s(%s) {\n' %

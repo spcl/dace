@@ -344,7 +344,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 size_desc_name = sdfg.arrays[name].size_desc_name
                 if size_desc_name is not None:
                     size_desc = sdfg.arrays[size_desc_name]
-                    size_ctypedef = dtypes.pointer(size_desc.dtype).ctype
+                    size_ctypedef = size_desc.dtype.ctype
                     self._dispatcher.declared_arrays.add(size_desc_name, DefinedType.Pointer, size_ctypedef)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:

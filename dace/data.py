@@ -1442,7 +1442,7 @@ class Array(Data):
         else:
             self.offset = [0] * len(shape)
 
-        self.is_deferred_array = any(["__dace_defer" in str(dim) for dim in self.shape])
+        self.is_deferred_array = any([str(dim).startswith("__dace_defer") for dim in self.shape])
 
         self.validate()
 

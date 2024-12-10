@@ -573,11 +573,15 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             write_size_edges = list(state.edges_by_connector(node, insize))
 
             # Reading-Writing the size is valid only if the array is transient and has the storage type CPU_Heap or GPU_Global
+            has_writes = len(write_size_edges) > 0
             has_writes_or_reads = len(read_size_edges) + len(write_size_edges) > 0
             size_access_allowed = arr.transient and (arr.storage == dtypes.StorageType.CPU_Heap or arr.storage == dtypes.StorageType.GPU_Global)
             if has_writes_or_reads and not size_access_allowed:
                 raise InvalidSDFGNodeError('Reading the size of an array, or changing (writing to) the size of an array '
                                            'is only valid if the array is transient and the storage is CPU_Heap or GPU_Global', sdfg, state_id, nid)
+            if has_writes and scope[node] is not None:
+                raise InvalidSDFGNodeError('Resizing array is not allowed within a scope (e.g. not inside maps)', sdfg, state_id, nid)
+
 
             if len(write_size_edges) > 1:
                 raise InvalidSDFGNodeError('One node can have at maximum one edge writing to its size descriptior', sdfg, state_id, nid)
