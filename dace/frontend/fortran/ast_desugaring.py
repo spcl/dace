@@ -312,8 +312,10 @@ def _find_type_decl_node(node: Entity_Decl):
     return anc
 
 
-def _eval_selected_int_kind(p: int) -> int:
+def _eval_selected_int_kind(p: np.int32) -> int:
     # Copied logic from `replace_int_kind()` elsewhere in the project.
+    # avoid int overflow in numpy 2.0
+    p = int(p)
     kind = int(math.ceil((math.log2(10 ** p) + 1) / 8))
     assert kind <= 8
     if kind <= 2:
