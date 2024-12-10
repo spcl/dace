@@ -71,7 +71,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                         break
                 if not par_graph_copy:
                     return False
-                graph_copy = par_graph_copy.nodes()[graph.block_id]
+                graph_copy = par_graph_copy.node(graph.block_id)
                 subgraph_copy = SubgraphView(graph_copy, [graph_copy.nodes()[i] for i in graph_indices])
                 expansion.cfg_id = par_graph_copy.cfg_id
 

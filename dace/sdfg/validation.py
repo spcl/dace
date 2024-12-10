@@ -81,7 +81,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
                     if r is not None:
                         validate_control_flow_region(sdfg, r, initialized_transients, symbols, references, **context)
             elif isinstance(edge.src, ControlFlowRegion):
-                lsyms = copy.deepcopy(symbols)
+                lsyms = copy.copy(symbols)
                 if isinstance(edge.src, LoopRegion) and not edge.src.loop_variable in lsyms:
                     lsyms[edge.src.loop_variable] = None
                 validate_control_flow_region(sdfg, edge.src, initialized_transients, lsyms, references, **context)
@@ -147,7 +147,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
                     if r is not None:
                         validate_control_flow_region(sdfg, r, initialized_transients, symbols, references, **context)
             elif isinstance(edge.dst, ControlFlowRegion):
-                lsyms = copy.deepcopy(symbols)
+                lsyms = copy.copy(symbols)
                 if isinstance(edge.dst, LoopRegion) and not edge.dst.loop_variable in lsyms:
                     lsyms[edge.dst.loop_variable] = None
                 validate_control_flow_region(sdfg, edge.dst, initialized_transients, lsyms, references, **context)
@@ -163,7 +163,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
                 if r is not None:
                     validate_control_flow_region(sdfg, r, initialized_transients, symbols, references, **context)
         elif isinstance(start_block, ControlFlowRegion):
-            lsyms = copy.deepcopy(symbols)
+            lsyms = copy.copy(symbols)
             if isinstance(start_block, LoopRegion) and not start_block.loop_variable in lsyms:
                 lsyms[start_block.loop_variable] = None
             validate_control_flow_region(sdfg, start_block, initialized_transients, lsyms, references, **context)

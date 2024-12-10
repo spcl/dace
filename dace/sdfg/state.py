@@ -1225,6 +1225,9 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     def edges(self):
         return []
 
+    def sub_regions(self) -> List['AbstractControlFlowRegion']:
+        return []
+
     def set_default_lineinfo(self, lineinfo: dace.dtypes.DebugInfo):
         """
         Sets the default source line information to be lineinfo, or None to
@@ -3388,6 +3391,9 @@ class ConditionalBlock(AbstractControlFlowRegion):
     def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None, parent: Optional['ControlFlowRegion'] = None):
         super().__init__(label, sdfg, parent)
         self._branches = []
+
+    def sub_regions(self):
+        return [b for _, b in self.branches]
 
     def __str__(self):
         return self._label

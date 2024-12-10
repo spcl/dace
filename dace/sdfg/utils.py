@@ -1305,13 +1305,13 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
 
 def inline_control_flow_regions(sdfg: SDFG, types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
-                                blacklist: Optional[List[Type[AbstractControlFlowRegion]]] = None,
+                                ignore_region_types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
                                 progress: bool = None) -> int:
     if types:
         blocks = [n for n, _ in sdfg.all_nodes_recursive() if type(n) in types]
-    elif blacklist:
+    elif ignore_region_types:
         blocks = [n for n, _ in sdfg.all_nodes_recursive()
-                  if isinstance(n, AbstractControlFlowRegion) and type(n) not in blacklist]
+                  if isinstance(n, AbstractControlFlowRegion) and type(n) not in ignore_region_types]
     else:
         blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, AbstractControlFlowRegion)]
     count = 0
@@ -1326,6 +1326,8 @@ def inline_control_flow_regions(sdfg: SDFG, types: Optional[List[Type[AbstractCo
             continue
         if block.inline()[0]:
             count += 1
+
+    sdfg.reset_cfg_list()
 
     return count
 
@@ -1557,10 +1559,10 @@ def _tswds_cf_region(
         for _, b in region.branches:
             yield from _tswds_cf_region(sdfg, b, symbols, recursive)
         return
-    elif isinstance(region, LoopRegion):
-        # Add the own loop variable to the defined symbols, if present.
-        loop_syms = region.new_symbols(symbols)
-        symbols.update({k: v for k, v in loop_syms.items() if v is not None})
+
+    # Add the own loop variable to the defined symbols, if present.
+    loop_syms = region.new_symbols(symbols)
+    symbols.update({k: v for k, v in loop_syms.items() if v is not None})
 
     # Add symbols from inter-state edges along the state machine
     start_region = region.start_block

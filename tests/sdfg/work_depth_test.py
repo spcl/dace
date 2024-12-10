@@ -13,12 +13,11 @@ from dace.sdfg.performance_evaluation.assumptions import ContradictingAssumption
 import sympy as sp
 import numpy as np
 
+from dace.sdfg.utils import inline_control_flow_regions
 from dace.transformation.interstate import NestSDFG
 from dace.transformation.dataflow import MapExpansion
 
 from pytest import raises
-
-from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
 
 N = dc.symbol('N')
 M = dc.symbol('M')
@@ -221,12 +220,7 @@ def test_work_depth(test_name):
         sdfg.apply_transformations(MapExpansion)
 
     # NOTE: Until the W/D Analysis is changed to make use of the new blocks, inline control flow for the analysis.
-    inliner = InlineControlFlowRegions()
-    inliner.no_inline_conditional = False
-    inliner.no_inline_loops = False
-    inliner.no_inline_function_call_regions = False
-    inliner.no_inline_named_regions = False
-    inliner.apply_pass(sdfg, {})
+    inline_control_flow_regions(sdfg)
     for sd in sdfg.all_sdfgs_recursive():
         sd.using_experimental_blocks = False
 
@@ -279,12 +273,7 @@ def test_avg_par(test_name: str):
         sdfg.apply_transformations(MapExpansion)
 
     # NOTE: Until the W/D Analysis is changed to make use of the new blocks, inline control flow for the analysis.
-    inliner = InlineControlFlowRegions()
-    inliner.no_inline_conditional = False
-    inliner.no_inline_loops = False
-    inliner.no_inline_function_call_regions = False
-    inliner.no_inline_named_regions = False
-    inliner.apply_pass(sdfg, {})
+    inline_control_flow_regions(sdfg)
     for sd in sdfg.all_sdfgs_recursive():
         sd.using_experimental_blocks = False
 

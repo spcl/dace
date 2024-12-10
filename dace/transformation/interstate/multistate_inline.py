@@ -145,12 +145,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
             from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
-            inline_pass = InlineControlFlowRegions()
-            inline_pass.no_inline_conditional = False
-            inline_pass.no_inline_named_regions = False
-            inline_pass.no_inline_function_call_regions = False
-            inline_pass.no_inline_loops = False
-            inline_pass.apply_pass(nsdfg, {})
+            sdutil.inline_control_flow_regions(nsdfg)
             # After inlining, try to lift out control flow again, essentially preserving all control flow that can be
             # preserved while removing the return blocks.
             ControlFlowRaising().apply_pass(nsdfg, {})

@@ -11,6 +11,9 @@ from dace.transformation import pass_pipeline as ppl, transformation
 @properties.make_properties
 @transformation.experimental_cfg_block_compatible
 class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
+    """
+    Prunes empty (or no-op) conditional branches from conditional blocks.
+    """
 
     CATEGORY: str = 'Simplification'
 
