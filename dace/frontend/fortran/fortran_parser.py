@@ -3443,6 +3443,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     replacements = 1
     step = 1
     while replacements > 0:
+        replacements = 0
         program = enum_propagator.generic_visit(program)
         prop = ast_transforms.AssignmentPropagator(propagation_info)
         program = prop.visit(program)
