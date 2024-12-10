@@ -7,7 +7,7 @@ from fparser.two.parser import ParserFactory
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, deconstruct_enums, \
     deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, \
-    assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, consolidate_uses
+    assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, consolidate_uses, prune_branches
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
@@ -1244,6 +1244,40 @@ SUBROUTINE main
   a_deconglobalvar_14 = perim_deconglobalfn_5(s_deconglobalvar_13, 1.0)
   s_deconglobalvar_13 % sides = area_deconglobalfn_8(s_deconglobalvar_13, 4.1)
   circle_deconglobalvar_4 = 5.0
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_branch_pruning():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main
+  implicit none
+  integer, parameter :: k = 4
+  integer :: a = -1, b = -1
+
+  if (k < 2) then
+    a = k
+  else if (k < 5) then
+    b = k
+  else
+    a = k
+    b = k
+  end if
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = prune_branches(ast)
+
+    got = ast.tofortran()
+    print(got)
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  INTEGER, PARAMETER :: k = 4
+  INTEGER :: a = - 1, b = - 1
+  b = k
 END SUBROUTINE main
 """.strip()
     assert got == want

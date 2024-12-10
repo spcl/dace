@@ -1,8 +1,11 @@
 import math
+import operator
 import re
-from typing import Union, Tuple, Dict, Optional, List, Iterable, Set
+import sys
+from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type
 
 import networkx as nx
+import numpy as np
 from fparser.api import get_reader
 from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, \
     Component_Decl, Entity_Decl, Specific_Binding, Generic_Binding, Interface_Stmt, Main_Program, Subroutine_Subprogram, \
@@ -15,9 +18,10 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Specification_Part, Interface_Block, Association, Procedure_Designator, Type_Bound_Procedure_Part, \
     Associate_Construct, Subscript_Triplet, End_Function_Stmt, End_Subroutine_Stmt, Module_Subprogram_Part, \
     Enumerator_List, Actual_Arg_Spec_List, Only_List, Section_Subscript_List, Char_Selector, Data_Pointer_Object, \
-    Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body
+    Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, Else_If_Stmt, \
+    Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
-from fparser.two.utils import Base, walk
+from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
@@ -45,6 +49,7 @@ class TYPE_SPEC:
         self.optional: bool = 'OPTIONAL' in attrs
         self.inp: bool = 'INTENT(IN)' in attrs or 'INTENT(INOUT)' in attrs
         self.out: bool = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
+        self.const: bool = 'PARAMETER' in attrs
         self.keyword: Optional[str] = None
 
     @staticmethod
@@ -208,14 +213,18 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
     return scope_spec + (name,)
 
 
-def search_real_local_alias_spec(node: Name, alias_map: SPEC_TABLE) -> Optional[SPEC]:
-    loc = search_local_alias_spec(node)
-    if not loc:
-        return None
+def search_real_local_alias_spec_from_spec(loc: SPEC, alias_map: SPEC_TABLE) -> Optional[SPEC]:
     while len(loc) > 1 and loc not in alias_map:
         # The name is not immediately available in the current scope, but may be it is in the parent's scope.
         loc = loc[:-2] + (loc[-1],)
     return loc if loc in alias_map else None
+
+
+def search_real_local_alias_spec(node: Name, alias_map: SPEC_TABLE) -> Optional[SPEC]:
+    loc = search_local_alias_spec(node)
+    if not loc:
+        return None
+    return search_real_local_alias_spec_from_spec(loc, alias_map)
 
 
 def identifier_specs(ast: Program) -> SPEC_TABLE:
@@ -305,7 +314,13 @@ def _find_type_decl_node(node: Entity_Decl):
 
 def _eval_selected_int_kind(p: int) -> int:
     # Copied logic from `replace_int_kind()` elsewhere in the project.
-    return int(math.ceil((math.log2(10 ** p) + 1) / 8))
+    kind = int(math.ceil((math.log2(10 ** p) + 1) / 8))
+    assert kind <= 8
+    if kind <= 2:
+        return kind
+    elif kind <= 4:
+        return 4
+    return 8
 
 
 def _eval_selected_real_kind(p: int, r: int) -> int:
@@ -323,6 +338,7 @@ def _const_eval_int(expr: Base, alias_map: SPEC_TABLE) -> Optional[int]:
         spec = find_real_ident_spec(expr.string, scope_spec, alias_map)
         decl = alias_map[spec]
         assert isinstance(decl, Entity_Decl)
+        # TODO: Verify that it is a constant expression.
         init = atmost_one(children_of_type(decl, Initialization))
         # TODO: Add ref.
         _, iexpr = init.children
@@ -350,6 +366,225 @@ def _const_eval_int(expr: Base, alias_map: SPEC_TABLE) -> Optional[int]:
     return None
 
 
+def _cdiv(x, y):
+    return operator.floordiv(x, y) \
+        if (isinstance(x, (np.int8, np.int16, np.int32, np.int64))
+            and isinstance(y, (np.int8, np.int16, np.int32, np.int64))) \
+        else operator.truediv(x, y)
+
+
+UNARY_OPS = {
+    '.NOT.': operator.not_,
+    '-': operator.neg,
+}
+
+BINARY_OPS = {
+    '<': operator.le,
+    '>': operator.ge,
+    '==': operator.eq,
+    '/=': operator.ne,
+    '<=': operator.lt,
+    '>=': operator.gt,
+    '+': operator.add,
+    '-': operator.sub,
+    '*': operator.mul,
+    '/': _cdiv,
+    '.OR.': operator.or_,
+    '.AND.': operator.and_,
+    '**': operator.pow,
+}
+
+NUMPY_INTS = Union[np.int8, np.int16, np.int32, np.int64]
+NUMPY_REALS = Union[np.float32, np.float64]
+NUMPY_TYPES = Union[NUMPY_INTS, NUMPY_REALS, np.bool_]
+
+
+def _count_bytes(t: Type[NUMPY_TYPES]) -> int:
+    if t is np.int8:
+        return 1
+    elif t is np.int16:
+        return 2
+    elif t is np.int32:
+        return 4
+    elif t is np.int64:
+        return 8
+    elif t is np.float32:
+        return 4
+    elif t is np.float64:
+        return 8
+    elif t is np.bool_:
+        return 1
+    raise ValueError(f"{t} is not an expected type; expected {NUMPY_TYPES}")
+
+
+def _eval_int_literal(x: Union[Signed_Int_Literal_Constant, Int_Literal_Constant], alias_map: SPEC_TABLE) -> NUMPY_INTS:
+    num, kind = x.children
+    if kind is None:
+        kind = 4
+    elif kind in {'1', '2', '4', '8'}:
+        kind = np.int32(kind)
+    else:
+        kind_spec = search_real_local_alias_spec_from_spec(find_scope_spec(x) + (kind,), alias_map)
+        if kind_spec:
+            kind_decl = alias_map[kind_spec]
+            kind_node, _, _, _ = kind_decl.children
+            kind = _const_eval_basic_type(kind_node, alias_map)
+            assert isinstance(kind, np.int32)
+    assert kind in {1, 2, 4, 8}
+    if kind == 1:
+        return np.int8(num)
+    elif kind == 2:
+        return np.int16(num)
+    elif kind == 4:
+        return np.int32(num)
+    elif kind == 8:
+        return np.int64(num)
+
+
+def _eval_real_literal(x: Union[Signed_Real_Literal_Constant, Real_Literal_Constant],
+                       alias_map: SPEC_TABLE) -> NUMPY_REALS:
+    num, kind = x.children
+    if kind is None:
+        if 'D' in num:
+            num = num.replace('D', 'e')
+            kind = 8
+        else:
+            kind = 4
+    else:
+        kind_spec = search_real_local_alias_spec_from_spec(find_scope_spec(x) + (kind,), alias_map)
+        if kind_spec:
+            kind_decl = alias_map[kind_spec]
+            kind_node, _, _, _ = kind_decl.children
+            kind = _const_eval_basic_type(kind_node, alias_map)
+            assert isinstance(kind, np.int32)
+    assert kind in {4, 8}
+    if kind == 4:
+        return np.float32(num)
+    elif kind == 8:
+        return np.float64(num)
+
+
+def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_TYPES]:
+    if isinstance(expr, (Part_Ref, Data_Ref)):
+        return None
+    elif isinstance(expr, Name):
+        spec = search_real_local_alias_spec(expr, alias_map)
+        if not spec:
+            # Does not even have a valid identifier.
+            return None
+        decl = alias_map[spec]
+        if not isinstance(decl, Entity_Decl):
+            # Is not even a data entity.
+            return None
+        typ = find_type_of_entity(decl, alias_map)
+        if not typ or not typ.const or typ.shape:
+            # Does not have a constant type.
+            return None
+        init = atmost_one(children_of_type(decl, Initialization))
+        # TODO: Add ref.
+        _, iexpr = init.children
+        val = _const_eval_basic_type(iexpr, alias_map)
+        assert val is not None
+        if typ.spec == ('INTEGER1',):
+            val = np.int8(val)
+        elif typ.spec == ('INTEGER2',):
+            val = np.int16(val)
+        elif typ.spec == ('INTEGER4',) or typ.spec == ('INTEGER',):
+            val = np.int32(val)
+        elif typ.spec == ('INTEGER8',):
+            val = np.int64(val)
+        elif typ.spec == ('REAL4',) or typ.spec == ('REAL',):
+            val = np.float32(val)
+        elif typ.spec == ('REAL8',):
+            val = np.float64(val)
+        elif typ.spec == ('LOGICAL',):
+            val = np.bool_(val)
+        else:
+            raise ValueError(f"{expr}/{typ.spec} is not a basic type")
+        return val
+    elif isinstance(expr, Intrinsic_Function_Reference):
+        intr, args = expr.children
+        if args:
+            args = args.children
+        if intr.string == 'EPSILON':
+            a, = args
+            a = _const_eval_basic_type(a, alias_map)
+            assert isinstance(a, (np.float32, np.float64))
+            return type(a)(sys.float_info.epsilon)
+        elif intr.string == 'SELECTED_REAL_KIND':
+            p, r = args
+            p, r = _const_eval_basic_type(p, alias_map), _const_eval_basic_type(r, alias_map)
+            assert isinstance(p, np.int32) and isinstance(r, np.int32)
+            return np.int32(_eval_selected_real_kind(p, r))
+        elif intr.string == 'SELECTED_INT_KIND':
+            p, = args
+            p = _const_eval_basic_type(p, alias_map)
+            assert isinstance(p, np.int32)
+            return np.int32(_eval_selected_int_kind(p))
+        elif intr.string == 'INT':
+            if len(args) == 1:
+                num, = args
+                kind = 4
+            else:
+                num, kind = args
+                kind = _const_eval_basic_type(kind, alias_map)
+                assert kind is not None
+            num = _const_eval_basic_type(num, alias_map)
+            if not num:
+                return None
+            return _eval_int_literal(Int_Literal_Constant(f"{num}_{kind}"), alias_map)
+        elif intr.string == 'REAL':
+            if len(args) == 1:
+                num, = args
+                kind = 4
+            else:
+                num, kind = args
+                kind = _const_eval_basic_type(kind, alias_map)
+                assert kind is not None
+            num = _const_eval_basic_type(num, alias_map)
+            if not num:
+                return None
+            valstr = str(num)
+            if kind == 8:
+                if 'e' in valstr:
+                    valstr = valstr.replace('e', 'D')
+                else:
+                    valstr = f"{valstr}D0"
+            return _eval_real_literal(Real_Literal_Constant(valstr), alias_map)
+    elif isinstance(expr, (Int_Literal_Constant, Signed_Int_Literal_Constant)):
+        return _eval_int_literal(expr, alias_map)
+    elif isinstance(expr, Logical_Literal_Constant):
+        return np.bool_(expr.tofortran().upper() == '.TRUE.')
+    elif isinstance(expr, (Real_Literal_Constant, Signed_Real_Literal_Constant)):
+        return _eval_real_literal(expr, alias_map)
+    elif isinstance(expr, BinaryOpBase):
+        lv, op, rv = expr.children
+        if op in BINARY_OPS:
+            lv = _const_eval_basic_type(lv, alias_map)
+            rv = _const_eval_basic_type(rv, alias_map)
+            if lv is None or rv is None:
+                return None
+            return BINARY_OPS[op](lv, rv)
+    elif isinstance(expr, UnaryOpBase):
+        op, val = expr.children
+        if op in UNARY_OPS:
+            val = _const_eval_basic_type(val, alias_map)
+            if val is None:
+                return None
+            return UNARY_OPS[op](val)
+    elif isinstance(expr, Parenthesis):
+        _, x, _ = expr.children
+        return _const_eval_basic_type(x, alias_map)
+    elif isinstance(expr, Hex_Constant):
+        x = expr.string
+        assert x[:2] == 'Z"' and x[-1:] == '"'
+        x = x[2:-1]
+        return np.int32(int(x, 16))
+
+    # TODO: Add other evaluations.
+    return None
+
+
 def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TYPE_SPEC]:
     anc = _find_type_decl_node(node)
     if not anc:
@@ -361,18 +596,24 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
 
     extra_dim = None
     if isinstance(typ, Intrinsic_Type_Spec):
+        ACCEPTED_TYPES = {'INTEGER', 'REAL', 'DOUBLE PRECISION', 'LOGICAL', 'CHARACTER'}
         typ_name, kind = typ.children
+        assert typ_name in ACCEPTED_TYPES, typ_name
+
         # TODO: How should we handle character lengths? Just treat it as an extra dimension?
         if isinstance(kind, Length_Selector):
+            assert typ_name == 'CHARACTER'
             extra_dim = (':',)
         elif isinstance(kind, Kind_Selector):
+            assert typ_name in {'INTEGER', 'REAL', 'LOGICAL'}
             _, kind, _ = kind.children
-            kind = _const_eval_int(kind, alias_map)
-            if kind:
-                # TODO: We should always be able to evlauate a kind. I.e., this should be an assert.
-                # TODO: Perhaps not attach it as a string?
-                # If not a default kind, attach it to the type.
-                typ_name = f"{typ_name}{kind}"
+            kind = _const_eval_basic_type(kind, alias_map) or 4
+            typ_name = f"{typ_name}{kind}"
+        elif kind is None:
+            if typ_name in {'INTEGER', 'REAL'}:
+                typ_name = f"{typ_name}4"
+            elif typ_name in {'DOUBLE PRECISION'}:
+                typ_name = f"REAL8"
         spec = (typ_name,)
     elif isinstance(typ, Declaration_Type_Spec):
         _, typ_name = typ.children
@@ -772,7 +1013,9 @@ def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -
             if isinstance(x, (Real_Literal_Constant, Signed_Real_Literal_Constant)):
                 return TYPE_SPEC('REAL')
             elif isinstance(x, (Int_Literal_Constant, Signed_Int_Literal_Constant)):
-                return TYPE_SPEC('INTEGER')
+                val = _eval_int_literal(x, alias_map)
+                assert isinstance(val, NUMPY_INTS)
+                return TYPE_SPEC(f"INTEGER{_count_bytes(type(val))}")
             elif isinstance(x, Char_Literal_Constant):
                 str_typ = TYPE_SPEC('CHARACTER', 'DIMENSION(:)')
                 return str_typ
@@ -1716,7 +1959,103 @@ def consolidate_uses(ast: Program) -> Program:
         nuses: List[Use_Stmt] = [
             Use_Stmt(f"use {k}") if k in all_use else Use_Stmt(f"use {k}, only: {', '.join(use_map[k])}")
             for k in use_map.keys() | all_use]
+        reuses: List[Use_Stmt] = [
+            Use_Stmt(f"use {k}, only: {', '.join(r for r in use_map[k] if '=>' in r)}")
+            for k in use_map.keys() if any('=>' in r for r in use_map[k])]
         # Remove the old ones, and prepend the new ones.
-        sp.content = nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
+        sp.content = nuses + reuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
         _reparent_children(sp)
+    return ast
+
+
+def _prune_branches_in_ifblock(ib: If_Construct, alias_map: SPEC_TABLE):
+    ifthen = ib.children[0]
+    assert isinstance(ifthen, If_Then_Stmt)
+    cond, = ifthen.children
+    cval = _const_eval_basic_type(cond, alias_map)
+    if cval is None:
+        return
+    print(f"PRUNING: {cond}\n{ib.tofortran()}")
+    assert isinstance(cval, np.bool_)
+
+    elifat = [idx for idx, c in enumerate(ib.children) if isinstance(c, (Else_If_Stmt, Else_Stmt))]
+    if cval:
+        cut = elifat[0] if elifat else -1
+        actions = ib.children[1:cut]
+        replace_node(ib, actions)
+        return
+    elif not elifat:
+        remove_self(ib)
+        return
+
+    cut = elifat[0]
+    cut_cond = ib.children[cut]
+    if isinstance(cut_cond, Else_Stmt):
+        actions = ib.children[cut + 1:-1]
+        replace_node(ib, actions)
+        return
+
+    isinstance(cut_cond, Else_If_Stmt)
+    cut_cond, _ = cut_cond.children
+    remove_children(ib, ib.children[1:(cut + 1)])
+    set_children(ifthen, (cut_cond,))
+    _prune_branches_in_ifblock(ib, alias_map)
+
+
+def prune_branches(ast: Program) -> Program:
+    alias_map = alias_specs(ast)
+    for ib in walk(ast, If_Construct):
+        _prune_branches_in_ifblock(ib, alias_map)
+    return ast
+
+
+def const_eval_nodes(ast: Program) -> Program:
+    LITERAL_TYPES = Union[
+        Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, Signed_Int_Literal_Constant,
+        Logical_Literal_Constant]
+    EXPRESSION_TYPES = Union[
+        LITERAL_TYPES, Expr, Add_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr, Level_5_Expr,
+        Intrinsic_Function_Reference]
+
+    alias_map = alias_specs(ast)
+
+    def _const_eval_node(n: Base) -> bool:
+        val = _const_eval_basic_type(n, alias_map)
+        if val is None:
+            return False
+        assert not np.isnan(val)
+        if isinstance(val, np.bool_):
+            val = Logical_Literal_Constant('.true.' if val else '.false.')
+        elif isinstance(val, NUMPY_INTS):
+            bytez = _count_bytes(type(val))
+            if val < 0:
+                val = Signed_Int_Literal_Constant(f"{val}" if bytez == 4 else f"{val}_{bytez}")
+            else:
+                val = Int_Literal_Constant(f"{val}" if bytez == 4 else f"{val}_{bytez}")
+        elif isinstance(val, NUMPY_REALS):
+            bytez = _count_bytes(type(val))
+            valstr = str(val)
+            if bytez == 8:
+                if 'e' in valstr:
+                    valstr = valstr.replace('e', 'D')
+                else:
+                    valstr = f"{valstr}D0"
+            if val < 0:
+                val = Signed_Real_Literal_Constant(valstr)
+            else:
+                val = Real_Literal_Constant(valstr)
+        replace_node(n, val)
+        return True
+
+    for expr in reversed(walk(ast, EXPRESSION_TYPES)):
+        # Try to const-eval the expression.
+        if _const_eval_node(expr):
+            # If the node is successfully replaced, then nothing else to do.
+            continue
+        # Otherwise, try to at least replace the names with the literal values.
+        for nm in reversed(walk(expr, Name)):
+            _const_eval_node(nm)
+    for node in reversed(walk(ast, Kind_Selector)):
+        _, kind, _ = node.children
+        _const_eval_node(kind)
     return ast
