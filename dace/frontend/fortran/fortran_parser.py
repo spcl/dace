@@ -32,7 +32,7 @@ from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES,
     identifier_specs, append_children, correct_for_function_calls, remove_access_statements, sort_modules, \
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
     deconstruct_associations, assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, \
-    consolidate_uses
+    consolidate_uses, prune_branches, const_eval_nodes
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import UseAllPruneList
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
@@ -3301,6 +3301,8 @@ def create_sdfg_from_fortran_file_with_options(
     ast = correct_for_function_calls(ast)
     ast = deconstruct_procedure_calls(ast)
     ast = deconstruct_interface_calls(ast)
+    ast = const_eval_nodes(ast)
+    ast = prune_branches(ast)
     ast = prune_unused_objects(ast,
                                [m for m in walk(ast, Subroutine_Subprogram) if find_name_of_node(m) == 'radiation'])
     ast = assign_globally_unique_subprogram_names(ast, {('radiation_interface', 'radiation')})
@@ -3498,7 +3500,6 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
-
 
     print("Before intrinsics")
     for transformation in partial_ast.fortran_intrinsics().transformations():
