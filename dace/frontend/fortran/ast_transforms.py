@@ -2823,7 +2823,7 @@ class IfEvaluator(NodeTransformer):
         try:
             evaluated = sym.evaluate(sym.pystr_to_symbolic(text), {})
         except:
-            print("Failed: " + text)
+            #print("Failed: " + text)
             return self.generic_visit(node)
 
         if evaluated == sp.true:
