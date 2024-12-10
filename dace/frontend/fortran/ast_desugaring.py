@@ -1975,7 +1975,6 @@ def _prune_branches_in_ifblock(ib: If_Construct, alias_map: SPEC_TABLE):
     cval = _const_eval_basic_type(cond, alias_map)
     if cval is None:
         return
-    print(f"PRUNING: {cond}\n{ib.tofortran()}")
     assert isinstance(cval, np.bool_)
 
     elifat = [idx for idx, c in enumerate(ib.children) if isinstance(c, (Else_If_Stmt, Else_Stmt))]

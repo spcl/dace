@@ -7,7 +7,8 @@ from fparser.two.parser import ParserFactory
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, deconstruct_enums, \
     deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, \
-    assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, consolidate_uses, prune_branches
+    assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, consolidate_uses, prune_branches, \
+    const_eval_nodes
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
@@ -1271,13 +1272,62 @@ end subroutine main
     ast = prune_branches(ast)
 
     got = ast.tofortran()
-    print(got)
     want = """
 SUBROUTINE main
   IMPLICIT NONE
   INTEGER, PARAMETER :: k = 4
   INTEGER :: a = - 1, b = - 1
   b = k
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_constant_resolving():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main
+  implicit none
+  integer, parameter :: k = 8
+  integer :: a = -1, b = -1
+  real, parameter :: pk = 4.1_k
+  real(kind=selected_real_kind(5, 5)) :: p = 1.0_k
+
+  if (k < 2) then
+    a = k
+    p = k*pk
+  else if (k < 5) then
+    b = k
+    p = p + k*pk
+  else
+    a = k
+    b = k
+    p = a*p + k*pk
+  end if
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = const_eval_nodes(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  INTEGER, PARAMETER :: k = 8
+  INTEGER :: a = - 1, b = - 1
+  REAL, PARAMETER :: pk = 4.1D0
+  REAL(KIND = 4) :: p = 1.0D0
+  IF (.FALSE.) THEN
+    a = k
+    p = 32.79999923706055D0
+  ELSE IF (.FALSE.) THEN
+    b = k
+    p = p + 32.79999923706055D0
+  ELSE
+    a = k
+    b = k
+    p = a * p + 32.79999923706055D0
+  END IF
 END SUBROUTINE main
 """.strip()
     assert got == want
