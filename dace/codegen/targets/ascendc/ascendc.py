@@ -137,6 +137,7 @@ class AscendCCodeGen(TargetCodeGenerator):
         AscendCCodeGen._in_device_code = False
         self._cpu_codegen: Optional["CPUCodeGen"] = None
         self._localcode = CodeIOStream()
+        self._localwrappercode = CodeIOStream()
         self._globalcode = CodeIOStream()
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
@@ -192,6 +193,9 @@ class AscendCCodeGen(TargetCodeGenerator):
         self.language = "cce"
         self._codeobject = CodeObject(
             sdfg.name + "_" + "ascendc", "", self.language, AscendCCodeGen, "AscendC"
+        )
+        self._impl_codeobject = CodeObject(
+            sdfg.name + "_kernels" + "_" + "ascendc", "", self.language, AscendCCodeGen, "AscendC"
         )
         # Annotate AscendC streams
         self._acl_streams, _ = self._compute_acl_streams(sdfg)
@@ -320,7 +324,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
     }}
 }}
 
-{localcode}
+{localwrappercode}
 
 #ifdef DACE_ASCEND
 #endif
@@ -331,14 +335,26 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             initcode=initcode.getvalue(),
             exitcode=exitcode.getvalue(),
             other_globalcode=self._globalcode.getvalue(),
-            localcode=self._localcode.getvalue(),
+            localwrappercode=self._localwrappercode.getvalue(),
             file_header=fileheader.getvalue(),
             nstreams=max(1, self._acl_streams),
             sdfg=self._global_sdfg,
             nevents=1,
         )
 
-        return [self._codeobject]
+        self._impl_codeobject.code = f"""
+#ifdef DACE_ASCEND
+#ifndef __CCE_KT_TEST__
+#endif
+
+{self._localcode.getvalue()}
+
+#ifdef DACE_ASCEND
+#endif
+#endif
+"""
+
+        return [self._codeobject, self._impl_codeobject]
 
     def node_dispatch_predicate(self, sdfg, state, node):
         if hasattr(node, "schedule"):  # NOTE: Works on nodes and scopes
@@ -1486,9 +1502,27 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         # Write callback function definition
         self._localcode.write(
             """
+DACE_EXPORTED void __dace_runkernel_impl_{fname}({fargs});
+DACE_EXPORTED void __dace_runkernel_impl_{fname}({fargs})
+{{
+""".format(
+                fname=kernel_name,
+                fargs=", ".join(
+                    state_param + kernel_args_entry_typed + extra_call_args_typed
+                ),
+            ),
+            cfg,
+            state_id,
+            node,
+        )
+
+        self._localwrappercode.write(
+            """
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
 {{
+    __dace_runkernel_impl_{fname}({fargs});
+}}
 """.format(
                 fname=kernel_name,
                 fargs=", ".join(
