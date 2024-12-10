@@ -1115,6 +1115,33 @@ class InternalFortranAst:
                         if kind == "*":
                             size_later = True
                     else:
+                      if isinstance(type_of_node.items[1].items[1], f03.Int_Literal_Constant):
+                            kind = type_of_node.items[1].items[1].string.lower()
+                            if basetype == "REAL":
+                                if kind == "8":
+                                    basetype = "REAL8"
+                                else:
+                                    raise TypeError("Real kind not supported")
+                            elif basetype == "INTEGER":
+                                if kind == "4":
+                                    basetype = "INTEGER"
+                                elif kind == "1":
+                                    #TODO: support for 1 byte integers /chars would be useful
+                                    basetype = "INTEGER"  
+                                
+                                elif kind == "2":
+                                    #TODO: support for 2 byte integers would be useful
+                                    basetype = "INTEGER"       
+                                
+                                elif kind == "8":
+                                    #TODO: support for 8 byte integers would be useful
+                                    basetype = "INTEGER"     
+                                else:
+                                    raise TypeError("Integer kind not supported")
+                            else:
+                                raise TypeError("Derived type not supported")    
+
+                      else:
                         kind = type_of_node.items[1].items[1].string.lower()
                         if self.symbols[kind] is not None:
                             if basetype == "REAL":
