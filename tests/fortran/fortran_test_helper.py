@@ -55,8 +55,14 @@ class SourceCodeBuilder:
             # Run `gfortran -Wall` to verify that it compiles.
             # Note: we're relying on the fact that python dictionaries keeps the insertion order when calling `keys()`.
             cmd = ['gfortran', '-Wall', '-shared', *self.sources.keys()]
-            subprocess.run(cmd, cwd=td, capture_output=True).check_returncode()
-            return self
+
+            try:
+                subprocess.run(cmd, cwd=td, capture_output=True).check_returncode()
+                return self
+            except subprocess.CalledProcessError as e:
+                print("Fortran compilation failed!")
+                print(e.stderr.decode())
+                raise e
 
     def get(self) -> Tuple[Dict[str, str], Optional[str]]:
         """Get a dictionary mapping file names (possibly auto-inferred) to their content."""

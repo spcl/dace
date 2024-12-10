@@ -49,9 +49,16 @@ class Structures:
         # for struct1 % struct2 % struct3 % var
         # we find definition of struct1, then we iterate until we find the var
 
-        struct_type = scope_vars.get_var(node.parent, ast_utils.get_name(node.parent_ref)).type
+        # find the top structure
+        top_ref = node
+        while isinstance(top_ref.parent_ref, ast_internal_classes.Data_Ref_Node):
+            top_ref = top_ref.parent_ref
+
+        struct_type = scope_vars.get_var(node.parent, ast_utils.get_name(top_ref.parent_ref)).type
         struct_def = self.structures[struct_type]
-        cur_node = node
+
+        #cur_node = node
+        cur_node = top_ref
 
         while True:
             cur_node = cur_node.part_ref

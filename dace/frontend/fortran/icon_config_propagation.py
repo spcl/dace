@@ -57,33 +57,56 @@ def parse_assignments(assignments: list[str]) -> list[tuple[str, str]]:
 
 
 if __name__ == "__main__":
-    base_dir_ecrad = "/home/alex/icon-model/externals/ecrad"
-    base_dir_icon = "/home/alex/icon-model/src"
+
+    base_icon_path = sys.argv[1]
+    icon_file = sys.argv[2]
+    sdfgs_dir = sys.argv[3]
+
+    base_dir_ecrad = f"{base_icon_path}/externals/ecrad"
+    base_dir_icon = f"{base_icon_path}/src"
     fortran_files = find_path_recursive(base_dir_ecrad)
     ast_builder = ast_components.InternalFortranAst()
     parser = pf().create(std="f2008")
 
-    strings = read_lines_between("/home/alex/icon-model/run/exp.exclaim_ape_R2B09", "! radiation_nml: radiation scheme",
-                                 "/")
+    # Update configuration with user changes
+    strings = read_lines_between(
+        f"{base_icon_path}/run/exp.exclaim_ape_R2B09",
+        "! radiation_nml: radiation scheme",
+        "/"
+    )
     parsed_strings = parse_assignments(strings)
 
-    parkind_ast = parser(ffr(file_candidate="/home/alex/icon-model/src/shared/mo_kind.f90"))
+    parkind_ast = parser(ffr(file_candidate=f"{base_icon_path}/src/shared/mo_kind.f90"))
     parkinds = ast_builder.create_ast(parkind_ast)
-   
 
-    reader = ffr(file_candidate="/home/alex/icon-model/src/namelists/mo_radiation_nml.f90")
+    reader = ffr(file_candidate=f"{base_icon_path}/src/namelists/mo_radiation_nml.f90")
     namelist_ast = parser(reader)
     namelist_internal_ast = ast_builder.create_ast(namelist_ast)
+    # this creates the initial list of assignments
+    # this does not consider conditional control-flow
+    # it excludes condiditions like "if"
+    #
+    # assignments are in form of (variable, value)
+    # we try to replace instances of variable with "value"
+    # value can be almost anything
+    #
     lister = ast_transforms.AssignmentLister(parsed_strings)
 
     replacements = 1
     step = 1
+    # we replace if conditions iteratively until no more changes
+    # are done to the source code
     while replacements > 0:
         lister.reset()
         lister.visit(namelist_internal_ast)
+
+        # Propagate assignments
         prop = ast_transforms.AssignmentPropagator(lister.simple_assignments)
         namelist_internal_ast = prop.visit(namelist_internal_ast)
         replacements = prop.replacements
+
+        # We try to evaluate if conditions. If we can evaluate to true/false,
+        # then we replace the if condition with the exact path
         if_eval = ast_transforms.IfEvaluator()
         namelist_internal_ast = if_eval.visit(namelist_internal_ast)
         replacements += if_eval.replacements
@@ -91,16 +114,19 @@ if __name__ == "__main__":
             prop.replacements) + " If: " + str(if_eval.replacements))
         step += 1
 
-    # adding enums from radiotion config
+    # adding enums from radiation config
     adiation_config_ast = parser(
-        ffr(file_candidate="/home/alex/icon-model/src/configure_model/mo_radiation_config.f90"))
+        ffr(file_candidate=f"{base_icon_path}/src/configure_model/mo_radiation_config.f90")
+    )
     radiation_config_internal_ast = ast_builder.create_ast(adiation_config_ast)
+    # replace long complex enum names with integers
     enum_propagator = ast_transforms.PropagateEnums()
     enum_propagator.visit(radiation_config_internal_ast)
 
     # namelist_assignments.insert(0,("amd", "28.970"))
 
-    ecrad_init_ast = parser(ffr(file_candidate="/home/alex/icon-model/src/atm_phy_nwp/mo_nwp_ecrad_init.f90"))
+    # Repeat the
+    ecrad_init_ast = parser(ffr(file_candidate=f"{base_icon_path}/src/atm_phy_nwp/mo_nwp_ecrad_init.f90"))
     ecrad_internal_ast = ast_builder.create_ast(ecrad_init_ast)
     # clearing acc check
     ecrad_internal_ast.modules[0].subroutine_definitions.pop(1)
@@ -126,41 +152,54 @@ if __name__ == "__main__":
     lister2.simple_assignments.append(
         (ast_internal.Data_Ref_Node(parent_ref=ast_internal.Name_Node(name="ecrad_conf"), part_ref=ast_internal.Name_Node(name="do_save_radiative_properties")),
          ast_internal.Bool_Literal_Node(value='False')))
+
+    # this is defined internally in the program as "false"
+    # We remove it to simplify the code
     lister2.simple_assignments.append(
         (ast_internal.Name_Node(name="lhook"),
          ast_internal.Bool_Literal_Node(value='False')))
 
-
-    #namelist_internal_ast=IfEvaluator().visit(namelist_internal_ast)
-    base_dir = "/home/alex/icon-model/externals/ecrad/"
-    #base_dir = "/mnt/c/Users/AlexWork/icon_f2dace/src"
+    base_dir = f"{base_icon_path}/externals/ecrad/"
     fortran_files = find_path_recursive(base_dir)
-  
-    #print(fortran_files)
-    inc_list = ["/home/alex/icon-model/externals/ecrad/include"]
-    #inc_list = ["/mnt/c/Users/AlexWork/icon_f2dace/src/include"]
-    
-    #sdfg = fortran_parser.create_sdfg_from_fortran_file_with_options(
-    #    "/mnt/c/Users/AlexWork/icon_f2dace/src/shared/mo_util_texthash.f90",
-    #     include_list=inc_list,
-    #    source_list=fortran_files)
-    fortran_parser.create_sdfg_from_fortran_file_with_options(
-        #"/mnt/c/Users/AlexWork/icon_f2dace/src/atm_dyn_iconam/mo_solve_nonhydro.f90",
-        #"/home/alex/ecrad/driver/ecrad_driver.F90",
-        #"/home/alex/ecrad/radiation/radiation_homogeneous_lw.F90",
-        #"/home/alex/ecrad/ifs/yoe_spectral_planck.F90",
-        #"/home/alex/ecrad/ifs/radiation_scheme.F90",
-        "/home/alex/icon-model/externals/ecrad/radiation/radiation_interface.F90",
-        #"/mnt/c/Users/AlexWork/icon_f2dace/src/shared/mo_loopindices.f90",
-        #"/mnt/c/Users/AlexWork/icon_f2dace/src/parallel_infrastructure/mo_mpi.f90",
-        #"/mnt/c/Users/AlexWork/icon_f2dace/src/shared/mo_fortran_tools.f90",
-        #"/mnt/c/Users/AlexWork/icon_f2dace/src/shared/mo_math_utility_solvers2.f90",
-        #"/mnt/c/Users/AlexWork/icon_f2dace/src/shared/mo_math_utilities.f90",
-        #"/mnt/c/Users/AlexWork/icon_f2dace/src/configure_model/mo_parallel_config.f90",
-        #"/mnt/c/Users/AlexWork/icon_f2dace/src/shared/mo_exception.f90",
-        include_list=inc_list,
-        source_list=fortran_files,icon_sources_dir="/home/alex/icon-model/externals/ecradicon-model/external/ecrad/",
-        icon_sdfgs_dir="/home/alex/fcdc/ecrad_f2dace/sdfgs",normalize_offsets=True, propagation_info=lister.simple_assignments+lister2.simple_assignments)
-    
+    inc_list = [f"{base_icon_path}/externals/ecrad/include"]
 
-  
+    propagation_info = lister.simple_assignments + lister2.simple_assignments
+
+    # let's fix the propagation info for ECRAD
+    for i in propagation_info:
+        if isinstance(i[0], ast_internal.Data_Ref_Node):
+            i[0].parent_ref.name = i[0].parent_ref.name.replace("ecrad_conf", "config")
+
+    radiation_config_ast = parser(
+        ffr(file_candidate=f"{base_icon_path}/externals/ecrad/radiation/radiation_config.F90"))
+
+    enum_propagator_files = [
+        f"{base_icon_path}/src/shared/mo_kind.f90",
+        f"{base_icon_path}/externals/ecrad/ifsaux/parkind1.F90",
+        f"{base_icon_path}/externals/ecrad/ifsaux/ecradhook.F90"
+    ]
+
+    cfg = fortran_parser.FindUsedFunctionsConfig(
+        root = 'radiation',
+        needed_functions = ['radiation_interface', 'radiation'],
+        skip_functions = ['radiation_monochromatic', 'radiation_cloudless_sw',
+                    'radiation_tripleclouds_sw', 'radiation_homogeneous_sw']
+    )
+
+    # previous steps were used to generate the initial list of assignments for ECRAD
+    # this includes user config and internal enumerations of ICON
+    # the previous ASTs can be now disregarded
+    # we only keep the list of assignments and propagate it to ECRAD parsing.
+    print(f"{base_icon_path}/{icon_file}")
+    fortran_parser.create_sdfg_from_fortran_file_with_options(
+        f"{base_icon_path}/{icon_file}",
+        include_list=inc_list,
+        source_list=fortran_files,
+        sdfgs_dir=sdfgs_dir,
+        subroutine_name="solver_mcica_sw",
+        normalize_offsets=True,
+        propagation_info=propagation_info,
+        enum_propagator_ast=radiation_config_ast,
+        enum_propagator_files=enum_propagator_files,
+        used_functions_config=cfg
+    )
