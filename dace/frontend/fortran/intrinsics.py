@@ -10,6 +10,8 @@ from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, P
     ScopeVarsDeclarations, par_Decl_Range_Finder, mywalk
 from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 from dace.libraries.blas.nodes.dot import dot_libnode
+from dace.libraries.blas.nodes.gemm import gemm_libnode
+from dace.libraries.standard.nodes import Transpose
 from dace.sdfg import SDFGState, SDFG, nodes
 from dace.sdfg.graph import OrderedDiGraph
 from dace.transformation import transformation as xf
@@ -78,7 +80,6 @@ class IntrinsicNodeTransformer(NodeTransformer):
         if isinstance(variable, ast_internal_classes.Data_Ref_Node):
 
             variable = self._parse_struct_ref(variable)
-            print(type(variable))
             return variable
 
         name = ""
@@ -87,7 +88,6 @@ class IntrinsicNodeTransformer(NodeTransformer):
         elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
             name = variable.name.name
         else:
-            print(type(variable))
             raise NotImplementedError()
 
         if self.scope_vars.contains_var(parent, name):
@@ -1272,13 +1272,43 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
     def blas_dot(self, state: SDFGState, sdfg: SDFG):
         dot_libnode(None, sdfg, state, self.array1.data, self.array2.data, self.out.data)
 
+    def blas_matmul(self, state: SDFGState, sdfg: SDFG):
+        gemm_libnode(
+            None,
+            sdfg,
+            state,
+            self.array1.data,
+            self.array2.data,
+            self.out.data,
+            1.0,
+            0.0,
+            False,
+            False
+        )
+
+    def transpose(self, state: SDFGState, sdfg: SDFG):
+
+        input_arr = state.add_read(self.array1.data)
+        res = state.add_write(self.out.data)
+
+        libnode = Transpose("transpose", dtype=sdfg.arrays[self.array1.data].dtype)
+        state.add_node(libnode)
+
+        state.add_edge(input_arr, None, libnode, "_inp", sdfg.make_array_memlet(self.array1.data))
+        state.add_edge(libnode, "_out", res, None, sdfg.make_array_memlet(self.out.data))
+
     LIBRARY_NODE_TRANSFORMATIONS = {
-        "__dace_blas_dot": blas_dot
+        "__dace_blas_dot": blas_dot,
+        "__dace_transpose": transpose,
+        "__dace_matmul": blas_matmul
     }
 
     @classmethod
     def expressions(cls):
 
+        graphs = []
+
+        # Match tasklets with two inputs, like dot
         g = OrderedDiGraph()
         g.add_node(cls.array1)
         g.add_node(cls.array2)
@@ -1287,7 +1317,18 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
         g.add_edge(cls.array1, cls.tasklet, None)
         g.add_edge(cls.array2, cls.tasklet, None)
         g.add_edge(cls.tasklet, cls.out, None)
-        return [g]
+        graphs.append(g)
+
+        # Match tasklets with one input, like transpose
+        g = OrderedDiGraph()
+        g.add_node(cls.array1)
+        g.add_node(cls.tasklet)
+        g.add_node(cls.out)
+        g.add_edge(cls.array1, cls.tasklet, None)
+        g.add_edge(cls.tasklet, cls.out, None)
+        graphs.append(g)
+
+        return graphs
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
 
@@ -1420,6 +1461,8 @@ class MathFunctions(IntrinsicTransformation):
         "ATAN": MathTransformation("atan", "FIRST_ARG"),
         "ATAN2": MathTransformation("atan2", "FIRST_ARG"),
         "DOT_PRODUCT": MathTransformation("__dace_blas_dot", "FIRST_ARG"),
+        "TRANSPOSE": MathTransformation("__dace_transpose", "FIRST_ARG"),
+        "MATMUL": MathTransformation("__dace_matmul", "FIRST_ARG"),
     }
 
     class TypeTransformer(IntrinsicNodeTransformer):
@@ -1583,12 +1626,15 @@ class FortranIntrinsics:
         "ALL": All,
         "MINVAL": MinVal,
         "MAXVAL": MaxVal,
-        "MERGE": Merge,
-
+        "MERGE": Merge
     }
 
+    # All functions return an array
+    # Our call extraction transformation only supports scalars
     EXEMPTED_FROM_CALL_EXTRACTION = [
-        Merge
+        Merge.Transformation.func_name(),
+        "__dace_TRANSPOSE",
+        "__dace_MATMUL",
     ]
 
     def __init__(self):
@@ -1611,10 +1657,7 @@ class FortranIntrinsics:
 
     @staticmethod
     def call_extraction_exemptions() -> List[str]:
-        return [
-            *[func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION]
-            # *MathFunctions.temporary_functions()
-        ]
+        return FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION
 
     def replace_function_name(self, node: FASTNode) -> ast_internal_classes.Name_Node:
 
@@ -1626,7 +1669,6 @@ class FortranIntrinsics:
             "ALLOCATED": "__dace_allocated",
             "TRIM": "__dace_trim",
             "IEOR": "__dace_ieor",
-            "TRANSPOSE": "__dace_transpose",
             "BTEST": "__dace_btest",
             "LEN_TRIM": "__dace_len_trim",
             "ASSOCIATED": "__dace_associated",
@@ -1639,21 +1681,17 @@ class FortranIntrinsics:
             "FRACTION": "__dace_fraction",
             "NEW_LINE": "__dace_new_line",
             "PRECISION": "__dace_precision",
-            "MATMUL": "__dace_matmul",
             "MINLOC": "__dace_minloc",
             "LEN": "__dace_len",
             "SCAN": "__dace_scan",
             "RANDOM_SEED": "__dace_random_seed",
             "RANDOM_NUMBER": "__dace_random_number",
             "DATE_AND_TIME": "__dace_date_and_time",
-
         }
         if not DirectReplacement.replacable_name(func_name) and not MathFunctions.replacable(func_name) and func_name not in self.IMPLEMENTATIONS_AST:
             replacements[func_name]="__dace_"+func_name
             print(f"Function {func_name} not supported yet, intrinsics required!")
         if func_name in replacements:
-            if func_name == "__dace_allocated":
-                print("ALLOCATED ", node.parent)
             return ast_internal_classes.Name_Node(name=replacements[func_name])
         elif DirectReplacement.replacable_name(func_name):
 
