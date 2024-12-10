@@ -1318,14 +1318,14 @@ SUBROUTINE main
   REAL, PARAMETER :: pk = 4.1D0
   REAL(KIND = 4) :: p = 1.0D0
   IF (.FALSE.) THEN
-    a = k
+    a = 8
     p = 32.79999923706055D0
   ELSE IF (.FALSE.) THEN
-    b = k
+    b = 8
     p = p + 32.79999923706055D0
   ELSE
-    a = k
-    b = k
+    a = 8
+    b = 8
     p = a * p + 32.79999923706055D0
   END IF
 END SUBROUTINE main

@@ -19,7 +19,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Associate_Construct, Subscript_Triplet, End_Function_Stmt, End_Subroutine_Stmt, Module_Subprogram_Part, \
     Enumerator_List, Actual_Arg_Spec_List, Only_List, Section_Subscript_List, Char_Selector, Data_Pointer_Object, \
     Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, Else_If_Stmt, \
-    Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand
+    Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, Assignment_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
@@ -2046,6 +2046,10 @@ def const_eval_nodes(ast: Program) -> Program:
         replace_node(n, val)
         return True
 
+    for asgn in reversed(walk(ast, Assignment_Stmt)):
+        lv, op, rv = asgn.children
+        assert op == '='
+        _const_eval_node(rv)
     for expr in reversed(walk(ast, EXPRESSION_TYPES)):
         # Try to const-eval the expression.
         if _const_eval_node(expr):
@@ -2054,7 +2058,7 @@ def const_eval_nodes(ast: Program) -> Program:
         # Otherwise, try to at least replace the names with the literal values.
         for nm in reversed(walk(expr, Name)):
             _const_eval_node(nm)
-    for node in reversed(walk(ast, Kind_Selector)):
-        _, kind, _ = node.children
+    for knode in reversed(walk(ast, Kind_Selector)):
+        _, kind, _ = knode.children
         _const_eval_node(kind)
     return ast
