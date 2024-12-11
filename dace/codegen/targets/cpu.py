@@ -17,7 +17,7 @@ from dace.frontend import operations
 from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_stream_view, NodeNotExpandedError,
                        dynamic_map_inputs)
-from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
+from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_ascend, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
 from typing import TYPE_CHECKING, Optional, Tuple, Union
 from dace.codegen.targets import fpga
@@ -1987,7 +1987,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
-        if instr is not None and not is_devicelevel_gpu(sdfg, state_dfg, node):
+        if instr is not None and not is_devicelevel_gpu(sdfg, state_dfg, node) and not is_devicelevel_ascend(sdfg, state_dfg, node):
             instr.on_scope_exit(sdfg, state_dfg, node, outer_stream, callsite_stream, function_stream)
 
         self.generate_scope_postamble(sdfg, dfg, state_id, function_stream, outer_stream, callsite_stream)

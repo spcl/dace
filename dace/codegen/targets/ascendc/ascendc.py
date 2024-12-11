@@ -192,7 +192,7 @@ class AscendCCodeGen(TargetCodeGenerator):
         # TODO
         self.language = "cce"
         self._codeobject = CodeObject(
-            sdfg.name + "_" + "ascendc", "", self.language, AscendCCodeGen, "AscendC"
+            sdfg.name + "_" + "ascendc", "", "cpp", AscendCCodeGen, "AscendC"
         )
         self._impl_codeobject = CodeObject(
             sdfg.name + "_kernels" + "_" + "ascendc", "", self.language, AscendCCodeGen, "AscendC"
@@ -249,15 +249,13 @@ class AscendCCodeGen(TargetCodeGenerator):
             params_comma = ", " + params_comma
 
         self._codeobject.code = """
-#ifdef DACE_ASCEND
-#ifndef __CCE_KT_TEST__
-#endif
-#include  "kernel_operator.h"
 
-#include <dace/ascendc/ascendccommon.h>
-#include <dace/types.h>
-#include <dace/perf/reporting.h>
-//#include <dace/dace.h>
+#include <dace/dace.h>
+
+namespace dace
+{{
+    using float16 = aclFloat16;
+}}
 
 {file_header}
 
@@ -328,9 +326,6 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
 {localwrappercode}
 
-#ifdef DACE_ASCEND
-#endif
-#endif
 """.format(
             params=params_comma,
             sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
@@ -344,10 +339,18 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             nevents=1,
         )
 
+        structstr = '\n'.join(self._frame.statestruct)
+        state_struct = f"""struct {mangle_dace_state_struct_name(self._global_sdfg)} {{
+    {structstr}
+}};"""
         self._impl_codeobject.code = f"""
 #ifdef DACE_ASCEND
 #ifndef __CCE_KT_TEST__
 #endif
+
+#include  "kernel_operator.h"
+
+#include <dace/ascendc/devicetypes.h>
 
 {self._localcode.getvalue()}
 
@@ -355,7 +358,6 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 #endif
 #endif
 """
-
         return [self._codeobject, self._impl_codeobject]
 
     def node_dispatch_predicate(self, sdfg, state, node):
@@ -1201,7 +1203,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
                 for stream in streams_to_sync:
                     callsite_stream.write(
-                        "//TODO stream \n DACE_ACL_CHECK(aclrtSynchronizeDevice());"
+                        "//TODO stream \n"
                     )
 
             # After synchronizing streams, generate state footer normally
@@ -1213,9 +1215,11 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             )
 
             # Invoke all instrumentation providers
+            """"
             for instr in self._frame._dispatcher.instrumentation.values():
                 if instr is not None:
                     instr.on_state_end(sdfg, state, callsite_stream, function_stream)
+            """
 
     def generate_devicelevel_state(
         self,
@@ -1340,6 +1344,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         self.scope_exit_stream = CodeIOStream()
 
         # Instrumentation for kernel scope
+        """
         instr = self._dispatcher.instrumentation[scope_entry.map.instrument]
         if instr is not None:
             instr.on_scope_entry(
@@ -1359,6 +1364,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                 self.scope_exit_stream,
                 self._globalcode,
             )
+        """
 
         # Redefine constant arguments and rename arguments to device counterparts
         # TODO: This (const behavior and code below) is all a hack.
@@ -1510,7 +1516,7 @@ DACE_EXPORTED void __dace_runkernel_impl_{fname}({fargs})
 """.format(
                 fname=kernel_name,
                 fargs=", ".join(
-                    state_param + kernel_args_entry_typed + extra_call_args_typed
+                    kernel_args_entry_typed + extra_call_args_typed
                 ),
             ),
             cfg,
@@ -1521,14 +1527,20 @@ DACE_EXPORTED void __dace_runkernel_impl_{fname}({fargs})
         self._localwrappercode.write(
             """
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
+DACE_EXPORTED void __dace_runkernel_impl_{fname}({impl_fargs_no_state});
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
 {{
-    __dace_runkernel_impl_{fname}({fargs});
-}}
+    __dace_runkernel_impl_{fname}({impl_call_fargs_no_state});
 """.format(
                 fname=kernel_name,
                 fargs=", ".join(
                     state_param + kernel_args_entry_typed + extra_call_args_typed
+                ),
+                impl_call_fargs_no_state=", ".join(
+                    list(prototype_kernel_args.keys()) + extra_call_args
+                ),
+                impl_fargs_no_state =", ".join(
+                    kernel_args_entry_typed + extra_call_args_typed
                 ),
             ),
             cfg,
@@ -1549,20 +1561,6 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
                 scope_entry,
             )
 
-        def replace_input_name(arg, cast_pattern="uint8_t*"):
-            new_arg = re.sub(
-                r"\bconst " + re.escape(cast_pattern) + r"(\w+)",
-                r"static_cast<" + re.escape(cast_pattern) + r">(\1)",
-                arg,
-            )
-            if new_arg == arg:
-                new_arg = re.sub(
-                    r"\b" + re.escape(cast_pattern) + r"(\w+)",
-                    r"static_cast<" + re.escape(cast_pattern) + r">(\1)",
-                    arg,
-                )
-
-            return new_arg
 
         #print("KARGS", kernel_args)
         kargs = str(
@@ -1584,7 +1582,7 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
             """
         )
 
-        self._emit_sync(self._localcode)
+        self._emit_sync(self._localwrappercode)
 
         # Close the runkernel function
         self._localcode.write("}")
@@ -1647,8 +1645,11 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
         # synchronize_streams(sdfg, cfg, state, state_id, scope_entry, scope_exit, callsite_stream, self)
 
         # Instrumentation (post-kernel)
+        """
         if instr is not None:
             callsite_stream.write(outer_stream.getvalue())
+        """
+        self._localwrappercode.write("}\n")
 
     def get_tb_maps_recursive(self, subgraph):
         res = []
@@ -1942,7 +1943,7 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
 
             # First three dimensions are evaluated directly
             if len(brange) > 1:
-                raise Exception("UWU, TODO, Ranges with more than 1 dimension")
+                raise Exception("TODO, Ranges with more than 1 dimension")
 
             for i in range(min(len(brange), 3)):
                 varname = scope_map.params[-i - 1]

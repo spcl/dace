@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 cmake_minimum_required(VERSION 3.17)
-project(dace_program)
+project(dace_program LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -295,19 +295,36 @@ if (DACE_ENABLE_ASCEND)
   enable_language(CCE)
 
   set_source_files_properties(${DACE_ASCEND_FILES} PROPERTIES LANGUAGE CCE)
-  set_source_files_properties(${DACE_HOST_FILES} PROPERTIES LANGUAGE CCE)
+  set_source_files_properties(${DACE_HOST_FILES} PROPERTIES LANGUAGE CXX)
+
+  #message(FATAL_ERROR "DACE_HOST" "${DACE_HOST_FILES}" "DACE_ASCEND" "${DACE_ASCEND_FILES}")
+
+  link_directories(${_CMAKE_CCE_HOST_IMPLICIT_LINK_DIRECTORIES})
+  include_directories(${_CMAKE_CCE_HOST_IMPLICIT_INCLUDE_DIRECTORIES})
+  link_libraries(${_CMAKE_CCE_HOST_IMPLICIT_LINK_LIBRARIES})
 
   add_library(ascendc_kernels SHARED ${DACE_ASCEND_FILES})
   target_compile_definitions(ascendc_kernels PUBLIC TILING_KEY_VAR=0)
+  get_filename_component(GCC_PATH ${CMAKE_CXX_COMPILER} DIRECTORY)
+  get_filename_component(GCC_TOOLCHAIN_PATH ${GCC_PATH} DIRECTORY)
+  if (NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    message(FATAL_ERROR "This project requires GNU compilers. Please set CMAKE_CXX_COMPILER to a GCC executable.")
+  endif()
   target_compile_options(ascendc_kernels PUBLIC
     -O3
     -std=c++17
     ${OpenMP_CXX_FLAGS}
   )
-  set_target_properties(ascendc_kernels PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  target_compile_options(ascendc_kernels PRIVATE
+    --gcc-toolchain=${GCC_TOOLCHAIN_PATH} -stdlib=libstdc++
+  )
   target_compile_features(ascendc_kernels PUBLIC cxx_std_17)
   list(APPEND DACE_LIBS ascendc_kernels)
   target_link_libraries(ascendc_kernels PUBLIC OpenMP::OpenMP_CXX ${OpenMP_CXX_LIBRARIES})
+  set_target_properties(ascendc_kernels PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+  )
 endif()
 
 # Create HIP object files
@@ -612,7 +629,7 @@ include("targets/mlir/mlir.cmake")
 # Create DaCe library file
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_HOST_FILES} ${DACE_OBJECTS})
 set_target_properties(${DACE_PROGRAM_NAME} PROPERTIES
-    CXX_STANDARD 20
+    CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
     LANGUAGE CXX
     LINKER_LANGUAGE CXX)
@@ -620,6 +637,7 @@ target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
 target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ascendc_kernels)
 target_compile_features(${DACE_PROGRAM_NAME} PUBLIC cxx_std_17)
 set_target_properties(${DACE_PROGRAM_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+#message(FATAL_ERROR "D ${DACE_CPP_FILES} ${DACE_HOST_FILES} ${DACE_OBJECTS}")
 
 
 # Add additional required files
@@ -661,6 +679,11 @@ endif()
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
 target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
+
+set_target_properties(dacestub_${DACE_PROGRAM_NAME} PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED YES
+)
 
 # Ascend CCE compiler has problems doing these by itself
 if(DACE_ENABLE_ASCEND)

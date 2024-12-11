@@ -231,6 +231,18 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG',
         schedules,
     )
 
+def is_devicelevel_ascend(sdfg: 'dace.sdfg.SDFG',
+                       state: 'dace.sdfg.SDFGState',
+                       node: nd.Node) -> bool:
+    schedules = dtypes.ASCEND_SCHEDULES
+    return is_in_scope(
+        sdfg,
+        state,
+        node,
+        schedules,
+    )
+
+
 
 def is_devicelevel_gpu_kernel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: nd.Node) -> bool:
     """ Tests whether a node in an SDFG is contained within an actual GPU kernel.

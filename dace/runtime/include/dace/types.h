@@ -3,8 +3,10 @@
 #define __DACE_TYPES_H
 
 #include <cstdint>
-#ifndef DACE_ASCEND
 #include <complex>
+
+#ifdef DACE_ASCEND
+#include "acl/acl.h"
 #endif
 
 #ifdef _MSC_VER
@@ -87,6 +89,12 @@ namespace dace {
 };
 #endif
 
+#if defined(DACE_ASCEND)
+namespace dace
+{
+    using float16 = aclFloat16;
+}
+#endif
 
 namespace dace
 {
@@ -109,12 +117,13 @@ namespace dace
     typedef half float16;
     #elif defined(__HIPCC__)
     typedef half float16;
+    #elif defined(DACE_ASCEND)
+    // Need to define seperately on host and device code
+    // using works better
     #else
-    #ifndef DACE_ASCEND
     typedef std::complex<float> complex64;
     typedef std::complex<double> complex128;
-    #endif
-    typedef half float16;
+    typedef aclFloat16 float16;
     #endif
 
     enum NumAccesses
