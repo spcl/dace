@@ -937,9 +937,8 @@ class FunctionToSubroutineDefiner(NodeTransformer):
     """
 
     def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
-
-        if node.ret != None:
-            ret = node.ret
+        assert node.ret
+        ret = node.ret
 
         found = False
         if node.specification_part is not None:
@@ -975,9 +974,10 @@ class FunctionToSubroutineDefiner(NodeTransformer):
                     enums=None
                 )
 
-        execution_part = NameReplacer(node.name.name, node.name.name + "__ret").visit(node.execution_part)
-        if node.ret != None:
-            execution_part = NameReplacer(ret.name.name, node.name.name + "__ret").visit(node.execution_part)
+        # We should always be able to tell a functions return _variable_ (i.e., not type, which we also should be able
+        # to tell).
+        assert node.ret
+        execution_part = NameReplacer(ret.name, node.name.name + "__ret").visit(node.execution_part)
         args = node.args
         args.append(ast_internal_classes.Name_Node(name=node.name.name + "__ret", type=node.type))
         return ast_internal_classes.Subroutine_Subprogram_Node(
