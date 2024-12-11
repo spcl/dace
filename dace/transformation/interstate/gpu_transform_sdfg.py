@@ -85,7 +85,7 @@ def _recursive_in_check(node, state, gpu_scalars):
 
 
 @make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class GPUTransformSDFG(transformation.MultiStateTransformation):
     """ Implements the GPUTransformSDFG transformation.
 

@@ -31,7 +31,7 @@ def fpga_update(sdfg: SDFG, state: SDFGState, depth: int):
                 fpga_update(node.sdfg, s, depth + 1)
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class FPGATransformState(transformation.MultiStateTransformation):
     """ Implements the FPGATransformState transformation. """
 

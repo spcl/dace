@@ -11,7 +11,7 @@ from dace.transformation.passes import analysis as ap
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class ReferenceToView(ppl.Pass):
     """
     Replaces Reference data descriptors that are only set to one source with views.

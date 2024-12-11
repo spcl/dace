@@ -8,7 +8,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class StrictSymbolSSA(ppl.ControlFlowRegionPass):
     """
     Perform an SSA transformation on all symbols in the SDFG in a strict manner, i.e., without introducing phi nodes.

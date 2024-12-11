@@ -24,7 +24,7 @@ BlockConstsT = Dict[ControlFlowBlock, ConstsT]
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class ConstantPropagation(ppl.Pass):
     """
     Propagates constants and symbols that were assigned to one value forward through the SDFG, reducing

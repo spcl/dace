@@ -652,7 +652,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     #############################
 
     # Create initial tree from CFG
-    if sdfg.using_experimental_blocks:
+    if sdfg.using_explicit_control_flow:
         cfg: cf.ControlFlow = cf.structured_control_flow_tree_with_regions(sdfg, lambda _: '')
     else:
         cfg: cf.ControlFlow = cf.structured_control_flow_tree(sdfg, lambda _: '')

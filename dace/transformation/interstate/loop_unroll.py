@@ -13,7 +13,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 
 @make_properties
-@xf.experimental_cfg_block_compatible
+@xf.explicit_cf_compatible
 class LoopUnroll(xf.MultiStateTransformation):
     """ Unrolls a for-loop into multiple individual control flow regions """
 

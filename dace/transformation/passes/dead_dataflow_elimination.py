@@ -20,7 +20,7 @@ PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be er
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class DeadDataflowElimination(ppl.ControlFlowRegionPass):
     """
     Removes unused computations from SDFG states.

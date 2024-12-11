@@ -9,7 +9,7 @@ from dace.transformation import helpers, transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class TrivialLoopElimination(transformation.MultiStateTransformation):
     """
     Eliminates loops with a single loop iteration.

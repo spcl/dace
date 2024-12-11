@@ -156,7 +156,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                  recompile: bool = True,
                  distributed_compilation: bool = False,
                  method: bool = False,
-                 use_experimental_cfg_blocks: bool = True):
+                 use_explicit_cf: bool = True):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
@@ -176,7 +176,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.recreate_sdfg = recreate_sdfg
         self.regenerate_code = regenerate_code
         self.recompile = recompile
-        self.use_experimental_cfg_blocks = use_experimental_cfg_blocks
+        self.use_explicit_cf = use_explicit_cf
         self.distributed_compilation = distributed_compilation
 
         self.global_vars = _get_locals_and_globals(f)
@@ -494,10 +494,10 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Obtain DaCe program as SDFG
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
 
-        if not self.use_experimental_cfg_blocks:
+        if not self.use_explicit_cf:
             for nsdfg in sdfg.all_sdfgs_recursive():
                 sdutils.inline_control_flow_regions(nsdfg)
-        sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
+        sdfg.using_explicit_control_flow = self.use_explicit_cf
 
         sdfg.reset_cfg_list()
 

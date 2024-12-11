@@ -1144,7 +1144,7 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
     :param sdfg: The SDFG to iterate over.
     :return: Control-flow block representing the entire SDFG.
     """
-    if sdfg.root_sdfg.using_experimental_blocks:
+    if sdfg.root_sdfg.using_explicit_control_flow:
         return structured_control_flow_tree_with_regions(sdfg, dispatch_state)
 
     # Avoid import loops

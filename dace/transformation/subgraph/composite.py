@@ -19,7 +19,7 @@ import warnings
 
 
 @make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class CompositeFusion(transformation.SubgraphTransformation):
     """ MultiExpansion + SubgraphFusion in one Transformation
         Additional StencilTiling is also possible as a canonicalizing

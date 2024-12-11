@@ -18,7 +18,7 @@ from dace.transformation.interstate.loop_lifting import LoopLifting
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class ControlFlowRaising(ppl.Pass):
     """
     Raises all detectable control flow that can be expressed with native SDFG structures, such as loops and branching.
@@ -175,7 +175,7 @@ class ControlFlowRaising(ppl.Pass):
         n_cond_regions_post = len([x for x in sdfg.all_control_flow_blocks() if isinstance(x, ConditionalBlock)])
         lifted = n_cond_regions_post - n_cond_regions_pre
         if lifted:
-            sdfg.root_sdfg.using_experimental_blocks = True
+            sdfg.root_sdfg.using_explicit_control_flow = True
         return lifted
 
     def apply_pass(self, top_sdfg: SDFG, _) -> Optional[Tuple[int, int, int]]:

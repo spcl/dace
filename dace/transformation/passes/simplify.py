@@ -48,7 +48,7 @@ _nonrecursive_passes = [
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class SimplifyPass(ppl.FixedPointPipeline):
     """
     A pipeline that simplifies an SDFG by applying a series of simplification passes.
@@ -106,15 +106,15 @@ class SimplifyPass(ppl.FixedPointPipeline):
         """
         Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
         """
-        if sdfg.root_sdfg.using_experimental_blocks:
-            if (not hasattr(p, '__experimental_cfg_block_compatible__') or
-                p.__experimental_cfg_block_compatible__ == False):
+        if sdfg.root_sdfg.using_explicit_control_flow:
+            if (not hasattr(p, '__explicit_cf_compatible__') or
+                p.__explicit_cf_compatible__ == False):
                 warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
                               'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
-                              'ensure the top level SDFG does not have `SDFG.using_experimental_blocks` set to ' +
+                              'ensure the top level SDFG does not have `SDFG.using_explicit_control_flow` set to ' +
                               'True. If ' + p.__class__.__name__ + ' is compatible with experimental blocks, ' +
                               'please annotate it with the class decorator ' +
-                              '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                              '`@dace.transformation.explicit_cf_compatible`. see ' +
                               '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
                               'for more information.')
                 return None

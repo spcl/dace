@@ -11,12 +11,12 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, FunctionCallRegion, LoopRegion, NamedRegion
 from dace.sdfg.utils import fuse_states, inline_control_flow_regions, inline_sdfgs
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.transformation import experimental_cfg_block_compatible
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class FuseStates(ppl.Pass):
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs).
@@ -53,7 +53,7 @@ class FuseStates(ppl.Pass):
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class InlineSDFGs(ppl.Pass):
     """
     Inlines all possible nested SDFGs (and sub-SDFGs).
@@ -91,7 +91,7 @@ class InlineSDFGs(ppl.Pass):
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class InlineControlFlowRegions(ppl.Pass):
     """
     Inlines all control flow regions.
@@ -168,7 +168,7 @@ class InlineControlFlowRegions(ppl.Pass):
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class FixNestedSDFGReferences(ppl.Pass):
     """
     Fixes nested SDFG references to parent state/SDFG/node

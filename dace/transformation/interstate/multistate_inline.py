@@ -18,7 +18,7 @@ from dace.sdfg.state import LoopRegion, ReturnBlock, StateSubgraphView
 
 
 @make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class InlineMultistateSDFG(transformation.SingleStateTransformation):
     """
     Inlines a multi-state nested SDFG into a top-level SDFG. This only happens
@@ -141,14 +141,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if isinstance(blk, ReturnBlock):
                 has_return = True
         if has_return:
-            # Avoid cyclic imports
-            from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
-            from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
-
-            sdutil.inline_control_flow_regions(nsdfg)
-            # After inlining, try to lift out control flow again, essentially preserving all control flow that can be
-            # preserved while removing the return blocks.
-            ControlFlowRaising().apply_pass(nsdfg, {})
+            sdutil.inline_control_flow_regions(nsdfg, lower_returns=True)
 
         if nsdfg_node.schedule != dtypes.ScheduleType.Default:
             infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])

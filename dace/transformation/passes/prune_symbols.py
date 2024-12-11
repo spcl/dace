@@ -12,7 +12,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class RemoveUnusedSymbols(ppl.Pass):
     """
     Prunes unused symbols from the SDFG symbol repository (``sdfg.symbols``) and interstate edges.

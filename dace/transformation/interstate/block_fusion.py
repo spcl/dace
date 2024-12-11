@@ -5,7 +5,7 @@ from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, Control
 from dace.transformation import transformation
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class BlockFusion(transformation.MultiStateTransformation):
     """ Implements the block-fusion transformation.
 

@@ -460,8 +460,8 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
-    using_experimental_blocks = Property(dtype=bool, default=False,
-                                         desc="Whether the SDFG contains experimental control flow blocks")
+    using_explicit_control_flow = Property(dtype=bool, default=False,
+                                           desc="Whether the SDFG contains explicit control flow constructs")
 
     def __init__(self,
                  name: str,
@@ -2844,14 +2844,14 @@ class SDFG(ControlFlowRegion):
         """
         return dace.Memlet.from_array(array, self.data(array))
 
-    def recheck_using_experimental_blocks(self) -> bool:
-        found_experimental_block = False
+    def recheck_using_explicit_control_flow(self) -> bool:
+        found_explicit_cf_block = False
         for node, graph in self.root_sdfg.all_nodes_recursive():
             if isinstance(graph, ControlFlowRegion) and not isinstance(graph, SDFG):
-                found_experimental_block = True
+                found_explicit_cf_block = True
                 break
             if isinstance(node, ControlFlowBlock) and not isinstance(node, SDFGState):
-                found_experimental_block = True
+                found_explicit_cf_block = True
                 break
-        self.root_sdfg.using_experimental_blocks = found_experimental_block
-        return found_experimental_block
+        self.root_sdfg.using_explicit_control_flow = found_explicit_cf_block
+        return found_explicit_cf_block

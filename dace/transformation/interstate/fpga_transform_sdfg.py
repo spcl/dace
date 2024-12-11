@@ -9,7 +9,7 @@ from dace.transformation import transformation
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class FPGATransformSDFG(transformation.MultiStateTransformation):
     """ Implements the FPGATransformSDFG transformation, which takes an entire
         SDFG and transforms it into an FPGA-capable SDFG. """

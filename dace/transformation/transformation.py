@@ -34,8 +34,8 @@ from typing import TypeVar
 
 PassT = TypeVar('PassT', bound=ppl.Pass)
 
-def experimental_cfg_block_compatible(cls: PassT) -> PassT:
-    cls.__experimental_cfg_block_compatible__ = True
+def explicit_cf_compatible(cls: PassT) -> PassT:
+    cls.__explicit_cf_compatible__ = True
     return cls
 
 
@@ -506,7 +506,7 @@ class PatternTransformation(TransformationBase):
 
 
 @make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class SingleStateTransformation(PatternTransformation, abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within a single SDFG state.
@@ -1061,7 +1061,7 @@ def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Ca
                 sdfg = get_sdfg_arg(tgt, *args)
             if sdfg and isinstance(sdfg, SDFG):
                 root_sdfg: SDFG = sdfg.cfg_list[0]
-                if not root_sdfg.using_experimental_blocks:
+                if not root_sdfg.using_explicit_control_flow:
                     return vanilla_method(tgt, *args, **kwargs)
                 else:
                     warnings.warn('Skipping ' + function_name + ' from ' + cls.__name__ +
