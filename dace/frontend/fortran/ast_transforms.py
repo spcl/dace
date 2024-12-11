@@ -784,11 +784,9 @@ class ArgumentExtractorNodeLister(NodeVisitor):
             "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             for i in node.args:
-                if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i,
-                                                                               ast_internal_classes.Literal) or isinstance(
-                    i, ast_internal_classes.Array_Subscript_Node) or isinstance(i,
-                                                                                ast_internal_classes.Data_Ref_Node) or isinstance(
-                    i, ast_internal_classes.Actual_Arg_Spec_Node):
+                if isinstance(i, (ast_internal_classes.Name_Node, ast_internal_classes.Literal,
+                                  ast_internal_classes.Array_Subscript_Node, ast_internal_classes.Data_Ref_Node,
+                                  ast_internal_classes.Actual_Arg_Spec_Node)):
                     continue
                 else:
                     self.nodes.append(i)
@@ -831,11 +829,9 @@ class ArgumentExtractor(NodeTransformer):
                                                      line_number=node.line_number)
         for i, arg in enumerate(node.args):
             # Ensure we allow to extract function calls from arguments
-            if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg,
-                                                                             ast_internal_classes.Literal) or isinstance(
-                arg, ast_internal_classes.Array_Subscript_Node) or isinstance(arg,
-                                                                              ast_internal_classes.Data_Ref_Node) or isinstance(
-                arg, ast_internal_classes.Actual_Arg_Spec_Node):
+            if isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Literal,
+                                ast_internal_classes.Array_Subscript_Node, ast_internal_classes.Data_Ref_Node,
+                                ast_internal_classes.Actual_Arg_Spec_Node)):
                 result.args.append(arg)
             else:
                 result.args.append(ast_internal_classes.Name_Node(name="tmp_arg_" + str(tmp), type='VOID'))
@@ -2200,14 +2196,14 @@ class ForDeclarer(NodeTransformer):
                                                                op="=",
                                                                rval=child.cond.rval,
                                                                line_number=child.line_number)
-                newfbody=RenameVar(child.init.lval.name, "_for_it_" + str(self.count)).visit(child.body)
+                newfbody = RenameVar(child.init.lval.name, "_for_it_" + str(self.count)).visit(child.body)
                 newcond = RenameVar(child.cond.lval.name, "_for_it_" + str(self.count)).visit(child.cond)
                 newiter = RenameVar(child.iter.lval.name, "_for_it_" + str(self.count)).visit(child.iter)
-                newinit=child.init
-                newinit.lval=RenameVar(child.init.lval.name, "_for_it_" + str(self.count)).visit(child.init.lval)
+                newinit = child.init
+                newinit.lval = RenameVar(child.init.lval.name, "_for_it_" + str(self.count)).visit(child.init.lval)
 
                 newfor = ast_internal_classes.For_Stmt_Node(init=newinit, cond=newcond, iter=newiter, body=newfbody,
-                                                            line_number=child.line_number,parent=child.parent)
+                                                            line_number=child.line_number, parent=child.parent)
                 self.count += 1
                 newfor = self.visit(newfor)
                 newbody.append(newfor)
@@ -2902,20 +2898,20 @@ class AssignmentPropagator(NodeTransformer):
                             old_value = i[1]
                             self.replacements += 1
                             break
-                        elif isinstance(old_value, ast_internal_classes.Name_Node) and isinstance(i[0],
-                                                                                                  ast_internal_classes.Name_Node):
+                        elif (isinstance(old_value, ast_internal_classes.Name_Node)
+                              and isinstance(i[0], ast_internal_classes.Name_Node)):
                             if old_value.name == i[0].name:
                                 old_value = i[1]
                                 self.replacements += 1
                                 break
-                        elif isinstance(old_value, ast_internal_classes.Data_Ref_Node) and isinstance(i[0],
-                                                                                                      ast_internal_classes.Data_Ref_Node):
-                            if isinstance(old_value.part_ref, ast_internal_classes.Name_Node) and isinstance(
-                                    i[0].part_ref, ast_internal_classes.Name_Node) and isinstance(old_value.parent_ref,
-                                                                                                  ast_internal_classes.Name_Node) and isinstance(
-                                i[0].parent_ref, ast_internal_classes.Name_Node):
-                                if old_value.part_ref.name == i[0].part_ref.name and old_value.parent_ref.name == i[
-                                    0].parent_ref.name:
+                        elif (isinstance(old_value, ast_internal_classes.Data_Ref_Node)
+                              and isinstance(i[0], ast_internal_classes.Data_Ref_Node)):
+                            if (isinstance(old_value.part_ref, ast_internal_classes.Name_Node)
+                                    and isinstance(i[0].part_ref, ast_internal_classes.Name_Node)
+                                    and isinstance(old_value.parent_ref, ast_internal_classes.Name_Node)
+                                    and isinstance(i[0].parent_ref, ast_internal_classes.Name_Node)):
+                                if (old_value.part_ref.name == i[0].part_ref.name
+                                        and old_value.parent_ref.name == i[0].parent_ref.name):
                                     old_value = i[1]
                                     self.replacements += 1
                                     break
