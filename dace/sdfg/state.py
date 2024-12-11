@@ -2606,6 +2606,13 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         self._cached_start_block: Optional[ControlFlowBlock] = None
         self._cfg_list: List['ControlFlowRegion'] = [self]
 
+    def get_meta_codeblocks(self) -> List[CodeBlock]:
+        """
+        Get a list of codeblocks used by the control flow region.
+        This may include things such as loop control statements or conditions for branching etc.
+        """
+        return []
+
     def get_meta_read_memlets(self) -> List[mm.Memlet]:
         """
         Get read memlets used by the control flow region itself, such as in condition checks for conditional blocks, or
@@ -3305,6 +3312,14 @@ class LoopRegion(ControlFlowRegion):
 
         return True, (init_state, guard_state, end_state)
 
+    def get_meta_codeblocks(self):
+        codes = [self.loop_condition]
+        if self.init_statement:
+            codes.append(self.init_statement)
+        if self.update_statement:
+            codes.append(self.update_statement)
+        return codes
+
     def get_meta_read_memlets(self) -> List[mm.Memlet]:
         # Avoid cyclic imports.
         from dace.sdfg.sdfg import memlets_in_ast
@@ -3458,6 +3473,13 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
     def remove_branch(self, branch: ControlFlowRegion):
         self._branches = [(c, b) for c, b in self._branches if b is not branch]
+
+    def get_meta_codeblocks(self):
+        codes = []
+        for c, _ in self.branches:
+            if c is not None:
+                codes.append(c)
+        return codes
 
     def get_meta_read_memlets(self) -> List[mm.Memlet]:
         # Avoid cyclic imports.

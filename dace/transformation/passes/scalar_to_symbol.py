@@ -739,20 +739,10 @@ class ScalarToSymbolPromotion(passes.Pass):
                         assignment = cleanup_re[scalar].sub(scalar, assignment.strip())
                 ise.assignments[aname] = assignment
         for reg in sdfg.all_control_flow_regions():
-            if isinstance(reg, LoopRegion):
-                codes = [reg.loop_condition]
-                if reg.init_statement:
-                    codes.append(reg.init_statement)
-                if reg.update_statement:
-                    codes.append(reg.update_statement)
-                for cd in codes:
-                    for stmt in cd.code:
-                        promo.visit(stmt)
-            elif isinstance(reg, ConditionalBlock):
-                for c, _ in reg.branches:
-                    if c is not None:
-                        for stmt in c.code:
-                            promo.visit(stmt)
+            meta_codes = reg.get_meta_codeblocks()
+            for cd in meta_codes:
+                for stmt in cd.code:
+                    promo.visit(stmt)
 
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)

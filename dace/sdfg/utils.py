@@ -1557,51 +1557,48 @@ def _tswds_state(
 
 def _tswds_cf_region(
         sdfg: SDFG,
-        region: AbstractControlFlowRegion,
+        cfg: AbstractControlFlowRegion,
         symbols: Dict[str, dtypes.typeclass],
         recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
-    if isinstance(region, ConditionalBlock):
-        for _, b in region.branches:
-            yield from _tswds_cf_region(sdfg, b, symbols, recursive)
-        return
+    sub_regions = cfg.sub_regions() or [cfg]
+    for region in sub_regions:
+        # Add symbols newly defined by this region, if present.
+        region_symbols = region.new_symbols(symbols)
+        symbols.update({k: v for k, v in region_symbols.items() if v is not None})
 
-    # Add the own loop variable to the defined symbols, if present.
-    loop_syms = region.new_symbols(symbols)
-    symbols.update({k: v for k, v in loop_syms.items() if v is not None})
+        # Add symbols from inter-state edges along the state machine
+        start_region = region.start_block
+        visited = set()
+        visited_edges = set()
+        for edge in region.dfs_edges(start_region):
+            # Source -> inter-state definition -> Destination
+            visited_edges.add(edge)
+            # Source
+            if edge.src not in visited:
+                visited.add(edge.src)
+                if isinstance(edge.src, SDFGState):
+                    yield from _tswds_state(sdfg, edge.src, {}, recursive)
+                elif isinstance(edge.src, AbstractControlFlowRegion):
+                    yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
 
-    # Add symbols from inter-state edges along the state machine
-    start_region = region.start_block
-    visited = set()
-    visited_edges = set()
-    for edge in region.dfs_edges(start_region):
-        # Source -> inter-state definition -> Destination
-        visited_edges.add(edge)
-        # Source
-        if edge.src not in visited:
-            visited.add(edge.src)
-            if isinstance(edge.src, SDFGState):
-                yield from _tswds_state(sdfg, edge.src, {}, recursive)
-            elif isinstance(edge.src, AbstractControlFlowRegion):
-                yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
+            # Add edge symbols into defined symbols
+            issyms = edge.data.new_symbols(sdfg, symbols)
+            symbols.update({k: v for k, v in issyms.items() if v is not None})
 
-        # Add edge symbols into defined symbols
-        issyms = edge.data.new_symbols(sdfg, symbols)
-        symbols.update({k: v for k, v in issyms.items() if v is not None})
+            # Destination
+            if edge.dst not in visited:
+                visited.add(edge.dst)
+                if isinstance(edge.dst, SDFGState):
+                    yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
+                elif isinstance(edge.dst, AbstractControlFlowRegion):
+                    yield from _tswds_cf_region(sdfg, edge.dst, symbols, recursive)
 
-        # Destination
-        if edge.dst not in visited:
-            visited.add(edge.dst)
-            if isinstance(edge.dst, SDFGState):
-                yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
-            elif isinstance(edge.dst, AbstractControlFlowRegion):
-                yield from _tswds_cf_region(sdfg, edge.dst, symbols, recursive)
-
-    # If there is only one state, the DFS will miss it
-    if start_region not in visited:
-        if isinstance(start_region, SDFGState):
-            yield from _tswds_state(sdfg, start_region, symbols, recursive)
-        elif isinstance(start_region, AbstractControlFlowRegion):
-            yield from _tswds_cf_region(sdfg, start_region, symbols, recursive)
+        # If there is only one state, the DFS will miss it
+        if start_region not in visited:
+            if isinstance(start_region, SDFGState):
+                yield from _tswds_state(sdfg, start_region, symbols, recursive)
+            elif isinstance(start_region, AbstractControlFlowRegion):
+                yield from _tswds_cf_region(sdfg, start_region, symbols, recursive)
 
 
 def traverse_sdfg_with_defined_symbols(
