@@ -1,13 +1,16 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, List, Optional, Type, TypeVar, Union, overload, TYPE_CHECKING
+from typing import Any, List, Optional, Type, TypeVar, Union, overload, TYPE_CHECKING, Dict
 
 import networkx as nx
 from fparser.two import Fortran2003 as f03
 from fparser.two import Fortran2008 as f08
+from fparser.two.Fortran2003 import Function_Subprogram, Function_Stmt, Program, Prefix, Intrinsic_Type_Spec
 
 from dace.frontend.fortran import ast_internal_classes
-from dace.frontend.fortran.ast_internal_classes import Name_Node, Program_Node
+from dace.frontend.fortran.ast_desugaring import alias_specs
+from dace.frontend.fortran.ast_internal_classes import Name_Node, Program_Node, Decl_Stmt_Node, Var_Decl_Node
 from dace.frontend.fortran.ast_transforms import StructLister, StructDependencyLister, Structures
+from dace.frontend.fortran.ast_utils import singular
 
 if TYPE_CHECKING:
     from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -720,30 +723,46 @@ class InternalFortranAst:
         renames = [i for i in children if isinstance(i, ast_internal_classes.Rename_Node)]
         return ast_internal_classes.Only_List_Node(names=names, renames=renames)
 
-    def prefix_stmt(self, node: FASTNode):
-        if 'recursive' in node.string.lower():
+    def prefix_stmt(self, prefix: Prefix):
+        if 'recursive' in prefix.string.lower():
             print("recursive found")
-        for i in node.children:
-            if i.string.lower() == "elemental":
-                return ast_internal_classes.Prefix_Node(elemental=True,recursive=False, pure=False)
-            if i.string.lower() == "recursive":
-                return ast_internal_classes.Prefix_Node(elemental=False,recursive=True, pure=False)
-            if i.string.lower() == "pure":
-                return ast_internal_classes.Prefix_Node(elemental=False,recursive=False, pure=True)
-        return ast_internal_classes.Prefix_Node(elemental=False,recursive=False, pure=False)
+        props: Dict[str, bool] = {
+            'elemental': False,
+            'recursive': False,
+            'pure': False,
+        }
+        type = 'VOID'
+        for c in prefix.children:
+            if c.string.lower() in props.keys():
+                props[c.string.lower()] = True
+            elif isinstance(c, Intrinsic_Type_Spec):
+                type = c.string
+        return ast_internal_classes.Prefix_Node(type=type,
+                                                elemental=props['elemental'],
+                                                recursive=props['recursive'],
+                                                pure=props['pure'])
 
-    def function_subprogram(self, node: FASTNode):
+    def function_subprogram(self, node: Function_Subprogram):
         children = self.create_children(node)
 
-        name = get_child(children, ast_internal_classes.Function_Stmt_Node)
         specification_part = get_child(children, ast_internal_classes.Specification_Part_Node)
         execution_part = get_child(children, ast_internal_classes.Execution_Part_Node)
 
-        return_type = name.return_type
+        name = get_child(children, ast_internal_classes.Function_Stmt_Node)
+        return_var: Name_Node = name.ret.name if name.ret else name.name
+        return_type: str = name.type
+        if name.type == 'VOID':
+            assert specification_part
+            var_decls: List[Var_Decl_Node] = [v
+                                              for c in specification_part.specifications if
+                                              isinstance(c, Decl_Stmt_Node)
+                                              for v in c.vardecl]
+            return_type = singular(v.type for v in var_decls if v.name == return_var.name)
+
         return ast_internal_classes.Function_Subprogram_Node(
             name=name.name,
             args=name.args,
-            ret=name.ret,
+            ret=return_var,
             specification_part=specification_part,
             execution_part=execution_part,
             type=return_type,
@@ -751,25 +770,20 @@ class InternalFortranAst:
             elemental=name.elemental,
         )
 
-    def function_stmt(self, node: FASTNode):
+    def function_stmt(self, node: Function_Stmt):
         children = self.create_children(node)
         name = get_child(children, ast_internal_classes.Name_Node)
         args = get_child(children, ast_internal_classes.Arg_List_Node)
         prefix = get_child(children, ast_internal_classes.Prefix_Node)
-        if prefix is None:
-            elemental = False
-        else:
-            elemental = prefix.elemental
+
+        type, elemental = (prefix.type, prefix.elemental) if prefix else ('VOID', False)
         if prefix is not None and prefix.recursive:
-            print("recursive found "+name.name)
+            print("recursive found " + name.name)
 
         ret = get_child(children, ast_internal_classes.Suffix_Node)
-        if args == None:
-            ret_args = []
-        else:
-            ret_args = args.args
-        return ast_internal_classes.Function_Stmt_Node(name=name, args=ret_args, return_type=ret,
-                                                       line_number=node.item.span, ret=ret, elemental=elemental)
+        ret_args = args.args if args else []
+        return ast_internal_classes.Function_Stmt_Node(
+            name=name, args=ret_args, line_number=node.item.span, ret=ret, elemental=elemental, type=ret)
 
     def subroutine_stmt(self, node: FASTNode):
         # print(self.name_list)
@@ -777,13 +791,10 @@ class InternalFortranAst:
         name = get_child(children, ast_internal_classes.Name_Node)
         args = get_child(children, ast_internal_classes.Arg_List_Node)
         prefix = get_child(children, ast_internal_classes.Prefix_Node)
-        if prefix is None:
-            elemental = False
-        else:
-            elemental = prefix.elemental
+        elemental = prefix.elemental if prefix else False
         if prefix is not None and prefix.recursive:
-            print("recursive found "+name.name)    
-        if args == None:
+            print("recursive found " + name.name)
+        if args is None:
             ret_args = []
         else:
             ret_args = args.args
@@ -886,7 +897,7 @@ class InternalFortranAst:
         function_definitions = [i for i in children if isinstance(i, ast_internal_classes.Function_Subprogram_Node)]
         subroutine_definitions = [i for i in children if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node)]
         return ast_internal_classes.Internal_Subprogram_Part_Node(function_definitions=function_definitions,
-                                                                subroutine_definitions=subroutine_definitions)
+                                                                  subroutine_definitions=subroutine_definitions)
 
     def interface_block(self, node: FASTNode):
         children = self.create_children(node)
