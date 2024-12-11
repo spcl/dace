@@ -319,6 +319,7 @@ class AST_translator:
             ast_internal_classes.Continue_Node: self.continue2sdfg,
             ast_internal_classes.Derived_Type_Def_Node: self.derivedtypedef2sdfg,
             ast_internal_classes.Pointer_Assignment_Stmt_Node: self.pointerassignment2sdfg,
+            ast_internal_classes.While_Stmt_Node: self.whilestmt2sdfg,
         }
 
     def get_dace_type(self, type):
@@ -716,6 +717,12 @@ class AST_translator:
             sdfg.add_edge(guard_substate, final_substate, InterstateEdge("not (" + condition + ")"))
         self.last_sdfg_states[sdfg] = final_substate
 
+    def whilestmt2sdfg(self, node: ast_internal_classes.While_Stmt_Node, sdfg: SDFG):
+
+        #raise NotImplementedError("Fortran while statements are not implemented yet")
+        print("Uh oh - whilestmt2sdfg empty") 
+        return None
+
     def forstmt2sdfg(self, node: ast_internal_classes.For_Stmt_Node, sdfg: SDFG):
         """
         This function is responsible for translating Fortran for statements into a SDFG.
@@ -782,6 +789,20 @@ class AST_translator:
         :param sdfg: The SDFG to which the node should be translated
         """
         if node.name == "modname": return
+
+        if node.name.startswith("__f2dace_A_"):
+            #separate name by removing the prefix and the suffix starting with _d_
+            array_name = node.name[11:]
+            array_name = array_name[:array_name.index("_d_")]
+            if array_name in sdfg.arrays:
+                return # already declared
+        if node.name.startswith("__f2dace_OA_"):
+            #separate name by removing the prefix and the suffix starting with _d_
+            array_name = node.name[12:]
+            array_name = array_name[:array_name.index("_d_")]
+            if array_name in sdfg.arrays:
+                return    
+
         if self.contexts.get(sdfg.name) is None:
             self.contexts[sdfg.name] = ast_utils.Context(name=sdfg.name)
         if self.contexts[sdfg.name].constants.get(node.name) is None:
@@ -1845,6 +1866,13 @@ class AST_translator:
                                            transient=False,
                                            strides=array_in_global.strides,
                                            offset=array_in_global.offset)
+        all_symbols = new_sdfg.free_symbols
+        missing_symbols = [s for s in all_symbols if s not in sym_dict]     
+        for i in missing_symbols:
+            if i in sdfg.arrays:
+                sym_dict[i] = i       
+            else:
+                print("Symbol not found in sdfg arrays: ", i)        
         if self.multiple_sdfgs == False:
             # print("Adding nested sdfg", new_sdfg.name, "to", sdfg.name)
             # print(sym_dict)
@@ -2003,6 +2031,12 @@ class AST_translator:
                     old_mode = self.transient_mode
                     # print("For ",sdfg_name," old mode is ",old_mode)
                     self.transient_mode = True
+                    for j in node.specification_part.symbols:
+                        if isinstance(j, ast_internal_classes.Symbol_Decl_Node):
+                            self.symbol2sdfg(j, new_sdfg)
+                        else:
+                            raise NotImplementedError("Symbol not implemented")
+                    
                     for j in node.specification_part.specifications:
                         self.declstmt2sdfg(j, new_sdfg)
                     self.transient_mode = old_mode
@@ -3609,8 +3643,9 @@ def create_sdfg_from_fortran_file_with_options(
     for j in program.subroutine_definitions:
 
         if subroutine_name is not None:
-            if not subroutine_name in j.name.name:
-                continue
+            if not subroutine_name+"_decon" in j.name.name :
+                    print("Skipping 1 ", j.name.name)
+                    continue
 
         if j.execution_part is None:
             continue
@@ -3654,16 +3689,23 @@ def create_sdfg_from_fortran_file_with_options(
 
     for i in program.modules:
 
-        for path in source_list:
+        #for path in source_list:
 
-            if path.lower().find(i.name.name.lower()) != -1:
-                mypath = path
-                break
+        #    if path.lower().find(i.name.name.lower()) != -1:
+        #        mypath = path
+        #        break
 
         for j in i.subroutine_definitions:
 
             if subroutine_name is not None:
-                if not subroutine_name in j.name.name :
+                #special for radiation
+                if subroutine_name=='radiation':
+                    if not 'radiation' == j.name.name :
+                        print("Skipping ", j.name.name)
+                        continue
+
+                elif not subroutine_name in j.name.name :
+                    print("Skipping ", j.name.name)
                     continue
 
             if j.execution_part is None:

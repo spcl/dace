@@ -197,6 +197,7 @@ if __name__ == "__main__":
         source_list=fortran_files,
         sdfgs_dir=sdfgs_dir,
         subroutine_name="radiation",
+        #subroutine_name="cloud_generator",
         normalize_offsets=True,
         propagation_info=propagation_info,
         enum_propagator_ast=radiation_config_ast,

@@ -2198,7 +2198,14 @@ class ForDeclarer(NodeTransformer):
                                                                op="=",
                                                                rval=child.cond.rval,
                                                                line_number=child.line_number)
-                newfor = RenameVar(child.init.lval.name, "_for_it_" + str(self.count)).visit(child)
+                newfbody=RenameVar(child.init.lval.name, "_for_it_" + str(self.count)).visit(child.body)
+                newcond = RenameVar(child.cond.lval.name, "_for_it_" + str(self.count)).visit(child.cond)
+                newiter = RenameVar(child.iter.lval.name, "_for_it_" + str(self.count)).visit(child.iter)
+                newinit=child.init
+                newinit.lval=RenameVar(child.init.lval.name, "_for_it_" + str(self.count)).visit(child.init.lval)
+
+                newfor = ast_internal_classes.For_Stmt_Node(init=newinit, cond=newcond, iter=newiter, body=newfbody,
+                                                            line_number=child.line_number,parent=child.parent)
                 self.count += 1
                 newfor = self.visit(newfor)
                 newbody.append(newfor)
