@@ -703,21 +703,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
         dtype = sdfg.arrays[data_name].dtype
 
-        # Only consider the offsets with __dace_defer in original dim
-        mask_array = ["__dace_defer" in str(dim) for dim in data.shape]
+        size_assignment_strs, new_size_strs, _ = cpp._get_realloc_dimensions(
+            size_array_name, new_size_array_name, data.shape
+        )
 
-        # In case the size does not only consist of a "__dace_defer" symbol but from an expression involving "__dace_defer"
-        # The size array is only updated with the symbol, and while calculating the expression, we only replace the __dace_defer_dim pattern
-        # With the corresponding access from the size array
-        new_size_strs = []
-        for i, mask in enumerate(mask_array):
-            if mask:
-                new_size_str = cpp.sym2cpp(data.shape[i])
-                pattern = r'__dace_defer_dim(\d+)'
-                new_size_strs.append(re.sub(pattern, lambda m: f'{new_size_array_name}[{m.group(1)}]', new_size_str))
-                callsite_stream.write(
-                    f"{size_array_name}[{i}] = {new_size_array_name}[{i}];"
-                )
+        for size_assignment in size_assignment_strs:
+            callsite_stream.write(size_assignment)
 
         size_str = " * ".join(new_size_strs)
         callsite_stream.write(

@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ctypes
 import functools
+import re
 import warnings
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
@@ -2793,15 +2794,16 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         dtype = sdfg.arrays[data_name].dtype
 
-        # Only consider the offsets with __dace_defer in original dim
-        mask_array = ["__dace_defer" in str(dim) for dim in data.shape]
-        print(mask_array)
+        size_assignment_strs, new_size_strs, old_size_strs = cpp._get_realloc_dimensions(
+            size_array_name, new_size_array_name, data.shape
+        )
+
 
         # Call realloc only after no __dace_defer is left in size_array (must be true)
         # Save new and old sizes before registering them, because we need both to compute the bound of the new array
-        old_size_str = " * ".join([f"{size_array_name}[{i}]" for i in range(len(data.shape))])
+        old_size_str = " * ".join(old_size_strs)
         old_size_str += f" * sizeof({dtype.ctype})"
-        new_size_str = " * ".join([f"{new_size_array_name}[{i}]" if mask_array[i] else f"{size_array_name}[{i}]" for i in range(len(data.shape)) ])
+        new_size_str = " * ".join(new_size_strs)
         new_size_str += f" * sizeof({dtype.ctype})"
         tmp_storage_name = "__tmp_realloc_move_storage"
 
@@ -2830,15 +2832,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         s += "}\n"
         callsite_stream.write(s)
 
-        new_size_strs = []
-        for i, mask in enumerate(mask_array):
-            if mask:
-                new_size_str = cpp.sym2cpp(data.shape[i])
-                pattern = r'__dace_defer_dim(\d+)'
-                new_size_strs.append(re.sub(pattern, lambda m: f'{new_size_array_name}[{m.group(1)}]', new_size_str))
-                callsite_stream.write(
-                    f"{size_array_name}[{i}] = {new_size_array_name}[{i}];"
-                )
+        for size_assignment in size_assignment_strs:
+            callsite_stream.write(size_assignment)
 
 ########################################################################
 ########################################################################

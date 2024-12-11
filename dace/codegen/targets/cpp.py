@@ -612,6 +612,29 @@ def _get_deferred_size_names(desc, name):
                     deferred_size_names.append(elem)
     return deferred_size_names if deferred_size_names is not None and len(deferred_size_names) > 0 else None
 
+def _get_realloc_dimensions(size_array_name:str, new_size_array_name:str, shape):
+    # Only consider the offsets with __dace_defer in original dim
+    mask_array = ["__dace_defer" in str(dim) for dim in shape]
+
+    # In case the size does not only consist of a "__dace_defer" symbol but from an expression involving "__dace_defer"
+    # The size array is only updated with the symbol, and while calculating the expression, we only replace the __dace_defer_dim pattern
+    # With the corresponding access from the size array
+    size_assignment_strs = []
+    new_size_strs = []
+    old_size_strs = []
+    for i, mask in enumerate(mask_array):
+        if mask:
+            new_size_str = sym2cpp(shape[i])
+            pattern = r'__dace_defer_dim(\d+)'
+            new_size_strs.append(re.sub(pattern, lambda m: f'{new_size_array_name}[{m.group(1)}]', new_size_str))
+            old_size_strs.append(re.sub(pattern, lambda m: f"{size_array_name}[{m.group(1)}]", new_size_str))
+            size_assignment_strs.append(
+                f"{size_array_name}[{i}] = {new_size_array_name}[{i}];"
+            )
+        else:
+            new_size_strs.append(sym2cpp(shape[i]))
+    return size_assignment_strs, new_size_strs, old_size_strs
+
 def cpp_array_expr(sdfg,
                    memlet,
                    with_brackets=True,
