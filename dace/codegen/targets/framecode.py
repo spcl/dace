@@ -973,7 +973,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             if len(array) == 1:
                 array = array[0]
                 if type(array) == data.Array and array.is_deferred_array:
-                    dimensions = ["0" if cpp.sym2cpp(dim).startswith("__dace_defer") else cpp.sym2cpp(dim) for dim in array.shape]
+                    # 0 is a placeholder value, it is not important what the value is
+                    dimensions = ["0" if "__dace_defer" in cpp.sym2cpp(dim) else cpp.sym2cpp(dim) for dim in array.shape]
                     size_str = ",".join(dimensions)
                     assert len(size_nodedesc.shape) == 1
                     alloc_str = f'{ctypedef} {size_desc_name}[{size_nodedesc.shape[0]}]{{{size_str}}};\n'

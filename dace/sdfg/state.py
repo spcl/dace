@@ -421,8 +421,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             # Trace through scope entry using IN_# -> OUT_#
             if isinstance(curedge.dst, (nd.EntryNode, nd.ExitNode)):
                 if curedge.dst_conn is None:
-                    #raise ValueError("Destination connector cannot be None for {}".format(curedge.dst))
-                    break
+                    raise ValueError("Destination connector cannot be None for {}".format(curedge.dst))
                 if not curedge.dst_conn.startswith("IN_"):  # Map variable
                     break
                 next_edge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == "OUT_" + curedge.dst_conn[3:])

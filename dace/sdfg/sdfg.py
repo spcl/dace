@@ -500,7 +500,6 @@ class SDFG(ControlFlowRegion):
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
-        self._arrays = NestedDict()
         self.arg_names = []
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -1795,7 +1794,7 @@ class SDFG(ControlFlowRegion):
         # convert strings to int if possible, unless it is not the reserved symbol for deferred allocation
         newshape = []
         for i, s in enumerate(shape):
-            if isinstance(s, str) and s.startswith("__dace_defer"):
+            if isinstance(s, str) and "__dace_defer" in s:
                 newshape.append(dace.symbolic.pystr_to_symbolic(f"{s}_dim{i}"))
             else:
                 try:

@@ -210,7 +210,6 @@ def _add_realloc_inside_map(sdfg: dace.SDFG, schedule_type: dace.dtypes.Schedule
     state.add_edge(sca, None, an_2, "_write_size", dace.Memlet("tmp0"))
     state.add_edge(an_2, None, map_exit, None, dace.Memlet(None))
 
-
 def test_realloc_inside_map_gpu():
     sdfg =_get_assign_map_sdfg(dace.dtypes.StorageType.GPU_Global, True, dace.dtypes.ScheduleType.GPU_Device)
     _add_realloc_inside_map(sdfg, dace.dtypes.ScheduleType.GPU_Device)
@@ -231,12 +230,142 @@ def test_realloc_inside_map_cpu():
 
     pytest.fail("Realloc-use with non-transient data and incomplete write did not fail when it was expected to.")
 
+def _get_conditional_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient: bool, schedule_type: dace.dtypes.ScheduleType, defer_expr_instead_of_symbol: bool = False):
+    sdfg = dace.sdfg.SDFG(name=f"deferred_alloc_test_2")
+
+    if not defer_expr_instead_of_symbol:
+        sdfg.add_array(name="A", shape=("__dace_defer", "__dace_defer"), dtype=dace.float32, storage=storage_type,
+                        lifetime=dace.dtypes.AllocationLifetime.SDFG, transient=transient)
+    else:
+        sdfg.add_array(name="A", shape=("4 * __dace_defer", "8 * __dace_defer"), dtype=dace.float32, storage=storage_type,
+                        lifetime=dace.dtypes.AllocationLifetime.SDFG, transient=transient)
+
+    sdfg.add_scalar(name="path", transient=False, dtype=numpy.uint64)
+
+    start = sdfg.add_state("s1")
+    iftrue = sdfg.add_state("s1_0")
+    iffalse = sdfg.add_state("s1_1")
+    assigntrue = sdfg.add_state("s2_0")
+    assignfalse = sdfg.add_state("s2_1")
+    state = sdfg.add_state("s3")
+
+    sdfg.add_edge(start, iftrue, dace.InterstateEdge("path == 1"))
+    sdfg.add_edge(start, iffalse, dace.InterstateEdge("path != 1"))
+    sdfg.add_edge(iftrue, assigntrue, dace.InterstateEdge(None))
+    sdfg.add_edge(iffalse, assignfalse, dace.InterstateEdge(None))
+    sdfg.add_edge(assigntrue, state, dace.InterstateEdge(None))
+    sdfg.add_edge(assignfalse, state, dace.InterstateEdge(None))
+
+    s1name, s1 = sdfg.add_array(name="size1", shape=(2,), dtype=numpy.uint64, storage=dace.dtypes.StorageType.Register,
+                    lifetime=dace.dtypes.AllocationLifetime.SDFG, transient=False)
+    s2name, s2 = sdfg.add_array(name="size2", shape=(2,), dtype=numpy.uint64, storage=dace.dtypes.StorageType.Register,
+                    lifetime=dace.dtypes.AllocationLifetime.SDFG, transient=False)
+
+    an_2_0 = assigntrue.add_access('A')
+    an_2_0.add_in_connector('_write_size')
+    an_u_2_0 = assigntrue.add_access("size1")
+    assigntrue.add_edge(an_u_2_0, None, an_2_0, "_write_size", dace.memlet.Memlet("size1"))
+
+    an_2_1 = assignfalse.add_access('A')
+    an_2_1.add_in_connector('_write_size')
+    an_u_2_1 = assignfalse.add_access("size2")
+    assignfalse.add_edge(an_u_2_1, None, an_2_1, "_write_size", dace.memlet.Memlet("size2"))
+
+    if storage_type == dace.dtypes.StorageType.CPU_Heap:
+        assert (schedule_type == dace.dtypes.ScheduleType.Sequential or schedule_type == dace.dtypes.ScheduleType.CPU_Multicore)
+    elif storage_type == dace.dtypes.StorageType.GPU_Global:
+        assert (schedule_type == dace.dtypes.ScheduleType.GPU_Device)
+
+    an_3 = state.add_access('A')
+    an_3.add_out_connector('_read_size')
+    map_entry, map_exit = state.add_map(name="map",ndrange={"i":dace.subsets.Range([(0,"__A_0-1",1)]),
+                                                            "j":dace.subsets.Range([(0,"__A_1-1", 1)])},
+                                            schedule=schedule_type)
+    state.add_edge(an_3, '_read_size', map_entry, "__A_0", dace.Memlet(expr="A_size[0]"))
+    state.add_edge(an_3, '_read_size', map_entry, "__A_1", dace.Memlet(expr="A_size[1]"))
+    map_entry.add_in_connector("__A_0")
+    map_entry.add_in_connector("__A_1")
+    map_exit.add_in_connector("IN_A")
+    map_exit.add_out_connector("OUT_A")
+
+    t1 = state.add_tasklet(name="assign", inputs={}, outputs={"_out"}, code="_out=3.0")
+    state.add_edge(map_entry, None, t1, None, dace.Memlet(None))
+    state.add_edge(t1, "_out", map_exit, "IN_A", dace.Memlet(expr="A[i, j]"))
+
+    an_4 = state.add_access('A')
+    state.add_edge(map_exit, "OUT_A", an_4, None, dace.Memlet(data="A", subset=dace.subsets.Range([(0,"__A_0-1", 1), (0,"__A_1-1", 1)])))
+
+    an_4.add_out_connector('_read_size')
+    map_entry2, map_exit2 = state.add_map(name="map2",ndrange={"i":dace.subsets.Range([(0,"__A_0-1",1)]),"j":dace.subsets.Range([(0,"__A_1-1", 1)])},
+                                            schedule=schedule_type)
+    state.add_edge(an_4, '_read_size', map_entry2, "__A_0", dace.Memlet(expr="A_size[0]"))
+    state.add_edge(an_4, '_read_size', map_entry2, "__A_1", dace.Memlet(expr="A_size[1]"))
+    state.add_edge(an_4, None, map_entry2, "IN_A", dace.Memlet(expr="A[0:__A_0, 0:__A_1]"))
+    map_entry2.add_in_connector("__A_0")
+    map_entry2.add_in_connector("__A_1")
+    map_entry2.add_in_connector("IN_A")
+    map_entry2.add_out_connector("OUT_A")
+    map_exit2.add_in_connector("IN_A")
+    map_exit2.add_out_connector("OUT_A")
+
+    t2 = state.add_tasklet(name="check", inputs={"_in"}, outputs={"_out"}, code='_out = _in', language=dace.dtypes.Language.Python)
+    state.add_edge(map_entry2, "OUT_A", t2, "_in", dace.Memlet(expr="A[i, j]"))
+    state.add_edge(t2, "_out", map_exit2, "IN_A", dace.Memlet(expr="A[i, j]"))
+
+    an_5 = state.add_access('A')
+    state.add_edge(map_exit2, "OUT_A", an_5, None, dace.Memlet(data="A", subset=dace.subsets.Range([(0,"__A_0-1", 1), (0,"__A_1-1", 1)])))
+
+    arr_name, arr = sdfg.add_array(name="example_array", dtype=dace.float32, shape=(1,), transient=False, storage=storage_type)
+    arrn = state.add_access(arr_name)
+    state.add_edge(an_5, None, arrn, None, dace.memlet.Memlet("A[0, 0]"))
+
+    return sdfg
+
 def test_conditional_alloc_gpu():
-    pass
+    sdfg =_get_conditional_alloc_sdfg(dace.dtypes.StorageType.GPU_Global, True, dace.dtypes.ScheduleType.GPU_Device)
+    sdfg.validate()
+    size1 = numpy.array([1, 1]).astype(numpy.uint64)
+    size2 = numpy.array([22, 22]).astype(numpy.uint64)
+    try:
+        import cupy
+    except Exception:
+        return
+
+    arr = cupy.array([-1.0]).astype(cupy.float32)
+    sdfg(path=1, size1=size1, size2=size2, example_array=arr)
+    assert ( arr.get()[0] == 3.0 )
 
 def test_conditional_alloc_cpu():
-    pass
+    sdfg =_get_conditional_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True, dace.dtypes.ScheduleType.CPU_Multicore)
+    sdfg.validate()
+    size1 = numpy.array([1, 1]).astype(numpy.uint64)
+    size2 = numpy.array([22, 22]).astype(numpy.uint64)
+    arr = numpy.array([-1.0]).astype(numpy.float32)
+    sdfg(path=0, size1=size1, size2=size2, example_array=arr)
+    assert ( arr[0] == 3.0 )
 
+def test_conditional_alloc_with_expr_gpu():
+    sdfg =_get_conditional_alloc_sdfg(dace.dtypes.StorageType.GPU_Global, True, dace.dtypes.ScheduleType.GPU_Device, True)
+    sdfg.validate()
+    size1 = numpy.array([1, 1]).astype(numpy.uint64)
+    size2 = numpy.array([22, 22]).astype(numpy.uint64)
+    try:
+        import cupy
+    except Exception:
+        return
+
+    arr = cupy.array([-1.0]).astype(cupy.float32)
+    sdfg(path=1, size1=size1, size2=size2, example_array=arr)
+    assert ( arr.get()[0] == 3.0 )
+
+def test_conditional_alloc_with_expr_cpu():
+    sdfg =_get_conditional_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True, dace.dtypes.ScheduleType.CPU_Multicore, True)
+    sdfg.validate()
+    size1 = numpy.array([1, 1]).astype(numpy.uint64)
+    size2 = numpy.array([22, 22]).astype(numpy.uint64)
+    arr = numpy.array([-1.0]).astype(numpy.float32)
+    sdfg(path=0, size1=size1, size2=size2, example_array=arr)
+    assert ( arr[0] == 3.0 )
 
 def test_incomplete_write_dimensions_1():
     sdfg = _get_trivial_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True, "1:2")
@@ -285,3 +414,13 @@ if __name__ == "__main__":
     test_incomplete_write_dimensions_1()
     print(f"Realloc with incomplete write 2")
     test_incomplete_write_dimensions_2()
+
+    print(f"Test conditional alloc with use cpu")
+    test_conditional_alloc_cpu()
+    print(f"Test conditional alloc with use gpu")
+    test_conditional_alloc_gpu()
+
+    print(f"Test conditional alloc with use and the shape as a non-trivial expression cpu")
+    test_conditional_alloc_with_expr_cpu()
+    print(f"Test conditional alloc with use and the shape as a non-trivial expression gpu")
+    test_conditional_alloc_with_expr_gpu()

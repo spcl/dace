@@ -548,8 +548,8 @@ def ndcopy_to_strided_copy(
         return None
 
 
-def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed_veclen=1, indices=None,
-                    deferred_size_names=None):
+def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None,
+                    packed_veclen=1, indices=None, deferred_size_names=None):
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
 
@@ -579,7 +579,7 @@ def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed
     if packed_veclen > 1:
         index /= packed_veclen
 
-    if not (deferred_size_names is None):
+    if deferred_size_names is not None:
         access_str_with_deferred_vars = sym2cpp(index)
         def replace_pattern(match):
             number = match.group(1)
@@ -591,6 +591,27 @@ def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed
         return sym2cpp(index)
 
 
+def _get_deferred_size_names(desc, name):
+    if (desc.storage != dtypes.StorageType.GPU_Global and
+        desc.storage != dtypes.StorageType.CPU_Heap and
+        not desc.transient):
+        return None
+    def check_dace_defer(elements):
+        for elem in elements:
+            if "__dace_defer" in str(elem):
+                return True
+        return False
+    deferred_size_names = None
+    if check_dace_defer(desc.shape):
+        if desc.storage == dtypes.StorageType.GPU_Global or desc.storage == dtypes.StorageType.CPU_Heap:
+            deferred_size_names = []
+            for i, elem in enumerate(desc.shape):
+                if "__dace_defer" in str(elem):
+                    deferred_size_names.append(f"__{name}_dim{i}_size" if desc.storage == dtypes.StorageType.GPU_Global else f"{desc.size_desc_name}[{i}]")
+                else:
+                    deferred_size_names.append(elem)
+    return deferred_size_names if deferred_size_names is not None and len(deferred_size_names) > 0 else None
+
 def cpp_array_expr(sdfg,
                    memlet,
                    with_brackets=True,
@@ -600,14 +621,14 @@ def cpp_array_expr(sdfg,
                    use_other_subset=False,
                    indices=None,
                    referenced_array=None,
-                   codegen=None,
-                   deferred_size_names=None):
+                   codegen=None):
     """ Converts an Indices/Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
     desc : dace.Data = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
     desc_name = memlet.data
+    deferred_size_names = _get_deferred_size_names(desc, desc_name)
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices, deferred_size_names=deferred_size_names)
 
     # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?

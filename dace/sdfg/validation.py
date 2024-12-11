@@ -324,6 +324,29 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                             , sdfg, None
                         )
 
+            if isinstance(desc, dt.Array): #is_deferred_array and is_size_array are only defined for dt.Array
+                if desc.is_deferred_array:
+                    if desc.is_size_array:
+                        raise InvalidSDFGError(
+                            f"A deferred array can't be used as a size array for another array. Data descriptor name: {desc}."
+                            , sdfg, None
+                        )
+                    if not desc.transient:
+                        raise InvalidSDFGError(
+                            f"Deferred arrays need to be transient."
+                            , sdfg, None
+                        )
+                    if "__return" in name:
+                        raise InvalidSDFGError(
+                            f"Deferred arrays can't be returned. {desc} has __return in its name."
+                            , sdfg, None
+                        )
+                    if desc.storage is not dtypes.StorageType.GPU_Global and desc.storage is not dtypes.StorageType.CPU_Heap:
+                        raise InvalidSDFGError(
+                            f"Deferred arrays are supported only for {dtypes.StorageType.GPU_Global} and {dtypes.StorageType.CPU_Heap} storage types for {desc}."
+                            , sdfg, None
+                        )
+
         # Check if SDFG is located within a GPU kernel
         context['in_gpu'] = is_devicelevel_gpu(sdfg, None, None)
         context['in_fpga'] = is_devicelevel_fpga(sdfg, None, None)
@@ -349,7 +372,7 @@ def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]
     """
     Helper function that returns False if a data container cannot be accessed in the current SDFG context.
     """
-    storage = sdfg.arrays[container].storage if container in sdfg.arrays else sdfg.arrays[container].storage
+    storage = sdfg.arrays[container].storage
     if storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES:
         return context.get('in_gpu', False)
     if storage == dtypes.StorageType.FPGA_Global or storage in dtypes.FPGA_STORAGES:
@@ -929,7 +952,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Check dimensionality of memory access
         if isinstance(e.data.subset, (sbs.Range, sbs.Indices)):
-            desc = sdfg.arrays[e.data.data] if e.data.data in sdfg.arrays else sdfg.arrays[e.data.data]
+            desc = sdfg.arrays[e.data.data]
             if e.data.subset.dims() != len(desc.shape):
                 raise InvalidSDFGEdgeError(
                     "Memlet subset uses the wrong dimensions"

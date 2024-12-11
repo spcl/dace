@@ -606,7 +606,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
         is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
         arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
         ctypedef = '%s *' % nodedesc.dtype.ctype
-        deferred_allocation = any([s for s in nodedesc.shape if str(s).startswith("__dace_defer")])
+        deferred_allocation = any([s for s in nodedesc.shape if "__dace_defer" in str(s)])
 
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
@@ -2794,7 +2794,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         dtype = sdfg.arrays[data_name].dtype
 
         # Only consider the offsets with __dace_defer in original dim
-        mask_array = [str(dim).startswith("__dace_defer") for dim in data.shape]
+        mask_array = ["__dace_defer" in str(dim) for dim in data.shape]
+        print(mask_array)
 
         # Call realloc only after no __dace_defer is left in size_array (must be true)
         # Save new and old sizes before registering them, because we need both to compute the bound of the new array
@@ -2829,8 +2830,12 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         s += "}\n"
         callsite_stream.write(s)
 
+        new_size_strs = []
         for i, mask in enumerate(mask_array):
             if mask:
+                new_size_str = cpp.sym2cpp(data.shape[i])
+                pattern = r'__dace_defer_dim(\d+)'
+                new_size_strs.append(re.sub(pattern, lambda m: f'{new_size_array_name}[{m.group(1)}]', new_size_str))
                 callsite_stream.write(
                     f"{size_array_name}[{i}] = {new_size_array_name}[{i}];"
                 )

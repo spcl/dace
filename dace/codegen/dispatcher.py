@@ -635,10 +635,7 @@ class TargetDispatcher(object):
         state = cfg.state(state_id)
         target = self.get_reallocate_dispatcher(node, edge, sdfg, state)
         assert target is not None
-        if target is None:
-            return
 
-        # Dispatch reallocate
         self._used_targets.add(target)
         target.reallocate(sdfg, cfg, dfg, state_id, src_node, node, edge, function_stream, output_stream)
 
