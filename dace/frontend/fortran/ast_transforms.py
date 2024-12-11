@@ -57,7 +57,7 @@ class Structures:
         struct_type = scope_vars.get_var(node.parent, ast_utils.get_name(top_ref.parent_ref)).type
         struct_def = self.structures[struct_type]
 
-        #cur_node = node
+        # cur_node = node
         cur_node = top_ref
 
         while True:
@@ -265,7 +265,7 @@ class FindFunctionAndSubroutines(NodeVisitor):
 
     def __init__(self):
         self.names: List[ast_internal_classes.Name_Node] = []
-        self.module_based_names: Dict[str,List[ast_internal_classes.Name_Node]] = {}
+        self.module_based_names: Dict[str, List[ast_internal_classes.Name_Node]] = {}
         self.nodes: Dict[str, ast_internal_classes.FNode] = {}
         self.iblocks: Dict[str, List[str]] = {}
         self.current_module = "_dace_default"
@@ -705,12 +705,13 @@ class CallToArray(NodeTransformer):
 
     def __init__(self, funcs: FindFunctionAndSubroutines, dict=None):
         self.funcs = funcs
-        self.rename_dict=dict
+        self.rename_dict = dict
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.excepted_funcs = [
             "malloc", "pow", "cbrt", "__dace_sign", "__dace_allocated", "tanh", "atan2",
-            "__dace_epsilon","__dace_exit","surrtpk","surrtab","surrtrf","abor1", *FortranIntrinsics.function_names()
+            "__dace_epsilon", "__dace_exit", "surrtpk", "surrtab", "surrtrf", "abor1",
+            *FortranIntrinsics.function_names()
         ]
         #
 
@@ -720,39 +721,41 @@ class CallToArray(NodeTransformer):
         assert node.name is not None, f"not a valid call expression, got: {node} / {type(node)}"
         name = node.name.name
 
-        found_in_names= name in [i.name for i in self.funcs.names]
+        found_in_names = name in [i.name for i in self.funcs.names]
         found_in_renames = False
         if self.rename_dict is not None:
-            for k,v in self.rename_dict.items():
-                for original_name,replacement_names in v.items():
-                    if isinstance(replacement_names,str):
-                      if name == replacement_names:
-                        found_in_renames = True
-                        module=k
-                        original_one=original_name
-                        node.name.name=original_name
-                        print(f"Found {name} in {module} with original name {original_one}")
-                        break
-                    elif isinstance(replacement_names,list):
-                        for repl in replacement_names:  
+            for k, v in self.rename_dict.items():
+                for original_name, replacement_names in v.items():
+                    if isinstance(replacement_names, str):
+                        if name == replacement_names:
+                            found_in_renames = True
+                            module = k
+                            original_one = original_name
+                            node.name.name = original_name
+                            print(f"Found {name} in {module} with original name {original_one}")
+                            break
+                    elif isinstance(replacement_names, list):
+                        for repl in replacement_names:
                             if name == repl:
                                 found_in_renames = True
-                                module=k
-                                original_one=original_name
-                                node.name.name=original_name
+                                module = k
+                                original_one = original_name
+                                node.name.name = original_name
                                 print(f"Found in list {name} in {module} with original name {original_one}")
                                 break
                     else:
-                        raise ValueError(f"Invalid type {type(replacement_names)} for {replacement_names}")    
-        #TODO Deconproc is a special case, we need to handle it differently - this is just s quick workaround
-        if name.startswith("__dace_") or  name in self.excepted_funcs or found_in_renames or found_in_names or name in self.funcs.iblocks:
+                        raise ValueError(f"Invalid type {type(replacement_names)} for {replacement_names}")
+
+        # TODO Deconproc is a special case, we need to handle it differently - this is just s quick workaround
+        if name.startswith(
+                "__dace_") or name in self.excepted_funcs or found_in_renames or found_in_names or name in self.funcs.iblocks:
             processed_args = []
             for i in node.args:
-                arg = CallToArray(self.funcs,self.rename_dict).visit(i)
+                arg = CallToArray(self.funcs, self.rename_dict).visit(i)
                 processed_args.append(arg)
             node.args = processed_args
             return node
-        indices = [CallToArray(self.funcs,self.rename_dict).visit(i) for i in node.args]
+        indices = [CallToArray(self.funcs, self.rename_dict).visit(i) for i in node.args]
         # Array subscript cannot be empty.
         assert indices
         return ast_internal_classes.Array_Subscript_Node(name=node.name, type=node.type, indices=indices,
@@ -783,9 +786,9 @@ class ArgumentExtractorNodeLister(NodeVisitor):
             for i in node.args:
                 if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i,
                                                                                ast_internal_classes.Literal) or isinstance(
-                        i, ast_internal_classes.Array_Subscript_Node) or isinstance(i,
-                                                                                    ast_internal_classes.Data_Ref_Node) or isinstance(
-                        i, ast_internal_classes.Actual_Arg_Spec_Node):
+                    i, ast_internal_classes.Array_Subscript_Node) or isinstance(i,
+                                                                                ast_internal_classes.Data_Ref_Node) or isinstance(
+                    i, ast_internal_classes.Actual_Arg_Spec_Node):
                     continue
                 else:
                     self.nodes.append(i)
@@ -830,9 +833,9 @@ class ArgumentExtractor(NodeTransformer):
             # Ensure we allow to extract function calls from arguments
             if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg,
                                                                              ast_internal_classes.Literal) or isinstance(
-                    arg, ast_internal_classes.Array_Subscript_Node) or isinstance(arg,
-                                                                                  ast_internal_classes.Data_Ref_Node) or isinstance(
-                    arg, ast_internal_classes.Actual_Arg_Spec_Node):
+                arg, ast_internal_classes.Array_Subscript_Node) or isinstance(arg,
+                                                                              ast_internal_classes.Data_Ref_Node) or isinstance(
+                arg, ast_internal_classes.Actual_Arg_Spec_Node):
                 result.args.append(arg)
             else:
                 result.args.append(ast_internal_classes.Name_Node(name="tmp_arg_" + str(tmp), type='VOID'))
@@ -1657,7 +1660,7 @@ class OptionalArgsTransformer(NodeTransformer):
                 elif dtype == 'DOUBLE':
                     new_args[i] = ast_internal_classes.Real_Literal_Node(value='0')
                 elif dtype == 'CHAR':
-                    new_args[i] = ast_internal_classes.Char_Literal_Node(value='0')    
+                    new_args[i] = ast_internal_classes.Char_Literal_Node(value='0')
                 else:
                     raise NotImplementedError()
                 new_args[i + optional_args] = ast_internal_classes.Bool_Literal_Node(value='0')
@@ -1843,7 +1846,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           structures: Structures,
                           declaration=True,
                           main_iterator_ranges: Optional[list] = None
-):
+                          ):
     """
     Helper function for the transformation of array operations and sums to loops
     :param node: The AST to be transformed
@@ -1985,7 +1988,6 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                             name="tmp_parfor_" + str(count + len(rangepos) - 1), type="INTEGER", sizes=None, init=None)
                     ]))
 
-
             """
                 To account for ranges with different starting offsets inside the same loop,
                 we need to adapt array accesses.
@@ -2017,7 +2019,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                     ast_internal_classes.BinOp_Node(
                         lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)),
                         op="+",
-                        rval = ast_internal_classes.BinOp_Node(
+                        rval=ast_internal_classes.BinOp_Node(
                             lval=lower_boundary,
                             op="-",
                             rval=current_lower_boundary
@@ -2044,7 +2046,6 @@ class ArrayToLoop(NodeTransformer):
         self.scope_vars = ScopeVarsDeclarations(ast)
         self.scope_vars.visit(ast)
 
-
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
         for child in node.execution:
@@ -2060,7 +2061,7 @@ class ArrayToLoop(NodeTransformer):
                 par_Decl_Range_Finder(current, ranges, rangepos, [], self.count, newbody, self.scope_vars,
                                       self.ast.structures, True)
 
-                #if res_range is not None and len(res_range) > 0:
+                # if res_range is not None and len(res_range) > 0:
 
                 # catch cases where an array is used as name, without range expression
                 visitor = ReplaceImplicitParDecls(self.scope_vars)
@@ -2072,7 +2073,7 @@ class ArrayToLoop(NodeTransformer):
                     rangesrval = []
 
                     par_Decl_Range_Finder(i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars,
-                                            self.ast.structures, False, ranges)
+                                          self.ast.structures, False, ranges)
                     for i, j in zip(ranges, rangesrval):
                         if i != j:
                             if isinstance(i, list) and isinstance(j, list) and len(i) == len(j):
@@ -2084,13 +2085,14 @@ class ArrayToLoop(NodeTransformer):
                                                 raise NotImplementedError("Ranges must be the same")
                                         else:
                                             # this is not actually illegal.
-                                            #raise NotImplementedError("Ranges must be the same")
+                                            # raise NotImplementedError("Ranges must be the same")
                                             continue
                             else:
                                 raise NotImplementedError("Ranges must be identical")
 
                 range_index = 0
-                body = ast_internal_classes.BinOp_Node(lval=current, op="=", rval=child.rval, line_number=child.line_number)
+                body = ast_internal_classes.BinOp_Node(lval=current, op="=", rval=child.rval,
+                                                       line_number=child.line_number)
                 for i in ranges:
                     initrange = i[0]
                     finalrange = i[1]
@@ -2616,7 +2618,7 @@ class PointerRemoval(NodeTransformer):
                         if var_decl.sizes is not None:
                             for symbol in var_decl.sizes:
                                 symbols_to_remove.add(symbol.name)
-                        if var_decl.offsets is not None:        
+                        if var_decl.offsets is not None:
                             for symbol in var_decl.offsets:
                                 symbols_to_remove.add(symbol.name)
 
@@ -2830,7 +2832,7 @@ class IfEvaluator(NodeTransformer):
         try:
             evaluated = sym.evaluate(sym.pystr_to_symbolic(text), {})
         except:
-            #print("Failed: " + text)
+            # print("Failed: " + text)
             return self.generic_visit(node)
 
         if evaluated == sp.true:
@@ -2900,14 +2902,20 @@ class AssignmentPropagator(NodeTransformer):
                             old_value = i[1]
                             self.replacements += 1
                             break
-                        elif isinstance(old_value, ast_internal_classes.Name_Node) and isinstance(i[0],ast_internal_classes.Name_Node):
+                        elif isinstance(old_value, ast_internal_classes.Name_Node) and isinstance(i[0],
+                                                                                                  ast_internal_classes.Name_Node):
                             if old_value.name == i[0].name:
                                 old_value = i[1]
                                 self.replacements += 1
                                 break
-                        elif isinstance(old_value,ast_internal_classes.Data_Ref_Node) and isinstance(i[0], ast_internal_classes.Data_Ref_Node):
-                            if isinstance(old_value.part_ref,ast_internal_classes.Name_Node) and isinstance(i[0].part_ref,ast_internal_classes.Name_Node) and isinstance(old_value.parent_ref,ast_internal_classes.Name_Node) and isinstance(i[0].parent_ref,ast_internal_classes.Name_Node):
-                                if old_value.part_ref.name == i[0].part_ref.name and old_value.parent_ref.name == i[0].parent_ref.name:
+                        elif isinstance(old_value, ast_internal_classes.Data_Ref_Node) and isinstance(i[0],
+                                                                                                      ast_internal_classes.Data_Ref_Node):
+                            if isinstance(old_value.part_ref, ast_internal_classes.Name_Node) and isinstance(
+                                    i[0].part_ref, ast_internal_classes.Name_Node) and isinstance(old_value.parent_ref,
+                                                                                                  ast_internal_classes.Name_Node) and isinstance(
+                                i[0].parent_ref, ast_internal_classes.Name_Node):
+                                if old_value.part_ref.name == i[0].part_ref.name and old_value.parent_ref.name == i[
+                                    0].parent_ref.name:
                                     old_value = i[1]
                                     self.replacements += 1
                                     break
@@ -2945,6 +2953,7 @@ class FindUnusedFunctions(NodeVisitor):
         self.used_names[node.name.name] = used_calls
         return
 
+
 class ReplaceImplicitParDecls(NodeTransformer):
 
     def __init__(self, scope_vars):
@@ -2971,4 +2980,3 @@ class ReplaceImplicitParDecls(NodeTransformer):
             )
         else:
             return node
-
