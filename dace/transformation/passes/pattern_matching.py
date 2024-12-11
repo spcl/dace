@@ -107,7 +107,7 @@ class PatternMatchAndApply(ppl.Pass):
                                   'not have `SDFG.using_explicit_control_flow` set to True. If ' +
                                   xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
                                   'please annotate it with the class decorator ' +
-                                  '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                                  '`@dace.transformation.explicit_cf_compatible`. see ' +
                                   '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
                                   'for more information.')
                     continue
@@ -227,7 +227,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                                           'not have `SDFG.using_explicit_control_flow` set to True. If ' +
                                           xform.__class__.__name__ + ' is compatible with experimental blocks, ' +
                                           'please annotate it with the class decorator ' +
-                                          '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                                          '`@dace.transformation.explicit_cf_compatible`. see ' +
                                           '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
                                           'for more information.')
                             continue
@@ -419,7 +419,7 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
                               'not have `SDFG.using_explicit_control_flow` set to True. If ' +
                               match.__class__.__name__ + ' is compatible with experimental blocks, ' +
                               'please annotate it with the class decorator ' +
-                              '`@dace.transformation.experimental_cfg_block_compatible`. see ' +
+                              '`@dace.transformation.explicit_cf_compatible`. see ' +
                               '`https://github.com/spcl/dace/wiki/Experimental-Control-Flow-Blocks` ' +
                               'for more information.')
                 return None

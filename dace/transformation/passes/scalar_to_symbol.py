@@ -235,18 +235,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     for edge in sdfg.all_interstate_edges():
         interstate_symbols |= edge.data.free_symbols
     for reg in sdfg.all_control_flow_regions():
-        if isinstance(reg, LoopRegion):
-            interstate_symbols |= reg.loop_condition.get_free_symbols()
-            if reg.loop_variable:
-                interstate_symbols.add(reg.loop_variable)
-            if reg.update_statement:
-                interstate_symbols |= reg.update_statement.get_free_symbols()
-            if reg.init_statement:
-                interstate_symbols |= reg.init_statement.get_free_symbols()
-        elif isinstance(reg, ConditionalBlock):
-            for c, _ in reg.branches:
-                if c is not None:
-                    interstate_symbols |= c.get_free_symbols()
+        interstate_symbols |= reg.used_symbols(all_symbols=True, with_contents=False)
     for candidate in (candidates - interstate_symbols):
         if integers_only and sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
             candidates.remove(candidate)

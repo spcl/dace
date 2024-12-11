@@ -194,11 +194,11 @@ class GPUPersistentKernel(SubgraphTransformation):
                 if k in sdfg.symbols and k not in kernel_sdfg.symbols:
                     kernel_sdfg.add_symbol(k, sdfg.symbols[k])
         for blk in subgraph_blocks:
-            if isinstance(blk, LoopRegion):
-                if blk.loop_variable and blk.init_statement:
-                    new_symbols.add(blk.loop_variable)
-                    if blk.loop_variable in sdfg.symbols and blk.loop_variable not in kernel_sdfg.symbols:
-                        kernel_sdfg.add_symbol(blk.loop_variable, sdfg.symbols[blk.loop_variable])
+            if isinstance(blk, AbstractControlFlowRegion):
+                for k, v in blk.new_symbols(sdfg.symbols).items():
+                    new_symbols.add(k)
+                    if k not in kernel_sdfg.symbols:
+                        kernel_sdfg.add_symbol(k, v)
 
         # Setting entry node in nested SDFG if no entry guard was created
         if entry_guard_state is None:

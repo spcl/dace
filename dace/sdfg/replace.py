@@ -11,7 +11,6 @@ import dace
 from dace import dtypes, properties, symbolic
 from dace.codegen import cppunparse
 from dace.frontend.python.astutils import ASTFindReplace
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 
 if TYPE_CHECKING:
     from dace.sdfg.state import StateSubgraphView
