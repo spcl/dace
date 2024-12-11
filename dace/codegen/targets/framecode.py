@@ -964,7 +964,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Only allocate arrays that really require deferred allocation (symbol has __dace_defer)
         # Reshaping these arrays are not allowed
         size_arrays = sdfg.size_arrays()
-        callsite_stream.write(f'//Declare size arrays\n', sdfg)
         for size_desc_name in size_arrays:
             size_nodedesc = sdfg.arrays[size_desc_name]
             assert ("__return" not in size_desc_name)
@@ -979,7 +978,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     assert len(size_nodedesc.shape) == 1
                     alloc_str = f'{ctypedef} {size_desc_name}[{size_nodedesc.shape[0]}]{{{size_str}}};\n'
                     callsite_stream.write(alloc_str)
-                    self.dispatcher.defined_vars.add(size_desc_name, disp.DefinedType.Pointer, ctypedef)
+                    self.dispatcher.defined_vars.add(size_desc_name, disp.DefinedType.Pointer, ctypedef, allow_shadowing=True)
 
         #######################################################################
         # Generate actual program body
