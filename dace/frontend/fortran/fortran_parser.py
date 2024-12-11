@@ -32,7 +32,7 @@ from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES,
     identifier_specs, append_children, correct_for_function_calls, remove_access_statements, sort_modules, \
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
     deconstruct_associations, assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, \
-    consolidate_uses, prune_branches, const_eval_nodes
+    consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import UseAllPruneList
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
@@ -2583,22 +2583,16 @@ class ParseConfig:
                  entry_points: Union[None, SPEC, List[SPEC]] = None):
         # Make the configs canonical, by processing the various types upfront.
         if isinstance(main, Path):
-            main = FortranFileReader(main)
-        else:
-            main = FortranStringReader(main)
+            main = main.read_text()
+        main = FortranStringReader(main)
         if not sources:
             sources: Dict[str, str] = {}
+        elif isinstance(sources, list):
+            sources: Dict[str, str] = {str(p): p.read_text() for p in sources}
         if not includes:
             includes: List[Path] = []
-        # TODO: This should be done, but for now `recursive_ast_improver()` isn't happy with it. Should be fixed.
-        # if isinstance(sources, list):
-        #     sources = [FortranFileReader(p) for p in sources]
-        # elif isinstance(sources, dict):
-        #     sources = {p: FortranStringReader(content) for p, content in sources.items()}
-        # if isinstance(includes, list):
-        #     includes = [FortranFileReader(p) for p in includes]
-        # elif isinstance(includes, dict):
-        #     includes = {p: FortranStringReader(content) for p, content in includes.items()}
+        if not isinstance(entry_points, list):
+            entry_points = [entry_points]
 
         self.main = main
         self.sources = sources
@@ -2606,13 +2600,17 @@ class ParseConfig:
         self.entry_points = entry_points
 
 
-def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortranAst, FNode]:
+def create_fparser_ast(cfg: ParseConfig) -> Program:
     parser = ParserFactory().create(std="f2008")
     ast = parser(cfg.main)
-    assert isinstance(ast, Program)
-
     ast = recursive_ast_improver(ast, cfg.sources, cfg.includes, parser)
+    ast = lower_identifier_names(ast)
     assert isinstance(ast, Program)
+    return ast
+
+
+def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortranAst, FNode]:
+    ast = create_fparser_ast(cfg)
 
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
@@ -3297,38 +3295,31 @@ def name_and_rename_dict_creator(parse_order: list,dep_graph:nx.DiGraph)->Tuple[
         name_dict[i] = names
     return name_dict, rename_dict
 
+
 @dataclass
 class FindUsedFunctionsConfig:
-
     root: str
     needed_functions: List[str]
     skip_functions: List[str]
 
-def create_sdfg_from_fortran_file_with_options(
-    source_string: str,
-    source_list, include_list,
-    sdfgs_dir,
-    subroutine_name: Optional[str] = None,
-    normalize_offsets: bool = True, 
-    propagation_info = None,
-    enum_propagator_files: Optional[List[str]] = None,
-    enum_propagator_ast = None,
-    used_functions_config: Optional[FindUsedFunctionsConfig] = None
-):
 
+def create_sdfg_from_fortran_file_with_options(
+        cfg: ParseConfig,
+        ast: Program,
+        sdfgs_dir,
+        subroutine_name: Optional[str] = None,
+        normalize_offsets: bool = True,
+        propagation_info=None,
+        enum_propagator_files: Optional[List[str]] = None,
+        enum_propagator_ast=None,
+        used_functions_config: Optional[FindUsedFunctionsConfig] = None
+):
     """
     Creates an SDFG from a fortran file
     :param source_string: The fortran file name
     :return: The resulting SDFG
 
     """
-    parser = pf().create(std="f2008")
-    reader = ffr(file_candidate=source_string, include_dirs=include_list, source_only=source_list)
-
-    ast = parser(reader)
-    if isinstance(source_list, list):
-        source_list = {src: Path(src).read_text() for src in source_list}
-    ast = recursive_ast_improver(ast, source_list, include_list, parser)
     ast = deconstruct_enums(ast)
     ast = deconstruct_associations(ast)
     ast = remove_access_statements(ast)
@@ -3468,14 +3459,12 @@ def create_sdfg_from_fortran_file_with_options(
         i.function_definitions = []
     program.function_definitions = []
 
-
     # time to trim the ast using the propagation info
     # adding enums from radiotion config
     if enum_propagator_files is not None:
-
+        parser = ParserFactory().create(std="f2008")
         if enum_propagator_files is not None:
             for file in enum_propagator_files:
-
                 config_ast = parser(ffr(file_candidate=file))
                 partial_ast.create_ast(config_ast)
 

@@ -2078,3 +2078,9 @@ def const_eval_nodes(ast: Program) -> Program:
             _const_eval_node(nm)
 
     return ast
+
+
+def lower_identifier_names(ast: Program) -> Program:
+    for nm in walk(ast, Name):
+        nm.string = nm.string.lower()
+    return ast
