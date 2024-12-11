@@ -252,6 +252,8 @@ class AscendCCodeGen(TargetCodeGenerator):
 
 #include <dace/ascendc/ascendccommon.h>
 #include <dace/types.h>
+#include <dace/perf/reporting.h>
+//#include <dace/dace.h>
 
 {file_header}
 
