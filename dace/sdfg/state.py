@@ -13,6 +13,7 @@ from typing import (TYPE_CHECKING, Any, AnyStr, Callable, Dict, Iterable, Iterat
 
 import dace
 from dace.frontend.python import astutils
+from dace.sdfg.replace import replace_in_codeblock
 import dace.serialize
 from dace import data as dt
 from dace import dtypes
@@ -2612,6 +2613,16 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         """
         return []
 
+    def replace_meta_accesses(self, replacements: dict) -> None:
+        """
+        Replace accesses to specific data containers in reads or writes performed by the control flow region itself in
+        meta accesses, such as in condition checks for conditional blocks or in loop conditions for loops, etc.
+
+        :param replacements: A dictionary mapping the current data container names to the names of data containers with
+                             which accesses to them should be replaced.
+        """
+        pass
+
     @property
     def root_sdfg(self) -> 'SDFG':
         from dace.sdfg.sdfg import SDFG  # Avoid import loop
@@ -3304,6 +3315,13 @@ class LoopRegion(ControlFlowRegion):
             read_memlets.extend(memlets_in_ast(self.update_statement.code[0], self.sdfg.arrays))
         return read_memlets
 
+    def replace_meta_accesses(self, replacements):
+        replace_in_codeblock(self.loop_condition, replacements)
+        if self.init_statement:
+            replace_in_codeblock(self.init_statement, replacements)
+        if self.update_statement:
+            replace_in_codeblock(self.update_statement, replacements)
+
     def _used_symbols_internal(self,
                                all_symbols: bool,
                                defined_syms: Optional[Set] = None,
@@ -3417,6 +3435,11 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
     def sub_regions(self):
         return [b for _, b in self.branches]
+
+    def replace_meta_accesses(self, replacements):
+        for c, _ in self.branches:
+            if c is not None:
+                replace_in_codeblock(c, replacements)
 
     def __str__(self):
         return self._label

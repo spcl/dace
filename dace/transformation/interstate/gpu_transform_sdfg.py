@@ -598,35 +598,14 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                         e.data.replace(devicename, hostname, False)
 
         for block in list(sdfg.all_control_flow_blocks()):
-            arrays_used = set()
-            if isinstance(block, ConditionalBlock):
-                for c, _ in block.branches:
-                    if c is not None:
-                        arrays_used.update(set(c.get_free_symbols()) & cloned_data)
-            elif isinstance(block, LoopRegion):
-                arrays_used.update(set(block.loop_condition.get_free_symbols()) & cloned_data)
-                if block.init_statement:
-                    arrays_used.update(set(block.init_statement.get_free_symbols()) & cloned_data)
-                if block.update_statement:
-                    arrays_used.update(set(block.update_statement.get_free_symbols()) & cloned_data)
-            else:
-                continue
+            arrays_used = set(block.used_symbols(all_symbols=True, with_contents=False)) & cloned_data
 
             # Create a state and copy out used arrays
             if len(arrays_used) > 0:
                 co_state = block.parent_graph.add_state_before(block, block.label + '_icopyout')
                 mapping = _create_copy_out(arrays_used)
                 for devicename, hostname in mapping.items():
-                    if isinstance(block, ConditionalBlock):
-                        for c, _ in block.branches:
-                            if c is not None:
-                                replace_in_codeblock(c, {devicename: hostname})
-                    elif isinstance(block, LoopRegion):
-                        replace_in_codeblock(block.loop_condition, {devicename: hostname})
-                        if block.init_statement:
-                            replace_in_codeblock(block.init_statement, {devicename: hostname})
-                        if block.update_statement:
-                            replace_in_codeblock(block.update_statement, {devicename: hostname})
+                    block.replace_meta_accesses({devicename: hostname})
 
         # Step 9: Simplify
         if not self.simplify:
