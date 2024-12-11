@@ -164,8 +164,8 @@ class Function_Subprogram_Node(FNode):
                  ret: 'Name_Node',
                  specification_part: 'Specification_Part_Node',
                  execution_part: 'Execution_Part_Node',
-                 type: Any = None,
-                 elemental: bool = False,
+                 type: str,
+                 elemental: bool,
                  **kwargs):
         super().__init__(**kwargs)
         self.name = name
@@ -253,16 +253,36 @@ class Subroutine_Stmt_Node(FNode):
 
 
 class Function_Stmt_Node(FNode):
-    _attributes = ('name',)
+    def __init__(self, name: 'Name_Node', args: List[FNode], ret: Optional['Suffix_Node'], elemental: bool, type: str, **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.args = args
+        self.ret = ret
+        self.elemental = elemental
+        self.type = type
+
+    _attributes = ('name', 'elemental', 'type')
     _fields = ('args', 'ret',)
 
 
 class Prefix_Node(FNode):
+    def __init__(self, type: str, elemental: bool, recursive: bool, pure: bool, **kwargs):
+        super().__init__(**kwargs)
+        self.type = type
+        self.elemental = elemental
+        self.recursive = recursive
+        self.pure = pure
+
     _attributes = ('elemental', 'recursive', 'pure',)
     _fields = ()
 
 
 class Name_Node(FNode):
+    def __init__(self, name: str, type: str = 'VOID', **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.type = type
+
     _attributes = ('name', 'type',)
     _fields = ()
 
@@ -419,6 +439,10 @@ class Deallocate_Stmt_Node(FNode):
 
 
 class Decl_Stmt_Node(Statement_Node):
+    def __init__(self, vardecl: List[Var_Decl_Node], **kwargs):
+        super().__init__(**kwargs)
+        self.vardecl = vardecl
+
     _attributes = ()
     _fields = ('vardecl',)
 
@@ -461,6 +485,10 @@ class Char_Literal_Node(Literal):
 
 
 class Suffix_Node(FNode):
+    def __init__(self, name: 'Name_Node', **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+
     _attributes = ()
     _fields = ('name')
 
