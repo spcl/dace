@@ -1306,7 +1306,8 @@ class SDFG(ControlFlowRegion):
                                defined_syms: Optional[Set] = None,
                                free_syms: Optional[Set] = None,
                                used_before_assignment: Optional[Set] = None,
-                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
+                               keep_defined_in_mapping: bool = False,
+                               with_contents: bool = True) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -1327,7 +1328,8 @@ class SDFG(ControlFlowRegion):
                                               keep_defined_in_mapping=keep_defined_in_mapping,
                                               defined_syms=defined_syms,
                                               free_syms=free_syms,
-                                              used_before_assignment=used_before_assignment)
+                                              used_before_assignment=used_before_assignment,
+                                              with_contents=with_contents)
 
     def get_all_toplevel_symbols(self) -> Set[str]:
         """

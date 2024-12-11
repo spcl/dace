@@ -1306,7 +1306,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
 def inline_control_flow_regions(sdfg: SDFG, types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
                                 ignore_region_types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
-                                progress: bool = None) -> int:
+                                progress: bool = None, lower_returns: bool = False,
+                                eliminate_dead_states: bool = False) -> int:
     if types:
         blocks = [n for n, _ in sdfg.all_nodes_recursive() if type(n) in types]
     elif ignore_region_types:
@@ -1324,8 +1325,12 @@ def inline_control_flow_regions(sdfg: SDFG, types: Optional[List[Type[AbstractCo
         # Control flow regions where the parent is a conditional block are not inlined.
         if block.parent_graph and type(block.parent_graph) == ConditionalBlock:
             continue
-        if block.inline()[0]:
+        if block.inline(lower_returns=lower_returns)[0]:
             count += 1
+    if eliminate_dead_states:
+        # Avoid cyclic imports.
+        from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+        DeadStateElimination().apply_pass(sdfg, {})
 
     sdfg.reset_cfg_list()
 

@@ -5,8 +5,7 @@ from dace import data, memlet, dtypes, sdfg as sd, subsets as sbs, propagate_mem
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
 from dace.sdfg.replace import replace_in_codeblock
-from dace.sdfg.sdfg import memlets_in_ast
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import transformation, helpers as xfh
 from dace.properties import ListProperty, Property, make_properties
 from collections import defaultdict
@@ -290,16 +289,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         for edge in sdfg.all_interstate_edges():
             check_memlets.extend(edge.data.get_read_memlets(sdfg.arrays))
         for blk in sdfg.all_control_flow_blocks():
-            if isinstance(blk, ConditionalBlock):
-                for c, _ in blk.branches:
-                    if c is not None:
-                        check_memlets.extend(memlets_in_ast(c.code[0], sdfg.arrays))
-            elif isinstance(blk, LoopRegion):
-                check_memlets.extend(memlets_in_ast(blk.loop_condition.code[0], sdfg.arrays))
-                if blk.init_statement:
-                    check_memlets.extend(memlets_in_ast(blk.init_statement.code[0], sdfg.arrays))
-                if blk.update_statement:
-                    check_memlets.extend(memlets_in_ast(blk.update_statement.code[0], sdfg.arrays))
+            if isinstance(blk, AbstractControlFlowRegion):
+                check_memlets.extend(blk.get_meta_read_memlets())
         for mem in check_memlets:
             if sdfg.arrays[mem.data].storage == dtypes.StorageType.GPU_Global:
                 data_already_on_gpu[mem.data] = None
