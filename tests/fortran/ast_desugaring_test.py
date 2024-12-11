@@ -4,11 +4,11 @@ from fparser.common.readfortran import FortranStringReader
 from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 
-from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, deconstruct_enums, \
     deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, \
-    assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, consolidate_uses, prune_branches, \
+    assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
     const_eval_nodes
+from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
@@ -1284,7 +1284,7 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
-def test_constant_resolving():
+def test_constant_resolving_expressions():
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main
   implicit none
@@ -1307,6 +1307,7 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
+    ast = correct_for_function_calls(ast)
     ast = const_eval_nodes(ast)
 
     got = ast.tofortran()
@@ -1328,6 +1329,62 @@ SUBROUTINE main
     b = 8
     p = a * p + 32.79999923706055D0
   END IF
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_constant_resolving_non_expressions():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main
+  implicit none
+  integer, parameter :: k = 8
+  integer :: i
+  real :: a = 1
+  do i = 2, k
+    a = a + i * k
+  end do
+  a = fun(k)
+  call not_fun(k, a)
+  contains
+  real function fun(x)
+    integer, intent(in) :: x
+    fun = x * k
+  end function fun
+  subroutine not_fun(x, y)
+    integer, intent(in) :: x
+    real, intent(out) :: y
+    y = x * k
+  end subroutine not_fun
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = correct_for_function_calls(ast)
+    ast = const_eval_nodes(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  INTEGER, PARAMETER :: k = 8
+  INTEGER :: i
+  REAL :: a = 1
+  DO i = 2, 8
+    a = a + i * 8
+  END DO
+  a = fun(8)
+  CALL not_fun(8, a)
+  CONTAINS
+  REAL FUNCTION fun(x)
+    INTEGER, INTENT(IN) :: x
+    fun = x * 8
+  END FUNCTION fun
+  SUBROUTINE not_fun(x, y)
+    INTEGER, INTENT(IN) :: x
+    REAL, INTENT(OUT) :: y
+    y = x * 8
+  END SUBROUTINE not_fun
 END SUBROUTINE main
 """.strip()
     assert got == want
