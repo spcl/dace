@@ -1115,7 +1115,7 @@ class InternalFortranAst:
                         if kind == "*":
                             size_later = True
                     else:
-                      if isinstance(type_of_node.items[1].items[1], f03.Int_Literal_Constant):
+                        if isinstance(type_of_node.items[1].items[1], f03.Int_Literal_Constant):
                             kind = type_of_node.items[1].items[1].string.lower()
                             if basetype == "REAL":
                                 if kind == "8":
@@ -1141,21 +1141,21 @@ class InternalFortranAst:
                             else:
                                 raise TypeError("Derived type not supported")    
 
-                      else:
-                        kind = type_of_node.items[1].items[1].string.lower()
-                        if self.symbols[kind] is not None:
-                            if basetype == "REAL":
-                                while hasattr(self.symbols[kind], "name"):
-                                    kind = self.symbols[kind].name
-                                if self.symbols[kind].value == "8":
-                                    basetype = "REAL8"
-                            elif basetype == "INTEGER":
-                                while hasattr(self.symbols[kind], "name"):
-                                    kind = self.symbols[kind].name
-                                if self.symbols[kind].value == "4":
-                                    basetype = "INTEGER"
-                            else:
-                                raise TypeError("Derived type not supported")
+                        else:
+                            kind = type_of_node.items[1].items[1].string.lower()
+                            if self.symbols[kind] is not None:
+                                if basetype == "REAL":
+                                    while hasattr(self.symbols[kind], "name"):
+                                        kind = self.symbols[kind].name
+                                    if self.symbols[kind].value == "8":
+                                        basetype = "REAL8"
+                                elif basetype == "INTEGER":
+                                    while hasattr(self.symbols[kind], "name"):
+                                        kind = self.symbols[kind].name
+                                    if self.symbols[kind].value == "4":
+                                        basetype = "INTEGER"
+                                else:
+                                    raise TypeError("Derived type not supported")
 
                 # if derived_type:
                 #    raise TypeError("Derived type not supported")
