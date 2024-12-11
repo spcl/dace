@@ -418,10 +418,6 @@ class SDFG(ControlFlowRegion):
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_nested_arrays_from_json)
-    _arrays = Property(dtype=NestedDict,
-                       desc="Data size descriptors for this SDFG",
-                       to_json=_arrays_to_json,
-                       from_json=_nested_arrays_from_json)
     symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -1733,13 +1729,11 @@ class SDFG(ControlFlowRegion):
         """ Tries to find a new name by adding an underscore and a number. """
 
         names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
-                 | self._rdistrarrays.keys() | self.symbols.keys() | self._arrays.keys())
+                 | self._rdistrarrays.keys() | self.symbols.keys())
         return dt.find_new_name(name, names)
 
     def is_name_used(self, name: str) -> bool:
         """ Checks if `name` is already used inside the SDFG."""
-        if name in self._arrays:
-            return True
         if name in self._arrays:
             return True
         if name in self.symbols:
@@ -2139,7 +2133,7 @@ class SDFG(ControlFlowRegion):
         else:
             # We do not check for data constant, because there is a link between the constants and
             #  the data descriptors.
-            if name in self.arrays or name in self.arrays:
+            if name in self.arrays:
                 raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
             if name in self.symbols:
                 raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
