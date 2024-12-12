@@ -65,14 +65,16 @@ class Program_Node(FNode):
 
 
 class BinOp_Node(FNode):
-    _attributes = (
-        'op',
-        'type',
-    )
-    _fields = (
-        'lval',
-        'rval',
-    )
+    def __init__(self, op: str, lval: FNode, rval: FNode, type: str = 'VOID', **kwargs):
+        super().__init__(**kwargs)
+        assert rval
+        self.op = op
+        self.lval = lval
+        self.rval = rval
+        self.type = type
+
+    _attributes = ('op', 'type')
+    _fields = ('lval', 'rval')
 
 
 class UnOp_Node(FNode):
@@ -537,7 +539,7 @@ class Ac_Value_List_Node(FNode):
 
 
 class Section_Subscript_List_Node(FNode):
-    _fields = ('list')
+    _fields = ('list',)
 
 
 class Pointer_Assignment_Stmt_Node(FNode):
@@ -581,7 +583,7 @@ class Defer_Shape_Node(FNode):
 
 class Component_Initialization_Node(FNode):
     _attributes = ()
-    _fields = ('init')
+    _fields = ('init',)
 
 
 class Case_Cond_Node(FNode):
@@ -601,27 +603,27 @@ class Procedure_Separator_Node(FNode):
 
 class Pointer_Object_List_Node(FNode):
     _attributes = ()
-    _fields = ('list')
+    _fields = ('list',)
 
 
 class Read_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('args')
+    _fields = ('args',)
 
 
 class Close_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('args')
+    _fields = ('args',)
 
 
 class Open_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('args')
+    _fields = ('args',)
 
 
 class Associate_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('args')
+    _fields = ('args',)
 
 
 class Associate_Construct_Node(FNode):
@@ -631,7 +633,7 @@ class Associate_Construct_Node(FNode):
 
 class Association_List_Node(FNode):
     _attributes = ()
-    _fields = ('list')
+    _fields = ('list',)
 
 
 class Association_Node(FNode):

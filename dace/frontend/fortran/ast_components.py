@@ -4,7 +4,9 @@ from typing import Any, List, Optional, Type, TypeVar, Union, overload, TYPE_CHE
 import networkx as nx
 from fparser.two import Fortran2003 as f03
 from fparser.two import Fortran2008 as f08
-from fparser.two.Fortran2003 import Function_Subprogram, Function_Stmt, Program, Prefix, Intrinsic_Type_Spec
+from fparser.two.Fortran2003 import Function_Subprogram, Function_Stmt, Program, Prefix, Intrinsic_Type_Spec, \
+    Assignment_Stmt, Logical_Literal_Constant, Real_Literal_Constant, Signed_Real_Literal_Constant, \
+    Int_Literal_Constant, Signed_Int_Literal_Constant, Hex_Constant
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_desugaring import alias_specs
@@ -173,6 +175,7 @@ class InternalFortranAst:
             "Loop_Control": self.loop_control,
             "Block_Nonlabel_Do_Construct": self.block_nonlabel_do_construct,
             "Real_Literal_Constant": self.real_literal_constant,
+            "Signed_Real_Literal_Constant": self.real_literal_constant,
             "Char_Literal_Constant": self.char_literal_constant,
             "Subscript_Triplet": self.subscript_triplet,
             "Section_Subscript_List": self.section_subscript_list,
@@ -243,6 +246,7 @@ class InternalFortranAst:
             "Intrinsic_Type_Spec": self.intrinsic_type_spec,
             "Entity_Decl_List": self.entity_decl_list,
             "Int_Literal_Constant": self.int_literal_constant,
+            "Signed_Int_Literal_Constant": self.int_literal_constant,
             "Hex_Constant": self.hex_constant,
             "Logical_Literal_Constant": self.logical_literal_constant,
             "Actual_Arg_Spec_List": self.actual_arg_spec_list,
@@ -308,7 +312,6 @@ class InternalFortranAst:
             "Namelist_Group_Object_List": self.namelist_group_object_list,
             "Open_Stmt": self.open_stmt,
             "Connect_Spec_List": self.connect_spec_list,
-            "Connect_Spec": self.connect_spec,
             "Association": self.association,
             "Association_List": self.association_list,
             "Associate_Stmt": self.associate_stmt,
@@ -1494,7 +1497,7 @@ class InternalFortranAst:
             return ast_internal_classes.UnOp_Node(lval=children[1], op=children[0], line_number=line,
                                                   type=children[1].type)
 
-    def assignment_stmt(self, node: FASTNode):
+    def assignment_stmt(self, node: Assignment_Stmt):
         children = self.create_children(node)
         line = get_line(node)
 
@@ -1966,24 +1969,24 @@ class InternalFortranAst:
     def entity_decl_list(self, node: FASTNode):
         return node
 
-    def int_literal_constant(self, node: FASTNode):
+    def int_literal_constant(self, node: Union[Int_Literal_Constant, Signed_Int_Literal_Constant]):
         value = node.string
         if value.find("_") != -1:
             x = value.split("_")
             value = x[0]
         return ast_internal_classes.Int_Literal_Node(value=value, type="INTEGER")
 
-    def hex_constant(self, node: FASTNode):
+    def hex_constant(self, node: Hex_Constant):
         return ast_internal_classes.Int_Literal_Node(value=str(int(node.string[2:-1], 16)), type="INTEGER")
 
-    def logical_literal_constant(self, node: FASTNode):
+    def logical_literal_constant(self, node: Logical_Literal_Constant):
         if node.string in [".TRUE.", ".true.", ".True."]:
             return ast_internal_classes.Bool_Literal_Node(value="True")
         if node.string in [".FALSE.", ".false.", ".False."]:
             return ast_internal_classes.Bool_Literal_Node(value="False")
         raise ValueError("Unknown logical literal constant")
 
-    def real_literal_constant(self, node: FASTNode):
+    def real_literal_constant(self, node: Union[Real_Literal_Constant, Signed_Real_Literal_Constant]):
         value = node.children[0].lower()
         if len(node.children) == 2 and node.children[1] is not None and node.children[1].lower() == "wp":
             return ast_internal_classes.Double_Literal_Node(value=value, type="DOUBLE")
