@@ -32,9 +32,10 @@ from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES,
     identifier_specs, append_children, correct_for_function_calls, remove_access_statements, sort_modules, \
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
     deconstruct_associations, assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, \
-    consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names
+    consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
+    remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
-from dace.frontend.fortran.ast_utils import UseAllPruneList
+from dace.frontend.fortran.ast_utils import UseAllPruneList, children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
 from dace.properties import CodeBlock
 
@@ -2591,7 +2592,9 @@ class ParseConfig:
             sources: Dict[str, str] = {str(p): p.read_text() for p in sources}
         if not includes:
             includes: List[Path] = []
-        if not isinstance(entry_points, list):
+        if not entry_points:
+            entry_points = []
+        elif isinstance(entry_points, tuple):
             entry_points = [entry_points]
 
         self.main = main
@@ -2620,13 +2623,14 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
 
     if not cfg.entry_points:
         # Keep all the possible entry points.
-        entry_points = [c for c in ast.children if isinstance(c, ENTRY_POINT_OBJECT_TYPES)]
+        entry_points = [ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_TYPES)))
+                        for c in ast.children if isinstance(c, ENTRY_POINT_OBJECT_TYPES)]
     else:
         eps = cfg.entry_points
         if isinstance(eps, tuple):
             eps = [eps]
         ident_map = identifier_specs(ast)
-        entry_points = [ident_map[ep] for ep in eps if ep in ident_map]
+        entry_points = [ep for ep in eps if ep in ident_map]
     ast = prune_unused_objects(ast, entry_points)
     assert isinstance(ast, Program)
 
