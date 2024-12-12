@@ -255,7 +255,8 @@ class Subroutine_Stmt_Node(FNode):
 
 
 class Function_Stmt_Node(FNode):
-    def __init__(self, name: 'Name_Node', args: List[FNode], ret: Optional['Suffix_Node'], elemental: bool, type: str, **kwargs):
+    def __init__(self, name: 'Name_Node', args: List[FNode], ret: Optional['Suffix_Node'], elemental: bool, type: str,
+                 **kwargs):
         super().__init__(**kwargs)
         self.name = name
         self.args = args
@@ -337,8 +338,8 @@ class Array_Subscript_Node(FNode):
         self.type = type
         self.indices = indices
 
-    _attributes = ( 'type',)
-    _fields = ('name','indices',)
+    _attributes = ('type',)
+    _fields = ('name', 'indices',)
 
 
 class Type_Decl_Node(Statement_Node):
@@ -458,32 +459,38 @@ class Void(VarType):
 
 
 class Literal(FNode):
-    _attributes = ('value',)
+    def __init__(self, value: str, type: str, **kwargs):
+        super().__init__(**kwargs)
+        self.value = value
+        self.type = type
+
+    _attributes = ('value', 'type')
     _fields = ()
 
 
 class Int_Literal_Node(Literal):
-    pass
+    def __init__(self, value: str, type='INTEGER', **kwargs):
+        super().__init__(value, type, **kwargs)
 
 
 class Real_Literal_Node(Literal):
-    pass
+    def __init__(self, value: str, type='REAL', **kwargs):
+        super().__init__(value, type, **kwargs)
 
 
 class Double_Literal_Node(Literal):
-    pass
+    def __init__(self, value: str, type='DOUBLE', **kwargs):
+        super().__init__(value, type, **kwargs)
 
 
 class Bool_Literal_Node(Literal):
-    pass
-
-
-class String_Literal_Node(Literal):
-    pass
+    def __init__(self, value: str, type='BOOL', **kwargs):
+        super().__init__(value, type, **kwargs)
 
 
 class Char_Literal_Node(Literal):
-    pass
+    def __init__(self, value: str, type='CHAR', **kwargs):
+        super().__init__(value, type, **kwargs)
 
 
 class Suffix_Node(FNode):
@@ -492,7 +499,7 @@ class Suffix_Node(FNode):
         self.name = name
 
     _attributes = ()
-    _fields = ('name')
+    _fields = ('name',)
 
 
 class Call_Expr_Node(FNode):

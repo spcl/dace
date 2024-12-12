@@ -2,7 +2,8 @@ import math
 import operator
 import re
 import sys
-from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type
+from dataclasses import dataclass
+from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type, Any
 
 import networkx as nx
 import numpy as np
@@ -377,7 +378,7 @@ def _cdiv(x, y):
 
 
 UNARY_OPS = {
-    '.NOT.': operator.not_,
+    '.NOT.': np.logical_not,
     '-': operator.neg,
 }
 
@@ -392,8 +393,8 @@ BINARY_OPS = {
     '-': operator.sub,
     '*': operator.mul,
     '/': _cdiv,
-    '.OR.': operator.or_,
-    '.AND.': operator.and_,
+    '.OR.': np.logical_or,
+    '.AND.': np.logical_and,
     '**': operator.pow,
 }
 
@@ -641,6 +642,7 @@ def _dataref_root(dref: Union[Name, Data_Ref], scope_spec: SPEC, alias_map: SPEC
     else:
         assert len(dref.children) >= 2
         root, rest = dref.children[0], dref.children[1:]
+
     if isinstance(root, Name):
         root_spec = find_real_ident_spec(root.string, scope_spec, alias_map)
         assert root_spec in alias_map, f"canont find: {root_spec} / {dref} in {scope_spec}"
@@ -648,12 +650,13 @@ def _dataref_root(dref: Union[Name, Data_Ref], scope_spec: SPEC, alias_map: SPEC
     elif isinstance(root, Data_Ref):
         root_type = find_type_dataref(root, scope_spec, alias_map)
     assert root_type
-    return root_type, rest
+
+    return root, root_type, rest
 
 
 def find_dataref_component_spec(dref: Union[Name, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE) -> SPEC:
     # The root must have been a typed object.
-    root_type, rest = _dataref_root(dref, scope_spec, alias_map)
+    _, root_type, rest = _dataref_root(dref, scope_spec, alias_map)
 
     cur_type = root_type
     # All component shards except for the last one must have been type objects too.
@@ -683,7 +686,7 @@ def find_dataref_component_spec(dref: Union[Name, Data_Ref], scope_spec: SPEC, a
 
 
 def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
-    root_type, rest = _dataref_root(dref, scope_spec, alias_map)
+    _, root_type, rest = _dataref_root(dref, scope_spec, alias_map)
     cur_type = root_type
     for comp in rest:
         assert isinstance(comp, (Name, Part_Ref))
@@ -1470,17 +1473,17 @@ def _reparent_children(node: Base):
             c.parent = node
 
 
-def prune_unused_objects(ast: Program,
-                         keepers: List[Union[Module, Main_Program, Subroutine_Subprogram, Function_Subprogram]]) \
-        -> Program:
+def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
     """
     Precondition: All the indirections have been taken out of the program.
     """
-    PRUNABLE_OBJECT_TYPES = Union[Subroutine_Subprogram, Function_Subprogram, Derived_Type_Def]
+    PRUNABLE_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram, Derived_Type_Def]
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
     survivors: Set[SPEC] = set()
+    keepers = [alias_map[k].parent for k in keepers]
+    assert all(isinstance(k, PRUNABLE_OBJECT_TYPES) for k in keepers)
 
     def _keep_from(node: Base):
         for nm in walk(node, Name):
@@ -2019,10 +2022,36 @@ def prune_branches(ast: Program) -> Program:
     return ast
 
 
+LITERAL_TYPES = Union[
+    Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, Signed_Int_Literal_Constant,
+    Logical_Literal_Constant]
+
+
+def numpy_type_to_literal(val: NUMPY_TYPES) -> Union[LITERAL_TYPES]:
+    if isinstance(val, np.bool_):
+        val = Logical_Literal_Constant('.true.' if val else '.false.')
+    elif isinstance(val, NUMPY_INTS):
+        bytez = _count_bytes(type(val))
+        if val < 0:
+            val = Signed_Int_Literal_Constant(f"{val}" if bytez == 4 else f"{val}_{bytez}")
+        else:
+            val = Int_Literal_Constant(f"{val}" if bytez == 4 else f"{val}_{bytez}")
+    elif isinstance(val, NUMPY_REALS):
+        bytez = _count_bytes(type(val))
+        valstr = str(val)
+        if bytez == 8:
+            if 'e' in valstr:
+                valstr = valstr.replace('e', 'D')
+            else:
+                valstr = f"{valstr}D0"
+        if val < 0:
+            val = Signed_Real_Literal_Constant(valstr)
+        else:
+            val = Real_Literal_Constant(valstr)
+    return val
+
+
 def const_eval_nodes(ast: Program) -> Program:
-    LITERAL_TYPES = Union[
-        Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, Signed_Int_Literal_Constant,
-        Logical_Literal_Constant]
     EXPRESSION_TYPES = Union[
         LITERAL_TYPES, Expr, Add_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr, Level_5_Expr,
         Intrinsic_Function_Reference]
@@ -2034,26 +2063,7 @@ def const_eval_nodes(ast: Program) -> Program:
         if val is None:
             return False
         assert not np.isnan(val)
-        if isinstance(val, np.bool_):
-            val = Logical_Literal_Constant('.true.' if val else '.false.')
-        elif isinstance(val, NUMPY_INTS):
-            bytez = _count_bytes(type(val))
-            if val < 0:
-                val = Signed_Int_Literal_Constant(f"{val}" if bytez == 4 else f"{val}_{bytez}")
-            else:
-                val = Int_Literal_Constant(f"{val}" if bytez == 4 else f"{val}_{bytez}")
-        elif isinstance(val, NUMPY_REALS):
-            bytez = _count_bytes(type(val))
-            valstr = str(val)
-            if bytez == 8:
-                if 'e' in valstr:
-                    valstr = valstr.replace('e', 'D')
-                else:
-                    valstr = f"{valstr}D0"
-            if val < 0:
-                val = Signed_Real_Literal_Constant(valstr)
-            else:
-                val = Real_Literal_Constant(valstr)
+        val = numpy_type_to_literal(val)
         replace_node(n, val)
         return True
 
@@ -2072,8 +2082,10 @@ def const_eval_nodes(ast: Program) -> Program:
     for knode in reversed(walk(ast, Kind_Selector)):
         _, kind, _ = knode.children
         _const_eval_node(kind)
-    for node in reversed(walk(ast,
-                              (Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization))):
+
+    NON_EXPRESSION_TYPES = Union[
+        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization]
+    for node in reversed(walk(ast, NON_EXPRESSION_TYPES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
 
