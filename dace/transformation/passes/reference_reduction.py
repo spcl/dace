@@ -5,13 +5,13 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import SDFG, SDFGState, data, properties, Memlet
 from dace.sdfg import nodes
-from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.helpers import all_isedges_between
 from dace.transformation.passes import analysis as ap
 
 
 @properties.make_properties
-@transformation.single_level_sdfg_only
+@transformation.explicit_cf_compatible
 class ReferenceToView(ppl.Pass):
     """
     Replaces Reference data descriptors that are only set to one source with views.
@@ -135,13 +135,10 @@ class ReferenceToView(ppl.Pass):
                     # Filter self and unreachable states
                     if other_state is state or other_state not in reachable_states[state]:
                         continue
-                    for path in sdfg.all_simple_paths(state, other_state, as_edges=True):
-                        for e in path:
-                            # The symbol was modified/reassigned in one of the paths, skip
-                            if fsyms & e.data.assignments.keys():
-                                result.remove(cand)
-                                break
-                        if cand not in result:
+                    for e in all_isedges_between(state, other_state):
+                        # The symbol was modified/reassigned in one of the paths, skip
+                        if fsyms & e.data.assignments.keys():
+                            result.remove(cand)
                             break
                     if cand not in result:
                         break

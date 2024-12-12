@@ -12,7 +12,7 @@ from dace.transformation import transformation
 from typing import Tuple, Optional
 
 
-class MapToForLoopRegion(transformation.SingleStateTransformation):
+class MapToForLoop(transformation.SingleStateTransformation):
     """ Implements the Map to for-loop transformation.
 
         Takes a map and enforces a sequential schedule by transforming it into a loop region. Creates a nested SDFG, if
@@ -112,27 +112,6 @@ class MapToForLoopRegion(transformation.SingleStateTransformation):
 
         sdfg.reset_cfg_list()
         # Ensure the SDFG is marked as containing CFG regions
-        sdfg.root_sdfg.using_experimental_blocks = True
-
-        return node, nstate
-
-
-class MapToForLoop(MapToForLoopRegion):
-    """ Implements the Map to for-loop transformation.
-
-        Takes a map and enforces a sequential schedule by transforming it into
-        a state-machine of a for-loop. Creates a nested SDFG, if necessary.
-    """
-
-    before_state: SDFGState
-    guard: SDFGState
-    after_state: SDFGState
-
-    def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.NestedSDFG, SDFGState]:
-        node, nstate = super().apply(graph, sdfg)
-        _, (self.before_state, self.guard, self.after_state) = self.loop_region.inline()
-
-        sdfg.reset_cfg_list()
-        sdfg.recheck_using_experimental_blocks()
+        sdfg.root_sdfg.using_explicit_control_flow = True
 
         return node, nstate

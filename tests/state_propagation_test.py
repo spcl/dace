@@ -1,10 +1,12 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
+import pytest
 from dace.dtypes import Language
 from dace.properties import CodeProperty, CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
 import dace
 from dace.sdfg.propagation import propagate_states
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
 def state_check_executions(state, expected, expected_dynamic=False):
@@ -16,7 +18,8 @@ def state_check_executions(state, expected, expected_dynamic=False):
         raise RuntimeError('Expected static executions, got dynamic')
 
 
-def test_conditional_fake_merge():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_conditional_fake_merge(with_regions):
     sdfg = dace.SDFG('fake_merge')
 
     state_init = sdfg.add_state('init')
@@ -40,13 +43,17 @@ def test_conditional_fake_merge():
     sdfg.add_edge(state_c, state_e,
                   InterstateEdge(condition=CodeProperty.from_string('not (j < 10)', language=Language.Python)))
 
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     state_check_executions(state_d, 1, True)
     state_check_executions(state_e, 1, True)
 
 
-def test_conditional_full_merge():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_conditional_full_merge(with_regions):
     sdfg = dace.SDFG('conditional_full_merge')
 
     sdfg.add_scalar('a', dace.int32)
@@ -71,6 +78,9 @@ def test_conditional_full_merge():
     sdfg.add_edge(r_branch, if_merge_2, dace.InterstateEdge())
     sdfg.add_edge(if_merge_2, if_merge_1, dace.InterstateEdge())
 
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     # Check start state.
@@ -92,7 +102,8 @@ def test_conditional_full_merge():
     state_check_executions(if_merge_1, 1)
 
 
-def test_while_inside_for():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_while_inside_for(with_regions):
     sdfg = dace.SDFG('while_inside_for')
 
     sdfg.add_symbol('i', dace.int32)
@@ -116,13 +127,19 @@ def test_while_inside_for():
     sdfg.add_edge(guard_2, loop_2, dace.InterstateEdge(condition=CodeBlock('j < 20')))
     sdfg.add_edge(loop_2, guard_2, dace.InterstateEdge())
 
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     # Check start state.
     state_check_executions(init_state, 1)
 
     # Check the for loop guard, `i in range(20)`.
-    state_check_executions(guard_1, 21)
+    if with_regions:
+        state_check_executions(guard_1, 20)
+    else:
+        state_check_executions(guard_1, 21)
     # Check loop-end branch.
     state_check_executions(end_1, 1)
     # Check inside the loop.
@@ -136,7 +153,8 @@ def test_while_inside_for():
     state_check_executions(loop_2, 0, expected_dynamic=True)
 
 
-def test_for_with_nested_full_merge_branch():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_for_with_nested_full_merge_branch(with_regions):
     sdfg = dace.SDFG('for_full_merge')
 
     sdfg.add_symbol('i', dace.int32)
@@ -171,13 +189,19 @@ def test_for_with_nested_full_merge_branch():
     sdfg.add_edge(r_branch, if_merge, dace.InterstateEdge())
     sdfg.add_edge(if_merge, guard_1, dace.InterstateEdge(assignments={'i': 'i + 1'}))
 
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     # Check start state.
     state_check_executions(init_state, 1)
 
     # For loop, check loop guard, `for i in range(20)`.
-    state_check_executions(guard_1, 21)
+    if with_regions:
+        state_check_executions(guard_1, 20)
+    else:
+        state_check_executions(guard_1, 21)
     # Check loop-end branch.
     state_check_executions(end_1, 1)
     # Check inside the loop.
@@ -190,7 +214,8 @@ def test_for_with_nested_full_merge_branch():
     state_check_executions(if_merge, 20)
 
 
-def test_for_inside_branch():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_for_inside_branch(with_regions):
     sdfg = dace.SDFG('for_in_branch')
 
     state_init = sdfg.add_state('init')
@@ -218,15 +243,22 @@ def test_for_inside_branch():
         'j': 'j + 1',
     }))
 
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     state_check_executions(branch_guard, 1, False)
-    state_check_executions(loop_guard, 11, True)
+    if with_regions:
+        state_check_executions(loop_guard, 10, True)
+    else:
+        state_check_executions(loop_guard, 11, True)
     state_check_executions(loop_state, 10, True)
     state_check_executions(branch_merge, 1, False)
 
 
-def test_full_merge_inside_loop():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_full_merge_inside_loop(with_regions):
     sdfg = dace.SDFG('full_merge_inside_loop')
 
     state_init = sdfg.add_state('init')
@@ -256,16 +288,23 @@ def test_full_merge_inside_loop():
         'i': 'i + 1',
     }))
 
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
-    state_check_executions(loop_guard, 11, False)
+    if with_regions:
+        state_check_executions(loop_guard, 10, False)
+    else:
+        state_check_executions(loop_guard, 11, False)
     state_check_executions(branch_guard, 10, False)
     state_check_executions(branch_state, 10, True)
     state_check_executions(branch_merge, 10, False)
     state_check_executions(loop_end, 1, False)
 
 
-def test_while_with_nested_full_merge_branch():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_while_with_nested_full_merge_branch(with_regions):
     sdfg = dace.SDFG('while_full_merge')
 
     sdfg.add_scalar('a', dace.int32)
@@ -299,6 +338,9 @@ def test_while_with_nested_full_merge_branch():
     sdfg.add_edge(r_branch, if_merge, dace.InterstateEdge())
     sdfg.add_edge(if_merge, guard_1, dace.InterstateEdge())
 
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     # Check start state.
@@ -318,7 +360,8 @@ def test_while_with_nested_full_merge_branch():
     state_check_executions(if_merge, 0, expected_dynamic=True)
 
 
-def test_3_fold_nested_loop_with_symbolic_bounds():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_3_fold_nested_loop_with_symbolic_bounds(with_regions):
     N = dace.symbol('N')
     M = dace.symbol('M')
     K = dace.symbol('K')
@@ -355,34 +398,47 @@ def test_3_fold_nested_loop_with_symbolic_bounds():
     sdfg.add_edge(guard_3, loop_3, dace.InterstateEdge(condition=CodeBlock('k < K')))
     sdfg.add_edge(loop_3, guard_3, dace.InterstateEdge(assignments={'k': 'k + 1'}))
 
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     # Check start state.
     state_check_executions(init_state, 1)
 
     # 1st level loop, check loop guard, `for i in range(N)`.
-    state_check_executions(guard_1, N + 1)
+    if with_regions:
+        state_check_executions(guard_1, N)
+    else:
+        state_check_executions(guard_1, N + 1)
     # Check loop-end branch.
     state_check_executions(end_1, 1)
     # Check inside the loop.
     state_check_executions(loop_1, N)
 
     # 2nd level nested loop, check loog guard, `for j in range(M)`.
-    state_check_executions(guard_2, M * N + N)
+    if with_regions:
+        state_check_executions(guard_2, M * N)
+    else:
+        state_check_executions(guard_2, M * N + N)
     # Check loop-end branch.
     state_check_executions(end_2, N)
     # Check inside the loop.
     state_check_executions(loop_2, M * N)
 
     # 3rd level nested loop, check loop guard, `for k in range(K)`.
-    state_check_executions(guard_3, M * N * K + M * N)
+    if with_regions:
+        state_check_executions(guard_3, M * N * K)
+    else:
+        state_check_executions(guard_3, M * N * K + M * N)
     # Check loop-end branch.
     state_check_executions(end_3, M * N)
     # Check inside the loop.
     state_check_executions(loop_3, M * N * K)
 
 
-def test_3_fold_nested_loop():
+@pytest.mark.parametrize('with_regions', [False, True])
+def test_3_fold_nested_loop(with_regions):
     sdfg = dace.SDFG('nest_3')
 
     sdfg.add_symbol('i', dace.int32)
@@ -415,27 +471,40 @@ def test_3_fold_nested_loop():
     sdfg.add_edge(guard_3, loop_3, dace.InterstateEdge(condition=CodeBlock('k < j')))
     sdfg.add_edge(loop_3, guard_3, dace.InterstateEdge(assignments={'k': 'k + 1'}))
 
+    if with_regions:
+        ControlFlowRaising().apply_pass(sdfg, {})
+
     propagate_states(sdfg)
 
     # Check start state.
     state_check_executions(init_state, 1)
 
     # 1st level loop, check loop guard, `for i in range(20)`.
-    state_check_executions(guard_1, 21)
+    if with_regions:
+        state_check_executions(guard_1, 20)
+    else:
+        # When using a state-machine-style loop, the guard is executed N+1 times for N loop iterations.
+        state_check_executions(guard_1, 21)
     # Check loop-end branch.
     state_check_executions(end_1, 1)
     # Check inside the loop.
     state_check_executions(loop_1, 20)
 
     # 2nd level nested loop, check loog guard, `for j in range(i, 20)`.
-    state_check_executions(guard_2, 230)
+    if with_regions:
+        state_check_executions(guard_2, 210)
+    else:
+        state_check_executions(guard_2, 230)
     # Check loop-end branch.
     state_check_executions(end_2, 20)
     # Check inside the loop.
     state_check_executions(loop_2, 210)
 
     # 3rd level nested loop, check loop guard, `for k in range(i, j)`.
-    state_check_executions(guard_3, 1540)
+    if with_regions:
+        state_check_executions(guard_3, 1330)
+    else:
+        state_check_executions(guard_3, 1540)
     # Check loop-end branch.
     state_check_executions(end_3, 210)
     # Check inside the loop.
@@ -443,12 +512,21 @@ def test_3_fold_nested_loop():
 
 
 if __name__ == "__main__":
-    test_3_fold_nested_loop()
-    test_3_fold_nested_loop_with_symbolic_bounds()
-    test_while_with_nested_full_merge_branch()
-    test_for_with_nested_full_merge_branch()
-    test_for_inside_branch()
-    test_while_inside_for()
-    test_conditional_full_merge()
-    test_conditional_fake_merge()
-    test_full_merge_inside_loop()
+    test_3_fold_nested_loop(False)
+    test_3_fold_nested_loop_with_symbolic_bounds(False)
+    test_while_with_nested_full_merge_branch(False)
+    test_for_with_nested_full_merge_branch(False)
+    test_for_inside_branch(False)
+    test_while_inside_for(False)
+    test_conditional_full_merge(False)
+    test_conditional_fake_merge(False)
+    test_full_merge_inside_loop(False)
+    test_3_fold_nested_loop(True)
+    test_3_fold_nested_loop_with_symbolic_bounds(True)
+    test_while_with_nested_full_merge_branch(True)
+    test_for_with_nested_full_merge_branch(True)
+    test_for_inside_branch(True)
+    test_while_inside_for(True)
+    test_conditional_full_merge(True)
+    test_conditional_fake_merge(True)
+    test_full_merge_inside_loop(True)

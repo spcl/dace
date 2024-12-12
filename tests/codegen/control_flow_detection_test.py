@@ -1,5 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from math import exp
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
 import dace
@@ -66,7 +65,7 @@ def test_edge_split_loop_detection():
 
     sdfg: dace.SDFG = looptest.to_sdfg(simplify=True)
     if dace.Config.get_bool('optimizer', 'detect_control_flow'):
-        assert 'for (' in sdfg.generate_code()[0].code
+        assert 'while (' in sdfg.generate_code()[0].code
 
     A = looptest()
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)

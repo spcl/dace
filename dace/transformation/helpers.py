@@ -4,15 +4,16 @@ import copy
 import itertools
 from networkx import MultiDiGraph
 
-from dace.sdfg.state import ControlFlowRegion
+from dace.properties import CodeBlock
+from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
-from typing import Dict, List, Optional, Tuple, Set, Union
+from typing import Dict, Iterable, List, Optional, Tuple, Set, Union
 
 from dace import data, dtypes, symbolic
 from dace.codegen import control_flow as cf
 from dace.sdfg import nodes, utils
-from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
+from dace.sdfg.graph import Edge, SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import graph
@@ -30,10 +31,13 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
     """
 
     # Nest states
-    states = subgraph.nodes()
+    blocks: List[ControlFlowBlock] = subgraph.nodes()
     return_state = None
-    if len(states) > 1:
+    if len(blocks) > 1 or isinstance(blocks[0], AbstractControlFlowRegion):
+        # Avoid cyclic imports
+        from dace.transformation.passes.analysis import loop_analysis
 
+        graph: ControlFlowRegion = blocks[0].parent_graph
         if start is not None:
             source_node = start
         else:
@@ -47,6 +51,30 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         if len(sink_nodes) != 1:
             raise NotImplementedError
         sink_node = sink_nodes[0]
+
+        all_blocks: List[ControlFlowBlock] = []
+        is_edges: List[Edge[InterstateEdge]] = []
+        for b in blocks:
+            if isinstance(b, AbstractControlFlowRegion):
+                all_blocks.append(b)
+                for nb in b.all_control_flow_blocks():
+                    all_blocks.append(nb)
+                for e in b.all_interstate_edges():
+                    is_edges.append(e)
+            else:
+                all_blocks.append(b)
+        states: List[SDFGState] = [b for b in all_blocks if isinstance(b, SDFGState)]
+        for src in blocks:
+            for dst in blocks:
+                for edge in graph.edges_between(src, dst):
+                    is_edges.append(edge)
+        return_blocks: Set[ReturnBlock] = set([b for b in all_blocks if isinstance(b, ReturnBlock)])
+        if len(return_blocks) > 0:
+            did_return_inner = '_did_ret_from_nsdfg'
+            did_return_inner = sdfg._find_new_name(did_return_inner)
+            sdfg.add_scalar(did_return_inner, dtypes.int32, transient=True)
+        else:
+            did_return_inner = None
 
         # Find read/write sets
         read_set, write_set = set(), set()
@@ -67,12 +95,21 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                         if e.data.data and e.data.data in sdfg.arrays:
                             write_set.add(e.data.data)
         # Add data from edges
-        for src in states:
-            for dst in states:
-                for edge in sdfg.edges_between(src, dst):
-                    for s in edge.data.free_symbols:
-                        if s in sdfg.arrays:
-                            read_set.add(s)
+        for edge in is_edges:
+            for s in edge.data.free_symbols:
+                if s in sdfg.arrays:
+                    read_set.add(s)
+        for blk in all_blocks:
+            if isinstance(blk, ConditionalBlock):
+                for c, _ in blk.branches:
+                    if c is not None:
+                        for s in c.get_free_symbols():
+                            if s in sdfg.arrays:
+                                read_set.add(s)
+            elif isinstance(blk, LoopRegion):
+                for s in blk.loop_condition.get_free_symbols():
+                    if s in sdfg.arrays:
+                        read_set.add(s)
 
         # Find NestedSDFG's unique data
         rw_set = read_set | write_set
@@ -82,7 +119,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                 continue
             found = False
             for state in sdfg.states():
-                if state in states:
+                if state in blocks:
                     continue
                 for node in state.nodes():
                     if (isinstance(node, nodes.AccessNode) and node.data == name):
@@ -98,7 +135,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         # Find defined subgraph symbols
         defined_symbols = set()
         strictly_defined_symbols = set()
-        for e in subgraph.edges():
+        for e in is_edges:
             defined_symbols.update(set(e.data.assignments.keys()))
             for k, v in e.data.assignments.items():
                 try:
@@ -107,22 +144,65 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                 except AttributeError:
                     # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
                     pass
+        for b in all_blocks:
+            if isinstance(b, LoopRegion) and b.loop_variable:
+                defined_symbols.add(b.loop_variable)
+                if b.loop_variable not in sdfg.symbols:
+                    if b.init_statement:
+                        init_assignment = loop_analysis.get_init_assignment(b)
+                        if b.loop_variable not in {str(s) for s in symbolic.pystr_to_symbolic(init_assignment).args}:
+                            strictly_defined_symbols.add(b.loop_variable)
+                    else:
+                        strictly_defined_symbols.add(b.loop_variable)
 
-        return_state = new_state = sdfg.add_state('nested_sdfg_parent')
+        return_state = new_state = graph.add_state('nested_sdfg_parent')
+
+        # If there is a return that is being nested in, a conditional return is added right after the new nested SDFG
+        # which will be taken if the inner, nested return was hit.
+        ret_cond = None
+        if len(return_blocks) > 0:
+            ret_cond = ConditionalBlock('return_' + sdfg.label + '_from_nested', sdfg, graph)
+            graph.add_node(ret_cond, ensure_unique_name=True)
+            ret_branch = ControlFlowRegion('return_' + sdfg.label + '_from_nested_body', sdfg, ret_cond)
+            ret_block = ReturnBlock('return', sdfg, ret_branch)
+            ret_branch.add_node(ret_block)
+            ret_cond.add_branch(CodeBlock(did_return_inner), ret_branch)
+
         nsdfg = SDFG("nested_sdfg", constants=sdfg.constants_prop, parent=new_state)
         nsdfg.add_node(source_node, is_start_state=True)
-        nsdfg.add_nodes_from([s for s in states if s is not source_node])
-        for s in states:
-            s.parent = nsdfg
+        nsdfg.add_nodes_from([s for s in blocks if s is not source_node])
         for e in subgraph.edges():
             nsdfg.add_edge(e.src, e.dst, e.data)
 
-        for e in sdfg.in_edges(source_node):
-            sdfg.add_edge(e.src, new_state, e.data)
-        for e in sdfg.out_edges(sink_node):
-            sdfg.add_edge(new_state, e.dst, e.data)
+        # Annotate any transitions to return blocks in the inner, nested SDFG by first setting the added transient
+        # scalar to 1 / true to detect that the inner SDFG returned.
+        if len(return_blocks) > 0:
+            for blk in nsdfg.all_control_flow_blocks():
+                if blk in return_blocks:
+                    pre_state = blk.parent_graph.add_state_before(blk)
+                    did_ret_tasklet = pre_state.add_tasklet('__did_ret_set', {}, {'out'}, 'out = 1')
+                    did_ret_access = pre_state.add_access(did_return_inner)
+                    pre_state.add_edge(did_ret_tasklet, 'out', did_ret_access, None, Memlet(did_return_inner + '[0]'))
+                    write_set.add(did_return_inner)
 
-        sdfg.remove_nodes_from(states)
+        if ret_cond is not None:
+            pre_state = graph.add_state('before_nested_sdfg_parent')
+            for e in graph.in_edges(source_node):
+                graph.add_edge(e.src, pre_state, e.data)
+            did_ret_tasklet = pre_state.add_tasklet('__did_ret_init', {}, {'out'}, 'out = 0')
+            did_ret_access = pre_state.add_access(did_return_inner)
+            pre_state.add_edge(did_ret_tasklet, 'out', did_ret_access, None, Memlet(did_return_inner + '[0]'))
+            graph.add_edge(pre_state, new_state, InterstateEdge())
+            graph.add_edge(new_state, ret_cond, InterstateEdge())
+            for e in graph.out_edges(sink_node):
+                graph.add_edge(ret_cond, e.dst, e.data)
+        else:
+            for e in graph.in_edges(source_node):
+                graph.add_edge(e.src, new_state, e.data)
+            for e in graph.out_edges(sink_node):
+                graph.add_edge(new_state, e.dst, e.data)
+
+        graph.remove_nodes_from(blocks)
 
         # Add NestedSDFG arrays
         for name in read_set | write_set:
@@ -139,8 +219,11 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         ndefined_symbols = set()
         out_mapping = {}
         out_state = None
-        for e in nsdfg.edges():
+        for e in nsdfg.all_interstate_edges():
             ndefined_symbols.update(set(e.data.assignments.keys()))
+        for b in all_blocks:
+            if isinstance(b, LoopRegion) and b.loop_variable is not None and b.loop_variable != '' and b.init_statement:
+                ndefined_symbols.add(b.loop_variable)
         if ndefined_symbols:
             out_state = nsdfg.add_state('symbolic_output')
             nsdfg.add_edge(sink_node, out_state, InterstateEdge())
@@ -160,7 +243,8 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
 
         # Add NestedSDFG node
         fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
-        fsymbols.update(defined_symbols - strictly_defined_symbols)
+        fsymbols.update(defined_symbols)
+        fsymbols = fsymbols - strictly_defined_symbols
         mapping = {s: s for s in fsymbols}
         cnode = new_state.add_nested_sdfg(nsdfg, None, read_set, write_set, mapping)
         for s in strictly_defined_symbols:
@@ -177,188 +261,29 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
 
         # Part (2)
         if out_state is not None:
-            extra_state = sdfg.add_state('symbolic_output')
-            for e in sdfg.out_edges(new_state):
-                sdfg.add_edge(extra_state, e.dst, e.data)
-                sdfg.remove_edge(e)
-            sdfg.add_edge(new_state, extra_state, InterstateEdge(assignments=out_mapping))
+            extra_state = graph.add_state('symbolic_output')
+            for e in graph.out_edges(new_state):
+                graph.add_edge(extra_state, e.dst, e.data)
+                graph.remove_edge(e)
+            graph.add_edge(new_state, extra_state, InterstateEdge(assignments=out_mapping))
             new_state = extra_state
 
     else:
-        return_state = states[0]
+        return_state = blocks[0]
 
     return return_state
 
 
-def _copy_state(sdfg: SDFG,
-                state: SDFGState,
-                before: bool = True,
-                states: Optional[Set[SDFGState]] = None) -> SDFGState:
-    """
-    Duplicates a state, placing the copy before or after (see param before) the original and redirecting a subset of its
-    edges (see param state). The state is expected to be a scope's source or sink state and this method facilitates the
-    nesting of SDFG subgraphs where the state may be part of multiple scopes.
-    
-    :param state: The SDFGState to copy.
-    :param before: True if the copy should be placed before the original.
-    :param states: A collection of SDFGStates that should be considered for edge redirection.
-    :return: The SDFGState copy.
-    """
-
-    state_copy = copy.deepcopy(state)
-    state_copy._label += '_copy'
-    state_copy.parent = sdfg
-    sdfg.add_node(state_copy)
-
-    in_conditions = []
-    for e in sdfg.in_edges(state):
-        if states and e.src not in states:
-            continue
-        sdfg.add_edge(e.src, state_copy, e.data)
-        sdfg.remove_edge(e)
-        if not e.data.is_unconditional():
-            in_conditions.append(e.data.condition.as_string)
-
-    out_conditions = []
-    for e in sdfg.out_edges(state):
-        if states and e.dst not in states:
-            continue
-        sdfg.add_edge(state_copy, e.dst, e.data)
-        sdfg.remove_edge(e)
-        if not e.data.is_unconditional():
-            out_conditions.append(e.data.condition.as_string)
-
-    if before:
-        condition = None
-        if in_conditions:
-            condition = 'or'.join([f"({c})" for c in in_conditions])
-        sdfg.add_edge(state_copy, state, InterstateEdge(condition=condition))
-    else:
-        condition = None
-        # NOTE: The following should be unecessary for preserving program semantics. Therefore we comment it out to
-        # avoid the overhead of evaluating the condition.
-        # if out_conditions:
-        #     condition = 'or'.join([f"({c})" for c in out_conditions])
-        sdfg.add_edge(state, state_copy, InterstateEdge(condition=condition))
-
-    return state_copy
-
-
-def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
-    """
-    Partitions the SDFG to subgraphs that can be nested independently of each other. The method does not nest the
-    subgraphs but alters the SDFG; (1) interstate edges are split, (2) scope source/sink states that belong to multiple
-    scopes are duplicated (see _copy_state).
-    
-    :param sdfg: The SDFG to be partitioned.
-    :return: The found subgraphs in the form of a dictionary where the keys are the start state of the subgraphs and the
-             values are the sets of SDFGStates contained withing each subgraph.
-    """
-
-    split_interstate_edges(sdfg)
-
-    # Create a unique sink state to avoid issues with finding control flow.
-    sink_states = sdfg.sink_nodes()
-    if len(sink_states) > 1:
-        new_sink = sdfg.add_state('common_sink')
-        for s in sink_states:
-            sdfg.add_edge(s, new_sink, InterstateEdge())
-
-    ipostdom = utils.postdominators(sdfg)
-    cft = cf.structured_control_flow_tree(sdfg, None)
-
-    # Iterate over the SDFG's control flow scopes and create for each an SDFG subraph. These subgraphs must be disjoint,
-    # so we duplicate SDFGStates that appear in more than one scopes (guards and exits of loops and conditionals).
-    components = {}
-    visited = {}  # Dict[SDFGState, bool]: True if SDFGState in Scope (non-SingleState)
-    for i, child in enumerate(cft.children):
-        if isinstance(child, cf.BasicCFBlock):
-            if child.state in visited:
-                continue
-            components[child.state] = (set([child.state]), child)
-            visited[child.state] = False
-        elif isinstance(child, (cf.ForScope, cf.WhileScope)):
-            guard = child.guard
-            fexit = None
-            condition = child.condition if isinstance(child, cf.ForScope) else child.test
-            for e in sdfg.out_edges(guard):
-                if e.data.condition != condition:
-                    fexit = e.dst
-                    break
-            if fexit is None:
-                raise ValueError("Cannot find for-scope's exit states.")
-
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
-
-            if guard in visited:
-                if visited[guard]:
-                    guard_copy = _copy_state(sdfg, guard, False, states)
-                    guard.remove_nodes_from(guard.nodes())
-                    states.remove(guard)
-                    states.add(guard_copy)
-                    guard = guard_copy
-                else:
-                    del components[guard]
-                    del visited[guard]
-
-            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.BasicCFBlock)
-                    and cft.children[i + 1].state is fexit):
-                fexit_copy = _copy_state(sdfg, fexit, True, states)
-                fexit.remove_nodes_from(fexit.nodes())
-                states.remove(fexit)
-                states.add(fexit_copy)
-
-            components[guard] = (states, child)
-            visited.update({s: True for s in states})
-        elif isinstance(child, (cf.IfScope, cf.IfElseChain)):
-            guard = child.branch_block
-            ifexit = ipostdom[guard]
-
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
-
-            if guard in visited:
-                if visited[guard]:
-                    guard_copy = _copy_state(sdfg, guard, False, states)
-                    guard.remove_nodes_from(guard.nodes())
-                    states.remove(guard)
-                    states.add(guard_copy)
-                    guard = guard_copy
-                else:
-                    del components[guard]
-                    del visited[guard]
-
-            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.BasicCFBlock)
-                    and cft.children[i + 1].state is ifexit):
-                ifexit_copy = _copy_state(sdfg, ifexit, True, states)
-                ifexit.remove_nodes_from(ifexit.nodes())
-                states.remove(ifexit)
-                states.add(ifexit_copy)
-
-            components[guard] = (states, child)
-            visited.update({s: True for s in states})
-        else:
-            raise ValueError(f"Unsupported control flow class {type(child)}")
-
-    return components
-
-
-def nest_sdfg_control_flow(sdfg: SDFG, components=None):
+def nest_sdfg_control_flow(sdfg: SDFG):
     """
     Partitions the SDFG to subgraphs and nests them.
     
     :param sdfg: The SDFG to be partitioned.
-    :param components: An existing partition of the SDFG.
     """
-
-    components = components or find_sdfg_control_flow(sdfg)
-
-    num_components = len(components)
-
-    if num_components < 2:
-        return
-
-    for i, (start, (component, _)) in enumerate(components.items()):
-        nest_sdfg_subgraph(sdfg, graph.SubgraphView(sdfg, component), start)
+    for nd in sdfg.nodes():
+        if isinstance(nd, AbstractControlFlowRegion):
+            nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [nd]))
+            sdfg.reset_cfg_list()
 
 
 def nest_state_subgraph(sdfg: SDFG,
@@ -1069,7 +994,7 @@ def constant_symbols(sdfg: SDFG) -> Set[str]:
     :param sdfg: The input SDFG.
     :return: A set of symbol names that remain constant throughout the SDFG.
     """
-    interstate_symbols = {k for e in sdfg.edges() for k in e.data.assignments.keys()}
+    interstate_symbols = {k for e in sdfg.all_interstate_edges() for k in e.data.assignments.keys()}
     return set(sdfg.symbols) - interstate_symbols
 
 
@@ -1214,7 +1139,7 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
         snodes = state.scope_children()[treenode.entry]
         for node in snodes:
             if isinstance(node, nodes.NestedSDFG):
-                for nstate in node.sdfg.nodes():
+                for nstate in node.sdfg.states():
                     ntree = nstate.scope_tree()[None]
                     ntree.state = nstate
                     treenode.children.append(ntree)
@@ -1429,8 +1354,8 @@ def can_run_state_on_fpga(state: SDFGState):
             return False
 
         # Streams have strict conditions due to code generator limitations
-        if (isinstance(node, nodes.AccessNode) and isinstance(graph.parent.arrays[node.data], data.Stream)):
-            nodedesc = graph.parent.arrays[node.data]
+        if (isinstance(node, nodes.AccessNode) and isinstance(graph.sdfg.arrays[node.data], data.Stream)):
+            nodedesc = graph.sdfg.arrays[node.data]
             sdict = graph.scope_dict()
             if nodedesc.storage in [
                     dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.CPU_ThreadLocal
@@ -1442,7 +1367,7 @@ def can_run_state_on_fpga(state: SDFGState):
                 return False
 
             # Arrays of streams cannot have symbolic size on FPGA
-            if symbolic.issymbolic(nodedesc.total_size, graph.parent.constants):
+            if symbolic.issymbolic(nodedesc.total_size, graph.sdfg.constants):
                 return False
 
             # Streams cannot be unbounded on FPGA
@@ -1562,3 +1487,98 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
                                   memlet=Memlet(data=sink.data,
                                                 subset=copy.deepcopy(subset),
                                                 other_subset=copy.deepcopy(subset)))
+
+
+def all_isedges_between(src: ControlFlowBlock, dst: ControlFlowBlock) -> Iterable[Edge[InterstateEdge]]:
+    """
+    Helper function that generates an iterable of all edges potentially encountered between two control flow blocks.
+    """
+    if src.sdfg is not dst.sdfg:
+        raise RuntimeError('Blocks reside in different SDFGs')
+
+    if src.parent_graph is dst.parent_graph:
+        # Simple case where both blocks reside in the same graph:
+        edges = set()
+        for p in src.parent_graph.all_simple_paths(src, dst, as_edges=True):
+            for e in p:
+                edges.add(e)
+                if isinstance(e.dst, ControlFlowRegion):
+                    edges.update(e.dst.all_interstate_edges())
+        return edges
+    else:
+        # In the case where the two blocks are not in the same graph, we follow this procedure:
+        # 1. Collect the list of control flow regions on the direct path between the source and destination:
+        #   a) Determine the 'lowest common parent' region
+        #   b) Determine the list of parents of the source before the common parent is reached
+        #   c) Determine the list of parents of the destination before the common parent is reached.
+        # 2. In each of the parents of the source, add all edges from the source or the next parent until the
+        #    end(s) of each region to the result
+        # 3. In each of the destination's parents, add all edges from the start block on until the destination
+        #    or next parent to the result.
+        # 4. In the lowest common parent region, find all edge paths between the next parent regions for both
+        #    the source and destination.
+        # Note that for each edge, if the destination is a control flow region, any edges inside of it may also
+        # be on the path and consequently also need to be added.
+        edges = set()
+
+        # Step 1.a): Find the lowest common parent region.
+        common_regions = set()
+        pivot_graph = src.parent_graph
+        all_parent_regions_src = [pivot_graph]
+        while not isinstance(pivot_graph, SDFG):
+            pivot_graph = pivot_graph.parent_graph
+            all_parent_regions_src.append(pivot_graph)
+        pivot_graph = dst.parent_graph
+        all_parent_regions_dst = [pivot_graph]
+        while not isinstance(pivot_graph, SDFG):
+            pivot_graph = pivot_graph.parent_graph
+            all_parent_regions_dst.append(pivot_graph)
+            if pivot_graph in all_parent_regions_src:
+                common_regions.add(pivot_graph)
+
+        # Step 1.b) and 1.c): Determine the list of parents involved in the path for the source and destination.
+        involved_src: List[ControlFlowRegion] = []
+        involved_dst: List[ControlFlowRegion] = []
+        common_parent: ControlFlowRegion = None
+        for r in all_parent_regions_src:
+            if r not in common_regions:
+                involved_src.append(r)
+            else:
+                common_parent = r
+                break
+        for r in all_parent_regions_dst:
+            if r not in common_regions:
+                involved_dst.append(r)
+            else:
+                if r is not common_parent:
+                    raise RuntimeError('No common parent found')
+                break
+
+        # Step 2
+        src_pivot = src
+        for r in involved_src:
+            for sink in r.sink_nodes():
+                for p in r.all_simple_paths(src_pivot, sink, as_edges=True):
+                    for e in p:
+                        edges.add(e)
+                        if isinstance(e.dst, ControlFlowRegion):
+                            edges.update(e.dst.all_interstate_edges())
+            src_pivot = r
+        # Step 3
+        dst_pivot = dst
+        for r in involved_dst:
+            for p in r.all_simple_paths(r.start_block, dst_pivot, as_edges=True):
+                for e in p:
+                    edges.add(e)
+                    if isinstance(e.dst, ControlFlowRegion):
+                        edges.update(e.dst.all_interstate_edges())
+            dst_pivot = r
+
+        # Step 4
+        for p in common_parent.all_simple_paths(src_pivot, dst_pivot, as_edges=True):
+            for e in p:
+                edges.add(e)
+                if isinstance(e.dst, ControlFlowRegion) and not e.dst is dst_pivot:
+                    edges.update(e.dst.all_interstate_edges())
+
+        return edges

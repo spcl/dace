@@ -685,7 +685,7 @@ class UnderapproximateWritesDict:
                 Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]] = field(default_factory=dict)
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class UnderapproximateWrites(ppl.Pass):
 
     # Dictionary mapping each edge to a copy of the memlet of that edge with its write set underapproximated.
