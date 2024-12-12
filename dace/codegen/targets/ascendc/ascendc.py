@@ -1853,6 +1853,7 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
         )
 
         # Close the opened up for loops
+
         for _ in kernel_map.params:
             kernel_stream.write("}", cfg, state_id, node)
         kernel_stream.write("}", cfg, state_id, node)
@@ -1938,6 +1939,7 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
             if len(brange) > 1:
                 raise Exception("TODO, Ranges with more than 1 dimension")
 
+            conds = []
             for i in range(min(len(brange), 3)):
                 varname = scope_map.params[-i - 1]
 
@@ -2032,10 +2034,14 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
         # If there are any other threadblock maps down the road,
         # synchronize the thread-block / grid
         parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
+
+        if parent_scope.map.schedule == dtypes.ScheduleType.Ascend_Device:
+            callsite_stream.write("pipe_barrier(PIPE_ALL);", cfg, state_id, scope_entry)
         if (
             len(next_scopes) > 0
             or parent_scope.schedule == dtypes.ScheduleType.Sequential
         ):
+
             # Thread-block synchronization
             if scope_entry.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
                 callsite_stream.write("__syncthreads();", cfg, state_id, scope_entry)
@@ -2275,6 +2281,12 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
             out_edges = state.out_edges_by_connector(node, oconn)
             for out_edge in out_edges:
                 callsite_stream.write(f"outQueue_{out_edge.data.data}.EnQue<{sdfg.arrays[out_edge.data.data].dtype.ctype}>({out_edge.data.data});")
+
+        for iconn, ctype in node.in_connectors.items():
+            in_edges = state.in_edges_by_connector(node, iconn)
+            for in_edge in in_edges:
+                callsite_stream.write(f"inQueue_{in_edge.data.data}.FreeTensor({in_edge.data.data});")
+
 
 
     def make_ptr_vector_cast(self, *args, **kwargs):

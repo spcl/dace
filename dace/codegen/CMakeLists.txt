@@ -303,25 +303,25 @@ if (DACE_ENABLE_ASCEND)
   include_directories(${_CMAKE_CCE_HOST_IMPLICIT_INCLUDE_DIRECTORIES})
   link_libraries(${_CMAKE_CCE_HOST_IMPLICIT_LINK_LIBRARIES})
 
-  add_library(ascendc_kernels SHARED ${DACE_ASCEND_FILES})
-  target_compile_definitions(ascendc_kernels PUBLIC TILING_KEY_VAR=0)
+  add_library(${DACE_PROGRAM_NAME}_ascendc_kernels SHARED ${DACE_ASCEND_FILES})
+  target_compile_definitions(${DACE_PROGRAM_NAME}_ascendc_kernels PUBLIC TILING_KEY_VAR=0)
   get_filename_component(GCC_PATH ${CMAKE_CXX_COMPILER} DIRECTORY)
   get_filename_component(GCC_TOOLCHAIN_PATH ${GCC_PATH} DIRECTORY)
   if (NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     message(FATAL_ERROR "This project requires GNU compilers. Please set CMAKE_CXX_COMPILER to a GCC executable.")
   endif()
-  target_compile_options(ascendc_kernels PUBLIC
+  target_compile_options(${DACE_PROGRAM_NAME}_ascendc_kernels PUBLIC
     -O3
     -std=c++17
     ${OpenMP_CXX_FLAGS}
   )
-  target_compile_options(ascendc_kernels PRIVATE
+  target_compile_options(${DACE_PROGRAM_NAME}_ascendc_kernels PRIVATE
     --gcc-toolchain=${GCC_TOOLCHAIN_PATH} -stdlib=libstdc++
   )
-  target_compile_features(ascendc_kernels PUBLIC cxx_std_17)
-  list(APPEND DACE_LIBS ascendc_kernels)
-  target_link_libraries(ascendc_kernels PUBLIC OpenMP::OpenMP_CXX ${OpenMP_CXX_LIBRARIES})
-  set_target_properties(ascendc_kernels PROPERTIES
+  target_compile_features(${DACE_PROGRAM_NAME}_ascendc_kernels PUBLIC cxx_std_17)
+  list(APPEND DACE_LIBS ${DACE_PROGRAM_NAME}_ascendc_kernels)
+  target_link_libraries(${DACE_PROGRAM_NAME}_ascendc_kernels PUBLIC OpenMP::OpenMP_CXX ${OpenMP_CXX_LIBRARIES})
+  set_target_properties(${DACE_PROGRAM_NAME}_ascendc_kernels PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
   )
@@ -634,7 +634,7 @@ set_target_properties(${DACE_PROGRAM_NAME} PROPERTIES
     LANGUAGE CXX
     LINKER_LANGUAGE CXX)
 target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
-target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ascendc_kernels)
+target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_PROGRAM_NAME}_ascendc_kernels)
 target_compile_features(${DACE_PROGRAM_NAME} PUBLIC cxx_std_17)
 set_target_properties(${DACE_PROGRAM_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 #message(FATAL_ERROR "D ${DACE_CPP_FILES} ${DACE_HOST_FILES} ${DACE_OBJECTS}")
@@ -690,11 +690,11 @@ if(DACE_ENABLE_ASCEND)
   link_directories(${DACE_ASCEND_INSTALL_PATH}/runtime/lib64)
   find_library(ASCENDCL_LIB ascendcl HINTS ${DACE_ASCEND_INSTALL_PATH}/runtime/lib64)
   find_library(ASCENDCL_RUNTIME_LIB runtime HINTS ${DACE_ASCEND_INSTALL_PATH}/runtime/lib64)
-  target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ascendc_kernels ${ASCENDCL_LIB})
+  target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_PROGRAM_NAME}_ascendc_kernels ${ASCENDCL_LIB})
   target_compile_options(${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
   target_link_options(${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
   target_compile_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${OpenMP_CXX_FLAGS} -fopenmp)
-  target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ascendc_kernels ${OpenMP_CXX_LIBRARIES} ${CMAKE_DL_LIBS} ${ASCENDCL_LIB} ${ASCENDCL_RUNTIME_LIB})
+  target_link_libraries(dacestub_${DACE_PROGRAM_NAME} PUBLIC ${DACE_PROGRAM_NAME}_ascendc_kernels ${OpenMP_CXX_LIBRARIES} ${CMAKE_DL_LIBS} ${ASCENDCL_LIB} ${ASCENDCL_RUNTIME_LIB})
   target_link_options(dacestub_${DACE_PROGRAM_NAME} PUBLIC -fopenmp)
   set(PRELOAD_PATH "LD_PRELOAD=${ASCEND_HOME_PATH}/runtime/lib64/libruntime.so:${ASCEND_HOME_PATH}/runtime/lib64/libascendcl.so")
   set_target_properties(dacestub_${DACE_PROGRAM_NAME} PROPERTIES

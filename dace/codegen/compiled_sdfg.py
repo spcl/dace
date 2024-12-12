@@ -34,8 +34,11 @@ class ReloadableDLL(object):
         self._stub_filename = os.path.join(os.path.dirname(os.path.realpath(library_filename)),
                                            f'libdacestub_{program_name}.{Config.get("compiler", "library_extension")}')
         self._library_filename = os.path.realpath(library_filename)
+        self._kernelslibrary_filename = os.path.join(os.path.dirname(os.path.realpath(library_filename)),
+                                           f'lib{program_name}_ascendc_kernels.{Config.get("compiler", "library_extension")}')
         self._stub = None
         self._lib = None
+        self._kernel_lib = None
 
     def get_symbol(self, name, restype=ctypes.c_int):
         """ Returns a symbol (e.g., function name) in the loaded library. """
@@ -88,9 +91,7 @@ class ReloadableDLL(object):
         try:
             from dace.codegen import common
             if common.is_ascend_available():
-                ascend_runtime = common.get_ascend_runtime()
-                kernel_lib_path = os.path.join(os.path.dirname(os.path.realpath(self._library_filename)), 'libascendc_kernels.so')
-                ascend_runtime.load_kernel_lib(kernel_lib_path=kernel_lib_path)
+                self._kernel_lib =ctypes.CDLL(self._kernelslibrary_filename)
         except OSError as e:
             print(f"Library load error: {e}")
             print(f"Error details: {os.strerror(e.errno)}")
@@ -142,8 +143,13 @@ class ReloadableDLL(object):
         if self._stub is None:
             return
 
+        if self._kernel_lib is not None:
+            del self._kernel_lib
+            self._kernel_lib = None
+
         self._stub.unload_library(self._lib)
         self._lib = None
+
         del self._stub
         self._stub = None
 

@@ -8,8 +8,8 @@ class AscendRuntime:
 
         self._getlasterror_msg = getattr(self.acl_library, f'aclGetRecentErrMsg')
 
-    def load_kernel_lib(self, kernel_lib_path: str):
-        self.kernel_library = ctypes.CDLL(kernel_lib_path, mode=ctypes.RTLD_GLOBAL)
+    #def load_kernel_lib(self, kernel_lib_path: str):
+    #    self.kernel_library = ctypes.CDLL(kernel_lib_path, mode=ctypes.RTLD_GLOBAL)
 
     def get_error_string(self, err: int) -> str:
         return self._getlasterror_msg().decode('utf-8')
