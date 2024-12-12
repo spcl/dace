@@ -178,8 +178,6 @@ class BasicCFBlock(ControlFlow):
 
         expr = '__state_{}_{}:;\n'.format(cfg.cfg_id, self.state.label)
         if self.state.number_of_nodes() > 0:
-            print(f"state {self.state.label} has {self.state.number_of_nodes()} nodes")
-            print(f"cfg_id {cfg.cfg_id}")
             expr += '{\n'
             expr += f'// Start of state {self.state.label}\n'
             expr += self.dispatch_state(self.state)

@@ -113,6 +113,10 @@ inline void bare_dma_wait_all() {
 //Basic DMA 1d transfter load from HBM
 void flex_dma_async_1d(uint32_t dst_addr, uint32_t src_addr, size_t transfer_size){
     flex_push_stack();
+    // if (flex_is_dm_core() && flex_get_cluster_id() == 0)
+    // {
+    //     printf("flex_dma_async_1d: dst_addr: %x, src_addr: %x, transfer_size: %d\n", dst_addr, src_addr, transfer_size);
+    // }
     bare_dma_start_1d(dst_addr, src_addr, transfer_size); //Start iDMA
     flex_pull_stack();
 }
@@ -122,9 +126,44 @@ void flex_dma_async_2d(uint64_t dst, uint64_t src,
                                                  size_t size, size_t dst_stride,
                                                  size_t src_stride,
                                                  size_t repeat) {       
-    // flex_push_stack();         
+    if (flex_is_dm_core() && flex_get_cluster_id() == 0)
+    {
+        flex_print("dst: ");flex_print_int(dst);
+        flex_print(" src: ");flex_print_int(src);
+        flex_print(" size: ");flex_print_int(size);
+        flex_print(" dst_stride: ");flex_print_int(dst_stride);
+        flex_print(" src_stride: ");flex_print_int(src_stride);
+        flex_print(" repeat: ");flex_print_int(repeat);
+        flex_print("\n");
+    }
     // bare_dma_start_2d(dst, src, size, dst_stride, src_stride, repeat); //Start iDMA
-    // flex_pull_stack();
+    // flex_dma_async_wait_all();
+    for (int i = 0; i < repeat; i++)
+    {
+        flex_dma_async_1d(dst + i * dst_stride, src + i * src_stride, size);
+        flex_dma_async_wait_all();
+    }
+}
+
+void flex_dma_async_2d_async(uint64_t dst, uint64_t src,
+                                                 size_t size, size_t dst_stride,
+                                                 size_t src_stride,
+                                                 size_t repeat) {       
+    flex_push_stack();         
+    
+    
+    if (flex_is_dm_core() && flex_get_cluster_id() == 0)
+    {
+        flex_print("dst: ");flex_print_int(dst);
+        flex_print(" src: ");flex_print_int(src);
+        flex_print(" size: ");flex_print_int(size);
+        flex_print(" dst_stride: ");flex_print_int(dst_stride);
+        flex_print(" src_stride: ");flex_print_int(src_stride);
+        flex_print(" repeat: ");flex_print_int(repeat);
+        flex_print("\n");
+    }
+    // bare_dma_start_2d(dst, src, size, dst_stride, src_stride, repeat); //Start iDMA
+    flex_pull_stack();
     for (int i = 0; i < repeat; i++)
     {
         flex_dma_async_1d(dst + i * dst_stride, src + i * src_stride, size);

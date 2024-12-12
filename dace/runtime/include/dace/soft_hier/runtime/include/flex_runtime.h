@@ -6,14 +6,15 @@
 #define ARCH_NUM_CLUSTER            (ARCH_NUM_CLUSTER_X*ARCH_NUM_CLUSTER_Y)
 #define cluster_index(x,y)          ((y)*ARCH_NUM_CLUSTER_X+(x))
 #define local(offset)               (ARCH_CLUSTER_TCDM_BASE+offset)
+#define zomem(offset)               (ARCH_CLUSTER_ZOMEM_BASE+offset)
 #define remote_cid(cid,offset)      (ARCH_CLUSTER_TCDM_REMOTE+cid*ARCH_CLUSTER_TCDM_SIZE+offset)
 #define remote_xy(x,y,offset)       (ARCH_CLUSTER_TCDM_REMOTE+cluster_index(x,y)*ARCH_CLUSTER_TCDM_SIZE+offset)
 #define remote_pos(pos,offset)      (ARCH_CLUSTER_TCDM_REMOTE+cluster_index(pos.x,pos.y)*ARCH_CLUSTER_TCDM_SIZE+offset)
 #define hbm_addr(offset)            (ARCH_HBM_START_BASE+offset)
-#define hbm_west(hid,offset)        (ARCH_HBM_START_BASE+(hid)*ARCH_HBM_NODE_INTERLEAVE+offset)
-#define hbm_north(hid,offset)       (ARCH_HBM_START_BASE+(hid)*ARCH_HBM_NODE_INTERLEAVE+ARCH_HBM_NODE_INTERLEAVE*ARCH_NUM_CLUSTER_Y+offset)
-#define hbm_east(hid,offset)        (ARCH_HBM_START_BASE+(hid)*ARCH_HBM_NODE_INTERLEAVE+ARCH_HBM_NODE_INTERLEAVE*(ARCH_NUM_CLUSTER_Y+ARCH_NUM_CLUSTER_X)+offset)
-#define hbm_south(hid,offset)       (ARCH_HBM_START_BASE+(hid)*ARCH_HBM_NODE_INTERLEAVE+ARCH_HBM_NODE_INTERLEAVE*2*ARCH_NUM_CLUSTER_Y+ARCH_HBM_NODE_INTERLEAVE*ARCH_NUM_CLUSTER_X+offset)
+#define hbm_west(hid,offset)        (ARCH_HBM_START_BASE+(hid)*ARCH_HBM_NODE_ADDR_SPACE+offset)
+#define hbm_north(hid,offset)       (ARCH_HBM_START_BASE+(hid)*ARCH_HBM_NODE_ADDR_SPACE+ARCH_HBM_NODE_ADDR_SPACE*ARCH_NUM_CLUSTER_Y+offset)
+#define hbm_east(hid,offset)        (ARCH_HBM_START_BASE+(hid)*ARCH_HBM_NODE_ADDR_SPACE+ARCH_HBM_NODE_ADDR_SPACE*(ARCH_NUM_CLUSTER_Y+ARCH_NUM_CLUSTER_X)+offset)
+#define hbm_south(hid,offset)       (ARCH_HBM_START_BASE+(hid)*ARCH_HBM_NODE_ADDR_SPACE+ARCH_HBM_NODE_ADDR_SPACE*2*ARCH_NUM_CLUSTER_Y+ARCH_HBM_NODE_ADDR_SPACE*ARCH_NUM_CLUSTER_X+offset)
 
 /*******************
 * Cluster Position *
@@ -80,19 +81,19 @@ uint32_t flex_get_cluster_id(){
 
 uint32_t flex_get_core_id(){
     uint32_t hartid;
-    asm("csrr %0, mhartid" : "=r"(hartid));
+    asm volatile("csrr %0, mhartid" : "=r"(hartid));
     return hartid;
 }
 
 uint32_t flex_is_dm_core(){
     uint32_t hartid;
-    asm("csrr %0, mhartid" : "=r"(hartid));
+    asm volatile("csrr %0, mhartid" : "=r"(hartid));
     return (hartid == ARCH_NUM_CORE_PER_CLUSTER-1);
 }
 
 uint32_t flex_is_first_core(){
     uint32_t hartid;
-    asm("csrr %0, mhartid" : "=r"(hartid));
+    asm volatile("csrr %0, mhartid" : "=r"(hartid));
     return (hartid == 0);
 }
 
@@ -271,6 +272,26 @@ void flex_timer_end(){
     flex_intra_cluster_sync();
 }
 
+/*******************
+*      Logging     *
+*******************/
+
+void flex_log_char(char c){
+    uint32_t data = (uint32_t) c;
+    volatile uint32_t * log_reg = (volatile uint32_t *)(ARCH_SOC_REGISTER_EOC + 16);
+    *log_reg = data;
+}
+
+void flex_print(char * str){
+    for (int i = 0; str[i] != '\0'; i++) {
+        flex_log_char(str[i]);
+    }
+}
+
+void flex_print_int(uint32_t data){
+    volatile uint32_t * log_reg = (volatile uint32_t *)(ARCH_SOC_REGISTER_EOC + 20);
+    *log_reg = data;
+}
 
 /****************************
 *      Stack Operations     *
@@ -278,55 +299,55 @@ void flex_timer_end(){
 
 
 inline void flex_push_stack(){
-    asm volatile (
-        "addi sp, sp, -96 \n"    // Adjust stack pointer (allocate 96 bytes on stack)
-        "sw ra, 92(sp) \n"       // Save return address (ra) on stack
-        "sw s0, 88(sp) \n"       // Save frame pointer (s0) on stack
-        "sw s1, 84(sp) \n"       // Save s1 on stack
-        "sw s2, 80(sp) \n"       // Save s2 on stack
-        "sw s3, 76(sp) \n"       // Save s3 on stack
-        "sw s4, 72(sp) \n"       // Save s4 on stack
-        "sw s5, 68(sp) \n"       // Save s5 on stack
-        "sw s6, 64(sp) \n"       // Save s6 on stack
-        "sw s7, 60(sp) \n"       // Save s7 on stack
-        "sw s8, 56(sp) \n"       // Save s8 on stack
-        "sw s9, 52(sp) \n"       // Save s9 on stack
-        "sw s10, 48(sp) \n"      // Save s10 on stack
-        "sw s11, 44(sp) \n"      // Save s11 on stack
-        "sw t0, 40(sp) \n"       // Save t0 on stack
-        "sw t1, 36(sp) \n"       // Save t1 on stack
-        "sw t2, 32(sp) \n"       // Save t2 on stack
-        "sw t3, 28(sp) \n"       // Save t3 on stack
-        "sw t4, 24(sp) \n"       // Save t4 on stack
-        "sw t5, 20(sp) \n"       // Save t5 on stack
-        "sw t6, 16(sp) \n"       // Save t6 on stack
-    );
+    // asm volatile (
+    //     "addi sp, sp, -96 \n"    // Adjust stack pointer (allocate 96 bytes on stack)
+    //     "sw ra, 92(sp) \n"       // Save return address (ra) on stack
+    //     "sw s0, 88(sp) \n"       // Save frame pointer (s0) on stack
+    //     "sw s1, 84(sp) \n"       // Save s1 on stack
+    //     "sw s2, 80(sp) \n"       // Save s2 on stack
+    //     "sw s3, 76(sp) \n"       // Save s3 on stack
+    //     "sw s4, 72(sp) \n"       // Save s4 on stack
+    //     "sw s5, 68(sp) \n"       // Save s5 on stack
+    //     "sw s6, 64(sp) \n"       // Save s6 on stack
+    //     "sw s7, 60(sp) \n"       // Save s7 on stack
+    //     "sw s8, 56(sp) \n"       // Save s8 on stack
+    //     "sw s9, 52(sp) \n"       // Save s9 on stack
+    //     "sw s10, 48(sp) \n"      // Save s10 on stack
+    //     "sw s11, 44(sp) \n"      // Save s11 on stack
+    //     "sw t0, 40(sp) \n"       // Save t0 on stack
+    //     "sw t1, 36(sp) \n"       // Save t1 on stack
+    //     "sw t2, 32(sp) \n"       // Save t2 on stack
+    //     "sw t3, 28(sp) \n"       // Save t3 on stack
+    //     "sw t4, 24(sp) \n"       // Save t4 on stack
+    //     "sw t5, 20(sp) \n"       // Save t5 on stack
+    //     "sw t6, 16(sp) \n"       // Save t6 on stack
+    // );
 }
 
 inline void flex_pull_stack(){
-    asm volatile (
-        "lw ra, 92(sp) \n"       // Restore return address (ra)
-        "lw s0, 88(sp) \n"       // Restore frame pointer (s0)
-        "lw s1, 84(sp) \n"       // Restore s1
-        "lw s2, 80(sp) \n"       // Restore s2
-        "lw s3, 76(sp) \n"       // Restore s3
-        "lw s4, 72(sp) \n"       // Restore s4
-        "lw s5, 68(sp) \n"       // Restore s5
-        "lw s6, 64(sp) \n"       // Restore s6
-        "lw s7, 60(sp) \n"       // Restore s7
-        "lw s8, 56(sp) \n"       // Restore s8
-        "lw s9, 52(sp) \n"       // Restore s9
-        "lw s10, 48(sp) \n"      // Restore s10
-        "lw s11, 44(sp) \n"      // Restore s11
-        "lw t0, 40(sp) \n"       // Restore t0
-        "lw t1, 36(sp) \n"       // Restore t1
-        "lw t2, 32(sp) \n"       // Restore t2
-        "lw t3, 28(sp) \n"       // Restore t3
-        "lw t4, 24(sp) \n"       // Restore t4
-        "lw t5, 20(sp) \n"       // Restore t5
-        "lw t6, 16(sp) \n"       // Restore t6
-        "addi sp, sp, 96 \n"     // Adjust stack pointer back (deallocate 96 bytes from stack)
-    );
+    // asm volatile (
+    //     "lw ra, 92(sp) \n"       // Restore return address (ra)
+    //     "lw s0, 88(sp) \n"       // Restore frame pointer (s0)
+    //     "lw s1, 84(sp) \n"       // Restore s1
+    //     "lw s2, 80(sp) \n"       // Restore s2
+    //     "lw s3, 76(sp) \n"       // Restore s3
+    //     "lw s4, 72(sp) \n"       // Restore s4
+    //     "lw s5, 68(sp) \n"       // Restore s5
+    //     "lw s6, 64(sp) \n"       // Restore s6
+    //     "lw s7, 60(sp) \n"       // Restore s7
+    //     "lw s8, 56(sp) \n"       // Restore s8
+    //     "lw s9, 52(sp) \n"       // Restore s9
+    //     "lw s10, 48(sp) \n"      // Restore s10
+    //     "lw s11, 44(sp) \n"      // Restore s11
+    //     "lw t0, 40(sp) \n"       // Restore t0
+    //     "lw t1, 36(sp) \n"       // Restore t1
+    //     "lw t2, 32(sp) \n"       // Restore t2
+    //     "lw t3, 28(sp) \n"       // Restore t3
+    //     "lw t4, 24(sp) \n"       // Restore t4
+    //     "lw t5, 20(sp) \n"       // Restore t5
+    //     "lw t6, 16(sp) \n"       // Restore t6
+    //     "addi sp, sp, 96 \n"     // Adjust stack pointer back (deallocate 96 bytes from stack)
+    // );
 }
 
 #endif

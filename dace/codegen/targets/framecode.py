@@ -211,7 +211,7 @@ typedef struct {mangle_dace_state_struct_name(sdfg)} {{
         """
         # Write frame code - header
         global_stream.write('/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n' + '#include <dace/dace.h>\n', sdfg)
-
+        global_stream.write('#include <dace/soft_hier/preload.h>\n', sdfg)
         # Write header required by environments
         for env in self.environments:
             self.statestruct.extend(env.state_fields)
@@ -413,7 +413,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                        global_stream: CodeIOStream,
                        callsite_stream: CodeIOStream,
                        generate_state_footer: bool = True):
-        print(f'Framecode generating state {state.label}...')
+        # print(f'Framecode generating state {state.label}...')
         callsite_stream.write(f'//Framecode generating state {state.label}...', sdfg)
         sid = state.block_id
         # Emit internal transient array allocation
@@ -438,7 +438,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         components = dace.sdfg.concurrent_subgraphs(state)
 
         if len(components) <= 1:
-            print(f"len(components) <= 1: {len(components)}")
             self._dispatcher.dispatch_subgraph(sdfg,
                                                cfg,
                                                state,
@@ -448,7 +447,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                                                skip_entry_node=False)
             # print(f'Finished Framecode dispatch_subgraph {state.label}.')
         else:
-            print(f"len(components) > 1: {len(components)}")
             if sdfg.openmp_sections:
                 callsite_stream.write("#pragma omp parallel sections\n{")
             for c in components:

@@ -15,8 +15,8 @@ void flex_redmule_config(uint16_t m_size, uint16_t n_size, uint16_t k_size){
     uint32_t cfg_reg0 = ((k_size << 16) | (m_size << 0));
     uint32_t cfg_reg1 = (n_size << 0);
 
-    asm volatile ("addi t3, %0, 0" :: "r"(cfg_reg0));
-    asm volatile ("addi t4, %0, 0" :: "r"(cfg_reg1));
+    asm volatile ("addi t3, %0, 0" :: "r"(cfg_reg0): "t3");
+    asm volatile ("addi t4, %0, 0" :: "r"(cfg_reg1): "t4");
 
     /* mcnfig instruction */
     // asm volatile(
@@ -37,9 +37,9 @@ void flex_redmule_config(uint16_t m_size, uint16_t n_size, uint16_t k_size){
 
 void flex_redmule_trigger(uint32_t x_addr, uint32_t w_addr, uint32_t y_addr, redmule_compute_format_t format){
     flex_push_stack();
-    asm volatile ("addi t0, %0, 0" :: "r"(x_addr));
-    asm volatile ("addi t1, %0, 0" :: "r"(w_addr));
-    asm volatile ("addi t2, %0, 0" :: "r"(y_addr));
+    asm volatile ("addi t0, %0, 0" :: "r"(x_addr): "t0");
+    asm volatile ("addi t1, %0, 0" :: "r"(w_addr): "t1");
+    asm volatile ("addi t2, %0, 0" :: "r"(y_addr): "t2");
 
     /* arith instruction */
     // sm volatile(

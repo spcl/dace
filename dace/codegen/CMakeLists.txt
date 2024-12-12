@@ -288,6 +288,7 @@ if (DACE_ENABLE_RTL AND DACE_ENABLE_XILINX)
 endif()
 
 if(DACE_ENABLE_SOFTHIER)
+  include_directories(${DACE_RUNTIME_DIR}/include/soft_hier)
   message(STATUS "11111111111")
   enable_language(SHCC)
   message(STATUS "2222222222")
@@ -655,7 +656,7 @@ if(DACE_ENABLE_SOFTHIER)
 
   add_custom_command(
       OUTPUT softhier.elf
-      COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s -x c ${DACE_SOFTHIER_FILES}
+      COMMAND ${CMAKE_SHCC_COMPILER} -I ${SOFTHIER_INSTALL_PATH}/include -I ${SOFTHIER_INCLUDE_DIRS} -T ${SHCC_LINKER_SCRIPT} -nostartfiles -mabi=ilp32d -mcmodel=medany -march=rv32imafd -g -O3 -ffast-math -fno-builtin-printf -fno-common -ffunction-sections -Wl,--gc-sections -o ${SOFTHIER_SW_BUILD_PATH}/softhier.elf ${SOFTHIER_INSTALL_PATH}/flex_start.s -x c ${DACE_SOFTHIER_FILES}
       COMMENT "Generating softhier.elf"
   )
 
