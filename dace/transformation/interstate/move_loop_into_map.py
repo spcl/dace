@@ -24,7 +24,7 @@ def offset(memlet_subset_ranges, value):
     return (memlet_subset_ranges[0] + value, memlet_subset_ranges[1] + value, memlet_subset_ranges[2])
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class MoveLoopIntoMap(transformation.MultiStateTransformation):
     """
     Moves a loop around a map into the map

@@ -5,13 +5,12 @@ from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowBlock, Control
 from dace.transformation import transformation
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class BlockFusion(transformation.MultiStateTransformation):
-    """ Implements the state-fusion transformation.
+    """ Implements the block-fusion transformation.
 
-        State-fusion takes two states that are connected through a single edge,
-        and fuses them into one state. If permissive, also applies if potential memory
-        access hazards are created.
+        Block-fusion takes two control flow blocks that are connected through a single edge, where either one or both
+        blocks are 'no-op' control flow blocks, and fuses them into one.
     """
 
     first_block = transformation.PatternNode(ControlFlowBlock)
@@ -53,7 +52,7 @@ class BlockFusion(transformation.MultiStateTransformation):
         if out_edges[0].data.assignments:
             if not in_edges:
                 return False
-            # If the first block is a control flow region, no absorbtion is possible.
+            # If the first block is a control flow region, no absorption is possible.
             if isinstance(self.first_block, AbstractControlFlowRegion):
                 return False
             # Fail if symbol is set before the block to fuse

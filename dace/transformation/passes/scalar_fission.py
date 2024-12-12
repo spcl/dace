@@ -8,7 +8,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class ScalarFission(ppl.Pass):
     """
     Fission transient scalars or arrays of size 1 that are dominated by a write into separate data containers.

@@ -15,7 +15,7 @@ from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
 
     conditional = transformation.PatternNode(ConditionalBlock)

@@ -13,7 +13,7 @@ from dace.transformation import pass_pipeline as ppl, transformation
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class DeadStateElimination(ppl.Pass):
     """
     Removes all unreachable states (e.g., due to a branch that will never be taken) from an SDFG.
@@ -166,7 +166,7 @@ class DeadStateElimination(ppl.Pass):
                     raise InvalidSDFGNodeError('Conditional block detected, where else branch is not the last branch')
                 break
             # If an unconditional branch is found, ignore all other branches that follow this one.
-            if cond.as_string.strip() == '1' or self._is_truthy(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
+            if cond.as_string.strip() == '1' or self._is_definitely_true(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
                 unconditional = branch
                 break
         if unconditional is not None:
@@ -177,7 +177,7 @@ class DeadStateElimination(ppl.Pass):
         else:
             # Check if any branches are certainly never taken.
             for cond, branch in block.branches:
-                if cond is not None and self._is_falsy(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
+                if cond is not None and self._is_definitely_false(symbolic.pystr_to_symbolic(cond.as_string), block.sdfg):
                     dead_branches.append([cond, branch])
 
         return dead_branches
@@ -195,9 +195,9 @@ class DeadStateElimination(ppl.Pass):
             return True
 
         # Evaluate condition
-        return self._is_truthy(edge.condition_sympy(), sdfg)
+        return self._is_definitely_true(edge.condition_sympy(), sdfg)
 
-    def _is_truthy(self, cond: sp.Basic, sdfg: SDFG) -> bool:
+    def _is_definitely_true(self, cond: sp.Basic, sdfg: SDFG) -> bool:
         if cond == True or cond == sp.Not(sp.logic.boolalg.BooleanFalse(), evaluate=False):
             return True
 
@@ -215,9 +215,9 @@ class DeadStateElimination(ppl.Pass):
             return False
 
         # Evaluate condition
-        return self._is_falsy(edge.condition_sympy(), sdfg)
+        return self._is_definitely_false(edge.condition_sympy(), sdfg)
 
-    def _is_falsy(self, cond: sp.Basic, sdfg: SDFG) -> bool:
+    def _is_definitely_false(self, cond: sp.Basic, sdfg: SDFG) -> bool:
         if cond == False or cond == sp.Not(sp.logic.boolalg.BooleanTrue(), evaluate=False):
             return True
 

@@ -3,9 +3,9 @@
 from typing import Dict
 import dace
 from dace.sdfg.analysis.writeset_underapproximation import UnderapproximateWrites, UnderapproximateWritesDict
+from dace.sdfg.utils import inline_control_flow_regions
 from dace.subsets import Range
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.fusion_inline import InlineControlFlowRegions
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -309,12 +309,7 @@ def test_loop_in_map_multiplied_indices():
     sdfg = loop.to_sdfg(simplify=True)
 
     # NOTE: Until the analysis is changed to make use of the new blocks, inline control flow for the analysis.
-    inliner = InlineControlFlowRegions()
-    inliner.no_inline_conditional = False
-    inliner.no_inline_loops = False
-    inliner.no_inline_function_call_regions = False
-    inliner.no_inline_named_regions = False
-    inliner.apply_pass(sdfg, {})
+    inline_control_flow_regions(sdfg)
 
     pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
@@ -341,12 +336,7 @@ def test_loop_in_map():
     sdfg = loop.to_sdfg(simplify=True)
 
     # NOTE: Until the analysis is changed to make use of the new blocks, inline control flow for the analysis.
-    inliner = InlineControlFlowRegions()
-    inliner.no_inline_conditional = False
-    inliner.no_inline_loops = False
-    inliner.no_inline_function_call_regions = False
-    inliner.no_inline_named_regions = False
-    inliner.apply_pass(sdfg, {})
+    inline_control_flow_regions(sdfg)
 
     pipeline = Pipeline([UnderapproximateWrites()])
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
@@ -474,12 +464,7 @@ def test_nested_sdfg_in_map_nest():
     sdfg = nested_loop.to_sdfg(simplify=True)
 
     # NOTE: Until the analysis is changed to make use of the new blocks, inline control flow for the analysis.
-    inliner = InlineControlFlowRegions()
-    inliner.no_inline_conditional = False
-    inliner.no_inline_loops = False
-    inliner.no_inline_function_call_regions = False
-    inliner.no_inline_named_regions = False
-    inliner.apply_pass(sdfg, {})
+    inline_control_flow_regions(sdfg)
 
     pipeline = Pipeline([UnderapproximateWrites()])
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
@@ -517,12 +502,7 @@ def test_loop_in_nested_sdfg_in_map_partial_write():
     sdfg = nested_loop.to_sdfg(simplify=True)
 
     # NOTE: Until the analysis is changed to make use of the new blocks, inline control flow for the analysis.
-    inliner = InlineControlFlowRegions()
-    inliner.no_inline_conditional = False
-    inliner.no_inline_loops = False
-    inliner.no_inline_function_call_regions = False
-    inliner.no_inline_named_regions = False
-    inliner.apply_pass(sdfg, {})
+    inline_control_flow_regions(sdfg)
 
     pipeline = Pipeline([UnderapproximateWrites()])
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
@@ -558,12 +538,7 @@ def test_map_in_nested_sdfg_in_map():
     sdfg = nested_loop.to_sdfg(simplify=True)
 
     # NOTE: Until the analysis is changed to make use of the new blocks, inline control flow for the analysis.
-    inliner = InlineControlFlowRegions()
-    inliner.no_inline_conditional = False
-    inliner.no_inline_loops = False
-    inliner.no_inline_function_call_regions = False
-    inliner.no_inline_named_regions = False
-    inliner.apply_pass(sdfg, {})
+    inline_control_flow_regions(sdfg)
 
     pipeline = Pipeline([UnderapproximateWrites()])
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
@@ -600,12 +575,7 @@ def test_nested_sdfg_in_map_branches():
     sdfg = nested_loop.to_sdfg(simplify=True)
 
     # NOTE: Until the analysis is changed to make use of the new blocks, inline control flow for the analysis.
-    inliner = InlineControlFlowRegions()
-    inliner.no_inline_conditional = False
-    inliner.no_inline_loops = False
-    inliner.no_inline_function_call_regions = False
-    inliner.no_inline_named_regions = False
-    inliner.apply_pass(sdfg, {})
+    inline_control_flow_regions(sdfg)
 
     pipeline = Pipeline([UnderapproximateWrites()])
     result: Dict[int, UnderapproximateWritesDict] = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
@@ -874,12 +844,7 @@ def test_loop_in_nested_sdfg_in_map_multiplied_indices():
     sdfg = nested_loop.to_sdfg(simplify=True)
 
     # NOTE: Until the analysis is changed to make use of the new blocks, inline control flow for the analysis.
-    inliner = InlineControlFlowRegions()
-    inliner.no_inline_conditional = False
-    inliner.no_inline_loops = False
-    inliner.no_inline_function_call_regions = False
-    inliner.no_inline_named_regions = False
-    inliner.apply_pass(sdfg, {})
+    inline_control_flow_regions(sdfg)
 
     pipeline = Pipeline([UnderapproximateWrites()])
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
@@ -912,12 +877,7 @@ def test_loop_in_nested_sdfg_simple():
     sdfg = nested_loop.to_sdfg(simplify=True)
 
     # NOTE: Until the analysis is changed to make use of the new blocks, inline control flow for the analysis.
-    inliner = InlineControlFlowRegions()
-    inliner.no_inline_conditional = False
-    inliner.no_inline_loops = False
-    inliner.no_inline_function_call_regions = False
-    inliner.no_inline_named_regions = False
-    inliner.apply_pass(sdfg, {})
+    inline_control_flow_regions(sdfg)
 
     pipeline = Pipeline([UnderapproximateWrites()])
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]

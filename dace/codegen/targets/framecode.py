@@ -485,7 +485,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
-        if sdfg.root_sdfg.recheck_using_experimental_blocks():
+        if sdfg.root_sdfg.recheck_using_explicit_control_flow():
             # Use control flow blocks embedded in the SDFG to generate control flow.
             cft = cflow.structured_control_flow_tree_with_regions(sdfg, dispatch_state)
         elif config.Config.get_bool('optimizer', 'detect_control_flow'):
@@ -697,19 +697,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     if name in self.free_symbols(isedge.data):
                         multistate = True
                 for cfg in sdfg.all_control_flow_regions():
-                    block_syms = set()
-                    if isinstance(cfg, LoopRegion):
-                        block_syms |= symbolic.free_symbols_and_functions(cfg.loop_condition.as_string)
-                        update_stmt = loop_analysis.get_update_assignment(cfg)
-                        init_stmt = loop_analysis.get_init_assignment(cfg)
-                        if update_stmt:
-                            block_syms |= symbolic.free_symbols_and_functions(update_stmt)
-                        if init_stmt:
-                            block_syms |= symbolic.free_symbols_and_functions(init_stmt)
-                    elif isinstance(cfg, ConditionalBlock):
-                        for cond, _ in cfg.branches:
-                            if cond is not None:
-                                block_syms |= symbolic.free_symbols_and_functions(cond.as_string)
+                    block_syms = cfg.used_symbols(all_symbols=True, with_contents=False)
                     if name in block_syms:
                         multistate = True
 

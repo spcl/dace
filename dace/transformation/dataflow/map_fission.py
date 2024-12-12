@@ -15,7 +15,7 @@ from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class MapFission(transformation.SingleStateTransformation):
     """ Implements the MapFission transformation.
         Map fission refers to subsuming a map scope into its internal subgraph,

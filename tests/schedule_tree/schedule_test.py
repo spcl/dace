@@ -5,10 +5,6 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 import numpy as np
 
-from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import LoopRegion
-from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
-
 
 def test_for_in_map_in_for():
 

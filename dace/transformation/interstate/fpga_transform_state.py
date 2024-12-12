@@ -31,7 +31,7 @@ def fpga_update(sdfg: SDFG, state: SDFGState, depth: int):
                 fpga_update(node.sdfg, s, depth + 1)
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class FPGATransformState(transformation.MultiStateTransformation):
     """ Implements the FPGATransformState transformation. """
 
@@ -98,13 +98,12 @@ class FPGATransformState(transformation.MultiStateTransformation):
         # Input nodes may also be nodes with WCR memlets
         # We have to recur across nested SDFGs to find them
         wcr_input_nodes = set()
-        stack = []
 
-        for node, pGraph in state.all_nodes_recursive():
+        for node, node_parent_graph in state.all_nodes_recursive():
             if isinstance(node, dace.sdfg.nodes.AccessNode):
-                for e in pGraph.in_edges(node):
+                for e in node_parent_graph.in_edges(node):
                     if e.data.wcr is not None:
-                        trace = dace.sdfg.trace_nested_access(node, pGraph, pGraph.sdfg)
+                        trace = dace.sdfg.trace_nested_access(node, node_parent_graph, node_parent_graph.sdfg)
                         for node_trace, memlet_trace, state_trace, sdfg_trace in trace:
                             # Find the name of the accessed node in our scope
                             if state_trace == state and sdfg_trace == sdfg:

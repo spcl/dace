@@ -31,7 +31,7 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class StateFusionExtended(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation extended to fuse states with RAW and WAW dependencies.
         An empty memlet is used to represent a dependency between two subgraphs with RAW and WAW dependencies.

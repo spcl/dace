@@ -11,7 +11,6 @@ import dace
 from dace import dtypes, properties, symbolic
 from dace.codegen import cppunparse
 from dace.frontend.python.astutils import ASTFindReplace
-from dace.sdfg.state import ConditionalBlock, LoopRegion
 
 if TYPE_CHECKING:
     from dace.sdfg.state import StateSubgraphView
@@ -203,13 +202,4 @@ def replace_datadesc_names(sdfg: 'dace.SDFG', repl: Dict[str, str]):
                         edge.data.data = repl[edge.data.data]
 
         # Replace in loop or branch conditions:
-        if isinstance(cf, LoopRegion):
-            replace_in_codeblock(cf.loop_condition, repl)
-            if cf.update_statement:
-                replace_in_codeblock(cf.update_statement, repl)
-            if cf.init_statement:
-                replace_in_codeblock(cf.init_statement, repl)
-        elif isinstance(cf, ConditionalBlock):
-            for c, _ in cf.branches:
-                if c is not None:
-                    replace_in_codeblock(c, repl)
+        cf.replace_meta_accesses(repl)

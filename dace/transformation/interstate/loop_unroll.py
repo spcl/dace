@@ -13,7 +13,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
 
 @make_properties
-@xf.experimental_cfg_block_compatible
+@xf.explicit_cf_compatible
 class LoopUnroll(xf.MultiStateTransformation):
     """ Unrolls a for-loop into multiple individual control flow regions """
 
@@ -26,7 +26,7 @@ class LoopUnroll(xf.MultiStateTransformation):
     )
 
     inline_iterations = Property(dtype=bool, default=True,
-                                 desc='Whether or not to inline individual iteration\'s CFGs after unrolling')
+                                 desc="Whether or not to inline individual iterations' CFGs after unrolling")
 
     @classmethod
     def expressions(cls):

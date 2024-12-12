@@ -11,11 +11,11 @@ from dace.properties import Property, make_properties, CodeBlock
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.passes.analysis import loop_analysis
-from dace.transformation.transformation import experimental_cfg_block_compatible
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 @make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class LoopPeeling(LoopUnroll):
     """
     Splits the first `count` iterations of loop into multiple, separate control flow regions (one per iteration).

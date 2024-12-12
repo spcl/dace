@@ -1305,13 +1305,14 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
 
 def inline_control_flow_regions(sdfg: SDFG, types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
-                                blacklist: Optional[List[Type[AbstractControlFlowRegion]]] = None,
-                                progress: bool = None) -> int:
+                                ignore_region_types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
+                                progress: bool = None, lower_returns: bool = False,
+                                eliminate_dead_states: bool = False) -> int:
     if types:
         blocks = [n for n, _ in sdfg.all_nodes_recursive() if type(n) in types]
-    elif blacklist:
+    elif ignore_region_types:
         blocks = [n for n, _ in sdfg.all_nodes_recursive()
-                  if isinstance(n, AbstractControlFlowRegion) and type(n) not in blacklist]
+                  if isinstance(n, AbstractControlFlowRegion) and type(n) not in ignore_region_types]
     else:
         blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, AbstractControlFlowRegion)]
     count = 0
@@ -1324,8 +1325,14 @@ def inline_control_flow_regions(sdfg: SDFG, types: Optional[List[Type[AbstractCo
         # Control flow regions where the parent is a conditional block are not inlined.
         if block.parent_graph and type(block.parent_graph) == ConditionalBlock:
             continue
-        if block.inline()[0]:
+        if block.inline(lower_returns=lower_returns)[0]:
             count += 1
+    if eliminate_dead_states:
+        # Avoid cyclic imports.
+        from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+        DeadStateElimination().apply_pass(sdfg, {})
+
+    sdfg.reset_cfg_list()
 
     return count
 
@@ -1550,51 +1557,48 @@ def _tswds_state(
 
 def _tswds_cf_region(
         sdfg: SDFG,
-        region: AbstractControlFlowRegion,
+        cfg: AbstractControlFlowRegion,
         symbols: Dict[str, dtypes.typeclass],
         recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
-    if isinstance(region, ConditionalBlock):
-        for _, b in region.branches:
-            yield from _tswds_cf_region(sdfg, b, symbols, recursive)
-        return
-    elif isinstance(region, LoopRegion):
-        # Add the own loop variable to the defined symbols, if present.
-        loop_syms = region.new_symbols(symbols)
-        symbols.update({k: v for k, v in loop_syms.items() if v is not None})
+    sub_regions = cfg.sub_regions() or [cfg]
+    for region in sub_regions:
+        # Add symbols newly defined by this region, if present.
+        region_symbols = region.new_symbols(symbols)
+        symbols.update({k: v for k, v in region_symbols.items() if v is not None})
 
-    # Add symbols from inter-state edges along the state machine
-    start_region = region.start_block
-    visited = set()
-    visited_edges = set()
-    for edge in region.dfs_edges(start_region):
-        # Source -> inter-state definition -> Destination
-        visited_edges.add(edge)
-        # Source
-        if edge.src not in visited:
-            visited.add(edge.src)
-            if isinstance(edge.src, SDFGState):
-                yield from _tswds_state(sdfg, edge.src, {}, recursive)
-            elif isinstance(edge.src, AbstractControlFlowRegion):
-                yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
+        # Add symbols from inter-state edges along the state machine
+        start_region = region.start_block
+        visited = set()
+        visited_edges = set()
+        for edge in region.dfs_edges(start_region):
+            # Source -> inter-state definition -> Destination
+            visited_edges.add(edge)
+            # Source
+            if edge.src not in visited:
+                visited.add(edge.src)
+                if isinstance(edge.src, SDFGState):
+                    yield from _tswds_state(sdfg, edge.src, {}, recursive)
+                elif isinstance(edge.src, AbstractControlFlowRegion):
+                    yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
 
-        # Add edge symbols into defined symbols
-        issyms = edge.data.new_symbols(sdfg, symbols)
-        symbols.update({k: v for k, v in issyms.items() if v is not None})
+            # Add edge symbols into defined symbols
+            issyms = edge.data.new_symbols(sdfg, symbols)
+            symbols.update({k: v for k, v in issyms.items() if v is not None})
 
-        # Destination
-        if edge.dst not in visited:
-            visited.add(edge.dst)
-            if isinstance(edge.dst, SDFGState):
-                yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
-            elif isinstance(edge.dst, AbstractControlFlowRegion):
-                yield from _tswds_cf_region(sdfg, edge.dst, symbols, recursive)
+            # Destination
+            if edge.dst not in visited:
+                visited.add(edge.dst)
+                if isinstance(edge.dst, SDFGState):
+                    yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
+                elif isinstance(edge.dst, AbstractControlFlowRegion):
+                    yield from _tswds_cf_region(sdfg, edge.dst, symbols, recursive)
 
-    # If there is only one state, the DFS will miss it
-    if start_region not in visited:
-        if isinstance(start_region, SDFGState):
-            yield from _tswds_state(sdfg, start_region, symbols, recursive)
-        elif isinstance(start_region, AbstractControlFlowRegion):
-            yield from _tswds_cf_region(sdfg, start_region, symbols, recursive)
+        # If there is only one state, the DFS will miss it
+        if start_region not in visited:
+            if isinstance(start_region, SDFGState):
+                yield from _tswds_state(sdfg, start_region, symbols, recursive)
+            elif isinstance(start_region, AbstractControlFlowRegion):
+                yield from _tswds_cf_region(sdfg, start_region, symbols, recursive)
 
 
 def traverse_sdfg_with_defined_symbols(

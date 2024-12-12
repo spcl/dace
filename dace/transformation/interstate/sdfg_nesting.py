@@ -23,7 +23,7 @@ from dace import data
 
 
 @make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class InlineSDFG(transformation.SingleStateTransformation):
     """
     Inlines a single-state nested SDFG into a top-level SDFG.
@@ -738,7 +738,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
 
 @make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class InlineTransients(transformation.SingleStateTransformation):
     """
     Inlines all transient arrays that are not used anywhere else into a nested SDFG.
@@ -881,7 +881,7 @@ class ASTRefiner(ast.NodeTransformer):
 
 
 @make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class RefineNestedAccess(transformation.SingleStateTransformation):
     """
     Reduces memlet shape when a memlet is connected to a nested SDFG, but not
@@ -1106,7 +1106,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
 
 @make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class NestSDFG(transformation.MultiStateTransformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
         nested SDFG node from it. """

@@ -22,7 +22,7 @@ SymbolScopeDict = Dict[str, Dict[Edge[InterstateEdge], Set[Union[Edge[Interstate
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class StateReachability(ppl.Pass):
     """
     Evaluates state reachability (which other states can be executed after each state).
@@ -61,7 +61,7 @@ class StateReachability(ppl.Pass):
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class ControlFlowBlockReachability(ppl.Pass):
     """
     Evaluates control flow block reachability (which control flow block can be executed after each control flow block)
@@ -194,7 +194,7 @@ def reachable_nodes(G):
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class SymbolAccessSets(ppl.ControlFlowRegionPass):
     """
     Evaluates symbol access sets (which symbols are read/written in each control flow block or interstate edge).
@@ -224,7 +224,7 @@ class SymbolAccessSets(ppl.ControlFlowRegionPass):
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class AccessSets(ppl.Pass):
     """
     Evaluates memory access sets (which arrays/data descriptors are read/written in each control flow block).
@@ -238,6 +238,19 @@ class AccessSets(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         # If access nodes were modified, reapply
         return modified & ppl.Modifies.AccessNodes
+
+    def _get_loop_region_readset(self, loop: LoopRegion, arrays: Set[str]) -> Set[str]:
+        readset = set()
+        exprs = { loop.loop_condition.as_string }
+        update_stmt = loop_analysis.get_update_assignment(loop)
+        init_stmt = loop_analysis.get_init_assignment(loop)
+        if update_stmt:
+            exprs.add(update_stmt)
+        if init_stmt:
+            exprs.add(init_stmt)
+        for expr in exprs:
+            readset |= symbolic.free_symbols_and_functions(expr) & arrays
+        return readset
 
     def apply_pass(self, top_sdfg: SDFG, _) -> Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]:
         """
@@ -262,15 +275,7 @@ class AccessSets(ppl.Pass):
                             if state.out_degree(anode) > 0:
                                 readset.add(anode.data)
                     if isinstance(block, LoopRegion):
-                        exprs = set([ block.loop_condition.as_string ])
-                        update_stmt = loop_analysis.get_update_assignment(block)
-                        init_stmt = loop_analysis.get_init_assignment(block)
-                        if update_stmt:
-                            exprs.add(update_stmt)
-                        if init_stmt:
-                            exprs.add(init_stmt)
-                        for expr in exprs:
-                            readset |= symbolic.free_symbols_and_functions(expr) & arrays
+                        readset |= self._get_loop_region_readset(block, arrays)
                     elif isinstance(block, ConditionalBlock):
                         for cond, _ in block.branches:
                             if cond is not None:
@@ -289,7 +294,7 @@ class AccessSets(ppl.Pass):
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class FindAccessStates(ppl.Pass):
     """
     For each data descriptor, creates a set of states in which access nodes of that data are used.
@@ -328,7 +333,7 @@ class FindAccessStates(ppl.Pass):
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class FindAccessNodes(ppl.Pass):
     """
     For each data descriptor, creates a dictionary mapping states to all read and write access nodes with the given
@@ -365,7 +370,7 @@ class FindAccessNodes(ppl.Pass):
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class SymbolWriteScopes(ppl.ControlFlowRegionPass):
     """
     For each symbol, create a dictionary mapping each interstate edge writing to that symbol to the set of interstate
@@ -466,7 +471,7 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class ScalarWriteShadowScopes(ppl.Pass):
     """
     For each scalar or array of size 1, create a dictionary mapping writes to that data container to the set of reads
@@ -645,7 +650,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class AccessRanges(ppl.Pass):
     """
     For each data descriptor, finds all memlets used to access it (read/write ranges).
@@ -683,7 +688,7 @@ class AccessRanges(ppl.Pass):
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class FindReferenceSources(ppl.Pass):
     """
     For each Reference data descriptor, finds all memlets used to set it. If a Tasklet was used
@@ -772,7 +777,7 @@ class FindReferenceSources(ppl.Pass):
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class DeriveSDFGConstraints(ppl.Pass):
 
     CATEGORY: str = 'Analysis'

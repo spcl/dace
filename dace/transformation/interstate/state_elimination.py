@@ -13,7 +13,7 @@ from dace.sdfg.state import ControlFlowRegion
 from dace.transformation import transformation
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class EndStateElimination(transformation.MultiStateTransformation):
     """
     End-state elimination removes a redundant state that has one incoming edge
@@ -61,7 +61,7 @@ class EndStateElimination(transformation.MultiStateTransformation):
                 sdfg.remove_symbol(sym)
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class StartStateElimination(transformation.MultiStateTransformation):
     """
     Start-state elimination removes a redundant state that has one outgoing edge
@@ -134,7 +134,7 @@ def _assignments_to_consider(sdfg, edge, is_constant=False):
     return assignments_to_consider
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class StateAssignElimination(transformation.MultiStateTransformation):
     """
     State assign elimination removes all assignments into the final state
@@ -231,7 +231,7 @@ def _alias_assignments(sdfg: SDFG, edge: InterstateEdge):
     return assignments_to_consider
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class SymbolAliasPromotion(transformation.MultiStateTransformation):
     """
     SymbolAliasPromotion moves inter-state assignments that create symbolic
@@ -336,7 +336,7 @@ class SymbolAliasPromotion(transformation.MultiStateTransformation):
             in_edge.assignments[k] = v
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class HoistState(transformation.SingleStateTransformation):
     """ Move a state out of a nested SDFG """
     nsdfg = transformation.PatternNode(nodes.NestedSDFG)
@@ -492,7 +492,7 @@ class HoistState(transformation.SingleStateTransformation):
         nsdfg.sdfg.start_state = nsdfg.sdfg.node_id(nisedge.dst)
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class TrueConditionElimination(transformation.MultiStateTransformation):
     """
     If a state transition condition is always true, removes condition from edge.
@@ -528,7 +528,7 @@ class TrueConditionElimination(transformation.MultiStateTransformation):
         edge.data.condition = CodeBlock("1")
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class FalseConditionElimination(transformation.MultiStateTransformation):
     """
     If a state transition condition is always false, removes edge.

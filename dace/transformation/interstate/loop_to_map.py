@@ -73,7 +73,7 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
 
 
 @properties.make_properties
-@xf.experimental_cfg_block_compatible
+@xf.explicit_cf_compatible
 class LoopToMap(xf.MultiStateTransformation):
     """
     Convert a control flow loop into a dataflow map. Currently only supports the simple case where there is no overlap
@@ -492,7 +492,7 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Direct edges among source and sink access nodes must pass through a tasklet.
         # We first gather them and handle them later.
-        direct_edges: Set[gr.Edge[memlet.Memlet]] = set()
+        direct_edges: Set[gr.MultiConnectorEdge[memlet.Memlet]] = set()
         for n1 in source_nodes:
             if not isinstance(n1, nodes.AccessNode):
                 continue

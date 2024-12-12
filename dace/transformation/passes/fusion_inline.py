@@ -11,12 +11,12 @@ from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, FunctionCallRegion, LoopRegion, NamedRegion
 from dace.sdfg.utils import fuse_states, inline_control_flow_regions, inline_sdfgs
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.transformation import experimental_cfg_block_compatible
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class FuseStates(ppl.Pass):
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs).
@@ -53,7 +53,7 @@ class FuseStates(ppl.Pass):
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class InlineSDFGs(ppl.Pass):
     """
     Inlines all possible nested SDFGs (and sub-SDFGs).
@@ -91,7 +91,7 @@ class InlineSDFGs(ppl.Pass):
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class InlineControlFlowRegions(ppl.Pass):
     """
     Inlines all control flow regions.
@@ -126,21 +126,21 @@ class InlineControlFlowRegions(ppl.Pass):
     
         :return: The total number of states fused, or None if did not apply.
         """
-        blacklist = []
+        ignore_region_types = []
         if self.no_inline_loops:
-            blacklist.append(LoopRegion)
+            ignore_region_types.append(LoopRegion)
         if self.no_inline_conditional:
-            blacklist.append(ConditionalBlock)
+            ignore_region_types.append(ConditionalBlock)
         if self.no_inline_named_regions:
-            blacklist.append(NamedRegion)
+            ignore_region_types.append(NamedRegion)
         if self.no_inline_function_call_regions:
-            blacklist.append(FunctionCallRegion)
-        if len(blacklist) < 1:
-            blacklist = None
+            ignore_region_types.append(FunctionCallRegion)
+        if len(ignore_region_types) < 1:
+            ignore_region_types = None
 
         inlined = 0
         while True:
-            inlined_in_iteration = inline_control_flow_regions(sdfg, None, blacklist, self.progress)
+            inlined_in_iteration = inline_control_flow_regions(sdfg, None, ignore_region_types, self.progress)
             if inlined_in_iteration < 1:
                 break
             inlined += inlined_in_iteration
@@ -168,7 +168,7 @@ class InlineControlFlowRegions(ppl.Pass):
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class FixNestedSDFGReferences(ppl.Pass):
     """
     Fixes nested SDFG references to parent state/SDFG/node

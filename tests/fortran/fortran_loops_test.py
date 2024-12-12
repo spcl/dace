@@ -29,7 +29,7 @@ def test_fortran_frontend_loop_region_basic_loop():
         ENDDO
     end SUBROUTINE loop_test_function
     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, use_experimental_cfg_blocks=True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, use_explicit_cf=True)
 
     a_test = np.full([10, 10], 2, order="F", dtype=np.float64)
     b_test = np.full([10, 10], 3, order="F", dtype=np.float64)

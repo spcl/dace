@@ -145,7 +145,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                     # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
                     pass
         for b in all_blocks:
-            if isinstance(b, LoopRegion) and b.loop_variable is not None and b.loop_variable != '':
+            if isinstance(b, LoopRegion) and b.loop_variable:
                 defined_symbols.add(b.loop_variable)
                 if b.loop_variable not in sdfg.symbols:
                     if b.init_statement:
