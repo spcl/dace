@@ -23,7 +23,7 @@ from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.analysis.analysis import ControlFlowBlockReachability
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class StatePropagation(ppl.ControlFlowRegionPass):
     """
     Analyze a control flow region to determine the number of times each block inside of it is executed in the form of a
@@ -34,7 +34,7 @@ class StatePropagation(ppl.ControlFlowRegionPass):
     Additionally, the pass annotates each block with a `ranges` property, which indicates for loop variables defined
     at that block what range of values the variable may take on.
     Note: This path directly annotates the graph.
-    This pass supersedes `dace.sdfg.propagation.propagate_states` and is based on its algorithm, with significant
+    This pass supersedes ``dace.sdfg.propagation.propagate_states`` and is based on its algorithm, with significant
     simplifications thanks to the use of control flow regions.
     """
 
@@ -183,7 +183,7 @@ class StatePropagation(ppl.ControlFlowRegionPass):
                                    starting_execs, starting_dynamic)
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class MemletPropagation(ppl.ControlFlowRegionPass):
     """
     TODO
