@@ -29,7 +29,7 @@ class AST_translator:
     """  
     This class is responsible for translating the internal AST into a SDFG.
     """
-    def __init__(self, ast: ast_components.InternalFortranAst, source: str, use_experimental_cfg_blocks: bool = False):
+    def __init__(self, ast: ast_components.InternalFortranAst, source: str, use_explicit_cf: bool = False):
         """
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
@@ -69,7 +69,7 @@ class AST_translator:
             ast_internal_classes.Allocate_Stmt_Node: self.allocate2sdfg,
             ast_internal_classes.Break_Node: self.break2sdfg,
         }
-        self.use_experimental_cfg_blocks = use_experimental_cfg_blocks
+        self.use_explicit_cf = use_explicit_cf
 
     def get_dace_type(self, type):
         """  
@@ -271,7 +271,7 @@ class AST_translator:
         :param sdfg: The SDFG to which the node should be translated
         """
 
-        if not self.use_experimental_cfg_blocks:
+        if not self.use_explicit_cf:
             declloop = False
             name = "FOR_l_" + str(node.line_number[0]) + "_c_" + str(node.line_number[1])
             begin_state = ast_utils.add_simple_state_to_sdfg(self, cfg, "Begin" + name)
@@ -1103,7 +1103,7 @@ def create_sdfg_from_string(
     source_string: str,
     sdfg_name: str,
     normalize_offsets: bool = False,
-    use_experimental_cfg_blocks: bool = False
+    use_explicit_cf: bool = False
 ):
     """
     Creates an SDFG from a fortran file in a string
@@ -1133,7 +1133,7 @@ def create_sdfg_from_string(
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
-    ast2sdfg = AST_translator(own_ast, __file__, use_experimental_cfg_blocks)
+    ast2sdfg = AST_translator(own_ast, __file__, use_explicit_cf)
     sdfg = SDFG(sdfg_name)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
@@ -1148,11 +1148,11 @@ def create_sdfg_from_string(
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_cfg_list()
-    sdfg.using_experimental_blocks = use_experimental_cfg_blocks
+    sdfg.using_explicit_control_flow = use_explicit_cf
     return sdfg
 
 
-def create_sdfg_from_fortran_file(source_string: str, use_experimental_cfg_blocks: bool = False):
+def create_sdfg_from_fortran_file(source_string: str, use_explicit_cf: bool = False):
     """
     Creates an SDFG from a fortran file
     :param source_string: The fortran file name
@@ -1180,11 +1180,11 @@ def create_sdfg_from_fortran_file(source_string: str, use_experimental_cfg_block
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program).visit(program)
-    ast2sdfg = AST_translator(own_ast, __file__, use_experimental_cfg_blocks)
+    ast2sdfg = AST_translator(own_ast, __file__, use_explicit_cf)
     sdfg = SDFG(source_string)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
     ast2sdfg.translate(program, sdfg)
 
-    sdfg.using_experimental_blocks = use_experimental_cfg_blocks
+    sdfg.using_explicit_control_flow = use_explicit_cf
     return sdfg

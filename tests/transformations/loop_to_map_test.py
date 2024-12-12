@@ -3,15 +3,15 @@ import argparse
 import copy
 import os
 import tempfile
-from typing import Tuple
 
 import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes, propagation
+from dace.sdfg import nodes
+from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap, StateFusion
-from dace.transformation.interstate.loop_detection import DetectLoop
+from dace.transformation.interstate.loop_lifting import LoopLifting
 
 
 def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after, log_path):
@@ -86,6 +86,8 @@ of << i << "\\n";""",
     e = post.add_write("E")
     post_tasklet = post.add_tasklet("post", {}, {"e"}, "e = i" if use_variable else "e = N")
     post.add_memlet_path(post_tasklet, e, src_conn="e", memlet=dace.Memlet("E[0]"))
+
+    sdfg.apply_transformations_repeated([LoopLifting])
 
     return sdfg
 
@@ -285,6 +287,7 @@ def test_interstate_dep():
 
     ref = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
     val = np.copy(ref)
+    sdfg.apply_transformations_repeated([LoopLifting])
     sdfg(A=ref)
 
     assert sdfg.apply_transformations(LoopToMap) == 0
@@ -294,7 +297,8 @@ def test_interstate_dep():
 
 
 def test_need_for_tasklet():
-
+    # Note: Since the introduction of loop regions this no longer requires a tasklet, as the nested SDFG is directly
+    # equivalent to the loop region, including all direct access node to access node copy operations.
     sdfg = dace.SDFG('needs_tasklet')
     aname, _ = sdfg.add_array('A', (10, ), dace.int32)
     bname, _ = sdfg.add_array('B', (10, ), dace.int32)
@@ -304,14 +308,8 @@ def test_need_for_tasklet():
     bnode = body.add_access(bname)
     body.add_nedge(anode, bnode, dace.Memlet(data=aname, subset='i', other_subset='9 - i'))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
-    found = False
-    for n, s in sdfg.all_nodes_recursive():
-        if isinstance(n, nodes.Tasklet):
-            found = True
-            break
-
-    assert found
 
     A = np.arange(10, dtype=np.int32)
     B = np.empty((10, ), dtype=np.int32)
@@ -321,7 +319,8 @@ def test_need_for_tasklet():
 
 
 def test_need_for_transient():
-
+    # Note: Since the introduction of loop regions this no longer requires a transient, as the nested SDFG is directly
+    # equivalent to the loop region, including all direct access node to access node copy operations.
     sdfg = dace.SDFG('needs_transient')
     aname, _ = sdfg.add_array('A', (10, 10), dace.int32)
     bname, _ = sdfg.add_array('B', (10, 10), dace.int32)
@@ -331,14 +330,8 @@ def test_need_for_transient():
     bnode = body.add_access(bname)
     body.add_nedge(anode, bnode, dace.Memlet(data=aname, subset='0:10, i', other_subset='0:10, 9 - i'))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
-    found = False
-    for n, s in sdfg.all_nodes_recursive():
-        if isinstance(n, nodes.AccessNode) and n.data not in (aname, bname):
-            found = True
-            break
-
-    assert found
 
     A = np.arange(100, dtype=np.int32).reshape(10, 10).copy()
     B = np.empty((10, 10), dtype=np.int32)
@@ -403,6 +396,7 @@ def test_symbol_write_before_read():
     sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(j='0')))
     sdfg.add_edge(body, body_end, dace.InterstateEdge(assignments=dict(j='j + 1')))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     assert sdfg.apply_transformations(LoopToMap) == 1
 
 
@@ -430,6 +424,7 @@ def test_symbol_array_mix(overwrite):
         sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(sym='sym + tmp')))
     sdfg.add_edge(body, body_end, dace.InterstateEdge(assignments=dict(sym='sym + 1.0')))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     assert sdfg.apply_transformations(LoopToMap) == (1 if overwrite else 0)
 
 
@@ -456,6 +451,7 @@ def test_symbol_array_mix_2(parallel):
     t = body_start.add_tasklet('use', {}, {'o'}, 'o = sym')
     body_start.add_edge(t, 'o', body_start.add_write('B'), None, dace.Memlet('B[i]'))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     assert sdfg.apply_transformations(LoopToMap) == (1 if parallel else 0)
 
 
@@ -482,6 +478,7 @@ def test_internal_symbol_used_outside(overwrite):
     else:
         sdfg.add_edge(after, after_1, dace.InterstateEdge())
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     assert sdfg.apply_transformations(LoopToMap) == (1 if overwrite else 0)
 
 
@@ -511,6 +508,7 @@ def test_shared_local_transient_single_state():
     body.add_edge(t1, '__out', anode, None, dace.Memlet(data='A', subset='i'))
     body.add_edge(anode, None, t2, '__inp', dace.Memlet(data='A', subset='i'))
     body.add_edge(t2, '__out', bnode, None, dace.Memlet(data='__return', subset='i'))
+    sdfg.apply_transformations_repeated([LoopLifting])
 
     sdfg.apply_transformations_repeated(LoopToMap)
     assert 'A' in sdfg.arrays
@@ -550,6 +548,7 @@ def test_thread_local_transient_single_state():
     body.add_edge(anode, None, t2, '__inp', dace.Memlet(data='A', subset='i'))
     body.add_edge(t2, '__out', bnode, None, dace.Memlet(data='__return', subset='i'))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
     assert not ('A' in sdfg.arrays)
 
@@ -588,6 +587,7 @@ def test_shared_local_transient_multi_state():
     body1.add_edge(anode1, None, t2, '__inp', dace.Memlet(data='A', subset='i'))
     body1.add_edge(t2, '__out', bnode, None, dace.Memlet(data='__return', subset='i'))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
     assert 'A' in sdfg.arrays
 
@@ -629,6 +629,7 @@ def test_thread_local_transient_multi_state():
     body1.add_edge(anode1, None, t2, '__inp', dace.Memlet(data='A', subset='i'))
     body1.add_edge(t2, '__out', bnode, None, dace.Memlet(data='__return', subset='i'))
 
+    sdfg.apply_transformations_repeated([LoopLifting])
     sdfg.apply_transformations_repeated(LoopToMap)
     assert not ('A' in sdfg.arrays)
 
@@ -651,34 +652,25 @@ def test_nested_loops():
 
     sdfg = nested_loops.to_sdfg()
 
-    def find_loop(sdfg: dace.SDFG, itervar: str) -> Tuple[dace.SDFGState, dace.SDFGState, dace.SDFGState]:
-
-        guard, begin, fexit = None, None, None
-        for e in sdfg.edges():
-            if itervar in e.data.assignments and e.data.assignments[itervar] == '0':
-                guard = e.dst
-            elif e.data.condition.as_string in (f'({itervar} >= 10)', f'(not ({itervar} < 10))'):
-                fexit = e.dst
-        assert all(s is not None for s in (guard, fexit))
-
-        begin = next((e for e in sdfg.out_edges(guard) if e.dst != fexit)).dst
-
-        return guard, begin, fexit
+    def find_loop(sdfg: dace.SDFG, itervar: str) -> LoopRegion:
+        for cfg in sdfg.all_control_flow_regions():
+            if isinstance(cfg, LoopRegion) and cfg.loop_variable == itervar:
+                return cfg
 
     sdfg0 = copy.deepcopy(sdfg)
-    i_guard, i_begin, i_exit = find_loop(sdfg0, 'i')
-    LoopToMap.apply_to(sdfg0, loop_guard=i_guard, loop_begin=i_begin, exit_state=i_exit)
+    i_loop = find_loop(sdfg0, 'i')
+    LoopToMap.apply_to(sdfg0, loop=i_loop)
     nsdfg = next((sd for sd in sdfg0.all_sdfgs_recursive() if sd.parent is not None))
-    j_guard, j_begin, j_exit = find_loop(nsdfg, 'j')
-    LoopToMap.apply_to(nsdfg, loop_guard=j_guard, loop_begin=j_begin, exit_state=j_exit)
+    j_loop = find_loop(nsdfg, 'j')
+    LoopToMap.apply_to(nsdfg, loop=j_loop)
 
     val = np.arange(1000, dtype=np.int32).reshape(10, 10, 10).copy()
     sdfg(A=val, l=5)
 
     assert np.allclose(ref, val)
 
-    j_guard, j_begin, j_exit = find_loop(sdfg, 'j')
-    LoopToMap.apply_to(sdfg, loop_guard=j_guard, loop_begin=j_begin, exit_state=j_exit)
+    j_loop = find_loop(sdfg, 'j')
+    LoopToMap.apply_to(sdfg, loop=j_loop)
     # NOTE: The following fails to apply because of subset A[0:i+1], which is overapproximated.
     # i_guard, i_begin, i_exit = find_loop(sdfg, 'i')
     # LoopToMap.apply_to(sdfg, loop_guard=i_guard, loop_begin=i_begin, exit_state=i_exit)
@@ -718,7 +710,7 @@ def test_internal_write():
     val = np.empty((10, ), dtype=np.int32)
 
     internal_write.f(inp0, inp1, ref)
-    internal_write(inp0, inp1, val)
+    sdfg(inp0, inp1, val)
 
     assert np.array_equal(val, ref)
 
@@ -741,14 +733,15 @@ def test_rotated_loop_to_map(simplify):
     sdfg.add_edge(guard, exitstate, dace.InterstateEdge('N <= 0'))
     sdfg.add_edge(guard, preheader, dace.InterstateEdge('N > 0'))
     sdfg.add_edge(preheader, body, dace.InterstateEdge(assignments=dict(i=0)))
-    sdfg.add_edge(body, latch, dace.InterstateEdge())
-    sdfg.add_edge(latch, body, dace.InterstateEdge('i < N', assignments=dict(i='i + 1')))
+    sdfg.add_edge(body, latch, dace.InterstateEdge(assignments=dict(i='i + 1')))
+    sdfg.add_edge(latch, body, dace.InterstateEdge('i < N'))
     sdfg.add_edge(latch, loopexit, dace.InterstateEdge('i >= N'))
     sdfg.add_edge(loopexit, exitstate, dace.InterstateEdge())
 
     t = body.add_tasklet('addone', {'inp'}, {'out'}, 'out = inp + 1')
     body.add_edge(body.add_read('A'), None, t, 'inp', dace.Memlet('A[i]'))
     body.add_edge(t, 'out', body.add_write('A'), None, dace.Memlet('A[i]'))
+    sdfg.apply_transformations_repeated([LoopLifting])
 
     if simplify:
         sdfg.apply_transformations_repeated(StateFusion)
@@ -778,6 +771,8 @@ def test_self_loop_to_map():
     t = body.add_tasklet('addone', {'inp'}, {'out'}, 'out = inp + 1')
     body.add_edge(body.add_read('A'), None, t, 'inp', dace.Memlet('A[i]'))
     body.add_edge(t, 'out', body.add_write('A'), None, dace.Memlet('A[i]'))
+
+    sdfg.apply_transformations_repeated([LoopLifting])
 
     assert sdfg.apply_transformations_repeated(LoopToMap) == 1
 

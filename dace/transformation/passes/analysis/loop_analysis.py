@@ -3,8 +3,7 @@
 Various analyses concerning LopoRegions, and utility functions to get information about LoopRegions for other passes.
 """
 
-import ast
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 from dace.frontend.python import astutils
 
 import sympy
@@ -13,28 +12,12 @@ from dace import symbolic
 from dace.sdfg.state import LoopRegion
 
 
-class FindAssignment(ast.NodeVisitor):
-
-    assignments: Dict[str, str]
-    multiple: bool
-
-    def __init__(self):
-        self.assignments = {}
-        self.multiple = False
-
-    def visit_Assign(self, node: ast.Assign) -> Any:
-        for tgt in node.targets:
-            if isinstance(tgt, ast.Name):
-                if tgt.id in self.assignments:
-                    self.multiple = True
-                self.assignments[tgt.id] = astutils.unparse(node.value)
-        return self.generic_visit(node)
-
-
 def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     """
     Parse a loop region to identify the end value of the iteration variable under normal loop termination (no break).
     """
+    if loop.loop_variable is None or loop.loop_variable == '':
+        return None
     end: Optional[symbolic.SymbolicType] = None
     a = sympy.Wild('a')
     condition = symbolic.pystr_to_symbolic(loop.loop_condition.as_string)
@@ -68,7 +51,7 @@ def get_init_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     init_codes_list = init_stmt.code if isinstance(init_stmt.code, list) else [init_stmt.code]
     assignments: Dict[str, str] = {}
     for code in init_codes_list:
-        visitor = FindAssignment()
+        visitor = astutils.FindAssignment()
         visitor.visit(code)
         if visitor.multiple:
             return None
@@ -94,7 +77,7 @@ def get_update_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     update_codes_list = update_stmt.code if isinstance(update_stmt.code, list) else [update_stmt.code]
     assignments: Dict[str, str] = {}
     for code in update_codes_list:
-        visitor = FindAssignment()
+        visitor = astutils.FindAssignment()
         visitor.visit(code)
         if visitor.multiple:
             return None
