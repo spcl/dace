@@ -720,8 +720,8 @@ class AST_translator:
 
     def whilestmt2sdfg(self, node: ast_internal_classes.While_Stmt_Node, sdfg: SDFG):
 
-        #raise NotImplementedError("Fortran while statements are not implemented yet")
-        print("Uh oh - whilestmt2sdfg empty") 
+        # raise NotImplementedError("Fortran while statements are not implemented yet")
+        print("Uh oh - whilestmt2sdfg empty")
         return None
 
     def forstmt2sdfg(self, node: ast_internal_classes.For_Stmt_Node, sdfg: SDFG):
@@ -792,17 +792,17 @@ class AST_translator:
         if node.name == "modname": return
 
         if node.name.startswith("__f2dace_A_"):
-            #separate name by removing the prefix and the suffix starting with _d_
+            # separate name by removing the prefix and the suffix starting with _d_
             array_name = node.name[11:]
             array_name = array_name[:array_name.index("_d_")]
             if array_name in sdfg.arrays:
-                return # already declared
+                return  # already declared
         if node.name.startswith("__f2dace_OA_"):
-            #separate name by removing the prefix and the suffix starting with _d_
+            # separate name by removing the prefix and the suffix starting with _d_
             array_name = node.name[12:]
             array_name = array_name[:array_name.index("_d_")]
             if array_name in sdfg.arrays:
-                return    
+                return
 
         if self.contexts.get(sdfg.name) is None:
             self.contexts[sdfg.name] = ast_utils.Context(name=sdfg.name)
@@ -1486,7 +1486,7 @@ class AST_translator:
                                         shape.append("( "+ text_stop + ") - ( "+ text_start + ") ")
                                         mysize=mysize*sym.pystr_to_symbolic("( "+ text_stop + ") - ( "+ text_start + ") ")
                                         index_list.append(None)
-                                        #raise NotImplementedError("Index in ParDecl should be ALL")
+                                        # raise NotImplementedError("Index in ParDecl should be ALL")
                                 else:
                                     text = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
                                                                      placeholders=self.placeholders,
@@ -1561,7 +1561,7 @@ class AST_translator:
                                 #    print(dir(element_type))
                             # print("array info: "+str(array),array.__class__.__name__)
                             # print(element_type,element_type.__class__.__name__)
-                            if hasattr(element_type,"name") and element_type.name in self.registered_types:
+                            if hasattr(element_type, "name") and element_type.name in self.registered_types:
                                 datatype = self.get_dace_type(element_type.name)
                                 datatype_to_add = copy.deepcopy(datatype)
                                 datatype_to_add.transient = False
@@ -1868,12 +1868,12 @@ class AST_translator:
                                            strides=array_in_global.strides,
                                            offset=array_in_global.offset)
         all_symbols = new_sdfg.free_symbols
-        missing_symbols = [s for s in all_symbols if s not in sym_dict]     
+        missing_symbols = [s for s in all_symbols if s not in sym_dict]
         for i in missing_symbols:
             if i in sdfg.arrays:
-                sym_dict[i] = i       
+                sym_dict[i] = i
             else:
-                print("Symbol not found in sdfg arrays: ", i)        
+                print("Symbol not found in sdfg arrays: ", i)
         if self.multiple_sdfgs == False:
             # print("Adding nested sdfg", new_sdfg.name, "to", sdfg.name)
             # print(sym_dict)
@@ -2037,7 +2037,7 @@ class AST_translator:
                             self.symbol2sdfg(j, new_sdfg)
                         else:
                             raise NotImplementedError("Symbol not implemented")
-                    
+
                     for j in node.specification_part.specifications:
                         self.declstmt2sdfg(j, new_sdfg)
                     self.transient_mode = old_mode
@@ -2248,13 +2248,13 @@ class AST_translator:
                     ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][retval.name], tasklet, retval.name, "0")
 
                     ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][retval.name], tasklet,
-                                           retval.name + "_out", "0")
+                                               retval.name + "_out", "0")
                 if isinstance(retval, ast_internal_classes.Array_Subscript_Node):
                     ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][retval.name.name], tasklet,
-                                          retval.name.name, "0")
+                                              retval.name.name, "0")
 
                     ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][retval.name.name], tasklet,
-                                           retval.name.name + "_out", "0")
+                                               retval.name.name + "_out", "0")
 
             for i, j in zip(input_names, input_names_tasklet):
                 memlet_range = self.get_memlet_range(sdfg, used_vars, i, j)
@@ -3099,182 +3099,6 @@ def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], incl
     return ast
 
 
-def simplified_dependency_graph(dep_graph: nx.DiGraph, interface_blocks: Dict[str, Dict[str, List[Name]]]) \
-        -> Tuple[nx.DiGraph, Dict[str, List]]:
-    for mod, blocks in interface_blocks.items():
-        for in_mod, _, data in dep_graph.in_edges(mod, data=True):
-            weights = data.get('obj_list')
-            if weights is None:
-                continue
-            new_weights = []
-            for weight in weights:
-                if isinstance(weight, UseAllPruneList):
-                    continue
-                # TODO: Other possibilities for weights beside `Name` and `Rename`? Not all `Base` type has a `string`.
-                name = weight.string
-                if name in blocks:
-                    new_weights.extend(blocks[name])
-                else:
-                    new_weights.append(weight)
-            data.update(obj_list=new_weights)
-
-    for node, data in dep_graph.nodes(data=True):
-        objects = data.get('info_list')
-        if objects is None:
-            continue
-        new_names_in_subroutines = {}
-        for subroutine, names in objects.names_in_subroutines.items():
-            new_names_list = []
-            for name in names:
-                if name in interface_blocks.keys():
-                    for replacement in interface_blocks[name].keys():
-                        new_names_list.append(replacement)
-                else:
-                    new_names_list.append(name)
-            new_names_in_subroutines[subroutine] = new_names_list
-        objects.names_in_subroutines = new_names_in_subroutines
-
-    simple_graph, actually_used_in_module = ast_utils.eliminate_dependencies(dep_graph)
-
-    changed = True
-    while changed:
-        old_graph = simple_graph.copy()
-        simple_graph, actually_used_in_module = ast_utils.eliminate_dependencies(old_graph)
-        if (simple_graph.number_of_nodes() == old_graph.number_of_nodes()
-                and simple_graph.number_of_edges() == old_graph.number_of_edges()):
-            changed = False
-
-    return simple_graph, actually_used_in_module
-
-
-def prune_unused_children(ast: Program, simple_graph: nx.DiGraph, actually_used_in_module: Dict[str, List]) \
-        -> Tuple[Dict[str, List[str]], Dict[str, Dict[str, str]]]:
-    parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
-    if not parse_order:
-        return {}, {}
-
-    parse_list, what_to_parse_list, type_to_parse_list = {}, {}, {}
-    for mod in parse_order:
-        parse_list[mod] = []
-        fands_list, type_list = [], []
-        for _, _, data in simple_graph.in_edges(mod, data=True):
-            deps = data.get("obj_list")
-            if not deps:
-                continue
-            dep_names = list(dep.string for dep in deps)
-            if dep_names:
-                ast_utils.extend_with_new_items_from(parse_list[mod], dep_names)
-        res = simple_graph.nodes.get(mod).get("info_list")
-        if res:
-            res_fand = set(chain(res.list_of_functions, res.list_of_subroutines))
-            res_types = set(res.list_of_types)
-            for _, _, data in simple_graph.in_edges(mod, data=True):
-                fns = list(item for item in parse_list[mod] if item in res_fand)
-                if fns:
-                    ast_utils.extend_with_new_items_from(fands_list, fns)
-                typs = list(item for item in parse_list[mod] if item in res_types)
-                if typs:
-                    ast_utils.extend_with_new_items_from(type_list, typs)
-            fns = list(item for item in actually_used_in_module[mod] if item in res_fand)
-            if fns:
-                ast_utils.extend_with_new_items_from(fands_list, fns)
-            typs = list(item for item in actually_used_in_module[mod] if item in res_types)
-            if typs:
-                ast_utils.extend_with_new_items_from(type_list, typs)
-        what_to_parse_list[mod] = fands_list
-        type_to_parse_list[mod] = type_list
-
-    top_level_ast: str = parse_order.pop() if parse_order else ast
-    new_children = []
-    for mod in ast.children:
-        if not isinstance(mod, (Module, Main_Program)):
-            # Leave it alone if it is not a module  or program node (e.g., a subroutine).
-            new_children.append(mod)
-            continue
-        stmt, spec, exec, subp = _get_module_or_program_parts(mod)
-        mod_name = ast_utils.singular(ast_utils.children_of_type(stmt, Name)).string
-        if mod_name not in parse_order and mod_name != top_level_ast:
-            print(f"Module {mod_name} not needing parsing")
-            continue
-        # if mod_name == top_level_ast:
-        #     new_children.append(mod)
-        if spec:
-            new_spec_children = []
-            for c in spec.children:
-                if isinstance(c, Type_Declaration_Stmt):
-                    tdecl = c
-                    intrinsic_spec, _, entity_decls_list = tdecl.children
-                    if not isinstance(intrinsic_spec, Declaration_Type_Spec):
-                        new_spec_children.append(tdecl)
-                        continue
-                    entity_decls = []
-                    for edecl in ast_utils.children_of_type(entity_decls_list, Entity_Decl):
-                        edecl_name = ast_utils.singular(ast_utils.children_of_type(edecl, Name)).string
-                        if edecl_name in actually_used_in_module[mod_name]:
-                            entity_decls.append(edecl)
-                        # elif (edecl_name in rename_dict[mod_name]
-                        #       and rename_dict[mod_name][edecl_name] in actually_used_in_module[mod_name]):
-                        #     entity_decls.append(edecl)
-                    if not entity_decls:
-                        continue
-                    if isinstance(entity_decls_list.children, tuple):
-                        new_spec_children.append(tdecl)
-                        continue
-                    entity_decls_list.children.clear()
-                    for edecl in entity_decls:
-                        entity_decls_list.children.append(edecl)
-                    new_spec_children.append(tdecl)
-                elif isinstance(c, Derived_Type_Def):
-                    derv = c
-                    if derv.children[0].children[1].string in type_to_parse_list[mod_name]:
-                        new_spec_children.append(derv)
-                elif isinstance(c, (Subroutine_Subprogram, Function_Subprogram)):
-                    subr, subr_stmt = c, c.children[0]
-                    subr_name = ast_utils.singular(ast_utils.children_of_type(subr_stmt, Name)).string
-                    if subr_name in actually_used_in_module[mod_name]:
-                        new_spec_children.append(subr)
-                else:
-                    new_spec_children.append(c)
-            spec.children[:] = new_spec_children
-        if subp:
-            subroutinesandfunctions = []
-            for c in subp.children:
-                if isinstance(c, (Subroutine_Subprogram, Function_Subprogram)):
-                    c_stmt = ast_utils.singular(
-                        ast_utils.children_of_type(
-                            c, Subroutine_Stmt if isinstance(c, Subroutine_Subprogram) else Function_Stmt))
-                    c_name = ast_utils.singular(ast_utils.children_of_type(c_stmt, Name)).string
-                    if mod_name in what_to_parse_list and c_name in what_to_parse_list[mod_name]:
-                        subroutinesandfunctions.append(c)
-                else:
-                    subroutinesandfunctions.append(c)
-            subp.children[:] = subroutinesandfunctions
-        new_children.append(mod)
-    ast.children[:] = new_children
-
-    name_dict, rename_dict = {}, {}
-    for mod in parse_order:
-        local_rename_dict = {}
-        names = []
-        for user, _, data in list(simple_graph.in_edges(mod, data=True)):
-            objs = data.get('obj_list')
-            if not objs:
-                continue
-            name_nodes = list(item.string for item in objs if isinstance(item, Name))
-            if name_nodes:
-                ast_utils.extend_with_new_items_from(names, name_nodes)
-            rename_nodes = list(item.children[2].string for item in objs if isinstance(item, Rename))
-            if rename_nodes:
-                ast_utils.extend_with_new_items_from(names, rename_nodes)
-            for item in objs:
-                if isinstance(item, Rename):
-                    local_rename_dict[item.children[2].string] = item.children[1].string
-        rename_dict[mod] = local_rename_dict
-        name_dict[mod] = names
-
-    return name_dict, rename_dict
-
-
 def name_and_rename_dict_creator(parse_order: list,dep_graph:nx.DiGraph)->Tuple[Dict[str, List[str]], Dict[str, Dict[str, str]]]:
     name_dict = {}
     rename_dict = {}
@@ -3341,8 +3165,7 @@ def create_sdfg_from_fortran_file_with_options(
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
 
     what_to_parse_list = {}
-    name_dict, rename_dict = name_and_rename_dict_creator(parse_order,dep_graph)
-
+    name_dict, rename_dict = name_and_rename_dict_creator(parse_order, dep_graph)
 
     tables = SymbolTable
     partial_ast = ast_components.InternalFortranAst()
@@ -3430,8 +3253,8 @@ def create_sdfg_from_fortran_file_with_options(
     program.iblocks = functions_and_subroutines_builder.iblocks
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     program = ast_transforms.functionStatementEliminator(program)
-    #program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
-    #program = ast_transforms.CallToArray(functions_and_subroutines_builder, rename_dict).visit(program)
+    # program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
+    # program = ast_transforms.CallToArray(functions_and_subroutines_builder, rename_dict).visit(program)
     # program = ast_transforms.TypeInterference(program).visit(program)
     # program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
@@ -3681,7 +3504,7 @@ def create_sdfg_from_fortran_file_with_options(
 
     for i in program.modules:
 
-        #for path in source_list:
+        # for path in source_list:
 
         #    if path.lower().find(i.name.name.lower()) != -1:
         #        mypath = path
