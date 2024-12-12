@@ -1529,7 +1529,7 @@ class MathFunctions(IntrinsicTransformation):
                 raise NotImplementedError()
 
         def visit_BinOp_Node(self, binop_node: ast_internal_classes.BinOp_Node):
-
+            return binop_node
             if not isinstance(binop_node.rval, ast_internal_classes.Call_Expr_Node):
                 return binop_node
 
@@ -1621,7 +1621,7 @@ class FortranIntrinsics:
         "ALL": All,
         "MINVAL": MinVal,
         "MAXVAL": MaxVal,
-        "MERGE": Merge
+        "MERGE": Merge,
     }
 
     # All functions return an array
