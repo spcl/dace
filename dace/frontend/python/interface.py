@@ -44,7 +44,7 @@ def program(f: F,
             recompile: bool = True,
             distributed_compilation: bool = False,
             constant_functions=False,
-            use_experimental_cfg_blocks=False,
+            use_explicit_cf=True,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     """
     Entry point to a data-centric program. For methods and ``classmethod``s, use
@@ -69,8 +69,7 @@ def program(f: F,
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
                                resulting program.
-    :param use_experimental_cfg_blocks: If True, makes use of experimental CFG blocks susch as loop and conditional
-                                        regions.
+    :param use_explicit_cf: If True, makes use of explicit control flow constructs.
     :note: If arguments are defined with type hints, the program can be compiled
            ahead-of-time with ``.compile()``.
     """
@@ -87,7 +86,7 @@ def program(f: F,
                               regenerate_code=regenerate_code,
                               recompile=recompile,
                               distributed_compilation=distributed_compilation,
-                              use_experimental_cfg_blocks=use_experimental_cfg_blocks)
+                              use_explicit_cf=use_explicit_cf)
 
 
 function = program

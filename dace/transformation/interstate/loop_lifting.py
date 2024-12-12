@@ -8,7 +8,7 @@ from dace.transformation.interstate.loop_detection import DetectLoop
 
 
 @properties.make_properties
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
 
     def can_be_applied(self, graph: transformation.ControlFlowRegion, expr_index: int, sdfg: transformation.SDFG,
@@ -95,5 +95,5 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
         for n in full_body:
             graph.remove_node(n)
 
-        sdfg.root_sdfg.using_experimental_blocks = True
+        sdfg.root_sdfg.using_explicit_control_flow = True
         sdfg.reset_cfg_list()

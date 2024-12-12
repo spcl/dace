@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ 
 Various classes to facilitate the code generation of structured control 
 flow elements (e.g., ``for``, ``if``, ``while``) from state machines in SDFGs. 
@@ -62,8 +62,8 @@ import networkx as nx
 import sympy as sp
 from dace import dtypes
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion,
-                             ReturnBlock, SDFGState)
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, ControlFlowRegion,
+                             LoopRegion, ReturnBlock, SDFGState)
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.properties import CodeBlock
@@ -200,7 +200,10 @@ class BreakCFBlock(ControlFlow):
     block: BreakBlock
 
     def as_cpp(self, codegen, symbols) -> str:
-        return 'break;\n'
+        cfg = self.block.parent_graph
+        expr = '__state_{}_{}:;\n'.format(cfg.cfg_id, self.block.label)
+        expr += 'break;\n'
+        return expr
 
     @property
     def first_block(self) -> BreakBlock:
@@ -214,7 +217,10 @@ class ContinueCFBlock(ControlFlow):
     block: ContinueBlock
 
     def as_cpp(self, codegen, symbols) -> str:
-        return 'continue;\n'
+        cfg = self.block.parent_graph
+        expr = '__state_{}_{}:;\n'.format(cfg.cfg_id, self.block.label)
+        expr += 'continue;\n'
+        return expr
 
     @property
     def first_block(self) -> ContinueBlock:
@@ -228,7 +234,10 @@ class ReturnCFBlock(ControlFlow):
     block: ReturnBlock
 
     def as_cpp(self, codegen, symbols) -> str:
-        return 'return;\n'
+        cfg = self.block.parent_graph
+        expr = '__state_{}_{}:;\n'.format(cfg.cfg_id, self.block.label)
+        expr += 'return;\n'
+        return expr
 
     @property
     def first_block(self) -> ReturnBlock:
@@ -316,7 +325,13 @@ class GeneralBlock(RegionBlock):
                 # One unconditional edge
                 if (len(out_edges) == 1 and out_edges[0].data.is_unconditional()):
                     continue
-                expr += f'goto __state_exit_{sdfg.cfg_id};\n'
+                if self.region:
+                    expr += f'goto __state_exit_{self.region.cfg_id};\n'
+                else:
+                    expr += f'goto __state_exit_{sdfg.cfg_id};\n'
+
+        if self.region and not isinstance(self.region, SDFG):
+            expr += f'__state_exit_{self.region.cfg_id}:;\n'
 
         return expr
 
@@ -536,10 +551,14 @@ class GeneralLoopScope(RegionBlock):
         expr = ''
 
         if self.loop.update_statement and self.loop.init_statement and self.loop.loop_variable:
-            init = unparse_interstate_edge(self.loop.init_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
+            lsyms = {}
+            lsyms.update(symbols)
+            if codegen.dispatcher.defined_vars.has(self.loop.loop_variable) and not self.loop.loop_variable in lsyms:
+                lsyms[self.loop.loop_variable] = codegen.dispatcher.defined_vars.get(self.loop.loop_variable)[1]
+            init = unparse_interstate_edge(self.loop.init_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
             init = init.strip(';')
 
-            update = unparse_interstate_edge(self.loop.update_statement.code[0], sdfg, codegen=codegen, symbols=symbols)
+            update = unparse_interstate_edge(self.loop.update_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
             update = update.strip(';')
 
             if self.loop.inverted:
@@ -570,6 +589,8 @@ class GeneralLoopScope(RegionBlock):
                 expr += f'while ({cond}) {{\n'
                 expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
                 expr += '\n}\n'
+
+        expr += f'__state_exit_{self.loop.cfg_id}:;\n'
 
         return expr
 
@@ -1018,21 +1039,16 @@ def _structured_control_flow_traversal_with_regions(cfg: ControlFlowRegion,
                                                     start: Optional[ControlFlowBlock] = None,
                                                     stop: Optional[ControlFlowBlock] = None,
                                                     generate_children_of: Optional[ControlFlowBlock] = None,
-                                                    branch_merges: Optional[Dict[ControlFlowBlock,
-                                                                                 ControlFlowBlock]] = None,
                                                     ptree: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
                                                     visited: Optional[Set[ControlFlowBlock]] = None):
-    if branch_merges is None:
-        branch_merges = cfg_analysis.branch_merges(cfg)
-
     if ptree is None:
         ptree = cfg_analysis.block_parent_tree(cfg, with_loops=False)
 
     start = start if start is not None else cfg.start_block
 
-    def make_empty_block():
+    def make_empty_block(region):
         return GeneralBlock(dispatch_state, parent_block,
-                            last_block=False, region=None, elements=[], gotos_to_ignore=[],
+                            last_block=False, region=region, elements=[], gotos_to_ignore=[],
                             gotos_to_break=[], gotos_to_continue=[], assignments_to_ignore=[], sequential=True)
 
     # Traverse states in custom order
@@ -1059,18 +1075,18 @@ def _structured_control_flow_traversal_with_regions(cfg: ControlFlowRegion,
             cfg_block = GeneralConditionalScope(dispatch_state, parent_block, False, node, [])
             for cond, branch in node.branches:
                 if branch is not None:
-                    body = make_empty_block()
+                    body = make_empty_block(branch)
                     body.parent = cfg_block
                     _structured_control_flow_traversal_with_regions(branch, dispatch_state, body)
                     cfg_block.branch_bodies.append((cond, body))
         elif isinstance(node, ControlFlowRegion):
             if isinstance(node, LoopRegion):
-                body = make_empty_block()
+                body = make_empty_block(node)
                 cfg_block = GeneralLoopScope(dispatch_state, parent_block, False, node, body)
                 body.parent = cfg_block
                 _structured_control_flow_traversal_with_regions(node, dispatch_state, body)
             else:
-                cfg_block = make_empty_block()
+                cfg_block = make_empty_block(node)
                 cfg_block.region = node
                 _structured_control_flow_traversal_with_regions(node, dispatch_state, cfg_block)
 
@@ -1095,13 +1111,14 @@ def _structured_control_flow_traversal_with_regions(cfg: ControlFlowRegion,
     return visited - {stop}
 
 
-def structured_control_flow_tree_with_regions(sdfg: SDFG, dispatch_state: Callable[[SDFGState], str]) -> ControlFlow:
+def structured_control_flow_tree_with_regions(cfg: ControlFlowRegion,
+                                              dispatch_state: Callable[[SDFGState], str]) -> ControlFlow:
     """
-    Returns a structured control-flow tree (i.e., with constructs such as branches and loops) from an SDFG based on the
+    Returns a structured control-flow tree (i.e., with constructs such as branches and loops) from a CFG based on the
     control flow regions it contains.
     
-    :param sdfg: The SDFG to iterate over.
-    :return: Control-flow block representing the entire SDFG.
+    :param cfg: The graph to iterate over.
+    :return: Control-flow block representing the entire graph.
     """
     root_block = GeneralBlock(dispatch_state=dispatch_state,
                               parent=None,
@@ -1113,7 +1130,7 @@ def structured_control_flow_tree_with_regions(sdfg: SDFG, dispatch_state: Callab
                               gotos_to_break=[],
                               assignments_to_ignore=[],
                               sequential=True)
-    _structured_control_flow_traversal_with_regions(sdfg, dispatch_state, root_block)
+    _structured_control_flow_traversal_with_regions(cfg, dispatch_state, root_block)
     _reset_block_parents(root_block)
     return root_block
 
@@ -1127,7 +1144,7 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
     :param sdfg: The SDFG to iterate over.
     :return: Control-flow block representing the entire SDFG.
     """
-    if sdfg.root_sdfg.using_experimental_blocks:
+    if sdfg.root_sdfg.using_explicit_control_flow:
         return structured_control_flow_tree_with_regions(sdfg, dispatch_state)
 
     # Avoid import loops

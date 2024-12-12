@@ -652,7 +652,10 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     #############################
 
     # Create initial tree from CFG
-    cfg: cf.ControlFlow = cf.structured_control_flow_tree(sdfg, lambda _: '')
+    if sdfg.using_explicit_control_flow:
+        cfg: cf.ControlFlow = cf.structured_control_flow_tree_with_regions(sdfg, lambda _: '')
+    else:
+        cfg: cf.ControlFlow = cf.structured_control_flow_tree(sdfg, lambda _: '')
 
     # Traverse said tree (also into states) to create the schedule tree
     def totree(node: cf.ControlFlow, parent: cf.GeneralBlock = None) -> List[tn.ScheduleTreeNode]:
