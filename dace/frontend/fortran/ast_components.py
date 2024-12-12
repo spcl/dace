@@ -885,7 +885,7 @@ class InternalFortranAst:
 
     def parenthesis_expr(self, node: FASTNode):
         children = self.create_children(node)
-        return ast_internal_classes.Parenthesis_Expr_Node(expr=children[1], type=children[1].type)
+        return ast_internal_classes.Parenthesis_Expr_Node(expr=children[1])
 
     def module_subprogram_part(self, node: FASTNode):
         children = self.create_children(node)

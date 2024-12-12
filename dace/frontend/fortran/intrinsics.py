@@ -3,7 +3,7 @@ import math
 import sys
 from abc import abstractmethod
 from collections import namedtuple
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, Union
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, \
@@ -75,20 +75,20 @@ class IntrinsicNodeTransformer(NodeTransformer):
             else:
                 raise NotImplementedError()
 
-    def get_var_declaration(self, parent: ast_internal_classes.FNode, variable: ast_internal_classes.FNode):
-
+    def get_var_declaration(self,
+                            parent: ast_internal_classes.FNode,
+                            variable: Union[
+                                ast_internal_classes.Data_Ref_Node, ast_internal_classes.Name_Node,
+                                ast_internal_classes.Array_Subscript_Node]):
         if isinstance(variable, ast_internal_classes.Data_Ref_Node):
-
             variable = self._parse_struct_ref(variable)
             return variable
 
-        name = ""
+        assert isinstance(variable, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node))
         if isinstance(variable, ast_internal_classes.Name_Node):
             name = variable.name
         elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
             name = variable.name.name
-        else:
-            raise NotImplementedError()
 
         if self.scope_vars.contains_var(parent, name):
             return self.scope_vars.get_var(parent, name)
@@ -132,7 +132,6 @@ class DirectReplacement(IntrinsicTransformation):
 
             replacement_rule = DirectReplacement.FUNCTIONS[func_name]
             if isinstance(replacement_rule, DirectReplacement.Transformation):
-
                 # FIXME: we do not have line number in binop?
                 binop_node.rval, input_type = replacement_rule.function(self, node, 0)  # binop_node.line)
 
@@ -183,7 +182,8 @@ class DirectReplacement(IntrinsicTransformation):
         value = int(rank.value)
         return (var_decl.sizes[value - 1], "INTEGER")
 
-    def _replace_lbound_ubound(func: str, transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
+    def _replace_lbound_ubound(func: str, transformer: IntrinsicNodeTransformer,
+                               var: ast_internal_classes.Call_Expr_Node, line):
 
         if len(var.args) not in [1, 2]:
             raise RuntimeError()
@@ -203,32 +203,33 @@ class DirectReplacement(IntrinsicTransformation):
 
         rank_value = int(rank.value)
 
-        is_assumed = isinstance(var_decl.offsets[rank_value-1], ast_internal_classes.Name_Node) and var_decl.offsets[rank_value-1].name.startswith("__f2dace_")
+        is_assumed = isinstance(var_decl.offsets[rank_value - 1], ast_internal_classes.Name_Node) and var_decl.offsets[
+            rank_value - 1].name.startswith("__f2dace_")
 
         if func == 'lbound':
 
             if is_assumed and not var_decl.alloc:
                 value = ast_internal_classes.Int_Literal_Node(value="1")
-            elif isinstance(var_decl.offsets[rank_value-1], int):
-                value = ast_internal_classes.Int_Literal_Node(value=str(var_decl.offsets[rank_value-1]))
+            elif isinstance(var_decl.offsets[rank_value - 1], int):
+                value = ast_internal_classes.Int_Literal_Node(value=str(var_decl.offsets[rank_value - 1]))
             else:
-                value = var_decl.offsets[rank_value-1]
+                value = var_decl.offsets[rank_value - 1]
 
         else:
-            if isinstance(var_decl.sizes[rank_value-1], ast_internal_classes.FNode):
-                size = var_decl.sizes[rank_value-1] 
+            if isinstance(var_decl.sizes[rank_value - 1], ast_internal_classes.FNode):
+                size = var_decl.sizes[rank_value - 1]
             else:
-                size= ast_internal_classes.Int_Literal_Node(value=var_decl.sizes[rank_value-1])
+                size = ast_internal_classes.Int_Literal_Node(value=var_decl.sizes[rank_value - 1])
 
             if is_assumed and not var_decl.alloc:
                 value = size
             else:
-                if isinstance(var_decl.offsets[rank_value-1], ast_internal_classes.FNode):
-                    offset = var_decl.offsets[rank_value-1] 
-                elif isinstance(var_decl.offsets[rank_value-1], int):
-                    offset = ast_internal_classes.Int_Literal_Node(value=str(var_decl.offsets[rank_value-1]))
+                if isinstance(var_decl.offsets[rank_value - 1], ast_internal_classes.FNode):
+                    offset = var_decl.offsets[rank_value - 1]
+                elif isinstance(var_decl.offsets[rank_value - 1], int):
+                    offset = ast_internal_classes.Int_Literal_Node(value=str(var_decl.offsets[rank_value - 1]))
                 else:
-                    offset = ast_internal_classes.Int_Literal_Node(value=var_decl.offsets[rank_value-1])
+                    offset = ast_internal_classes.Int_Literal_Node(value=var_decl.offsets[rank_value - 1])
 
                 value = ast_internal_classes.BinOp_Node(
                     op="+",
@@ -497,11 +498,11 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
         return None
 
     def _parse_binary_op(self, node: ast_internal_classes.Call_Expr_Node, arg: ast_internal_classes.BinOp_Node) -> \
-    Tuple[
-        ast_internal_classes.Array_Subscript_Node,
-        Optional[ast_internal_classes.Array_Subscript_Node],
-        ast_internal_classes.BinOp_Node
-    ]:
+            Tuple[
+                ast_internal_classes.Array_Subscript_Node,
+                Optional[ast_internal_classes.Array_Subscript_Node],
+                ast_internal_classes.BinOp_Node
+            ]:
 
         """
             Supports passing binary operations as an input to function.
@@ -1491,23 +1492,18 @@ class MathFunctions(IntrinsicTransformation):
                 struct_def = self.ast.structures.structures[struct_type]
 
         def func_type(self, node: ast_internal_classes.Call_Expr_Node):
-
             # take the first arg
             arg = node.args[0]
-            if isinstance(arg, ast_internal_classes.Real_Literal_Node):
-                return 'REAL'
-            elif isinstance(arg, ast_internal_classes.Double_Literal_Node):
-                return 'DOUBLE'
-            elif isinstance(arg, ast_internal_classes.Int_Literal_Node):
-                return 'INTEGER'
-            elif isinstance(arg, ast_internal_classes.Call_Expr_Node):
+            if isinstance(arg, (ast_internal_classes.Real_Literal_Node, ast_internal_classes.Double_Literal_Node,
+                                ast_internal_classes.Int_Literal_Node, ast_internal_classes.Call_Expr_Node,
+                                ast_internal_classes.BinOp_Node, ast_internal_classes.UnOp_Node)):
                 return arg.type
-            elif isinstance(arg, ast_internal_classes.Name_Node):
+            elif isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node)):
                 return self.get_var_declaration(node.parent, arg).type
             elif isinstance(arg, ast_internal_classes.Data_Ref_Node):
                 return self._parse_struct_ref(arg)
             else:
-                return self.get_var_declaration(node.parent, arg).type
+                raise NotImplementedError(type(arg))
 
         def replace_call(self, old_call: ast_internal_classes.Call_Expr_Node, new_call: ast_internal_classes.FNode):
 
@@ -1568,9 +1564,11 @@ class MathFunctions(IntrinsicTransformation):
 
             # replace types of return variable - LHS of the binary operator
             var = binop_node.lval
-            var_decl = self.get_var_declaration(var.parent, var)
-            var.type = input_type
-            var_decl.type = input_type
+            if isinstance(var, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node,
+                                ast_internal_classes.Array_Subscript_Node)):
+                var_decl = self.get_var_declaration(var.parent, var)
+                var.type = input_type
+                var_decl.type = input_type
 
             return binop_node
 
@@ -1685,8 +1683,9 @@ class FortranIntrinsics:
             "RANDOM_NUMBER": "__dace_random_number",
             "DATE_AND_TIME": "__dace_date_and_time",
         }
-        if not DirectReplacement.replacable_name(func_name) and not MathFunctions.replacable(func_name) and func_name not in self.IMPLEMENTATIONS_AST:
-            replacements[func_name]="__dace_"+func_name
+        if not DirectReplacement.replacable_name(func_name) and not MathFunctions.replacable(
+                func_name) and func_name not in self.IMPLEMENTATIONS_AST:
+            replacements[func_name] = "__dace_" + func_name
             print(f"Function {func_name} not supported yet, intrinsics required!")
         if func_name in replacements:
             return ast_internal_classes.Name_Node(name=replacements[func_name])
@@ -1707,7 +1706,6 @@ class FortranIntrinsics:
 
             return MathFunctions.replace(func_name)
 
-        
         if self.IMPLEMENTATIONS_AST[func_name].has_transformation():
 
             if hasattr(self.IMPLEMENTATIONS_AST[func_name], "Transformation"):
