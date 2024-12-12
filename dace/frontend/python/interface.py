@@ -69,7 +69,7 @@ def program(f: F,
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
                                resulting program.
-    :param use_explicit_cfl: If True, makes use of explicit control flow constructs.
+    :param use_explicit_cf: If True, makes use of explicit control flow constructs.
     :note: If arguments are defined with type hints, the program can be compiled
            ahead-of-time with ``.compile()``.
     """

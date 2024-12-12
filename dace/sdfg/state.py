@@ -2585,14 +2585,14 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
                                 ControlFlowBlock, abc.ABC):
     """
     Abstract superclass to represent all kinds of control flow regions in an SDFG.
-    This is consequently one of the three main classes of control flow graph nodes, which include `ControlFlowBlock`s,
-    `SDFGState`s, and nested `AbstractControlFlowRegion`s. An `AbstractControlFlowRegion` can further be either a region
-    that directly contains a control flow graph (`ControlFlowRegion`s and subclasses thereof), or something that acts
-    like and has the same utilities as a control flow region, including the same API, but is itself not directly a
-    single graph. An example of this is the `ConditionalBlock`, which acts as a single control flow region to the
-    outside, but contains multiple actual graphs (one per branch). As such, there are very few but important differences
-    between the subclasses of `AbstractControlFlowRegion`s, such as how traversals are performed, how many start blocks
-    there are, etc.
+    This is consequently one of the three main classes of control flow graph nodes, which include ``ControlFlowBlock``s,
+    ``SDFGState``s, and nested ``AbstractControlFlowRegion``s. An ``AbstractControlFlowRegion`` can further be either a
+    region that directly contains a control flow graph (``ControlFlowRegion``s and subclasses thereof), or something
+    that acts like and has the same utilities as a control flow region, including the same API, but is itself not
+    directly a single graph. An example of this is the ``ConditionalBlock``, which acts as a single control flow region
+    to the outside, but contains multiple actual graphs (one per branch). As such, there are very few but important
+    differences between the subclasses of ``AbstractControlFlowRegion``s, such as how traversals are performed, how many
+    start blocks there are, etc.
     """
 
     def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None,
@@ -2753,7 +2753,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 
         return False, None
 
-    def new_symbols(self, symbols: dict) -> Dict[str, dtypes.typeclass]:
+    def new_symbols(self, symbols: Dict[str, dtypes.typeclass]) -> Dict[str, dtypes.typeclass]:
         """
         Returns a mapping between the symbol defined by this control flow region and its type, if it exists.
         """
@@ -3099,7 +3099,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 @make_properties
 class ControlFlowRegion(AbstractControlFlowRegion):
     """
-    A `ControlFlowRegion` represents a control flow graph node that itself contains a control flow graph.
+    A ``ControlFlowRegion`` represents a control flow graph node that itself contains a control flow graph.
     This can be an arbitrary control flow graph, but may also be a specific type of control flow region with additional
     semantics, such as a loop or a function call.
     """
