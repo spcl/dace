@@ -253,7 +253,7 @@ class Flatten_Classes(NodeTransformer):
                                     name=ast_internal_classes.Name_Node(name=i.name.name + "_" + node.name.name,
                                                                         type=node.type, args=node.args,
                                                                         line_number=node.line_number), args=node.args,
-                                    type=node.type, line_number=node.line_number)
+                                    type=node.type, subroutine=node.subroutine, line_number=node.line_number)
         return self.generic_visit(node)
 
 
@@ -817,16 +817,13 @@ class ArgumentExtractor(NodeTransformer):
         if node.name.name in ["malloc", "pow", "cbrt", "__dace_epsilon",
                               *FortranIntrinsics.call_extraction_exemptions()]:
             return self.generic_visit(node)
-        if hasattr(node, "subroutine"):
-            if node.subroutine is True:
-                return self.generic_visit(node)
+        if node.subroutine:
+            return self.generic_visit(node)
         if not hasattr(self, "count"):
             self.count = 0
         tmp = self.count
-        result = ast_internal_classes.Call_Expr_Node(type=node.type,
-                                                     name=node.name,
-                                                     args=[],
-                                                     line_number=node.line_number)
+        result = ast_internal_classes.Call_Expr_Node(type=node.type, subroutine=node.subroutine,
+                                                     name=node.name, args=[], line_number=node.line_number)
         for i, arg in enumerate(node.args):
             # Ensure we allow to extract function calls from arguments
             if isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Literal,
@@ -1121,20 +1118,16 @@ class CallExtractor(NodeTransformer):
                         ]))
                     newbody.append(
                         ast_internal_classes.BinOp_Node(op="=",
-                                                        lval=ast_internal_classes.Name_Node(name="tmp_call_" +
-                                                                                                 str(temp),
-                                                                                            type=res[i].type),
-                                                        rval=res[i],
-                                                        line_number=child.line_number))
+                                                        lval=ast_internal_classes.Name_Node(
+                                                            name="tmp_call_" + str(temp), type=res[i].type),
+                                                        rval=res[i], line_number=child.line_number))
                     temp = temp - 1
             if isinstance(child, ast_internal_classes.Call_Expr_Node):
                 new_args = []
-                if hasattr(child, "args"):
-                    for i in child.args:
-                        new_args.append(self.visit(i))
-                new_child = ast_internal_classes.Call_Expr_Node(type=child.type,
-                                                                name=child.name,
-                                                                args=new_args,
+                for i in child.args:
+                    new_args.append(self.visit(i))
+                new_child = ast_internal_classes.Call_Expr_Node(type=child.type, subroutine=child.subroutine,
+                                                                name=child.name, args=new_args,
                                                                 line_number=child.line_number)
                 newbody.append(new_child)
             else:
@@ -1460,8 +1453,9 @@ class SignToIf(NodeTransformer):
                                                     type="VOID",
                                                     lval=ast_internal_classes.Call_Expr_Node(
                                                         name=ast_internal_classes.Name_Node(name="abs"),
-                                                        type="DOUBLE",
                                                         args=[copy.deepcopy(args[0])],
+                                                        type="DOUBLE",
+                                                        subroutine=False,
                                                         line_number=node.line_number),
                                                     line_number=node.line_number),
                                                 line_number=node.line_number)

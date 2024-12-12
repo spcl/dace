@@ -496,11 +496,15 @@ class Suffix_Node(FNode):
 
 
 class Call_Expr_Node(FNode):
+    def __init__(self, name: 'Name_Node', args: List[FNode], subroutine: bool, type: str, **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.args = args
+        self.subroutine = subroutine
+        self.type = type
+
     _attributes = ('type', 'subroutine')
-    _fields = (
-        'name',
-        'args',
-    )
+    _fields = ('name', 'args')
 
 
 class Derived_Type_Stmt_Node(FNode):

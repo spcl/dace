@@ -4,12 +4,11 @@ from typing import Any, List, Optional, Type, TypeVar, Union, overload, TYPE_CHE
 import networkx as nx
 from fparser.two import Fortran2003 as f03
 from fparser.two import Fortran2008 as f08
-from fparser.two.Fortran2003 import Function_Subprogram, Function_Stmt, Program, Prefix, Intrinsic_Type_Spec, \
+from fparser.two.Fortran2003 import Function_Subprogram, Function_Stmt, Prefix, Intrinsic_Type_Spec, \
     Assignment_Stmt, Logical_Literal_Constant, Real_Literal_Constant, Signed_Real_Literal_Constant, \
-    Int_Literal_Constant, Signed_Int_Literal_Constant, Hex_Constant
+    Int_Literal_Constant, Signed_Int_Literal_Constant, Hex_Constant, Function_Reference
 
 from dace.frontend.fortran import ast_internal_classes
-from dace.frontend.fortran.ast_desugaring import alias_specs
 from dace.frontend.fortran.ast_internal_classes import Name_Node, Program_Node, Decl_Stmt_Node, Var_Decl_Node
 from dace.frontend.fortran.ast_transforms import StructLister, StructDependencyLister, Structures
 from dace.frontend.fortran.ast_utils import singular
@@ -464,9 +463,9 @@ class InternalFortranAst:
     def close_stmt(self, node: FASTNode):
         children = self.create_children(node)
         if node.item is None:
-            line='-1'
+            line = '-1'
         else:
-            line = node.item.span    
+            line = node.item.span
         return ast_internal_classes.Close_Stmt_Node(args=children[0], line_number=line)
 
     def io_control_spec(self, node: FASTNode):
@@ -541,12 +540,12 @@ class InternalFortranAst:
         children = self.create_children(node)
         return children
 
-    def function_reference(self, node: FASTNode):
+    def function_reference(self, node: Function_Reference):
         name, args = self.create_children(node)
         line = get_line(node)
         return ast_internal_classes.Call_Expr_Node(name=name,
                                                    args=args.args if args else [],
-                                                   type="VOID",
+                                                   type="VOID", subroutine=False,
                                                    line_number=line)
 
     def end_associate_stmt(self, node: FASTNode):
@@ -815,7 +814,7 @@ class InternalFortranAst:
         # child 1 is "**"
         return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name="pow"),
                                                    args=[children[0], children[2]],
-                                                   line_number=line, type="REAL")
+                                                   line_number=line, type="REAL", subroutine=False)
 
     def array_constructor(self, node: FASTNode):
         children = self.create_children(node)
@@ -1140,20 +1139,20 @@ class InternalFortranAst:
                                 if kind == "4":
                                     basetype = "INTEGER"
                                 elif kind == "1":
-                                    #TODO: support for 1 byte integers /chars would be useful
-                                    basetype = "INTEGER"  
-                                
+                                    # TODO: support for 1 byte integers /chars would be useful
+                                    basetype = "INTEGER"
+
                                 elif kind == "2":
-                                    #TODO: support for 2 byte integers would be useful
-                                    basetype = "INTEGER"       
-                                
+                                    # TODO: support for 2 byte integers would be useful
+                                    basetype = "INTEGER"
+
                                 elif kind == "8":
-                                    #TODO: support for 8 byte integers would be useful
-                                    basetype = "INTEGER"     
+                                    # TODO: support for 8 byte integers would be useful
+                                    basetype = "INTEGER"
                                 else:
                                     raise TypeError("Integer kind not supported")
                             else:
-                                raise TypeError("Derived type not supported")    
+                                raise TypeError("Derived type not supported")
 
                         else:
                             kind = type_of_node.items[1].items[1].string.lower()
@@ -1817,14 +1816,15 @@ class InternalFortranAst:
         #    line_number = 42
         # else:
         #    line_number = node.item.span
-        return ast_internal_classes.Call_Expr_Node(name=name, args=ret_args, type="VOID", line_number=line_number)
+        return ast_internal_classes.Call_Expr_Node(name=name, args=ret_args, type="VOID", subroutine=True,
+                                                   line_number=line_number)
 
     def return_stmt(self, node: FASTNode):
         return None
 
     def stop_stmt(self, node: FASTNode):
-        return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name="__dace_exit"), args=[], type="VOID",
-                                                  line_number=node.item.span)
+        return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name="__dace_exit"), args=[],
+                                                   type="VOID", subroutine=False, line_number=node.item.span)
 
     def dummy_arg_list(self, node: FASTNode):
         children = self.create_children(node)
@@ -1844,7 +1844,6 @@ class InternalFortranAst:
         args = get_child(children, ast_internal_classes.Section_Subscript_List_Node)
         return ast_internal_classes.Array_Subscript_Node(name=name, type="VOID", indices=args.list,
                                                          line_number=line)
-        
 
     def loop_control(self, node: FASTNode):
         children = self.create_children(node)

@@ -361,9 +361,8 @@ class DirectReplacement(IntrinsicTransformation):
         return False
 
     @staticmethod
-    def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line,
-                symbols: list) -> ast_internal_classes.FNode:
-
+    def replace(func_name: str, args: ast_internal_classes.Arg_List_Node, line, symbols: list) \
+            -> ast_internal_classes.FNode:
         # Here we already have __dace_func
         fname = func_name.split('__dace_')[1]
         return DirectReplacement.FUNCTIONS[fname].function(args, line, symbols)
@@ -1550,8 +1549,6 @@ class MathFunctions(IntrinsicTransformation):
             for arg in node.args:
                 self.visit(arg)
 
-            return_type = None
-            input_type = None
             input_type = self.func_type(node)
 
             replacement_rule = MathFunctions.INTRINSIC_TO_DACE[func_name]
@@ -1739,6 +1736,6 @@ class FortranIntrinsics:
             # We will do the actual type replacement later
             # To that end, we need to know the input types - but these we do not know at the moment.
             return ast_internal_classes.Call_Expr_Node(
-                name=name, type="VOID",
+                name=name, type="VOID", subroutine=True,
                 args=args.args, line_number=line
             )
