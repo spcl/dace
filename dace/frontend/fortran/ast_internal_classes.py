@@ -496,11 +496,15 @@ class Suffix_Node(FNode):
 
 
 class Call_Expr_Node(FNode):
+    def __init__(self, name: 'Name_Node', args: List[FNode], subroutine: bool, type: str, **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.args = args
+        self.subroutine = subroutine
+        self.type = type
+
     _attributes = ('type', 'subroutine')
-    _fields = (
-        'name',
-        'args',
-    )
+    _fields = ('name', 'args')
 
 
 class Derived_Type_Stmt_Node(FNode):
@@ -642,38 +646,38 @@ class Association_Node(FNode):
 
 
 class Connect_Spec_Node(FNode):
-    _attributes = ('type')
-    _fields = ('args')
+    _attributes = ('type',)
+    _fields = ('args',)
 
 
 class Close_Spec_Node(FNode):
-    _attributes = ('type')
-    _fields = ('args')
+    _attributes = ('type',)
+    _fields = ('args',)
 
 
 class Close_Spec_List_Node(FNode):
     _attributes = ()
-    _fields = ('list')
+    _fields = ('list',)
 
 
 class IO_Control_Spec_Node(FNode):
-    _attributes = ('type')
-    _fields = ('args')
+    _attributes = ('type',)
+    _fields = ('args',)
 
 
 class IO_Control_Spec_List_Node(FNode):
     _attributes = ()
-    _fields = ('list')
+    _fields = ('list',)
 
 
 class Connect_Spec_List_Node(FNode):
     _attributes = ()
-    _fields = ('list')
+    _fields = ('list',)
 
 
 class Nullify_Stmt_Node(FNode):
     _attributes = ()
-    _fields = ('list')
+    _fields = ('list',)
 
 
 class Namelist_Stmt_Node(FNode):
@@ -683,12 +687,12 @@ class Namelist_Stmt_Node(FNode):
 
 class Namelist_Group_Object_List_Node(FNode):
     _attributes = ()
-    _fields = ('list')
+    _fields = ('list',)
 
 
 class Bound_Procedures_Node(FNode):
     _attributes = ()
-    _fields = ('procedures')
+    _fields = ('procedures',)
 
 
 class Specific_Binding_Node(FNode):
@@ -697,6 +701,12 @@ class Specific_Binding_Node(FNode):
 
 
 class Parenthesis_Expr_Node(FNode):
+    def __init__(self, expr: FNode, **kwargs):
+        super().__init__(**kwargs)
+        assert hasattr(expr, 'type')
+        self.expr = expr
+        self.type = expr.type
+
     _attributes = ()
     _fields = ('expr', 'type')
 
