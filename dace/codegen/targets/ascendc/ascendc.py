@@ -344,19 +344,11 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
     {structstr}
 }};"""
         self._impl_codeobject.code = f"""
-#ifdef DACE_ASCEND
-#ifndef __CCE_KT_TEST__
-#endif
-
 #include  "kernel_operator.h"
 
 #include <dace/ascendc/devicetypes.h>
 
 {self._localcode.getvalue()}
-
-#ifdef DACE_ASCEND
-#endif
-#endif
 """
         return [self._codeobject, self._impl_codeobject]
 
@@ -1215,7 +1207,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             )
 
             # Invoke all instrumentation providers
-            """"
+            """
             for instr in self._frame._dispatcher.instrumentation.values():
                 if instr is not None:
                     instr.on_state_end(sdfg, state, callsite_stream, function_stream)
@@ -1344,14 +1336,14 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         self.scope_exit_stream = CodeIOStream()
 
         # Instrumentation for kernel scope
-        """
         instr = self._dispatcher.instrumentation[scope_entry.map.instrument]
         if instr is not None:
+            pre_outer_stream = CodeIOStream()
             instr.on_scope_entry(
                 sdfg,
                 state,
                 scope_entry,
-                callsite_stream,
+                pre_outer_stream,
                 self.scope_entry_stream,
                 self._globalcode,
             )
@@ -1364,7 +1356,6 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
                 self.scope_exit_stream,
                 self._globalcode,
             )
-        """
 
         # Redefine constant arguments and rename arguments to device counterparts
         # TODO: This (const behavior and code below) is all a hack.
@@ -1523,14 +1514,15 @@ DACE_EXPORTED void __dace_runkernel_impl_{fname}({fargs})
             state_id,
             node,
         )
-
         self._localwrappercode.write(
             """
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
 DACE_EXPORTED void __dace_runkernel_impl_{fname}({impl_fargs_no_state});
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
 {{
+    {instrumentation_beg}
     __dace_runkernel_impl_{fname}({impl_call_fargs_no_state});
+
 """.format(
                 fname=kernel_name,
                 fargs=", ".join(
@@ -1542,6 +1534,7 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
                 impl_fargs_no_state =", ".join(
                     kernel_args_entry_typed + extra_call_args_typed
                 ),
+                instrumentation_beg=pre_outer_stream.getvalue(),
             ),
             cfg,
             state_id,
@@ -1645,10 +1638,10 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
         # synchronize_streams(sdfg, cfg, state, state_id, scope_entry, scope_exit, callsite_stream, self)
 
         # Instrumentation (post-kernel)
-        """
+
         if instr is not None:
-            callsite_stream.write(outer_stream.getvalue())
-        """
+            self._localwrappercode.write(outer_stream.getvalue())
+
         self._localwrappercode.write("}\n")
 
     def get_tb_maps_recursive(self, subgraph):
