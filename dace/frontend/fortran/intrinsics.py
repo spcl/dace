@@ -135,11 +135,19 @@ class DirectReplacement(IntrinsicTransformation):
                 # FIXME: we do not have line number in binop?
                 binop_node.rval, input_type = replacement_rule.function(self, node, 0)  # binop_node.line)
 
-                # replace types of return variable - LHS of the binary operator
                 var = binop_node.lval
-                var_decl = self.get_var_declaration(var.parent, var)
+
+                # replace types of return variable - LHS of the binary operator
+                # we only propagate that for the assignment
+                # we handle extracted call variables this way
+                # but we can also have different shapes, e.g., `maxval(something) > something_else`
+                # hence the check
+                if isinstance(var, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node, ast_internal_classes.Data_Ref_Node)):
+
+                    var_decl = self.get_var_declaration(var.parent, var)
+                    var_decl.type = input_type
+
                 var.type = input_type
-                var_decl.type = input_type
 
             return binop_node
 
@@ -1467,30 +1475,6 @@ class MathFunctions(IntrinsicTransformation):
 
     class TypeTransformer(IntrinsicNodeTransformer):
 
-        def _parse_struct_ref(self, node: ast_internal_classes.Data_Ref_Node):
-
-            # we assume starting from the top (left-most) data_ref_node
-            # for struct1 % struct2 % struct3 % var
-            # we find definition of struct1, then we iterate until we find the var
-
-            struct_type = self.scope_vars.get_var(node.parent, node.parent_ref.name).type
-            struct_def = self.ast.structures.structures[struct_type]
-            cur_node = node
-
-            while True:
-                cur_node = cur_node.part_ref
-
-                if isinstance(cur_node, ast_internal_classes.Array_Subscript_Node):
-                    struct_def = self.ast.structures.structures[struct_type]
-                    return struct_def.vars[cur_node.name.name].type
-
-                elif isinstance(cur_node, ast_internal_classes.Name_Node):
-                    struct_def = self.ast.structures.structures[struct_type]
-                    return struct_def.vars[cur_node.name].type
-
-                struct_type = struct_def.vars[cur_node.parent_ref.name].type
-                struct_def = self.ast.structures.structures[struct_type]
-
         def func_type(self, node: ast_internal_classes.Call_Expr_Node):
             # take the first arg
             arg = node.args[0]
@@ -1501,7 +1485,7 @@ class MathFunctions(IntrinsicTransformation):
             elif isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node)):
                 return self.get_var_declaration(node.parent, arg).type
             elif isinstance(arg, ast_internal_classes.Data_Ref_Node):
-                return self._parse_struct_ref(arg)
+                return self._parse_struct_ref(arg).type
             else:
                 raise NotImplementedError(type(arg))
 
