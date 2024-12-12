@@ -2,9 +2,12 @@
 
 import os
 import sys
+from pathlib import Path
 
 from fparser.common.readfortran import FortranFileReader as ffr
 from fparser.two.parser import ParserFactory as pf
+
+from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast
 
 current = os.path.dirname(os.path.realpath(__file__))
 parent = os.path.dirname(current)
@@ -65,6 +68,16 @@ if __name__ == "__main__":
     base_dir_ecrad = f"{base_icon_path}/externals/ecrad"
     base_dir_icon = f"{base_icon_path}/src"
     fortran_files = find_path_recursive(base_dir_ecrad)
+    inc_list = [f"{base_icon_path}/externals/ecrad/include"]
+
+    # Construct the primary ECRad AST.
+    parse_cfg = ParseConfig(
+        main=Path(f"{base_icon_path}/{icon_file}"),
+        sources=[Path(f) for f in fortran_files],
+        entry_points=[('radiation_interface', 'radiation')],
+    )
+    ecrad_ast = create_fparser_ast(parse_cfg)
+
     ast_builder = ast_components.InternalFortranAst()
     parser = pf().create(std="f2008")
 
@@ -148,9 +161,10 @@ if __name__ == "__main__":
             prop.replacements) + " If: " + str(if_eval.replacements))
         step += 1
 
-    #TODO: a couple of manual replacements
+    # TODO: a couple of manual replacements
     lister2.simple_assignments.append(
-        (ast_internal.Data_Ref_Node(parent_ref=ast_internal.Name_Node(name="ecrad_conf"), part_ref=ast_internal.Name_Node(name="do_save_radiative_properties")),
+        (ast_internal.Data_Ref_Node(parent_ref=ast_internal.Name_Node(name="ecrad_conf"),
+                                    part_ref=ast_internal.Name_Node(name="do_save_radiative_properties")),
          ast_internal.Bool_Literal_Node(value='False')))
 
     # this is defined internally in the program as "false"
@@ -158,10 +172,6 @@ if __name__ == "__main__":
     lister2.simple_assignments.append(
         (ast_internal.Name_Node(name="lhook"),
          ast_internal.Bool_Literal_Node(value='False')))
-
-    base_dir = f"{base_icon_path}/externals/ecrad/"
-    fortran_files = find_path_recursive(base_dir)
-    inc_list = [f"{base_icon_path}/externals/ecrad/include"]
 
     propagation_info = lister.simple_assignments + lister2.simple_assignments
 
@@ -180,11 +190,13 @@ if __name__ == "__main__":
     ]
 
     cfg = fortran_parser.FindUsedFunctionsConfig(
-        root = 'radiation',
-        needed_functions = [['radiation_interface', 'radiation']],
-        skip_functions = ['radiation_monochromatic', 'radiation_cloudless_sw',
-                    'radiation_tripleclouds_sw', 'radiation_homogeneous_sw']
+        root='radiation',
+        needed_functions=[['radiation_interface', 'radiation']],
+        skip_functions=['radiation_monochromatic', 'radiation_cloudless_sw',
+                        'radiation_tripleclouds_sw', 'radiation_homogeneous_sw']
     )
+
+    # generate_propagation_info(propagation_info)
 
     # previous steps were used to generate the initial list of assignments for ECRAD
     # this includes user config and internal enumerations of ICON
@@ -192,12 +204,11 @@ if __name__ == "__main__":
     # we only keep the list of assignments and propagate it to ECRAD parsing.
     print(f"{base_icon_path}/{icon_file}")
     fortran_parser.create_sdfg_from_fortran_file_with_options(
-        f"{base_icon_path}/{icon_file}",
-        include_list=inc_list,
-        source_list=fortran_files,
+        parse_cfg,
+        ecrad_ast,
         sdfgs_dir=sdfgs_dir,
         subroutine_name="radiation",
-        #subroutine_name="cloud_generator",
+        # subroutine_name="cloud_generator",
         normalize_offsets=True,
         propagation_info=propagation_info,
         enum_propagator_ast=radiation_config_ast,
