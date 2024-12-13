@@ -2184,7 +2184,7 @@ class IfConditionExtractor(NodeTransformer):
                 old_cond = child.cond
                 newbody.append(
                     ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                        ast_internal_classes.Symbol_Decl_Node(
+                        ast_internal_classes.Var_Decl_Node(
                             name="_if_cond_" + str(self.count), type="INTEGER", sizes=None, init=None)
                     ]))
                 newbody.append(ast_internal_classes.BinOp_Node(
