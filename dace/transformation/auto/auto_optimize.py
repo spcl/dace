@@ -59,7 +59,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             graph_or_subgraph.simplify(validate_all=validate_all)
             # MapFusion for trivial cases
             graph_or_subgraph.apply_transformations_repeated(
-                    MapFusion,
+                    MapFusion(strict_dataflow=True),
                     validate_all=validate_all,
             )
 

@@ -36,9 +36,9 @@ def test_applyto_enumerate():
     pattern = sdutil.node_path_graph(dace.nodes.MapExit, dace.nodes.AccessNode, dace.nodes.MapEntry)
     for subgraph in enumerate_matches(sdfg, pattern):
         MapFusion.apply_to(sdfg,
-                           map_exit_1=subgraph.source_nodes()[0],
-                           intermediate_access_node=next(n for n in subgraph.nodes() if isinstance(n, dace.nodes.AccessNode)),
-                           map_entry_2=subgraph.sink_nodes()[0])
+                           first_map_exit=subgraph.source_nodes()[0],
+                           array=next(n for n in subgraph.nodes() if isinstance(n, dace.nodes.AccessNode)),
+                           second_map_entry=subgraph.sink_nodes()[0])
 
 
 def test_applyto_pattern():

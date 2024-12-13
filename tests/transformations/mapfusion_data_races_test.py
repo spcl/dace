@@ -101,4 +101,3 @@ if __name__ == "__main__":
     test_rw_data_race_3_sgf()
     test_rw_data_race_3_mf()
     test_rw_data_race_4_mf()
-    print("SUCCESS")

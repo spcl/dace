@@ -70,7 +70,7 @@ def run_correlation(device_type: dace.dtypes.DeviceType):
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply autopot
-        sdfg = correlation_kernel.to_sdfg(simplify=True)
+        sdfg = correlation_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         last_value = os.environ.get('DACE_testing_serialization', '0')
         os.environ['DACE_testing_serialization'] = '0'

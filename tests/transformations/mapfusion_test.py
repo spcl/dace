@@ -428,6 +428,7 @@ def test_fusion_with_nested_sdfg_0():
             A[i] = tmp[i] * 2
     
     sdfg = fusion_with_nested_sdfg_0.to_sdfg(simplify=True)
+    sdfg.view()
 
     # Because the transformation refuses to fuse dynamic edges.
     #  We have to eliminate them.
@@ -977,6 +978,101 @@ def test_fusion_non_strict_dataflow_implicit_dependency():
     assert count == 0
 
 
+def test_inner_map_dependency():
+    sdfg = dace.SDFG("inner_map_dependency_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+
+    name_arrays = ["A", "T", "C"]
+    for aname in name_arrays:
+        sdfg.add_array(
+                name,
+                shape=(10,),
+                transient=False,
+        )
+    sdfg.arrays["T"].transient = True
+    sdfg.add_scalar(
+            "s",
+            dtype=dace.float64,
+            transient=True,
+    )
+    A, T, C = (state.add_access(name) for name in name_arrays)
+    s1, s2 = (state.add_access("s") for _ in range(2))
+
+    me1, mx1 = state.add_map(
+            "map_1",
+            ndrange={"__i0": "0:10"},
+    )
+    tsklt1 = state.add_tasklet(
+            "tskl1",
+            inputs={"__in1"},
+            outputs={"__out"},
+            code="__out = __in1 + 1.0",
+    )
+
+    state.add_edge(
+            A,
+            None,
+            me1,
+            "IN_A",
+            dace.Memlet("A[0:10]")
+    )
+    state.add_edge(
+            me1,
+            "OUT_A",
+            s1,
+            None,
+            dace.Memlet("A[__i0] -> [0]")
+    )
+    me1.add_in_connector("IN_A")
+    me1.add_out_connector("IUT_A")
+    state.add_edge(
+            s1,
+            None,
+            tskl1,
+            dace.Memlet("s[0]")
+    )
+    state.add_edge(
+            tsklt1,
+            "__out",
+            mx1,
+            "IN_T",
+            dace.Memlet("T[__i0]")
+    )
+    state.add_edge(
+            mx1,
+            "OUT_T",
+            T,
+            None,
+            dace.Memlet("T[0:10]")
+    )
+    mx1.add_in_connector("IN_T")
+    mx1.add_out_connector("OUT_T")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 if __name__ == '__main__':
     test_fusion_non_strict_dataflow_implicit_dependency()
     test_fusion_strict_dataflow_pointwise()
@@ -1002,5 +1098,3 @@ if __name__ == '__main__':
     test_offset_correction_scalar_read()
     test_offset_correction_empty()
     test_different_offsets()
-    print("SUCCESS")
-

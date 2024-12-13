@@ -48,9 +48,9 @@ class MapFusion(transformation.SingleStateTransformation):
     """
 
     # Pattern Nodes
-    map_exit_1 = transformation.transformation.PatternNode(nodes.MapExit)
-    intermediate_access_node = transformation.transformation.PatternNode(nodes.AccessNode)
-    map_entry_2 = transformation.transformation.PatternNode(nodes.MapEntry)
+    first_map_exit = transformation.transformation.PatternNode(nodes.MapExit)
+    array = transformation.transformation.PatternNode(nodes.AccessNode)
+    second_map_entry = transformation.transformation.PatternNode(nodes.MapEntry)
 
 
     # Settings
@@ -84,11 +84,11 @@ class MapFusion(transformation.SingleStateTransformation):
     ) -> None:
         super().__init__(**kwargs)
         if only_toplevel_maps is not None:
-            self.only_toplevel_maps = bool(only_toplevel_maps)
+            self.only_toplevel_maps = only_toplevel_maps
         if only_inner_maps is not None:
-            self.only_inner_maps = bool(only_inner_maps)
+            self.only_inner_maps = only_inner_maps
         if strict_dataflow is not None:
-            self.strict_dataflow = bool(strict_dataflow)
+            self.strict_dataflow = strict_dataflow
         self._shared_data = {}
 
 
@@ -102,7 +102,7 @@ class MapFusion(transformation.SingleStateTransformation):
         matched nodes, but more or less on anything that has an incoming connection
         from the first Map or an outgoing connection to the second Map entry.
         """
-        return [dace.sdfg.utils.node_path_graph(cls.map_exit_1, cls.intermediate_access_node, cls.map_entry_2)]
+        return [dace.sdfg.utils.node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry)]
 
 
     def can_be_applied(
@@ -119,18 +119,40 @@ class MapFusion(transformation.SingleStateTransformation):
         - Tests if there are read write dependencies.
         - Tests if the decomposition exists.
         """
-        map_entry_1: nodes.MapEntry = graph.entry_node(self.map_exit_1)
-        map_exit_1: nodes.MapExit = self.map_exit_1
-        map_entry_2: nodes.MapEntry = self.map_entry_2
+        first_map_entry: nodes.MapEntry = graph.entry_node(self.first_map_exit)
+        first_map_exit: nodes.MapExit = self.first_map_exit
+        second_map_entry: nodes.MapEntry = self.second_map_entry
 
-        # This essentially test the structural properties of the two Maps.
-        if not self.can_topologically_be_fused(map_entry_1=map_entry_1, map_entry_2=map_entry_2, graph=graph, sdfg=sdfg):
+        # Check the structural properties of the Maps. The function will return
+        #  the `dict` that describes how the parameters must be renamed (for caching)
+        #  or `None` if the maps can not be structurally fused.
+        param_repl = self.can_topologically_be_fused(
+                first_map_entry=first_map_entry,
+                second_map_entry=second_map_entry,
+                graph=graph,
+                sdfg=sdfg
+        )
+        if param_repl is None:
             return False
 
-        # Test for read-write conflicts
+        # Tests if there are read write dependencies that are caused by the bodies
+        #  of the Maps, such as referring to the same data. Note that this tests are
+        #  different from the ones performed by `has_read_write_dependency()`, which
+        #  only checks the data dependencies that go through the scope nodes.
+        if self.has_inner_read_write_dependency(
+                first_map_entry=first_map_entry,
+                second_map_entry=second_map_entry,
+                state=graph,
+                sdfg=sdfg,
+        ):
+            return False
+
+        # Tests for read write conflicts of the two maps, this is only checking
+        #  the data that goes through the scope nodes. `has_inner_read_write_dependency()`
+        #  if used to check if there are internal dependencies.
         if self.has_read_write_dependency(
-                map_entry_1=map_entry_1,
-                map_entry_2=map_entry_2,
+                first_map_entry=first_map_entry,
+                second_map_entry=second_map_entry,
                 state=graph,
                 sdfg=sdfg,
         ):
@@ -142,8 +164,9 @@ class MapFusion(transformation.SingleStateTransformation):
         output_partition = self.partition_first_outputs(
             state=graph,
             sdfg=sdfg,
-            map_exit_1=map_exit_1,
-            map_entry_2=map_entry_2,
+            first_map_exit=first_map_exit,
+            second_map_entry=second_map_entry,
+            param_repl=param_repl,
         )
         if output_partition is None:
             return False
@@ -170,27 +193,30 @@ class MapFusion(transformation.SingleStateTransformation):
         #  once we start adding and removing nodes it seems that their ID changes.
         #  Thus we have to save them here, this is a known behaviour in DaCe.
         assert isinstance(graph, dace.SDFGState)
-        assert isinstance(self.map_exit_1, nodes.MapExit)
-        assert isinstance(self.map_entry_2, nodes.MapEntry)
+        assert isinstance(self.first_map_exit, nodes.MapExit)
+        assert isinstance(self.second_map_entry, nodes.MapEntry)
 
-        map_exit_1: nodes.MapExit = self.map_exit_1
-        map_entry_2: nodes.MapEntry = self.map_entry_2
-        map_exit_2: nodes.MapExit = graph.exit_node(self.map_entry_2)
-        map_entry_1: nodes.MapEntry = graph.entry_node(self.map_exit_1)
+        first_map_exit: nodes.MapExit = self.first_map_exit
+        second_map_entry: nodes.MapEntry = self.second_map_entry
+        second_map_exit: nodes.MapExit = graph.exit_node(self.second_map_entry)
+        first_map_entry: nodes.MapEntry = graph.entry_node(self.first_map_exit)
 
         # Before we do anything we perform the renaming.
         self.rename_map_parameters(
-            first_map=map_exit_1.map,
-            second_map=map_entry_2.map,
-            second_map_entry=map_entry_2,
+            first_map=first_map_exit.map,
+            second_map=second_map_entry.map,
+            second_map_entry=second_map_entry,
             state=graph,
         )
 
+        # Now compute the partition. Because we have already renamed the parameters
+        #  of the second Map, there is no need to perform any renaming.
         output_partition = self.partition_first_outputs(
             state=graph,
             sdfg=sdfg,
-            map_exit_1=map_exit_1,
-            map_entry_2=map_entry_2,
+            first_map_exit=first_map_exit,
+            second_map_entry=second_map_entry,
+            param_repl=dict(),
         )
         assert output_partition is not None  # Make MyPy happy.
         pure_outputs, exclusive_outputs, shared_outputs = output_partition
@@ -200,9 +226,9 @@ class MapFusion(transformation.SingleStateTransformation):
                 intermediate_outputs=exclusive_outputs,
                 state=graph,
                 sdfg=sdfg,
-                map_exit_1=map_exit_1,
-                map_entry_2=map_entry_2,
-                map_exit_2=map_exit_2,
+                first_map_exit=first_map_exit,
+                second_map_entry=second_map_entry,
+                second_map_exit=second_map_exit,
                 is_exclusive_set=True,
             )
         if len(shared_outputs) != 0:
@@ -210,16 +236,16 @@ class MapFusion(transformation.SingleStateTransformation):
                 intermediate_outputs=shared_outputs,
                 state=graph,
                 sdfg=sdfg,
-                map_exit_1=map_exit_1,
-                map_entry_2=map_entry_2,
-                map_exit_2=map_exit_2,
+                first_map_exit=first_map_exit,
+                second_map_entry=second_map_entry,
+                second_map_exit=second_map_exit,
                 is_exclusive_set=False,
             )
-        assert pure_outputs == set(graph.out_edges(map_exit_1))
+        assert pure_outputs == set(graph.out_edges(first_map_exit))
         if len(pure_outputs) != 0:
             self.relocate_nodes(
-                from_node=map_exit_1,
-                to_node=map_exit_2,
+                from_node=first_map_exit,
+                to_node=second_map_exit,
                 state=graph,
                 sdfg=sdfg,
             )
@@ -228,26 +254,27 @@ class MapFusion(transformation.SingleStateTransformation):
         #  to the first map, now we must move the output of the first map
         #  to the second one, as this one is used.
         self.relocate_nodes(
-            from_node=map_entry_2,
-            to_node=map_entry_1,
+            from_node=second_map_entry,
+            to_node=first_map_entry,
             state=graph,
             sdfg=sdfg,
         )
 
-        for node_to_remove in [map_exit_1, map_entry_2]:
+        for node_to_remove in [first_map_exit, second_map_entry]:
             assert graph.degree(node_to_remove) == 0
             graph.remove_node(node_to_remove)
 
         # Now turn the second output node into the output node of the first Map.
-        map_exit_2.map = map_entry_1.map
+        second_map_exit.map = first_map_entry.map
 
 
     def partition_first_outputs(
         self,
         state: SDFGState,
         sdfg: SDFG,
-        map_exit_1: nodes.MapExit,
-        map_entry_2: nodes.MapEntry,
+        first_map_exit: nodes.MapExit,
+        second_map_entry: nodes.MapEntry,
+        param_repl: Dict[str, str],
     ) -> Union[
             Tuple[
                 Set[graph.MultiConnectorEdge[dace.Memlet]],
@@ -256,7 +283,7 @@ class MapFusion(transformation.SingleStateTransformation):
             ],
             None,
     ]:
-        """Partition the output edges of `map_exit_1` for serial map fusion.
+        """Partition the output edges of `first_map_exit` for serial map fusion.
 
         The output edges of the first map are partitioned into three distinct sets,
         defined as follows:
@@ -277,36 +304,27 @@ class MapFusion(transformation.SingleStateTransformation):
         output can be added to either intermediate set and might fail to compute
         the partition, even if it would exist.
 
-        Returns:
-            If such a decomposition exists the function will return the three sets
-            mentioned above in the same order.
-            In case the decomposition does not exist, i.e. the maps can not be fused
-            the function returns `None`.
+        :return: If such a decomposition exists the function will return the three sets
+            mentioned above in the same order. In case the decomposition does not exist,
+            i.e. the maps can not be fused the function returns `None`.
 
-        Args:
-            state: The in which the two maps are located.
-            sdfg: The full SDFG in whcih we operate.
-            map_exit_1: The exit node of the first map.
-            map_entry_2: The entry node of the second map.
+        :param state: The in which the two maps are located.
+        :param sdfg: The full SDFG in whcih we operate.
+        :param first_map_exit: The exit node of the first map.
+        :param second_map_entry: The entry node of the second map.
+        :param param_repl: Use this map to rename the parameter of the second Map, such
+            that they match the one of the first map.
         """
         # The three outputs set.
         pure_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
         exclusive_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
         shared_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
 
-        # Compute the renaming that for translating the parameter of the _second_
-        #  map to the ones used by the first map.
-        repl_dict: Dict[str, str] = self.find_parameter_remapping(
-            first_map=map_exit_1.map,
-            second_map=map_entry_2.map,
-        )
-        assert repl_dict is not None
-
         # Set of intermediate nodes that we have already processed.
         processed_inter_nodes: Set[nodes.Node] = set()
 
         # Now scan all output edges of the first exit and classify them
-        for out_edge in state.out_edges(map_exit_1):
+        for out_edge in state.out_edges(first_map_exit):
             intermediate_node: nodes.Node = out_edge.dst
 
             # We already processed the node, this should indicate that we should
@@ -329,7 +347,7 @@ class MapFusion(transformation.SingleStateTransformation):
             if not self.is_node_reachable_from(
                     graph=state,
                     begin=intermediate_node,
-                    end=map_entry_2,
+                    end=second_map_entry,
             ):
                 pure_outputs.add(out_edge)
                 continue
@@ -361,7 +379,7 @@ class MapFusion(transformation.SingleStateTransformation):
             #   To handle this we need to associate a consumer edge (the outgoing edges
             #   of the second map) with exactly one producer.
             producer_edges: List[graph.MultiConnectorEdge[dace.Memlet]] = list(
-                state.in_edges_by_connector(map_exit_1, "IN_" + out_edge.src_conn[4:]))
+                state.in_edges_by_connector(first_map_exit, "IN_" + out_edge.src_conn[4:]))
             if len(producer_edges) > 1:
                 return None
 
@@ -410,8 +428,8 @@ class MapFusion(transformation.SingleStateTransformation):
 
                 # If the second map entry is not immediately reachable from the intermediate
                 #  node, then ensure that there is not path that goes to it.
-                if intermediate_node_out_edge.dst is not map_entry_2:
-                    if self.is_node_reachable_from(graph=state, begin=intermediate_node_out_edge.dst, end=map_entry_2):
+                if intermediate_node_out_edge.dst is not second_map_entry:
+                    if self.is_node_reachable_from(graph=state, begin=intermediate_node_out_edge.dst, end=second_map_entry):
                         return None
                     continue
 
@@ -431,7 +449,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 #  We do not check them, but collect them and inspect them.
                 #  NOTE: The subset still uses the old iteration variables.
                 for inner_consumer_edge in state.out_edges_by_connector(
-                        map_entry_2, "OUT_" + intermediate_node_out_edge.dst_conn[3:]):
+                        second_map_entry, "OUT_" + intermediate_node_out_edge.dst_conn[3:]):
                     if inner_consumer_edge.data.src_subset is None:
                         return None
                     if inner_consumer_edge.data.dynamic:
@@ -442,10 +460,10 @@ class MapFusion(transformation.SingleStateTransformation):
             assert len(consumer_subsets) != 0
 
             # The consumer still uses the original symbols of the second map, so we must rename them.
-            if repl_dict:
+            if param_repl:
                 consumer_subsets = copy.deepcopy(consumer_subsets)
                 for consumer_subset in consumer_subsets:
-                    symbolic.safe_replace(mapping=repl_dict, replace_callback=consumer_subset.replace)
+                    symbolic.safe_replace(mapping=param_repl, replace_callback=consumer_subset.replace)
 
             # Now we are checking if a single iteration of the first (top) map
             #  can satisfy all data requirements of the second (bottom) map.
@@ -582,9 +600,9 @@ class MapFusion(transformation.SingleStateTransformation):
         intermediate_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]],
         state: SDFGState,
         sdfg: SDFG,
-        map_exit_1: nodes.MapExit,
-        map_entry_2: nodes.MapEntry,
-        map_exit_2: nodes.MapExit,
+        first_map_exit: nodes.MapExit,
+        second_map_entry: nodes.MapEntry,
+        second_map_exit: nodes.MapExit,
         is_exclusive_set: bool,
     ) -> None:
         """This function handles the intermediate sets.
@@ -599,9 +617,9 @@ class MapFusion(transformation.SingleStateTransformation):
             intermediate_outputs: The set of outputs, that should be processed.
             state: The state in which the map is processed.
             sdfg: The SDFG that should be optimized.
-            map_exit_1: The exit of the first/top map.
-            map_entry_2: The entry of the second map.
-            map_exit_2: The exit of the second map.
+            first_map_exit: The exit of the first/top map.
+            second_map_entry: The entry of the second map.
+            second_map_exit: The exit of the second map.
             is_exclusive_set: If `True` `intermediate_outputs` is the exclusive set.
 
         Notes:
@@ -609,7 +627,7 @@ class MapFusion(transformation.SingleStateTransformation):
             after this function has run the state is (most likely) invalid.
         """
 
-        map_params = map_exit_1.map.params.copy()
+        map_params = first_map_exit.map.params.copy()
 
         # Now we will iterate over all intermediate edges and process them.
         #  If not stated otherwise the comments assume that we run in exclusive mode.
@@ -623,7 +641,7 @@ class MapFusion(transformation.SingleStateTransformation):
 
             # Now we will determine the shape of the new intermediate. This size of
             #  this temporary is given by the Memlet that goes into the first map exit.
-            pre_exit_edges = list(state.in_edges_by_connector(map_exit_1, "IN_" + out_edge.src_conn[4:]))
+            pre_exit_edges = list(state.in_edges_by_connector(first_map_exit, "IN_" + out_edge.src_conn[4:]))
             if len(pre_exit_edges) != 1:
                 raise NotImplementedError()
             pre_exit_edge = pre_exit_edges[0]
@@ -732,7 +750,7 @@ class MapFusion(transformation.SingleStateTransformation):
             # NOTE: Assumes that map (if connected is the direct neighbour).
             conn_names: Set[str] = set()
             for inter_node_out_edge in state.out_edges(inter_node):
-                if inter_node_out_edge.dst == map_entry_2:
+                if inter_node_out_edge.dst == second_map_entry:
                     assert inter_node_out_edge.dst_conn.startswith("IN_")
                     conn_names.add(inter_node_out_edge.dst_conn)
                 else:
@@ -747,7 +765,7 @@ class MapFusion(transformation.SingleStateTransformation):
             for in_conn_name in conn_names:
                 out_conn_name = "OUT_" + in_conn_name[3:]
 
-                for inner_edge in state.out_edges_by_connector(map_entry_2, out_conn_name):
+                for inner_edge in state.out_edges_by_connector(second_map_entry, out_conn_name):
                     assert inner_edge.data.data == inter_name  # DIRECTION!!
 
                     # As for the producer side, we now read from a smaller array,
@@ -798,11 +816,11 @@ class MapFusion(transformation.SingleStateTransformation):
 
                 # The edge that leaves the second map entry was already deleted. We now delete
                 #  the edges that connected the intermediate node with the second map entry.
-                for edge in list(state.in_edges_by_connector(map_entry_2, in_conn_name)):
+                for edge in list(state.in_edges_by_connector(second_map_entry, in_conn_name)):
                     assert edge.src == inter_node
                     state.remove_edge(edge)
-                map_entry_2.remove_in_connector(in_conn_name)
-                map_entry_2.remove_out_connector(out_conn_name)
+                second_map_entry.remove_in_connector(in_conn_name)
+                second_map_entry.remove_out_connector(out_conn_name)
 
             if is_exclusive_set:
                 # In exclusive mode the old intermediate node is no longer needed.
@@ -812,15 +830,15 @@ class MapFusion(transformation.SingleStateTransformation):
                 state.remove_node(inter_node)
 
                 state.remove_edge(pre_exit_edge)
-                map_exit_1.remove_in_connector(pre_exit_edge.dst_conn)
-                map_exit_1.remove_out_connector(out_edge.src_conn)
+                first_map_exit.remove_in_connector(pre_exit_edge.dst_conn)
+                first_map_exit.remove_out_connector(out_edge.src_conn)
                 del sdfg.arrays[inter_name]
 
             else:
                 # This is the shared mode, so we have to recreate the intermediate
                 #  node, but this time it is at the exit of the second map.
                 state.remove_edge(pre_exit_edge)
-                map_exit_1.remove_in_connector(pre_exit_edge.dst_conn)
+                first_map_exit.remove_in_connector(pre_exit_edge.dst_conn)
 
                 # This is the Memlet that goes from the map internal intermediate
                 #  temporary node to the Map output. This will essentially restore
@@ -830,25 +848,25 @@ class MapFusion(transformation.SingleStateTransformation):
                 assert pre_exit_edge.data.data == inter_name
                 final_pre_exit_memlet.other_subset = subsets.Range.from_array(new_inter_desc)
 
-                new_pre_exit_conn = map_exit_2.next_connector()
+                new_pre_exit_conn = second_map_exit.next_connector()
                 state.add_edge(
                     new_inter_node,
                     None,
-                    map_exit_2,
+                    second_map_exit,
                     "IN_" + new_pre_exit_conn,
                     final_pre_exit_memlet,
                 )
                 state.add_edge(
-                    map_exit_2,
+                    second_map_exit,
                     "OUT_" + new_pre_exit_conn,
                     inter_node,
                     out_edge.dst_conn,
                     copy.deepcopy(out_edge.data),
                 )
-                map_exit_2.add_in_connector("IN_" + new_pre_exit_conn)
-                map_exit_2.add_out_connector("OUT_" + new_pre_exit_conn)
+                second_map_exit.add_in_connector("IN_" + new_pre_exit_conn)
+                second_map_exit.add_out_connector("OUT_" + new_pre_exit_conn)
 
-                map_exit_1.remove_out_connector(out_edge.src_conn)
+                first_map_exit.remove_out_connector(out_edge.src_conn)
                 state.remove_edge(out_edge)
 
 
@@ -919,12 +937,12 @@ class MapFusion(transformation.SingleStateTransformation):
 
     def can_topologically_be_fused(
         self,
-        map_entry_1: nodes.MapEntry,
-        map_entry_2: nodes.MapEntry,
+        first_map_entry: nodes.MapEntry,
+        second_map_entry: nodes.MapEntry,
         graph: Union[dace.SDFGState, dace.SDFG],
         sdfg: dace.SDFG,
         permissive: bool = False,
-    ) -> bool:
+    ) -> Optional[Dict[str, str]]:
         """Performs basic checks if the maps can be fused.
 
         This function only checks constrains that are common between serial and
@@ -933,42 +951,108 @@ class MapFusion(transformation.SingleStateTransformation):
         - The scheduling of the maps.
         - The map parameters.
 
-        Args:
-            map_entry_1: The entry of the first (in serial case the top) map.
-            map_exit_2: The entry of the second (in serial case the bottom) map.
-            graph: The SDFGState in which the maps are located.
-            sdfg: The SDFG itself.
-            permissive: Currently unused.
+        :return: If the maps can not be topologically fused the function returns `None`.
+            If they can be fused the function returns `dict` that describes parameter
+            replacement, see `find_parameter_remapping()` for more.
+
+        :param first_map_entry: The entry of the first (in serial case the top) map.
+        :param second_map_exit: The entry of the second (in serial case the bottom) map.
+        :param graph: The SDFGState in which the maps are located.
+        :param sdfg: The SDFG itself.
+        :param permissive: Currently unused.
         """
         if self.only_inner_maps and self.only_toplevel_maps:
-            raise ValueError("You specified both `only_inner_maps` and `only_toplevel_maps`.")
+            raise ValueError("Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusion instance.")
 
         # Ensure that both have the same schedule
-        if map_entry_1.map.schedule != map_entry_2.map.schedule:
-            return False
+        if first_map_entry.map.schedule != second_map_entry.map.schedule:
+            return None
 
         # Fusing is only possible if the two entries are in the same scope.
         scope = graph.scope_dict()
-        if scope[map_entry_1] != scope[map_entry_2]:
-            return False
+        if scope[first_map_entry] != scope[second_map_entry]:
+            return None
         elif self.only_inner_maps:
-            if scope[map_entry_1] is None:
-                return False
+            if scope[first_map_entry] is None:
+                return None
         elif self.only_toplevel_maps:
-            if scope[map_entry_1] is not None:
-                return False
+            if scope[first_map_entry] is not None:
+                return None
 
         # We will now check if there exists a remapping that of the map parameter
-        if self.find_parameter_remapping(first_map=map_entry_1.map, second_map=map_entry_2.map) is None:
-            return False
+        param_repl = self.find_parameter_remapping(first_map=first_map_entry.map, second_map=second_map_entry.map)
+        if param_repl is None:
+            return None
+        return None
 
-        return True
+
+    def has_inner_read_write_dependency(
+        self,
+        first_map_entry: nodes.MapEntry,
+        second_map_entry: nodes.MapEntry,
+        state: SDFGState,
+        sdfg: SDFG,
+    ) -> bool:
+        """This function tests if there are dependency inside the Maps.
+
+        The function will scan and anaysize the body of the two Maps and look for
+        inconsistencies. To detect them the function will scan the body of the maps
+        and examine the all AccessNodes and apply the following rules:
+        - If an AccessNode refers to a View, it is ignored. Because the source is
+            either on the outside, in which case `has_read_write_dependency()`
+            takes care of it, or the data source is inside the Map body itself.
+        - An inconsistency is detected, if in each bodies there exists an AccessNode
+            that refer to the same data.
+        - An inconsistency is detected, if there exists an AccessNode that refers
+            to non transient data. This is an implementation detail and could be
+            lifted.
+
+        Note that some of the restrictions of this function could be relaxed by
+        performing more analysis.
+
+        :return: The function returns `True` if an inconsistency has been found.
+
+        :param first_map_entry: The entry node of the first map.
+        :param second_map_entry: The entry node of the second map.
+        :param state: The state on which we operate.
+        :param sdfg: The SDFG on which we operate.
+        """
+        first_map_body = state.scope_subgraph(first_map_entry, False, False)
+        second_map_body = state.scope_subgraph(second_map_entry, False, False)
+
+        # Find the data that is internally referenced. Because of the first rule above,
+        #  we filter all views above.
+        first_map_body_data, second_map_body_data = [
+            {
+                dnode.data
+                for dnode in map_body.nodes()
+                if isinstance(dnode, nodes.AccessNode) and not self.is_view(dnode, sdfg)
+            }
+            for map_body in [first_map_body, second_map_body]
+        ]
+
+        # If there is data that is referenced in both, then we consider this as an error
+        #  this is the second rule above.
+        if not first_map_body_data.isdisjoint(second_map_body_data):
+            return True
+
+        # We consider it as a problem if any map refers to non-transient data.
+        #  This is an implementation detail and could be dropped if we do further
+        #  analysis.
+        if any(
+            not sdfg.arrays[data].transient
+            for data in first_map_body_data.union(second_map_body_data)
+        ):
+            return True
+
+        return False
 
 
     def has_read_write_dependency(
         self,
-        map_entry_1: nodes.MapEntry,
-        map_entry_2: nodes.MapEntry,
+        first_map_entry: nodes.MapEntry,
+        second_map_entry: nodes.MapEntry,
+        param_repl: Dict[str, str],
         state: SDFGState,
         sdfg: SDFG,
     ) -> bool:
@@ -983,24 +1067,22 @@ class MapFusion(transformation.SingleStateTransformation):
             at the same time. However, the function will not check for read write
             conflicts in this set, this is done in the partition function.
 
-        Returns:
-            `True` if there is a conflict between the maps that can not be handled.
-            If there is no conflict or if the conflict can be handled `False`
-            is returned.
+        :return: `True` if there is a conflict between the maps that can not be handled.
+            If there is no conflict or if the conflict can be handled `False` is returned.
 
-        Args:
-            map_entry_1: The entry node of the first map.
-            map_entry_2: The entry node of the second map.
-            state: The state on which we operate.
-            sdfg: The SDFG on which we operate.
+        :param first_map_entry: The entry node of the first map.
+        :param second_map_entry: The entry node of the second map.
+        :param param_repl: Dict that describes how to rename the parameters of the second Map.
+        :param state: The state on which we operate.
+        :param sdfg: The SDFG on which we operate.
         """
-        map_exit_1: nodes.MapExit = state.exit_node(map_entry_1)
-        map_exit_2: nodes.MapExit = state.exit_node(map_entry_2)
+        first_map_exit: nodes.MapExit = state.exit_node(first_map_entry)
+        second_map_exit: nodes.MapExit = state.exit_node(second_map_entry)
 
         # Get the read and write sets of the different maps, note that Views
         #  are not resolved yet.
         access_sets: List[Dict[str, nodes.AccessNode]] = []
-        for scope_node in [map_entry_1, map_exit_1, map_entry_2, map_exit_2]:
+        for scope_node in [first_map_entry, first_map_exit, second_map_entry, second_map_exit]:
             access_set: Set[nodes.AccessNode] = self.get_access_set(scope_node, state)
             access_sets.append({node.data: node for node in access_set})
             # If two different access nodes of the same scoping node refers to the
@@ -1071,10 +1153,6 @@ class MapFusion(transformation.SingleStateTransformation):
         if len(fused_inout_data_names) == 0:
             return False
 
-        # Get the replacement dict for changing the map variables from the subsets of
-        #  the second map.
-        repl_dict = self.find_parameter_remapping(map_entry_1.map, map_exit_2.map)
-
         # Now we inspect if there is a read write dependency, between data that is
         #  used as input and output of the fused map. There is no problem is they
         #  are pointwise, i.e. in each iteration the same locations are accessed.
@@ -1085,20 +1163,20 @@ class MapFusion(transformation.SingleStateTransformation):
             all_subsets.extend(
                 self.find_subsets(
                     node=read_map_1[inout_data_name],
-                    scope_node=map_entry_1,
+                    scope_node=first_map_entry,
                     state=state,
                     sdfg=sdfg,
-                    repl_dict=None,
+                    param_repl=None,
                 ))
             #  While the subsets defining writing are given by the second map's exit
             #  node, there we also have to apply renaming.
             all_subsets.extend(
                 self.find_subsets(
                     node=write_map_2[inout_data_name],
-                    scope_node=map_exit_2,
+                    scope_node=second_map_exit,
                     state=state,
                     sdfg=sdfg,
-                    repl_dict=repl_dict,
+                    param_repl=param_repl,
                 ))
             # Now we can test if these subsets are point wise
             if not self.test_if_subsets_are_point_wise(all_subsets):
@@ -1255,7 +1333,7 @@ class MapFusion(transformation.SingleStateTransformation):
         self._shared_data[sdfg] = shared_data
 
 
-    def find_parameter_remapping(self, first_map: nodes.Map, second_map: nodes.Map) -> Union[Dict[str, str], None]:
+    def find_parameter_remapping(self, first_map: nodes.Map, second_map: nodes.Map) -> Optional[Dict[str, str]]:
         """Computes the parameter remapping for the parameters of the _second_ map.
 
         The returned `dict` maps the parameters of the second map (keys) to parameter
@@ -1486,7 +1564,7 @@ class MapFusion(transformation.SingleStateTransformation):
         scope_node: Union[nodes.MapExit, nodes.MapEntry],
         state: SDFGState,
         sdfg: SDFG,
-        repl_dict: Optional[Dict[str, str]],
+        param_repl: Optional[Dict[str, str]],
     ) -> List[subsets.Subset]:
         """Finds all subsets that access `node` within `scope_node`.
 
@@ -1494,13 +1572,13 @@ class MapFusion(transformation.SingleStateTransformation):
         Instead it will locate the edges which is immediately inside the
         map scope.
 
-        Args:
-            node: The access node that should be examined.
-            scope_node: We are only interested in data that flows through this node.
-            state: The state in which we operate.
-            sdfg: The SDFG object.
+        :param node: The access node that should be examined.
+        :param scope_node: We are only interested in data that flows through this node.
+        :param state: The state in which we operate.
+        :param sdfg: The SDFG object.
+        :param param_repl: `dict` that describes the parameter renaming that should be
+            performed. Can be `None` to skip the processing.
         """
-
         # Is the node used for reading or for writing.
         #  This influences how we have to proceed.
         if isinstance(scope_node, nodes.MapEntry):
@@ -1519,10 +1597,10 @@ class MapFusion(transformation.SingleStateTransformation):
         assert not any(subset is None for subset in found_subsets)
 
         found_subsets = copy.deepcopy(found_subsets)
-        if repl_dict:
+        if param_repl:
             for subset in found_subsets:
                 # Replace happens in place
-                symbolic.safe_replace(repl_dict, subset.replace)
+                symbolic.safe_replace(param_repl, subset.replace)
 
         return found_subsets
 

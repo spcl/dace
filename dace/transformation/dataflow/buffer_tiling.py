@@ -100,9 +100,9 @@ class BufferTiling(transformation.SingleStateTransformation):
         some_buffer = next(iter(buffers))  # some dummy to pass to MapFusion.apply_to()
         MapFusion.apply_to(
                 sdfg,
-                map_exit_1=tile_map1_exit,
-                intermediate_access_node=some_buffer,
-                map_entry_2=tile_map2_entry,
+                first_map_exit=tile_map1_exit,
+                array=some_buffer,
+                second_map_entry=tile_map2_entry,
                 verify=True,
         )
 
