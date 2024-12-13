@@ -4,7 +4,7 @@
 
 import copy
 import warnings
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import networkx as nx
 from networkx.exception import NetworkXError, NodeNotFound
@@ -12,7 +12,6 @@ from networkx.exception import NetworkXError, NodeNotFound
 from dace import data, dtypes
 from dace import memlet as mm
 from dace import subsets, symbolic
-from dace.config import Config
 from dace.sdfg import SDFG, SDFGState, graph, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers

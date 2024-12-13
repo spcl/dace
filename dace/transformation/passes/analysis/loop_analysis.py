@@ -3,7 +3,8 @@
 Various analyses concerning LopoRegions, and utility functions to get information about LoopRegions for other passes.
 """
 
-from typing import Dict, Optional, Set, Union
+from typing import Dict, Optional, Union
+from dace.frontend.python import astutils
 
 import sympy
 
