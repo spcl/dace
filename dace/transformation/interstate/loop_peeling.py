@@ -1,47 +1,35 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Loop unroll transformation """
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+""" Loop peeling transformation """
 
 import sympy as sp
-from typing import Optional
+from typing import List, Optional
 
 from dace import sdfg as sd
+from dace import symbolic
 from dace.sdfg.state import ControlFlowRegion
 from dace.properties import Property, make_properties, CodeBlock
-from dace.sdfg import graph as gr
-from dace.sdfg import utils as sdutil
 from dace.symbolic import pystr_to_symbolic
-from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from dace.transformation.interstate.loop_unroll import LoopUnroll
-from dace.transformation.transformation import experimental_cfg_block_compatible
+from dace.transformation.passes.analysis import loop_analysis
+from dace.transformation.transformation import explicit_cf_compatible
 
 
 @make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class LoopPeeling(LoopUnroll):
     """
-    Splits the first `count` iterations of a state machine for-loop into
-    multiple, separate states.
+    Splits the first `count` iterations of loop into multiple, separate control flow regions (one per iteration).
     """
 
     begin = Property(
         dtype=bool,
         default=True,
-        desc='If True, peels loop from beginning (first `count` '
-        'iterations), otherwise peels last `count` iterations.',
+        desc='If True, peels loop from beginning (first `count` iterations), otherwise peels last `count` iterations.',
     )
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
-
-        guard = self.loop_guard
-        begin = self.loop_begin
-
-        # If loop cannot be detected, fail
-        found = find_for_loop(sdfg, guard, begin)
-        if found is None:
-            return False
-
         return True
 
     def _modify_cond(self, condition, var, step):
@@ -77,90 +65,55 @@ class LoopPeeling(LoopUnroll):
         return res
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
-        ####################################################################
         # Obtain loop information
-        begin: sd.SDFGState = self.loop_begin
-        after_state: sd.SDFGState = self.exit_state
-
-        # Obtain iteration variable, range, and stride
-        condition_edge = self.loop_condition_edge()
-        not_condition_edge = self.loop_exit_edge()
-        itervar, rng, loop_struct = self.loop_information()
-
-        # Get loop states
-        loop_states = self.loop_body()
-        first_id = loop_states.index(begin)
-        last_state = loop_struct[1]
-        last_id = loop_states.index(last_state)
-        loop_subgraph = gr.SubgraphView(graph, loop_states)
-
-        ####################################################################
-        # Transform
+        start = loop_analysis.get_init_assignment(self.loop)
+        end = loop_analysis.get_loop_end(self.loop)
+        stride = loop_analysis.get_loop_stride(self.loop)
+        is_symbolic = any([symbolic.issymbolic(r) for r in (start, end)])
 
         if self.begin:
-            # If begin, change initialization assignment and prepend states before
-            # guard
-            init_edges = []
-            before_states = loop_struct[0]
-            for before_state in before_states:
-                init_edge = self.loop_init_edge()
-                init_edge.data.assignments[itervar] = str(rng[0] + self.count * rng[2])
-                init_edges.append(init_edge)
-            append_states = before_states
-
-            # Add `count` states, each with instantiated iteration variable
+            # Create states for loop subgraph
+            peeled_iterations: List[ControlFlowRegion] = []
             for i in range(self.count):
-                # Instantiate loop states with iterate value
-                state_name: str = 'start_' + itervar + str(i * rng[2])
-                state_name = state_name.replace('-', 'm').replace('+', 'p').replace('*', 'M').replace('/', 'D')
-                new_states = self.instantiate_loop(
-                    sdfg,
-                    loop_states,
-                    loop_subgraph,
-                    itervar,
-                    rng[0] + i * rng[2],
-                    state_name,
-                )
+                # Instantiate loop contents as a new control flow region with iterate value.
+                current_index = start + (i * stride)
+                iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
+                                                                   str(i) if is_symbolic else None)
 
-                # Connect states to before the loop with unconditional edges
-                for append_state in append_states:
-                    graph.add_edge(append_state, new_states[first_id], sd.InterstateEdge())
-                append_states = [new_states[last_id]]
+                # Connect iterations with unconditional edges
+                if len(peeled_iterations) > 0:
+                    graph.add_edge(peeled_iterations[-1], iteration_region, sd.InterstateEdge())
+                peeled_iterations.append(iteration_region)
 
-            # Reconnect edge to guard state from last peeled iteration
-            for append_state in append_states:
-                if append_state not in before_states:
-                    for init_edge in init_edges:
-                        graph.remove_edge(init_edge)
-                    graph.add_edge(append_state, init_edge.dst, init_edges[0].data)
+            # Connect the peeled iterations to the remainder of the loop and adjust the remaining iteration bounds.
+            if peeled_iterations:
+                for ie in graph.in_edges(self.loop):
+                    graph.add_edge(ie.src, peeled_iterations[0], ie.data)
+                    graph.remove_edge(ie)
+                graph.add_edge(peeled_iterations[-1], self.loop, sd.InterstateEdge())
+
+                new_start = symbolic.evaluate(start + (self.count * stride), sdfg.constants)
+                self.loop.init_statement = CodeBlock(f'{self.loop.loop_variable} = {new_start}')
         else:
-            # If begin, change initialization assignment and prepend states before
-            # guard
-            itervar_sym = pystr_to_symbolic(itervar)
-            condition_edge.data.condition = CodeBlock(self._modify_cond(condition_edge.data.condition, itervar, rng[2]))
-            not_condition_edge.data.condition = CodeBlock(
-                self._modify_cond(not_condition_edge.data.condition, itervar, rng[2]))
-            prepend_state = after_state
-
-            # Add `count` states, each with instantiated iteration variable
+            # Create states for loop subgraph
+            peeled_iterations: List[ControlFlowRegion] = []
             for i in reversed(range(self.count)):
-                # Instantiate loop states with iterate value
-                state_name: str = 'end_' + itervar + str(-i * rng[2])
-                state_name = state_name.replace('-', 'm').replace('+', 'p').replace('*', 'M').replace('/', 'D')
-                new_states = self.instantiate_loop(
-                    sdfg,
-                    loop_states,
-                    loop_subgraph,
-                    itervar,
-                    itervar_sym + i * rng[2],
-                    state_name,
-                )
+                # Instantiate loop contents as a new control flow region with iterate value.
+                current_index = pystr_to_symbolic(self.loop.loop_variable) + (i * stride)
+                iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
+                                                                   str(i) if is_symbolic else None)
 
-                # Connect states to before the loop with unconditional edges
-                graph.add_edge(new_states[last_id], prepend_state, sd.InterstateEdge())
-                prepend_state = new_states[first_id]
+                # Connect iterations with unconditional edges
+                if len(peeled_iterations) > 0:
+                    graph.add_edge(iteration_region, peeled_iterations[-1], sd.InterstateEdge())
+                peeled_iterations.append(iteration_region)
 
-            # Reconnect edge to guard state from last peeled iteration
-            if prepend_state != after_state:
-                graph.remove_edge(not_condition_edge)
-                graph.add_edge(not_condition_edge.src, prepend_state, not_condition_edge.data)
+            # Connect the peeled iterations to the remainder of the loop and adjust the remaining iteration bounds.
+            if peeled_iterations:
+                for oe in graph.out_edges(self.loop):
+                    graph.add_edge(peeled_iterations[0], oe.dst, oe.data)
+                    graph.remove_edge(oe)
+                graph.add_edge(self.loop, peeled_iterations[-1], sd.InterstateEdge())
+
+                new_cond = CodeBlock(self._modify_cond(self.loop.loop_condition, self.loop.loop_variable, stride))
+                self.loop.loop_condition = new_cond

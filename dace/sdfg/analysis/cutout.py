@@ -574,7 +574,7 @@ def _transformation_determine_affected_nodes(
         if transformation.cfg_id >= 0 and target_sdfg.cfg_list:
             target_sdfg = target_sdfg.cfg_list[transformation.cfg_id]
 
-        subgraph = transformation.get_subgraph(target_sdfg)
+        subgraph = transformation.subgraph_view(target_sdfg)
         for n in subgraph.nodes():
             affected_nodes.add(n)
 
