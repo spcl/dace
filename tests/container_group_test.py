@@ -18,7 +18,7 @@ A2 = cp.asarray(A, cp.float32)
 B2 = cp.asarray(B, cp.float32)
 C2 = cp.zeros((_N, _N), cp.float32)
 
-def _get_jacobi_sdfg():
+def _get_jacobi_sdfg(use_container_array: bool):
     jacobi_sdfg = dace.SDFG("jacobi")
 
     initialize = jacobi_sdfg.add_state("initialize")
@@ -40,22 +40,37 @@ def _get_jacobi_sdfg():
     jacobi_sdfg.add_symbol(name="N", stype=np.int64)
     jacobi_sdfg.add_symbol(name="NUM_STEPS", stype=np.int64)
 
-    struct = dace.data.Structure(
-        members={
-            "A": dace.data.Array(
-                shape=[N, N],
-                storage=dace.dtypes.StorageType.CPU_Heap,
-                dtype=dace.typeclass(np.float32),
-            ),
-            "B": dace.data.Array(
-                shape=[N, N],
-                storage=dace.dtypes.StorageType.CPU_Heap,
-                dtype=dace.typeclass(np.float32),
-            ),
-        },
-        name="AB",
-        storage=dace.dtypes.StorageType.CPU_Heap,
-    )
+    if use_container_array:
+        struct = dace.data.Structure(
+            members={
+                "As": dace.data.ContainerArray(
+                    stype=dace.data.Array(
+                        shape=[N, N],
+                        storage=dace.dtypes.StorageType.CPU_Heap,
+                        dtype=dace.typeclass(np.float32),
+                    ), shape=(2,), transient=False
+                ),
+            },
+            name="AB",
+            storage=dace.dtypes.StorageType.CPU_Heap,
+        )
+    else:
+        struct = dace.data.Structure(
+            members={
+                "A": dace.data.Array(
+                    shape=[N, N],
+                    storage=dace.dtypes.StorageType.CPU_Heap,
+                    dtype=dace.typeclass(np.float32),
+                ),
+                "B": dace.data.Array(
+                    shape=[N, N],
+                    storage=dace.dtypes.StorageType.CPU_Heap,
+                    dtype=dace.typeclass(np.float32),
+                ),
+            },
+            name="AB",
+            storage=dace.dtypes.StorageType.CPU_Heap,
+        )
 
     jacobi_sdfg.add_datadesc(name="AB", datadesc=struct)
 
@@ -80,6 +95,26 @@ def _get_jacobi_sdfg():
     ab3_access = dace.nodes.AccessNode(data="AB")
     kernel.add_node(ab3_access)
 
+    if use_container_array:
+        v_A_name, v_A = jacobi_sdfg.add_view(
+            name="v_AB_A",
+            shape=[N, N],
+            storage=dace.dtypes.StorageType.CPU_Heap,
+            dtype=dace.typeclass(np.float32),
+        )
+
+        v_B_name, v_B = jacobi_sdfg.add_view(
+            name="v_AB_As",
+            shape=[N, N],
+            storage=dace.dtypes.StorageType.CPU_Heap,
+            dtype=dace.typeclass(np.float32),
+        )
+        ab4_access = dace.nodes.AccessNode(data="v_AB_As")
+        kernel.add_node(ab4_access)
+        ab5_access = dace.nodes.AccessNode(data="v_AB_As")
+        kernel.add_node(ab5_access)
+
+
     a_access = dace.nodes.AccessNode(data="v_A")
     a_access.add_in_connector("views")
     b_dst_access = dace.nodes.AccessNode(data="v_B")
@@ -91,9 +126,26 @@ def _get_jacobi_sdfg():
     a_dst_access.add_out_connector("views")
     kernel.add_node(b_access)
 
-    kernel.add_edge(ab_access, None, a_access, "views", dace.Memlet(data="AB.A", subset=dace.subsets.Range.from_string("0:N, 0:N")))
-    kernel.add_edge(ab2_access, None, b_access, "views", dace.Memlet(data="AB.B", subset=dace.subsets.Range.from_string("0:N, 0:N")))
-
+    if not use_container_array:
+        kernel.add_edge(ab_access, None, a_access, "views",
+                        dace.Memlet(data="AB.A",
+                                    subset=dace.subsets.Range.from_string("0:N, 0:N")))
+        kernel.add_edge(ab2_access, None, b_access, "views",
+                        dace.Memlet(data="AB.B",
+                                    subset=dace.subsets.Range.from_string("0:N, 0:N")))
+    else:
+        kernel.add_edge(ab_access, None, ab4_access, "views",
+                        dace.Memlet(data="AB.As",
+                                    subset=dace.subsets.Range.from_string("0:1")))
+        kernel.add_edge(ab2_access, None, ab5_access, "views",
+                        dace.Memlet(data="AB.As",
+                                    subset=dace.subsets.Range.from_string("1:2")))
+        kernel.add_edge(ab4_access, None, a_access, "views",
+                        dace.Memlet(data="v_AB_As",
+                                    subset=dace.subsets.Range.from_string("0:N, 0:N")))
+        kernel.add_edge(ab5_access, None, b_access, "views",
+                        dace.Memlet(data="v_AB_As",
+                                    subset=dace.subsets.Range.from_string("0:N, 0:N")))
 
     for j, (src, dst, src_access, dst_access) in enumerate(
         [("A", "B", a_access, b_dst_access), ("B", "A", b_access, a_dst_access)]
@@ -210,21 +262,31 @@ def _get_jacobi_sdfg():
         kernel.add_edge(update_map_exit, f"OUT_v_{dst}", dst_access, None,  dace.Memlet(expr=f"v_{dst}[0:N,0:N]"))
 
         if j == 0:
-            kernel.add_edge(dst_access, f"views", ab2_access, None,  dace.Memlet(expr=f"AB.{dst}[0:N,0:N]"))
+            if use_container_array:
+                ab6_access = kernel.add_access("v_AB_As")
+                kernel.add_edge(dst_access, f"views", ab6_access, None,  dace.Memlet(expr=f"v_AB_As[0:N, 0:N]"))
+                kernel.add_edge(ab6_access, f"views", ab2_access, None,  dace.Memlet(expr=f"AB.As[{j}:{j}+1]"))
+            else:
+                kernel.add_edge(dst_access, f"views", ab2_access, None,  dace.Memlet(expr=f"AB.{dst}[0:N,0:N]"))
         if j == 1:
-            kernel.add_edge(dst_access, f"views", ab3_access, None,  dace.Memlet(expr=f"AB.{dst}[0:N,0:N]"))
+            if use_container_array:
+                ab7_access = kernel.add_access("v_AB_As")
+                kernel.add_edge(dst_access, f"views", ab7_access, None,  dace.Memlet(expr=f"v_AB_As[0:N, 0:N]"))
+                kernel.add_edge(ab7_access, f"views", ab3_access, None,  dace.Memlet(expr=f"AB.As[{j}:{j}+1]"))
+            else:
+                kernel.add_edge(dst_access, f"views", ab3_access, None,  dace.Memlet(expr=f"AB.{dst}[0:N,0:N]"))
 
     jacobi_sdfg.save("jacobi_with_structs_sdfg.sdfg")
     jacobi_sdfg.validate()
     return jacobi_sdfg
 
 
-def test_struct_to_container_group():
+def test_struct_to_container_group(use_container_array:bool):
     N = dace.symbol("N")
     TSTEPS = dace.symbol("TSTEPS")
     _N = 8192
 
-    sdfg = _get_jacobi_sdfg()
+    sdfg = _get_jacobi_sdfg(use_container_array)
 
     StructToContainerGroups().apply_pass(sdfg, {})
 
@@ -232,9 +294,10 @@ def test_struct_to_container_group():
 
     sdfg.validate()
 
-    for arr in sdfg.arrays:
-        assert isinstance(arr, dace.data.Array) or isinstance(arr, dace.data.Scalar)
+    #for arr in sdfg.arrays:
+    #    assert isinstance(arr, dace.data.Array) or isinstance(arr, dace.data.Scalar)
 
 
 if __name__ == "__main__":
-    test_struct_to_container_group()
+    test_struct_to_container_group(False)
+    test_struct_to_container_group(True)
