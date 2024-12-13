@@ -5,7 +5,7 @@ import numpy
 import pytest
 
 
-@pytest.fixture(params=[dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.GPU_Global])
+@pytest.fixture(params=[dace.dtypes.StorageType.CPU_Heap, dace.dtypes.StorageType.GPU_Global, dace.dtypes.StorageType.CPU_Pinned])
 def storage_type(request):
     return request.param
 
@@ -19,6 +19,8 @@ def schedule_type(storage_type):
         return dace.dtypes.ScheduleType.Sequential
     elif storage_type == dace.dtypes.StorageType.GPU_Global:
         return dace.dtypes.ScheduleType.GPU_Device
+    elif storage_type == dace.dtypes.StorageType.CPU_Pinned:
+        return dace.dtypes.ScheduleType.Sequential
 
 def _get_trivial_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient: bool, write_size="0:2"):
     sdfg = dace.sdfg.SDFG(name=f"deferred_alloc_test_1")
@@ -77,6 +79,8 @@ def _get_assign_map_sdfg(storage_type: dace.dtypes.StorageType, transient: bool,
         assert (schedule_type == dace.dtypes.ScheduleType.Sequential or schedule_type == dace.dtypes.ScheduleType.CPU_Multicore)
     elif storage_type == dace.dtypes.StorageType.GPU_Global:
         assert (schedule_type == dace.dtypes.ScheduleType.GPU_Device)
+    elif storage_type == dace.dtypes.StorageType.CPU_Pinned:
+        assert (schedule_type == dace.dtypes.ScheduleType.Sequential)
 
     an_3.add_out_connector('_read_size')
     map_entry2, map_exit2 = state.add_map(name="map2",ndrange={"i":dace.subsets.Range([(0,15-1,1)]),"j":dace.subsets.Range([(0,"__A_dim1_size-1", 1)])},
@@ -101,7 +105,7 @@ def _get_assign_map_sdfg(storage_type: dace.dtypes.StorageType, transient: bool,
     return sdfg
 
 def _valid_to_reallocate(transient, storage_type):
-    return transient and (storage_type == dace.dtypes.StorageType.GPU_Global or storage_type == dace.dtypes.StorageType.CPU_Heap)
+    return transient and (storage_type in dace.dtypes.REALLOCATABLE_STORAGES)
 
 def _test_trivial_realloc(storage_type: dace.dtypes.StorageType, transient: bool):
     sdfg = _get_trivial_alloc_sdfg(storage_type, transient)
@@ -138,12 +142,12 @@ def _test_realloc_use(storage_type: dace.dtypes.StorageType, transient: bool, sc
         raise AssertionError("Realloc-use with non-transient data did not fail when it was expected to.")
 
     compiled_sdfg = sdfg.compile()
-    if storage_type == dace.dtypes.StorageType.CPU_Heap:
+    if storage_type == dace.dtypes.StorageType.CPU_Heap or storage_type == dace.dtypes.StorageType.CPU_Pinned:
         arr = numpy.array([-1.0]).astype(numpy.float32)
         user_size = numpy.array([10, 10]).astype(numpy.uint64)
         compiled_sdfg(user_size=user_size, example_array=arr)
         assert ( arr[0] == 3.0 )
-    if storage_type == dace.dtypes.StorageType.GPU_Global:
+    elif storage_type == dace.dtypes.StorageType.GPU_Global:
         try:
             import cupy
         except Exception:
@@ -158,12 +162,12 @@ def _test_realloc_use(storage_type: dace.dtypes.StorageType, transient: bool, sc
     sdfg.apply_transformations_repeated([StateFusion, RedundantArray, RedundantSecondArray])
     sdfg.validate()
     compiled_sdfg = sdfg.compile()
-    if storage_type == dace.dtypes.StorageType.CPU_Heap:
+    if storage_type == dace.dtypes.StorageType.CPU_Heap or storage_type == dace.dtypes.StorageType.CPU_Pinned:
         arr = numpy.array([-1.0]).astype(numpy.float32)
         user_size = numpy.array([10, 10]).astype(numpy.uint64)
         compiled_sdfg(user_size=user_size, example_array=arr)
         assert ( arr[0] == 3.0 )
-    if storage_type == dace.dtypes.StorageType.GPU_Global:
+    elif storage_type == dace.dtypes.StorageType.GPU_Global:
         try:
             import cupy
         except Exception:
@@ -182,8 +186,16 @@ def test_realloc_use_cpu(transient: bool):
     _test_realloc_use(dace.dtypes.StorageType.CPU_Heap, transient, dace.dtypes.ScheduleType.Sequential)
 
 @pytest.mark.gpu
+def test_realloc_use_cpu_pinned(transient: bool):
+    _test_realloc_use(dace.dtypes.StorageType.CPU_Pinned, transient, dace.dtypes.ScheduleType.Sequential)
+
+@pytest.mark.gpu
 def test_trivial_realloc_gpu(transient: bool):
     _test_trivial_realloc(dace.dtypes.StorageType.GPU_Global, transient)
+
+@pytest.mark.gpu
+def test_trivial_realloc_cpu_pinned(transient: bool):
+    _test_trivial_realloc(dace.dtypes.StorageType.CPU_Pinned, transient)
 
 def test_trivial_realloc_cpu(transient: bool):
     _test_trivial_realloc(dace.dtypes.StorageType.CPU_Heap, transient)
@@ -219,6 +231,17 @@ def test_realloc_inside_map_gpu():
         return
 
     pytest.fail("Realloc-use with non-transient data and incomplete write did not fail when it was expected to.")
+
+def test_realloc_inside_map_cpu_pinned():
+    sdfg =_get_assign_map_sdfg(dace.dtypes.StorageType.CPU_Pinned, True, dace.dtypes.ScheduleType.Sequential)
+    _add_realloc_inside_map(sdfg, dace.dtypes.ScheduleType.Sequential)
+    try:
+        sdfg.validate()
+    except Exception:
+        return
+
+    pytest.fail("Realloc-use with non-transient data and incomplete write did not fail when it was expected to.")
+
 
 def test_realloc_inside_map_cpu():
     sdfg =_get_assign_map_sdfg(dace.dtypes.StorageType.CPU_Heap, True, dace.dtypes.ScheduleType.CPU_Multicore)
@@ -275,6 +298,8 @@ def _get_conditional_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient
         assert (schedule_type == dace.dtypes.ScheduleType.Sequential or schedule_type == dace.dtypes.ScheduleType.CPU_Multicore)
     elif storage_type == dace.dtypes.StorageType.GPU_Global:
         assert (schedule_type == dace.dtypes.ScheduleType.GPU_Device)
+    elif storage_type == dace.dtypes.StorageType.CPU_Pinned:
+        assert (schedule_type == dace.dtypes.ScheduleType.Sequential)
 
     an_3 = state.add_access('A')
     an_3.add_out_connector('_read_size')
@@ -321,6 +346,7 @@ def _get_conditional_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient
 
     return sdfg
 
+@pytest.mark.gpu
 def test_conditional_alloc_gpu():
     sdfg =_get_conditional_alloc_sdfg(dace.dtypes.StorageType.GPU_Global, True, dace.dtypes.ScheduleType.GPU_Device)
     sdfg.validate()
@@ -335,6 +361,16 @@ def test_conditional_alloc_gpu():
     sdfg(path=1, size1=size1, size2=size2, example_array=arr)
     assert ( arr.get()[0] == 3.0 )
 
+@pytest.mark.gpu
+def test_conditional_alloc_cpu_pinned():
+    sdfg =_get_conditional_alloc_sdfg(dace.dtypes.StorageType.CPU_Pinned, True, dace.dtypes.ScheduleType.Sequential)
+    sdfg.validate()
+    size1 = numpy.array([1, 1]).astype(numpy.uint64)
+    size2 = numpy.array([22, 22]).astype(numpy.uint64)
+    arr = numpy.array([-1.0]).astype(numpy.float32)
+    sdfg(path=1, size1=size1, size2=size2, example_array=arr)
+    assert ( arr.get()[0] == 3.0 )
+
 def test_conditional_alloc_cpu():
     sdfg =_get_conditional_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True, dace.dtypes.ScheduleType.CPU_Multicore)
     sdfg.validate()
@@ -344,6 +380,7 @@ def test_conditional_alloc_cpu():
     sdfg(path=0, size1=size1, size2=size2, example_array=arr)
     assert ( arr[0] == 3.0 )
 
+@pytest.mark.gpu
 def test_conditional_alloc_with_expr_gpu():
     sdfg =_get_conditional_alloc_sdfg(dace.dtypes.StorageType.GPU_Global, True, dace.dtypes.ScheduleType.GPU_Device, True)
     sdfg.validate()
@@ -355,6 +392,16 @@ def test_conditional_alloc_with_expr_gpu():
         return
 
     arr = cupy.array([-1.0]).astype(cupy.float32)
+    sdfg(path=1, size1=size1, size2=size2, example_array=arr)
+    assert ( arr.get()[0] == 3.0 )
+
+@pytest.mark.gpu
+def test_conditional_alloc_with_expr_cpu_pinned():
+    sdfg =_get_conditional_alloc_sdfg(dace.dtypes.StorageType.CPU_Pinned, True, dace.dtypes.ScheduleType.Sequential, True)
+    sdfg.validate()
+    size1 = numpy.array([1, 1]).astype(numpy.uint64)
+    size2 = numpy.array([22, 22]).astype(numpy.uint64)
+    arr = numpy.array([-1.0]).astype(numpy.float32)
     sdfg(path=1, size1=size1, size2=size2, example_array=arr)
     assert ( arr.get()[0] == 3.0 )
 
@@ -391,24 +438,36 @@ if __name__ == "__main__":
     test_realloc_inside_map_cpu()
     print(f"Trivial Realloc within map, gpu")
     test_realloc_inside_map_gpu()
+    print(f"Trivial Realloc within map, cpu pinned")
+    test_realloc_inside_map_cpu_pinned()
 
     print(f"Trivial Realloc with storage, cpu")
     test_trivial_realloc_cpu(True)
     print(f"Trivial Realloc-Use with storage, cpu")
     test_realloc_use_cpu(True)
+    print(f"Trivial Realloc within map, cpu pinned")
+    test_realloc_use_cpu_pinned(True)
 
     print(f"Trivial Realloc with storage, gpu")
     test_trivial_realloc_gpu(True)
     print(f"Trivial Realloc-Use with storage, gpu")
     test_realloc_use_gpu(True)
+    print(f"Trivial Realloc-Use with storage, cpu pinned")
+    test_realloc_use_cpu_pinned(True)
+
     print(f"Trivial Realloc with storage, cpu, on non-transient data")
     test_trivial_realloc_cpu(False)
     print(f"Trivial Realloc-Use with storage, cpu, on non-transient data")
     test_realloc_use_cpu(False)
     print(f"Trivial Realloc with storage, gpu, on non-transient data")
     test_trivial_realloc_gpu(False)
+
     print(f"Trivial Realloc-Use with storage, gpu, on non-transient data")
     test_realloc_use_gpu(False)
+    print(f"Trivial Realloc with storage, cpu pinned, on non-transient data")
+    test_trivial_realloc_cpu_pinned(False)
+    print(f"Trivial Realloc-Use with storage, cpu pinned, on non-transient data")
+    test_realloc_use_cpu_pinned(False)
 
     print(f"Realloc with incomplete write one, validation")
     test_incomplete_write_dimensions_1()
@@ -419,8 +478,12 @@ if __name__ == "__main__":
     test_conditional_alloc_cpu()
     print(f"Test conditional alloc with use, gpu")
     test_conditional_alloc_gpu()
+    print(f"Test conditional alloc with use, cpu pinned")
+    test_conditional_alloc_cpu_pinned()
 
     print(f"Test conditional alloc with use and the shape as a non-trivial expression, cpu")
     test_conditional_alloc_with_expr_cpu()
     print(f"Test conditional alloc with use and the shape as a non-trivial expression, gpu")
     test_conditional_alloc_with_expr_gpu()
+    print(f"Test conditional alloc with use and the shape as a non-trivial expression, cpu pinned")
+    test_conditional_alloc_with_expr_cpu_pinned()

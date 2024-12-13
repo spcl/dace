@@ -592,8 +592,7 @@ def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None,
 
 
 def _get_deferred_size_names(desc, name):
-    if (desc.storage != dtypes.StorageType.GPU_Global and
-        desc.storage != dtypes.StorageType.CPU_Heap and
+    if (desc.storage not in dtypes.REALLOCATABLE_STORAGES and
         not desc.transient):
         return None
     def check_dace_defer(elements):
@@ -603,7 +602,7 @@ def _get_deferred_size_names(desc, name):
         return False
     deferred_size_names = None
     if check_dace_defer(desc.shape):
-        if desc.storage == dtypes.StorageType.GPU_Global or desc.storage == dtypes.StorageType.CPU_Heap:
+        if desc.storage in dtypes.REALLOCATABLE_STORAGES:
             deferred_size_names = []
             for i, elem in enumerate(desc.shape):
                 if "__dace_defer" in str(elem):

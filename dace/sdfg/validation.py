@@ -359,9 +359,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                             f"Deferred arrays can't be returned. {desc} has __return in its name."
                             , sdfg, None
                         )
-                    if desc.storage is not dtypes.StorageType.GPU_Global and desc.storage is not dtypes.StorageType.CPU_Heap:
+                    if desc.storage not in dtypes.REALLOCATABLE_STORAGES:
                         raise InvalidSDFGError(
-                            f"Deferred arrays are supported only for {dtypes.StorageType.GPU_Global} and {dtypes.StorageType.CPU_Heap} storage types for {desc}."
+                            f"Deferred arrays are supported only for {dtypes.REALLOCATABLE_STORAGES} storage types for {desc}."
                             , sdfg, None
                         )
 
@@ -616,10 +616,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             # Reading-Writing the size is valid only if the array is transient and has the storage type CPU_Heap or GPU_Global
             has_writes = len(write_size_edges) > 0
             has_writes_or_reads = len(read_size_edges) + len(write_size_edges) > 0
-            size_access_allowed = arr.transient and (arr.storage == dtypes.StorageType.CPU_Heap or arr.storage == dtypes.StorageType.GPU_Global)
+            size_access_allowed = arr.transient and (arr.storage in dtypes.REALLOCATABLE_STORAGES)
             if has_writes_or_reads and not size_access_allowed:
                 raise InvalidSDFGNodeError('Reading the size of an array, or changing (writing to) the size of an array '
-                                           'is only valid if the array is transient and the storage is CPU_Heap or GPU_Global', sdfg, state_id, nid)
+                                           f'is only valid if the array is transient and the storage is in {dtypes.REALLOCATABLE_STORAGES}', sdfg, state_id, nid)
             if has_writes and scope[node] is not None:
                 raise InvalidSDFGNodeError('Resizing array is not allowed within a scope (e.g. not inside maps)', sdfg, state_id, nid)
 

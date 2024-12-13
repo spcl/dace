@@ -136,6 +136,7 @@ class CUDACodeGen(TargetCodeGenerator):
                 dispatcher.register_copy_dispatcher(dtypes.StorageType.Register, st, sched_type, illegal_copy)
 
         dispatcher.register_reallocate_dispatcher(dtypes.StorageType.GPU_Global, self)
+        dispatcher.register_reallocate_dispatcher(dtypes.StorageType.CPU_Pinned, self)
         # End of illegal copies
         # End of dispatcher registration
         ######################################
@@ -606,11 +607,12 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
         arrsize = nodedesc.total_size
         is_dynamically_sized = symbolic.issymbolic(arrsize, sdfg.constants)
         arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
+
         ctypedef = '%s *' % nodedesc.dtype.ctype
         deferred_allocation = any([s for s in nodedesc.shape if "__dace_defer" in str(s)])
 
-        # Different types of GPU arrays
-        if nodedesc.storage == dtypes.StorageType.GPU_Global:
+        # Different types of GPU arrays)
+        if nodedesc.storage in dtypes.REALLOCATABLE_STORAGES:
             if not declared:
                 declaration_stream.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
@@ -2808,27 +2810,43 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         tmp_storage_name = "__tmp_realloc_move_storage"
 
         callsite_stream.write(f"if ({dst_node.data} == nullptr) {{", cfg, state_id, dst_node.guid)
-        self._alloc_gpu_global(dst_node, data, callsite_stream, data_name, new_size_str)
+        if data.storage  == dtypes.StorageType.GPU_Global:
+            assert data.storage == dtypes.StorageType.CPU_Pinned
+            self._alloc_gpu_global(dst_node, data, callsite_stream, data_name, new_size_str)
+        else:
+            callsite_stream.write(f"DACE_GPU_CHECK({self.backend}MallocHost(reinterpret_cast<void**>(&{data_name}), {new_size_str}));", cfg, state_id, dst_node.guid)
         callsite_stream.write("} else {\n", cfg, state_id, dst_node.guid)
         callsite_stream.write(f"{dtype}* {tmp_storage_name};")
-        self._alloc_gpu_global(None, data, callsite_stream, tmp_storage_name, new_size_str)
+        if data.storage  == dtypes.StorageType.GPU_Global:
+            self._alloc_gpu_global(None, data, callsite_stream, tmp_storage_name, new_size_str)
+        else:
+            assert data.storage == dtypes.StorageType.CPU_Pinned
+            callsite_stream.write(f"DACE_GPU_CHECK({self.backend}MallocHost(reinterpret_cast<void**>(&{tmp_storage_name}), {new_size_str}));", cfg, state_id, dst_node.guid)
+
         s = ""
-        if not data.pool:  # If pooled, will be freed somewhere else
-            copy_size_str = f"Min({old_size_str}, {new_size_str})"
-            s += f"DACE_GPU_CHECK({self.backend}Memcpy(static_cast<void *>({tmp_storage_name}), static_cast<void *>({data_name}), {copy_size_str}, cudaMemcpyDeviceToDevice));\n"
-            s += f"DACE_GPU_CHECK({self.backend}Free({data_name}));\n"
+        copy_size_str = f"Min({old_size_str}, {new_size_str})"
+        if data.storage == dtypes.StorageType.GPU_Global:
+            if not data.pool:  # If pooled, will be freed somewhere else
+                s += f"DACE_GPU_CHECK({self.backend}Memcpy(static_cast<void *>({tmp_storage_name}), static_cast<void *>({data_name}), {copy_size_str}, cudaMemcpyDeviceToDevice));\n"
+                s += f"DACE_GPU_CHECK({self.backend}Free({data_name}));\n"
+                s += f"{data_name} = {tmp_storage_name};\n"
+            else:
+                cudastream = getattr(dst_node, '_cuda_stream', 'nullptr')
+                if cudastream != 'nullptr':
+                    cudastream = f'__state->gpu_context->streams[{cudastream}]'
+                s += f'DACE_GPU_CHECK({self.backend}MallocAsync(reinterpret_cast<void**>(&{tmp_storage_name}), {new_size_str}, {cudastream}));\n'
+                s += f"DACE_GPU_CHECK({self.backend}MemcpyAsync(static_cast<void *>({tmp_storage_name}), static_cast<void *>({data_name}), {copy_size_str}, {cudastream}), cudaMemcpyDeviceToDevice));\n"
+                s += f"DACE_GPU_CHECK({self.backend}FreeAsync({data_name}, {cudastream}));\n"
+                callsite_stream.write(s)
+                self._emit_sync(callsite_stream)
+                callsite_stream.write(f"{data_name} = {tmp_storage_name};\n")
+                s = ""
+        elif data.storage == dtypes.StorageType.CPU_Pinned:
+            s += f"DACE_GPU_CHECK({self.backend}Memcpy(static_cast<void *>({tmp_storage_name}), static_cast<void *>({data_name}), {copy_size_str}, cudaMemcpyHostToHost));\n"
+            s += f"DACE_GPU_CHECK({self.backend}FreeHost({data_name}));\n"
             s += f"{data_name} = {tmp_storage_name};\n"
         else:
-            cudastream = getattr(dst_node, '_cuda_stream', 'nullptr')
-            if cudastream != 'nullptr':
-                cudastream = f'__state->gpu_context->streams[{cudastream}]'
-            s += f'DACE_GPU_CHECK({self.backend}MallocAsync(static_cast<void**>(&{data_name}), {new_size_str}, {cudastream}));\n'
-            s += f"DACE_GPU_CHECK({self.backend}MemcpyAsync(static_cast<void *>({tmp_storage_name}), static_cast<void *>({data_name}), {copy_size_str}, {cudastream}), cudaMemcpyDeviceToDevice));\n"
-            s += f"DACE_GPU_CHECK({self.backend}FreeAsync({data_name}, {cudastream}));\n"
-            callsite_stream.write(s)
-            self._emit_sync(callsite_stream)
-            callsite_stream.write(f"{data_name} = {tmp_storage_name};\n")
-            s = ""
+            raise Exception("Realloc in CUDA, storage type must be CPU_Pinned or GPU_Global")
         s += "}\n"
         callsite_stream.write(s)
 
