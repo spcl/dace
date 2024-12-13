@@ -699,7 +699,7 @@ class CPUCodeGen(TargetCodeGenerator):
         new_size_array_name = src_node.data
 
         desc = sdfg.arrays[data_name]
-        assert type(data) == dt.Array
+        assert type(desc) == data.Array
         size_array_name = desc.size_desc_name
 
         dtype = sdfg.arrays[data_name].dtype
