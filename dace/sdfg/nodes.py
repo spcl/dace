@@ -144,6 +144,43 @@ class Node(object):
         self.out_connectors = connectors
         return True
 
+    def _add_scope_connectors(
+            self,
+            connector_name: str,
+            dtype: Optional[dtypes.typeclass] = None,
+            force: bool = False,
+    ) -> None:
+        """ Adds input and output connector names to `self` in one step.
+
+            The function will add an input connector with name `'IN_' + connector_name`
+            and an output connector with name `'OUT_' + connector_name`.
+            The function is a shorthand for calling `add_in_connector()` and `add_out_connector()`.
+
+            :param connector_name: The base name of the new connectors.
+            :param dtype: The type of the connectors, or `None` for auto-detect.
+            :param force: Add connector even if input or output connector of that name already exists.
+            :return: True if the operation is successful, otherwise False.
+        """
+        in_connector_name = "IN_" + connector_name
+        out_connector_name = "OUT_" + connector_name
+        if not force:
+            if in_connector_name in self.in_connectors or in_connector_name in self.out_connectors:
+                return False
+            if out_connector_name in self.in_connectors or out_connector_name in self.out_connectors:
+                return False
+        # We force unconditionally because we have performed the tests above.
+        self.add_in_connector(
+                connector_name=in_connector_name,
+                dtype=dtype,
+                force=True,
+        )
+        self.add_out_connector(
+                connector_name=out_connector_name,
+                dtype=dtype,
+                force=True,
+        )
+        return True
+
     def remove_in_connector(self, connector_name: str):
         """ Removes an input connector from the node.
 
@@ -741,6 +778,9 @@ class EntryNode(Node):
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
+    add_scope_connectors = Node._add_scope_connectors
+
+
 
 # ------------------------------------------------------------------------------
 
@@ -751,6 +791,8 @@ class ExitNode(Node):
 
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
+
+    add_scope_connectors = Node._add_scope_connectors
 
 
 # ------------------------------------------------------------------------------
