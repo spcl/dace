@@ -455,12 +455,20 @@ if __name__ == "__main__":
     print(f"Trivial Realloc with storage, cpu pinned, on non-transient data")
     test_trivial_realloc_cpu_pinned(False)
 
-    print(f"Trivial Realloc-Use with storage, cpu")
+    print(f"Trivial Realloc-Use with storage, cpu, transient")
     test_realloc_use_cpu(True)
-    print(f"Trivial Realloc-Use with storage, gpu")
+    print(f"Trivial Realloc-Use with storage, gpu, transient")
     test_realloc_use_gpu(True)
-    print(f"Trivial Realloc-Use with storage, cpu pinned")
+    print(f"Trivial Realloc-Use with storage, cpu pinned, transient")
     test_realloc_use_cpu_pinned(True)
+
+    print(f"Trivial Realloc-Use with storage, cpu, non-transient")
+    test_realloc_use_cpu(False)
+    print(f"Trivial Realloc-Use with storage, gpu, non-transient")
+    test_realloc_use_gpu(False)
+    print(f"Trivial Realloc-Use with storage, cpu pinned, non-transient")
+    test_realloc_use_cpu_pinned(False)
+
     print(f"Realloc with incomplete write one, validation")
     test_incomplete_write_dimensions_1()
     print(f"Realloc with incomplete write two, validation")
