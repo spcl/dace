@@ -474,6 +474,10 @@ def make_transients_persistent(sdfg: SDFG,
                     not_persistent.add(dnode.data)
                     continue
                 desc = dnode.desc(nsdfg)
+                # Only convert what is not a member of a non-persistent struct.
+                if (dnode.root_data != dnode.data and
+                    nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent):
+                    continue
                 # Only convert arrays and scalars that are not registers
                 if not desc.transient or type(desc) not in {dt.Array, dt.Scalar}:
                     not_persistent.add(dnode.data)
@@ -573,8 +577,6 @@ def auto_optimize(sdfg: SDFG,
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
-        for s in sdfg.cfg_list:
-            xfh.split_interstate_edges(s)
         l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
                                                    validate=False,
                                                    validate_all=validate_all)
@@ -594,6 +596,7 @@ def auto_optimize(sdfg: SDFG,
 
     # fuse subgraphs greedily
     sdfg.simplify()
+    sdfg.reset_cfg_list()
 
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
@@ -663,6 +666,8 @@ def auto_optimize(sdfg: SDFG,
         if debugprint and len(known_symbols) > 0:
             print("Specializing the SDFG for symbols", known_symbols)
         sdfg.specialize(known_symbols)
+
+    sdfg.reset_cfg_list()
 
     # Validate at the end
     if validate or validate_all:

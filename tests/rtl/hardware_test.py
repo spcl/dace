@@ -372,8 +372,7 @@ def test_hardware_add42_single():
     return sdfg
 
 
-@pytest.mark.skip(reason="This test is covered by the Xilinx tests.")
-def test_hardware_axpy_double_pump(veclen=2):
+def _hardware_axpy_double_pump(veclen=2):
     '''
     Tests manual application of the multi-pumping optimization applied to the AXPY program from BLAS.
 
@@ -415,7 +414,7 @@ def test_hardware_axpy_double_pump_vec2():
     '''
     Tests double pumping with a vector length of 2.
     '''
-    return test_hardware_axpy_double_pump(veclen=2)
+    return _hardware_axpy_double_pump(veclen=2)
 
 
 @rtl_test()
@@ -423,7 +422,7 @@ def test_hardware_axpy_double_pump_vec4():
     '''
     Tests double pumping with a vector length of 4.
     '''
-    return test_hardware_axpy_double_pump(veclen=4)
+    return _hardware_axpy_double_pump(veclen=4)
 
 
 @rtl_test()
@@ -493,7 +492,7 @@ def test_hardware_vadd_temporal_vectorization():
         return sdfg
 
 
-# TODO disabled due to problem with array of streams in Vitis 2021.1
+# Disabled due to problem with array of streams in Vitis 2021.1
 #rtl_test()
 #def test_hardware_add42_multi():
 #    N = dace.symbol('N')
@@ -522,7 +521,6 @@ if __name__ == '__main__':
         test_hardware_vadd(None)
         test_hardware_vadd_temporal_vectorization(None)
         test_hardware_add42_single(None)
-        # TODO disabled due to problem with array of streams in Vitis 2021.1
         #test_hardware_add42_multi(None)
         test_hardware_axpy_double_pump_vec2(None)
         test_hardware_axpy_double_pump_vec4(None)

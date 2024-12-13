@@ -2,11 +2,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import argparse
-import numpy
-import pickle
-import json
-
-import dace
 from dace.frontend.octave import parse
 from dace.sdfg.nodes import AccessNode
 

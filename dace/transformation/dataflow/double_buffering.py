@@ -127,8 +127,8 @@ class DoubleBuffering(transformation.SingleStateTransformation):
 
         ##############################
         # Add initial reads to initial nested state
-        initial_state: sd.SDFGState = nsdfg_node.sdfg.start_state
-        initial_state.label = '%s_init' % map_entry.map.label
+        loop_block = nsdfg_node.sdfg.start_block
+        initial_state = nsdfg_node.sdfg.add_state_before(loop_block, '%s_init' % map_entry.map.label)
         for edge in edges_to_replace:
             initial_state.add_node(edge.src)
             rnode = edge.src
@@ -151,8 +151,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         ##############################
         # Add the main state's contents to the last state, modifying
         # memlets appropriately.
-        final_state: sd.SDFGState = nsdfg_node.sdfg.sink_nodes()[0]
-        final_state.label = '%s_final_computation' % map_entry.map.label
+        final_state = nsdfg_node.sdfg.add_state_after(loop_block, '%s_final_computation' % map_entry.map.label)
         dup_nstate = copy.deepcopy(nstate)
         final_state.add_nodes_from(dup_nstate.nodes())
         for e in dup_nstate.edges():
