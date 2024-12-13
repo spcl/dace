@@ -91,8 +91,7 @@ end
     sdfg.view()
 
 
-
-
+@pytest.mark.skip(reason="Interactive test (opens SDFG).")
 def test_fortran_frontend_function_test2():
     """
     Tests to check whether Fortran array slices are correctly translates to DaCe views.
@@ -274,6 +273,7 @@ END FUNCTION function3_test_function
 
 
 
+@pytest.mark.skip(reason="Interactive test (opens SDFG).")
 def test_fortran_frontend_function_test4():
     """
     Test for elemental functions
@@ -340,6 +340,7 @@ length=norm(v)+a
 
 
 
+@pytest.mark.skip(reason="Interactive test (opens SDFG).")
 def test_fortran_frontend_function_test5():
     """
     Test for elemental functions

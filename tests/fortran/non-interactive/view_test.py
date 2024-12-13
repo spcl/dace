@@ -112,6 +112,7 @@ END SUBROUTINE viewlens
     assert (b[0, 0, 0] == 4620)
 
 
+@pytest.mark.skip(reason="Interactive test (opens SDFG).")
 def test_fortran_frontend_view_test_2():
     """
     Tests to check whether Fortran array slices are correctly translates to DaCe views. This case necessitates multiple views per array in the same context.
@@ -168,6 +169,7 @@ END SUBROUTINE viewlens
     assert (c[1, 1, 1] == 84)
 
 
+@pytest.mark.skip(reason="Interactive test (opens SDFG).")
 def test_fortran_frontend_view_test_3():
     """
     Tests to check whether Fortran array slices are correctly translates to DaCe views. This test generates multiple views from the same array in the same context.    """
