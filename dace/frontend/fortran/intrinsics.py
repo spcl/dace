@@ -167,14 +167,14 @@ class DirectReplacement(IntrinsicTransformation):
 
             ret = ast_internal_classes.BinOp_Node(
                 lval=var_decl.sizes[0],
-                rval=None,
+                rval=ast_internal_classes.Name_Node(name="INTRINSIC_TEMPORARY"),
                 op="*"
             )
             cur_node = ret
             for i in range(1, len(var_decl.sizes) - 1):
                 cur_node.rval = ast_internal_classes.BinOp_Node(
                     lval=var_decl.sizes[i],
-                    rval=None,
+                    rval=ast_internal_classes.Name_Node(name="INTRINSIC_TEMPORARY"),
                     op="*"
                 )
                 cur_node = cur_node.rval
