@@ -85,7 +85,7 @@ class ArrayElimination(ppl.Pass):
 
         # If node is completely removed from graph, erase data descriptor
         array_items = list(sdfg.arrays.items())
-        size_descriptors = set([v.size_desc_name for v in sdfg.arrays.values() if v.size_desc_name is not None])
+        size_descriptors = set([v.size_desc_name for v in sdfg.arrays.values() if type(v) == data.Array and v.size_desc_name is not None])
         for aname, desc in array_items:
             # Remove size descriptors only if the original array is removed
             if  aname in size_descriptors:

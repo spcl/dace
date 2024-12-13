@@ -341,7 +341,7 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.declared_arrays.add(name, DefinedType.Pointer, ctypedef)
 
             # Size desc is defined only for transient arrays
-            if nodedesc.transient and nodedesc.storage == dtypes.StorageType.CPU_Heap:
+            if nodedesc.transient and nodedesc.storage == dtypes.StorageType.CPU_Heap and type(nodedesc) == data.Array:
                 size_desc_name = sdfg.arrays[name].size_desc_name
                 if size_desc_name is not None:
                     size_desc = sdfg.arrays[size_desc_name]
@@ -698,13 +698,14 @@ class CPUCodeGen(TargetCodeGenerator):
         data_name = dst_node.data
         new_size_array_name = src_node.data
 
-        data = sdfg.arrays[data_name]
-        size_array_name = data.size_desc_name
+        desc = sdfg.arrays[data_name]
+        assert type(data) == dt.Array
+        size_array_name = desc.size_desc_name
 
         dtype = sdfg.arrays[data_name].dtype
 
         size_assignment_strs, new_size_strs, _ = cpp._get_realloc_dimensions(
-            size_array_name, new_size_array_name, data.shape
+            size_array_name, new_size_array_name, desc.shape
         )
 
         for size_assignment in size_assignment_strs:

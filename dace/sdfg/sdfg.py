@@ -774,11 +774,10 @@ class SDFG(ControlFlowRegion):
         size_ararys_to_rm = set()
         for arr_name, size_desc_name in size_desc_map.items():
             arr = self.arrays[arr_name] if arr_name in self.arrays else None
-            if arr is not None:
+            if arr is not None and type(arr) == dt.Array:
                 size_desc_name_before = arr.size_desc_name
                 # If we change the name of an array, then we need to change its size array accordingly
-                if (arr.transient and type(arr) == dt.Array and size_desc_name_before is not None
-                    and size_desc_name is not None):
+                if (arr.transient and size_desc_name_before is not None):
                     arr.size_desc_name = size_desc_name
                     assert (arr.size_desc_name == size_desc_name)
                     self.arrays[size_desc_name]  = self.arrays.pop(size_desc_name_before)
@@ -1199,10 +1198,13 @@ class SDFG(ControlFlowRegion):
                                          f"{name}: it is accessed by node "
                                          f"{node} in state {state}.")
 
-        size_desc_name = self._arrays[name].size_desc_name
-        # If unused it might have been removed by optimization
-        if size_desc_name is not None and size_desc_name in self._arrays:
-            del self._arrays[size_desc_name]
+        # Check for size desc
+        if type(self._arrays[name]) == dt.Array:
+            size_desc_name = self._arrays[name].size_desc_name
+            # If unused it might have been removed by optimization
+            if size_desc_name is not None and size_desc_name in self._arrays:
+                del self._arrays[size_desc_name]
+
         del self._arrays[name]
 
 
