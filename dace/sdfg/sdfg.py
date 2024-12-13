@@ -2917,7 +2917,7 @@ class SDFG(ControlFlowRegion):
 
     def register_container_group_members(self, flattening_mode):
         for _, dg in self.container_groups.items():
-            self._register_container_group_members(flattening_mode=flattening_mode, container_group=dg, prefix_name='')
+            self._register_container_group_members(flattening_mode=flattening_mode, container_group=dg, prefix_name='', acc_shape=())
         print(self._arrays)
 
     def _register_container_group_members(self, flattening_mode, container_group: ContainerGroup, prefix_name: str, acc_shape: tuple):
@@ -2935,7 +2935,7 @@ class SDFG(ControlFlowRegion):
 
         # If we have a 3rd level (L2.1 is a struct and has L3.1 and L.32):
         # [L1][L2.1][L3.1], [L1][L2.1][L3.2], [L1][L2.2], [L1][L2.3]
-        if flattening_mode == ContainerGroupFlatteningMode.StructsOfArrays:
+        if flattening_mode == ContainerGroupFlatteningMode.StructOfArrays:
             for name, member in container_group.members.items():
                 dg_prefix = prefix_name + f'__ContainerGroup_{container_group.name}'
                 if isinstance(member, ContainerGroup):

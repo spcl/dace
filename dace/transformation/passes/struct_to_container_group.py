@@ -26,7 +26,7 @@ def _has_trailing_number(s):
 
 @make_properties
 class StructToContainerGroups(ppl.Pass):
-    def __init__(self, flattening_mode: ContainerGroupFlatteningMode = ContainerGroupFlatteningMode.StructsOfArrays):
+    def __init__(self, flattening_mode: ContainerGroupFlatteningMode = ContainerGroupFlatteningMode.StructOfArrays):
         self._access_names_map = dict()
         self._data_connected_to_vsv_struct = dict()
         self._flattening_mode = flattening_mode
@@ -42,7 +42,7 @@ class StructToContainerGroups(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> int:
         sdfg.generate_container_groups_from_structs(self._flattening_mode)
-        sdfg.register_container_group_members()
+        sdfg.register_container_group_members(self._flattening_mode)
 
         # A -> B both access nodes, this should trigger the further check whether we can apply
         for state in sdfg.nodes():

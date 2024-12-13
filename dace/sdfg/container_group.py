@@ -13,7 +13,7 @@ import sympy
 
 class ContainerGroupFlatteningMode(Enum):
     ArrayOfStructs = 1
-    StructsOfArrays = 2
+    StructOfArrays = 2
 
 
 def _members_to_json(members):
