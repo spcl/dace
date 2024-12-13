@@ -13,7 +13,7 @@ from dace.transformation.transformation import SingleStateTransformation
 
 
 @properties.make_properties
-@transformation.single_level_sdfg_only
+@transformation.explicit_cf_compatible
 class ArrayElimination(ppl.Pass):
     """
     Merges and removes arrays and their corresponding accesses. This includes redundant array copies, unnecessary views,
@@ -48,7 +48,7 @@ class ArrayElimination(ppl.Pass):
 
         # Traverse SDFG backwards
         try:
-            state_order = list(cfg.blockorder_topological_sort(sdfg))
+            state_order = list(cfg.blockorder_topological_sort(sdfg, recursive=True, ignore_nonstate_blocks=True))
         except KeyError:
             return None
         for state in reversed(state_order):
@@ -140,14 +140,14 @@ class ArrayElimination(ppl.Pass):
         """
         removed_nodes: Set[nodes.AccessNode] = set()
         xforms = [RemoveSliceView()]
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
 
         for nodeset in access_nodes.values():
             for anode in list(nodeset):
                 for xform in xforms:
                     # Quick path to setup match
                     candidate = {type(xform).view: anode}
-                    xform.setup_match(sdfg, sdfg.cfg_id, state_id, candidate, 0, override=True)
+                    xform.setup_match(sdfg, state.parent_graph.cfg_id, state_id, candidate, 0, override=True)
 
                     # Try to apply
                     if xform.can_be_applied(state, 0, sdfg):
@@ -162,7 +162,7 @@ class ArrayElimination(ppl.Pass):
         Removes access nodes that represent redundant copies and/or views.
         """
         removed_nodes: Set[nodes.AccessNode] = set()
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
 
         # Transformations that remove the first access node
         xforms_first: List[SingleStateTransformation] = [RedundantWriteSlice(), UnsqueezeViewRemove(), RedundantArray()]
@@ -192,7 +192,8 @@ class ArrayElimination(ppl.Pass):
                             for xform in xforms_first:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
-                                xform.setup_match(sdfg, sdfg.cfg_id, state_id, candidate, 0, override=True)
+                                xform.setup_match(sdfg, state.parent_graph.cfg_id, state_id, candidate, 0,
+                                                  override=True)
 
                                 # Try to apply
                                 if xform.can_be_applied(state, 0, sdfg):
@@ -212,7 +213,8 @@ class ArrayElimination(ppl.Pass):
                             for xform in xforms_second:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
-                                xform.setup_match(sdfg, sdfg.cfg_id, state_id, candidate, 0, override=True)
+                                xform.setup_match(sdfg, state.parent_graph.cfg_id, state_id, candidate, 0,
+                                                  override=True)
 
                                 # Try to apply
                                 if xform.can_be_applied(state, 0, sdfg):

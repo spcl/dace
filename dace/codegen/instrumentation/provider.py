@@ -60,34 +60,37 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_state_begin(self, sdfg: SDFG, state: SDFGState, local_stream: CodeIOStream,
+    def on_state_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                        global_stream: CodeIOStream) -> None:
         """ Event called at the beginning of SDFG state code generation.
 
             :param sdfg: The generated SDFG object.
+            :param cfg: The generated Control Flow Region object.
             :param state: The generated SDFGState object.
             :param local_stream: Code generator for the in-function code.
             :param global_stream: Code generator for global (external) code.
         """
         pass
 
-    def on_state_end(self, sdfg: SDFG, state: SDFGState, local_stream: CodeIOStream,
+    def on_state_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, local_stream: CodeIOStream,
                      global_stream: CodeIOStream) -> None:
         """ Event called at the end of SDFG state code generation.
 
             :param sdfg: The generated SDFG object.
+            :param cfg: The generated Control Flow Region object.
             :param state: The generated SDFGState object.
             :param local_stream: Code generator for the in-function code.
             :param global_stream: Code generator for global (external) code.
         """
         pass
 
-    def on_scope_entry(self, sdfg: SDFG, state: SDFGState, node: nodes.EntryNode, outer_stream: CodeIOStream,
-                       inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_scope_entry(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.EntryNode,
+                       outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         """ Event called at the beginning of a scope (on generating an
             EntryNode).
 
             :param sdfg: The generated SDFG object.
+            :param cfg: The generated Control Flow Region object.
             :param state: The generated SDFGState object.
             :param node: The EntryNode object from which code is generated.
             :param outer_stream: Code generator for the internal code before
@@ -98,11 +101,12 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_scope_exit(self, sdfg: SDFG, state: SDFGState, node: nodes.ExitNode, outer_stream: CodeIOStream,
-                      inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_scope_exit(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.ExitNode,
+                      outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         """ Event called at the end of a scope (on generating an ExitNode).
 
             :param sdfg: The generated SDFG object.
+            :param cfg: The generated Control Flow Region object.
             :param state: The generated SDFGState object.
             :param node: The ExitNode object from which code is generated.
             :param outer_stream: Code generator for the internal code after
@@ -113,12 +117,13 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_copy_begin(self, sdfg: SDFG, state: SDFGState, src_node: nodes.Node, dst_node: nodes.Node,
-                      edge: MultiConnectorEdge[Memlet], local_stream: CodeIOStream, global_stream: CodeIOStream,
-                      copy_shape, src_strides, dst_strides) -> None:
+    def on_copy_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, src_node: nodes.Node,
+                      dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet], local_stream: CodeIOStream,
+                      global_stream: CodeIOStream, copy_shape, src_strides, dst_strides) -> None:
         """ Event called at the beginning of generating a copy operation.
 
             :param sdfg: The generated SDFG object.
+            :param cfg: The generated Control Flow Region object.
             :param state: The generated SDFGState object.
             :param src_node: The source node of the copy.
             :param dst_node: The destination node of the copy.
@@ -131,11 +136,13 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_copy_end(self, sdfg: SDFG, state: SDFGState, src_node: nodes.Node, dst_node: nodes.Node,
-                    edge: MultiConnectorEdge[Memlet], local_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_copy_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, src_node: nodes.Node,
+                    dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet], local_stream: CodeIOStream,
+                    global_stream: CodeIOStream) -> None:
         """ Event called at the end of generating a copy operation.
 
             :param sdfg: The generated SDFG object.
+            :param cfg: The generated Control Flow Region object.
             :param state: The generated SDFGState object.
             :param src_node: The source node of the copy.
             :param dst_node: The destination node of the copy.
@@ -145,11 +152,12 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_node_begin(self, sdfg: SDFG, state: SDFGState, node: nodes.Node, outer_stream: CodeIOStream,
-                      inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_node_begin(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
+                      outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         """ Event called at the beginning of generating a node.
 
             :param sdfg: The generated SDFG object.
+            :param cfg: The generated Control Flow Region object.
             :param state: The generated SDFGState object.
             :param node: The generated node.
             :param outer_stream: Code generator for the internal code before
@@ -160,11 +168,12 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_node_end(self, sdfg: SDFG, state: SDFGState, node: nodes.Node, outer_stream: CodeIOStream,
-                    inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
+    def on_node_end(self, sdfg: SDFG, cfg: ControlFlowRegion, state: SDFGState, node: nodes.Node,
+                    outer_stream: CodeIOStream, inner_stream: CodeIOStream, global_stream: CodeIOStream) -> None:
         """ Event called at the end of generating a node.
         
             :param sdfg: The generated SDFG object.
+            :param cfg: The generated Control Flow Region object.
             :param state: The generated SDFGState object.
             :param node: The generated node.
             :param outer_stream: Code generator for the internal code after

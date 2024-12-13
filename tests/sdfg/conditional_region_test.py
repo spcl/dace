@@ -43,6 +43,7 @@ def test_serialization():
 
     for j in range(10):
         cfg = ControlFlowRegion(f'cfg_{j}', sdfg)
+        cfg.add_state('noop')
         cond_region.add_branch(CodeBlock(f'i == {j}'), cfg)
     
     assert sdfg.is_valid()

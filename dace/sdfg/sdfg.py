@@ -460,8 +460,8 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
-    using_experimental_blocks = Property(dtype=bool, default=False,
-                                         desc="Whether the SDFG contains experimental control flow blocks")
+    using_explicit_control_flow = Property(dtype=bool, default=False,
+                                           desc="Whether the SDFG contains explicit control flow constructs")
 
     def __init__(self,
                  name: str,
@@ -1359,7 +1359,8 @@ class SDFG(ControlFlowRegion):
                                defined_syms: Optional[Set] = None,
                                free_syms: Optional[Set] = None,
                                used_before_assignment: Optional[Set] = None,
-                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
+                               keep_defined_in_mapping: bool = False,
+                               with_contents: bool = True) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -1380,7 +1381,8 @@ class SDFG(ControlFlowRegion):
                                               keep_defined_in_mapping=keep_defined_in_mapping,
                                               defined_syms=defined_syms,
                                               free_syms=free_syms,
-                                              used_before_assignment=used_before_assignment)
+                                              used_before_assignment=used_before_assignment,
+                                              with_contents=with_contents)
 
     def get_all_toplevel_symbols(self) -> Set[str]:
         """
@@ -1417,7 +1419,7 @@ class SDFG(ControlFlowRegion):
         read_set = set()
         write_set = set()
         for state in self.states():
-            for edge in self.in_edges(state):
+            for edge in state.parent_graph.in_edges(state):
                 read_set |= edge.data.free_symbols & self.arrays.keys()
             # Get dictionaries of subsets read and written from each state
             rs, ws = state._read_and_write_sets()
@@ -1575,7 +1577,7 @@ class SDFG(ControlFlowRegion):
         result = {}
         tstate = {}
 
-        for (i, state) in enumerate(self.nodes()):
+        for (i, state) in enumerate(self.states()):
             scope_dict = state.scope_dict()
             for node in state.nodes():
                 if isinstance(node, nd.AccessNode) and node.desc(self).transient:
@@ -2939,14 +2941,14 @@ class SDFG(ControlFlowRegion):
         """
         return dace.Memlet.from_array(array, self.data(array))
 
-    def recheck_using_experimental_blocks(self) -> bool:
-        found_experimental_block = False
+    def recheck_using_explicit_control_flow(self) -> bool:
+        found_explicit_cf_block = False
         for node, graph in self.root_sdfg.all_nodes_recursive():
             if isinstance(graph, ControlFlowRegion) and not isinstance(graph, SDFG):
-                found_experimental_block = True
+                found_explicit_cf_block = True
                 break
             if isinstance(node, ControlFlowBlock) and not isinstance(node, SDFGState):
-                found_experimental_block = True
+                found_explicit_cf_block = True
                 break
-        self.root_sdfg.using_experimental_blocks = found_experimental_block
-        return found_experimental_block
+        self.root_sdfg.using_explicit_control_flow = found_explicit_cf_block
+        return found_explicit_cf_block
