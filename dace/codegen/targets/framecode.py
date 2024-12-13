@@ -969,7 +969,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             size_nodedesc = sdfg.arrays[size_desc_name]
             assert ("__return" not in size_desc_name)
             ctypedef = size_nodedesc.dtype.ctype
-            array = [v for v in sdfg.arrays.values() if v.size_desc_name is not None and v.size_desc_name == size_desc_name]
+            array = [v for v in sdfg.arrays.values() if type(v) == data.Array and v.size_desc_name is not None and v.size_desc_name == size_desc_name]
             assert len(array) <= 1
             if len(array) == 1:
                 array = array[0]

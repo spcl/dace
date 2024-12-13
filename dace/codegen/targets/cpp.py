@@ -631,6 +631,7 @@ def _get_realloc_dimensions(size_array_name:str, new_size_array_name:str, shape)
                 f"{size_array_name}[{i}] = {new_size_array_name}[{i}];"
             )
         else:
+            old_size_strs.append(sym2cpp(shape[i]))
             new_size_strs.append(sym2cpp(shape[i]))
     return size_assignment_strs, new_size_strs, old_size_strs
 

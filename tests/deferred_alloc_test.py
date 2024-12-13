@@ -369,7 +369,7 @@ def test_conditional_alloc_cpu_pinned():
     size2 = numpy.array([22, 22]).astype(numpy.uint64)
     arr = numpy.array([-1.0]).astype(numpy.float32)
     sdfg(path=1, size1=size1, size2=size2, example_array=arr)
-    assert ( arr.get()[0] == 3.0 )
+    assert ( arr[0] == 3.0 )
 
 def test_conditional_alloc_cpu():
     sdfg =_get_conditional_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True, dace.dtypes.ScheduleType.CPU_Multicore)
@@ -403,7 +403,7 @@ def test_conditional_alloc_with_expr_cpu_pinned():
     size2 = numpy.array([22, 22]).astype(numpy.uint64)
     arr = numpy.array([-1.0]).astype(numpy.float32)
     sdfg(path=1, size1=size1, size2=size2, example_array=arr)
-    assert ( arr.get()[0] == 3.0 )
+    assert ( arr[0] == 3.0 )
 
 def test_conditional_alloc_with_expr_cpu():
     sdfg =_get_conditional_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True, dace.dtypes.ScheduleType.CPU_Multicore, True)
@@ -443,32 +443,24 @@ if __name__ == "__main__":
 
     print(f"Trivial Realloc with storage, cpu")
     test_trivial_realloc_cpu(True)
-    print(f"Trivial Realloc-Use with storage, cpu")
-    test_realloc_use_cpu(True)
-    print(f"Trivial Realloc within map, cpu pinned")
-    test_realloc_use_cpu_pinned(True)
-
     print(f"Trivial Realloc with storage, gpu")
     test_trivial_realloc_gpu(True)
+    print(f"Trivial Realloc with storage, cpu pinned")
+    test_trivial_realloc_cpu_pinned(True)
+
+    print(f"Trivial Realloc with storage, cpu, on non-transient data")
+    test_trivial_realloc_cpu(False)
+    print(f"Trivial Realloc-Use with storage, gpu, on non-transient data")
+    test_trivial_realloc_gpu(False)
+    print(f"Trivial Realloc with storage, cpu pinned, on non-transient data")
+    test_trivial_realloc_cpu_pinned(False)
+
+    print(f"Trivial Realloc-Use with storage, cpu")
+    test_realloc_use_cpu(True)
     print(f"Trivial Realloc-Use with storage, gpu")
     test_realloc_use_gpu(True)
     print(f"Trivial Realloc-Use with storage, cpu pinned")
     test_realloc_use_cpu_pinned(True)
-
-    print(f"Trivial Realloc with storage, cpu, on non-transient data")
-    test_trivial_realloc_cpu(False)
-    print(f"Trivial Realloc-Use with storage, cpu, on non-transient data")
-    test_realloc_use_cpu(False)
-    print(f"Trivial Realloc with storage, gpu, on non-transient data")
-    test_trivial_realloc_gpu(False)
-
-    print(f"Trivial Realloc-Use with storage, gpu, on non-transient data")
-    test_realloc_use_gpu(False)
-    print(f"Trivial Realloc with storage, cpu pinned, on non-transient data")
-    test_trivial_realloc_cpu_pinned(False)
-    print(f"Trivial Realloc-Use with storage, cpu pinned, on non-transient data")
-    test_realloc_use_cpu_pinned(False)
-
     print(f"Realloc with incomplete write one, validation")
     test_incomplete_write_dimensions_1()
     print(f"Realloc with incomplete write two, validation")

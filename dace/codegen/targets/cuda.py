@@ -1632,6 +1632,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     size_desc = sdfg.arrays[size_desc_name]
                     dyn_args_typed.append(f"const {size_desc.dtype.ctype} __{arr_name}_dim{i}_size")
                     needed_size_scalars_declaration.append(f"const {size_desc.dtype.ctype} __{arr_name}_dim{i}_size = {size_desc_name}[{i}];")
+        #raise Exception(needed_size_scalars_declaration, dyn_args)
 
         self._localcode.write(
             '__global__ void %s %s(%s) {\n' %
@@ -2065,6 +2066,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         # handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(cfg.node(state_id), dfg_scope.source_nodes()[0]):
+            # If src is a _read_size, it was handled before
+            if e.src_conn is not None and e.src_conn == "_read_size":
+                continue
             kernel_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 cfg, state_id,
@@ -2810,14 +2814,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         tmp_storage_name = "__tmp_realloc_move_storage"
 
         callsite_stream.write(f"if ({dst_node.data} == nullptr) {{", cfg, state_id, dst_node.guid)
-        if data.storage  == dtypes.StorageType.GPU_Global:
-            assert data.storage == dtypes.StorageType.CPU_Pinned
+        if data.storage == dtypes.StorageType.GPU_Global:
             self._alloc_gpu_global(dst_node, data, callsite_stream, data_name, new_size_str)
         else:
+            assert data.storage == dtypes.StorageType.CPU_Pinned
             callsite_stream.write(f"DACE_GPU_CHECK({self.backend}MallocHost(reinterpret_cast<void**>(&{data_name}), {new_size_str}));", cfg, state_id, dst_node.guid)
         callsite_stream.write("} else {\n", cfg, state_id, dst_node.guid)
         callsite_stream.write(f"{dtype}* {tmp_storage_name};")
-        if data.storage  == dtypes.StorageType.GPU_Global:
+        if data.storage == dtypes.StorageType.GPU_Global:
             self._alloc_gpu_global(None, data, callsite_stream, tmp_storage_name, new_size_str)
         else:
             assert data.storage == dtypes.StorageType.CPU_Pinned
