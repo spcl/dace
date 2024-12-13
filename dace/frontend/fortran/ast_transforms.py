@@ -1864,7 +1864,6 @@ class ArrayLoopNodeLister(NodeVisitor):
 
 def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           ranges: list,
-                          rangepos: list,
                           rangeslen: list,
                           count: int,
                           newbody: list,
@@ -1885,6 +1884,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
     :return: Ranges, rangepos, newbody
     """
 
+    rangepos = []
     currentindex = 0
     indices = []
     name_chain = []
@@ -1921,6 +1921,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
     for idx, i in enumerate(node.indices):
         if isinstance(i, ast_internal_classes.ParDecl_Node):
+
             if i.type == "ALL":
                 lower_boundary = None
                 if offsets[idx] != 1:
@@ -1948,7 +1949,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                                                                       arrname=ast_internal_classes.Name_Node(
                                                                           name=array_name, type="VOID",
                                                                           line_number=node.line_number),
-                                                                      pos=currentindex)
+                                                                      pos=idx)
                 """
                     When there's an offset, we add MAX_RANGE + offset.
                     But since the generated loop has `<=` condition, we need to subtract 1.
@@ -2083,8 +2084,7 @@ class ArrayToLoop(NodeTransformer):
 
                 current = child.lval
                 ranges = []
-                rangepos = []
-                par_Decl_Range_Finder(current, ranges, rangepos, [], self.count, newbody, self.scope_vars,
+                par_Decl_Range_Finder(current, ranges, [], self.count, newbody, self.scope_vars,
                                       self.ast.structures, True)
 
                 # if res_range is not None and len(res_range) > 0:
@@ -2095,10 +2095,9 @@ class ArrayToLoop(NodeTransformer):
 
                 rvals = [i for i in mywalk(child.rval) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
                 for i in rvals:
-                    rangeposrval = []
                     rangesrval = []
 
-                    par_Decl_Range_Finder(i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars,
+                    par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars,
                                           self.ast.structures, False, ranges)
                     for i, j in zip(ranges, rangesrval):
                         if i != j:

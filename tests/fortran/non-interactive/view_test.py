@@ -18,6 +18,7 @@ import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
 
+@pytest.mark.skip(reason="Interactive test (opens SDFG).")
 def test_fortran_frontend_view_test():
     """
     Tests to check whether Fortran array slices are correctly translates to DaCe views.

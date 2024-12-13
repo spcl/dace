@@ -2816,6 +2816,7 @@ def create_sdfg_from_string(
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.IfConditionExtractor().visit(program)
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
