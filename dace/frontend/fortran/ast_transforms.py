@@ -1442,7 +1442,9 @@ class SignToIf(NodeTransformer):
                                                     name=ast_internal_classes.Name_Node(name="abs"),
                                                     type="DOUBLE",
                                                     args=[copy.deepcopy(args[0])],
-                                                    line_number=node.line_number),
+                                                    line_number=node.line_number,
+                                                    subroutine=False,),
+                                                    
                                                 line_number=node.line_number)
             ])
             body_else = ast_internal_classes.Execution_Part_Node(execution=[
@@ -2165,6 +2167,49 @@ class PartialRenameVar(NodeTransformer):
                                                      sizes=node.sizes, init=node.init, line_number=node.line_number,
                                                      kind=node.kind, alloc=node.alloc, offsets=node.offsets)
 
+
+class IfConditionExtractor(NodeTransformer):
+    """
+    Ensures that each loop iterator is unique by extracting the actual iterator and assigning it to a uniquely named local variable
+    """
+
+    def __init__(self):
+        self.count = 0
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        newbody = []
+        for child in node.execution:
+            
+            if isinstance(child, ast_internal_classes.If_Stmt_Node):
+                old_cond = child.cond
+                newbody.append(
+                    ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                        ast_internal_classes.Symbol_Decl_Node(
+                            name="_if_cond_" + str(self.count), type="INTEGER", sizes=None, init=None)
+                    ]))
+                newbody.append(ast_internal_classes.BinOp_Node(
+                    lval=ast_internal_classes.Name_Node(name="_if_cond_" + str(self.count)),
+                    op="=",
+                    rval=old_cond,
+                    line_number=child.line_number,
+                    parent=child.parent))
+                newcond = ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name="_if_cond_" + str(self.count)),
+                                                               op="==",
+                                                               rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                                               line_number=child.line_number,parent=old_cond.parent)
+                newifbody = self.visit(child.body)
+                newelsebody = self.visit(child.body_else)
+                
+                newif = ast_internal_classes.If_Stmt_Node(cond=newcond,  body=newifbody, body_else=newelsebody,
+                                                            line_number=child.line_number, parent=child.parent)
+                self.count += 1
+                
+                newbody.append(newif)
+
+            else:
+                newbody.append(self.visit(child))
+        return ast_internal_classes.Execution_Part_Node(execution=newbody)
+    
 
 class ForDeclarer(NodeTransformer):
     """

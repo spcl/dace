@@ -64,6 +64,10 @@ if __name__ == "__main__":
     base_icon_path = sys.argv[1]
     icon_file = sys.argv[2]
     sdfgs_dir = sys.argv[3]
+    if len(sys.argv) > 4:
+        already_parsed_ast = sys.argv[4]
+    else:
+        already_parsed_ast = None
 
     base_dir_ecrad = f"{base_icon_path}/externals/ecrad"
     base_dir_icon = f"{base_icon_path}/src"
@@ -76,7 +80,13 @@ if __name__ == "__main__":
         sources=[Path(f) for f in fortran_files],
         entry_points=[('radiation_interface', 'radiation')],
     )
-    ecrad_ast = create_fparser_ast(parse_cfg)
+    if already_parsed_ast is None:
+        ecrad_ast = create_fparser_ast(parse_cfg)
+        already_parsed_ast_bool = False
+    else:
+        mini_parser=pf().create(std="f2008")
+        ecrad_ast = mini_parser(ffr(file_candidate=already_parsed_ast))
+        already_parsed_ast_bool = True
 
     ast_builder = ast_components.InternalFortranAst()
     parser = pf().create(std="f2008")
@@ -213,5 +223,6 @@ if __name__ == "__main__":
         propagation_info=propagation_info,
         enum_propagator_ast=radiation_config_ast,
         enum_propagator_files=enum_propagator_files,
-        used_functions_config=cfg
+        used_functions_config=cfg,
+        already_parsed_ast=already_parsed_ast_bool
     )

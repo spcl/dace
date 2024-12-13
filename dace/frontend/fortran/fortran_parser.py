@@ -3140,7 +3140,8 @@ def create_sdfg_from_fortran_file_with_options(
         propagation_info=None,
         enum_propagator_files: Optional[List[str]] = None,
         enum_propagator_ast=None,
-        used_functions_config: Optional[FindUsedFunctionsConfig] = None
+        used_functions_config: Optional[FindUsedFunctionsConfig] = None,
+        already_parsed_ast=False
 ):
     """
     Creates an SDFG from a fortran file
@@ -3148,18 +3149,21 @@ def create_sdfg_from_fortran_file_with_options(
     :return: The resulting SDFG
 
     """
-    ast = deconstruct_enums(ast)
-    ast = deconstruct_associations(ast)
-    ast = remove_access_statements(ast)
-    ast = correct_for_function_calls(ast)
-    ast = deconstruct_procedure_calls(ast)
-    ast = deconstruct_interface_calls(ast)
-    ast = const_eval_nodes(ast)
-    ast = prune_branches(ast)
-    ast = prune_unused_objects(ast, cfg.entry_points)
-    ast = assign_globally_unique_subprogram_names(ast, {('radiation_interface', 'radiation')})
-    ast = assign_globally_unique_variable_names(ast, {'config'})
-    ast = consolidate_uses(ast)
+    if not already_parsed_ast:
+        ast = deconstruct_enums(ast)
+        ast = deconstruct_associations(ast)
+        ast = remove_access_statements(ast)
+        ast = correct_for_function_calls(ast)
+        ast = deconstruct_procedure_calls(ast)
+        ast = deconstruct_interface_calls(ast)
+        ast = const_eval_nodes(ast)
+        ast = prune_branches(ast)
+        ast = prune_unused_objects(ast, cfg.entry_points)
+        ast = assign_globally_unique_subprogram_names(ast, {('radiation_interface', 'radiation')})
+        ast = assign_globally_unique_variable_names(ast, {'config'})
+        ast = consolidate_uses(ast)
+    else:
+        ast = correct_for_function_calls(ast)    
 
     dep_graph = compute_dep_graph(ast, 'radiation_interface')
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
@@ -3258,6 +3262,7 @@ def create_sdfg_from_fortran_file_with_options(
     # program = ast_transforms.TypeInterference(program).visit(program)
     # program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.IfConditionExtractor().visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)

@@ -1513,7 +1513,7 @@ class MathFunctions(IntrinsicTransformation):
                 raise NotImplementedError()
 
         def visit_BinOp_Node(self, binop_node: ast_internal_classes.BinOp_Node):
-            return binop_node
+            
             if not isinstance(binop_node.rval, ast_internal_classes.Call_Expr_Node):
                 return binop_node
 
@@ -1605,7 +1605,7 @@ class FortranIntrinsics:
         "ALL": All,
         "MINVAL": MinVal,
         "MAXVAL": MaxVal,
-        "MERGE": Merge,
+        #"MERGE": Merge,
     }
 
     # All functions return an array
@@ -1667,10 +1667,7 @@ class FortranIntrinsics:
             "RANDOM_NUMBER": "__dace_random_number",
             "DATE_AND_TIME": "__dace_date_and_time",
         }
-        if not DirectReplacement.replacable_name(func_name) and not MathFunctions.replacable(
-                func_name) and func_name not in self.IMPLEMENTATIONS_AST:
-            replacements[func_name] = "__dace_" + func_name
-            print(f"Function {func_name} not supported yet, intrinsics required!")
+       
         if func_name in replacements:
             return ast_internal_classes.Name_Node(name=replacements[func_name])
         elif DirectReplacement.replacable_name(func_name):
@@ -1711,7 +1708,7 @@ class FortranIntrinsics:
         if name.name in func_types:
             # FIXME: this will be progressively removed
             call_type = func_types[name.name]
-            return ast_internal_classes.Call_Expr_Node(name=name, type=call_type, args=args.args, line_number=line)
+            return ast_internal_classes.Call_Expr_Node(name=name, type=call_type, args=args.args, line_number=line,subroutine=False)
         elif DirectReplacement.replacable(name.name):
             return DirectReplacement.replace(name.name, args, line, symbols)
         else:
