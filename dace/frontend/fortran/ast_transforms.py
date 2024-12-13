@@ -991,16 +991,31 @@ class CallExtractorNodeLister(NodeVisitor):
     Finds all function calls in the AST node and its children that have to be extracted into independent expressions
     """
 
-    def __init__(self):
+    def __init__(self,root=None):
+        self.root = root
         self.nodes: List[ast_internal_classes.Call_Expr_Node] = []
+        
 
     def visit_For_Stmt_Node(self, node: ast_internal_classes.For_Stmt_Node):
         self.generic_visit(node.init)
         self.generic_visit(node.cond)
         return
+    
+    def visit_If_Stmt_Node(self, node: ast_internal_classes.If_Stmt_Node):
+        self.generic_visit(node.cond)
+        return
+    
+    def visit_While_Stmt_Node(self, node: ast_internal_classes.While_Stmt_Node):
+        self.generic_visit(node.cond)
+        return
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         stop = False
+        if self.root==node:
+            return self.generic_visit(node)
+        if isinstance(self.root, ast_internal_classes.BinOp_Node):
+            if node == self.root.rval and isinstance(self.root.lval, ast_internal_classes.Name_Node):
+                return self.generic_visit(node)
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
                 stop = True
@@ -1010,7 +1025,7 @@ class CallExtractorNodeLister(NodeVisitor):
             "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             self.nodes.append(node)
-        return self.generic_visit(node)
+        #return self.generic_visit(node)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         return
@@ -1025,9 +1040,11 @@ class CallExtractor(NodeTransformer):
 
     def __init__(self, count=0):
         self.count = count
+     
+
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-
+        
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if node.name.name in ["malloc", "pow", "cbrt", "__dace_epsilon",
                               *FortranIntrinsics.call_extraction_exemptions()]:
@@ -1041,97 +1058,114 @@ class CallExtractor(NodeTransformer):
             self.count = self.count + 1
         tmp = self.count
 
-        for i, arg in enumerate(node.args):
-            # Ensure we allow to extract function calls from arguments
-            node.args[i] = self.visit(arg)
+        #for i, arg in enumerate(node.args):
+        #    # Ensure we allow to extract function calls from arguments
+        #    node.args[i] = self.visit(arg)
 
         return ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp - 1))
 
-    def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
-        newspec = []
+    # def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
+    #     newspec = []
 
-        for i in node.specifications:
-            if not isinstance(i, ast_internal_classes.Decl_Stmt_Node):
-                newspec.append(self.visit(i))
-            else:
-                newdecl = []
-                for var in i.vardecl:
-                    lister = CallExtractorNodeLister()
-                    lister.visit(var)
-                    res = lister.nodes
-                    for j in res:
-                        if j == var:
-                            res.pop(res.index(j))
-                    if len(res) > 0:
-                        temp = self.count + len(res) - 1
-                        for ii in reversed(range(0, len(res))):
-                            newdecl.append(
-                                ast_internal_classes.Var_Decl_Node(
-                                    name="tmp_call_" + str(temp),
-                                    type=res[ii].type,
-                                    sizes=None,
-                                    line_number=var.line_number,
-                                    init=res[ii],
-                                )
-                            )
-                            newdecl.append(
-                                ast_internal_classes.Var_Decl_Node(
-                                    name="tmp_call_" + str(temp),
-                                    type=res[ii].type,
-                                    sizes=None,
-                                    line_number=var.line_number,
-                                    init=res[ii],
-                                )
-                            )
-                            temp = temp - 1
-                    newdecl.append(self.visit(var))
-                newspec.append(ast_internal_classes.Decl_Stmt_Node(vardecl=newdecl))
-        return ast_internal_classes.Specification_Part_Node(specifications=newspec, symbols=node.symbols,
-                                                            typedecls=node.typedecls, uses=node.uses, enums=node.enums,
-                                                            interface_blocks=node.interface_blocks)
+    #     for i in node.specifications:
+    #         if not isinstance(i, ast_internal_classes.Decl_Stmt_Node):
+    #             newspec.append(self.visit(i))
+    #         else:
+    #             newdecl = []
+    #             for var in i.vardecl:
+    #                 lister = CallExtractorNodeLister()
+    #                 lister.visit(var)
+    #                 res = lister.nodes
+    #                 for j in res:
+    #                     if j == var:
+    #                         res.pop(res.index(j))
+    #                 if len(res) > 0:
+    #                     temp = self.count + len(res) - 1
+    #                     for ii in reversed(range(0, len(res))):
+    #                         newdecl.append(
+    #                             ast_internal_classes.Var_Decl_Node(
+    #                                 name="tmp_call_" + str(temp),
+    #                                 type=res[ii].type,
+    #                                 sizes=None,
+    #                                 line_number=var.line_number,
+    #                                 init=res[ii],
+    #                             )
+    #                         )
+    #                         newdecl.append(
+    #                             ast_internal_classes.Var_Decl_Node(
+    #                                 name="tmp_call_" + str(temp),
+    #                                 type=res[ii].type,
+    #                                 sizes=None,
+    #                                 line_number=var.line_number,
+    #                                 init=res[ii],
+    #                             )
+    #                         )
+    #                         temp = temp - 1
+    #                 newdecl.append(self.visit(var))
+    #             newspec.append(ast_internal_classes.Decl_Stmt_Node(vardecl=newdecl))
+    #     return ast_internal_classes.Specification_Part_Node(specifications=newspec, symbols=node.symbols,
+    #                                                         typedecls=node.typedecls, uses=node.uses, enums=node.enums,
+    #                                                         interface_blocks=node.interface_blocks)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
-        newbody = []
-
-        for child in node.execution:
-            lister = CallExtractorNodeLister()
-            lister.visit(child)
-            res = lister.nodes
-            for i in res:
-                if i == child:
-                    res.pop(res.index(i))
-            if res is not None:
-                # Variables are counted from 0...end, starting from main node, to all calls nested
-                # in main node arguments.
-                # However, we need to define nested ones first.
-                # We go in reverse order, counting from end-1 to 0.
-                temp = self.count + len(res) - 1
-                for i in reversed(range(0, len(res))):
-                    newbody.append(
-                        ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                            ast_internal_classes.Var_Decl_Node(
-                                name="tmp_call_" + str(temp),
-                                type=res[i].type,
-                                sizes=None,
-                                init=None
-                            )
-                        ]))
-                    newbody.append(
-                        ast_internal_classes.BinOp_Node(op="=",
-                                                        lval=ast_internal_classes.Name_Node(
-                                                            name="tmp_call_" + str(temp), type=res[i].type),
-                                                        rval=res[i], line_number=child.line_number))
-                    temp = temp - 1
-            if isinstance(child, ast_internal_classes.Call_Expr_Node):
-                new_args = []
-                for i in child.args:
-                    new_args.append(self.visit(i))
-                new_child = ast_internal_classes.Call_Expr_Node(type=child.type, subroutine=child.subroutine,
-                                                                name=child.name, args=new_args,
-                                                                line_number=child.line_number)
-                newbody.append(new_child)
-            else:
-                newbody.append(self.visit(child))
+        
+        oldbody = node.execution
+        changes_made=True
+        while changes_made:
+            changes_made=False
+            newbody = []
+            for child in oldbody:
+                lister = CallExtractorNodeLister(child)
+                lister.visit(child)
+                res = lister.nodes
+                
+                if len(res)> 0:
+                    changes_made=True
+                    # Variables are counted from 0...end, starting from main node, to all calls nested
+                    # in main node arguments.
+                    # However, we need to define nested ones first.
+                    # We go in reverse order, counting from end-1 to 0.
+                    temp = self.count + len(res) - 1
+                    for i in reversed(range(0, len(res))):
+                        newbody.append(
+                            ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                                ast_internal_classes.Var_Decl_Node(
+                                    name="tmp_call_" + str(temp),
+                                    type=res[i].type,
+                                    sizes=None,
+                                    init=None
+                                )
+                            ]))
+                        newbody.append(
+                            ast_internal_classes.BinOp_Node(op="=",
+                                                            lval=ast_internal_classes.Name_Node(
+                                                                name="tmp_call_" + str(temp), type=res[i].type),
+                                                            rval=res[i], line_number=child.line_number))
+                        temp = temp - 1
+                if isinstance(child, ast_internal_classes.Call_Expr_Node):
+                    new_args = []
+                    for i in child.args:
+                        new_args.append(self.visit(i))
+                    new_child = ast_internal_classes.Call_Expr_Node(type=child.type, subroutine=child.subroutine,
+                                                                    name=child.name, args=new_args,
+                                                                    line_number=child.line_number)
+                    newbody.append(new_child)
+                elif isinstance(child, ast_internal_classes.BinOp_Node):
+                    if isinstance(child.lval,ast_internal_classes.Name_Node) and isinstance (child.rval, ast_internal_classes.Call_Expr_Node):
+                        new_args = []
+                        for i in child.rval.args:
+                            new_args.append(self.visit(i))
+                        new_child = ast_internal_classes.Call_Expr_Node(type=child.rval.type, subroutine=child.rval.subroutine,
+                                                                        name=child.rval.name, args=new_args,
+                                                                        line_number=child.rval.line_number)
+                        newbody.append(ast_internal_classes.BinOp_Node(op=child.op,
+                                                                    lval=child.lval,
+                                                                    rval=new_child, line_number=child.line_number))   
+                    else:
+                        newbody.append(self.visit(child))    
+                else:
+                    newbody.append(self.visit(child))
+            oldbody = newbody        
 
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
@@ -2184,7 +2218,7 @@ class IfConditionExtractor(NodeTransformer):
                 old_cond = child.cond
                 newbody.append(
                     ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                        ast_internal_classes.Symbol_Decl_Node(
+                        ast_internal_classes.Var_Decl_Node(
                             name="_if_cond_" + str(self.count), type="INTEGER", sizes=None, init=None)
                     ]))
                 newbody.append(ast_internal_classes.BinOp_Node(
