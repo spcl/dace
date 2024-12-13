@@ -1380,7 +1380,8 @@ class MathFunctions(IntrinsicTransformation):
             name=ast_internal_classes.Name_Node(name="pow"),
             type="INTEGER",
             args=[const_two, i],
-            line_number=line
+            line_number=line,
+            subroutine=False,
         )
 
         mult = ast_internal_classes.BinOp_Node(
@@ -1715,6 +1716,6 @@ class FortranIntrinsics:
             # We will do the actual type replacement later
             # To that end, we need to know the input types - but these we do not know at the moment.
             return ast_internal_classes.Call_Expr_Node(
-                name=name, type="VOID", subroutine=True,
+                name=name, type="VOID", subroutine=False,
                 args=args.args, line_number=line
             )

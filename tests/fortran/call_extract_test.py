@@ -27,7 +27,7 @@ def test_fortran_frontend_call_extract():
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_call_extract", normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
-
+    
     input = np.full([2], 42, order="F", dtype=np.float32)
     res = np.full([2], 42, order="F", dtype=np.float32)
     sdfg(d=input, res=res)
