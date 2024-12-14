@@ -37,6 +37,13 @@ void flex_redmule_config(uint16_t m_size, uint16_t n_size, uint16_t k_size){
 
 void flex_redmule_trigger(uint32_t x_addr, uint32_t w_addr, uint32_t y_addr, redmule_compute_format_t format){
     flex_push_stack();
+    // if (flex_is_first_core() && flex_get_cluster_id() == 0)
+    // {
+    //     flex_print("x_addr: ");flex_print_int(x_addr);
+    //     flex_print(" w_addr: ");flex_print_int(w_addr);
+    //     flex_print(" y_addr: ");flex_print_int(y_addr);
+    //     flex_print("\n");
+    // }
     asm volatile ("addi t0, %0, 0" :: "r"(x_addr): "t0");
     asm volatile ("addi t1, %0, 0" :: "r"(w_addr): "t1");
     asm volatile ("addi t2, %0, 0" :: "r"(y_addr): "t2");

@@ -70,11 +70,11 @@
         "type": "Array",
         "attributes": {
           "strides": [
-            "1024",
-            "32",
+            "4096",
+            "64",
             "1"
           ],
-          "total_size": "1024",
+          "total_size": "4096",
           "offset": [
             "0",
             "0",
@@ -84,8 +84,8 @@
           "dtype": "float16",
           "shape": [
             "1",
-            "32",
-            "32"
+            "64",
+            "64"
           ],
           "transient": true,
           "storage": "SoftHier_TCDM",
@@ -96,10 +96,10 @@
         "type": "Array",
         "attributes": {
           "strides": [
-            "32",
+            "64",
             "1"
           ],
-          "total_size": "1024",
+          "total_size": "4096",
           "offset": [
             "0",
             "0"
@@ -107,8 +107,8 @@
           "optional": false,
           "dtype": "float16",
           "shape": [
-            "32",
-            "32"
+            "64",
+            "64"
           ],
           "transient": true,
           "storage": "SoftHier_TCDM",
@@ -119,10 +119,10 @@
         "type": "Array",
         "attributes": {
           "strides": [
-            "32",
+            "64",
             "1"
           ],
-          "total_size": "1024",
+          "total_size": "4096",
           "offset": [
             "0",
             "0"
@@ -130,8 +130,8 @@
           "optional": false,
           "dtype": "float16",
           "shape": [
-            "32",
-            "32"
+            "64",
+            "64"
           ],
           "transient": true,
           "storage": "SoftHier_TCDM",
@@ -162,8 +162,8 @@
         "language": "CPP"
       }
     },
-    "guid": "c64e9d27-6a40-4046-b25f-bf0eeb26daf2",
-    "hash": "275146d44b206c9cd61b8120ca7a5573047d40d27223e2f275e855e847b16eb7"
+    "guid": "89f714cb-33b0-4381-9681-f6604432d0d6",
+    "hash": "b9660563b2da4edc78e1b24e56dc464ad54c0649d8fb355768e4eb7d0be746e6"
   },
   "nodes": [
     {
@@ -202,7 +202,7 @@
       "nodes": [
         {
           "type": "MapEntry",
-          "label": "gemm_entry[i=0:M:128, j=0:N:128]",
+          "label": "gemm_entry[i=0:M:256, j=0:N:256]",
           "attributes": {
             "label": "gemm_entry",
             "params": [
@@ -215,13 +215,13 @@
                 {
                   "start": "0",
                   "end": "M - 1",
-                  "step": "128",
+                  "step": "256",
                   "tile": "1"
                 },
                 {
                   "start": "0",
                   "end": "N - 1",
-                  "step": "128",
+                  "step": "256",
                   "tile": "1"
                 }
               ]
@@ -229,11 +229,11 @@
             "schedule": "SoftHier_Device",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 145,
-              "end_line": 145,
+              "start_line": 146,
+              "end_line": 146,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
+              "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -243,7 +243,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "f286181b-dbda-4030-ba27-99250547bd66"
+            "guid": "9aab1896-2e17-497e-8546-ebfdd47bd7f8"
           },
           "id": 0,
           "scope_entry": null,
@@ -251,7 +251,7 @@
         },
         {
           "type": "MapExit",
-          "label": "gemm_entry[i=0:M:128, j=0:N:128]",
+          "label": "gemm_entry[i=0:M:256, j=0:N:256]",
           "attributes": {
             "in_connectors": {
               "IN_C": null
@@ -259,7 +259,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "fc58105e-a678-4d5a-8e6a-dfc602a634a9"
+            "guid": "4d4ada76-d4bd-41b0-8b2d-f1c44fc0247a"
           },
           "id": 1,
           "scope_entry": "0",
@@ -271,14 +271,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 155,
-              "end_line": 155,
+              "start_line": 156,
+              "end_line": 156,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
+              "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
             },
             "data": "A",
-            "guid": "aab0fda7-d71b-45cc-8793-0e5bd0b1b54a"
+            "guid": "590611fa-57b0-4625-a417-1f5f2a204ea7"
           },
           "id": 2,
           "scope_entry": null,
@@ -290,14 +290,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 155,
-              "end_line": 155,
+              "start_line": 156,
+              "end_line": 156,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
+              "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
             },
             "data": "B",
-            "guid": "71b0ac9c-bb07-4f74-949b-4788d27d48c5"
+            "guid": "e4026f0c-cec4-4605-b2cf-13a02169e4f1"
           },
           "id": 3,
           "scope_entry": null,
@@ -309,14 +309,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 162,
-              "end_line": 162,
+              "start_line": 163,
+              "end_line": 163,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
+              "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
             },
             "data": "C",
-            "guid": "42bf6d5f-faab-4137-b250-442986381cfe"
+            "guid": "828333da-d5d9-4cb1-b472-8e93fc193046"
           },
           "id": 4,
           "scope_entry": null,
@@ -351,11 +351,11 @@
             "schedule": "SoftHier_Cluster",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 165,
-              "end_line": 165,
+              "start_line": 166,
+              "end_line": 166,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
+              "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -365,7 +365,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "1af44a61-0fb4-4fd7-a61f-e458f5999a3e"
+            "guid": "7141aff6-2a45-4e4c-b6d9-fb11ef90f3e6"
           },
           "id": 5,
           "scope_entry": "0",
@@ -381,7 +381,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "2bce6efd-816d-4b2c-9cb2-77a959a64123"
+            "guid": "de93d8eb-78a3-4714-a025-402973c89400"
           },
           "id": 6,
           "scope_entry": "5",
@@ -389,7 +389,7 @@
         },
         {
           "type": "MapEntry",
-          "label": "thread_coarsened[ci=0:32:32, cj=0:32:32]",
+          "label": "thread_coarsened[ci=0:64:64, cj=0:64:64]",
           "attributes": {
             "label": "thread_coarsened",
             "params": [
@@ -401,14 +401,14 @@
               "ranges": [
                 {
                   "start": "0",
-                  "end": "31",
-                  "step": "32",
+                  "end": "63",
+                  "step": "64",
                   "tile": "1"
                 },
                 {
                   "start": "0",
-                  "end": "31",
-                  "step": "32",
+                  "end": "63",
+                  "step": "64",
                   "tile": "1"
                 }
               ]
@@ -416,11 +416,11 @@
             "schedule": "SoftHier_Sequential",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 189,
-              "end_line": 189,
+              "start_line": 190,
+              "end_line": 190,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
+              "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -430,7 +430,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "70be3cb2-967d-4528-bc5a-0f888eae2221"
+            "guid": "c03ab5ff-6a0d-4f89-8f05-3fe8435744b7"
           },
           "id": 7,
           "scope_entry": "5",
@@ -438,7 +438,7 @@
         },
         {
           "type": "MapExit",
-          "label": "thread_coarsened[ci=0:32:32, cj=0:32:32]",
+          "label": "thread_coarsened[ci=0:64:64, cj=0:64:64]",
           "attributes": {
             "in_connectors": {
               "IN_C": null
@@ -446,7 +446,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "aa5c1a7f-78b7-4f8c-a536-e1736df9b351"
+            "guid": "c94009b6-273b-49ce-8341-fee38886e88a"
           },
           "id": 8,
           "scope_entry": "7",
@@ -454,7 +454,7 @@
         },
         {
           "type": "MapEntry",
-          "label": "block_tiled[bK=0:K:32]",
+          "label": "block_tiled[bK=0:K:64]",
           "attributes": {
             "label": "block_tiled",
             "params": [
@@ -466,7 +466,7 @@
                 {
                   "start": "0",
                   "end": "K - 1",
-                  "step": "32",
+                  "step": "64",
                   "tile": "1"
                 }
               ]
@@ -474,11 +474,11 @@
             "schedule": "SoftHier_Sequential",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 213,
-              "end_line": 213,
+              "start_line": 214,
+              "end_line": 214,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
+              "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -490,7 +490,7 @@
               "OUT_B": null,
               "OUT_accumulator": null
             },
-            "guid": "b243bf3b-df3b-44da-94fa-7b7184f38bcd"
+            "guid": "a0ff03f2-cf33-4855-b699-19478cd8bb12"
           },
           "id": 9,
           "scope_entry": "7",
@@ -498,7 +498,7 @@
         },
         {
           "type": "MapExit",
-          "label": "block_tiled[bK=0:K:32]",
+          "label": "block_tiled[bK=0:K:64]",
           "attributes": {
             "in_connectors": {
               "IN_accumulator": null
@@ -506,7 +506,7 @@
             "out_connectors": {
               "OUT_accumulator": null
             },
-            "guid": "4ae78277-04c2-4656-bda6-2cd272376c9f"
+            "guid": "d2a99304-2f19-49b6-9744-e72684c68fce"
           },
           "id": 10,
           "scope_entry": "9",
@@ -519,14 +519,14 @@
             "setzero": true,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 219,
-              "end_line": 219,
+              "start_line": 220,
+              "end_line": 220,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
+              "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
             },
             "data": "accumulator",
-            "guid": "33211b53-bf95-42b6-8257-5da801557e73"
+            "guid": "f7f8a69f-1e03-4d75-8ebf-4114808d9359"
           },
           "id": 11,
           "scope_entry": "7",
@@ -538,14 +538,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 245,
-              "end_line": 245,
+              "start_line": 246,
+              "end_line": 246,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
+              "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
             },
             "data": "local_A",
-            "guid": "3a5d413e-80db-4af2-ab0a-c1b511a995d7"
+            "guid": "68373709-8ebb-457b-9e16-a1cd2f8b1d3a"
           },
           "id": 12,
           "scope_entry": "9",
@@ -557,14 +557,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 245,
-              "end_line": 245,
+              "start_line": 246,
+              "end_line": 246,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
+              "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
             },
             "data": "local_B",
-            "guid": "56e84e69-bf3f-4bb2-9c05-50e5506438da"
+            "guid": "313a1ff2-2ad4-408a-8075-55b025e94359"
           },
           "id": 13,
           "scope_entry": "9",
@@ -575,16 +575,16 @@
           "label": "mmad_redmule",
           "attributes": {
             "code": {
-              "string_data": "flex_redmule_trigger(_in_local_a, _in_local_b, _in_accumulator, REDMULE_FP_16);",
+              "string_data": "flex_redmule_trigger(_in_local_a, _in_local_b, _in_accumulator, REDMULE_NONE_16);",
               "language": "CPP"
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 256,
-              "end_line": 256,
+              "start_line": 257,
+              "end_line": 257,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
+              "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
             },
             "label": "mmad_redmule",
             "in_connectors": {
@@ -595,7 +595,7 @@
             "out_connectors": {
               "_out_accumulator": null
             },
-            "guid": "d80070b2-92ff-43ae-b6d3-d5b9d6a0480b"
+            "guid": "92993ae1-7e72-4f88-9cae-7c1be594005b"
           },
           "id": 14,
           "scope_entry": "9",
@@ -607,14 +607,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 285,
-              "end_line": 285,
+              "start_line": 286,
+              "end_line": 286,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/scratch/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
+              "filename": "/usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/soft_hier/matmul/run_matmul.py"
             },
             "data": "accumulator",
-            "guid": "5600ef86-fb50-4c10-bdbc-3e0ae0f78d2f"
+            "guid": "59a21993-8314-4595-ac15-7197c26e5cd7"
           },
           "id": 15,
           "scope_entry": "7",
@@ -630,7 +630,7 @@
               "attributes": {
                 "volume": "1",
                 "debuginfo": null,
-                "guid": "7cb6e7b2-bab8-4a9f-9a1e-2b3132fce16b",
+                "guid": "f5a7504f-b5b5-46bf-886d-f939df31f513",
                 "src_subset": null,
                 "dst_subset": null,
                 "is_data_src": false,
@@ -669,7 +669,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "f6991428-bb4f-4321-abdd-0c255b2338df",
+                "guid": "bf0d44f3-aa48-4797-ab3b-e4df01634207",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -724,7 +724,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "7516ca53-acb2-444f-a118-c3e25858c153",
+                "guid": "02fdaccf-8b86-4218-9af5-e5e70a043d37",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -759,19 +759,19 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "1024",
+                "volume": "4096",
                 "subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "32*ci + 32*gi + i",
-                      "end": "32*ci + 32*gi + i + 31",
+                      "start": "64*ci + 64*gi + i",
+                      "end": "64*ci + 64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "32*cj + 32*gj + j",
-                      "end": "32*cj + 32*gj + j + 31",
+                      "start": "64*cj + 64*gj + j",
+                      "end": "64*cj + 64*gj + j + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -779,27 +779,27 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "66835b73-3e1e-4939-bd59-97586716d276",
+                "guid": "e1157695-1a59-41e9-801f-20e7ee053eec",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "32*ci + 32*gi + i",
-                      "end": "32*ci + 32*gi + i + 31",
+                      "start": "64*ci + 64*gi + i",
+                      "end": "64*ci + 64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "32*cj + 32*gj + j",
-                      "end": "32*cj + 32*gj + j + 31",
+                      "start": "64*cj + 64*gj + j",
+                      "end": "64*cj + 64*gj + j + 63",
                       "step": "1",
                       "tile": "1"
                     }
                   ]
                 },
                 "is_data_src": false,
-                "num_accesses": "1024"
+                "num_accesses": "4096"
               }
             }
           },
@@ -814,7 +814,7 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "1024",
+                "volume": "4096",
                 "subset": {
                   "type": "Range",
                   "ranges": [
@@ -826,13 +826,13 @@
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -840,7 +840,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "3bcd2c36-afd9-4efd-8738-dd04b6351246",
+                "guid": "aa3e4f95-9896-49ba-aa57-6c3619d39b79",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -852,13 +852,13 @@
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -866,7 +866,7 @@
                 },
                 "dst_subset": null,
                 "is_data_src": true,
-                "num_accesses": "1024"
+                "num_accesses": "4096"
               }
             }
           },
@@ -887,13 +887,13 @@
                   "ranges": [
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -901,19 +901,19 @@
                 },
                 "data": "local_A",
                 "debuginfo": null,
-                "guid": "6c276cbe-ea7b-40ac-ac4d-3e8c8105ecf0",
+                "guid": "b356779d-00b7-4926-a420-761ed1e0814d",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -942,13 +942,13 @@
                   "ranges": [
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -956,19 +956,19 @@
                 },
                 "data": "local_B",
                 "debuginfo": null,
-                "guid": "e115a000-2f5a-4787-93f3-3d2fab833118",
+                "guid": "bebafeb4-595f-443b-95ed-4d55b330561c",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -991,19 +991,19 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "1024",
+                "volume": "4096",
                 "subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "32*ci + 32*gi + i",
-                      "end": "32*ci + 32*gi + i + 31",
+                      "start": "64*ci + 64*gi + i",
+                      "end": "64*ci + 64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "bK",
-                      "end": "bK + 31",
+                      "end": "bK + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1011,19 +1011,19 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "89c53646-dd8b-4eb4-baf0-f92a9cc742f9",
+                "guid": "803957a3-62ac-4849-b26e-aea3db317c9c",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "32*ci + 32*gi + i",
-                      "end": "32*ci + 32*gi + i + 31",
+                      "start": "64*ci + 64*gi + i",
+                      "end": "64*ci + 64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "bK",
-                      "end": "bK + 31",
+                      "end": "bK + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1031,7 +1031,7 @@
                 },
                 "dst_subset": null,
                 "is_data_src": true,
-                "num_accesses": "1024"
+                "num_accesses": "4096"
               }
             }
           },
@@ -1046,13 +1046,13 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "128*K",
+                "volume": "256*K",
                 "subset": {
                   "type": "Range",
                   "ranges": [
                     {
                       "start": "i",
-                      "end": "i + 127",
+                      "end": "i + 255",
                       "step": "1",
                       "tile": "1"
                     },
@@ -1066,13 +1066,13 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "dcf9f6a2-937f-4993-841b-7bbfd0da9ced",
+                "guid": "11e7aa40-afb2-4d12-82de-a796954b8f8b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
                     {
                       "start": "i",
-                      "end": "i + 127",
+                      "end": "i + 255",
                       "step": "1",
                       "tile": "1"
                     },
@@ -1086,7 +1086,7 @@
                 },
                 "dst_subset": null,
                 "is_data_src": true,
-                "num_accesses": "128*K"
+                "num_accesses": "256*K"
               }
             }
           },
@@ -1101,13 +1101,13 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "32*K",
+                "volume": "64*K",
                 "subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "32*gi + i",
-                      "end": "32*gi + i + 31",
+                      "start": "64*gi + i",
+                      "end": "64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
@@ -1121,13 +1121,13 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "ceb2c128-2b78-4e80-97f9-95c457d3e980",
+                "guid": "307dc752-1afb-4b0c-b828-82322e2ec12b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "32*gi + i",
-                      "end": "32*gi + i + 31",
+                      "start": "64*gi + i",
+                      "end": "64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
@@ -1141,7 +1141,7 @@
                 },
                 "dst_subset": null,
                 "is_data_src": true,
-                "num_accesses": "32*K"
+                "num_accesses": "64*K"
               }
             }
           },
@@ -1156,13 +1156,13 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "32*K",
+                "volume": "64*K",
                 "subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "32*ci + 32*gi + i",
-                      "end": "32*ci + 32*gi + i + 31",
+                      "start": "64*ci + 64*gi + i",
+                      "end": "64*ci + 64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
@@ -1176,13 +1176,13 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "c3fe7bf7-0728-4e0a-8cf0-e10e082267b5",
+                "guid": "fc817c57-48e6-43ae-b3c3-99b8cdcafe27",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "32*ci + 32*gi + i",
-                      "end": "32*ci + 32*gi + i + 31",
+                      "start": "64*ci + 64*gi + i",
+                      "end": "64*ci + 64*gi + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
@@ -1196,7 +1196,7 @@
                 },
                 "dst_subset": null,
                 "is_data_src": true,
-                "num_accesses": "32*K"
+                "num_accesses": "64*K"
               }
             }
           },
@@ -1211,19 +1211,19 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "1024",
+                "volume": "4096",
                 "subset": {
                   "type": "Range",
                   "ranges": [
                     {
                       "start": "bK",
-                      "end": "bK + 31",
+                      "end": "bK + 63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "32*cj + 32*gj + j",
-                      "end": "32*cj + 32*gj + j + 31",
+                      "start": "64*cj + 64*gj + j",
+                      "end": "64*cj + 64*gj + j + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1231,19 +1231,19 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "1e2eb991-ff13-4dd0-a154-af6ef0b7be73",
+                "guid": "1f8c9ab8-05a2-4ca5-9223-af47764f475b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
                     {
                       "start": "bK",
-                      "end": "bK + 31",
+                      "end": "bK + 63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "32*cj + 32*gj + j",
-                      "end": "32*cj + 32*gj + j + 31",
+                      "start": "64*cj + 64*gj + j",
+                      "end": "64*cj + 64*gj + j + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1251,7 +1251,7 @@
                 },
                 "dst_subset": null,
                 "is_data_src": true,
-                "num_accesses": "1024"
+                "num_accesses": "4096"
               }
             }
           },
@@ -1266,7 +1266,7 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "128*K",
+                "volume": "256*K",
                 "subset": {
                   "type": "Range",
                   "ranges": [
@@ -1278,7 +1278,7 @@
                     },
                     {
                       "start": "j",
-                      "end": "j + 127",
+                      "end": "j + 255",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1286,7 +1286,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "590d0656-a3e0-40c6-90f3-8132575bfa39",
+                "guid": "56d6e2d8-8304-4aa7-870d-1b4bec51dd32",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1298,7 +1298,7 @@
                     },
                     {
                       "start": "j",
-                      "end": "j + 127",
+                      "end": "j + 255",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1306,7 +1306,7 @@
                 },
                 "dst_subset": null,
                 "is_data_src": true,
-                "num_accesses": "128*K"
+                "num_accesses": "256*K"
               }
             }
           },
@@ -1321,7 +1321,7 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "32*K",
+                "volume": "64*K",
                 "subset": {
                   "type": "Range",
                   "ranges": [
@@ -1332,8 +1332,8 @@
                       "tile": "1"
                     },
                     {
-                      "start": "32*gj + j",
-                      "end": "32*gj + j + 31",
+                      "start": "64*gj + j",
+                      "end": "64*gj + j + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1341,7 +1341,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "d3be37ee-45a6-4939-b062-0b6dd0ac66d4",
+                "guid": "ee539b81-59c5-4b62-b335-382ccb6539ae",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1352,8 +1352,8 @@
                       "tile": "1"
                     },
                     {
-                      "start": "32*gj + j",
-                      "end": "32*gj + j + 31",
+                      "start": "64*gj + j",
+                      "end": "64*gj + j + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1361,7 +1361,7 @@
                 },
                 "dst_subset": null,
                 "is_data_src": true,
-                "num_accesses": "32*K"
+                "num_accesses": "64*K"
               }
             }
           },
@@ -1376,7 +1376,7 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "32*K",
+                "volume": "64*K",
                 "subset": {
                   "type": "Range",
                   "ranges": [
@@ -1387,8 +1387,8 @@
                       "tile": "1"
                     },
                     {
-                      "start": "32*cj + 32*gj + j",
-                      "end": "32*cj + 32*gj + j + 31",
+                      "start": "64*cj + 64*gj + j",
+                      "end": "64*cj + 64*gj + j + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1396,7 +1396,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "7d3b8f93-aefc-4838-95a1-a064e335e18c",
+                "guid": "ddc74789-27a5-44e8-8e7b-c6c1df20b8cb",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1407,8 +1407,8 @@
                       "tile": "1"
                     },
                     {
-                      "start": "32*cj + 32*gj + j",
-                      "end": "32*cj + 32*gj + j + 31",
+                      "start": "64*cj + 64*gj + j",
+                      "end": "64*cj + 64*gj + j + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1416,7 +1416,7 @@
                 },
                 "dst_subset": null,
                 "is_data_src": true,
-                "num_accesses": "32*K"
+                "num_accesses": "64*K"
               }
             }
           },
@@ -1451,7 +1451,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "e0c08b20-d331-47d6-a3b0-5ce52466b473",
+                "guid": "6c05d3a7-a688-4708-b821-a761ea8d04d4",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1486,19 +1486,19 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "16384",
+                "volume": "65536",
                 "subset": {
                   "type": "Range",
                   "ranges": [
                     {
                       "start": "i",
-                      "end": "i + 127",
+                      "end": "i + 255",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "j",
-                      "end": "j + 127",
+                      "end": "j + 255",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1506,27 +1506,27 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "51009e5f-aea2-4c31-96a0-8fea7c07c612",
+                "guid": "08ce68c2-1501-43d1-bfea-c24b38ae3c5e",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
                   "ranges": [
                     {
                       "start": "i",
-                      "end": "i + 127",
+                      "end": "i + 255",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "j",
-                      "end": "j + 127",
+                      "end": "j + 255",
                       "step": "1",
                       "tile": "1"
                     }
                   ]
                 },
                 "is_data_src": false,
-                "num_accesses": "16384"
+                "num_accesses": "65536"
               }
             }
           },
@@ -1541,19 +1541,19 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "1024",
+                "volume": "4096",
                 "subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "32*gj + i",
-                      "end": "32*gj + i + 31",
+                      "start": "64*gj + i",
+                      "end": "64*gj + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "32*gj + j",
-                      "end": "32*gj + j + 31",
+                      "start": "64*gj + j",
+                      "end": "64*gj + j + 63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1561,27 +1561,27 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "7248cb7a-0713-4693-84b9-d0238e596ea2",
+                "guid": "02c0e2ab-fb2c-435b-aea5-84fe2449a490",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
                   "ranges": [
                     {
-                      "start": "32*gj + i",
-                      "end": "32*gj + i + 31",
+                      "start": "64*gj + i",
+                      "end": "64*gj + i + 63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
-                      "start": "32*gj + j",
-                      "end": "32*gj + j + 31",
+                      "start": "64*gj + j",
+                      "end": "64*gj + j + 63",
                       "step": "1",
                       "tile": "1"
                     }
                   ]
                 },
                 "is_data_src": false,
-                "num_accesses": "1024"
+                "num_accesses": "4096"
               }
             }
           },
@@ -1596,7 +1596,7 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "1024",
+                "volume": "4096",
                 "subset": {
                   "type": "Range",
                   "ranges": [
@@ -1608,13 +1608,13 @@
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1622,7 +1622,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "9ee3a4c3-462f-42f0-9c42-5b54ce5d33ae",
+                "guid": "643b4b8c-f577-4df7-88f5-26b89410ad85",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1635,20 +1635,20 @@
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     }
                   ]
                 },
                 "is_data_src": false,
-                "num_accesses": "1024"
+                "num_accesses": "4096"
               }
             }
           },
@@ -1675,13 +1675,13 @@
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1689,7 +1689,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "0e826676-cc7e-4e5e-b639-11e6fea007ab",
+                "guid": "32810a15-2b25-4880-a311-d715e71f566d",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1701,13 +1701,13 @@
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1730,7 +1730,7 @@
             "data": {
               "type": "Memlet",
               "attributes": {
-                "volume": "1024",
+                "volume": "4096",
                 "subset": {
                   "type": "Range",
                   "ranges": [
@@ -1742,13 +1742,13 @@
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     }
@@ -1756,7 +1756,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "42781308-58ab-4ea3-bf73-f3d8aad8bd6e",
+                "guid": "723d8e47-af1f-49c7-b4e4-b157ad076fec",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1769,20 +1769,20 @@
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     },
                     {
                       "start": "0",
-                      "end": "31",
+                      "end": "63",
                       "step": "1",
                       "tile": "1"
                     }
                   ]
                 },
                 "is_data_src": false,
-                "num_accesses": "1024"
+                "num_accesses": "4096"
               }
             }
           },
@@ -1793,7 +1793,7 @@
         }
       ],
       "attributes": {
-        "guid": "80949f39-9827-45fb-bc75-1bf043045464"
+        "guid": "a3b638bb-bc72-478b-8aca-79fa8b519d4a"
       }
     }
   ],

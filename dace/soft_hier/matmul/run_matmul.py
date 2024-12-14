@@ -2,6 +2,7 @@ import dace
 import typing
 import os
 import numpy as np
+import argparse
 
 def make_preload_elf(output_file_path, np_arrays, start_addresses=None):
     """
@@ -300,24 +301,58 @@ def _my_gen_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
 
 
 if __name__ == "__main__":
-    sdfg = _my_gen_matmul_sdfg(hardware_matmul_mnk=(32, 32, 32),
+    # create input arguments
+    parser = argparse.ArgumentParser(description="Run matrix multiplication with specified dimensions.")
+    parser.add_argument("--K", type=int, default=512, help="Dimension K")
+    parser.add_argument("--M", type=int, default=512, help="Dimension M")
+    parser.add_argument("--N", type=int, default=512, help="Dimension N")
+    parser.add_argument("--hardware_matmul_mnk", type=int, nargs=3, default=(64, 64, 64), help="Hardware matmul dimensions (M, N, K)")
+    parser.add_argument("--thread_group_dims", type=int, nargs=2, default=(4, 4), help="Thread group dimensions (gM, gN)")
+
+    args = parser.parse_args()
+
+    hardware_matmul_mnk = tuple(args.hardware_matmul_mnk)
+    thread_group_dims = tuple(args.thread_group_dims)
+    
+    sdfg = _my_gen_matmul_sdfg(hardware_matmul_mnk=hardware_matmul_mnk,
                             global_storage=dace.dtypes.StorageType.SoftHier_HBM,
                             local_storage=dace.dtypes.StorageType.SoftHier_TCDM,
                             device_schedule=dace.dtypes.ScheduleType.SoftHier_Device,
                             thread_group_schedule=dace.dtypes.ScheduleType.SoftHier_Cluster,
-                            thread_group_dims=(4, 4),
+                            thread_group_dims=thread_group_dims,
                             input_float=dace.float16,
                             output_float=dace.float16,
                             coarsening_factor=1,
-                            mmad_tasklet_str="flex_redmule_trigger(_in_local_a, _in_local_b, _in_accumulator, REDMULE_FP_16);")
+                            mmad_tasklet_str="flex_redmule_trigger(_in_local_a, _in_local_b, _in_accumulator, REDMULE_NONE_16);")
     sdfg.save("my_gemm.sdfgz")
     sdfg.validate()
     start_address = 0x00000000
-    K = 512
-    M = 512
-    N = 512
-    A_host = np.random.rand(M, K).astype(np.float16)
-    B_host = np.random.rand(K, N).astype(np.float16)
+    
+
+    K = args.K
+    M = args.M
+    N = args.N
+
+    A_host = np.ones((M, K), dtype=np.float16)
+    B_host = np.ones((K, N), dtype=np.float16)
+    # random add some zeros to A and B
+    # for i in range(M):
+    #     for j in range(K):
+    #         if np.random.rand() < 0.5:
+    #             A_host[i, j] += 1
+    # for i in range(K):
+    #     for j in range(N):
+    #         if np.random.rand() < 0.5:
+    #             B_host[i, j] = 1
+
+    # for i in range(M):
+    #     for j in range(K):
+    #         if np.random.rand() < 0.1:
+    #             A_host[i, j] += 4
+    # for i in range(K):
+    #     for j in range(N):
+    #         if np.random.rand() < 0.1:
+    #             B_host[i, j] += 4
     C_host = np.zeros((M, N), dtype=np.float16)
 
     A_address = 64 + start_address
@@ -327,5 +362,5 @@ if __name__ == "__main__":
     args = np.array([A_address, B_address, C_address, K, M, N], dtype=np.uint32)
     # print args in hex
 
-    make_preload_elf("/scratch/dace4softhier/gvsoc/sw_build/output.elf", [args, A_host, B_host, C_host])
+    make_preload_elf("/usr/scratch/badile111/dace4softhier/gvsoc/output.elf", [args, A_host, B_host, C_host])
     sdfg(A=A_host, B=B_host, C=C_host, M=M, N=N, K=K)

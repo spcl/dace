@@ -353,6 +353,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
 #include <math.h>
 #include "flex_runtime.h"
 #include "flex_redmule.h"
+#include "flex_printf.h"
 #include "flex_cluster_arch.h"
 #include "flex_dma_pattern.h"
 {file_header}
@@ -1179,7 +1180,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                            [f'{src_strides[0]}*{data_size}'] +
                                            [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
                     )
-                    # callsite_stream.write("flex_dma_async_wait_all();")
+                    callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
                     if is_sync:
                         callsite_stream.write("flex_intra_cluster_sync();")
@@ -1196,7 +1197,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             "if(flex_is_dm_core())"
                         )
                         callsite_stream.write("{", cfg, state_id, src_node)
-                        funcname = "flex_dma_async_2d"
+                        funcname = "flex_dma_async_2d_dummy"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
                                 args=', '.join([f'local({dst_expr})'] + 
@@ -1221,7 +1222,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         "if(flex_is_dm_core())"
                     )
                     callsite_stream.write("{", cfg, state_id, src_node)
-                    funcname = "flex_dma_async_2d"
+                    funcname = "flex_dma_async_2d_dummy"
                     callsite_stream.write(('    {func}({args});').format(
                             func=funcname,
                             args=', '.join([f'hbm_addr({dst_expr})'] + 
@@ -1699,6 +1700,21 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
             self._localcode.write(
             '''
+            if (flex_is_first_core() && (flex_get_cluster_id()==0))
+            {{
+                printf("A: %x\\n", A);
+                printf("B: %x\\n", B);
+                printf("C: %x\\n", C);
+                printf("K: %x\\n", K);
+                printf("M: %x\\n", M);
+                printf("N: %x\\n", N);
+            }}
+            if (flex_is_first_core() && (flex_get_cluster_id()==0))
+            {{
+                printf("%x\\n", ((uint32_t *)(hbm_addr(A)))[0]);
+                printf("%x\\n", ((uint32_t *)(hbm_addr(B)))[0]);
+                printf("%x\\n", ((uint32_t *)(hbm_addr(C)))[0]);
+            }}
             uint32_t eoc_val = 0;
             flex_global_barrier_xy();
             flex_timer_start();
@@ -1766,7 +1782,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         callsite_stream.write("printf(\"Start Running Kernel\");")
         # system("bash -c 'cd /scratch/dace4softhier/gvsoc && source sourceme.sh && ./install/bin/gvsoc --target=pulp.chips.flex_cluster.flex_cluster --binary ./sw_build/softhier.elf run --trace=/chip/cluster_0/redmule'");
         callsite_stream.write(
-            'int result = system("cd /scratch/dace4softhier/gvsoc && ./dace.sh");'
+            'int result = system("cd /usr/scratch/badile111/dace4softhier/gvsoc && ./dace.sh");'
         )
         callsite_stream.write("printf(\"Result: %d\", result);")
         callsite_stream.write("printf(\"Finish Running Kernel\");")
@@ -2048,7 +2064,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         
         # print(f'krange: {krange}; kdims: {kdims}; dsym: {dsym}; bidx: {bidx}')
         for i, r in enumerate(node.map.range):
-            var = kernel_map.params[-i - 1]
+            var = kernel_map.params[i]
             begin, end, skip = r
             kernel_stream.write(
                 "for (auto %s = %s; %s < %s; %s += %s) {\n" %
@@ -2215,13 +2231,13 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
             if len(brange) == 2:
                 for i in range(min(len(brange), 3)):
-                    varname = scope_map.params[-i - 1]
+                    varname = scope_map.params[i]
                     block_expr = 'get_pos(cluster_id).%s' % _named_idx(i)
                     expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
                     callsite_stream.write('int %s = %s;' % (varname, expr), cfg, state_id, scope_entry)
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
                 for i in range(min(len(brange), 3)):
-                    varname = scope_map.params[-i - 1]
+                    varname = scope_map.params[i]
                     condition = ''
                     condition += '%s <= %s' % (varname, brange.max_element()[i])
                     if len(condition) > 0:
@@ -2253,10 +2269,11 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                                     redmule_dims.append(edge.data.subset.size())
                             if len(redmule_dims) == 2 and redmule_dims[0][-1] == redmule_dims[1][-2]:
                                 # We have a matrix multiplication
+                                print(f"RedMule Dims {redmule_dims}")
                                 callsite_stream.write(f'// Configure RedMule Here\n')
                                 callsite_stream.write(f'if(flex_is_first_core())')
                                 callsite_stream.write('{', cfg, state_id, scope_entry)
-                                callsite_stream.write(f'flex_redmule_config({redmule_dims[0][-1]}, {redmule_dims[0][-2]}, {redmule_dims[1][-2]});')
+                                callsite_stream.write(f'flex_redmule_config({redmule_dims[0][-2]}, {redmule_dims[0][-1]}, {redmule_dims[1][-1]});')
                                 callsite_stream.write('}', cfg, state_id, scope_entry)
                                 break
                             else:
