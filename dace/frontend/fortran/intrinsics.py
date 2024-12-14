@@ -1201,7 +1201,6 @@ class Merge(LoopBasedReplacement):
                 self.destination_array = node.lval
                 return
 
-            self.destination_array = self._parse_array(exec_node, node.lval)
 
             # The first main argument is an array -> this dictates loop boundaries
             # Other arrays, regardless if they appear as the second array or mask, need to have the same loop boundary.
@@ -1212,6 +1211,32 @@ class Merge(LoopBasedReplacement):
             par_Decl_Range_Finder(self.second_array, loop_ranges, [], self.count, new_func_body,
                                   self.scope_vars, self.ast.structures, True)
             self._adjust_array_ranges(node, self.second_array, self.loop_ranges, loop_ranges)
+
+            # parse destination
+
+            assert isinstance(node.lval, ast_internal_classes.Name_Node)
+
+            array_decl = self.get_var_declaration(exec_node.parent, node.lval)
+            if array_decl.sizes is None:
+
+                # for destination array, sizes might be unknown when we use arg extractor
+                # in that situation, we look at the size of the first argument
+                dims = len(self.first_array.indices)
+            else:
+                dims = len(array_decl.sizes)
+            self.destination_array = ast_internal_classes.Array_Subscript_Node(
+                name=node.lval, parent=node.lval.parent, type='VOID',
+                indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+            )
+
+            # type inference! this is necessary when the destination array is
+            # not known exactly, e.g., in recursive calls.
+            if array_decl.sizes is None:
+
+                first_input = self.get_var_declaration(node.parent, node.rval.args[0])
+                array_decl.sizes = copy.deepcopy(first_input.sizes)
+                array_decl.offsets = [1] * len(array_decl.sizes)
+                array_decl.type = first_input.type
 
             par_Decl_Range_Finder(self.destination_array, [], [], self.count,
                                   new_func_body, self.scope_vars, self.ast.structures, True)
@@ -1606,13 +1631,12 @@ class FortranIntrinsics:
         "ALL": All,
         "MINVAL": MinVal,
         "MAXVAL": MaxVal,
-        #"MERGE": Merge,
+        "MERGE": Merge,
     }
 
     # All functions return an array
     # Our call extraction transformation only supports scalars
     EXEMPTED_FROM_CALL_EXTRACTION = [
-        Merge.Transformation.func_name(),
         "__dace_TRANSPOSE",
         "__dace_MATMUL",
     ]

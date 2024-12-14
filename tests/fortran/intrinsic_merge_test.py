@@ -314,6 +314,58 @@ def test_fortran_frontend_merge_nonarray():
     sdfg(val=val, res=res)
     assert res[0] == 5
 
+def test_fortran_frontend_merge_recursive():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM merge_test
+                    implicit none
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: input2
+                    double precision, dimension(7) :: input3
+                    integer, dimension(7) :: mask1
+                    integer, dimension(7) :: mask2
+                    double precision, dimension(7) :: res
+                    CALL merge_test_function(input1, input2, input3, mask1, mask2, res)
+                    end
+
+                    SUBROUTINE merge_test_function(input1, input2, input3, mask1, mask2, res)
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: input2
+                    double precision, dimension(7) :: input3
+                    integer, dimension(7) :: mask1
+                    integer, dimension(7) :: mask2
+                    double precision, dimension(7) :: res
+
+                    res = MERGE(MERGE(input1, input2, mask1), input3, mask2)
+
+                    END SUBROUTINE merge_test_function
+                    """
+
+    # Now test to verify it executes correctly with no offset normalization
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "merge_test", True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+    size = 7
+
+    # Minimum is in the beginning
+    first = np.full([size], 13, order="F", dtype=np.float64)
+    second = np.full([size], 42, order="F", dtype=np.float64)
+    third = np.full([size], 43, order="F", dtype=np.float64)
+    mask1 = np.full([size], 0, order="F", dtype=np.int32)
+    mask2 = np.full([size], 1, order="F", dtype=np.int32)
+    res = np.full([size], 40, order="F", dtype=np.float64)
+
+    for i in range(int(size/2)):
+        mask1[i] = 1
+
+    mask2[-1] = 0
+
+    sdfg(input1=first, input2=second, input3=third, mask1=mask1, mask2=mask2, res=res)
+
+    assert np.allclose(res, [13, 13, 13, 42, 42, 42, 43])
+
 if __name__ == "__main__":
 
     test_fortran_frontend_merge_1d()
@@ -322,3 +374,4 @@ if __name__ == "__main__":
     test_fortran_frontend_merge_comparison_arrays_offset()
     test_fortran_frontend_merge_array_shift()
     test_fortran_frontend_merge_nonarray()
+    test_fortran_frontend_merge_recursive()
