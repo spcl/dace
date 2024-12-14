@@ -575,9 +575,8 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         elif isinstance(nodedesc, dace.data.View):
             return
 
-        result_alloc = StringIO()
         if nodedesc.storage == dtypes.StorageType.Ascend_Global:
-            callsite_stream.write("DACE_ACL_CHECK(aclrtFree((void**)&%s));\n" % (dataname))
+            callsite_stream.write("DACE_ACL_CHECK(aclrtFree((void*)%s));\n" % (dataname))
         elif nodedesc.storage in [
             dtypes.StorageType.Ascend_VECIN,
             dtypes.StorageType.Ascend_VECOUT,
