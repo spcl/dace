@@ -576,13 +576,13 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
             return
 
         if nodedesc.storage == dtypes.StorageType.Ascend_Global:
-            callsite_stream.write("DACE_ACL_CHECK(aclrtFree((void*)%s));\n" % (dataname))
+            callsite_stream.write("DACE_ACL_CHECK(aclrtFree(static_cast<void*>(%s)));\n" % (dataname))
         elif nodedesc.storage in [
             dtypes.StorageType.Ascend_VECIN,
             dtypes.StorageType.Ascend_VECOUT,
         ]:
             ascend_type_decl = self._get_ascendc_type(nodedesc, nodedesc.storage)
-            callsite_stream.write(f"// Free {dataname}\n")
+            callsite_stream.write(f"// Free {dataname} ?\n")
             # result_alloc.write(f"{ascend_type_decl} {dataname} = inQueue_{dataname}.AllocTensor<{nodedesc.dtype.ctype}> ();\n")
             # TODO
         else:
