@@ -91,7 +91,7 @@ class ReloadableDLL(object):
         try:
             from dace.codegen import common
             if common.is_ascend_available():
-                self._kernel_lib =ctypes.CDLL(self._kernelslibrary_filename)
+                self._kernel_lib = ctypes.CDLL(name=self._kernelslibrary_filename)
         except OSError as e:
             print(f"Library load error: {e}")
             print(f"Error details: {os.strerror(e.errno)}")

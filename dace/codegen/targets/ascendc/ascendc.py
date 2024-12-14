@@ -557,6 +557,7 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
         callsite_stream: CodeIOStream,
     ) -> None:
         dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
+
         if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
             dataname = f"({dataname} - {cpp.sym2cpp(nodedesc.start_offset)})"
 
@@ -576,13 +577,13 @@ DACE_EXPORTED void __dace_acl_set_all_streams({sdfg_state_name} *__state, aclrtS
 
         result_alloc = StringIO()
         if nodedesc.storage == dtypes.StorageType.Ascend_Global:
-            result_alloc.write("DACE_ACL_CHECK(aclrtFree((void**)&%s));\n" % (dataname))
+            callsite_stream.write("DACE_ACL_CHECK(aclrtFree((void**)&%s));\n" % (dataname))
         elif nodedesc.storage in [
             dtypes.StorageType.Ascend_VECIN,
             dtypes.StorageType.Ascend_VECOUT,
         ]:
             ascend_type_decl = self._get_ascendc_type(nodedesc, nodedesc.storage)
-            result_alloc.write(f"// Free {dataname}\n")
+            callsite_stream.write(f"// Free {dataname}\n")
             # result_alloc.write(f"{ascend_type_decl} {dataname} = inQueue_{dataname}.AllocTensor<{nodedesc.dtype.ctype}> ();\n")
             # TODO
         else:
@@ -1534,7 +1535,7 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
                 impl_fargs_no_state =", ".join(
                     kernel_args_entry_typed + extra_call_args_typed
                 ),
-                instrumentation_beg=pre_outer_stream.getvalue(),
+                instrumentation_beg=pre_outer_stream.getvalue() if instr is not None and pre_outer_stream is not None else "",
             ),
             cfg,
             state_id,
@@ -2035,8 +2036,8 @@ DACE_EXPORTED void __dace_runkernel_{fname}({fargs})
         # synchronize the thread-block / grid
         parent_scope, _ = xfh.get_parent_map(dfg, scope_entry)
 
-        if parent_scope.map.schedule == dtypes.ScheduleType.Ascend_Device:
-            callsite_stream.write("pipe_barrier(PIPE_ALL);", cfg, state_id, scope_entry)
+        #if parent_scope.map.schedule == dtypes.ScheduleType.Ascend_Device:
+        #    callsite_stream.write("pipe_barrier(PIPE_ALL);", cfg, state_id, scope_entry)
         if (
             len(next_scopes) > 0
             or parent_scope.schedule == dtypes.ScheduleType.Sequential
