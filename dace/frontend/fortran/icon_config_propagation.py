@@ -80,6 +80,7 @@ if __name__ == "__main__":
         sources=[Path(f) for f in fortran_files],
         entry_points=[('radiation_interface', 'radiation')],
     )
+    #already_parsed_ast=None
     if already_parsed_ast is None:
         ecrad_ast = create_fparser_ast(parse_cfg)
         already_parsed_ast_bool = False

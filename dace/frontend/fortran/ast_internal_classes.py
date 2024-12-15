@@ -484,7 +484,7 @@ class Double_Literal_Node(Literal):
 
 
 class Bool_Literal_Node(Literal):
-    def __init__(self, value: str, type='BOOL', **kwargs):
+    def __init__(self, value: str, type='LOGICAL', **kwargs):
         super().__init__(value, type, **kwargs)
 
 

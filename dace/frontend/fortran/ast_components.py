@@ -125,7 +125,7 @@ class InternalFortranAst:
         self.placeholders = {}
         self.placeholders_offsets = {}
         self.types = {
-            "LOGICAL": "BOOL",
+            "LOGICAL": "LOGICAL",
             "CHARACTER": "CHAR",
             "INTEGER": "INTEGER",
             "INTEGER4": "INTEGER",

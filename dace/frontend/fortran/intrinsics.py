@@ -1691,6 +1691,7 @@ class FortranIntrinsics:
             "RANDOM_SEED": "__dace_random_seed",
             "RANDOM_NUMBER": "__dace_random_number",
             "DATE_AND_TIME": "__dace_date_and_time",
+            "RESHAPE": "__dace_reshape",
         }
        
         if func_name in replacements:

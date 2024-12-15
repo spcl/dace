@@ -1594,7 +1594,7 @@ def optionalArgsHandleFunction(func):
                     break
             if not already_there:
                 var = ast_internal_classes.Var_Decl_Node(name=name,
-                                                         type='BOOL',
+                                                         type='LOGICAL',
                                                          alloc=False,
                                                          sizes=None,
                                                          offsets=None,
@@ -1681,7 +1681,7 @@ class OptionalArgsTransformer(NodeTransformer):
                 dtype = func_decl.optional_args[relative_position][1]
                 if dtype == 'INTEGER':
                     new_args[i] = ast_internal_classes.Int_Literal_Node(value='0')
-                elif dtype == 'BOOL':
+                elif dtype == 'LOGICAL':
                     new_args[i] = ast_internal_classes.Bool_Literal_Node(value='0')
                 elif dtype == 'DOUBLE':
                     new_args[i] = ast_internal_classes.Real_Literal_Node(value='0')
@@ -2080,8 +2080,19 @@ class ArrayToLoop(NodeTransformer):
             lister.visit(child)
             res = lister.nodes
             res_range = lister.range_nodes
-            if res is not None and len(res) > 0:
 
+            #Transpose breaks Array to loop transformation, and fixing it is not trivial - and will likely not involve array to loop at all.
+            calls=[i for i in mywalk(child) if isinstance(i, ast_internal_classes.Call_Expr_Node)]
+            skip_because_of_transpose = False
+            for i in calls:
+                if "__dace_transpose" in i.name.name.lower():
+                    skip_because_of_transpose = True
+            if skip_because_of_transpose:
+                    newbody.append(child)
+                    continue
+            try:
+              if res is not None and len(res) > 0:
+                
                 current = child.lval
                 ranges = []
                 par_Decl_Range_Finder(current, ranges, [], self.count, newbody, self.scope_vars,
@@ -2118,6 +2129,7 @@ class ArrayToLoop(NodeTransformer):
                 range_index = 0
                 body = ast_internal_classes.BinOp_Node(lval=current, op="=", rval=child.rval,
                                                        line_number=child.line_number)
+                
                 for i in ranges:
                     initrange = i[0]
                     finalrange = i[1]
@@ -2151,8 +2163,11 @@ class ArrayToLoop(NodeTransformer):
                 newbody.append(body)
 
                 self.count = self.count + range_index
-            else:
+              else:
                 newbody.append(self.visit(child))
+            except:
+                print("Error in ArrayToLoop, exception caught at line: "+str(child.line_number)) 
+                newbody.append(child)    
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
 
@@ -2419,7 +2434,8 @@ class TypeInference(NodeTransformer):
 
         type_hierarchy = [
             'VOID',
-            'BOOL',
+            'LOGICAL',
+            'CHAR',
             'INTEGER',
             'REAL',
             'DOUBLE'
@@ -2490,7 +2506,7 @@ class TypeInference(NodeTransformer):
         elif isinstance(node, ast_internal_classes.Real_Literal_Node):
             return 'REAL'
         elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
-            return 'BOOL'
+            return 'LOGICAL'
         else:
             return node.type
 

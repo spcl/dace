@@ -29,7 +29,7 @@ fortrantypes2dacetypes = {
     "INTEGER": dtypes.int32,
     "INTEGER8": dtypes.int64,
     "CHAR": dtypes.int8,
-    "BOOL": dtypes.int32,  # This is a hack to allow fortran to pass through external C
+    "LOGICAL": dtypes.int32,  # This is a hack to allow fortran to pass through external C
     "Unknown": dtypes.float64,  # TMP hack unti lwe have a proper type inference
 }
 
