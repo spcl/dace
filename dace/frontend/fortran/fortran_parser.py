@@ -916,6 +916,8 @@ class AST_translator:
                 varname = variable.name.name
             elif isinstance(variable, ast_internal_classes.Data_Ref_Node):
                 varname = ast_utils.get_name(variable)
+            elif isinstance(variable, ast_internal_classes.BinOp_Node):
+                varname = variable.rval.name
 
             if isinstance(variable, ast_internal_classes.Literal) or varname == "LITERAL":
                 literals.append(parameters[arg_i])
@@ -2815,8 +2817,9 @@ def create_sdfg_from_string(
     program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
-    program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.IfConditionExtractor().visit(program)
+    program = ast_transforms.CallExtractor().visit(program)
+    
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
@@ -3262,8 +3265,9 @@ def create_sdfg_from_fortran_file_with_options(
     # program = ast_transforms.CallToArray(functions_and_subroutines_builder, rename_dict).visit(program)
     # program = ast_transforms.TypeInterference(program).visit(program)
     # program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
-    program = ast_transforms.CallExtractor().visit(program)
+    
     program = ast_transforms.IfConditionExtractor().visit(program)
+    program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)

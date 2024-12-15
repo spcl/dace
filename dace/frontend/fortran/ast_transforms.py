@@ -772,12 +772,15 @@ class ArgumentExtractorNodeLister(NodeVisitor):
 
     def visit_For_Stmt_Node(self, node: ast_internal_classes.For_Stmt_Node):
         return
+    
+    def visit_If_Then_Stmt_Node(self, node: ast_internal_classes.If_Stmt_Node):
+        return
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         stop = False
-        if hasattr(node, "subroutine"):
-            if node.subroutine is True:
-                stop = True
+        #if hasattr(node, "subroutine"):
+        #    if node.subroutine is True:
+        #        stop = True
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if not stop and node.name.name not in [
@@ -817,8 +820,8 @@ class ArgumentExtractor(NodeTransformer):
         if node.name.name in ["malloc", "pow", "cbrt", "__dace_epsilon",
                               *FortranIntrinsics.call_extraction_exemptions()]:
             return self.generic_visit(node)
-        if node.subroutine:
-            return self.generic_visit(node)
+        #if node.subroutine:
+        #    return self.generic_visit(node)
         if not hasattr(self, "count"):
             self.count = 0
         tmp = self.count

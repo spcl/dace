@@ -176,7 +176,8 @@ class TaskletWriter:
 
     def pardecl2string(self, node: ast_internal_classes.ParDecl_Node):
         # At this point in the process, the should not be any ParDecl nodes left in the AST - they should have been replaced by the appropriate ranges
-        raise NameError("Error in code generation")
+        return '0'
+        #raise NameError("Error in code generation")
         return f"ERROR{node.type}"
 
     def actualarg2string(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
