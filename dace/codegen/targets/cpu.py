@@ -2352,7 +2352,6 @@ class CPUCodeGen(TargetCodeGenerator):
     def _generate_AccessNode(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                              node: nodes.Node, function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         state_dfg: SDFGState = cfg.nodes()[state_id]
-        print(f"Access Node: {node}")
         callsite_stream.write(f"// {node.data} = {node.data};", cfg, state_id, node)
         if node not in state_dfg.sink_nodes():
             # NOTE: sink nodes are synchronized at the end of a state

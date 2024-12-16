@@ -126,16 +126,16 @@ void flex_dma_async_2d(uint64_t dst, uint64_t src,
                                                  size_t size, size_t dst_stride,
                                                  size_t src_stride,
                                                  size_t repeat) {       
-    if (flex_is_dm_core() && flex_get_cluster_id() == 0)
-    {
-        flex_print("dst: ");flex_print_int(dst);
-        flex_print(" src: ");flex_print_int(src);
-        flex_print(" size: ");flex_print_int(size);
-        flex_print(" dst_stride: ");flex_print_int(dst_stride);
-        flex_print(" src_stride: ");flex_print_int(src_stride);
-        flex_print(" repeat: ");flex_print_int(repeat);
-        flex_print("\n");
-    }
+    // if (flex_is_dm_core() && flex_get_cluster_id() == 0)
+    // {
+    //     flex_print("dst: ");flex_print_int(dst);
+    //     flex_print(" src: ");flex_print_int(src);
+    //     flex_print(" size: ");flex_print_int(size);
+    //     flex_print(" dst_stride: ");flex_print_int(dst_stride);
+    //     flex_print(" src_stride: ");flex_print_int(src_stride);
+    //     flex_print(" repeat: ");flex_print_int(repeat);
+    //     flex_print("\n");
+    // }
     bare_dma_start_2d(dst, src, size, dst_stride, src_stride, repeat); //Start iDMA
     // flex_dma_async_wait_all();
 }
@@ -145,16 +145,16 @@ void flex_dma_async_2d_dummy(uint64_t dst, uint64_t src,
                                                  size_t size, size_t dst_stride,
                                                  size_t src_stride,
                                                  size_t repeat) {
-    if (flex_is_dm_core() && flex_get_cluster_id() == 0)
-    {
-        flex_print("dst: ");flex_print_int(dst);
-        flex_print(" src: ");flex_print_int(src);
-        flex_print(" size: ");flex_print_int(size);
-        flex_print(" dst_stride: ");flex_print_int(dst_stride);
-        flex_print(" src_stride: ");flex_print_int(src_stride);
-        flex_print(" repeat: ");flex_print_int(repeat);
-        flex_print("\n");
-    }
+    // if (flex_is_dm_core() && flex_get_cluster_id() == 0)
+    // {
+    //     flex_print("dst: ");flex_print_int(dst);
+    //     flex_print(" src: ");flex_print_int(src);
+    //     flex_print(" size: ");flex_print_int(size);
+    //     flex_print(" dst_stride: ");flex_print_int(dst_stride);
+    //     flex_print(" src_stride: ");flex_print_int(src_stride);
+    //     flex_print(" repeat: ");flex_print_int(repeat);
+    //     flex_print("\n");
+    // }
 
     for (int i = 0; i < repeat; i++)
     {
