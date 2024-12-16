@@ -303,11 +303,11 @@ def _my_gen_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
 if __name__ == "__main__":
     # create input arguments
     parser = argparse.ArgumentParser(description="Run matrix multiplication with specified dimensions.")
-    parser.add_argument("--K", type=int, default=512, help="Dimension K")
-    parser.add_argument("--M", type=int, default=512, help="Dimension M")
-    parser.add_argument("--N", type=int, default=512, help="Dimension N")
-    parser.add_argument("--hardware_matmul_mnk", type=int, nargs=3, default=(64, 64, 64), help="Hardware matmul dimensions (M, N, K)")
-    parser.add_argument("--thread_group_dims", type=int, nargs=2, default=(4, 4), help="Thread group dimensions (gM, gN)")
+    parser.add_argument("--K", type=int, default=1024, help="Dimension K")
+    parser.add_argument("--M", type=int, default=1024, help="Dimension M")
+    parser.add_argument("--N", type=int, default=1024, help="Dimension N")
+    parser.add_argument("--hardware_matmul_mnk", type=int, nargs=3, default=(256, 256, 256), help="Hardware matmul dimensions (M, N, K)")
+    parser.add_argument("--thread_group_dims", type=int, nargs=2, default=(2, 2), help="Thread group dimensions (gM, gN)")
 
     args = parser.parse_args()
 
@@ -362,5 +362,6 @@ if __name__ == "__main__":
     args = np.array([A_address, B_address, C_address, K, M, N], dtype=np.uint32)
     # print args in hex
 
-    make_preload_elf("/usr/scratch/badile111/dace4softhier/gvsoc/output.elf", [args, A_host, B_host, C_host])
+    # make_preload_elf("/usr/scratch/badile111/dace4softhier/gvsoc/output.elf", [args, A_host, B_host, C_host])
+    make_preload_elf("/usr/scratch/badile111/dace4softhier/gvsoc/output.elf", [args])
     sdfg(A=A_host, B=B_host, C=C_host, M=M, N=N, K=K)

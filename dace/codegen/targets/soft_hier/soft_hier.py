@@ -80,6 +80,7 @@ class SoftHierCodeGen(TargetCodeGenerator):
         self._kernel_state = None
         self._kernel_grid_conditions: List[str] = []
         self._scope_has_collaborative_copy = False
+        self._has_async_dma = False
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
         self._initcode = CodeIOStream()
@@ -1042,6 +1043,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
                 self._dispatcher, sdfg, state, edge, src_node, dst_node, self._cpu_codegen._packed_types))
             name = memlet.data
+            # print memlet information
+            print(f"memlet: {memlet} {memlet.src_subset} {memlet.dst_subset}")
             nodedesc = sdfg.arrays[name]
             data_size = nodedesc.dtype.bytes
             dims = len(copy_shape)
@@ -1061,6 +1064,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 src_name = u.data
             #src_name = name
             # assert len(subset.string_list()) == 1
+            
             if src_expr != src_name:
                 src_expr = f"{src_expr} * {data_size}"
             if dst_expr != dst_name:
@@ -1072,6 +1076,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             if len(state.in_edges(src_node)) > 0:
                 is_sync = True
             callsite_stream.write(f'// is_sync = {is_sync}')
+            self._has_async_dma = (not is_sync) or self._has_async_dma
             if dims == 1:
                 beg, end, step = subset.ranges[0]
                 length = (end + 1) - beg
@@ -1163,6 +1168,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     src_storage == dtypes.StorageType.SoftHier_HBM
                     and dst_storage == dtypes.StorageType.SoftHier_TCDM
                 ):
+                    s = subsets.Indices(memlet.src_subset)
+                    print(f"src_subset = {s[0][0]} {s[0][1]} {s[1][0]} {s[1][1]}")
+                    print(f"src data shape = {nodedesc.shape[0]} {nodedesc.shape[1]}")
+                    
+
                     callsite_stream.write(
                         "// SoftHier_HBM -> SoftHier_TCDM 2D"
                     )
@@ -1170,17 +1180,61 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         "if(flex_is_dm_core())"
                     )
                     callsite_stream.write("{", cfg, state_id, src_node)
-                    funcname = "flex_dma_async_2d"
-                    callsite_stream.write(('    {func}({args});').format(
-                            func=funcname,
-                            args=', '.join([f'local({dst_expr})'] + 
-                                           [f'hbm_addr({src_expr})'] + 
-                                           [f'{length_1}*{data_size}'] +
-                                           [f'{dst_strides[0]}*{data_size}'] +
-                                           [f'{src_strides[0]}*{data_size}'] +
-                                           [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
-                    )
-                    callsite_stream.write("flex_dma_async_wait_all();")
+
+                    if(nodedesc.is_hbm_interleaved):
+                        print(f"hbm_split_scheme = {nodedesc.hbm_split_scheme[0]} {nodedesc.hbm_split_scheme[1]}")
+                        print(f"hbm_placement_scheme = {nodedesc.hbm_placement_scheme[0]} {nodedesc.hbm_placement_scheme[1]} {nodedesc.hbm_placement_scheme[2]} ")
+                        row_length = nodedesc.shape[0]
+                        col_length = nodedesc.shape[1]
+                        row_start = s[0][0]
+                        col_start = s[1][0]
+                        row_split = nodedesc.hbm_split_scheme[0]
+                        col_split = nodedesc.hbm_split_scheme[1]
+                        channel_start = nodedesc.hbm_placement_scheme[0]
+                        channel_end = nodedesc.hbm_placement_scheme[1]
+                        channel_stride = nodedesc.hbm_placement_scheme[2]
+                        callsite_stream.write(f"int tile_height = {row_length}/{row_split};")
+                        callsite_stream.write(f"int tile_width = {col_length}/{col_split};")
+                        callsite_stream.write(f"int row_start = {row_start};")
+                        callsite_stream.write(f"int col_start = {col_start};")
+                        for i in range(row_split):
+                            for j in range(col_split):
+                                callsite_stream.write(f"int row_start_{i}_{j} = {i}*tile_height;")
+                                callsite_stream.write(f"int col_start_{i}_{j} = {j}*tile_width;")
+                        
+                        for i in range(row_split):
+                            for j in range(col_split):
+                                callsite_stream.write(
+                                    f"if ((row_start) >= row_start_{i}_{j} && row_start < (row_start_{i}_{j} + tile_height) && "
+                                    f"col_start >= col_start_{i}_{j} && col_start < (col_start_{i}_{j} + tile_width)) {{\n"
+                                )
+                                callsite_stream.write(f"int tile_index = {i}*{col_split} + {j};\n")
+                                callsite_stream.write("}\n")
+
+                        callsite_stream.write(f"int channel_id = {channel_start} + tile_index * {channel_stride};")
+                        funcname = "flex_dma_async_2d"
+                        callsite_stream.write(('    {func}({args});').format(
+                                func=funcname,
+                                args=', '.join([f'local({dst_expr})'] + 
+                                            [f'hbm_addr({src_expr} + channel_id * ARCH_HBM_NODE_ADDR_SPACE)'] + 
+                                            [f'{length_1}*{data_size}'] +
+                                            [f'{dst_strides[0]}*{data_size}'] +
+                                            [f'tile_width*{data_size}'] +
+                                            [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
+                        )
+                    else:
+                        funcname = "flex_dma_async_2d"
+                        callsite_stream.write(('    {func}({args});').format(
+                                func=funcname,
+                                args=', '.join([f'local({dst_expr})'] + 
+                                            [f'hbm_addr({src_expr})'] + 
+                                            [f'{length_1}*{data_size}'] +
+                                            [f'{dst_strides[0]}*{data_size}'] +
+                                            [f'{src_strides[0]}*{data_size}'] +
+                                            [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
+                        )
+                    if is_sync:
+                        callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
                     if is_sync:
                         callsite_stream.write("flex_intra_cluster_sync();")
@@ -1207,7 +1261,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                             [f'{dst_strides[0]}*{data_size}'] +
                                             [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
                         )
-                        # callsite_stream.write("flex_dma_async_wait_all();")
+                        if is_sync:
+                            callsite_stream.write("flex_dma_async_wait_all();")
                         callsite_stream.write("}", cfg, state_id, src_node)
                         if is_sync:
                             callsite_stream.write("flex_intra_cluster_sync();")
@@ -1232,7 +1287,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                            [f'{src_strides[0]}*{data_size}'] +
                                            [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
                     )
-                    # callsite_stream.write("flex_dma_async_wait_all();")
+                    # if is_sync:
+                    #     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
                     if is_sync:
                         callsite_stream.write("flex_intra_cluster_sync();")
@@ -1325,6 +1381,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Two modes: device-level state and if this state has active streams
         # print('SoftHier: Generating state', state.label)
         if SoftHierCodeGen._in_device_code:
+            self._has_async_dma = False
             self.generate_devicelevel_state(sdfg, cfg, state, function_stream, callsite_stream)
         else:
             # Active streams found. Generate state normally and sync with the
@@ -1333,6 +1390,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # Reset thread-block-level information
             self._scope_has_collaborative_copy = False
+            self._has_async_dma = False
 
             # Free pooled memory that needs to be released here
             to_remove = set()
@@ -1395,17 +1453,22 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Special case: if this is a GPU grid state and something is reading
         # from a possible result of a collaborative write, sync first
         # print('SoftHier: Generating device-level state', state.label)
-        if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device:
-            for node in state.nodes():
-                if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
-                        and state.in_degree(node) == 0 and state.out_degree(node) > 0):
-                    if not self._scope_has_collaborative_copy:
-                        callsite_stream.write('__syncthreads();', cfg, state.block_id)
-                    break
+        # if self._toplevel_schedule == dtypes.ScheduleType.SoftHier_Device:
+        #     for node in state.nodes():
+        #         if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.SoftHier_TCDM
+        #                 and state.in_degree(node) == 0 and state.out_degree(node) > 0):
+        #             if not self._scope_has_collaborative_copy:
+        #                 callsite_stream.write('__syncthreads();', cfg, state.block_id)
+        #             break
 
         self._frame.generate_state(sdfg, cfg, state, function_stream, callsite_stream)
         if len(state.nodes()) == 0:
             return
+        if self._has_async_dma:
+            callsite_stream.write('if (flex_is_dm_core())')
+            callsite_stream.write('{')
+            callsite_stream.write('flex_dma_async_wait_all();')
+            callsite_stream.write('}')
         callsite_stream.write('flex_intra_cluster_sync();')
     # NOTE: This function is ONLY called from the CPU side. Therefore, any
     # schedule that is out of the ordinary will raise an exception
@@ -2592,10 +2655,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                              offset=src_subset,
                              relative_offset=False,
                              packed_types=self._cpu_codegen._packed_types)
-                        print (f"Src Expr: {src_expr}")
-                        print (f"Src Node: {src_node}")
-                        print (f"Dst Node: {dst_node}")
-                        print(f"Src_node.data: {src_node.data}")
                         assign_str = (f"{write_type} {edge.dst_conn} = {src_expr};")
                         inner_stream.write(
                             assign_str,
