@@ -7,7 +7,7 @@ from typing import Any, List, Optional, Tuple, Union
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, \
-    ScopeVarsDeclarations, par_Decl_Range_Finder, mywalk
+    ScopeVarsDeclarations, TypeInference, par_Decl_Range_Finder, mywalk
 from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 from dace.libraries.blas.nodes.dot import dot_libnode
 from dace.libraries.blas.nodes.gemm import gemm_libnode
@@ -1552,13 +1552,19 @@ class MathFunctions(IntrinsicTransformation):
 
             # Visit all children before we expand this call.
             # We need that to properly get the type.
+            new_args = []
             for arg in node.args:
-                self.visit(arg)
+                new_args.append(self.visit(arg))
+            node.args = new_args
 
             input_type = self.func_type(node)
+            if input_type == 'VOID':
+                assert input_type != 'VOID', f"Unexpected void input at line number: {node.line_number}"
+                raise RuntimeError()
 
             replacement_rule = MathFunctions.INTRINSIC_TO_DACE[func_name]
             if isinstance(replacement_rule, dict):
+
                 replacement_rule = replacement_rule[input_type]
             if replacement_rule.return_type == "FIRST_ARG":
                 return_type = input_type
@@ -1568,7 +1574,6 @@ class MathFunctions(IntrinsicTransformation):
             if isinstance(replacement_rule, MathFunctions.MathTransformation):
                 node.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
                 node.type = return_type
-
             else:
                 binop_node.rval = replacement_rule.replacement_function(node)
 
@@ -1577,8 +1582,8 @@ class MathFunctions(IntrinsicTransformation):
             if isinstance(var, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node,
                                 ast_internal_classes.Array_Subscript_Node)):
                 var_decl = self.get_var_declaration(var.parent, var)
-                var.type = input_type
-                var_decl.type = input_type
+                var.type = return_type
+                var_decl.type = return_type
 
             return binop_node
 

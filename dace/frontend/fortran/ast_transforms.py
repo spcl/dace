@@ -2389,13 +2389,17 @@ class TypeInference(NodeTransformer):
     """
     """
 
-    def __init__(self, ast, assert_voids=True):
+    def __init__(self, ast, assert_voids=True, assign_scopes=True, scope_vars = None):
         self.assert_voids = assert_voids
 
         self.ast = ast
-        ParentScopeAssigner().visit(ast)
-        self.scope_vars = ScopeVarsDeclarations(ast)
-        self.scope_vars.visit(ast)
+        if assign_scopes:
+            ParentScopeAssigner().visit(ast)
+        if scope_vars is None:
+            self.scope_vars = ScopeVarsDeclarations(ast)
+            self.scope_vars.visit(ast)
+        else:
+            self.scope_vars = scope_vars
         self.structures = ast.structures
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
@@ -2403,7 +2407,8 @@ class TypeInference(NodeTransformer):
         if not hasattr(node, 'type') or node.type == 'VOID' or not hasattr(node, 'dims'):
             try:
                 var_def = self.scope_vars.get_var(node.parent, node.name)
-                node.type = var_def.type
+                if var_def.type != 'VOID':
+                    node.type = var_def.type
                 node.dims = len(var_def.sizes) if hasattr(var_def, 'sizes') and var_def.sizes is not None else 1
             except Exception as e:
                 print(f"Ignore type inference for {node.name}")
@@ -2414,14 +2419,16 @@ class TypeInference(NodeTransformer):
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
         var_def = self.scope_vars.get_var(node.parent, node.name.name)
-        node.type = var_def.type
+        if var_def.type != 'VOID':
+            node.type = var_def.type
         node.dims = len(var_def.sizes) if var_def.sizes is not None else 1
         return node
 
     def visit_Parenthesis_Expr_Node(self, node: ast_internal_classes.Parenthesis_Expr_Node):
 
-        self.visit(node.expr)
-        node.type = node.expr.type
+        node.expr = self.visit(node.expr)
+        if node.expr.type != 'VOID':
+            node.type = node.expr.type
         if hasattr(node.expr, 'dims'):
             node.dims = node.expr.dims
         return node
@@ -2432,8 +2439,8 @@ class TypeInference(NodeTransformer):
             Simple implementation of type promotion in binary ops.
         """
 
-        self.visit(node.lval)
-        self.visit(node.rval)
+        node.lval = self.visit(node.lval)
+        node.rval = self.visit(node.rval)
 
         type_hierarchy = [
             'VOID',
@@ -2458,12 +2465,15 @@ class TypeInference(NodeTransformer):
         elif hasattr(node.lval, "dims"):
             node.dims = self._get_dims(node.rval)
 
-        if node.op == '=' and idx_left == idx_void and idx_left != idx_void:
+        if node.op == '=' and idx_left == idx_void and idx_right != idx_void:
             lval_definition = self.scope_vars.get_var(node.parent, node.lval.name)
             lval_definition.type = node.type
             lval_definition.dims = node.dims
             node.lval.type = node.type
             node.lval.dims = node.dims
+
+        if node.type == 'VOID':
+            print("Couldn't infer the type for binop!")
 
         return node
 
@@ -2475,7 +2485,8 @@ class TypeInference(NodeTransformer):
         struct, variable = self.structures.find_definition(
             self.scope_vars, node
         )
-        node.type = variable.type
+        if variable.type != 'VOID':
+            node.type = variable.type
         node.dims = len(variable.sizes) if variable.sizes is not None else 1
         return node
 
@@ -2484,7 +2495,7 @@ class TypeInference(NodeTransformer):
         if node.type != 'VOID':
             return node
 
-        self.visit(node.arg)
+        node.arg = self.visit(node.arg)
 
         func_arg_name_type = self._get_type(node.arg)
         if func_arg_name_type == 'VOID':
@@ -2500,6 +2511,12 @@ class TypeInference(NodeTransformer):
             node.type = func_arg_name_type
             node.dims = self._get_dims(node.arg)
 
+        return node
+
+    def visit_UnOp_Node(self, node: ast_internal_classes.UnOp_Node):
+        node.lval = self.visit(node.lval)
+        if node.lval.type != 'VOID':
+            node.type = node.lval.type
         return node
 
     def _get_type(self, node):
@@ -3067,3 +3084,4 @@ class ReplaceImplicitParDecls(NodeTransformer):
             )
         else:
             return node
+
