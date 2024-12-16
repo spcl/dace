@@ -823,16 +823,16 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return None
 
     in_edge = in_edges[0]
-    out_edge = out_edges[0]
+    out_edge = out_edges[0] if len(out_edges) > 0 else None
 
     # If there is one incoming and one outgoing edge, and one leads to a code
     # node, the one that leads to an access node is the viewed data.
     inmpath = state.memlet_path(in_edge)
-    outmpath = state.memlet_path(out_edge)
+    outmpath = state.memlet_path(out_edge) if out_edge else None
     src_is_data, dst_is_data = False, False
     if isinstance(inmpath[0].src, nd.AccessNode):
         src_is_data = True
-    if isinstance(outmpath[-1].dst, nd.AccessNode):
+    if outmpath and isinstance(outmpath[-1].dst, nd.AccessNode):
         dst_is_data = True
 
     if src_is_data and not dst_is_data:

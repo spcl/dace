@@ -23,8 +23,8 @@ import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 if __name__ == "__main__":
     
     #sdfg=SDFG.from_file("/home/alex/fcdc/ecrad_f2dace/sdfgs/solver_mcica_lw_3321_validated_dbg.sdfgz")
-    #sdfg=SDFG.from_file("/home/alex/dace/dies_in_simplify3.sdfgz")
-    sdfg=SDFG.from_file("/home/alex/fcdc/ecrad_f2dace/sdfgs/radiation_validated_simplified.sdfgz")
+    sdfg=SDFG.from_file("/home/alex/dace/dies_in_simplify5.sdfgz")
+    #sdfg=SDFG.from_file("/home/alex/fcdc/ecrad_f2dace/sdfgs/radiation_validated_simplified.sdfgz")
     sdfg.simplify(verbose=True)
     print("Done")
     sdfg.save("/home/alex/fcdc/ecrad_f2dace/sdfgs/radiation_validated_simplified2.sdfgz")
