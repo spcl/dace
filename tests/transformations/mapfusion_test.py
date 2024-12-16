@@ -34,7 +34,13 @@ def apply_fusion(
     """
     num_maps_before = count_node(sdfg, nodes.MapEntry)
     org_sdfg = copy.deepcopy(sdfg)
-    sdfg.apply_transformations_repeated(MapFusion, validate=True, validate_all=True)
+    with dace.config.temporary_config():
+        dace.Config.set("optimizer", "match_exception", value=True)
+        sdfg.apply_transformations_repeated(
+            MapFusion(strict_dataflow=True),
+            validate=True,
+            validate_all=True
+        )
     num_maps_after = count_node(sdfg, nodes.MapEntry)
 
     has_processed = False
@@ -428,7 +434,6 @@ def test_fusion_with_nested_sdfg_0():
             A[i] = tmp[i] * 2
     
     sdfg = fusion_with_nested_sdfg_0.to_sdfg(simplify=True)
-    sdfg.view()
 
     # Because the transformation refuses to fuse dynamic edges.
     #  We have to eliminate them.
@@ -978,25 +983,42 @@ def test_fusion_non_strict_dataflow_implicit_dependency():
     assert count == 0
 
 
-def test_inner_map_dependency():
-    sdfg = dace.SDFG("inner_map_dependency_sdfg")
+def _make_inner_conflict_shared_scalar(
+        has_conflict: bool,
+) -> dace.SDFG:
+    """Generate the SDFG for tests with the inner dependency.
+
+    If `has_conflict` is `True` then a transient scalar is used inside both Map bodies.
+    Therefore, `MapFusion` should not be able to fuse them.
+    In case `has_conflict` is `False` then different scalars are used which allows
+    fusing the two maps.
+    """
+    sdfg = dace.SDFG(
+            "inner_map_dependency_sdfg"
+            if has_conflict
+            else "inner_map_dependency_resolved_sdfg"
+    )
     state = sdfg.add_state(is_start_block=True)
 
     name_arrays = ["A", "T", "C"]
     for aname in name_arrays:
         sdfg.add_array(
-                name,
+                aname,
                 shape=(10,),
+                dtype=dace.float64,
                 transient=False,
         )
     sdfg.arrays["T"].transient = True
-    sdfg.add_scalar(
-            "s",
-            dtype=dace.float64,
-            transient=True,
-    )
-    A, T, C = (state.add_access(name) for name in name_arrays)
-    s1, s2 = (state.add_access("s") for _ in range(2))
+
+    name_scalars = ["s", "s"] if has_conflict else ["s1", "s2"]
+    for sname in set(name_scalars):
+        sdfg.add_scalar(
+                sname,
+                dtype=dace.float64,
+                transient=True,
+        )
+    A, T, C = (state.add_access(aname) for aname in name_arrays)
+    s1, s2 = (state.add_access(sname) for sname in name_scalars)
 
     me1, mx1 = state.add_map(
             "map_1",
@@ -1009,71 +1031,250 @@ def test_inner_map_dependency():
             code="__out = __in1 + 1.0",
     )
 
+    # Create the first map series.
     state.add_edge(
-            A,
-            None,
-            me1,
-            "IN_A",
+            A, None,
+            me1, "IN_A",
             dace.Memlet("A[0:10]")
     )
+    me1.add_in_connector("IN_A")
     state.add_edge(
-            me1,
-            "OUT_A",
-            s1,
-            None,
+            me1, "OUT_A",
+            s1, None,
             dace.Memlet("A[__i0] -> [0]")
     )
-    me1.add_in_connector("IN_A")
-    me1.add_out_connector("IUT_A")
+    me1.add_out_connector("OUT_A")
     state.add_edge(
-            s1,
-            None,
-            tskl1,
-            dace.Memlet("s[0]")
+            s1, None,
+            tsklt1, "__in1",
+            dace.Memlet(f"{s1.data}[0]")
     )
     state.add_edge(
-            tsklt1,
-            "__out",
-            mx1,
-            "IN_T",
+            tsklt1, "__out",
+            mx1, "IN_T",
             dace.Memlet("T[__i0]")
     )
+    mx1.add_in_connector("IN_T")
     state.add_edge(
-            mx1,
-            "OUT_T",
-            T,
-            None,
+            mx1, "OUT_T",
+            T, None,
             dace.Memlet("T[0:10]")
     )
-    mx1.add_in_connector("IN_T")
     mx1.add_out_connector("OUT_T")
 
+    # Create the second map.
+    me2, mx2 = state.add_map(
+            "map_2",
+            ndrange={"__i0": "0:10"},
+    )
+    tsklt2 = state.add_tasklet(
+            "tskl2",
+            inputs={"__in1"},
+            outputs={"__out"},
+            code="__out = __in1 + 3.0",
+    )
+
+    state.add_edge(
+            T, None,
+            me2, "IN_T",
+            dace.Memlet("T[0:10]")
+    )
+    me2.add_in_connector("IN_T")
+    state.add_edge(
+            me2, "OUT_T",
+            s2, None,
+            dace.Memlet("T[__i0]")
+    )
+    me2.add_out_connector("OUT_T")
+    state.add_edge(
+            s2, None,
+            tsklt2, "__in1",
+            dace.Memlet(f"{s2.data}[0]")
+    )
+    state.add_edge(
+            tsklt2, "__out",
+            mx2, "IN_C",
+            dace.Memlet("C[__i0]")
+    )
+    mx2.add_in_connector("IN_C")
+    state.add_edge(
+            mx2, "OUT_C",
+            C, None,
+            dace.Memlet("C[0:10]")
+    )
+    mx2.add_out_connector("OUT_C")
+    sdfg.validate()
+    return sdfg
 
 
+def test_inner_map_dependency():
+    # Because the scalar is not shared the maps can not be fused.
+    sdfg = _make_inner_conflict_shared_scalar(has_conflict=True)
+    apply_fusion(sdfg, removed_maps=0, final_maps=2)
 
 
+def test_inner_map_dependency_resolved():
+    # Because the scalars are different, the scalar
+    sdfg = _make_inner_conflict_shared_scalar(has_conflict=False)
+    apply_fusion(sdfg, removed_maps=1, final_maps=1)
 
 
+def _impl_fusion_intermediate_different_access(modified_shape: bool):
+
+    def ref(A, B):
+        T = np.zeros((A.shape[0] + 1, 2))
+        for i in range(A.shape[0]):
+            T[i + 1, 0] = A[i] * 2
+            T[i + 1, 1] = A[i] / 2
+        for j in range(A.shape[0]):
+            B[j] = np.sin(T[j+1, 1])
+
+    sdfg = dace.SDFG("fusion_intermediate_different_access_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+    for name in "AB":
+        sdfg.add_array(
+                name,
+                shape=(10,),
+                dtype=dace.float64,
+                transient=False,
+        )
+    sdfg.add_array(
+            "T",
+            shape=(11, 2),
+            dtype=dace.float64,
+            transient=True,
+    )
+
+    # For this intermediate, which essentially represents `[A[i] * 2, A[i] / 2]` in
+    #  the reference above, there are two important remarks:
+    #  - It exists because one data stream, i.e. `T[i + 1, 1]` would be dead data flow
+    #       and currently the transformation can not handle this.
+    #  - The strange shape is because the transformation can not handle this case.
+    #       This is a limitation of the implementation.
+    sdfg.add_array(
+            "temp",
+            shape=(
+                (1, 2,)
+                if modified_shape
+                else (2,)
+            ),
+            dtype=dace.float64,
+            transient=True,
+    )
+
+    A, B, T, temp = (state.add_access(name) for name in ["A", "B", "T", "temp"])
+
+    me1, mx1 = state.add_map(
+            "first_map",
+            ndrange={"__i0": "0:10"},
+    )
+
+    state.add_edge(
+            A, None,
+            me1, "IN_A",
+            dace.Memlet("A[0:10]")
+    )
+    me1.add_in_connector("IN_A")
+    me1.add_out_connector("OUT_A")
+
+    tsklt1_1 = state.add_tasklet(
+            "tsklt1_1",
+            inputs={"__in1"},
+            outputs={"__out"},
+            code="__out = __in1 * 2.0",
+    )
+    state.add_edge(
+            me1, "OUT_A",
+            tsklt1_1, "__in1",
+            dace.Memlet("A[__i0]")
+    )
+    state.add_edge(
+            tsklt1_1, "__out",
+            temp, None,
+            dace.Memlet(
+                "temp[0, 0]"
+                if modified_shape
+                else "temp[0]"
+            )
+    )
+
+    tsklt1_2 = state.add_tasklet(
+            "tsklt1_2",
+            inputs={"__in1"},
+            outputs={"__out"},
+            code="__out = __in1 / 2.0",
+    )
+    state.add_edge(
+            me1, "OUT_A",
+            tsklt1_2, "__in1",
+            dace.Memlet("A[__i0]")
+    )
+    state.add_edge(
+            tsklt1_2, "__out",
+            temp, None,
+            dace.Memlet(
+                "temp[0, 1]"
+                if modified_shape
+                else "temp[1]"
+            )
+    )
+
+    state.add_edge(
+            temp, None,
+            mx1, "IN_temp",
+            dace.Memlet(
+                "temp[0, 0:2] -> [__i0 + 1, 0:2]"
+                if modified_shape
+                else "temp[0:2] -> [__i0 + 1, 0:2]"
+            )
+    )
+    state.add_edge(
+            mx1, "OUT_temp",
+            T, None,
+            dace.Memlet("T[1:11, 0:2]")
+    )
+    mx1.add_in_connector("IN_temp")
+    mx1.add_out_connector("OUT_temp")
+
+    state.add_mapped_tasklet(
+            "comp2",
+            map_ranges={"__i1": "0:10"},
+            inputs={"__in1": dace.Memlet("T[__i1 + 1, 1]")},
+            code="__out = math.sin(__in1)",
+            outputs={"__out": dace.Memlet("B[__i1]")},
+            input_nodes={T},
+            output_nodes={B},
+            external_edges=True,
+    )
+    sdfg.validate()
+
+    apply_fusion(sdfg, removed_maps=1, final_maps=1)
+
+    args_ref = {
+            'A': np.array(np.random.rand(10), dtype=np.float64, copy=True),
+            'B': np.array(np.random.rand(10), dtype=np.float64, copy=True),
+    }
+    args_res = copy.deepcopy(args_ref)
+
+    ref(**args_ref)
+    sdfg(**args_res)
+    for arg in args_ref.keys():
+        arg_ref = args_ref[arg]
+        arg_res = args_res[arg]
+        assert np.allclose(arg_ref, arg_res)
 
 
+def test_fusion_intermediate_different_access():
+    _impl_fusion_intermediate_different_access(modified_shape=False)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+def test_fusion_intermediate_different_access_mod_shape():
+    _impl_fusion_intermediate_different_access(modified_shape=True)
 
 
 if __name__ == '__main__':
+    test_fusion_intermediate_different_access()
+    test_fusion_intermediate_different_access_mod_shape()
     test_fusion_non_strict_dataflow_implicit_dependency()
     test_fusion_strict_dataflow_pointwise()
     test_fusion_strict_dataflow_not_pointwise()
@@ -1098,3 +1299,5 @@ if __name__ == '__main__':
     test_offset_correction_scalar_read()
     test_offset_correction_empty()
     test_different_offsets()
+    test_inner_map_dependency()
+    test_inner_map_dependency_resolved()
