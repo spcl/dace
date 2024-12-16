@@ -323,7 +323,7 @@ class DirectReplacement(IntrinsicTransformation):
         var_name = call.args[0].name
         test_var_name = f'__f2dace_OPTIONAL_{var_name}'
 
-        return (ast_internal_classes.Name_Node(name=test_var_name), "BOOL")
+        return (ast_internal_classes.Name_Node(name=test_var_name), "LOGICAL")
 
     def replacement_epsilon(args: ast_internal_classes.Arg_List_Node, line, symbols: list):
 
