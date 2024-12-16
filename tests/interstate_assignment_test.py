@@ -33,7 +33,6 @@ def _get_interstate_dependent_sdfg(assignments: Dict, symbols_at_start=False):
         s.add_edge(map_exit, f"OUT_array{sid}", an2, None, dace.memlet.Memlet(f"array{sid}[0:N]"))
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge(None, assignments=assignments))
-    sdfg.save("s1.sdfg")
     sdfg.validate()
     return sdfg
 
