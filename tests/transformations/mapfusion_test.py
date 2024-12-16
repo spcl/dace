@@ -1395,7 +1395,125 @@ def test_fusion_multiple_producers_consumers():
         assert np.allclose(arg_ref, arg_res)
 
 
+def test_fusion_multiple_consumers():
+    """The intermediate is consumed multiple times in the second map.
+    """
+    def ref(A, B, C):
+        T = np.zeros_like(A)
+        for i in range(A.shape[0]):
+            T[i] = np.sin(A[i] * 2)
+        for j in range(A.shape[0]):
+            B[j] = T[j] * 3.
+            C[j] = T[j] - 1.
+
+    sdfg = dace.SDFG("fusion_multiple_consumers_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+    for name in "ABCT":
+        sdfg.add_array(
+                name,
+                shape=(10,),
+                dtype=dace.float64,
+                transient=False,
+        )
+    sdfg.arrays["T"].transient = True
+
+    A, B, C, T = (state.add_access(name) for name in ["A", "B", "C", "T"])
+
+    state.add_mapped_tasklet(
+            "comp1",
+            map_ranges={"__i1": "0:10"},
+            inputs={
+                "__in1": dace.Memlet("A[__i1]"),
+            },
+            code="__out = math.sin(2 * __in1)",
+            outputs={"__out": dace.Memlet("T[__i1]")},
+            input_nodes={A},
+            output_nodes={T},
+            external_edges=True,
+    )
+
+    me2, mx2 = state.add_map(
+            "second_map",
+            ndrange={"__i0": "0:10"},
+    )
+
+    state.add_edge(
+            T, None,
+            me2, "IN_T",
+            dace.Memlet("T[0:10]", volume=20)
+    )
+    me2.add_in_connector("IN_T")
+    me2.add_out_connector("OUT_T")
+
+    tsklt2_1 = state.add_tasklet(
+            "tsklt2_1",
+            inputs={"__in1"},
+            outputs={"__out"},
+            code="__out = __in1 * 3.0",
+    )
+    state.add_edge(
+            me2, "OUT_T",
+            tsklt2_1, "__in1",
+            dace.Memlet("T[__i0]")
+    )
+    state.add_edge(
+            tsklt2_1, "__out",
+            mx2, "IN_B",
+            dace.Memlet("B[__i0]")
+    )
+
+    tsklt2_2 = state.add_tasklet(
+            "tsklt2_2",
+            inputs={"__in1"},
+            outputs={"__out"},
+            code="__out = __in1 - 1.0",
+    )
+    state.add_edge(
+            me2, "OUT_T",
+            tsklt2_2, "__in1",
+            dace.Memlet("T[__i0]")
+    )
+    state.add_edge(
+            tsklt2_2, "__out",
+            mx2, "IN_C",
+            dace.Memlet("C[__i0]")
+    )
+    mx2.add_in_connector("IN_B")
+    mx2.add_in_connector("IN_C")
+
+    state.add_edge(
+            mx2, "OUT_B",
+            B, None,
+            dace.Memlet("B[0:10]"),
+    )
+    state.add_edge(
+            mx2, "OUT_C",
+            C, None,
+            dace.Memlet("C[0:10]"),
+    )
+    mx2.add_out_connector("OUT_B")
+    mx2.add_out_connector("OUT_C")
+    sdfg.validate()
+
+    apply_fusion(sdfg, removed_maps=1, final_maps=1)
+
+    args_ref = {
+            'A': np.array(np.random.rand(10), dtype=np.float64, copy=True),
+            'B': np.array(np.random.rand(10), dtype=np.float64, copy=True),
+            'C': np.array(np.random.rand(10), dtype=np.float64, copy=True),
+    }
+    args_res = copy.deepcopy(args_ref)
+
+    ref(**args_ref)
+    sdfg(**args_res)
+    for arg in args_ref.keys():
+        arg_ref = args_ref[arg]
+        arg_res = args_res[arg]
+        assert np.allclose(arg_ref, arg_res)
+
+
 if __name__ == '__main__':
+    test_fusion_multiple_consumers()
     test_fusion_intermediate_different_access()
     test_fusion_intermediate_different_access_mod_shape()
     test_fusion_non_strict_dataflow_implicit_dependency()
