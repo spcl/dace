@@ -1636,7 +1636,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         self._localcode.write(
             '__global__ void %s %s(%s) {\n' %
-            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + dyn_args_typed + extra_kernel_args_typed)), sdfg, state_id, node)
+            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + dyn_args_typed + extra_kernel_args_typed)), cfg, state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
