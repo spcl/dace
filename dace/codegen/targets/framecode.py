@@ -959,8 +959,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if isvarName not in outside_symbols:
                     callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
                     self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
-                else:
-                    callsite_stream.write('//%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
         callsite_stream.write('\n', sdfg)
 
         #######################################################################
