@@ -1637,7 +1637,72 @@ def test_fusion_multiple_consumers():
         assert np.allclose(arg_ref, arg_res)
 
 
+def test_fusion_different_global_accesses():
+
+    def ref(A, B):
+        T = np.zeros_like(A)
+        for i in range(10):
+            T[i] = A[i] - B[i + 1]
+        for i in range(10):
+            A[i] = np.sin(T[i])
+            B[i + 1] = np.cos(T[i])
+
+    sdfg = dace.SDFG("fusion_different_global_accesses_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+    for name in "ABT":
+        sdfg.add_array(
+                name,
+                shape=(11,),
+                dtype=dace.float64,
+                transient=False,
+        )
+    sdfg.arrays["T"].transient = True
+    T = state.add_access("T")
+
+    state.add_mapped_tasklet(
+            "first_comp",
+            map_ranges={"__i0": "0:10"},
+            inputs={
+                "__in1": dace.Memlet("A[__i0]"),
+                "__in2": dace.Memlet("B[__i0 + 1]")
+            },
+            code="__out = __in1 - __in2",
+            outputs={"__out": dace.Memlet("T[__i0]")},
+            output_nodes={T},
+            external_edges=True,
+    )
+    state.add_mapped_tasklet(
+            "second_comp",
+            map_ranges={"__i0": "0:10"},
+            inputs={"__in1": dace.Memlet("T[__i0]")},
+            code="__out1 = math.sin(__in1)\n__out2 = math.cos(__in1)",
+            outputs={
+                "__out1": dace.Memlet("A[__i0]"),
+                "__out2": dace.Memlet("B[__i0 + 1]"),
+            },
+            input_nodes={T},
+            external_edges=True,
+    )
+    sdfg.validate()
+
+    apply_fusion(sdfg, removed_maps=1, final_maps=1)
+
+    args_ref = {
+            'A': np.array(np.random.rand(11), dtype=np.float64, copy=True),
+            'B': np.array(np.random.rand(11), dtype=np.float64, copy=True),
+    }
+    args_res = copy.deepcopy(args_ref)
+
+    ref(**args_ref)
+    sdfg(**args_res)
+    for arg in args_ref.keys():
+        arg_ref = args_ref[arg]
+        arg_res = args_res[arg]
+        assert np.allclose(arg_ref, arg_res)
+
+
 if __name__ == '__main__':
+    test_fusion_different_global_accesses()
     test_fusion_multiple_consumers()
     test_fusion_intermediate_different_access()
     test_fusion_intermediate_different_access_mod_shape()
