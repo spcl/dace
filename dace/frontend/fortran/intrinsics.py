@@ -7,7 +7,7 @@ from typing import Any, List, Optional, Tuple, Union
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, \
-    ScopeVarsDeclarations, par_Decl_Range_Finder, mywalk
+    ScopeVarsDeclarations, TypeInference, par_Decl_Range_Finder, mywalk
 from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 from dace.libraries.blas.nodes.dot import dot_libnode
 from dace.libraries.blas.nodes.gemm import gemm_libnode
@@ -323,7 +323,7 @@ class DirectReplacement(IntrinsicTransformation):
         var_name = call.args[0].name
         test_var_name = f'__f2dace_OPTIONAL_{var_name}'
 
-        return (ast_internal_classes.Name_Node(name=test_var_name), "BOOL")
+        return (ast_internal_classes.Name_Node(name=test_var_name), "LOGICAL")
 
     def replacement_epsilon(args: ast_internal_classes.Arg_List_Node, line, symbols: list):
 
@@ -1497,6 +1497,13 @@ class MathFunctions(IntrinsicTransformation):
         "DOT_PRODUCT": MathTransformation("__dace_blas_dot", "FIRST_ARG"),
         "TRANSPOSE": MathTransformation("__dace_transpose", "FIRST_ARG"),
         "MATMUL": MathTransformation("__dace_matmul", "FIRST_ARG"),
+        "IBSET": MathTransformation("bitwise_set", "INTEGER"),
+        "IEOR": MathTransformation("bitwise_xor", "INTEGER"),
+        "ISHFT": MathTransformation("bitwise_shift", "INTEGER"),
+        "IBCLR": MathTransformation("bitwise_clear", "INTEGER"),
+        "BTEST": MathTransformation("bitwise_test", "INTEGER"),
+        "IBITS": MathTransformation("bitwise_extract", "INTEGER"),
+        "IAND": MathTransformation("bitwise_and", "INTEGER")
     }
 
     class TypeTransformer(IntrinsicNodeTransformer):
@@ -1552,13 +1559,19 @@ class MathFunctions(IntrinsicTransformation):
 
             # Visit all children before we expand this call.
             # We need that to properly get the type.
+            new_args = []
             for arg in node.args:
-                self.visit(arg)
+                new_args.append(self.visit(arg))
+            node.args = new_args
 
             input_type = self.func_type(node)
+            if input_type == 'VOID':
+                #assert input_type != 'VOID', f"Unexpected void input at line number: {node.line_number}"
+                raise RuntimeError()
 
             replacement_rule = MathFunctions.INTRINSIC_TO_DACE[func_name]
             if isinstance(replacement_rule, dict):
+
                 replacement_rule = replacement_rule[input_type]
             if replacement_rule.return_type == "FIRST_ARG":
                 return_type = input_type
@@ -1568,7 +1581,6 @@ class MathFunctions(IntrinsicTransformation):
             if isinstance(replacement_rule, MathFunctions.MathTransformation):
                 node.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
                 node.type = return_type
-
             else:
                 binop_node.rval = replacement_rule.replacement_function(node)
 
@@ -1577,8 +1589,8 @@ class MathFunctions(IntrinsicTransformation):
             if isinstance(var, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node,
                                 ast_internal_classes.Array_Subscript_Node)):
                 var_decl = self.get_var_declaration(var.parent, var)
-                var.type = input_type
-                var_decl.type = input_type
+                var.type = return_type
+                var_decl.type = return_type
 
             return binop_node
 
@@ -1672,16 +1684,9 @@ class FortranIntrinsics:
             "SPREAD": "__dace_spread",
             "ALLOCATED": "__dace_allocated",
             "TRIM": "__dace_trim",
-            "IEOR": "__dace_ieor",
-            "BTEST": "__dace_btest",
             "LEN_TRIM": "__dace_len_trim",
             "ASSOCIATED": "__dace_associated",
-            "IBSET": "__dace_ibset",
             "MAXLOC": "__dace_maxloc",
-            "ISHFT": "__dace_ishft",
-            "IBCLR": "__dace_ibclr",
-            "IBITS": "__dace_ibits",
-            "IAND": "__dace_iand",
             "FRACTION": "__dace_fraction",
             "NEW_LINE": "__dace_new_line",
             "PRECISION": "__dace_precision",

@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from dace.frontend.fortran import fortran_parser
+from tests.fortran.fortran_test_helper import create_singular_sdfg_from_string, SourceCodeBuilder
 
 def test_fortran_frontend_bit_size():
     test_string = """
@@ -211,9 +212,85 @@ def test_fortran_frontend_present():
     assert res[0] == 1
     assert res2[0] == 0
 
+def test_fortran_frontend_bitwise_ops():
+    sources, main = SourceCodeBuilder().add_file("""
+    SUBROUTINE bitwise_ops(input, res)
+
+    integer, dimension(11) :: input
+    integer, dimension(11) :: res
+
+    res(1) = IBSET(input(1), 0)
+    res(2) = IBSET(input(2), 30)
+
+    res(3) = IBCLR(input(3), 0)
+    res(4) = IBCLR(input(4), 30)
+
+    res(5) = IEOR(input(5), 63)
+    res(6) = IEOR(input(6), 480)
+
+    res(7) = ISHFT(input(7), 5)
+    res(8) = ISHFT(input(8), 30)
+
+    res(9) = ISHFT(input(9), -5)
+    res(10) = ISHFT(input(10), -30)
+
+    res(11) = ISHFT(input(11), 0)
+
+    END SUBROUTINE bitwise_ops
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'bitwise_ops', normalize_offsets=False)
+    #sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 11
+    input = np.full([size], 42, order="F", dtype=np.int32)
+    res = np.full([size], 42, order="F", dtype=np.int32)
+
+    input = [32, 32, 33, 1073741825, 53, 530, 12, 1, 128, 1073741824, 12 ]
+
+    sdfg(input=input, res=res)
+
+    assert np.allclose(res, [33, 1073741856, 32, 1, 10, 1010, 384, 1073741824, 4, 1, 12])
+
+def test_fortran_frontend_bitwise_ops2():
+    sources, main = SourceCodeBuilder().add_file("""
+    SUBROUTINE bitwise_ops(input, res)
+
+    integer, dimension(6) :: input
+    integer, dimension(6) :: res
+
+    res(1) = IAND(input(1), 0)
+    res(2) = IAND(input(2), 31)
+
+    res(3) = BTEST(input(3), 0)
+    res(4) = BTEST(input(4), 5)
+
+    res(5) = IBITS(input(5), 0, 5)
+    res(6) = IBITS(input(6), 3, 10)
+
+    END SUBROUTINE bitwise_ops
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'bitwise_ops', normalize_offsets=False)
+    #sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 6
+    input = np.full([size], 42, order="F", dtype=np.int32)
+    res = np.full([size], 42, order="F", dtype=np.int32)
+
+    input = [2147483647, 16, 3, 31, 30, 630] 
+
+    sdfg(input=input, res=res)
+
+    print(res)
+    assert np.allclose(res, [0, 16, 1, 0, 30, 78])
+
+
 if __name__ == "__main__":
 
-    test_fortran_frontend_bit_size()
-    test_fortran_frontend_bit_size_symbolic()
-    test_fortran_frontend_size_arbitrary()
-    test_fortran_frontend_present()
+    #test_fortran_frontend_bit_size()
+    #test_fortran_frontend_bit_size_symbolic()
+    #test_fortran_frontend_size_arbitrary()
+    #test_fortran_frontend_present()
+    #test_fortran_frontend_bitwise_ops()
+    test_fortran_frontend_bitwise_ops2()
