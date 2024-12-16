@@ -96,14 +96,7 @@ def _get_jacobi_sdfg(use_container_array: bool):
     kernel.add_node(ab3_access)
 
     if use_container_array:
-        v_A_name, v_A = jacobi_sdfg.add_view(
-            name="v_AB_A",
-            shape=[N, N],
-            storage=dace.dtypes.StorageType.CPU_Heap,
-            dtype=dace.typeclass(np.float32),
-        )
-
-        v_B_name, v_B = jacobi_sdfg.add_view(
+        jacobi_sdfg.add_view(
             name="v_AB_As",
             shape=[N, N],
             storage=dace.dtypes.StorageType.CPU_Heap,
@@ -288,6 +281,9 @@ def test_struct_to_container_group(use_container_array:bool):
 
     sdfg = _get_jacobi_sdfg(use_container_array)
 
+    if use_container_array is False:
+        sdfg.save("jacobi_with_container_array.sdfg")
+
     StructToContainerGroups().apply_pass(sdfg, {})
 
     sdfg.save("jacobi_with_data_groups.sdfg")
@@ -299,5 +295,7 @@ def test_struct_to_container_group(use_container_array:bool):
 
 
 if __name__ == "__main__":
+    print("===========1")
     test_struct_to_container_group(False)
+    print("===========2")
     test_struct_to_container_group(True)
