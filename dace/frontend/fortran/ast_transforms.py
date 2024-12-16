@@ -1880,7 +1880,8 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           scope_vars: ScopeVarsDeclarations,
                           structures: Structures,
                           declaration=True,
-                          main_iterator_ranges: Optional[list] = None
+                          main_iterator_ranges: Optional[list] = None,
+                          allow_scalars = False
                           ):
     """
     Helper function for the transformation of array operations and sums to loops
@@ -1930,6 +1931,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
         offsets = scope_vars.get_var(node.parent, node.name.name).offsets
 
     for idx, i in enumerate(node.indices):
+
         if isinstance(i, ast_internal_classes.ParDecl_Node):
 
             if i.type == "ALL":
@@ -2072,6 +2074,13 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                         )
                     )
                 )
+            currentindex += 1
+
+        elif isinstance(i, (ast_internal_classes.Name_Node, ast_internal_classes.Int_Literal_Node)) and allow_scalars:
+
+            ranges.append([i, i])
+            rangeslen.append(1)
+            indices.append(i)
             currentindex += 1
         else:
             indices.append(i)

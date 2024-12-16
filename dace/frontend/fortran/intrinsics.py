@@ -589,15 +589,28 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
             start_loop = loop_ranges_main[i][0]
             end_loop = loop_ranges_array[i][0]
 
-            difference = int(end_loop.value) - int(start_loop.value)
-            if difference != 0:
-                new_index = ast_internal_classes.BinOp_Node(
-                    lval=idx_var,
-                    op="+",
-                    rval=ast_internal_classes.Int_Literal_Node(value=str(difference)),
-                    line_number=node.line_number
-                )
-                array.indices[i] = new_index
+            difference = ast_internal_classes.BinOp_Node(
+                lval=end_loop,
+                op="-",
+                rval=start_loop,
+                line_number=node.line_number
+            )
+            new_index = ast_internal_classes.BinOp_Node(
+                lval=idx_var,
+                op="+",
+                rval=difference,
+                line_number=node.line_number
+            )
+            array.indices[i] = new_index
+            #difference = int(end_loop.value) - int(start_loop.value)
+            #if difference != 0:
+            #    new_index = ast_internal_classes.BinOp_Node(
+            #        lval=idx_var,
+            #        op="+",
+            #        rval=ast_internal_classes.Int_Literal_Node(value=str(difference)),
+            #        line_number=node.line_number
+            #    )
+            #    array.indices[i] = new_index
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
 
@@ -1205,11 +1218,11 @@ class Merge(LoopBasedReplacement):
             # The first main argument is an array -> this dictates loop boundaries
             # Other arrays, regardless if they appear as the second array or mask, need to have the same loop boundary.
             par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], self.count, new_func_body,
-                                  self.scope_vars, self.ast.structures, True)
+                                  self.scope_vars, self.ast.structures, True, allow_scalars=True)
 
             loop_ranges = []
             par_Decl_Range_Finder(self.second_array, loop_ranges, [], self.count, new_func_body,
-                                  self.scope_vars, self.ast.structures, True)
+                                  self.scope_vars, self.ast.structures, True, allow_scalars=True)
             self._adjust_array_ranges(node, self.second_array, self.loop_ranges, loop_ranges)
 
             # parse destination
@@ -1244,13 +1257,13 @@ class Merge(LoopBasedReplacement):
             if self.mask_first_array is not None:
                 loop_ranges = []
                 par_Decl_Range_Finder(self.mask_first_array, loop_ranges, [], self.count, new_func_body,
-                                      self.scope_vars, self.ast.structures, True)
+                                      self.scope_vars, self.ast.structures, True, allow_scalars=True)
                 self._adjust_array_ranges(node, self.mask_first_array, self.loop_ranges, loop_ranges)
 
             if self.mask_second_array is not None:
                 loop_ranges = []
                 par_Decl_Range_Finder(self.mask_second_array, loop_ranges, [], self.count, new_func_body,
-                                      self.scope_vars, self.ast.structures, True)
+                                      self.scope_vars, self.ast.structures, True, allow_scalars=True)
                 self._adjust_array_ranges(node, self.mask_second_array, self.loop_ranges, loop_ranges)
 
         def _initialize_result(self, node: ast_internal_classes.FNode) -> Optional[ast_internal_classes.BinOp_Node]:
