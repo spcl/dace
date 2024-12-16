@@ -60,11 +60,11 @@ def test_applyto_pattern():
 
     assert MapFusion.can_be_applied_to(
             sdfg,
-            map_exit_1=mult_exit,
-            intermediate_access_node=access_node,
-            map_entry_2=add_entry
+            first_map_exit=mult_exit,
+            array=access_node,
+            second_map_entry=add_entry
     )
-    MapFusion.apply_to(sdfg, map_exit_1=mult_exit, intermediate_access_node=access_node, map_entry_2=add_entry)
+    MapFusion.apply_to(sdfg, first_map_exit=mult_exit, array=access_node, second_map_entry=add_entry)
 
     assert len([node for node in state.nodes() if isinstance(node, dace.nodes.MapEntry)]) == 1
 
@@ -88,9 +88,9 @@ def test_applyto_pattern_2():
 
     assert not MapFusion.can_be_applied_to(
             sdfg,
-            map_exit_1=map_exit_1,
-            intermediate_access_node=tmp,
-            map_entry_2=map_entry_2
+            first_map_exit=map_exit_1,
+            array=tmp,
+            second_map_entry=map_entry_2
     )
     with pytest.raises(
             ValueError,
@@ -99,9 +99,9 @@ def test_applyto_pattern_2():
         MapFusion.apply_to(
             sdfg,
             verify=True,
-            map_exit_1=map_exit_1,
-            intermediate_access_node=tmp,
-            map_entry_2=map_entry_2
+            first_map_exit=map_exit_1,
+            array=tmp,
+            second_map_entry=map_entry_2
         )
 
 
