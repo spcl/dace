@@ -3360,22 +3360,22 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
 
-    print("Before intrinsics")
-    for transformation in partial_ast.fortran_intrinsics().transformations():
-        transformation.initialize(program)
-        program = transformation.visit(program)
-    print("After intrinsics")
+    # print("Before intrinsics")
+    # for transformation in partial_ast.fortran_intrinsics().transformations():
+    #     transformation.initialize(program)
+    #     program = transformation.visit(program)
+    # print("After intrinsics")
 
     program = ast_transforms.TypeInference(program).visit(program)
     program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
-    print("Before intrinsics")
-    for transformation in partial_ast.fortran_intrinsics().transformations():
-        transformation.initialize(program)
-        program = transformation.visit(program)
-    print("After intrinsics")
+    # print("Before intrinsics")
+    # for transformation in partial_ast.fortran_intrinsics().transformations():
+    #     transformation.initialize(program)
+    #     program = transformation.visit(program)
+    # print("After intrinsics")
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
