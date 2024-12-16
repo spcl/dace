@@ -423,9 +423,8 @@ def test_fusion_with_empty_memlet():
 
 def test_fusion_with_nested_sdfg_0():
     
-    @dace.program
-    def fusion_with_nested_sdfg_0(A: dace.int32[10], B: dace.int32[10], C: dace.int32[10]):
-        tmp = np.empty([10], dtype=np.int32)
+    def ref(A, B, C):
+        tmp = np.zeros_like(A)
         for i in dace.map[0:10]:
             if C[i] < 0:
                 tmp[i] = B[i] - A[i]
@@ -433,14 +432,129 @@ def test_fusion_with_nested_sdfg_0():
                 tmp[i] = B[i] + A[i]
         for i in dace.map[0:10]:
             A[i] = tmp[i] * 2
-    
-    sdfg = fusion_with_nested_sdfg_0.to_sdfg(simplify=True)
 
-    # Because the transformation refuses to fuse dynamic edges.
-    #  We have to eliminate them.
-    for state in sdfg.states():
-        for edge in state.edges():
-            edge.data.dynamic = False
+    def _make_sdfg() -> dace.SDFG:
+        sdfg = SDFG("fusion_with_nested_sdfg_0")
+        state = sdfg.add_state(is_start_block=True)
+
+        for name in "ABCT":
+            sdfg.add_array(
+                    name,
+                    shape=(10,),
+                    dtype=dace.float64,
+                    transient=False,
+            )
+        sdfg.arrays["T"].transient = True
+
+        me1, mx1 = state.add_map("first_map", ndrange={"__i0": "0:10"})
+        nsdfg = state.add_nested_sdfg(
+                sdfg=_make_nested_sdfg(),
+                parent=sdfg,
+                inputs={"a", "b", "c"},
+                outputs={"t"},
+                symbol_mapping={},
+        )
+
+        for name in "ABC":
+            state.add_edge(
+                    state.add_access(name), None,
+                    me1, "IN_" + name,
+                    dace.Memlet(f"{name}[0:10]"),
+            )
+            me1.add_in_connector("IN_" + name)
+            state.add_edge(
+                    me1, "OUT_" + name,
+                    nsdfg, name.lower(),
+                    dace.Memlet(f"{name}[__i0]"),
+            )
+            me1.add_out_connector("OUT_" + name)
+        state.add_edge(
+                nsdfg, "t",
+                mx1, "IN_T",
+                dace.Memlet("T[__i0]"),
+        )
+        T = state.add_access("T")
+        state.add_edge(
+                mx1, "OUT_T",
+                T, None,
+                dace.Memlet("T[0:10]"),
+        )
+        mx1.add_in_connector("IN_T")
+        mx1.add_out_connector("OUT_T")
+
+        state.add_mapped_tasklet(
+                "comp2",
+                map_ranges={"__i0": "0:10"},
+                inputs={"__in1": dace.Memlet("T[__i0]")},
+                code="__out = __in1 * 2",
+                outputs={"__out": dace.Memlet("A[__i0]")},
+                input_nodes={T},
+                external_edges=True,
+        )
+        sdfg.validate()
+        return sdfg
+
+    def _make_nested_sdfg() -> dace.SDFG:
+        sdfg = SDFG("Nested")
+
+        for name in "abct":
+            sdfg.add_scalar(
+                    name,
+                    dtype=dace.float64,
+                    transient=False,
+            )
+
+        state_head = sdfg.add_state("head_state", is_start_block=True)
+        state_if_guard = sdfg.add_state("state_if_guard")
+        sdfg.add_edge(
+                state_head,
+                state_if_guard,
+                dace.InterstateEdge(
+                    condition="1",
+                    assignments={"__tmp2": "c < 0.0"},
+                )
+        )
+
+        def _make_branch_tasklet(
+                state: dace.SDFGState,
+                code: str,
+        ) -> None:
+            tasklet = state.add_tasklet(
+                    state.label + "_tasklet",
+                    inputs={"__in1", "__in2"},
+                    code=code,
+                    outputs={"__out"},
+            )
+            state.add_edge(
+                    state.add_access("b"), None,
+                    tasklet, "__in1",
+                    dace.Memlet("b[0]"),
+            )
+            state.add_edge(
+                    state.add_access("a"), None,
+                    tasklet, "__in2",
+                    dace.Memlet("a[0]"),
+            )
+            state.add_edge(
+                    tasklet, "__out",
+                    state.add_access("t"), None,
+                    dace.Memlet("t[0]"),
+            )
+
+        state_trueb = sdfg.add_state("true_branch")
+        _make_branch_tasklet(state_trueb, "__out = __in1 - __in2")
+        state_falseb = sdfg.add_state("false_branch")
+        _make_branch_tasklet(state_falseb, "__out = __in1 + __in2")
+        state_if_end = sdfg.add_state("if_join")
+
+        sdfg.add_edge(state_if_guard, state_trueb, dace.InterstateEdge(condition="__tmp2"))
+        sdfg.add_edge(state_if_guard, state_falseb, dace.InterstateEdge(condition="not __tmp2"))
+        sdfg.add_edge(state_falseb, state_if_end, dace.InterstateEdge())
+        sdfg.add_edge(state_trueb, state_if_end, dace.InterstateEdge())
+        sdfg.validate()
+        return sdfg
+
+    sdfg = _make_sdfg()
     apply_fusion(sdfg)
 
     for sd in sdfg.all_sdfgs_recursive():
@@ -451,6 +565,21 @@ def test_fusion_with_nested_sdfg_0():
                 for e1 in state.memlet_tree(e0):
                     dst = state.memlet_path(e1)[-1].dst
                 assert isinstance(dst, dace.nodes.AccessNode)
+
+
+    args_ref = {
+            'A': np.array(np.random.rand(10), dtype=np.float64, copy=True),
+            'B': np.array(np.random.rand(10), dtype=np.float64, copy=True),
+            'C': np.array(np.random.rand(10) - 0.5, dtype=np.float64, copy=True),
+    }
+    args_res = copy.deepcopy(args_ref)
+
+    ref(**args_ref)
+    sdfg(**args_res)
+    for arg in args_ref.keys():
+        arg_ref = args_ref[arg]
+        arg_res = args_res[arg]
+        assert np.allclose(arg_ref, arg_res), f"Failed in {arg}"
 
 
 def test_fusion_with_nested_sdfg_1():
