@@ -629,6 +629,8 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
             if not declared:
                 declaration_stream.write('%s %s;\n' % (ctypedef, dataname))
             self._alloc_gpu_global(node, nodedesc, result_alloc, dataname, arrsize_malloc)
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
+
 
             if node.setzero:
                 if deferred_allocation:
