@@ -12,13 +12,39 @@ from dace.transformation import helpers
 
 @properties.make_properties
 class MapFusion(transformation.SingleStateTransformation):
-    """Fuse two serial maps together.
+    """Implements the MapFusion transformation.
 
-    The transformation combines two maps into one that are connected through some
-    access nodes. Conceptually this transformation removes the exit of the first
-    or upper map and the entry of the lower or second map and then rewrites the
-    connections appropriately. Depending on the situation the transformation will
-    either fully remove or make the intermediate a new output of the second map.
+
+    From a high level perspective it will remove the MapExit node for the first and the MapEntry node of
+    the second Map. Then it will rewire and modify the Memlets to bypass the intermediate node and instead
+    go through a new intermediate node. This new intermediate node is much smaller because it has no longer
+    to absorb the whole output of the first map, but only the data that is produced by a single iteration
+    of the first map. It is important to note that it is not always possible to fully remove the intermediate
+    node, for example it is used somewhere else, see `is_shared_data()`. Thus by merging the two Maps together
+    the transformation will reduce the memory footprint because the intermediate nodes can be removed.
+    An example would be the following:
+    ```python
+    for i in range(N):
+        T[i] = foo(A[i])
+    for j in range(N):
+        B[j] = bar(T[i])
+    ```
+    which would be translated into:
+    ```python
+    for i in range(N):
+        temp: scalar = foo(A[i])
+        B[i] = bar(temp)
+    ```
+
+    The checks that two Maps can be fused are quite involved, however, they essentially check:
+    * If the two Maps cover the same iteration space, essentially have the same start, stop and
+        iteration , see `find_parameter_remapping()`.
+    * Furthermore, they verify if the new fused Map did not introduce read write conflict,
+        essentially it tests if the data is pointwise, i.e. what is read is also written,
+        see `has_read_write_dependency()`.
+    * Then it will examine the intermediate data. This will essentially test if the data that
+        is needed by a single iteration of the second Map is produced by a single iteration of
+        the first Map, see `partition_first_outputs()`.
 
     By default `strict_dataflow` is enabled. In this mode the transformation is
     more conservative. The main difference is, that it will not adjust the
@@ -1015,7 +1041,8 @@ class MapFusion(transformation.SingleStateTransformation):
             if scope[first_map_entry] is not None:
                 return None
 
-        # We will now check if there exists a remapping that of the map parameter
+        # We will now check if we can rename the Map parameter of the second Map such that they
+        #  match the one of the first Map.
         param_repl = self.find_parameter_remapping(first_map=first_map_entry.map, second_map=second_map_entry.map)
         return param_repl
 
