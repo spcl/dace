@@ -3362,18 +3362,18 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
 
-    # print("Before intrinsics")
-    # for transformation in partial_ast.fortran_intrinsics().transformations():
-    #     transformation.initialize(program)
-    #     program = transformation.visit(program)
-    #     #while True:
-    #     #    try:
-    #     #        program = transformation.visit(program)
-    #     #        break
-    #     #    except RuntimeError:
-    #     #        # FIXME: optimize func
-    #     #        print("Additional type inference")
-    #     #        program = ast_transforms.TypeInference(program, assert_voids=False, assign_scopes=False).visit(program)
+    print("Before intrinsics")
+    for transformation in partial_ast.fortran_intrinsics().transformations():
+        #program = transformation.visit(program)
+        while True:
+            try:
+                transformation.initialize(program)
+                program = transformation.visit(program)
+                break
+            except RuntimeError:
+                # FIXME: optimize func
+                print("Additional type inference")
+                program = ast_transforms.TypeInference(program, assert_voids=False, assign_scopes=False).visit(program)
 
     # print("After intrinsics")
 
