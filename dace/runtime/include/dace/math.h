@@ -157,6 +157,48 @@ static DACE_CONSTEXPR DACE_HDFI T left_shift(const T& left_operand, const T2& ri
     return left_operand << right_operand;
 }
 
+template<typename T>
+constexpr std::size_t bit_size() {
+    return sizeof(T) * 8;
+}
+
+// Implement to support Fortran's intrinsic IBSET
+template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_set(const T& value, int pos)
+{
+  if (pos < 0 || pos >= static_cast<int>(bit_size<T>())) {
+    throw std::runtime_error("Failed to execute bitwise_pos at position " + std::to_string(pos));
+  }
+  return value | (static_cast<T>(1) << pos);
+}
+
+// Implement to support Fortran's intrinsic IBCLR
+template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_clear(const T& value, int pos)
+{
+  if (pos < 0 || pos >= static_cast<int>(bit_size<T>())) {
+    throw std::runtime_error("Failed to execute bitwise_clear at position " + std::to_string(pos));
+  }
+  return value & ~(static_cast<T>(1) << pos); 
+}
+
+// Implement to support Fortran's intrinsic ISHFT
+template<typename T, std::enable_if_t<std::is_integral<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_shift(const T& value, int pos)
+{
+  if (std::abs(pos) >= static_cast<int>(bit_size<T>())) {
+    throw std::runtime_error("Failed to execute bitwise_shift at position " + std::to_string(pos));
+  }
+
+  if(pos < 0) {
+    return right_shift(value, -pos);
+  } else if (pos > 0) {
+    return left_shift(value, pos);
+  } else {
+    return value;
+  }
+}
+
 #define AND(x, y) ((x) && (y))
 #define OR(x, y) ((x) || (y))
 

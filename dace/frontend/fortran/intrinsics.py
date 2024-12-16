@@ -1497,6 +1497,10 @@ class MathFunctions(IntrinsicTransformation):
         "DOT_PRODUCT": MathTransformation("__dace_blas_dot", "FIRST_ARG"),
         "TRANSPOSE": MathTransformation("__dace_transpose", "FIRST_ARG"),
         "MATMUL": MathTransformation("__dace_matmul", "FIRST_ARG"),
+        "IBSET": MathTransformation("bitwise_set", "INTEGER"),
+        "IEOR": MathTransformation("bitwise_xor", "INTEGER"),
+        "ISHFT": MathTransformation("bitwise_shift", "INTEGER"),
+        "IBCLR": MathTransformation("bitwise_clear", "INTEGER")
     }
 
     class TypeTransformer(IntrinsicNodeTransformer):
@@ -1677,14 +1681,10 @@ class FortranIntrinsics:
             "SPREAD": "__dace_spread",
             "ALLOCATED": "__dace_allocated",
             "TRIM": "__dace_trim",
-            "IEOR": "__dace_ieor",
             "BTEST": "__dace_btest",
             "LEN_TRIM": "__dace_len_trim",
             "ASSOCIATED": "__dace_associated",
-            "IBSET": "__dace_ibset",
             "MAXLOC": "__dace_maxloc",
-            "ISHFT": "__dace_ishft",
-            "IBCLR": "__dace_ibclr",
             "IBITS": "__dace_ibits",
             "IAND": "__dace_iand",
             "FRACTION": "__dace_fraction",
