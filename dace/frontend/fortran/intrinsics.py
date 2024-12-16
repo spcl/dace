@@ -1500,7 +1500,10 @@ class MathFunctions(IntrinsicTransformation):
         "IBSET": MathTransformation("bitwise_set", "INTEGER"),
         "IEOR": MathTransformation("bitwise_xor", "INTEGER"),
         "ISHFT": MathTransformation("bitwise_shift", "INTEGER"),
-        "IBCLR": MathTransformation("bitwise_clear", "INTEGER")
+        "IBCLR": MathTransformation("bitwise_clear", "INTEGER"),
+        "BTEST": MathTransformation("bitwise_test", "INTEGER"),
+        "IBITS": MathTransformation("bitwise_extract", "INTEGER"),
+        "IAND": MathTransformation("bitwise_and", "INTEGER")
     }
 
     class TypeTransformer(IntrinsicNodeTransformer):
@@ -1563,7 +1566,7 @@ class MathFunctions(IntrinsicTransformation):
 
             input_type = self.func_type(node)
             if input_type == 'VOID':
-                assert input_type != 'VOID', f"Unexpected void input at line number: {node.line_number}"
+                #assert input_type != 'VOID', f"Unexpected void input at line number: {node.line_number}"
                 raise RuntimeError()
 
             replacement_rule = MathFunctions.INTRINSIC_TO_DACE[func_name]
@@ -1681,12 +1684,9 @@ class FortranIntrinsics:
             "SPREAD": "__dace_spread",
             "ALLOCATED": "__dace_allocated",
             "TRIM": "__dace_trim",
-            "BTEST": "__dace_btest",
             "LEN_TRIM": "__dace_len_trim",
             "ASSOCIATED": "__dace_associated",
             "MAXLOC": "__dace_maxloc",
-            "IBITS": "__dace_ibits",
-            "IAND": "__dace_iand",
             "FRACTION": "__dace_fraction",
             "NEW_LINE": "__dace_new_line",
             "PRECISION": "__dace_precision",
