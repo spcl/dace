@@ -2917,8 +2917,8 @@ class SDFG(ControlFlowRegion):
         return found_explicit_cf_block
 
     def register_container_group_members(self, flattening_mode):
-        for _, dg in self.container_groups.items():
-            self._register_container_group_members(flattening_mode=flattening_mode, container_group_or_array=dg, prefix_name='', acc_shape=())
+        for name, dg in self.container_groups.items():
+            self._register_container_group_members(flattening_mode=flattening_mode, container_group_or_array=dg, prefix_name=f'__CG_{name}', acc_shape=())
         print(self._arrays)
 
     def _register_container_group_members(self, flattening_mode,
@@ -2939,38 +2939,28 @@ class SDFG(ControlFlowRegion):
         # If we have a 3rd level (L2.1 is a struct and has L3.1 and L.32):
         # [L1][L2.1][L3.1], [L1][L2.1][L3.2], [L1][L2.2], [L1][L2.3]
         if flattening_mode == ContainerGroupFlatteningMode.StructOfArrays:
-            if type(container_group_or_array) == ContainerGroup:
+            if isinstance(container_group_or_array, ContainerGroup):
                 container_group = container_group_or_array
+                print(container_group.members.items())
                 for name, member in container_group.members.items():
-                    dg_prefix = prefix_name + f'__ContainerGroup_{container_group.name}'
                     if isinstance(member, ContainerGroup):
+                        if member.is_cg:
+                            dg_prefix = prefix_name + f'__CG_{member.name}'
+                        else:
+                            dg_prefix = prefix_name + f'__CA_{member.name}'
                         self._register_container_group_members(
                             container_group_or_array=member,
                             flattening_mode=flattening_mode,
                             prefix_name=dg_prefix,
                             acc_shape=acc_shape)
                     elif isinstance(member, dace.data.ContainerArray):
-                        container_array : dace.data.ContainerArray = member
-                        dg_prefix = prefix_name + f'__ContainerArray_{name}'
-                        self._register_container_group_members(
-                            container_group_or_array=container_array,
-                            flattening_mode=flattening_mode,
-                            prefix_name=dg_prefix,
-                            acc_shape=acc_shape + container_array.shape)
+                        assert False
                     else:
-                        member_demangled_name = dg_prefix + f'__member_{name}'
+                        member_demangled_name = prefix_name + f'__m_{name}'
+                        print("CG", self.container_groups, member_demangled_name)
                         self.add_datadesc(name=member_demangled_name, datadesc=member, find_new_name=False)
-            elif type(container_group_or_array) == dace.data.ContainerArray:
-                container_array : dace.data.ContainerArray = container_group_or_array
-                if type(container_array.stype) == ContainerGroup:
-                    self._register_container_group_members(
-                        container_group_or_array=container_array.stype,
-                        flattening_mode=flattening_mode,
-                        prefix_name=prefix_name,
-                        acc_shape=acc_shape + container_array.shape)
-                else:
-                    member_demangled_name = prefix_name + f'_member_Leaf'
-                    self.add_datadesc(name=member_demangled_name, datadesc=container_array.stype, find_new_name=False)
+            elif isinstance(container_group_or_array, dace.data.ContainerArray):
+                assert False
             else:
                 raise Exception("?")
 
@@ -2985,25 +2975,34 @@ class SDFG(ControlFlowRegion):
         for i, name in enumerate(name_hierarchy):
             if current_dg is None:
                 current_dg = self.container_groups[name]
-                demangled_name += f"__ContainerGroup_{current_dg.name}"
+                demangled_name += f"__CG_{current_dg.name}"
             elif name in current_dg.members:
                 if isinstance(current_dg.members[name], ContainerGroup):
                     current_dg = current_dg.members[name]
-                    demangled_name += f"__ContainerGroup_{current_dg.name}"
+                    if current_dg.is_cg:
+                        demangled_name += f"__CG_{current_dg.name}"
+                    else:
+                        demangled_name += f"__CA_{current_dg.name}"
                 elif (isinstance(current_dg.members[name], dace.data.ContainerArray)):
-                    demangled_name += f"__ContainerArray"
+                    assert (False)
                 else:
                     assert isinstance(current_dg.members[name], dace.data.Data)
                     assert i == len(name_hierarchy) - 1
-                    demangled_name += f"__member_{name}"
+                    demangled_name += f"__m_{name}"
                     return demangled_name
             else:
+                # if we are at last element and it is a "Leaf" (data had no name) it is not an error
+                print(current_dg.members)
+                if i == len(name_hierarchy) - 1 and len(current_dg.members) == 1 and "Leaf" in current_dg.members:
+                    demangled_name += f"__m_Leaf"
+                    return demangled_name
                 raise Exception(f'Name Hierarchy {name_hierarchy} Not in ContainerGroups {self.container_groups}, {self._arrays} 1')
+
         raise Exception(f'Name Hierarchy {name_hierarchy} Not in ContainerGroups {self.container_groups}, {self._arrays} 2')
 
     def generate_container_groups_from_structs(self, flattening_mode : ContainerGroupFlatteningMode):
         for arr_name, arr in self._arrays.items():
             if isinstance(arr, dt.Structure):
                 dg_name = arr_name
-                dg = ContainerGroup.from_struct(name=dg_name, struct_or_container_array=arr)
+                dg = ContainerGroup.from_struct(name=dg_name, struct_or_container_array=arr, is_cg=True, is_ca=False)
                 self.container_groups[dg_name] = dg

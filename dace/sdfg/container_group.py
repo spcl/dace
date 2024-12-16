@@ -38,10 +38,14 @@ class ContainerGroup:
         from_json=_members_from_json,
         to_json=_members_to_json,
     )
+    is_cg = Property(dtype=bool, default=False, allow_none=False)
+    is_ca = Property(dtype=bool, default=False, allow_none=False)
 
-    def __init__(self, name):
+    def __init__(self, name, is_cg, is_ca):
         self.name = name
         self.members = OrderedDict()
+        self.is_cg = is_cg
+        self.is_ca = is_ca
         self._validate()
 
     def add_member(self, name: str, member: Union[Data, "ContainerGroup"]):
@@ -82,41 +86,12 @@ class ContainerGroup:
 
     def __repr__(self):
         members_repr = ", ".join(
-            f"{k}: {v.__class__.__name__}" for k, v in self.members.items()
+            f"{k}: {v.__repr__()}" for k, v in self.members.items()
         )
-        return f"DataGroup(name='{self.name}', members={{ {members_repr} }})"
+        return f"ContainerGroup(name='{self.name}', is_cg={self.is_cg}, is_ca={self.is_ca}, members={{ {members_repr} }})"
 
     def __str__(self):
         return self.__repr__()
-
-    def _add_members(self, name, structure, acc_shape):
-        # If not a structure, then we have a leaf node
-        for member_name, member in structure.members.items():
-            if isinstance(member, data.Structure):
-                # Recursively convert nested Structures
-                self.add_member(
-                    name=f"{member_name}",
-                    member=self.from_struct(name=f"{member_name}", struct_or_container_array=member),
-                )
-                self._add_members(name=f"{member_name}",
-                                  member=self.from_struct(name=f"{member_name}", struct_or_container_array=member),)
-            if isinstance(member, (data.ContainerArray)):
-                self.add_member(
-                    name=f"{member_name}",
-                    member=self.from_struct(name=f"{member_name}", struct_or_container_array=member),
-                )
-                self._add_members(name=f"{member_name}",
-                                  member=self.from_struct(name=f"{member_name}", struct_or_container_array=member),)
-            elif isinstance(member, (data.Array, data.Scalar)):
-                # Append the previous shape and add the member
-                self.add_member(member_name, member, shape=acc_shape)
-            elif isinstance(
-                member, (sympy.Basic, symbolic.SymExpr, int, numpy.integer)
-            ):
-                # Convert other types to Scalar
-                self.add_member(member_name, data.Scalar(symbolic.symtype(member)))
-            else:
-                raise TypeError(f"Unsupported member type in Structure: {type(member)}")
 
     def _soa_from_struct(self, name, structure, acc_shape):
         self._add_members(name, structure, acc_shape=None)
@@ -125,63 +100,68 @@ class ContainerGroup:
     def from_struct(
         cls,
         name: str,
-        struct_or_container_array: typing.Union[data.Structure, data.ContainerArray]
+        struct_or_container_array: typing.Union[data.Structure, data.ContainerArray],
+        is_cg: bool,
+        is_ca: bool,
     ) -> "ContainerGroup":
-        dg = cls(name)
+        dg = cls(name=name, is_cg=is_cg, is_ca=is_ca)
+        assert is_cg ^ is_ca
 
-        if type(struct_or_container_array) == data.Structure:
+        if isinstance(struct_or_container_array, data.Structure):
             struct = struct_or_container_array
             for member_name, member in struct.members.items():
+                new_member = None
                 if isinstance(member, data.Structure):
-                    # Recursively convert nested Structures
-                    dg.add_member(
-                        name=f"{member_name}",
-                        member=cls.from_struct(name=f"{member_name}", struct_or_container_array=member),
-                    )
+                    new_member = cls.from_struct(
+                                    name=member_name,
+                                    struct_or_container_array=member,
+                                    is_cg=True,
+                                    is_ca=False)
                 elif isinstance(member, data.ContainerArray):
-                    dg.add_member(
-                        name=f"{member_name}",
-                        member=cls.from_struct(name=f"{member_name}", struct_or_container_array=member),
-                    )
+                    new_member = cls.from_struct(name=member_name,
+                                                 struct_or_container_array=member,
+                                                 is_cg=False,
+                                                 is_ca=True)
                 elif isinstance(member, (data.Array, data.Scalar)):
-                    # Directly add Arrays and Scalars
-                    dg.add_member(
-                        name=member_name,
-                        member=member)
+                    new_member = member
                 elif isinstance(
                     member, (sympy.Basic, symbolic.SymExpr, int, numpy.integer)
                 ):
-                    # Convert other types to Scalar
-                    dg.add_member(
-                        name=member_name,
-                        member=data.Scalar(symbolic.symtype(member)))
+                    new_member = data.Scalar(symbolic.symtype(member))
                 else:
                     raise TypeError(f"Unsupported member type in Structure: {type(member)}")
-        else:
-            assert type(struct_or_container_array) == data.ContainerArray
-            container_array = struct_or_container_array
-            member = container_array.stype
-            if isinstance(member, data.Structure):
-                # Recursively convert nested Structures
+
                 dg.add_member(
                     name=f"{member_name}",
-                    member=cls.from_struct(name=member.name, struct_or_container_array=member),
+                    member=new_member
                 )
+        else:
+            assert isinstance(struct_or_container_array, data.ContainerArray)
+            container_array = struct_or_container_array
+            member = container_array.stype
+            member_name = None
+            new_member = None
+
+            if isinstance(member, data.Structure):
+                # Recursively convert nested Structures
+                member_name = member.name
+                new_member = cls.from_struct(name=member.name,
+                                             struct_or_container_array=member,
+                                             is_cg=True,
+                                             is_ca=False)
             elif isinstance(member, data.ContainerArray):
                 raise Exception("Two container arrays in a row is currently not supported")
             elif isinstance(member, (data.Array, data.Scalar)):
-                # Directly add Arrays and Scalars
-                dg.add_member(
-                    name="Leaf",
-                    member=member)
+                new_member = member
             elif isinstance(
                 member, (sympy.Basic, symbolic.SymExpr, int, numpy.integer)
             ):
-                # Convert other types to Scalar
-                dg.add_member(
-                    name="Leaf",
-                    member=data.Scalar(symbolic.symtype(member)))
+                new_member=data.Scalar(symbolic.symtype(member))
             else:
                 raise TypeError(f"Unsupported member type in Structure: {type(member)}")
+            dg.add_member(
+                name=member_name if member_name is not None else "Leaf",
+                member=new_member
+            )
 
         return dg

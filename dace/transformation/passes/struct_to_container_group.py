@@ -45,6 +45,7 @@ class StructToContainerGroups(ppl.Pass):
         sdfg.register_container_group_members(self._flattening_mode)
 
         # A -> B both access nodes, this should trigger the further check whether we can apply
+        i = 0
         for state in sdfg.nodes():
             nodes = state.nodes()
             removed_nodes = set()
@@ -62,11 +63,14 @@ class StructToContainerGroups(ppl.Pass):
                             pattern_found = self._can_be_applied(
                                 state, sdfg, src_access, dst_access
                             )
+                            print("P", src_access, dst_access, pattern_found)
                             if pattern_found:
+                                i += 1
                                 newly_removed_nodes = self._apply(
                                     state, sdfg, src_access, dst_access
                                 )
                                 removed_nodes = removed_nodes.union(newly_removed_nodes)
+                                sdfg.save(f"{sdfg.name}_{i}.sdfg")
 
         # Clean Mapped Views (Views within data groups)
         for state in sdfg.nodes():
@@ -218,7 +222,7 @@ class StructToContainerGroups(ppl.Pass):
 
         return (struct_to_view_pattern, view_to_struct_pattern)
 
-    def _get_view_chain(
+    def _get_struct_to_view_view_chain(
         self, state: SDFGState, sdfg: SDFG, first_view_access: nodes.AccessNode
     ):
         view_accesses = [first_view_access]
@@ -236,16 +240,38 @@ class StructToContainerGroups(ppl.Pass):
             else:
                 return view_accesses
 
+
+    def _get_view_to_struct_view_chain(
+        self, state: SDFGState, sdfg: SDFG, last_view_access: nodes.AccessNode
+    ):
+        view_accesses = [last_view_access]
+        current_view_access = last_view_access
+        while True:
+            in_edges = state.in_edges(current_view_access)
+            assert len(in_edges) == 1
+            out_edge = in_edges[0]
+            u, uc, v, vc, memlet = out_edge
+            if isinstance(u, nodes.AccessNode) and isinstance(
+                sdfg.arrays[u.data], View
+            ):
+                current_view_access = u
+                view_accesses.insert(0, u)
+            else:
+                return view_accesses
+
     def _process_edges(self, edge_list, name_hierarchy, take_last=False):
         assert len(edge_list) == 1
         edge = edge_list[0]
         data = edge.data.data
         tokenized_data = data.split(".")
-        assert len(tokenized_data) == 2 or len(tokenized_data) == 1
-        if not take_last:
+        print("TD", tokenized_data, edge_list, edge.data.data)
+        if len(tokenized_data) == 2:
             name_hierarchy += tokenized_data
-        else:
-            name_hierarchy += [tokenized_data[-1]]
+        elif len(tokenized_data) == 1:
+            #Container array or other
+            print("TD2", tokenized_data)
+            name_hierarchy += tokenized_data
+            print("TD3", name_hierarchy)
 
     def _apply(
         self,
@@ -270,7 +296,8 @@ class StructToContainerGroups(ppl.Pass):
             view_access = src_access
             struct_access = dst_access
 
-        view_chain = self._get_view_chain(state, sdfg, view_access)
+        view_chain = self._get_struct_to_view_view_chain(state, sdfg, view_access) if struct_to_view else self._get_view_to_struct_view_chain(state, sdfg, view_access)
+        print("A", view_access, view_chain)
         assert len(view_chain) >= 1
         name_hierarchy = []
 
@@ -281,14 +308,15 @@ class StructToContainerGroups(ppl.Pass):
             self._process_edges(
                 edge_list=struct_to_view_edges, name_hierarchy=name_hierarchy
             )
+            print("STV", struct_to_view_edges)
 
-        for current_view_access in view_chain[:-1]:
-            view_to_next_edges = state.out_edges(current_view_access)
-            self._process_edges(
-                edge_list=view_to_next_edges,
-                name_hierarchy=name_hierarchy,
-                take_last=True,
-            )
+            for current_view_access in view_chain[:-1]:
+                view_to_next_edges = state.out_edges(current_view_access)
+                self._process_edges(
+                    edge_list=view_to_next_edges,
+                    name_hierarchy=name_hierarchy,
+                    take_last=True,
+                )
 
         if view_to_struct:
             view_to_struct_edges = [
@@ -297,10 +325,23 @@ class StructToContainerGroups(ppl.Pass):
             self._process_edges(
                 edge_list=view_to_struct_edges, name_hierarchy=name_hierarchy
             )
+            print("VTS", view_to_struct_edges, view_chain)
 
-        for i in range(len(name_hierarchy)):
-            if _has_trailing_number(name_hierarchy[i]):
-                name_hierarchy[i] = _remove_trailing_number(name_hierarchy[i])
+            for current_view_access in view_chain[:-1]:
+                view_to_next_edges = state.out_edges(current_view_access)
+                self._process_edges(
+                    edge_list=view_to_next_edges,
+                    name_hierarchy=name_hierarchy,
+                    take_last=True,
+                )
+                print(view_to_next_edges)
+
+
+        #for i in range(len(name_hierarchy)):
+        #    if _has_trailing_number(name_hierarchy[i]):
+        #        name_hierarchy[i] = _remove_trailing_number(name_hierarchy[i])
+
+        print(name_hierarchy, struct_to_view)
 
         demangled_name = sdfg.get_demangled_container_group_member_name(name_hierarchy)
 
