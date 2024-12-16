@@ -6,6 +6,7 @@ import os
 import dace
 import copy
 import uuid
+import pytest
 
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
@@ -1270,6 +1271,128 @@ def test_fusion_intermediate_different_access():
 
 def test_fusion_intermediate_different_access_mod_shape():
     _impl_fusion_intermediate_different_access(modified_shape=True)
+
+
+@pytest.mark.skip(reason="This feature is not yet fully supported.")
+def test_fusion_multiple_producers_consumers():
+    """Multiple producer and consumer nodes.
+
+    This test is very similar to the `test_fusion_intermediate_different_access()`
+    and `test_fusion_intermediate_different_access_mod_shape()` test, with the
+    exception that now full data is used in the second map.
+    However, currently `MapFusion` only supports a single producer, thus this test can
+    not run.
+    """
+    def ref(A, B):
+        T = np.zeros((A.shape[0], 2))
+        for i in range(A.shape[0]):
+            T[i, 0] = A[i] * 2
+            T[i, 1] = A[i] / 2
+        for j in range(A.shape[0]):
+            B[j] = np.sin(T[j, 1]) + np.cos(T[j, 0])
+
+    sdfg = dace.SDFG("fusion_multiple_producers_consumers_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+    for name in "AB":
+        sdfg.add_array(
+                name,
+                shape=(10,),
+                dtype=dace.float64,
+                transient=False,
+        )
+    sdfg.add_array(
+            "T",
+            shape=(10, 2),
+            dtype=dace.float64,
+            transient=True,
+    )
+
+    A, B, T = (state.add_access(name) for name in ["A", "B", "T"])
+
+    me1, mx1 = state.add_map(
+            "first_map",
+            ndrange={"__i0": "0:10"},
+    )
+
+    state.add_edge(
+            A, None,
+            me1, "IN_A",
+            dace.Memlet("A[0:10]")
+    )
+    me1.add_in_connector("IN_A")
+    me1.add_out_connector("OUT_A")
+
+    tsklt1_1 = state.add_tasklet(
+            "tsklt1_1",
+            inputs={"__in1"},
+            outputs={"__out"},
+            code="__out = __in1 * 2.0",
+    )
+    state.add_edge(
+            me1, "OUT_A",
+            tsklt1_1, "__in1",
+            dace.Memlet("A[__i0]")
+    )
+    state.add_edge(
+            tsklt1_1, "__out",
+            mx1, "IN_T",
+            dace.Memlet("T[__i0, 0]")
+    )
+
+    tsklt1_2 = state.add_tasklet(
+            "tsklt1_2",
+            inputs={"__in1"},
+            outputs={"__out"},
+            code="__out = __in1 / 2.0",
+    )
+    state.add_edge(
+            me1, "OUT_A",
+            tsklt1_2, "__in1",
+            dace.Memlet("A[__i0]")
+    )
+    state.add_edge(
+            tsklt1_2, "__out",
+            mx1, "IN_T",
+            dace.Memlet("T[__i0, 1]")
+    )
+    mx1.add_in_connector("IN_T")
+
+    state.add_edge(
+            mx1, "OUT_T",
+            T, None,
+            dace.Memlet("T[0:10, 0:2]"),
+    )
+    mx1.add_out_connector("OUT_T")
+
+    state.add_mapped_tasklet(
+            "comp2",
+            map_ranges={"__i1": "0:10"},
+            inputs={
+                "__in1": dace.Memlet("T[__i1, 1]"),
+                "__in2": dace.Memlet("T[__i1, 0]"),
+            },
+            code="__out = math.sin(__in1) + math.cos(__in2)",
+            outputs={"__out": dace.Memlet("B[__i1]")},
+            input_nodes={T},
+            output_nodes={B},
+            external_edges=True,
+    )
+    sdfg.validate()
+
+    apply_fusion(sdfg, removed_maps=1, final_maps=1)
+
+    args_ref = {
+            'A': np.array(np.random.rand(10), dtype=np.float64, copy=True),
+            'B': np.array(np.random.rand(10), dtype=np.float64, copy=True),
+    }
+    args_res = copy.deepcopy(args_ref)
+
+    ref(**args_ref)
+    sdfg(**args_res)
+    for arg in args_ref.keys():
+        arg_ref = args_ref[arg]
+        arg_res = args_res[arg]
+        assert np.allclose(arg_ref, arg_res)
 
 
 if __name__ == '__main__':
