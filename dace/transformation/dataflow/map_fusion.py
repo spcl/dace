@@ -27,24 +27,16 @@ class MapFusion(transformation.SingleStateTransformation):
     Furthermore, shared intermediates, see `partition_first_outputs()` will only
     be created if the data is not referred downstream in the dataflow.
 
-    Args:
-        only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
-        only_toplevel_maps: Only consider Maps that are at the top.
-        strict_dataflow: Which dataflow mode should be used, see above.
+    :param only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
+    :param only_toplevel_maps: Only consider Maps that are at the top.
+    :param strict_dataflow: Which dataflow mode should be used, see above.
 
-    Notes:
-        - This transformation modifies more nodes than it matches.
-        - After the transformation has been applied simplify should be run to remove
+    :note: This transformation modifies more nodes than it matches.
+    :note: After the transformation has been applied simplify should be run to remove
             some dead data flow, that was introduced to ensure validity.
-        - A `MapFusion` obejct can be initialized and be reused. However,
+    :note: A `MapFusion` obejct can be initialized and be reused. However,
             after new access nodes are added to any state, it is no longer valid
             to use the object.
-
-    Todo:
-        - Consider the case that only shared nodes are created (thus no inspection of
-            the graph is needed) and make all shared. Then use the dead dataflow
-            elimination transformation to get rid of the ones we no longer need.
-        - Increase the applicability.
     """
 
     # Pattern Nodes
@@ -115,9 +107,9 @@ class MapFusion(transformation.SingleStateTransformation):
         """Tests if the matched Maps can be merged.
 
         The two Maps are mergeable iff:
-        - Checks general requirements, see `can_topologically_be_fused()`.
-        - Tests if there are read write dependencies.
-        - Tests if the decomposition exists.
+        * Checks general requirements, see `can_topologically_be_fused()`.
+        * Tests if there are read write dependencies.
+        * Tests if the decomposition exists.
         """
         # To ensures that the `{src,dst}_subset` are properly set, run initialization.
         #  See [issue 1708](https://github.com/spcl/dace/issues/1703)
@@ -191,9 +183,8 @@ class MapFusion(transformation.SingleStateTransformation):
 
         By assumption we do not have to rename anything.
 
-        Args:
-            graph: The SDFG state we are operating on.
-            sdfg: The SDFG we are operating on.
+        :param graph: The SDFG state we are operating on.
+        :param sdfg: The SDFG we are operating on.
         """
         # To ensures that the `{src,dst}_subset` are properly set, run initialization.
         #  See [issue 1708](https://github.com/spcl/dace/issues/1703)
@@ -295,15 +286,15 @@ class MapFusion(transformation.SingleStateTransformation):
 
         The output edges of the first map are partitioned into three distinct sets,
         defined as follows:
-        - Pure Output Set `\mathbb{P}`:
+        * Pure Output Set `\mathbb{P}`:
             These edges exits the first map and does not enter the second map. These
             outputs will be simply be moved to the output of the second map.
-        - Exclusive Intermediate Set `\mathbb{E}`:
+        * Exclusive Intermediate Set `\mathbb{E}`:
             Edges in this set leaves the first map exit, enters an access node, from
             where a Memlet then leads immediately to the second map. The memory
             referenced by this access node is not used anywhere else, thus it can
             be removed.
-        - Shared Intermediate Set `\mathbb{S}`:
+        * Shared Intermediate Set `\mathbb{S}`:
             These edges are very similar to the one in `\mathbb{E}` except that they
             are used somewhere else, thus they can not be removed and have to be
             recreated as output of the second map.
@@ -531,11 +522,10 @@ class MapFusion(transformation.SingleStateTransformation):
         `from_node` has degree zero.
         The function assumes that the parameter renaming was already done.
 
-        Args:
-            from_node: Node from which the edges should be removed.
-            to_node: Node to which the edges should reconnect.
-            state: The state in which the operation happens.
-            sdfg: The SDFG that is modified.
+        :param from_node: Node from which the edges should be removed.
+        :param to_node: Node to which the edges should reconnect.
+        :param state: The state in which the operation happens.
+        :param sdfg: The SDFG that is modified.
         """
 
         # Now we relocate empty Memlets, from the `from_node` to the `to_node`
@@ -624,17 +614,15 @@ class MapFusion(transformation.SingleStateTransformation):
         the SDFG. While in shared mode the intermediate node will be preserved.
         The function assumes that the parameter renaming was already done.
 
-        Args:
-            intermediate_outputs: The set of outputs, that should be processed.
-            state: The state in which the map is processed.
-            sdfg: The SDFG that should be optimized.
-            first_map_exit: The exit of the first/top map.
-            second_map_entry: The entry of the second map.
-            second_map_exit: The exit of the second map.
-            is_exclusive_set: If `True` `intermediate_outputs` is the exclusive set.
+        :param intermediate_outputs: The set of outputs, that should be processed.
+        :param state: The state in which the map is processed.
+        :param sdfg: The SDFG that should be optimized.
+        :param first_map_exit: The exit of the first/top map.
+        :param second_map_entry: The entry of the second map.
+        :param second_map_exit: The exit of the second map.
+        :param is_exclusive_set: If `True` `intermediate_outputs` is the exclusive set.
 
-        Notes:
-            Before the transformation the `state` does not have to be valid and
+        :note: Before the transformation the `state` does not have to be valid and
             after this function has run the state is (most likely) invalid.
         """
 
@@ -887,10 +875,10 @@ class MapFusion(transformation.SingleStateTransformation):
         the two maps a new, but much smaller intermediate is needed.
 
         :return: The function returns a tuple with three values with the following meaning:
-            - The raw shape of the reduced intermediate.
-            - The cleared shape of the reduced intermediate, essentially the raw shape
+            * The raw shape of the reduced intermediate.
+            * The cleared shape of the reduced intermediate, essentially the raw shape
                 with all shape 1 dimensions removed.
-            - Which dimensions of the raw shape have been removed to get the cleared shape.
+            * Which dimensions of the raw shape have been removed to get the cleared shape.
 
         :param producer_subset: The subset that was used to write into the intermediate.
         :param inter_desc: The data descriptor for the intermediate.
@@ -937,12 +925,11 @@ class MapFusion(transformation.SingleStateTransformation):
         case the function computes the correction for the consumer side, i.e. the
         memlet tree that originates at `intermediate_desc`.
 
-        Args:
-            original_subset: The original subset that was used to write into the
-                intermediate, must be renamed to the final map parameter.
-            intermediate_desc: The original intermediate data descriptor.
-            map_params: The parameter of the final map.
-            producer_offset: The correction that was applied to the producer side.
+        :param original_subset: The original subset that was used to write into the
+            intermediate, must be renamed to the final map parameter.
+        :param intermediate_desc: The original intermediate data descriptor.
+        :param map_params: The parameter of the final map.
+        :param producer_offset: The correction that was applied to the producer side.
         """
         assert not isinstance(intermediate_desc, data.View)
         final_offset: subsets.Range = None
@@ -996,9 +983,9 @@ class MapFusion(transformation.SingleStateTransformation):
 
         This function only checks constrains that are common between serial and
         parallel map fusion process, which includes:
-        - The scope of the maps.
-        - The scheduling of the maps.
-        - The map parameters.
+        * The scope of the maps.
+        * The scheduling of the maps.
+        * The map parameters.
 
         :return: If the maps can not be topologically fused the function returns `None`.
             If they can be fused the function returns `dict` that describes parameter
@@ -1045,12 +1032,12 @@ class MapFusion(transformation.SingleStateTransformation):
         The function will scan and anaysize the body of the two Maps and look for
         inconsistencies. To detect them the function will scan the body of the maps
         and examine the all AccessNodes and apply the following rules:
-        - If an AccessNode refers to a View, it is ignored. Because the source is
+        * If an AccessNode refers to a View, it is ignored. Because the source is
             either on the outside, in which case `has_read_write_dependency()`
             takes care of it, or the data source is inside the Map body itself.
-        - An inconsistency is detected, if in each bodies there exists an AccessNode
+        * An inconsistency is detected, if in each bodies there exists an AccessNode
             that refer to the same data.
-        - An inconsistency is detected, if there exists an AccessNode that refers
+        * An inconsistency is detected, if there exists an AccessNode that refers
             to non transient data. This is an implementation detail and could be
             lifted.
 
@@ -1106,10 +1093,10 @@ class MapFusion(transformation.SingleStateTransformation):
         """Test if there is a read write dependency between the two maps to be fused.
 
         The function checks two different things.
-        - The function will make sure that there is no read write dependency between
+        * The function will make sure that there is no read write dependency between
             the input and output of the fused maps. For that it will inspect the
             respective subsets.
-        - The second part partially checks the intermediate nodes, it mostly ensures
+        * The second part partially checks the intermediate nodes, it mostly ensures
             that there are not views and that they are not used as inputs or outputs
             at the same time. However, the function will not check for read write
             conflicts in this set, this is done in the partition function.
@@ -1242,8 +1229,7 @@ class MapFusion(transformation.SingleStateTransformation):
         If the subsets originates from different maps, then they must have been
         renamed.
 
-        Args:
-            subsets_to_check: The list of subsets that should be checked.
+        :param subsets_to_check: The list of subsets that should be checked.
         """
         assert len(subsets_to_check) > 1
 
@@ -1281,21 +1267,19 @@ class MapFusion(transformation.SingleStateTransformation):
         """Tests if `data` is shared data, an can not be removed.
 
         Interstate data is used to transmit data, this includes:
-        - The data is referred in multiple states.
-        - The data is referred to multiple times in the same state, either the state
+        * The data is referred in multiple states.
+        * The data is referred to multiple times in the same state, either the state
             has multiple access nodes for that data or an access node has an
             out degree larger than one.
-        - The data is read inside interstate edges.
+        * The data is read inside interstate edges.
 
         This definition is stricter than the one employed by `SDFG.shared_transients()`,
         as it also includes usage within a state.
 
-        Args:
-            transient: The transient that should be checked.
-            sdfg: The SDFG containing the array.
+        :param transient: The transient that should be checked.
+        :param sdfg: The SDFG containing the array.
 
-        Note:
-            The function computes the this set once for every SDFG and then caches it.
+        :note: The function computes the this set once for every SDFG and then caches it.
             There is no mechanism to detect if the cache must be evicted. However,
             as long as no additional data is added to the SDFG, there is no problem.
         """
@@ -1312,8 +1296,7 @@ class MapFusion(transformation.SingleStateTransformation):
 
         See the documentation for `self.is_shared_data()` for a description.
 
-        Args:
-            sdfg: The SDFG for which the set of shared data should be computed.
+        :param sdfg: The SDFG for which the set of shared data should be computed.
         """
         # Shared data of this SDFG.
         shared_data: Set[str] = set()
@@ -1393,9 +1376,8 @@ class MapFusion(transformation.SingleStateTransformation):
         then the function returns an empty `dict`.
         If no remapping exists, then the function will return `None`.
 
-        Args:
-            first_map:  The first map (these parameters will be replaced).
-            second_map: The second map, these parameters acts as source.
+        :param first_map: The first map (these parameters will be replaced).
+        :param second_map: The second map, these parameters acts as source.
         """
 
         # The parameter names
@@ -1476,11 +1458,10 @@ class MapFusion(transformation.SingleStateTransformation):
         handled correct. The function assumes that a proper replacement exists.
         The replacement is computed by calling `self.find_parameter_remapping()`.
 
-        Args:
-            first_map:  The first map (these are the final parameter).
-            second_map: The second map, this map will be replaced.
-            second_map_entry: The entry node of the second map.
-            state: The SDFGState on which we operate.
+        :param first_map:  The first map (these are the final parameter).
+        :param second_map: The second map, this map will be replaced.
+        :param second_map_entry: The entry node of the second map.
+        :param state: The SDFGState on which we operate.
         """
         # Compute the replacement dict.
         repl_dict: Dict[str, str] = self.find_parameter_remapping(first_map=first_map, second_map=second_map)
@@ -1515,10 +1496,9 @@ class MapFusion(transformation.SingleStateTransformation):
         to `end` the function returns `True`. If the node is never found `False` is
         returned.
 
-        Args:
-            graph: The graph to operate on.
-            begin: The start of the DFS.
-            end: The node that should be located.
+        :param graph: The graph to operate on.
+        :param begin: The start of the DFS.
+        :param end: The node that should be located.
         """
 
         def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
@@ -1553,10 +1533,9 @@ class MapFusion(transformation.SingleStateTransformation):
         If no such node is found it will return `False`.
         Note that the node `begin` will be ignored.
 
-        Args:
-            data: The name of the data to look for.
-            graph: The graph to explore.
-            begin: The node to start exploration; The node itself is ignored.
+        :param data: The name of the data to look for.
+        :param graph: The graph to explore.
+        :param begin: The node to start exploration; The node itself is ignored.
         """
         def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
             return (edge.dst for edge in graph.out_edges(node))
@@ -1587,9 +1566,8 @@ class MapFusion(transformation.SingleStateTransformation):
         The function returns a set that contains all access nodes that were found.
         It is important that this set will also contain views.
 
-        Args:
-            scope_node: The scope node that should be evaluated.
-            state: The state in which we operate.
+        :param scope_node: The scope node that should be evaluated.
+        :param state: The state in which we operate.
         """
         if isinstance(scope_node, nodes.MapEntry):
             get_edges = lambda node: state.in_edges(node)
@@ -1674,35 +1652,17 @@ class MapFusion(transformation.SingleStateTransformation):
         access node. For convenience, if `view` is not a `View` the argument will be
         returned.
 
-        Args:
-            view: The view that should be traced.
-            state: The state in which we operate.
-            sdfg: The SDFG on which we operate.
+        :param view: The view that should be traced.
+        :param state: The state in which we operate.
+        :param sdfg: The SDFG on which we operate.
         """
 
         # Test if it is a view at all, if not return the passed node as source.
         if not self.is_view(view, sdfg):
             return view
 
-        # First determine if the view is used for reading or writing.
-        curr_edge = dace.sdfg.utils.get_view_edge(state, view)
-        if curr_edge is None:
-            raise RuntimeError(f"Failed to determine the direction of the view '{view}'.")
-        if curr_edge.dst_conn == "views":
-            # The view is used for reading.
-            next_node = lambda curr_edge: curr_edge.src
-        elif curr_edge.src_conn == "views":
-            # The view is used for writing.
-            next_node = lambda curr_edge: curr_edge.dst
-        else:
-            raise RuntimeError(f"Failed to determine the direction of the view '{view}' | {curr_edge}.")
-
-        # Now trace the view back.
-        org_view = view
-        view = next_node(curr_edge)
-        while self.is_view(view, sdfg):
-            curr_edge = dace.sdfg.utils.get_view_edge(state, view)
-            if curr_edge is None:
-                raise RuntimeError(f"View tracing of '{org_view}' failed at note '{view}'.")
-            view = next_node(curr_edge)
-        return view
+        # This is the node that defines the view.
+        defining_node = dace.sdfg.utils.get_last_view_node(state, view)
+        assert isinstance(defining_node, nodes.AccessNode)
+        assert not self.is_view(defining_node, sdfg)
+        return defining_node
