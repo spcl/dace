@@ -405,6 +405,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 if isinstance(producer_edge.src, nodes.AccessNode) and self.is_view(producer_edge.src, sdfg):
                     return None
                 if producer_edge.data.dynamic:
+                    # TODO(phimuell): Find out if this restriction could be lifted, but it is unlikely.
                     return None
                 if producer_edge.data.wcr is not None:
                     return None
@@ -456,13 +457,14 @@ class MapFusion(transformation.SingleStateTransformation):
                 # Now we look at all edges that leave the second map entry, i.e. the
                 #  edges that feeds the consumer and define what is read inside the map.
                 #  We do not check them, but collect them and inspect them.
-                #  NOTE: The subset still uses the old iteration variables.
+                # NOTE1: The subset still uses the old iteration variables.
+                # NOTE2: In case of consumer Memlet we explicitly allow dynamic Memlets.
+                #   This is different compared to the producer Memlet. The reason is
+                #   because in a consumer the data is conditionally read, so the data
+                #   has to exists anyway.
                 for inner_consumer_edge in state.out_edges_by_connector(
                         second_map_entry, "OUT_" + intermediate_node_out_edge.dst_conn[3:]):
                     if inner_consumer_edge.data.src_subset is None:
-                        return None
-                    if inner_consumer_edge.data.dynamic:
-                        # TODO(phimuell): Is this restriction necessary, I am not sure.
                         return None
                     consumer_subsets.append(inner_consumer_edge.data.src_subset)
             assert found_second_map, f"Found '{intermediate_node}' which looked like a pure node, but is not one."

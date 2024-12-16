@@ -583,7 +583,9 @@ def test_fusion_with_nested_sdfg_0():
 
 
 def test_fusion_with_nested_sdfg_1():
-    
+
+    # As a side effect this test also ensures that dynamic consumer edges, does not
+    #  impact fusing, i.e. allow that fusion can take place.
     @dace.program
     def fusion_with_nested_sdfg_1(A: dace.int32[10], B: dace.int32[10], C: dace.int32[10]):
         tmp = np.empty([10], dtype=np.int32)
@@ -600,12 +602,6 @@ def test_fusion_with_nested_sdfg_1():
                 B[i] = tmp[i] * 2
     
     sdfg = fusion_with_nested_sdfg_1.to_sdfg(simplify=True)
-
-    # Because the transformation refuses to fuse dynamic edges.
-    #  We have to eliminate them.
-    for state in sdfg.states():
-        for edge in state.edges():
-            edge.data.dynamic = False
     apply_fusion(sdfg)
 
     if len(sdfg.states()) != 1:
