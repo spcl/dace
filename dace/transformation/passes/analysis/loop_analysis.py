@@ -126,17 +126,17 @@ def get_loop_carry_dependencies(loop: LoopRegion) -> Optional[Dict[Memlet, Memle
     """
     update_assignment = None
     raw_deps: Dict[Memlet, Memlet] = dict()
-    for data in loop._possible_reads:
-        if not data in loop._possible_writes:
+    for data in loop.possible_reads:
+        if not data in loop.possible_writes:
             continue
 
-        input = loop._possible_reads[data]
+        input = loop.possible_reads[data]
         read_subset = input.src_subset or input.subset
         if loop.loop_variable and loop.loop_variable in input.free_symbols:
             # If the iteration variable is involved in an access, we need to first offset it by the loop
             # stride and then check for an overlap/intersection. If one is found after offsetting, there
             # is a RAW loop carry dependency.
-            output = loop._possible_writes[data]
+            output = loop.possible_writes[data]
             # Get and cache the update assignment for the loop.
             if update_assignment is None:
                 update_assignment = get_update_assignment(loop)
@@ -152,7 +152,7 @@ def get_loop_carry_dependencies(loop: LoopRegion) -> Optional[Dict[Memlet, Memle
         else:
             # Check for basic overlaps/intersections in RAW loop carry dependencies, when there is no
             # iteration variable involved.
-            output = loop._possible_writes[data]
+            output = loop.possible_writes[data]
             if intersects(output.subset, read_subset):
                 raw_deps[input] = output
     return raw_deps

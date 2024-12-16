@@ -1208,10 +1208,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     _sdfg: Optional['SDFG'] = None
     _parent_graph: Optional['ControlFlowRegion'] = None
 
-    _certain_reads: Dict[str, mm.Memlet]
-    _possible_reads: Dict[str, mm.Memlet]
-    _certain_writes: Dict[str, mm.Memlet]
-    _possible_writes: Dict[str, mm.Memlet]
+    certain_reads = DictProperty(key_type=str, value_type=mm.Memlet)
+    possible_reads = DictProperty(key_type=str, value_type=mm.Memlet)
+    certain_writes = DictProperty(key_type=str, value_type=mm.Memlet)
+    possible_writes = DictProperty(key_type=str, value_type=mm.Memlet)
 
     def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None, parent: Optional['ControlFlowRegion'] = None):
         super(ControlFlowBlock, self).__init__()
@@ -1223,10 +1223,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.pre_conditions = {}
         self.post_conditions = {}
         self.invariant_conditions = {}
-        self._certain_reads = dict()
-        self._possible_reads = dict()
-        self._certain_writes = dict()
-        self._possible_writes = dict()
+        self.certain_reads = {}
+        self.possible_reads = {}
+        self.certain_writes = {}
+        self.possible_writes = {}
 
         self.guid = generate_element_id(self)
 

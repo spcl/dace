@@ -1169,16 +1169,22 @@ class SubsetUnion(Subset):
     Wrapper subset type that stores multiple Subsets in a list.
     """
 
+    subset_list: List[Range]
+
     def __init__(self, subset):
-        self.subset_list: list[Subset] = []
+        self.subset_list = []
         if isinstance(subset, SubsetUnion):
             self.subset_list = subset.subset_list
         elif isinstance(subset, list):
             for subset in subset:
                 if not subset:
                     break
-                if isinstance(subset, (Range, Indices)):
+                if isinstance(subset, Range):
                     self.subset_list.append(subset)
+                elif isinstance(subset, Indices):
+                    self.subset_list.append(Range.from_indices(subset))
+                elif isinstance(subset, SubsetUnion):
+                    self.subset_list.extend(subset.subset_list)
                 else:
                     raise NotImplementedError
         elif isinstance(subset, (Range, Indices)):
@@ -1255,6 +1261,28 @@ class SubsetUnion(Subset):
         for subs in self.subset_list:
             dim_ranges.append(Range([subs[key]]))
         return SubsetUnion(dim_ranges)
+
+    def to_json(self):
+        ret = []
+
+        for sbs in self.subset_list:
+            ret.append(sbs.to_json())
+
+        return {'type': 'SubsetUnion', 'subset_list': ret}
+
+    @staticmethod
+    def from_json(obj, context=None):
+        if not isinstance(obj, dict):
+            raise TypeError("Expected dict, got {}".format(type(obj)))
+        if obj['type'] != 'SubsetUnion':
+            raise TypeError("from_json of class \"SubsetUnion\" called on json "
+                            "with type %s (expected 'SubsetUnion')" % obj['type'])
+
+        subset_list = []
+        for r in obj['subset_list']:
+            subset_list.append(Range.from_json(r, context))
+
+        return SubsetUnion(subset_list)
     
     def dims(self):
         if not self.subset_list:

@@ -20,22 +20,22 @@ def test_nested_conditional_in_map():
 
     MemletPropagation().apply_pass(sdfg, {})
 
-    assert 'A' in sdfg._possible_reads
-    assert str(sdfg._possible_reads['A'].subset) == '0, 0'
-    assert sdfg._possible_reads['A'].dynamic == False
-    assert sdfg._possible_reads['A'].volume == M
-    assert 'A' in sdfg._certain_reads
-    assert str(sdfg._certain_reads['A'].subset) == '0, 0'
-    assert sdfg._certain_reads['A'].dynamic == False
-    assert sdfg._certain_reads['A'].volume == M
-    assert 'A' in sdfg._possible_writes
-    assert str(sdfg._possible_writes['A'].subset) == '0:M, 0:N'
-    assert sdfg._possible_writes['A'].dynamic == False
-    assert sdfg._possible_writes['A'].volume == M * N
-    assert 'A' in sdfg._certain_writes
-    assert str(sdfg._certain_writes['A'].subset) == '0:M, 0:N'
-    assert sdfg._certain_writes['A'].dynamic == False
-    assert sdfg._certain_writes['A'].volume == M * N
+    assert 'A' in sdfg.possible_reads
+    assert str(sdfg.possible_reads['A'].subset) == '0, 0'
+    assert sdfg.possible_reads['A'].dynamic == False
+    assert sdfg.possible_reads['A'].volume == M
+    assert 'A' in sdfg.certain_reads
+    assert str(sdfg.certain_reads['A'].subset) == '0, 0'
+    assert sdfg.certain_reads['A'].dynamic == False
+    assert sdfg.certain_reads['A'].volume == M
+    assert 'A' in sdfg.possible_writes
+    assert str(sdfg.possible_writes['A'].subset) == '0:M, 0:N'
+    assert sdfg.possible_writes['A'].dynamic == False
+    assert sdfg.possible_writes['A'].volume == M * N
+    assert 'A' in sdfg.certain_writes
+    assert str(sdfg.certain_writes['A'].subset) == '0:M, 0:N'
+    assert sdfg.certain_writes['A'].dynamic == False
+    assert sdfg.certain_writes['A'].volume == M * N
 
 def test_nested_conditional_in_loop_in_map():
     N = dace.symbol('N')
@@ -55,22 +55,22 @@ def test_nested_conditional_in_loop_in_map():
 
     MemletPropagation().apply_pass(sdfg, {})
 
-    assert 'A' in sdfg._possible_reads
-    assert str(sdfg._possible_reads['A'].subset) == '0, 0'
-    assert sdfg._possible_reads['A'].dynamic == False
-    assert sdfg._possible_reads['A'].volume == M * (N - 2)
-    assert 'A' in sdfg._certain_reads
-    assert str(sdfg._certain_reads['A'].subset) == '0, 0'
-    assert sdfg._certain_reads['A'].dynamic == False
-    assert sdfg._certain_reads['A'].volume == M * (N - 2)
-    assert 'A' in sdfg._possible_writes
-    assert str(sdfg._possible_writes['A'].subset) == '0:M, 0:N - 2'
-    assert sdfg._possible_writes['A'].dynamic == False
-    assert sdfg._possible_writes['A'].volume == M * (N - 2)
-    assert 'A' in sdfg._certain_writes
-    assert str(sdfg._certain_writes['A'].subset) == '0:M, 0:N - 2'
-    assert sdfg._certain_writes['A'].dynamic == False
-    assert sdfg._certain_writes['A'].volume == M * (N - 2)
+    assert 'A' in sdfg.possible_reads
+    assert str(sdfg.possible_reads['A'].subset) == '0, 0'
+    assert sdfg.possible_reads['A'].dynamic == False
+    assert sdfg.possible_reads['A'].volume == M * (N - 2)
+    assert 'A' in sdfg.certain_reads
+    assert str(sdfg.certain_reads['A'].subset) == '0, 0'
+    assert sdfg.certain_reads['A'].dynamic == False
+    assert sdfg.certain_reads['A'].volume == M * (N - 2)
+    assert 'A' in sdfg.possible_writes
+    assert str(sdfg.possible_writes['A'].subset) == '0:M, 0:N - 2'
+    assert sdfg.possible_writes['A'].dynamic == False
+    assert sdfg.possible_writes['A'].volume == M * (N - 2)
+    assert 'A' in sdfg.certain_writes
+    assert str(sdfg.certain_writes['A'].subset) == '0:M, 0:N - 2'
+    assert sdfg.certain_writes['A'].dynamic == False
+    assert sdfg.certain_writes['A'].volume == M * (N - 2)
 
 def test_runtime_conditional():
     @dace.program
@@ -85,33 +85,33 @@ def test_runtime_conditional():
 
     MemletPropagation().apply_pass(sdfg, {})
 
-    assert 'mask' in sdfg._possible_reads
-    assert str(sdfg._possible_reads['mask'].subset) == '1:10'
-    assert sdfg._possible_reads['mask'].dynamic == False
-    assert sdfg._possible_reads['mask'].volume == 9
-    assert 'in1' in sdfg._possible_reads
-    assert str(sdfg._possible_reads['in1'].subset) == '0:10'
-    assert sdfg._possible_reads['in1'].dynamic == False
-    assert sdfg._possible_reads['in1'].volume == 18
+    assert 'mask' in sdfg.possible_reads
+    assert str(sdfg.possible_reads['mask'].subset) == '1:10'
+    assert sdfg.possible_reads['mask'].dynamic == False
+    assert sdfg.possible_reads['mask'].volume == 9
+    assert 'in1' in sdfg.possible_reads
+    assert str(sdfg.possible_reads['in1'].subset) == '0:10'
+    assert sdfg.possible_reads['in1'].dynamic == False
+    assert sdfg.possible_reads['in1'].volume == 18
 
-    assert 'mask' in sdfg._certain_reads
-    assert str(sdfg._certain_reads['mask'].subset) == '1:10'
-    assert sdfg._certain_reads['mask'].dynamic == False
-    assert sdfg._certain_reads['mask'].volume == 9
-    assert 'in1' in sdfg._certain_reads
-    assert str(sdfg._certain_reads['in1'].subset) == '0:10'
-    assert sdfg._certain_reads['in1'].dynamic == False
-    assert sdfg._certain_reads['in1'].volume == 18
+    assert 'mask' in sdfg.certain_reads
+    assert str(sdfg.certain_reads['mask'].subset) == '1:10'
+    assert sdfg.certain_reads['mask'].dynamic == False
+    assert sdfg.certain_reads['mask'].volume == 9
+    assert 'in1' in sdfg.certain_reads
+    assert str(sdfg.certain_reads['in1'].subset) == '0:10'
+    assert sdfg.certain_reads['in1'].dynamic == False
+    assert sdfg.certain_reads['in1'].volume == 18
 
-    assert 'out' in sdfg._possible_writes
-    assert str(sdfg._possible_writes['out'].subset) == '1:10'
-    assert sdfg._possible_writes['out'].dynamic == False
-    assert sdfg._possible_writes['out'].volume == 9
+    assert 'out' in sdfg.possible_writes
+    assert str(sdfg.possible_writes['out'].subset) == '1:10'
+    assert sdfg.possible_writes['out'].dynamic == False
+    assert sdfg.possible_writes['out'].volume == 9
 
-    assert 'out' in sdfg._certain_writes
-    assert str(sdfg._certain_writes['out'].subset) == '1:10'
-    assert sdfg._certain_writes['out'].dynamic == False
-    assert sdfg._certain_writes['out'].volume == 9
+    assert 'out' in sdfg.certain_writes
+    assert str(sdfg.certain_writes['out'].subset) == '1:10'
+    assert sdfg.certain_writes['out'].dynamic == False
+    assert sdfg.certain_writes['out'].volume == 9
 
 def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
     N = dace.symbol('N')
@@ -125,25 +125,25 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
 
     MemletPropagation().apply_pass(sdfg, {})
 
-    assert 'ind' in sdfg._possible_reads
-    assert str(sdfg._possible_reads['ind'].subset) == '0:M, 0:N'
-    assert sdfg._possible_reads['ind'].dynamic == False
-    assert sdfg._possible_reads['ind'].volume == N * M
+    assert 'ind' in sdfg.possible_reads
+    assert str(sdfg.possible_reads['ind'].subset) == '0:M, 0:N'
+    assert sdfg.possible_reads['ind'].dynamic == False
+    assert sdfg.possible_reads['ind'].volume == N * M
 
-    assert 'ind' in sdfg._certain_reads
-    assert str(sdfg._certain_reads['ind'].subset) == '0:M, 0:N'
-    assert sdfg._certain_reads['ind'].dynamic == False
-    assert sdfg._certain_reads['ind'].volume == N * M
+    assert 'ind' in sdfg.certain_reads
+    assert str(sdfg.certain_reads['ind'].subset) == '0:M, 0:N'
+    assert sdfg.certain_reads['ind'].dynamic == False
+    assert sdfg.certain_reads['ind'].volume == N * M
 
-    assert 'A' in sdfg._possible_writes
-    assert str(sdfg._possible_writes['A'].subset) == '0:M, 0:N'
-    assert sdfg._possible_writes['A'].dynamic == False
-    assert sdfg._possible_writes['A'].volume == N * M
+    assert 'A' in sdfg.possible_writes
+    assert str(sdfg.possible_writes['A'].subset) == '0:M, 0:N'
+    assert sdfg.possible_writes['A'].dynamic == False
+    assert sdfg.possible_writes['A'].volume == N * M
 
-    assert 'A' in sdfg._certain_writes
-    assert str(sdfg._certain_writes['A'].subset) == '0:M, 0:N'
-    assert sdfg._certain_writes['A'].dynamic == False
-    assert sdfg._certain_writes['A'].volume == N * M
+    assert 'A' in sdfg.certain_writes
+    assert str(sdfg.certain_writes['A'].subset) == '0:M, 0:N'
+    assert sdfg.certain_writes['A'].dynamic == False
+    assert sdfg.certain_writes['A'].volume == N * M
 
 def test_nested_loop_in_map():
     N = dace.symbol('N')
@@ -159,18 +159,18 @@ def test_nested_loop_in_map():
 
     MemletPropagation().apply_pass(sdfg, {})
 
-    assert sdfg._possible_reads == {}
-    assert sdfg._certain_reads == {}
+    assert sdfg.possible_reads == {}
+    assert sdfg.certain_reads == {}
 
-    assert 'A' in sdfg._possible_writes
-    assert str(sdfg._possible_writes['A'].subset) == '0:N, 0:M'
-    assert sdfg._possible_writes['A'].dynamic == False
-    assert sdfg._possible_writes['A'].volume == N * M
+    assert 'A' in sdfg.possible_writes
+    assert str(sdfg.possible_writes['A'].subset) == '0:N, 0:M'
+    assert sdfg.possible_writes['A'].dynamic == False
+    assert sdfg.possible_writes['A'].volume == N * M
 
-    assert 'A' in sdfg._certain_writes
-    assert str(sdfg._certain_writes['A'].subset) == '0:N, 0:M'
-    assert sdfg._certain_writes['A'].dynamic == False
-    assert sdfg._certain_writes['A'].volume == N * M
+    assert 'A' in sdfg.certain_writes
+    assert str(sdfg.certain_writes['A'].subset) == '0:N, 0:M'
+    assert sdfg.certain_writes['A'].dynamic == False
+    assert sdfg.certain_writes['A'].volume == N * M
 
 
 if __name__ == '__main__':
