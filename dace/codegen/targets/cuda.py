@@ -612,7 +612,9 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
         deferred_allocation = any([s for s in nodedesc.shape if "__dace_defer" in str(s)])
 
         # Different types of GPU arrays)
-        if nodedesc.storage in dtypes.REALLOCATABLE_STORAGES:
+        if deferred_allocation:
+            assert nodedesc.storage in dtypes.REALLOCATABLE_STORAGES
+
             if not declared:
                 declaration_stream.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
@@ -622,8 +624,11 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
                     "%s = nullptr; // Deferred Allocation" %
                     (dataname,)
                 )
-            else:
-                self._alloc_gpu_global(node, nodedesc, result_alloc, dataname, arrsize_malloc)
+
+        elif  nodedesc.storage == dtypes.StorageType.GPU_Global:
+            if not declared:
+                declaration_stream.write('%s %s;\n' % (ctypedef, dataname))
+            self._alloc_gpu_global(node, nodedesc, result_alloc, dataname, arrsize_malloc)
 
             if node.setzero:
                 if deferred_allocation:
