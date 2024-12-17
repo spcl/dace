@@ -56,13 +56,18 @@ class MapFusion(transformation.SingleStateTransformation):
     :param only_inner_maps: Only match Maps that are internal, i.e. inside another Map.
     :param only_toplevel_maps: Only consider Maps that are at the top.
     :param strict_dataflow: Which dataflow mode should be used, see above.
+    :param assume_always_shared: Assume that all intermediates are shared.
 
     :note: This transformation modifies more nodes than it matches.
-    :note: After the transformation has been applied simplify should be run to remove
-            some dead data flow, that was introduced to ensure validity.
-    :note: A `MapFusion` obejct can be initialized and be reused. However,
-            after new access nodes are added to any state, it is no longer valid
-            to use the object.
+    :note: An instance of MapFusion can be reused multiple times, with one exception.
+            Because the test if an intermediate can be removed or not is very expensive,
+            the transformation computes this information once in the beginning and then
+            caches it. However, the transformation lacks the means to detect if this data
+            has become out of data. Thus if new AccessNodes are added the cache is outdated
+            and the transformation should no longer be used.
+    :note: If `assume_always_shared` is `True` then the transformation will assume that
+            all intermediates are shared. This avoids the problems mentioned above with
+            the cache at the expense of the creation of dead dataflow.
     """
 
     # Pattern Nodes
@@ -87,6 +92,12 @@ class MapFusion(transformation.SingleStateTransformation):
         default=True,
         desc="If `True` then the transformation will ensure a more stricter data flow.",
     )
+    assume_always_shared = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="If `True` then all intermediates will be classified as shared.",
+    )
+
     # Maps SDFGs to the set of data that can not be removed,
     #  because they transmit data _between states_, such data will be made 'shared'.
     #  This variable acts as a cache, and is managed by 'is_shared_data()'.
@@ -1291,7 +1302,7 @@ class MapFusion(transformation.SingleStateTransformation):
         data: nodes.AccessNode,
         sdfg: dace.SDFG,
     ) -> bool:
-        """Tests if `data` is shared data, an can not be removed.
+        """Tests if `data` is shared data, an can not be removed from the SDFG.
 
         Interstate data is used to transmit data, this includes:
         * The data is referred in multiple states.
@@ -1309,7 +1320,13 @@ class MapFusion(transformation.SingleStateTransformation):
         :note: The function computes the this set once for every SDFG and then caches it.
             There is no mechanism to detect if the cache must be evicted. However,
             as long as no additional data is added to the SDFG, there is no problem.
+        :note: If `assume_always_shared` was set, then the function will always return `True`.
         """
+        # This is the only point where we check for `assume_always_shared`.
+        if self.assume_always_shared:
+            return True
+
+        # Check if the SDFG is known, if not scan it and compute the set.
         if sdfg not in self._shared_data:
             self._compute_shared_data_in(sdfg)
         return data.data in self._shared_data[sdfg]
