@@ -154,7 +154,7 @@ class DirectReplacement(IntrinsicTransformation):
     def replace_size(transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
 
         if len(var.args) not in [1, 2]:
-            raise RuntimeError()
+            assert False, "Incorrect arguments to size!"
 
         # get variable declaration for the first argument
         var_decl = transformer.get_var_declaration(var.parent, var.args[0])
@@ -194,7 +194,7 @@ class DirectReplacement(IntrinsicTransformation):
                                var: ast_internal_classes.Call_Expr_Node, line):
 
         if len(var.args) not in [1, 2]:
-            raise RuntimeError()
+            assert False, "Incorrect arguments to lbound/ubound"
 
         # get variable declaration for the first argument
         var_decl = transformer.get_var_declaration(var.parent, var.args[0])
@@ -262,7 +262,7 @@ class DirectReplacement(IntrinsicTransformation):
     def replace_bit_size(transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
 
         if len(var.args) != 1:
-            raise RuntimeError()
+            assert False, "Incorrect arguments to bit_size"
 
         # get variable declaration for the first argument
         var_decl = transformer.get_var_declaration(var.parent, var.args[0])
