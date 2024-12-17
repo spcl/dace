@@ -5,7 +5,7 @@
 from .mapreduce import MapReduceFusion, MapWCRFusion
 from .map_expansion import MapExpansion
 from .map_collapse import MapCollapse
-from .map_for_loop import MapToForLoop, MapToForLoopRegion
+from .map_for_loop import MapToForLoop
 from .map_interchange import MapInterchange
 from .map_dim_shuffle import MapDimShuffle
 from .map_fusion import MapFusion
