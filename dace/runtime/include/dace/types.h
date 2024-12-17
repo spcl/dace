@@ -49,7 +49,13 @@
     #define DACE_HDFI __host__ __device__ __forceinline__
     #define DACE_HFI __host__ __forceinline__
     #define DACE_DFI __device__ __forceinline__
+    #define DACE_HostDev __host__ __device__
+    #define DACE_Host __host__ 
+    #define DACE_Dev __device__
 #else
+    #define DACE_HostDev
+    #define DACE_Host 
+    #define DACE_Dev
     #define DACE_HDFI inline
     #define DACE_HFI inline
     #define DACE_DFI inline

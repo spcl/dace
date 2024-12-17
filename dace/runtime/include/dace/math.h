@@ -496,7 +496,7 @@ namespace dace
 {
     namespace math
     {       
-        static DACE_CONSTEXPR typeless_pi pi{};
+        static DACE_CONSTEXPR DACE_HostDev typeless_pi pi{};
         static DACE_CONSTEXPR typeless_nan nan{};
         //////////////////////////////////////////////////////
         template<typename T>

@@ -201,7 +201,7 @@ def test_cpu(monkeypatch):
     run_lenet(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Code error")
+@pytest.mark.skip(reason="std::runtime_error")
 @pytest.mark.gpu
 def test_gpu():
     run_lenet(dace.dtypes.DeviceType.GPU)

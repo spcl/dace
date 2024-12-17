@@ -83,16 +83,16 @@ def test_vec_sum_vectorize_first_decoupled_interfaces():
         return run_vec_sum(True)
 
 
-@pytest.mark.skip
 @xilinx_test(assert_ii_1=True)
 def test_vec_sum_fpga_transform_first_decoupled_interfaces():
     # For this test, decoupled read/write interfaces are needed to achieve II=1
     with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
-        return run_vec_sum(True)
+        with set_temporary('testing', 'serialization', value=False):
+            return run_vec_sum(True)
 
 
 if __name__ == "__main__":
     test_vec_sum_vectorize_first(None)
     test_vec_sum_fpga_transform_first(None)
-
+    test_vec_sum_fpga_transform_first_decoupled_interfaces(None)
     
