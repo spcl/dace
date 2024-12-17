@@ -5,7 +5,7 @@ import typing
 from dace import data
 from dace.data import Data
 from dace import serialize, symbolic
-from dace.properties import OrderedDictProperty, Property, make_properties
+from dace.properties import ListProperty, OrderedDictProperty, Property, make_properties
 from enum import Enum
 
 import numpy
@@ -40,12 +40,14 @@ class ContainerGroup:
     )
     is_cg = Property(dtype=bool, default=False, allow_none=False)
     is_ca = Property(dtype=bool, default=False, allow_none=False)
+    shape = Property(dtype=tuple, default=(1, ), allow_none=False)
 
-    def __init__(self, name, is_cg, is_ca):
+    def __init__(self, name, is_cg, is_ca, shape):
         self.name = name
         self.members = OrderedDict()
         self.is_cg = is_cg
         self.is_ca = is_ca
+        self.shape = shape
         self._validate()
 
     def add_member(self, name: str, member: Union[Data, "ContainerGroup"]):
@@ -88,7 +90,7 @@ class ContainerGroup:
         members_repr = ", ".join(
             f"{k}: {v.__repr__()}" for k, v in self.members.items()
         )
-        return f"ContainerGroup(name='{self.name}', is_cg={self.is_cg}, is_ca={self.is_ca}, members={{ {members_repr} }})"
+        return f"ContainerGroup(name='{self.name}', is_cg={self.is_cg}, is_ca={self.is_ca}, shape={self.shape}, members={{ {members_repr} }})"
 
     def __str__(self):
         return self.__repr__()
@@ -103,8 +105,9 @@ class ContainerGroup:
         struct_or_container_array: typing.Union[data.Structure, data.ContainerArray],
         is_cg: bool,
         is_ca: bool,
+        shape: tuple
     ) -> "ContainerGroup":
-        dg = cls(name=name, is_cg=is_cg, is_ca=is_ca)
+        dg = cls(name=name, is_cg=is_cg, is_ca=is_ca, shape=shape)
         assert is_cg ^ is_ca
 
         if isinstance(struct_or_container_array, data.Structure):
@@ -113,15 +116,17 @@ class ContainerGroup:
                 new_member = None
                 if isinstance(member, data.Structure):
                     new_member = cls.from_struct(
-                                    name=member_name,
-                                    struct_or_container_array=member,
-                                    is_cg=True,
-                                    is_ca=False)
+                                    name = member_name,
+                                    struct_or_container_array = member,
+                                    is_cg = True,
+                                    is_ca = False,
+                                    shape = (1, ))
                 elif isinstance(member, data.ContainerArray):
                     new_member = cls.from_struct(name=member_name,
-                                                 struct_or_container_array=member,
-                                                 is_cg=False,
-                                                 is_ca=True)
+                                                 struct_or_container_array = member,
+                                                 is_cg = False,
+                                                 is_ca = True,
+                                                 shape = member.shape)
                 elif isinstance(member, (data.Array, data.Scalar)):
                     new_member = member
                 elif isinstance(
@@ -148,7 +153,8 @@ class ContainerGroup:
                 new_member = cls.from_struct(name=member.name,
                                              struct_or_container_array=member,
                                              is_cg=True,
-                                             is_ca=False)
+                                             is_ca=False,
+                                             shape=(1,))
             elif isinstance(member, data.ContainerArray):
                 raise Exception("Two container arrays in a row is currently not supported")
             elif isinstance(member, (data.Array, data.Scalar)):
@@ -156,7 +162,7 @@ class ContainerGroup:
             elif isinstance(
                 member, (sympy.Basic, symbolic.SymExpr, int, numpy.integer)
             ):
-                new_member=data.Scalar(symbolic.symtype(member))
+                new_member = data.Scalar(symbolic.symtype(member))
             else:
                 raise TypeError(f"Unsupported member type in Structure: {type(member)}")
             dg.add_member(

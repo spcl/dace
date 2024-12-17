@@ -2919,35 +2919,20 @@ class SDFG(ControlFlowRegion):
     def register_container_group_members(self, flattening_mode):
         for name, dg in self.container_groups.items():
             self._register_container_group_members(flattening_mode=flattening_mode, container_group_or_array=dg, prefix_name=f'__CG_{name}', acc_shape=())
-        print(self._arrays)
 
     def _register_container_group_members(self, flattening_mode,
                                           container_group_or_array: typing.Union[ContainerGroup, dace.data.ContainerArray],
                                           prefix_name: str, acc_shape: tuple):
-        # Let's say we have an struct of CSR arrays length = L1.
-        # CSR is a srtuct of 3 arrays = L2.1, L2.2, L2.3.
-
-        # If we flatten as Array-of-Structs then we will have an array of form:
-        # [L1 * (L2.1 + L2.2 + L2.3)]
-
-        # If we have a 3rd level then (L2.1 is a struct and has L3.1 and L.32):
-        # [L1 * (L2.1 * (L3.1 + L3.2) + L2.2 + L2.3)]
-
-        # If we flatten as Structs-of-Arrays then we will have an array of form:
-        # [L1][L2.1], [L1][L2.2], [L1][L2.3]
-
-        # If we have a 3rd level (L2.1 is a struct and has L3.1 and L.32):
-        # [L1][L2.1][L3.1], [L1][L2.1][L3.2], [L1][L2.2], [L1][L2.3]
         if flattening_mode == ContainerGroupFlatteningMode.StructOfArrays:
             if isinstance(container_group_or_array, ContainerGroup):
                 container_group = container_group_or_array
-                print(container_group.members.items())
                 for name, member in container_group.members.items():
                     if isinstance(member, ContainerGroup):
                         if member.is_cg:
                             dg_prefix = prefix_name + f'__CG_{member.name}'
                         else:
                             dg_prefix = prefix_name + f'__CA_{member.name}'
+                            acc_shape += member.shape
                         self._register_container_group_members(
                             container_group_or_array=member,
                             flattening_mode=flattening_mode,
@@ -2956,16 +2941,32 @@ class SDFG(ControlFlowRegion):
                     elif isinstance(member, dace.data.ContainerArray):
                         assert False
                     else:
+                        # Add the dimensions accumulated while iterating from root to the leaf node of the trees
                         member_demangled_name = prefix_name + f'__m_{name}'
-                        print("CG", self.container_groups, member_demangled_name)
-                        self.add_datadesc(name=member_demangled_name, datadesc=member, find_new_name=False)
+                        if isinstance(member, dace.data.Scalar):
+                            datadesc = dace.data.Array(
+                                dtype=member.dtype, shape=acc_shape, transient=member.transient,
+                                allow_conflicts=member.allow_conflicts, storage=member.storage,
+                                location=member.location, may_alias=member.may_alias, lifetime=member.lifetime,
+                                debuginfo=member.debuginfo, start_offset=member.start_offset
+                            )
+                        elif isinstance(member, dace.data.Array):
+                            datadesc = dace.data.Array(
+                                dtype=member.dtype, shape=acc_shape + member.shape, transient=member.transient,
+                                allow_conflicts=member.allow_conflicts, storage=member.storage,
+                                location=member.location, may_alias=member.may_alias, lifetime=member.lifetime,
+                                debuginfo=member.debuginfo
+                            )
+                        else:
+                            raise Exception("Leaf member in a container group needs to be scalar or array")
+                        print("CG", self.container_groups, member_demangled_name, datadesc, datadesc.shape)
+                        self.add_datadesc(name=member_demangled_name, datadesc=datadesc, find_new_name=False)
             elif isinstance(container_group_or_array, dace.data.ContainerArray):
                 assert False
             else:
                 raise Exception("?")
-
         elif flattening_mode == ContainerGroupFlatteningMode.ArrayOfStructs:
-            raise Exception("TODO")
+            raise Exception("TODO Support for ArrayOfStructs Flattening")
         else:
             raise Exception("Unsupported Flattening Mode")
 
@@ -2992,17 +2993,20 @@ class SDFG(ControlFlowRegion):
                     return demangled_name
             else:
                 # if we are at last element and it is a "Leaf" (data had no name) it is not an error
-                print(current_dg.members)
+                print("A", i, current_dg, current_dg.members)
                 if i == len(name_hierarchy) - 1 and len(current_dg.members) == 1 and "Leaf" in current_dg.members:
                     demangled_name += f"__m_Leaf"
                     return demangled_name
                 raise Exception(f'Name Hierarchy {name_hierarchy} Not in ContainerGroups {self.container_groups}, {self._arrays} 1')
 
+        if i == len(name_hierarchy) - 1 and len(current_dg.members) == 1 and "Leaf" in current_dg.members:
+            demangled_name += f"__m_Leaf"
+            return demangled_name
         raise Exception(f'Name Hierarchy {name_hierarchy} Not in ContainerGroups {self.container_groups}, {self._arrays} 2')
 
     def generate_container_groups_from_structs(self, flattening_mode : ContainerGroupFlatteningMode):
         for arr_name, arr in self._arrays.items():
             if isinstance(arr, dt.Structure):
                 dg_name = arr_name
-                dg = ContainerGroup.from_struct(name=dg_name, struct_or_container_array=arr, is_cg=True, is_ca=False)
+                dg = ContainerGroup.from_struct(name=dg_name, struct_or_container_array=arr, is_cg=True, is_ca=False, shape=(1, ))
                 self.container_groups[dg_name] = dg
