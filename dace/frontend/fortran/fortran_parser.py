@@ -3370,10 +3370,10 @@ def create_sdfg_from_fortran_file_with_options(
                 transformation.initialize(program)
                 program = transformation.visit(program)
                 break
-            except RuntimeError:
+            except RuntimeError as e:
                 # FIXME: optimize func
                 print("Additional type inference")
-                program = ast_transforms.TypeInference(program, assert_voids=False, assign_scopes=False).visit(program)
+                program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
     print("After intrinsics")
 
