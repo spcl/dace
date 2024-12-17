@@ -754,11 +754,15 @@ class MapFusion(transformation.SingleStateTransformation):
             for producer_tree in state.memlet_tree(new_pre_exit_edge).traverse_children(include_self=False):
                 producer_edge = producer_tree.edge
 
-                # Associate the (already existing) Memlet with the new data.
-                # TODO(phimuell): Improve the code below to remove the check.
-                assert producer_edge.data.data == inter_name
-                producer_edge.data.data = new_inter_name
+                # In order to preserve the intrinsic direction of Memlets we only have to change
+                #  the `.data` attribute of the producer Memlet if it refers to the old intermediate.
+                #  If it refers to something different we keep it. Note that this case can only
+                #  occur if the producer is an AccessNode.
+                if producer_edge.data.data == inter_name:
+                    producer_edge.data.data = new_inter_name
 
+                # Regardless of the intrinsic direction of the Memlet, the subset we care about
+                #  is always `dst_subset`.
                 if is_scalar:
                     producer_edge.data.dst_subset = "0"
                 elif producer_edge.data.dst_subset is not None:
@@ -792,9 +796,6 @@ class MapFusion(transformation.SingleStateTransformation):
                 out_conn_name = "OUT_" + in_conn_name[3:]
 
                 for inner_edge in state.out_edges_by_connector(second_map_entry, out_conn_name):
-                    # TODO(phimuell): Lift this restriction
-                    assert inner_edge.data.data == inter_name  # DIRECTION!!
-
                     # As for the producer side, we now read from a smaller array,
                     #  So we must offset them, we use the original edge for this.
                     assert inner_edge.data.src_subset is not None
@@ -805,11 +806,17 @@ class MapFusion(transformation.SingleStateTransformation):
                             producer_offset=producer_offset,
                     )
 
-                    # Now we create a new connection that instead reads from the new
-                    #  intermediate, instead of the old one. For this we use the
-                    #  old Memlet as template. However it is not fully initialized.
+                    # Now create the memlet for the new consumer. To make sure that we get all attributes
+                    #  of the Memlet we make a deep copy of it. There is a tricky part here, we have to
+                    #  access `src_subset` however, this is only correctly set once it is put inside the
+                    #  SDFG. Furthermore, we have to make sure that the Memlet does not change its direction.
+                    #  i.e. that the association of `subset` and `other_subset` does not change. For this
+                    #  reason we only modify `.data` attribute of the Memlet if its name refers to the old
+                    #  intermediate. Furthermore, to play it safe, we only access the subset, `src_subset`
+                    #  after we have inserted it to the SDFG.
                     new_inner_memlet = copy.deepcopy(inner_edge.data)
-                    new_inner_memlet.data = new_inter_name
+                    if inner_edge.data.data == inter_name:
+                        new_inner_memlet.data = new_inter_name
 
                     # Now we replace the edge from the SDFG.
                     state.remove_edge(inner_edge)
@@ -826,19 +833,26 @@ class MapFusion(transformation.SingleStateTransformation):
                     if is_scalar:
                         new_inner_memlet.subset = "0"
                     elif new_inner_memlet.src_subset is not None:
+                        # TODO(phimuell): Figuring out if `src_subset` is None is an error.
                         new_inner_memlet.src_subset.offset(consumer_offset, negative=True)
                         new_inner_memlet.src_subset.pop(squeezed_dims)
 
                     # Now we have to make sure that all consumers are properly updated.
                     for consumer_tree in state.memlet_tree(new_inner_edge).traverse_children(include_self=False):
-                        # TODO(phimuell): Lift this restriction
-                        assert consumer_tree.edge.data.data == inter_name
-
                         consumer_edge = consumer_tree.edge
-                        consumer_edge.data.data = new_inter_name
+
+                        # We only modify the data if the Memlet refers to the old intermediate data.
+                        #  We can not do this unconditionally, because it might change the intrinsic
+                        #  direction of a Memlet and then `src_subset` would at the next `try_initialize`
+                        #  be wrong. Note that this case only occurs if the destination is an AccessNode.
+                        if consumer_edge.data.data == inter_name:
+                            consumer_edge.data.data = new_inter_name
+
+                        # Now we have to adapt the subsets.
                         if is_scalar:
                             consumer_edge.data.src_subset = "0"
                         elif consumer_edge.data.src_subset is not None:
+                            # TODO(phimuell): Figuring out if `src_subset` is None is an error.
                             consumer_edge.data.src_subset.offset(consumer_offset, negative=True)
                             consumer_edge.data.src_subset.pop(squeezed_dims)
 
