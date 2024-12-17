@@ -1432,7 +1432,14 @@ class IndexExtractor(NodeTransformer):
                                 offset = variable.offsets[idx]
 
                                 # it can be a symbol - Name_Node - or a value
-                                if not isinstance(offset, ast_internal_classes.Name_Node):
+
+
+                                if not isinstance(offset, ast_internal_classes.Name_Node) and not isinstance(offset,ast_internal_classes.BinOp_Node):
+                                    #check if offset is a number
+                                    try:
+                                        offset = int(offset)
+                                    except:
+                                        raise ValueError(f"Offset {offset} is not a number")
                                     offset = ast_internal_classes.Int_Literal_Node(value=str(offset))
                                 newbody.append(
                                     ast_internal_classes.BinOp_Node(
@@ -1931,10 +1938,15 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                 lower_boundary = None
                 if offsets[idx] != 1:
                     # support symbols and integer literals
-                    if isinstance(offsets[idx], ast_internal_classes.Name_Node):
+                    if isinstance(offsets[idx], ast_internal_classes.Name_Node)  or isinstance(offset,ast_internal_classes.BinOp_Node):
                         lower_boundary = offsets[idx]
                     else:
-                        lower_boundary = ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
+                        #check if offset is a number
+                        try:
+                            offset_value = int(offsets[idx])
+                        except:
+                            raise ValueError(f"Offset {offsets[idx]} is not a number")
+                        lower_boundary = ast_internal_classes.Int_Literal_Node(value=str(offset_value))
                 else:
                     lower_boundary = ast_internal_classes.Int_Literal_Node(value="1")
 
@@ -1962,10 +1974,14 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                 if offsets[idx] != 1:
 
                     # support symbols and integer literals
-                    if isinstance(offsets[idx], ast_internal_classes.Name_Node):
+                    if isinstance(offsets[idx], ast_internal_classes.Name_Node)  or isinstance(offset,ast_internal_classes.BinOp_Node):
                         offset = offsets[idx]
                     else:
-                        offset = ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
+                        try:
+                            offset_value = int(offsets[idx])
+                        except:
+                            raise ValueError(f"Offset {offsets[idx]} is not a number")
+                        offset = ast_internal_classes.Int_Literal_Node(value=str(offset_value))
 
                     upper_boundary = ast_internal_classes.BinOp_Node(
                         lval=upper_boundary,

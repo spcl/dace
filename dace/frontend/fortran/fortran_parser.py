@@ -721,8 +721,40 @@ class AST_translator:
     def whilestmt2sdfg(self, node: ast_internal_classes.While_Stmt_Node, sdfg: SDFG):
 
         # raise NotImplementedError("Fortran while statements are not implemented yet")
-        print("Uh oh - whilestmt2sdfg empty")
-        return None
+        name = "While_l_" + str(node.line_number[0]) + "_c_" + str(node.line_number[1])
+        begin_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "Begin" + name)
+        guard_substate = sdfg.add_state("Guard" + name)
+        final_substate = sdfg.add_state("Merge" + name)
+        self.last_sdfg_states[sdfg] = final_substate
+        
+        sdfg.add_edge(begin_state, guard_substate, InterstateEdge())
+
+        condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping, placeholders=self.placeholders,
+                                              placeholders_offsets=self.placeholders_offsets,
+                                              rename_dict=self.replace_names).write_code(node.cond)
+
+        
+        
+        begin_loop_state = sdfg.add_state("BeginWhile" + name)
+        end_loop_state = sdfg.add_state("EndWhile" + name)
+        self.last_sdfg_states[sdfg] = begin_loop_state
+        self.last_loop_continues[sdfg] = end_loop_state
+        if self.last_loop_continues_stack.get(sdfg) is None:
+            self.last_loop_continues_stack[sdfg] = []
+        self.last_loop_continues_stack[sdfg].append(end_loop_state)
+        self.translate(node.body, sdfg)
+
+        sdfg.add_edge(self.last_sdfg_states[sdfg], end_loop_state, InterstateEdge())
+        sdfg.add_edge(guard_substate, begin_loop_state, InterstateEdge(condition))
+        sdfg.add_edge(end_loop_state, guard_substate, InterstateEdge())
+        sdfg.add_edge(guard_substate, final_substate, InterstateEdge(f"not ({condition})"))
+        self.last_sdfg_states[sdfg] = final_substate
+
+        if len(self.last_loop_continues_stack[sdfg]) > 0:
+            self.last_loop_continues[sdfg] = self.last_loop_continues_stack[sdfg][-1]
+        else:
+            self.last_loop_continues[sdfg] = None
+
 
     def forstmt2sdfg(self, node: ast_internal_classes.For_Stmt_Node, sdfg: SDFG):
         """
@@ -3375,18 +3407,18 @@ def create_sdfg_from_fortran_file_with_options(
                 print("Additional type inference")
                 program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
-    print("After intrinsics")
+    # print("After intrinsics")
 
     program = ast_transforms.TypeInference(program).visit(program)
     program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
-    print("Before intrinsics")
-    for transformation in partial_ast.fortran_intrinsics().transformations():
-        transformation.initialize(program)
-        program = transformation.visit(program)
-    print("After intrinsics")
+    # print("Before intrinsics")
+    # for transformation in partial_ast.fortran_intrinsics().transformations():
+    #     transformation.initialize(program)
+    #     program = transformation.visit(program)
+    # print("After intrinsics")
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
