@@ -376,7 +376,8 @@ class StructToContainerGroups(ppl.Pass):
             print("SSSSSS", tuple(struct_to_view_edge.data.subset.ranges), struct_to_view_edge)
             app_data_from_node(struct_to_view_edge)
 
-            if isinstance(sdfg.arrays[struct_to_view_edge.data.data], dace.data.Structure):
+            if (isinstance(sdfg.arrays[struct_to_view_edge.src.data], dace.data.Structure) and
+                not isinstance(sdfg.arrays[struct_to_view_edge.data.data], dace.data.ContainerArray)):
                 skip = True
             else:
                 skip = False
@@ -384,9 +385,10 @@ class StructToContainerGroups(ppl.Pass):
                 if skip:
                     skip = False
                     continue
-                if isinstance(sdfg.arrays[vc.data], dace.data.Structure):
-                    skip = True
                 dst_edge = state.out_edges(vc)[0]
+                if (isinstance(sdfg.arrays[vc.data], dace.data.Structure) and
+                    not isinstance(sdfg.arrays[dst_edge.data.data], dace.data.ContainerArray)):
+                    skip = True
                 memlet_shape += tuple(dst_edge.data.subset.ranges)
                 app_data_from_node(dst_edge)
 
@@ -396,7 +398,8 @@ class StructToContainerGroups(ppl.Pass):
             memlet_shape += tuple(view_to_struct_edge.data.subset.ranges)
             app_data_from_node(view_to_struct_edge)
 
-            if isinstance(sdfg.arrays[view_to_struct_edge.data.data], dace.data.Structure):
+            if (isinstance(sdfg.arrays[view_to_struct_edge.dst.data], dace.data.Structure) and
+                not isinstance(sdfg.arrays[view_to_struct_edge.data.data], dace.data.ContainerArray)):
                 skip = True
             else:
                 skip = False
@@ -404,11 +407,12 @@ class StructToContainerGroups(ppl.Pass):
                 if skip:
                     skip = False
                     continue
-                if isinstance(sdfg.arrays[vc.data], dace.data.Structure):
-                    skip = True
                 src_edge = state.in_edges(vc)[0]
                 memlet_shape += tuple(src_edge.data.subset.ranges)
                 app_data_from_node(src_edge)
+                if (isinstance(sdfg.arrays[vc.data], dace.data.Structure) and
+                    not isinstance(sdfg.arrays[src_edge.data.data], dace.data.ContainerArray)):
+                    skip = True
 
         print(memlet_shape)
         print(viewed_data)
