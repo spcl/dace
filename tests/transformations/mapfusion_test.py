@@ -27,6 +27,7 @@ def apply_fusion(
         removed_maps: Union[int, None] = None,
         final_maps: Union[int, None] = None,
         unspecific: bool = False,
+        apply_once: bool = False,
 ) -> SDFG:
     """Applies the Map fusion transformation.
 
@@ -40,11 +41,18 @@ def apply_fusion(
     num_maps_before = None if unspecific else count_node(sdfg, nodes.MapEntry)
     with dace.config.temporary_config():
         dace.Config.set("optimizer", "match_exception", value=True)
-        sdfg.apply_transformations_repeated(
-            MapFusion(strict_dataflow=True),
-            validate=True,
-            validate_all=True
-        )
+        if apply_once:
+            sdfg.apply_transformations(
+                MapFusion(strict_dataflow=True),
+                validate=True,
+                validate_all=True
+            )
+        else:
+            sdfg.apply_transformations_repeated(
+                MapFusion(strict_dataflow=True),
+                validate=True,
+                validate_all=True
+            )
 
     if unspecific:
         return sdfg
@@ -1769,7 +1777,136 @@ def test_fusion_dynamic_producer():
         assert np.allclose(arg_ref, arg_res)
 
 
+def test_fusion_intrinsic_memlet_direction():
+
+    def ref(A, B):
+        T = A + 10.0
+        B[:] = np.sin(T)
+
+    sdfg = dace.SDFG("fusion_dynamic_producer_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+
+    for name in "ATB":
+        sdfg.add_array(
+                name,
+                shape=(10, 11, 12),
+                dtype=dace.float64,
+                transient=False,
+        )
+    sdfg.arrays["T"].transient = True
+
+    for num in "12":
+        sdfg.add_scalar(
+                "t" + num,
+                dtype=dace.float64,
+                transient=True,
+        )
+
+    A, T, B, t1, t2 = (state.add_access(name) for name in ["A", "T", "B", "t1", "t2"])
+
+    tsklt1, me1, mx1 = state.add_mapped_tasklet(
+            "comp1",
+            map_ranges={
+                "__i1": "0:10",
+                "__i2": "0:11",
+                "__i3": "0:12",
+            },
+            inputs={"__in1": dace.Memlet("A[__i1, __i2, __i3]")},
+            code="__out = __in1 + 10.0",
+            outputs={"__out": dace.Memlet("T[__i1, __i2, __i3]")},
+            input_nodes={A},
+            output_nodes={T},
+            external_edges=True,
+    )
+
+    tsklt2, me2, mx2 = state.add_mapped_tasklet(
+            "comp2",
+            map_ranges={
+                "__i1": "0:10",
+                "__i2": "0:11",
+                "__i3": "0:12",
+            },
+            inputs={"__in1": dace.Memlet("T[__i1, __i2, __i3]")},
+            code="__out = math.sin(__in1)",
+            outputs={"__out": dace.Memlet("B[__i1, __i2, __i3]")},
+            input_nodes={T},
+            output_nodes={B},
+            external_edges=True,
+    )
+
+    for me in [me1, me2]:
+        dace.transformation.dataflow.MapExpansion.apply_to(
+                sdfg,
+                options={"inner_schedule": dace.ScheduleType.Default},
+                map_entry=me,
+        )
+
+    # Now add a transient scalar at the output of `tsklt1`.
+    tsklt1_oedge = next(iter(state.out_edges(tsklt1)))
+    me1_inner = tsklt1_oedge.dst
+    state.add_edge(
+            tsklt1, "__out",
+            t1, None,
+            dace.Memlet("t1[0]"),
+    )
+    state.add_edge(
+            t1, None,
+            me1_inner, tsklt1_oedge.dst_conn,
+            dace.Memlet("t1[0] -> [__i1, __i2, __i3]"),
+    )
+    state.remove_edge(tsklt1_oedge)
+    tsklt1_oedge = None
+
+    # Now add a transient scalar in the front of `tsklt2`.
+    tsklt2_iedge = next(iter(state.in_edges(tsklt2)))
+    me2_inner = tsklt2_iedge.src
+    state.add_edge(
+            me2_inner, tsklt2_iedge.src_conn,
+            t2, None,
+            dace.Memlet("t2[0] -> [__i1, __i2, __i3]"),
+    )
+    state.add_edge(
+            t2, None,
+            tsklt2, "__in1",
+            dace.Memlet("t2[0]"),
+    )
+    state.remove_edge(tsklt2_iedge)
+    tsklt2_iedge = None
+    sdfg.validate()
+
+    # By Specifying `apply_once` we only perform one fusion, which will eliminate `T`.
+    #  This is not efficient, we do this to make sure that the update of the Memlets
+    #  has worked.
+    apply_fusion(sdfg, apply_once=True)
+
+    for edge in state.edges():
+        # There should be no edge, that references `T`.
+        assert edge.data.data != "T"
+
+        # If an edge is connected to `t2` or `t1` then its data should refer to it.
+        #  no other Memlet shall refer to them.
+        for t in [t1, t2]:
+            if edge.src is t or edge.dst is t:
+                assert edge.data.data == t.data
+            else:
+                assert edge.data.data != t.data
+
+    args_ref = {
+            'A': np.array(np.random.rand(10, 11, 12), dtype=np.float64, copy=True),
+            'B': np.array(np.random.rand(10, 11, 12), dtype=np.float64, copy=True),
+    }
+    args_res = copy.deepcopy(args_ref)
+
+    ref(**args_ref)
+    sdfg(**args_res)
+    for arg in args_ref.keys():
+        arg_ref = args_ref[arg]
+        arg_res = args_res[arg]
+        assert np.allclose(arg_ref, arg_res)
+
+
 if __name__ == '__main__':
+    test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
     test_fusion_different_global_accesses()
     test_fusion_multiple_consumers()
