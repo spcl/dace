@@ -75,7 +75,6 @@ class StructToContainerGroups(ppl.Pass):
                                 sdfg.save(f"{sdfg.name}_{i}.sdfg")
 
         # Clean Mapped Views (Views within data groups)
-        print("AMAP", self._access_names_map)
         for state in sdfg.states():
             #for node in state.nodes():
                 #if isinstance(node, dace.nodes.AccessNode):
@@ -119,6 +118,14 @@ class StructToContainerGroups(ppl.Pass):
                             state.remove_node(dst)
                         elif node in out_connected_nodes:
                             continue
+
+        # Remove structs
+        to_rm = []
+        for name, desc in sdfg.arrays.items():
+            if isinstance(desc, dace.data.Structure):
+                to_rm.insert(0, name)
+        for name in to_rm:
+            sdfg.remove_data(name=name, validate=True)
 
     def _can_be_applied(
         self,
@@ -358,23 +365,11 @@ class StructToContainerGroups(ppl.Pass):
 
         # This feels like a wrong solution to this issue, TODO: fix
         memlet_shape = ()
-        viewed_data = []
-        def app_data_from_node(e):
-            node_str = e.data.data
-            d = sdfg.arrays[node_str]
-            if isinstance(d, dace.data.View):
-                r = sdutil.trace_nested_access(e.src, state, sdfg)
-                print("ADFM", r)
-                viewed_data.append(d)
-            else:
-                viewed_data.append(d)
 
         if struct_to_view:
             assert len(struct_to_view_edges) == 1
             struct_to_view_edge = struct_to_view_edges[0]
             memlet_shape += tuple(struct_to_view_edge.data.subset.ranges)
-            print("SSSSSS", tuple(struct_to_view_edge.data.subset.ranges), struct_to_view_edge)
-            app_data_from_node(struct_to_view_edge)
 
             if (isinstance(sdfg.arrays[struct_to_view_edge.src.data], dace.data.Structure) and
                 not isinstance(sdfg.arrays[struct_to_view_edge.data.data], dace.data.ContainerArray)):
@@ -390,13 +385,11 @@ class StructToContainerGroups(ppl.Pass):
                     not isinstance(sdfg.arrays[dst_edge.data.data], dace.data.ContainerArray)):
                     skip = True
                 memlet_shape += tuple(dst_edge.data.subset.ranges)
-                app_data_from_node(dst_edge)
 
         if view_to_struct:
             assert len(view_to_struct_edges) == 1
             view_to_struct_edge = view_to_struct_edges[0]
             memlet_shape += tuple(view_to_struct_edge.data.subset.ranges)
-            app_data_from_node(view_to_struct_edge)
 
             if (isinstance(sdfg.arrays[view_to_struct_edge.dst.data], dace.data.Structure) and
                 not isinstance(sdfg.arrays[view_to_struct_edge.data.data], dace.data.ContainerArray)):
@@ -409,13 +402,10 @@ class StructToContainerGroups(ppl.Pass):
                     continue
                 src_edge = state.in_edges(vc)[0]
                 memlet_shape += tuple(src_edge.data.subset.ranges)
-                app_data_from_node(src_edge)
                 if (isinstance(sdfg.arrays[vc.data], dace.data.Structure) and
                     not isinstance(sdfg.arrays[src_edge.data.data], dace.data.ContainerArray)):
                     skip = True
 
-        print(memlet_shape)
-        print(viewed_data)
         mc = dace.memlet.Memlet(subset=dace.subsets.Range(memlet_shape), data=demangled_name)
 
         # If Struct -> View -> Dst:
@@ -427,9 +417,7 @@ class StructToContainerGroups(ppl.Pass):
         # Becomes Src (uc) -> (None) NewData
         state.add_node(an)
         # TODO: Fix memlet calculation in recursive data groups
-        missing_dims = memlet_shape[:-len(sdfg.arrays[view_chain[-1 if struct_to_view else 0].data].shape)]
         if struct_to_view:
-            print("SV", view_chain, "|", view_chain_w_struct, "|", src_edge, "|", dst_edge, "|", struct_to_view_edges)
 
             view_name = "v_" + demangled_name
             a = sdfg.arrays[dst_edge.data.data]
@@ -459,7 +447,6 @@ class StructToContainerGroups(ppl.Pass):
                 self._data_connected_to_vsv_struct[struct_access.guid] = ([], [an])
 
         else:  # view_to_struct
-            print("VS", view_chain,"|", view_chain_w_struct,  "|", src_edge, "|", dst_edge, "|", view_to_struct_edges)
 
             view_name = "v_" + demangled_name
             if view_name not in sdfg.arrays:
@@ -506,8 +493,6 @@ class StructToContainerGroups(ppl.Pass):
         self._access_names_map[view_chain[-1 if struct_to_view else 0].data] = (
             view_name
         )
-
-        #propagate_memlets_state(sdfg, state)
 
         return removed_nodes
 
