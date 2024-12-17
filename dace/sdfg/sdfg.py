@@ -12,6 +12,7 @@ import random
 import shutil
 import sys
 from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
+import typing
 import warnings
 
 import dace
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     from dace.codegen.compiled_sdfg import CompiledSDFG
     from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeScope
 
+from dace.sdfg.container_group import ContainerGroup, ContainerGroupFlatteningMode
 
 class NestedDict(dict):
 
@@ -51,8 +53,11 @@ class NestedDict(dict):
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__getitem__(token)
+
         while tokens:
             token = tokens.pop(0)
+            if isinstance(result, dt.ContainerArray):
+                result = result.stype
             result = result.members[token]
         return result
 
@@ -418,6 +423,10 @@ class SDFG(ControlFlowRegion):
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_nested_arrays_from_json)
+    container_groups = Property(dtype=NestedDict,
+                           desc="Data group descriptors for this SDFG",
+                           to_json=_arrays_to_json,
+                           from_json=_nested_arrays_from_json)
     symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -438,6 +447,7 @@ class SDFG(ControlFlowRegion):
                                desc='Whether to generate OpenMP sections in code')
 
     debuginfo = DebugInfoProperty(allow_none=True)
+
 
     _pgrids = DictProperty(str,
                            ProcessGrid,
@@ -496,6 +506,7 @@ class SDFG(ControlFlowRegion):
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
+        self.container_groups = NestedDict()
         self.arg_names = []
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -1318,11 +1329,16 @@ class SDFG(ControlFlowRegion):
 
         defined_syms |= set(self.constants_prop.keys())
 
+        init_code_symbols=set()
+        exit_code_symbols=set()
         # Add used symbols from init and exit code
         for code in self.init_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            init_code_symbols |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
         for code in self.exit_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            exit_code_symbols |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+
+        #free_syms|=set(filter(lambda x: not str(x).startswith('__f2dace_ARRAY'),init_code_symbols))
+        #free_syms|=set(filter(lambda x: not  str(x).startswith('__f2dace_ARRAY'),exit_code_symbols))
 
         return super()._used_symbols_internal(all_symbols=all_symbols,
                                               keep_defined_in_mapping=keep_defined_in_mapping,
@@ -1403,7 +1419,9 @@ class SDFG(ControlFlowRegion):
         }
 
         # Add global free symbols used in the generated code to scalar arguments
+        #TODO LATER investiagte why all_symbols=False leads to bug
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
+        free_symbols = set(filter(lambda x: not str(x).startswith('__f2dace_STRUCTARRAY'), free_symbols))
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary
@@ -1764,6 +1782,12 @@ class SDFG(ControlFlowRegion):
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
+    def add_container_group(self,
+                       name: str,
+                       find_new_name: bool = False) -> Tuple[str, ContainerGroup]:
+        dg_desc = ContainerGroup(name)
+        return self.add_container_group_desc(name, dg_desc, find_new_name=find_new_name), dg_desc
+
     def add_view(self,
                  name: str,
                  shape,
@@ -1904,7 +1928,7 @@ class SDFG(ControlFlowRegion):
             storage=storage,
             transient=transient,
             lifetime=lifetime,
-            debuginfo=debuginfo,
+            debuginfo=debuginfo
         )
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
@@ -2061,6 +2085,42 @@ class SDFG(ControlFlowRegion):
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc
         _add_symbols(self, datadesc)
+
+        return name
+
+    def add_container_group_desc(self, name: str, container_group_desc: ContainerGroup, find_new_name=False) -> str:
+        if not isinstance(name, str):
+            raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
+
+        if find_new_name:
+            name = self._find_new_name(name)
+            name = name.replace('.', '_')
+            if self.is_name_used(name):
+                name = self._find_new_name(name)
+        else:
+            if name in self.arrays:
+                raise FileExistsError(f'Data group descriptor "{name}" already exists in SDFG')
+            if name in self.symbols:
+                raise FileExistsError(f'Can not create data group descriptor "{name}", the name is used by a symbol.')
+            if name in self._subarrays:
+                raise FileExistsError(f'Can not create data group descriptor "{name}", the name is used by a subarray.')
+            if name in self._rdistrarrays:
+                raise FileExistsError(f'Can not create data group descriptor "{name}", the name is used by a RedistrArray.')
+            if name in self._pgrids:
+                raise FileExistsError(f'Can not create data group descriptor "{name}", the name is used by a ProcessGrid.')
+
+        def _add_symbols(sdfg: SDFG, desc: dt.Data):
+            if isinstance(desc, dt.Structure):
+                for v in desc.members.values():
+                    if isinstance(v, dt.Data):
+                        _add_symbols(sdfg, v)
+            for sym in desc.free_symbols:
+                if sym.name not in sdfg.symbols:
+                    sdfg.add_symbol(sym.name, sym.dtype)
+
+        # Add the data descriptor to the SDFG and all symbols that are not yet known.
+        self.container_groups[name] = container_group_desc
+        _add_symbols(self, container_group_desc)
 
         return name
 
@@ -2855,3 +2915,98 @@ class SDFG(ControlFlowRegion):
                 break
         self.root_sdfg.using_explicit_control_flow = found_explicit_cf_block
         return found_explicit_cf_block
+
+    def register_container_group_members(self, flattening_mode):
+        for name, dg in self.container_groups.items():
+            self._register_container_group_members(flattening_mode=flattening_mode, container_group_or_array=dg, prefix_name=f'__CG_{name}', acc_shape=())
+
+    def _register_container_group_members(self, flattening_mode,
+                                          container_group_or_array: typing.Union[ContainerGroup, dace.data.ContainerArray],
+                                          prefix_name: str, acc_shape: tuple):
+        if flattening_mode == ContainerGroupFlatteningMode.StructOfArrays:
+            if isinstance(container_group_or_array, ContainerGroup):
+                container_group = container_group_or_array
+                for name, member in container_group.members.items():
+                    if isinstance(member, ContainerGroup):
+                        if member.is_cg:
+                            dg_prefix = prefix_name + f'__CG_{member.name}'
+                        else:
+                            dg_prefix = prefix_name + f'__CA_{member.name}'
+                            acc_shape += member.shape
+                        self._register_container_group_members(
+                            container_group_or_array=member,
+                            flattening_mode=flattening_mode,
+                            prefix_name=dg_prefix,
+                            acc_shape=acc_shape)
+                    elif isinstance(member, dace.data.ContainerArray):
+                        assert False
+                    else:
+                        # Add the dimensions accumulated while iterating from root to the leaf node of the trees
+                        member_demangled_name = prefix_name + f'__m_{name}'
+                        if isinstance(member, dace.data.Scalar):
+                            datadesc = dace.data.Array(
+                                dtype=member.dtype, shape=acc_shape, transient=member.transient,
+                                allow_conflicts=member.allow_conflicts, storage=member.storage,
+                                location=member.location, may_alias=member.may_alias, lifetime=member.lifetime,
+                                debuginfo=member.debuginfo, start_offset=member.start_offset
+                            )
+                        elif isinstance(member, dace.data.Array):
+                            datadesc = dace.data.Array(
+                                dtype=member.dtype, shape=acc_shape + member.shape, transient=member.transient,
+                                allow_conflicts=member.allow_conflicts, storage=member.storage,
+                                location=member.location, may_alias=member.may_alias, lifetime=member.lifetime,
+                                debuginfo=member.debuginfo
+                            )
+                        else:
+                            raise Exception("Leaf member in a container group needs to be scalar or array")
+                        print("CG", self.container_groups, member_demangled_name, datadesc, datadesc.shape)
+                        self.add_datadesc(name=member_demangled_name, datadesc=datadesc, find_new_name=False)
+            elif isinstance(container_group_or_array, dace.data.ContainerArray):
+                assert False
+            else:
+                raise Exception("?")
+        elif flattening_mode == ContainerGroupFlatteningMode.ArrayOfStructs:
+            raise Exception("TODO Support for ArrayOfStructs Flattening")
+        else:
+            raise Exception("Unsupported Flattening Mode")
+
+    def get_demangled_container_group_member_name(self, name_hierarchy: List[Type[str]]):
+        current_dg = None
+        demangled_name = ''
+        for i, name in enumerate(name_hierarchy):
+            if current_dg is None:
+                current_dg = self.container_groups[name]
+                demangled_name += f"__CG_{current_dg.name}"
+            elif name in current_dg.members:
+                if isinstance(current_dg.members[name], ContainerGroup):
+                    current_dg = current_dg.members[name]
+                    if current_dg.is_cg:
+                        demangled_name += f"__CG_{current_dg.name}"
+                    else:
+                        demangled_name += f"__CA_{current_dg.name}"
+                elif (isinstance(current_dg.members[name], dace.data.ContainerArray)):
+                    assert (False)
+                else:
+                    assert isinstance(current_dg.members[name], dace.data.Data)
+                    assert i == len(name_hierarchy) - 1
+                    demangled_name += f"__m_{name}"
+                    return demangled_name
+            else:
+                # if we are at last element and it is a "Leaf" (data had no name) it is not an error
+                print("A", i, current_dg, current_dg.members)
+                if i == len(name_hierarchy) - 1 and len(current_dg.members) == 1 and "Leaf" in current_dg.members:
+                    demangled_name += f"__m_Leaf"
+                    return demangled_name
+                raise Exception(f'Name Hierarchy {name_hierarchy} Not in ContainerGroups {self.container_groups}, {self._arrays} 1')
+
+        if i == len(name_hierarchy) - 1 and len(current_dg.members) == 1 and "Leaf" in current_dg.members:
+            demangled_name += f"__m_Leaf"
+            return demangled_name
+        raise Exception(f'Name Hierarchy {name_hierarchy} Not in ContainerGroups {self.container_groups}, {self._arrays} 2')
+
+    def generate_container_groups_from_structs(self, flattening_mode : ContainerGroupFlatteningMode):
+        for arr_name, arr in self._arrays.items():
+            if isinstance(arr, dt.Structure):
+                dg_name = arr_name
+                dg = ContainerGroup.from_struct(name=dg_name, struct_or_container_array=arr, is_cg=True, is_ca=False, shape=(1, ))
+                self.container_groups[dg_name] = dg
