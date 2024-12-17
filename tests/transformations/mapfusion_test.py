@@ -26,15 +26,18 @@ def apply_fusion(
         sdfg: SDFG,
         removed_maps: Union[int, None] = None,
         final_maps: Union[int, None] = None,
+        unspecific: bool = False,
 ) -> SDFG:
     """Applies the Map fusion transformation.
 
     The function checks that the number of maps has been reduced, it is also possible
     to specify the number of removed maps. It is also possible to specify the final
     number of maps.
+    If `unspecific` is set to `True` then the function will just apply the
+    transformation and not check if maps were removed at all.
     """
-    num_maps_before = count_node(sdfg, nodes.MapEntry)
     org_sdfg = copy.deepcopy(sdfg)
+    num_maps_before = None if unspecific else count_node(sdfg, nodes.MapEntry)
     with dace.config.temporary_config():
         dace.Config.set("optimizer", "match_exception", value=True)
         sdfg.apply_transformations_repeated(
@@ -42,8 +45,11 @@ def apply_fusion(
             validate=True,
             validate_all=True
         )
-    num_maps_after = count_node(sdfg, nodes.MapEntry)
 
+    if unspecific:
+        return sdfg
+
+    num_maps_after = count_node(sdfg, nodes.MapEntry)
     has_processed = False
     if removed_maps is not None:
         has_processed = True
@@ -629,7 +635,7 @@ def test_interstate_fusion():
     ref_C = A + 30
     ref_D = A + 26
 
-    assert sdfg.apply_transformations_repeated(MapFusion, validate=True, validate_all=True) == 1
+    apply_fusion(sdfg, removed_maps=1)
     assert sdfg.number_of_nodes() == 2
     assert len([node for node in state1.data_nodes() if node.data == "B"]) == 1
 
@@ -1701,7 +1707,70 @@ def test_fusion_different_global_accesses():
         assert np.allclose(arg_ref, arg_res)
 
 
+def test_fusion_dynamic_producer():
+
+    def ref(A, B):
+        for i in range(10):
+            if B[i] < 0.5:
+                A[i] = 0.0
+        for i in range(10):
+            B[i] = np.sin(A[i])
+
+    sdfg = dace.SDFG("fusion_dynamic_producer_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+    for name in "AB":
+        sdfg.add_array(
+                name,
+                shape=(10,),
+                dtype=dace.float64,
+                transient=False,
+        )
+    B_top, B_bottom, A = (state.add_access(name) for name in "BBA")
+
+    state.add_mapped_tasklet(
+            "comp1",
+            map_ranges={"__i0": "0:10"},
+            inputs={"__in1": dace.Memlet("B[__i0]")},
+            code="if __in1 < 0.5:\n\t__out = 0.0",
+            outputs={"__out": dace.Memlet("A[__i0]", dynamic=True)},
+            input_nodes={B_top},
+            output_nodes={A},
+            external_edges=True,
+    )
+    state.add_mapped_tasklet(
+            "comp2",
+            map_ranges={"__i0": "0:10"},
+            inputs={"__in1": dace.Memlet("A[__i0]")},
+            code="__out = math.sin(__in1)",
+            outputs={"__out": dace.Memlet("B[__i0]")},
+            input_nodes={A},
+            output_nodes={B_bottom},
+            external_edges=True,
+    )
+    sdfg.validate()
+
+    # In case dynamic Memlets should be handled, we specify `unspecific`, i.e.
+    #  only validation tests are done. However, we run a verification step to see
+    #  if the transformation did the right thing.
+    apply_fusion(sdfg, unspecific=True)
+
+    args_ref = {
+            'A': np.array(np.random.rand(11), dtype=np.float64, copy=True),
+            'B': np.array(np.random.rand(11), dtype=np.float64, copy=True),
+    }
+    args_res = copy.deepcopy(args_ref)
+
+    ref(**args_ref)
+    csdfg = sdfg.compile()
+    csdfg(**args_res)
+    for arg in args_ref.keys():
+        arg_ref = args_ref[arg]
+        arg_res = args_res[arg]
+        assert np.allclose(arg_ref, arg_res)
+
+
 if __name__ == '__main__':
+    test_fusion_dynamic_producer()
     test_fusion_different_global_accesses()
     test_fusion_multiple_consumers()
     test_fusion_intermediate_different_access()
