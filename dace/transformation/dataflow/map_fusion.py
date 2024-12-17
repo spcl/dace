@@ -1342,7 +1342,7 @@ class MapFusion(transformation.SingleStateTransformation):
         #   - The access node has output degree larger than 1 (input degrees larger
         #       than one, will always be partitioned as shared anyway).
         prevously_seen_data: Set[str] = set()
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for access_node in state.data_nodes():
 
                 if access_node.data in shared_data:
