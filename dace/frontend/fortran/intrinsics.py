@@ -1181,7 +1181,7 @@ class Merge(LoopBasedReplacement):
             self.second_array = self._parse_array(node, node.args[1])
 
             # weird overload of MERGE - passing two scalars
-            if self.first_array is None and self.second_array is None:
+            if self.first_array is None or self.second_array is None:
                 self.uses_scalars = True
                 self.first_array = node.args[0]
                 self.second_array = node.args[1]

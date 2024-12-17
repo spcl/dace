@@ -2060,7 +2060,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                 )
             currentindex += 1
 
-        elif isinstance(i, (ast_internal_classes.Name_Node, ast_internal_classes.Int_Literal_Node)) and allow_scalars:
+        elif allow_scalars:
 
             ranges.append([i, i])
             rangeslen.append(1)
