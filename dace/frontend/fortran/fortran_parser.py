@@ -3396,7 +3396,8 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
-
+    program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
+    program = ast_transforms.ArrayToLoop(program).visit(program)
     print("Before intrinsics")
 
     prior_exception: Optional[NeedsTypeInferenceException] = None
