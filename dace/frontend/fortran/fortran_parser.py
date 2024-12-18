@@ -1807,10 +1807,11 @@ class AST_translator:
                     namefinder.visit(i)
                 names_list = namefinder.names
         # This handles the case where the function is called with read variables found in a module
+        cached_names=[a[0] for a in self.module_vars]
         for i in not_found_read_names:
             if i in names_list:
                 continue
-            if i in [a[0] for a in self.module_vars]:
+            if i in cached_names:
                 if self.name_mapping[sdfg].get(i) is not None:
                     self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
                     addedmemlets.append(i)
@@ -3405,9 +3406,9 @@ def create_sdfg_from_fortran_file_with_options(
             except RuntimeError:
                 # FIXME: optimize func
                 print("Additional type inference")
-                program = ast_transforms.TypeInference(program, assert_voids=False, assign_scopes=False).visit(program)
+                program = ast_transforms.TypeInference(program, assert_voids=False, assign_scopes=True).visit(program)
 
-    # print("After intrinsics")
+    print("After intrinsics")
 
     program = ast_transforms.TypeInference(program).visit(program)
     program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
