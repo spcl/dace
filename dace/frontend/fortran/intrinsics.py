@@ -491,7 +491,7 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
                      arg: ast_internal_classes.FNode) -> ast_internal_classes.Array_Subscript_Node:
 
         # supports syntax func(arr)
-        if isinstance(arg, ast_internal_classes.Name_Node):
+        if isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node)):
             # If we access SUM(arr) where arr has many dimensions,
             # We need to create a ParDecl_Node for each dimension
             # array_sizes = self.scope_vars.get_var(node.parent, arg.name).sizes
@@ -1036,6 +1036,10 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
 
         for arg in node.args:
 
+            if isinstance(arg, ast_internal_classes.Data_Ref_Node):
+                self.rvals.append(arg)
+                continue
+
             array_node = self._parse_array(node, arg)
 
             if array_node is not None:
@@ -1052,7 +1056,7 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
         self.argument_variable = self.rvals[0]
 
         par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], self.count, new_func_body,
-                              self.scope_vars, True)
+                              self.scope_vars, self.ast.structures, declaration=True)
 
     def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
 
