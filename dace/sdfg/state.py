@@ -46,8 +46,10 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
     if old_dinfo is not None:
         return old_dinfo
 
-    caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
-    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+    #caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
+    
+    #return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+    return dtypes.DebugInfo(1, 0, 1, 0, "skipped")
 
 
 def _make_iterators(ndrange):
