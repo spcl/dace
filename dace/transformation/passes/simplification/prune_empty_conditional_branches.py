@@ -61,7 +61,7 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
         if len(region.branches) == 0:
             # The conditional has become entirely empty, remove it.
             replacement_node_before = region.parent_graph.add_state_before(region)
-            replacement_node_after = region.parent_graph.add_state_before(region)
+            replacement_node_after = region.parent_graph.add_state_after(region)
             region.parent_graph.add_edge(replacement_node_before, replacement_node_after, InterstateEdge())
             region.parent_graph.remove_node(region)
 
