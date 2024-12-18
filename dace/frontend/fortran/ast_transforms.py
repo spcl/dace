@@ -2210,7 +2210,7 @@ class ArrayToLoop(NodeTransformer):
                 self.count = self.count + range_index
               else:
                 newbody.append(self.visit(child))
-            except:
+            except Exception as e:
                 print("Error in ArrayToLoop, exception caught at line: "+str(child.line_number)) 
                 newbody.append(child)    
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
@@ -3126,4 +3126,145 @@ class ReplaceImplicitParDecls(NodeTransformer):
             )
         else:
             return node
+
+class ReplaceStructArgsLibraryNodesVisitor(NodeVisitor):
+    """
+    Finds all intrinsic operations that have to be transformed to loops in the AST
+    """
+
+    def __init__(self):
+        self.nodes: List[ast_internal_classes.FNode] = []
+
+        FUNCS_TO_REPLACE = [
+            "transpose",
+            "matmul"
+        ]
+
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        name = node.name.name.split('__dace_')
+        if len(name) == 2 or name[1] in FUNCS_TO_REPLACE:
+            self.nodes.append(node)
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        return
+
+class ReplaceStructArgsLibraryNodes(NodeTransformer):
+
+    def __init__(self, ast):
+
+        self.ast = ast
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations(ast)
+        self.scope_vars.visit(ast)
+        self.structures = ast.structures
+
+        self.counter = 0
+
+        FUNCS_TO_REPLACE = [
+            "transpose",
+            "matmul"
+        ]
+
+    # FIXME: copy-paste from intrinsics
+    def _parse_struct_ref(self, node: ast_internal_classes.Data_Ref_Node) -> ast_internal_classes.FNode:
+
+        # we assume starting from the top (left-most) data_ref_node
+        # for struct1 % struct2 % struct3 % var
+        # we find definition of struct1, then we iterate until we find the var
+
+        struct_type = self.scope_vars.get_var(node.parent, node.parent_ref.name).type
+        struct_def = self.ast.structures.structures[struct_type]
+        cur_node = node
+
+        while True:
+            cur_node = cur_node.part_ref
+
+            if isinstance(cur_node, ast_internal_classes.Array_Subscript_Node):
+                struct_def = self.ast.structures.structures[struct_type]
+                return struct_def.vars[cur_node.name.name]
+
+            elif isinstance(cur_node, ast_internal_classes.Name_Node):
+                struct_def = self.ast.structures.structures[struct_type]
+                return struct_def.vars[cur_node.name]
+
+            elif isinstance(cur_node, ast_internal_classes.Data_Ref_Node):
+                struct_type = struct_def.vars[cur_node.parent_ref.name].type
+                struct_def = self.ast.structures.structures[struct_type]
+
+            else:
+                raise NotImplementedError()
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+
+        newbody = []
+
+        for child in node.execution:
+
+            lister = ReplaceStructArgsLibraryNodesVisitor()
+            lister.visit(child)
+            res = lister.nodes
+
+            if res is None or len(res) == 0:
+                newbody.append(self.visit(child))
+                continue
+
+            for call_node in res:
+
+                args = []
+                for arg in call_node.args:
+
+                    if isinstance(arg, ast_internal_classes.Data_Ref_Node):
+
+                        var = self._parse_struct_ref(arg)
+                        tmp_var_name = f"tmp_libnode_{self.counter}"
+
+                        node.parent.specification_part.specifications.append(
+                            ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                                ast_internal_classes.Var_Decl_Node(
+                                    name=tmp_var_name,
+                                    type=var.type,
+                                    sizes=var.sizes,
+                                    offsets=var.offsets,
+                                    init=None
+                                )
+                            ])
+                        )
+
+                        dest_node = ast_internal_classes.Array_Subscript_Node(
+                            name=ast_internal_classes.Name_Node(name=tmp_var_name),
+                            parent=call_node.parent, type=var.type,
+                            indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
+                        )
+
+                        if isinstance(arg.part_ref, ast_internal_classes.Name_Node):
+
+                            arg.part_ref = ast_internal_classes.Array_Subscript_Node(
+                                name=arg.part_ref,
+                                parent=call_node.parent, type=arg.part_ref.type,
+                                indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
+                            )
+
+                        newbody.append(
+                            ast_internal_classes.BinOp_Node(
+                                op="=",
+                                lval=dest_node,
+                                rval=arg,
+                                line_number=child.line_number,
+                                parent=child.parent
+                            )
+                        )
+
+                        self.counter += 1
+
+                        args.append(ast_internal_classes.Name_Node(name=tmp_var_name, type=var.type))
+
+                    else:
+                        args.append(arg)
+
+                call_node.args = args
+
+            newbody.append(child)
+
+        return ast_internal_classes.Execution_Part_Node(execution=newbody)
 

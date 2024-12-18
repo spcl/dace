@@ -2725,6 +2725,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         raise NameError("Not all functions were transformed to subroutines")
     program.function_definitions = []
     program = ast_transforms.SignToIf().visit(program)
+    program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
 
     for transformation in own_ast.fortran_intrinsics().transformations():
@@ -2736,6 +2737,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, cfg.normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
+
     structs_lister = ast_transforms.StructLister()
     structs_lister.visit(program)
     struct_dep_graph = nx.DiGraph()

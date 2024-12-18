@@ -85,6 +85,55 @@ end subroutine main
 
     assert np.all(np.transpose(res1) == arg1)
 
+def test_fortran_frontend_transpose_struct():
+    sources, main = SourceCodeBuilder().add_file("""
+
+MODULE test_types
+    IMPLICIT NONE
+    TYPE array_container
+        double precision, dimension(5,4) :: arg1
+    END TYPE array_container
+END MODULE
+
+MODULE test_transpose
+
+    contains
+
+    subroutine test_function(arg1, res1)
+        USE test_types
+        IMPLICIT NONE
+        TYPE(array_container) :: container
+        double precision, dimension(5,4) :: arg1
+        double precision, dimension(4,5) :: res1
+
+        container%arg1 = arg1
+
+        res1 = transpose(container%arg1)
+    end subroutine test_function
+
+END MODULE
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'test_transpose.test_function', normalize_offsets=True)
+    # TODO: We should re-enable `simplify()` once we merge it.
+    sdfg.simplify()
+    sdfg.compile()
+    sdfg.save('test.sdfg')
+
+    size_x = 5
+    size_y = 4
+    arg1 = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+    res1 = np.full([size_y, size_x], 42, order="F", dtype=np.float64)
+
+    for i in range(size_x):
+        for j in range(size_y):
+            arg1[i, j] = i + 1
+
+    sdfg(arg1=arg1, res1=res1)
+    print(arg1)
+    print(res1)
+
+    assert np.all(np.transpose(res1) == arg1)
+
 def test_fortran_frontend_matmul():
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main(arg1, arg2, res1)
@@ -118,7 +167,8 @@ end subroutine main
     assert np.all(np.matmul(arg1, arg2) == res1)
 
 if __name__ == "__main__":
-    test_fortran_frontend_dot()
-    test_fortran_frontend_dot_range()
-    test_fortran_frontend_transpose()
-    test_fortran_frontend_matmul()
+    #test_fortran_frontend_dot()
+    #test_fortran_frontend_dot_range()
+    #test_fortran_frontend_transpose()
+    test_fortran_frontend_transpose_struct()
+    #test_fortran_frontend_matmul()
