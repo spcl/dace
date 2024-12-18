@@ -405,28 +405,17 @@ def test_fortran_frontend_merge_scalar():
     res = np.full([size], 40, order="F", dtype=np.float64)
 
     sdfg(input1=first, input2=second, mask=mask, res=res)
-    print(res)
-    #for val in res:
-    #    assert val == 42
 
-    #for i in range(int(size/2)):
-    #    mask[i] = 1
-    #sdfg(input1=first, input2=second, mask=mask, res=res)
-    #for i in range(int(size/2)):
-    #    assert res[i] == 13
-    #for i in range(int(size/2), size):
-    #    assert res[i] == 42
+    assert res[0] == 42
+    for val in res[1:]:
+        assert val == 40
 
-    #mask[:] = 0
-    #for i in range(size):
-    #    if i % 2 == 1:
-    #        mask[i] = 1
-    #sdfg(input1=first, input2=second, mask=mask, res=res)
-    #for i in range(size):
-    #    if i % 2 == 1:
-    #        assert res[i] == 13
-    #    else:
-    #        assert res[i] == 42
+    mask[0] = 1
+    sdfg(input1=first, input2=second, mask=mask, res=res)
+    assert res[0] == 13
+    for val in res[1:]:
+        assert val == 40
+
 
 def test_fortran_frontend_merge_scalar2():
     """
@@ -474,13 +463,12 @@ def test_fortran_frontend_merge_scalar2():
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_merge_scalar()
-    test_fortran_frontend_merge_scalar2()
-    test_fortran_frontend_merge_1d()
-    test_fortran_frontend_merge_comparison_scalar()
-    test_fortran_frontend_merge_comparison_arrays()
-    test_fortran_frontend_merge_comparison_arrays_offset()
-    test_fortran_frontend_merge_array_shift()
-    test_fortran_frontend_merge_nonarray()
-    test_fortran_frontend_merge_recursive()
-    test_fortran_frontend_merge_recursive()
+    #test_fortran_frontend_merge_1d()
+    #test_fortran_frontend_merge_comparison_scalar()
+    #test_fortran_frontend_merge_comparison_arrays()
+    #test_fortran_frontend_merge_comparison_arrays_offset()
+    #test_fortran_frontend_merge_array_shift()
+    #test_fortran_frontend_merge_nonarray()
+    #test_fortran_frontend_merge_recursive()
+    test_fortran_frontend_merge_scalar()
+    #test_fortran_frontend_merge_scalar2()
