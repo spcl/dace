@@ -488,7 +488,8 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
         pass
 
     def _parse_array(self, node: ast_internal_classes.Execution_Part_Node,
-                     arg: ast_internal_classes.FNode) -> ast_internal_classes.Array_Subscript_Node:
+                     arg: ast_internal_classes.FNode, dims_count: Optional[int] = -1
+                     ) -> ast_internal_classes.Array_Subscript_Node:
 
         # supports syntax func(arr)
         if isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node)):
@@ -497,8 +498,16 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
             # array_sizes = self.scope_vars.get_var(node.parent, arg.name).sizes
             array_sizes = self.get_var_declaration(node.parent, arg).sizes
             if array_sizes is None:
-                return None
-            dims = len(array_sizes)
+
+                if dims_count != -1:
+                    # for destination array, sizes might be unknown when we use arg extractor
+                    # in that situation, we look at the size of the first argument
+                    dims = dims_count
+                else:
+                    return None
+            else:
+                dims = len(array_sizes)
+
             array_node = ast_internal_classes.Array_Subscript_Node(
                 name=arg, parent=arg.parent, type='VOID',
                 indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims)
@@ -1202,7 +1211,7 @@ class Merge(LoopBasedReplacement):
 
             # Last argument is either an array or a binary op
             arg = node.args[2]
-            array_node = self._parse_array(node, node.args[2])
+            array_node = self._parse_array(node, node.args[2], dims_count=len(self.first_array.indices))
             if array_node is not None:
 
                 self.mask_first_array = array_node
