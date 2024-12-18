@@ -593,9 +593,8 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
 
             idx_var = array.indices[i]
             start_loop = loop_ranges_main[i][0]
-            #tis next row is wrong:
-            #end_loop = loop_ranges_array[i][0]
-            end_loop = loop_ranges_main[i][0]
+            end_loop = loop_ranges_array[i][0]
+            
 
             difference = ast_internal_classes.BinOp_Node(
                 lval=end_loop,

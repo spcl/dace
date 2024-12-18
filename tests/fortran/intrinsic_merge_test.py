@@ -474,7 +474,7 @@ def test_fortran_frontend_merge_scalar2():
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_merge_scalar()
+    test_fortran_frontend_merge_scalar()
     test_fortran_frontend_merge_scalar2()
     test_fortran_frontend_merge_1d()
     test_fortran_frontend_merge_comparison_scalar()
