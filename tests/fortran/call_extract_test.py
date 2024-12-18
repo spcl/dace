@@ -17,7 +17,7 @@ def test_fortran_frontend_call_extract():
                     SUBROUTINE intrinsic_call_extract_test_function(d,res)
                     real, dimension(2) :: d
                     real, dimension(2) :: res
-
+                    
                     res(1) = SQRT(SIGN(EXP(d(1)), LOG(d(1))))
                     res(2) = MIN(SQRT(EXP(d(1))), SQRT(EXP(d(1))) - 1)
 
