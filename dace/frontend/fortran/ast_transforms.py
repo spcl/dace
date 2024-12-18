@@ -1913,6 +1913,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
             cur_node = cur_node.part_ref
             if isinstance(cur_node, ast_internal_classes.Data_Ref_Node):
                 name_chain.append(cur_node.parent_ref)
+
             if isinstance(cur_node, ast_internal_classes.Array_Subscript_Node):
                 struct_def = structures.structures[struct_type]
                 offsets = struct_def.vars[cur_node.name.name].offsets
@@ -1921,7 +1922,23 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
             elif isinstance(cur_node, ast_internal_classes.Name_Node):
                 struct_def = structures.structures[struct_type]
-                offsets = struct_def.vars[cur_node.name].offsets
+
+                var_def = struct_def.vars[cur_node.name]
+                offsets = var_def.offsets
+
+                # FIXME: is this always a desired behavior?
+
+                # if we are passed a name node in the context of parDeclRange,
+                # then we assume it should be a total range across the entire array
+                array_sizes = var_def.sizes
+                assert array_sizes is not None
+
+                dims = len(array_sizes)
+                node = ast_internal_classes.Array_Subscript_Node(
+                    name=cur_node, parent=node.parent, type=var_def.type,
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+                )
+
                 break
 
             struct_type = struct_def.vars[cur_node.parent_ref.name].type

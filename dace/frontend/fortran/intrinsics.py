@@ -18,6 +18,12 @@ from dace.transformation import transformation as xf
 
 FASTNode = Any
 
+class NeedsTypeInferenceException(BaseException):
+
+    def __init__(self, func_name, line_number):
+
+        self.line_number = line_number
+        self.func_name = func_name
 
 class IntrinsicTransformation:
 
@@ -154,7 +160,7 @@ class DirectReplacement(IntrinsicTransformation):
     def replace_size(transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
 
         if len(var.args) not in [1, 2]:
-            raise RuntimeError()
+            assert False, "Incorrect arguments to size!"
 
         # get variable declaration for the first argument
         var_decl = transformer.get_var_declaration(var.parent, var.args[0])
@@ -194,7 +200,7 @@ class DirectReplacement(IntrinsicTransformation):
                                var: ast_internal_classes.Call_Expr_Node, line):
 
         if len(var.args) not in [1, 2]:
-            raise RuntimeError()
+            assert False, "Incorrect arguments to lbound/ubound"
 
         # get variable declaration for the first argument
         var_decl = transformer.get_var_declaration(var.parent, var.args[0])
@@ -262,7 +268,7 @@ class DirectReplacement(IntrinsicTransformation):
     def replace_bit_size(transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
 
         if len(var.args) != 1:
-            raise RuntimeError()
+            assert False, "Incorrect arguments to bit_size"
 
         # get variable declaration for the first argument
         var_decl = transformer.get_var_declaration(var.parent, var.args[0])
@@ -485,7 +491,7 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
                      arg: ast_internal_classes.FNode) -> ast_internal_classes.Array_Subscript_Node:
 
         # supports syntax func(arr)
-        if isinstance(arg, ast_internal_classes.Name_Node):
+        if isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node)):
             # If we access SUM(arr) where arr has many dimensions,
             # We need to create a ParDecl_Node for each dimension
             # array_sizes = self.scope_vars.get_var(node.parent, arg.name).sizes
@@ -1030,6 +1036,10 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
 
         for arg in node.args:
 
+            if isinstance(arg, ast_internal_classes.Data_Ref_Node):
+                self.rvals.append(arg)
+                continue
+
             array_node = self._parse_array(node, arg)
 
             if array_node is not None:
@@ -1046,7 +1056,7 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
         self.argument_variable = self.rvals[0]
 
         par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], self.count, new_func_body,
-                              self.scope_vars, True)
+                              self.scope_vars, self.ast.structures, declaration=True)
 
     def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
 
@@ -1580,7 +1590,7 @@ class MathFunctions(IntrinsicTransformation):
             input_type = self.func_type(node)
             if input_type == 'VOID':
                 #assert input_type != 'VOID', f"Unexpected void input at line number: {node.line_number}"
-                raise RuntimeError()
+                raise NeedsTypeInferenceException(func_name, node.line_number)
 
             replacement_rule = MathFunctions.INTRINSIC_TO_DACE[func_name]
             if isinstance(replacement_rule, dict):

@@ -3,6 +3,7 @@
 import numpy as np
 
 from dace.frontend.fortran import ast_transforms, fortran_parser
+from tests.fortran.fortran_test_helper import SourceCodeBuilder, create_singular_sdfg_from_string
 
 def test_fortran_frontend_minval_double():
     """
@@ -244,9 +245,59 @@ def test_fortran_frontend_maxval_int():
     # It should be the dace max for integer
     assert res[3] == np.iinfo(np.int32).min
 
+def test_fortran_frontend_minval_struct():
+    sources, main = SourceCodeBuilder().add_file("""
+MODULE test_types
+    IMPLICIT NONE
+    TYPE array_container
+        INTEGER, DIMENSION(7) :: data
+    END TYPE array_container
+END MODULE
+
+MODULE test_minval
+    USE test_types
+    IMPLICIT NONE
+
+    CONTAINS
+
+    SUBROUTINE minval_test_func(input, res)
+        TYPE(array_container) :: container
+        INTEGER, DIMENSION(7) :: input
+        INTEGER, DIMENSION(3) :: res
+
+        container%data = input
+
+        CALL minval_test_func_internal(container, res)
+    END SUBROUTINE
+
+    SUBROUTINE minval_test_func_internal(container, res)
+        TYPE(array_container), INTENT(IN) :: container
+        INTEGER, DIMENSION(3) :: res
+
+        res(1) = MAXVAL(container%data)
+        res(2) = MAXVAL(container%data(:))
+        res(3) = MAXVAL(container%data(3:6))
+    END SUBROUTINE
+END MODULE
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'test_minval.minval_test_func')
+    #sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 7
+    input = np.full([size], 0, order="F", dtype=np.int32)
+    for i in range(size):
+        d[i] = i + 1
+    res = np.full([4], 42, order="F", dtype=np.int32)
+    # FIXME: this test is unfinished
+    sdfg(d=d, res=res)
+    print(res)
+
 if __name__ == "__main__":
 
-    test_fortran_frontend_minval_double()
-    test_fortran_frontend_minval_int()
-    test_fortran_frontend_maxval_double()
-    test_fortran_frontend_maxval_int()
+    #test_fortran_frontend_minval_double()
+    #test_fortran_frontend_minval_int()
+    #test_fortran_frontend_maxval_double()
+    #test_fortran_frontend_maxval_int()
+
+    test_fortran_frontend_minval_struct()
