@@ -36,7 +36,7 @@ from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES,
     remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import UseAllPruneList, children_of_type
-from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
+from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
 from dace.properties import CodeBlock
 
 global_struct_instance_counter = 0
@@ -3395,16 +3395,24 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.ArgumentExtractor(program).visit(program)
 
     print("Before intrinsics")
+
+    prior_exception: Optional[NeedsTypeInferenceException] = None
     for transformation in partial_ast.fortran_intrinsics().transformations():
-        #program = transformation.visit(program)
         while True:
             try:
                 transformation.initialize(program)
                 program = transformation.visit(program)
                 break
-            except RuntimeError as e:
+            except NeedsTypeInferenceException as e:
+
+                if prior_exception is not None:
+                    if e.line_number == prior_exception.line_number and e.func_name == prior_exception.func_name:
+                        print("Running additional type inference didn't help! VOID type in the same place.")
+                        raise RuntimeError()
+                else:
+                    prior_exception = e
+                print("Running additional type inference")
                 # FIXME: optimize func
-                print("Additional type inference")
                 program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
     # print("After intrinsics")

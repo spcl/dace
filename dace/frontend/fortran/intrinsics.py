@@ -18,6 +18,12 @@ from dace.transformation import transformation as xf
 
 FASTNode = Any
 
+class NeedsTypeInferenceException(BaseException):
+
+    def __init__(self, func_name, line_number):
+
+        self.line_number = line_number
+        self.func_name = func_name
 
 class IntrinsicTransformation:
 
@@ -1580,7 +1586,7 @@ class MathFunctions(IntrinsicTransformation):
             input_type = self.func_type(node)
             if input_type == 'VOID':
                 #assert input_type != 'VOID', f"Unexpected void input at line number: {node.line_number}"
-                raise RuntimeError()
+                raise NeedsTypeInferenceException(func_name, node.line_number)
 
             replacement_rule = MathFunctions.INTRINSIC_TO_DACE[func_name]
             if isinstance(replacement_rule, dict):
