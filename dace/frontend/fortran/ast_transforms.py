@@ -3143,7 +3143,7 @@ class ReplaceStructArgsLibraryNodesVisitor(NodeVisitor):
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         name = node.name.name.split('__dace_')
-        if len(name) == 2 and name[1] in self.FUNCS_TO_REPLACE:
+        if len(name) == 2 and name[1].lower() in self.FUNCS_TO_REPLACE:
             self.nodes.append(node)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
