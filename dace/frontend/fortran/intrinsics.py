@@ -602,7 +602,9 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
 
             idx_var = array.indices[i]
             start_loop = loop_ranges_main[i][0]
-            end_loop = loop_ranges_array[i][0]
+            #tis next row is wrong:
+            #end_loop = loop_ranges_array[i][0]
+            end_loop = loop_ranges_main[i][0]
 
             difference = ast_internal_classes.BinOp_Node(
                 lval=end_loop,
@@ -1206,8 +1208,22 @@ class Merge(LoopBasedReplacement):
                 self.second_array = node.args[1]
                 self.mask_cond = node.args[2]
                 return
+
             else:
-                self.uses_scalars = False
+                len_pardecls_first_array = 0
+                len_pardecls_second_array = 0
+
+                for ind in self.first_array.indices:
+                    pardecls = [i for i in mywalk(ind) if isinstance(i, ast_internal_classes.ParDecl_Node)]
+                    len_pardecls_first_array += len(pardecls)
+                for ind in self.second_array.indices:
+                    pardecls = [i for i in mywalk(ind) if isinstance(i, ast_internal_classes.ParDecl_Node)]
+                    len_pardecls_second_array += len(pardecls)    
+                assert len_pardecls_first_array == len_pardecls_second_array
+                if len_pardecls_first_array == 0:
+                    self.uses_scalars = True
+                else:    
+                    self.uses_scalars = False
 
             # Last argument is either an array or a binary op
             arg = node.args[2]
