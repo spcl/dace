@@ -3392,6 +3392,7 @@ def create_sdfg_from_fortran_file_with_options(
             i.subroutine_definitions = subroutines
 
     program = ast_transforms.SignToIf().visit(program)
+    program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
