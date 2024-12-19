@@ -2737,7 +2737,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, cfg.normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
-    program = ast_transforms.AllocatableReplacerTransformer().visit(program)
+    program = ast_transforms.allocatableReplacer(program)
 
     structs_lister = ast_transforms.StructLister()
     structs_lister.visit(program)

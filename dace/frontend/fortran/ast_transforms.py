@@ -1730,11 +1730,43 @@ def optionalArgsExpander(node=ast_internal_classes.Program_Node):
 
     return node
 
-class AllocatableReplacerVisitor(NodeVisitor):
+class AllocatableFunctionLister(NodeVisitor):
 
     def __init__(self):
+        self.functions = {}
+
+    def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
+
+        for i in node.specification_part.specifications:
+
+            vars = []
+            if isinstance(i, ast_internal_classes.Decl_Stmt_Node):
+
+                for var_decl in i.vardecl:
+                    if var_decl.alloc:
+
+                        # we are only interestd in adding flag if it's an arg
+                        found = False
+                        for arg in node.args:
+                            assert isinstance(arg, ast_internal_classes.Name_Node)
+
+                            if var_decl.name == arg.name:
+                                found = True
+                                break
+
+                        if found:
+                            vars.append(var_decl.name)
+
+            if len(vars) > 0:
+                self.functions[node.name.name] = vars
+
+class AllocatableReplacerVisitor(NodeVisitor):
+
+    def __init__(self, functions_with_alloc):
         self.allocate_var_names = []
         self.deallocate_var_names = []
+        self.call_nodes  = []
+        self.functions_with_alloc = functions_with_alloc
 
     def visit_Allocate_Stmt_Node(self, node: ast_internal_classes.Allocate_Stmt_Node):
 
@@ -1746,7 +1778,15 @@ class AllocatableReplacerVisitor(NodeVisitor):
         for var in node.list:
             self.deallocate_var_names.append(var.name)
 
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        for node.name.name in self.functions_with_alloc:
+            self.call_nodes.append(node)
+
 class AllocatableReplacerTransformer(NodeTransformer):
+
+    def __init__(self, functions_with_alloc: Dict[str, List[str]]):
+        self.functions_with_alloc = functions_with_alloc
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
 
@@ -1754,12 +1794,8 @@ class AllocatableReplacerTransformer(NodeTransformer):
 
         for child in node.execution:
 
-            lister = AllocatableReplacerVisitor()
+            lister = AllocatableReplacerVisitor(self.functions_with_alloc)
             lister.visit(child)
-
-            if len(lister.allocate_var_names) + len(lister.deallocate_var_names) == 0:
-                newbody.append(self.visit(child))
-                continue
 
             for alloc_node in lister.allocate_var_names:
 
@@ -1787,16 +1823,28 @@ class AllocatableReplacerTransformer(NodeTransformer):
                     )
                 )
 
+            for call_node in lister.call_nodes:
+
+                alloc_nodes = self.functions_with_alloc[call_node.name.name]
+
+                for alloc_name in alloc_nodes:
+                    name = f'__f2dace_ALLOCATED_{alloc_name}'
+                    call_node.args.append(
+                        ast_internal_classes.Name_Node(name=name)
+                    )
+
             newbody.append(child)
 
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
 
-    def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
+    def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
 
+        node.execution_part = self.visit(node.execution_part)
+
+        args = node.args.copy()
         newspec = []
-
-        for i in node.specifications:
+        for i in node.specification_part.specifications:
 
             if not isinstance(i, ast_internal_classes.Decl_Stmt_Node):
                 newspec.append(self.visit(i))
@@ -1808,6 +1856,15 @@ class AllocatableReplacerTransformer(NodeTransformer):
                     if var_decl.alloc:
 
                         name = f'__f2dace_ALLOCATED_{var_decl.name}'
+                        init = ast_internal_classes.Int_Literal_Node(value="0")
+
+                        # if it's an arg, then we don't initialize
+                        if node.name.name in self.functions_with_alloc and var_decl.name in self.functions_with_alloc[node.name.name]:
+                            init = None
+                            args.append(
+                                ast_internal_classes.Name_Node(name=name)
+                            )
+
                         var = ast_internal_classes.Var_Decl_Node(
                             name=name,
                             type='LOGICAL',
@@ -1816,45 +1873,30 @@ class AllocatableReplacerTransformer(NodeTransformer):
                             offsets=None,
                             kind=None,
                             optional=False,
-                            init=None,
+                            init=init,
                             line_number=var_decl.line_number
                         )
                         newdecls.append(var)
 
                 if len(newdecls) > 0:
                     newspec.append(ast_internal_classes.Decl_Stmt_Node(vardecl=newdecls))
-                newspec.append(i)
 
-        return ast_internal_classes.Specification_Part_Node(
-            specifications=newspec,
-            symbols=node.symbols,
-            typedecls=node.typedecls,
-            uses=node.uses,
-            enums=node.enums
+        if len(newspec) > 0:
+            node.specification_part.specifications.append(*newspec)
+
+        return ast_internal_classes.Subroutine_Subprogram_Node(
+            name=node.name, 
+            args=args,
+            specification_part=node.specification_part,
+            execution_part=node.execution_part
         )
 
 def allocatableReplacer(node=ast_internal_classes.Program_Node):
-    """
-    Adds to each optional arg a logical value specifying its status.
-    Eliminates function statements from the AST
-    :param node: The AST to be transformed
-    :return: The transformed AST
-    :note Should only be used on the program node
-    """
 
-    modified_functions = {}
+    visitor = AllocatableFunctionLister()
+    visitor.visit(node)
 
-    for func in node.subroutine_definitions:
-        if optionalArgsHandleFunction(func):
-            modified_functions[func.name.name] = func
-    for mod in node.modules:
-        for func in mod.subroutine_definitions:
-            if optionalArgsHandleFunction(func):
-                modified_functions[func.name.name] = func
-
-    node = OptionalArgsTransformer(modified_functions).visit(node)
-
-    return node
+    return AllocatableReplacerTransformer(visitor.functions).visit(node)
 
 def functionStatementEliminator(node=ast_internal_classes.Program_Node):
     """

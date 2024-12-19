@@ -285,6 +285,9 @@ def test_fortran_frontend_bitwise_ops2():
     assert np.allclose(res, [0, 16, 1, 0, 30, 78])
 
 def test_fortran_frontend_allocated():
+    # FIXME: this pattern is generally not supported.
+    # this needs an update once defered allocs are merged
+
     sources, main = SourceCodeBuilder().add_file("""
     SUBROUTINE allocated_test(res)
 
@@ -314,6 +317,60 @@ def test_fortran_frontend_allocated():
 
     assert np.allclose(res, [0, 1, 0])
 
+def test_fortran_frontend_allocated_nested():
+
+    # FIXME: this pattern is generally not supported.
+    # this needs an update once defered allocs are merged
+
+    sources, main = SourceCodeBuilder().add_file("""
+    MODULE allocated_test_interface
+        INTERFACE
+            SUBROUTINE allocated_test_nested(data, res)
+                integer, allocatable, dimension(:) :: data
+                integer, dimension(3) :: res
+            END SUBROUTINE allocated_test_nested
+        END INTERFACE
+    END MODULE
+
+    SUBROUTINE allocated_test(res)
+    USE allocated_test_interface
+    implicit none
+    integer, allocatable, dimension(:) :: data
+    integer, dimension(3) :: res
+
+    res(1) = ALLOCATED(data)
+
+    ALLOCATE(data(6))
+
+    CALL allocated_test_nested(data, res)
+
+    END SUBROUTINE allocated_test
+
+    SUBROUTINE allocated_test_nested(data, res)
+
+    integer, allocatable, dimension(:) :: data
+    integer, dimension(3) :: res
+
+    res(2) = ALLOCATED(data)
+
+    DEALLOCATE(data)
+
+    res(3) = ALLOCATED(data)
+
+    END SUBROUTINE allocated_test_nested
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'allocated_test', normalize_offsets=True)
+    #sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 3
+    res = np.full([size], 42, order="F", dtype=np.int32)
+
+    sdfg(res=res, __f2dace_A_data_d_0_s_0=0)
+    print(res)
+
+    assert np.allclose(res, [0, 1, 0])
+
 if __name__ == "__main__":
 
     test_fortran_frontend_bit_size()
@@ -323,3 +380,4 @@ if __name__ == "__main__":
     test_fortran_frontend_bitwise_ops()
     test_fortran_frontend_bitwise_ops2()
     test_fortran_frontend_allocated()
+    test_fortran_frontend_allocated_nested()
