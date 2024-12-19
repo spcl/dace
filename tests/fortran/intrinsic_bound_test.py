@@ -418,12 +418,12 @@ END MODULE
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_bound()
-    #test_fortran_frontend_bound_offsets()
-    #test_fortran_frontend_bound_assumed()
-    #test_fortran_frontend_bound_assumed_offsets()
-    #test_fortran_frontend_bound_allocatable_offsets()
-    #test_fortran_frontend_bound_structure()
-    #test_fortran_frontend_bound_structure_override()
-    #test_fortran_frontend_bound_structure_recursive()
-    test_fortran_frontend_bound_structure_recursive_allocatable()
+    test_fortran_frontend_bound()
+    test_fortran_frontend_bound_offsets()
+    test_fortran_frontend_bound_assumed()
+    test_fortran_frontend_bound_assumed_offsets()
+    test_fortran_frontend_bound_allocatable_offsets()
+    test_fortran_frontend_bound_structure()
+    test_fortran_frontend_bound_structure_override()
+    test_fortran_frontend_bound_structure_recursive()
+    #test_fortran_frontend_bound_structure_recursive_allocatable()

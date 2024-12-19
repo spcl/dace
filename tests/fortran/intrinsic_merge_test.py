@@ -461,10 +461,55 @@ def test_fortran_frontend_merge_scalar2():
     sdfg(input1=first, input2=second, mask=mask, res=res)
     assert res[0] == 13
 
+def test_fortran_frontend_merge_scalar3():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM merge_test
+                    implicit none
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: input2
+                    integer, dimension(7) :: mask
+                    integer, dimension(7) :: mask2
+                    double precision, dimension(7) :: res
+                    CALL merge_test_function(input1, input2, mask, mask2, res)
+                    end
+
+                    SUBROUTINE merge_test_function(input1, input2, mask, mask2, res)
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: input2
+                    integer, dimension(7) :: mask
+                    integer, dimension(7) :: mask2
+                    double precision, dimension(7) :: res
+
+                    res(1) = MERGE(input1(1), 0.0, mask(1) > mask2(1) .AND. mask2(2) == 0)
+
+                    END SUBROUTINE merge_test_function
+                    """
+
+    # Now test to verify it executes correctly with no offset normalization
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "merge_test", True)
+    #sdfg.simplify(verbose=True)
+    sdfg.compile()
+    size = 7
+
+    # Minimum is in the beginning
+    first = np.full([size], 13, order="F", dtype=np.float64)
+    second = np.full([size], 42, order="F", dtype=np.float64)
+    mask = np.full([size], 0, order="F", dtype=np.int32)
+    mask2 = np.full([size], 0, order="F", dtype=np.int32)
+    res = np.full([size], 40, order="F", dtype=np.float64)
+
+    sdfg(input1=first, input2=second, mask=mask, mask2=mask2, res=res)
+    assert res[0] == 0
+
+    mask[:] = 1
+    sdfg(input1=first, input2=second, mask=mask, mask2=mask2, res=res)
+    assert res[0] == 13
+
 if __name__ == "__main__":
 
-    test_fortran_frontend_merge_scalar()
-    test_fortran_frontend_merge_scalar2()
     test_fortran_frontend_merge_1d()
     test_fortran_frontend_merge_comparison_scalar()
     test_fortran_frontend_merge_comparison_arrays()
@@ -473,3 +518,6 @@ if __name__ == "__main__":
     test_fortran_frontend_merge_nonarray()
     test_fortran_frontend_merge_recursive()
     test_fortran_frontend_merge_recursive()
+    test_fortran_frontend_merge_scalar()
+    test_fortran_frontend_merge_scalar2()
+    test_fortran_frontend_merge_scalar3()
