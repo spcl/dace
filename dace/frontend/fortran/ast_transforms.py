@@ -1730,6 +1730,131 @@ def optionalArgsExpander(node=ast_internal_classes.Program_Node):
 
     return node
 
+class AllocatableReplacerVisitor(NodeVisitor):
+
+    def __init__(self):
+        self.allocate_var_names = []
+        self.deallocate_var_names = []
+
+    def visit_Allocate_Stmt_Node(self, node: ast_internal_classes.Allocate_Stmt_Node):
+
+        for var in node.allocation_list:
+            self.allocate_var_names.append(var.name.name)
+
+    def visit_Deallocate_Stmt_Node(self, node: ast_internal_classes.Deallocate_Stmt_Node):
+
+        for var in node.list:
+            self.deallocate_var_names.append(var.name)
+
+class AllocatableReplacerTransformer(NodeTransformer):
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+
+        newbody = []
+
+        for child in node.execution:
+
+            lister = AllocatableReplacerVisitor()
+            lister.visit(child)
+
+            if len(lister.allocate_var_names) + len(lister.deallocate_var_names) == 0:
+                newbody.append(self.visit(child))
+                continue
+
+            for alloc_node in lister.allocate_var_names:
+
+                name = f'__f2dace_ALLOCATED_{alloc_node}'
+                newbody.append(
+                    ast_internal_classes.BinOp_Node(
+                        op="=",
+                        lval=ast_internal_classes.Name_Node(name=name),
+                        rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                        line_number=child.line_number,
+                        parent=child.parent
+                    )
+                )
+
+            for dealloc_node in lister.deallocate_var_names:
+
+                name = f'__f2dace_ALLOCATED_{dealloc_node}'
+                newbody.append(
+                    ast_internal_classes.BinOp_Node(
+                        op="=",
+                        lval=ast_internal_classes.Name_Node(name=name),
+                        rval=ast_internal_classes.Int_Literal_Node(value="0"),
+                        line_number=child.line_number,
+                        parent=child.parent
+                    )
+                )
+
+            newbody.append(child)
+
+        return ast_internal_classes.Execution_Part_Node(execution=newbody)
+
+
+    def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
+
+        newspec = []
+
+        for i in node.specifications:
+
+            if not isinstance(i, ast_internal_classes.Decl_Stmt_Node):
+                newspec.append(self.visit(i))
+            else:
+
+                newdecls = []
+                for var_decl in i.vardecl:
+
+                    if var_decl.alloc:
+
+                        name = f'__f2dace_ALLOCATED_{var_decl.name}'
+                        var = ast_internal_classes.Var_Decl_Node(
+                            name=name,
+                            type='LOGICAL',
+                            alloc=False,
+                            sizes=None,
+                            offsets=None,
+                            kind=None,
+                            optional=False,
+                            init=None,
+                            line_number=var_decl.line_number
+                        )
+                        newdecls.append(var)
+
+                if len(newdecls) > 0:
+                    newspec.append(ast_internal_classes.Decl_Stmt_Node(vardecl=newdecls))
+                newspec.append(i)
+
+        return ast_internal_classes.Specification_Part_Node(
+            specifications=newspec,
+            symbols=node.symbols,
+            typedecls=node.typedecls,
+            uses=node.uses,
+            enums=node.enums
+        )
+
+def allocatableReplacer(node=ast_internal_classes.Program_Node):
+    """
+    Adds to each optional arg a logical value specifying its status.
+    Eliminates function statements from the AST
+    :param node: The AST to be transformed
+    :return: The transformed AST
+    :note Should only be used on the program node
+    """
+
+    modified_functions = {}
+
+    for func in node.subroutine_definitions:
+        if optionalArgsHandleFunction(func):
+            modified_functions[func.name.name] = func
+    for mod in node.modules:
+        for func in mod.subroutine_definitions:
+            if optionalArgsHandleFunction(func):
+                modified_functions[func.name.name] = func
+
+    node = OptionalArgsTransformer(modified_functions).visit(node)
+
+    return node
 
 def functionStatementEliminator(node=ast_internal_classes.Program_Node):
     """
