@@ -238,7 +238,7 @@ def test_fortran_frontend_bitwise_ops():
 
     END SUBROUTINE bitwise_ops
 """).check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'bitwise_ops', normalize_offsets=False)
+    sdfg = create_singular_sdfg_from_string(sources, 'bitwise_ops', normalize_offsets=True)
     #sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -270,7 +270,7 @@ def test_fortran_frontend_bitwise_ops2():
 
     END SUBROUTINE bitwise_ops
 """).check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'bitwise_ops', normalize_offsets=False)
+    sdfg = create_singular_sdfg_from_string(sources, 'bitwise_ops', normalize_offsets=True)
     #sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -282,15 +282,44 @@ def test_fortran_frontend_bitwise_ops2():
 
     sdfg(input=input, res=res)
 
-    print(res)
     assert np.allclose(res, [0, 16, 1, 0, 30, 78])
 
+def test_fortran_frontend_allocated():
+    sources, main = SourceCodeBuilder().add_file("""
+    SUBROUTINE allocated_test(res)
+
+    integer, allocatable, dimension(:) :: data
+    integer, dimension(3) :: res
+
+    res(1) = ALLOCATED(data)
+
+    ALLOCATE(data(6))
+
+    res(2) = ALLOCATED(data)
+
+    DEALLOCATE(data)
+
+    res(3) = ALLOCATED(data)
+
+    END SUBROUTINE allocated_test
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'allocated_test', normalize_offsets=True)
+    #sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 3
+    res = np.full([size], 42, order="F", dtype=np.int32)
+
+    sdfg(res=res)
+
+    assert np.allclose(res, [0, 1, 0])
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_bit_size()
-    #test_fortran_frontend_bit_size_symbolic()
-    #test_fortran_frontend_size_arbitrary()
-    #test_fortran_frontend_present()
-    #test_fortran_frontend_bitwise_ops()
+    test_fortran_frontend_bit_size()
+    test_fortran_frontend_bit_size_symbolic()
+    test_fortran_frontend_size_arbitrary()
+    test_fortran_frontend_present()
+    test_fortran_frontend_bitwise_ops()
     test_fortran_frontend_bitwise_ops2()
+    test_fortran_frontend_allocated()
