@@ -4,37 +4,42 @@ import numpy as np
 import pytest
 
 from dace.frontend.fortran import fortran_parser
+from tests.fortran.fortran_test_helper import create_singular_sdfg_from_string, SourceCodeBuilder
 
 def test_fortran_frontend_optional():
-    test_string = """
-                    PROGRAM intrinsic_optional_test_function
-                    implicit none
-                    integer, dimension(4) :: res
-                    integer, dimension(4) :: res2
-                    integer :: a
-                    CALL intrinsic_optional_test_function(res, res2, a)
-                    end
 
-                    SUBROUTINE intrinsic_optional_test_function(res, res2, a)
-                    integer, dimension(4) :: res
-                    integer, dimension(4) :: res2
-                    integer :: a
+    sources, main = SourceCodeBuilder().add_file("""
 
-                    CALL intrinsic_optional_test_function2(res, a)
-                    CALL intrinsic_optional_test_function2(res2)
+    MODULE intrinsic_optional_test
+        INTERFACE
+            SUBROUTINE intrinsic_optional_test_function2(res, a)
+                integer, dimension(2) :: res
+                integer, optional :: a
+            END SUBROUTINE intrinsic_optional_test_function2
+        END INTERFACE
+    END MODULE
 
-                    END SUBROUTINE intrinsic_optional_test_function
+    SUBROUTINE intrinsic_optional_test_function(res, res2, a)
+    USE intrinsic_optional_test
+    implicit none
+    integer, dimension(4) :: res
+    integer, dimension(4) :: res2
+    integer :: a
 
-                    SUBROUTINE intrinsic_optional_test_function2(res, a)
-                    integer, dimension(2) :: res
-                    integer, optional :: a
+    CALL intrinsic_optional_test_function2(res, a)
+    CALL intrinsic_optional_test_function2(res2)
 
-                    res(1) = a
+    END SUBROUTINE intrinsic_optional_test_function
 
-                    END SUBROUTINE intrinsic_optional_test_function2
-                    """
+    SUBROUTINE intrinsic_optional_test_function2(res, a)
+    integer, dimension(2) :: res
+    integer, optional :: a
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_optional_test_function", False)
+    res(1) = a
+
+    END SUBROUTINE intrinsic_optional_test_function2
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'intrinsic_optional_test_function', normalize_offsets=True)
     #sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -47,43 +52,47 @@ def test_fortran_frontend_optional():
     assert res2[0] == 0
 
 def test_fortran_frontend_optional_complex():
-    test_string = """
-                    PROGRAM intrinsic_optional_test_function
-                    implicit none
-                    integer, dimension(5) :: res
-                    integer, dimension(5) :: res2
-                    integer :: a
-                    double precision :: b
-                    logical :: c
-                    CALL intrinsic_optional_test_function(res, res2, a, b, c)
-                    end
 
-                    SUBROUTINE intrinsic_optional_test_function(res, res2, a, b, c)
-                    integer, dimension(5) :: res
-                    integer, dimension(5) :: res2
-                    integer :: a
-                    double precision :: b
-                    logical :: c
+    sources, main = SourceCodeBuilder().add_file("""
 
-                    CALL intrinsic_optional_test_function2(res, a, b)
-                    CALL intrinsic_optional_test_function2(res2)
+    MODULE intrinsic_optional_test
+        INTERFACE
+            SUBROUTINE intrinsic_optional_test_function2(res, a, b, c)
+                integer, dimension(5) :: res
+                integer, optional :: a
+                double precision, optional :: b
+                logical, optional :: c
+            END SUBROUTINE intrinsic_optional_test_function2
+        END INTERFACE
+    END MODULE
 
-                    END SUBROUTINE intrinsic_optional_test_function
+    SUBROUTINE intrinsic_optional_test_function(res, res2, a, b, c)
+    USE intrinsic_optional_test
+    implicit none
+    integer, dimension(5) :: res
+    integer, dimension(5) :: res2
+    integer :: a
+    double precision :: b
+    logical :: c
 
-                    SUBROUTINE intrinsic_optional_test_function2(res, a, b, c)
-                    integer, dimension(5) :: res
-                    integer, optional :: a
-                    double precision, optional :: b
-                    logical, optional :: c
+    CALL intrinsic_optional_test_function2(res, a, b)
+    CALL intrinsic_optional_test_function2(res2)
 
-                    res(1) = a
-                    res(2) = b
-                    res(3) = c
+    END SUBROUTINE intrinsic_optional_test_function
 
-                    END SUBROUTINE intrinsic_optional_test_function2
-                    """
+    SUBROUTINE intrinsic_optional_test_function2(res, a, b, c)
+    integer, dimension(5) :: res
+    integer, optional :: a
+    double precision, optional :: b
+    logical, optional :: c
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_optional_test_function", False)
+    res(1) = a
+    res(2) = b
+    res(3) = c
+
+    END SUBROUTINE intrinsic_optional_test_function2
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'intrinsic_optional_test_function', normalize_offsets=True)
     #sdfg.simplify(verbose=True)
     sdfg.compile()
 
