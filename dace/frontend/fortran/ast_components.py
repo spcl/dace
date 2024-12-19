@@ -442,7 +442,8 @@ class InternalFortranAst:
 
     def deallocate_stmt(self, node: FASTNode):
         children = self.create_children(node)
-        return ast_internal_classes.Deallocate_Stmt_Node(list=children[0].list)
+        line = get_line(node)
+        return ast_internal_classes.Deallocate_Stmt_Node(list=children[0].list, line_number=line)
 
     def proc_component_ref(self, node: FASTNode):
         children = self.create_children(node)
