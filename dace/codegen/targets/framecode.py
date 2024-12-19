@@ -901,6 +901,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, sdfg, global_stream, callsite_stream)
 
+        outside_symbols = sdfg.arglist() if is_top_level else set()
+
         # Define constants as top-level-allocated
         for cname, (ctype, _) in sdfg.constants_prop.items():
             if isinstance(ctype, data.Array):
@@ -954,10 +956,12 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     and config.Config.get('compiler', 'fpga', 'vendor').lower() == 'intel_fpga'):
                 # Emit OpenCL type
                 callsite_stream.write(f'{isvarType.ocltype} {isvarName};\n', sdfg)
+                self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
             else:
-                callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
-            self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
-
+                # If the variable is passed as an input argument to the SDFG, do not need to declare it
+                if isvarName not in outside_symbols:
+                    callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
+                    self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
         callsite_stream.write('\n', sdfg)
 
         # After the symbols
