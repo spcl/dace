@@ -331,6 +331,16 @@ class DirectReplacement(IntrinsicTransformation):
 
         return (ast_internal_classes.Name_Node(name=test_var_name), "LOGICAL")
 
+    def replace_allocated(transformer: IntrinsicNodeTransformer, call: ast_internal_classes.Call_Expr_Node, line):
+
+        assert len(call.args) == 1
+        assert isinstance(call.args[0], ast_internal_classes.Name_Node)
+
+        var_name = call.args[0].name
+        test_var_name = f'__f2dace_ALLOCATED_{var_name}'
+
+        return (ast_internal_classes.Name_Node(name=test_var_name), "LOGICAL")
+
     def replacement_epsilon(args: ast_internal_classes.Arg_List_Node, line, symbols: list):
 
         # assert len(args) == 1
@@ -347,7 +357,8 @@ class DirectReplacement(IntrinsicTransformation):
         "SIZE": Transformation(replace_size),
         "LBOUND": Transformation(replace_lbound),
         "UBOUND": Transformation(replace_ubound),
-        "PRESENT": Transformation(replace_present)
+        "PRESENT": Transformation(replace_present),
+        "ALLOCATED": Transformation(replace_allocated)
     }
 
     @staticmethod
@@ -1729,7 +1740,6 @@ class FortranIntrinsics:
             "SIGN": "__dace_sign",
             # TODO implement and categorize the intrinsic functions below
             "SPREAD": "__dace_spread",
-            "ALLOCATED": "__dace_allocated",
             "TRIM": "__dace_trim",
             "LEN_TRIM": "__dace_len_trim",
             "ASSOCIATED": "__dace_associated",
