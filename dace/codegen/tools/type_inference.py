@@ -9,7 +9,7 @@
 
 import numpy as np
 import ast
-from dace import dtypes
+from dace import data, dtypes
 from dace import symbolic
 from dace.codegen import cppunparse
 from dace.symbolic import symbol, SymExpr, symstr
@@ -60,7 +60,7 @@ def infer_expr_type(code, symbols=None):
     if isinstance(code, (str, float, int, complex)):
         parsed_ast = ast.parse(str(code))
     elif isinstance(code, sympy.Basic):
-        parsed_ast = ast.parse(sympy.printing.pycode(code))
+        parsed_ast = ast.parse(sympy.printing.pycode(code, allow_unknown_functions=True))
     elif isinstance(code, SymExpr):
         parsed_ast = ast.parse(sympy.printing.pycode(code.expr))
     else:
@@ -286,6 +286,8 @@ def _Name(t, symbols, inferred_symbols):
                 inferred_type = dtypes.typeclass(inferred_type.type)
             elif isinstance(inferred_type, symbolic.symbol):
                 inferred_type = inferred_type.dtype
+            elif isinstance(inferred_type, data.Data):
+                inferred_type = inferred_type.dtype
         elif t_id in inferred_symbols:
             inferred_type = inferred_symbols[t_id]
         return inferred_type
@@ -372,6 +374,8 @@ def _Compare(t, symbols, inferred_symbols):
         vec_len = inf_type.veclen
     for o, e in zip(t.ops, t.comparators):
         if o.__class__.__name__ not in cppunparse.CPPUnparser.cmpops:
+            continue
+        if isinstance(e, ast.Constant) and e.value is None:
             continue
         inf_type = _dispatch(e, symbols, inferred_symbols)
         if isinstance(inf_type, dtypes.vector):

@@ -652,7 +652,10 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     #############################
 
     # Create initial tree from CFG
-    cfg: cf.ControlFlow = cf.structured_control_flow_tree(sdfg, lambda _: '')
+    if sdfg.using_explicit_control_flow:
+        cfg: cf.ControlFlow = cf.structured_control_flow_tree_with_regions(sdfg, lambda _: '')
+    else:
+        cfg: cf.ControlFlow = cf.structured_control_flow_tree(sdfg, lambda _: '')
 
     # Traverse said tree (also into states) to create the schedule tree
     def totree(node: cf.ControlFlow, parent: cf.GeneralBlock = None) -> List[tn.ScheduleTreeNode]:
@@ -691,6 +694,26 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                                 edge_body.append(tn.BreakNode())
                             elif e in parent.gotos_to_continue:
                                 edge_body.append(tn.ContinueNode())
+                    else:
+                        # If the next state is not the expected target (loop-back edge, next state),
+                        # emit goto
+                        expected_transition = False
+                        if isinstance(parent, (cf.ForScope, cf.WhileScope)) and e.dst is parent.guard:
+                            expected_transition = True
+                        elif isinstance(parent, cf.DoWhileScope) and e.dst is parent.body[0]:
+                            expected_transition = True
+                        else:
+                            next_block = cf.find_next_block(node)
+                            # Next state in block or first state in next CF block
+                            if next_block is not None:
+                                if isinstance(next_block, cf.GeneralLoopScope):  # Special case for control flow regions
+                                    if e.dst is next_block.loop:
+                                        expected_transition = True
+                                elif next_block.first_block is e.dst:
+                                    expected_transition = True
+
+                        if not expected_transition and e not in parent.gotos_to_ignore:
+                            edge_body.append(tn.GotoNode(target=e.dst.label))
 
                     if e not in parent.gotos_to_ignore and not e.data.is_unconditional():
                         if sdfg.out_degree(node.state) == 1 and parent.sequential:

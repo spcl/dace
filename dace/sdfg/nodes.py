@@ -35,6 +35,7 @@ class Node(object):
     out_connectors = DictProperty(key_type=str,
                                   value_type=dtypes.typeclass,
                                   desc="A set of output connectors for this node.")
+    guid = Property(dtype=str, allow_none=False)
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
@@ -46,11 +47,23 @@ class Node(object):
         self.in_connectors = in_connectors or {}
         self.out_connectors = out_connectors or {}
 
+        self.guid = graph.generate_element_id(self)
+
     def __str__(self):
         if hasattr(self, 'label'):
             return self.label
         else:
             return type(self).__name__
+
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k == 'guid': # Skip ID
+                continue
+            setattr(result, k, dcpy(v, memo))
+        return result
 
     def validate(self, sdfg, state):
         pass
@@ -95,40 +108,77 @@ class Node(object):
     def __repr__(self):
         return type(self).__name__ + ' (' + self.__str__() + ')'
 
-    def add_in_connector(self, connector_name: str, dtype: dtypes.typeclass = None, force: bool = False):
+    def add_in_connector(self, connector_name: str, dtype: Any = None, force: bool = False):
         """ Adds a new input connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
 
             :param connector_name: The name of the new connector.
             :param dtype: The type of the connector, or None for auto-detect.
-            :param force: Add connector even if output connector already exists.
+            :param force: Add connector even if input or output connector of that name already exists.
             :return: True if the operation is successful, otherwise False.
         """
 
         if (not force and (connector_name in self.in_connectors or connector_name in self.out_connectors)):
             return False
-        connectors = self.in_connectors
-        connectors[connector_name] = dtype
-        self.in_connectors = connectors
+        if not isinstance(dtype, dace.typeclass):
+            dtype = dace.typeclass(dtype)
+        self.in_connectors[connector_name] = dtype
         return True
 
-    def add_out_connector(self, connector_name: str, dtype: dtypes.typeclass = None, force: bool = False):
+    def add_out_connector(self, connector_name: str, dtype: Any = None, force: bool = False,) -> bool:
         """ Adds a new output connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
 
             :param connector_name: The name of the new connector.
             :param dtype: The type of the connector, or None for auto-detect.
-            :param force: Add connector even if input connector already exists.
+            :param force: Add connector even if input or output connector of that name already exists.
             :return: True if the operation is successful, otherwise False.
         """
 
         if (not force and (connector_name in self.in_connectors or connector_name in self.out_connectors)):
             return False
-        connectors = self.out_connectors
-        connectors[connector_name] = dtype
-        self.out_connectors = connectors
+        if not isinstance(dtype, dace.typeclass):
+            dtype = dace.typeclass(dtype)
+        self.out_connectors[connector_name] = dtype
+        return True
+
+    def _add_scope_connectors(
+            self,
+            connector_name: str,
+            dtype: Optional[dtypes.typeclass] = None,
+            force: bool = False,
+    ) -> None:
+        """ Adds input and output connector names to `self` in one step.
+
+            The function will add an input connector with name `'IN_' + connector_name`
+            and an output connector with name `'OUT_' + connector_name`.
+            The function is a shorthand for calling `add_in_connector()` and `add_out_connector()`.
+
+            :param connector_name: The base name of the new connectors.
+            :param dtype: The type of the connectors, or `None` for auto-detect.
+            :param force: Add connector even if input or output connector of that name already exists.
+            :return: True if the operation is successful, otherwise False.
+        """
+        in_connector_name = "IN_" + connector_name
+        out_connector_name = "OUT_" + connector_name
+        if not force:
+            if in_connector_name in self.in_connectors or in_connector_name in self.out_connectors:
+                return False
+            if out_connector_name in self.in_connectors or out_connector_name in self.out_connectors:
+                return False
+        # We force unconditionally because we have performed the tests above.
+        self.add_in_connector(
+                connector_name=in_connector_name,
+                dtype=dtype,
+                force=True,
+        )
+        self.add_out_connector(
+                connector_name=out_connector_name,
+                dtype=dtype,
+                force=True,
+        )
         return True
 
     def remove_in_connector(self, connector_name: str):
@@ -253,12 +303,15 @@ class AccessNode(Node):
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
+
+        node._guid = graph.generate_element_id(node)
+
         return node
 
     @property
     def label(self):
         return self.data
-    
+
     @property
     def root_data(self):
         return self.data.split('.')[0]
@@ -270,7 +323,7 @@ class AccessNode(Node):
         if isinstance(sdfg, (dace.sdfg.SDFGState, dace.sdfg.ScopeSubgraphView)):
             sdfg = sdfg.parent
         return sdfg.arrays[self.data]
-    
+
     def root_desc(self, sdfg):
         from dace.sdfg import SDFGState, ScopeSubgraphView
         if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
@@ -529,6 +582,8 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
+    ext_sdfg_path = Property(dtype=str, default=None, allow_none=True,
+                             desc='Path to a file containing the SDFG for this nested SDFG')
     schedule = EnumProperty(dtype=dtypes.ScheduleType,
                             desc="SDFG schedule",
                             allow_none=True,
@@ -553,27 +608,38 @@ class NestedSDFG(CodeNode):
 
     def __init__(self,
                  label,
-                 sdfg,
+                 sdfg: Optional['dace.SDFG'],
                  inputs: Set[str],
                  outputs: Set[str],
                  symbol_mapping: Dict[str, Any] = None,
                  schedule=dtypes.ScheduleType.Default,
                  location=None,
-                 debuginfo=None):
-        from dace.sdfg import SDFG
+                 debuginfo=None,
+                 path: Optional[str] = None):
         super(NestedSDFG, self).__init__(label, location, inputs, outputs)
 
         # Properties
-        self.sdfg: SDFG = sdfg
+        self.sdfg: 'dace.SDFG' = sdfg
+        self.ext_sdfg_path = path
         self.symbol_mapping = symbol_mapping or {}
         self.schedule = schedule
         self.debuginfo = debuginfo
+
+    def load_external(self, context: Optional['dace.SDFGState']) -> None:
+        if self.sdfg is None and self.ext_sdfg_path is not None:
+            self.sdfg = dace.SDFG.from_file(self.ext_sdfg_path)
+            self.sdfg.parent_nsdfg_node = self
+            self.sdfg.parent = context
+            self.sdfg.parent_sdfg = context.sdfg if context else None
 
     def __deepcopy__(self, memo):
         cls = self.__class__
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
+            # Skip GUID.
+            if k in ('guid',):
+                continue
             setattr(result, k, dcpy(v, memo))
         if result._sdfg is not None:
             result._sdfg.parent_nsdfg_node = result
@@ -588,14 +654,14 @@ class NestedSDFG(CodeNode):
 
         dace.serialize.set_properties_from_json(ret, json_obj, context)
 
-        if context and 'sdfg_state' in context:
-            ret.sdfg.parent = context['sdfg_state']
-        if context and 'sdfg' in context:
-            ret.sdfg.parent_sdfg = context['sdfg']
+        if ret.sdfg is not None:
+            if context and 'sdfg_state' in context:
+                ret.sdfg.parent = context['sdfg_state']
+            if context and 'sdfg' in context:
+                ret.sdfg.parent_sdfg = context['sdfg']
+            ret.sdfg.parent_nsdfg_node = ret
 
-        ret.sdfg.parent_nsdfg_node = ret
-
-        ret.sdfg.update_cfg_list([])
+            ret.sdfg.update_cfg_list([])
 
         return ret
 
@@ -609,6 +675,7 @@ class NestedSDFG(CodeNode):
             internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
             keys_to_use &= internally_used_symbols
 
+        # Translate the internal symbols back to their external counterparts.
         free_syms |= set().union(*(map(str,
                                        pystr_to_symbolic(v).free_symbols) for k, v in self.symbol_mapping.items()
                                    if k in keys_to_use))
@@ -644,24 +711,29 @@ class NestedSDFG(CodeNode):
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
-        if self.sdfg.parent_nsdfg_node is not self:
-            raise ValueError('Parent nested SDFG node not properly set')
-        if self.sdfg.parent is not state:
-            raise ValueError('Parent state not properly set for nested SDFG node')
-        if self.sdfg.parent_sdfg is not sdfg:
-            raise ValueError('Parent SDFG not properly set for nested SDFG node')
+        if self.sdfg:
+            if self.sdfg.parent_nsdfg_node is not self:
+                raise ValueError('Parent nested SDFG node not properly set')
+            if self.sdfg.parent is not state:
+                raise ValueError('Parent state not properly set for nested SDFG node')
+            if self.sdfg.parent_sdfg is not sdfg:
+                raise ValueError('Parent SDFG not properly set for nested SDFG node')
 
-        connectors = self.in_connectors.keys() | self.out_connectors.keys()
-        for conn in connectors:
-            if conn not in self.sdfg.arrays:
-                raise NameError(
-                    f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
-                    'Example: parameter passed to a function without a matching array within it.')
-        for dname, desc in self.sdfg.arrays.items():
-            if not desc.transient and dname not in connectors:
-                raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
-            if dname in connectors and desc.transient:
-                raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
+            connectors = self.in_connectors.keys() | self.out_connectors.keys()
+            for conn in connectors:
+                if conn in self.sdfg.symbols:
+                    raise ValueError(
+                        f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
+                        'To pass symbols use "symbol_mapping".')
+                if conn not in self.sdfg.arrays:
+                    raise NameError(
+                        f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
+                        'Example: parameter passed to a function without a matching array within it.')
+            for dname, desc in self.sdfg.arrays.items():
+                if not desc.transient and dname not in connectors:
+                    raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
+                if dname in connectors and desc.transient:
+                    raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
 
         # Validate inout connectors
         from dace.sdfg import utils  # Avoids circular import
@@ -682,17 +754,18 @@ class NestedSDFG(CodeNode):
                                  f"output ({outputs}) arrays")
 
         # Validate undefined symbols
-        symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
-        missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
-        if missing_symbols:
-            raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))
-        extra_symbols = self.symbol_mapping.keys() - symbols
-        if len(extra_symbols) > 0:
-            # TODO: Elevate to an error?
-            warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
+        if self.sdfg:
+            symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
+            missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
+            if missing_symbols:
+                raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))
+            extra_symbols = self.symbol_mapping.keys() - symbols
+            if len(extra_symbols) > 0:
+                # TODO: Elevate to an error?
+                warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
-        # Recursively validate nested SDFG
-        self.sdfg.validate(references, **context)
+            # Recursively validate nested SDFG
+            self.sdfg.validate(references, **context)
 
 
 # ------------------------------------------------------------------------------
@@ -705,6 +778,9 @@ class EntryNode(Node):
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
+    add_scope_connectors = Node._add_scope_connectors
+
+
 
 # ------------------------------------------------------------------------------
 
@@ -716,6 +792,8 @@ class ExitNode(Node):
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
+    add_scope_connectors = Node._add_scope_connectors
+
 
 # ------------------------------------------------------------------------------
 
@@ -723,7 +801,7 @@ class ExitNode(Node):
 @dace.serialize.serializable
 class MapEntry(EntryNode):
     """ Node that opens a Map scope.
-        
+
         :see: Map
     """
 
@@ -786,10 +864,8 @@ class MapEntry(EntryNode):
         for p, rng in zip(self._map.params, self._map.range):
             result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
 
-        # Add dynamic inputs
+        # Handle the dynamic map ranges.
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
-
-        # Try to get connector type from connector
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
@@ -800,7 +876,7 @@ class MapEntry(EntryNode):
 @dace.serialize.serializable
 class MapExit(ExitNode):
     """ Node that closes a Map scope.
-        
+
         :see: Map
     """
 
@@ -871,6 +947,9 @@ class Map(object):
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
+    unroll_factor = Property(dtype=int, allow_none=True, default=0,
+                             desc="How much iterations should be unrolled."
+                             " To prevent unrolling, set this value to 1.")
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
@@ -882,36 +961,30 @@ class Map(object):
     omp_num_threads = Property(dtype=int,
                                default=0,
                                desc="Number of OpenMP threads executing the Map",
-                               optional=True,
-                               optional_condition=lambda m: m.schedule in
-                               (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+                               serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
     omp_schedule = EnumProperty(dtype=dtypes.OMPScheduleType,
                                 default=dtypes.OMPScheduleType.Default,
                                 desc="OpenMP schedule {static, dynamic, guided}",
-                                optional=True,
-                                optional_condition=lambda m: m.schedule in
-                                (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+                                serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
     omp_chunk_size = Property(dtype=int,
                               default=0,
                               desc="OpenMP schedule chunk size",
-                              optional=True,
-                              optional_condition=lambda m: m.schedule in
-                              (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+                              serialize_if=lambda m: m.schedule in dtypes.CPU_SCHEDULES)
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,
                                   allow_none=True,
                                   desc="GPU kernel block size",
-                                  optional=True,
-                                  optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+                                  serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     gpu_launch_bounds = Property(dtype=str,
                                  default="0",
                                  desc="GPU kernel launch bounds. A value of -1 disables the statement, 0 (default) "
                                  "enables the statement if block size is not symbolic, and any other value "
                                  "(including tuples) sets it explicitly.",
-                                 optional=True,
-                                 optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+                                 serialize_if=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
+    gpu_force_syncthreads = Property(dtype=bool, desc="Force a call to the __syncthreads for the map", default=False)
 
     def __init__(self,
                  label,
@@ -928,7 +1001,7 @@ class Map(object):
         self.label = label
         self.schedule = schedule
         self.unroll = unroll
-        self.collapse = 1
+        self.collapse = collapse
         self.params = params
         self.range = ndrange
         self.debuginfo = debuginfo
@@ -944,7 +1017,12 @@ class Map(object):
 
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
-            raise NameError('Invalid map name "%s"' % self.label)
+            raise NameError(f'Invalid map name "{self.label}"')
+        if self.get_param_num() == 0:
+            raise ValueError('There must be at least one parameter in a map.')
+        if self.get_param_num() != self.range.dims():
+            raise ValueError(f'There are {self.get_param_num()} parameters but the range'
+                             f' has {self.range.dims()} dimensions.')
 
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
@@ -960,7 +1038,7 @@ MapEntry = indirect_properties(Map, lambda obj: obj.map)(MapEntry)
 @dace.serialize.serializable
 class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
-        
+
         :see: Consume
     """
 
@@ -1041,7 +1119,7 @@ class ConsumeEntry(EntryNode):
 @dace.serialize.serializable
 class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
-        
+
         :see: Consume
     """
 
@@ -1382,8 +1460,8 @@ class LibraryNode(CodeNode):
         if implementation not in self.implementations.keys():
             raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
-        cfg_id = sdfg.cfg_id
-        state_id = sdfg.nodes().index(state)
+        cfg_id = state.parent_graph.cfg_id
+        state_id = state.block_id
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation: ExpandTransformation = transformation_type()
         transformation.setup_match(sdfg, cfg_id, state_id, subgraph, 0)

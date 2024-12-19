@@ -42,22 +42,22 @@ def _cart_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dims: Shape
     state.add_node(tasklet)
 
     # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
-    _, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True)
-    wnode = state.add_write(pgrid_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(pgrid_name, scal))
+    scal_name, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True, find_new_name=True)
+    wnode = state.add_write(scal_name)
+    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(scal_name, scal))
 
     return pgrid_name
 
 
 @oprepo.replaces_method('Intracomm', 'Create_cart')
-def _intracomm_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', dims: ShapeType):
+def _intracomm_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, dims: ShapeType):
     """ Equivalent to `dace.comm.Cart_create(dims).
         :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
         :return: Name of the new process-grid descriptor.
     """
 
     from mpi4py import MPI
-    icomm_name, icomm_obj = icomm
+    icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
     return _cart_create(pv, sdfg, state, dims)
@@ -97,9 +97,9 @@ def _cart_sub(pv: 'ProgramVisitor',
     state.add_node(tasklet)
 
     # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
-    _, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True)
-    wnode = state.add_write(pgrid_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(pgrid_name, scal))
+    scal_name, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True, find_new_name=True)
+    wnode = state.add_write(scal_name)
+    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(scal_name, scal))
 
     return pgrid_name
 
@@ -186,17 +186,17 @@ def _bcast(pv: ProgramVisitor,
 def _intracomm_bcast(pv: 'ProgramVisitor',
                      sdfg: SDFG,
                      state: SDFGState,
-                     comm: Tuple[str, 'Comm'],
+                     comm: str,
                      buffer: str,
                      root: Union[str, sp.Expr, Number] = 0):
     """ Equivalent to `dace.comm.Bcast(buffer, root)`. """
 
     from mpi4py import MPI
-    comm_name, comm_obj = comm
+    comm_name, comm_obj = comm, pv.globals[comm]
     if comm_obj == MPI.COMM_WORLD:
         return _bcast(pv, sdfg, state, buffer, root)
     # NOTE: Highly experimental
-    sdfg.add_scalar(comm_name, dace.int32)
+    scal_name, _ = sdfg.add_scalar(comm_name, dace.int32, find_new_name=True)
     return _bcast(pv, sdfg, state, buffer, root, fcomm=comm_name)
 
 
@@ -267,12 +267,12 @@ def _alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inbuffer: str,
 
 
 @oprepo.replaces_method('Intracomm', 'Alltoall')
-def _intracomm_alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', inp_buffer: str,
+def _intracomm_alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, inp_buffer: str,
                         out_buffer: str):
     """ Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer)`. """
 
     from mpi4py import MPI
-    icomm_name, icomm_obj = icomm
+    icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
     return _alltoall(pv, sdfg, state, inp_buffer, out_buffer)
@@ -303,12 +303,12 @@ def _allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, op
 
 
 @oprepo.replaces_method('Intracomm', 'Allreduce')
-def _intracomm_allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', inp_buffer: 'InPlace',
+def _intracomm_allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, inp_buffer: 'InPlace',
                          out_buffer: str, op: str):
     """ Equivalent to `dace.comm.Allreduce(out_buffer, op)`. """
 
     from mpi4py import MPI
-    icomm_name, icomm_obj = icomm
+    icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
     if inp_buffer != MPI.IN_PLACE:
@@ -470,12 +470,12 @@ def _send(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Send')
-def _intracomm_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', buffer: str,
+def _intracomm_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
                     dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.end(buffer, dst, tag)`. """
 
     from mpi4py import MPI
-    icomm_name, icomm_obj = icomm
+    icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
     return _send(pv, sdfg, state, buffer, dst, tag)
@@ -592,12 +592,12 @@ def _isend(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Isend')
-def _intracomm_isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', buffer: str,
+def _intracomm_isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
                      dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req)`. """
 
     from mpi4py import MPI
-    icomm_name, icomm_obj = icomm
+    icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
     req, _ = sdfg.add_array("isend_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
@@ -690,12 +690,12 @@ def _recv(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Recv')
-def _intracomm_Recv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', buffer: str,
+def _intracomm_Recv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
                     src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Recv(buffer, src, tagq)`. """
 
     from mpi4py import MPI
-    icomm_name, icomm_obj = icomm
+    icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
     return _recv(pv, sdfg, state, buffer, src, tag)
@@ -810,12 +810,12 @@ def _irecv(pv: ProgramVisitor,
 
 
 @oprepo.replaces_method('Intracomm', 'Irecv')
-def _intracomm_irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', buffer: str,
+def _intracomm_irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: str, buffer: str,
                      src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Irecv(buffer, src, tag, req)`. """
 
     from mpi4py import MPI
-    icomm_name, icomm_obj = icomm
+    icomm_name, icomm_obj = icomm, pv.globals[icomm]
     if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
     req, _ = sdfg.add_array("irecv_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
@@ -941,9 +941,9 @@ def _subarray(pv: ProgramVisitor,
         state.add_node(tasklet)
 
         # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
-        _, scal = sdfg.add_scalar(subarray_name, dace.int32, transient=True)
-        wnode = state.add_write(subarray_name)
-        state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(subarray_name, scal))
+        scal_name, scal = sdfg.add_scalar(subarray_name, dace.int32, transient=True, find_new_name=True)
+        wnode = state.add_write(scal_name)
+        state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(scal_name, scal))
 
     return subarray_name
 
@@ -1078,9 +1078,9 @@ def _redistribute(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: s
         f'int* {rdistrarray_name}_self_size;'
     ])
     state.add_node(tasklet)
-    _, scal = sdfg.add_scalar(rdistrarray_name, dace.int32, transient=True)
-    wnode = state.add_write(rdistrarray_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(rdistrarray_name, scal))
+    scal_name, scal = sdfg.add_scalar(rdistrarray_name, dace.int32, transient=True, find_new_name=True)
+    wnode = state.add_write(scal_name)
+    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(scal_name, scal))
 
     libnode = Redistribute('_Redistribute_', rdistrarray_name)
 

@@ -627,7 +627,7 @@ override default implementations for a library node type, or for an entire libra
 Internally, an expansion is a subclass of :class:`~dace.transformation.transformation.ExpandTransformation`. It is
 responsible for creating a new SDFG that implements the library node, and for connecting the inputs and outputs of the
 library node to the new SDFG. An example of such an expansion is Einstein summation specialization 
-(`see full file <https://github.com/spcl/dace/blob/master/dace/libraries/blas/nodes/einsum.py>`_):
+(`see full file <https://github.com/spcl/dace/blob/main/dace/libraries/blas/nodes/einsum.py>`_):
 
 .. code-block:: python
 

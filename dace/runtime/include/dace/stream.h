@@ -338,7 +338,7 @@ namespace dace {
 
     template <int CHUNKSIZE>
     struct Consume {
-        template <template <typename, bool> typename StreamT, typename T, bool ALIGNED,
+        template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
                   typename Functor>
         static void consume(StreamT<T, ALIGNED>& stream, unsigned num_threads,
                             Functor&& contents) {
@@ -359,7 +359,7 @@ namespace dace {
             for (auto& t : threads) t.join();
         }
 
-        template <template <typename, bool> typename StreamT, typename T, bool ALIGNED,
+        template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
                   typename CondFunctor, typename Functor>
         static void consume_cond(StreamT<T, ALIGNED>& stream, unsigned num_threads,
                                  CondFunctor&& quiescence, Functor&& contents) {
@@ -384,7 +384,7 @@ namespace dace {
     // Specialization for consumption of 1 element
     template<>
     struct Consume<1> {
-        template <template <typename, bool> typename StreamT, typename T, bool ALIGNED,
+        template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
                   typename Functor>
         static void consume(StreamT<T, ALIGNED>& stream, unsigned num_threads,
                             Functor&& contents) {
@@ -404,7 +404,7 @@ namespace dace {
             for (auto& t : threads) t.join();
         }
 
-        template <template <typename, bool> typename StreamT, typename T, bool ALIGNED,
+        template <template <typename, bool> class StreamT, typename T, bool ALIGNED,
                   typename CondFunctor, typename Functor>
         static void consume_cond(StreamT<T, ALIGNED>& stream, unsigned num_threads,
                                  CondFunctor&& quiescence, Functor&& contents) {

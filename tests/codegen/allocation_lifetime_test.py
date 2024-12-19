@@ -398,6 +398,31 @@ def test_persistent_array_access():
     assert np.allclose(a[3], 5)
 
 
+def test_persistent_loop_bound():
+    """
+    Code originates from Issue #1550.
+    Tests both ``for`` and OpenMP parallel ``for`` loop bounds with persistent storage.
+    """
+    N = dace.symbol('N')
+
+    @dace.program(auto_optimize=True)
+    def tester(L: dace.float64[N, N], index: dace.uint64, active_size: dace.uint64):
+        for i in range(index, active_size - 1):
+            L[i + 1][i] = 1.0
+
+            for j in range(i, dace.int64(active_size - 1)):
+                L[j + 1][i] = 2.0
+
+    l = np.random.rand(10, 10)
+    index = 2
+    active_size = 7
+    l_ref = np.copy(l)
+    tester.f(l_ref, index, active_size)
+    tester(l, index, active_size)
+
+    assert np.allclose(l, l_ref)
+
+
 def test_double_nested_persistent_write():
     sdfg = dace.SDFG('npw_inner')
     sdfg.add_array('pers', [20], dace.float64)
@@ -451,10 +476,16 @@ def test_branched_allocation(mode):
     sdfg.add_edge(state_br1_1, state_merge, dace.InterstateEdge())
     sdfg.add_edge(state_br2_1, state_merge, dace.InterstateEdge())
 
-    tasklet1 = state_br1.add_tasklet(name="br1", inputs=[], outputs=["out"], \
-            code="out = 1;", language=dace.Language.CPP)
-    tasklet2 = state_br2.add_tasklet(name="br2", inputs=[], outputs=["out"], \
-            code="out = 1;", language=dace.Language.CPP)
+    tasklet1 = state_br1.add_tasklet(name="br1",
+                                     inputs=[],
+                                     outputs=["out"],
+                                     code="out = 1;",
+                                     language=dace.Language.CPP)
+    tasklet2 = state_br2.add_tasklet(name="br2",
+                                     inputs=[],
+                                     outputs=["out"],
+                                     code="out = 1;",
+                                     language=dace.Language.CPP)
 
     arr_A = state_br1.add_write("A")
     memlet = dace.Memlet(expr="A[1]")
@@ -480,7 +511,7 @@ def test_branched_allocation(mode):
     sdfg.compile()
 
 
-@pytest.mark.skip
+@pytest.mark.skip('Dynamic array resize is not yet supported')
 def test_scope_multisize():
     """ An array that needs to be allocated multiple times with different sizes. """
     sdfg = dace.SDFG('test')
@@ -576,6 +607,7 @@ if __name__ == '__main__':
     test_persistent_scalar()
     test_persistent_scalar_in_map()
     test_persistent_array_access()
+    test_persistent_loop_bound()
     test_double_nested_persistent_write()
     test_branched_allocation('global')
     test_branched_allocation('singlevalue')

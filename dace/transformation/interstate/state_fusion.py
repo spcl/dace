@@ -32,7 +32,7 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
-@transformation.experimental_cfg_block_compatible
+@transformation.explicit_cf_compatible
 class StateFusion(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation.
 
@@ -306,6 +306,15 @@ class StateFusion(transformation.MultiStateTransformation):
             resulting_ccs: List[CCDesc] = StateFusion.find_fused_components(first_cc_input, first_cc_output,
                                                                             second_cc_input, second_cc_output)
 
+            if len(resulting_ccs) > 1:
+                # Side-effect tasklets cannot be fused if could lead to data races
+                for node in first_state.nodes():
+                    if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
+                        return False
+                for node in second_state.nodes():
+                    if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
+                        return False
+
             # Check for data races
             for fused_cc in resulting_ccs:
                 # Write-Write hazard - data is output of both first and second
@@ -525,13 +534,15 @@ class StateFusion(transformation.MultiStateTransformation):
 
         # Merge common (data) nodes
         merged_nodes = set()
+        removed_nodes = set()
         for node in second_mid:
 
             # merge only top level nodes, skip everything else
             if node not in top2:
                 continue
 
-            candidates = [x for x in order if x.data == node.data and x in top and x not in merged_nodes]
+            candidates = [x for x in order
+                          if x.data == node.data and x in top and x not in merged_nodes and x not in removed_nodes]
             source_node = first_state.in_degree(node) == 0
 
             # If not source node, try to connect every memlet-intersecting candidate
@@ -543,6 +554,7 @@ class StateFusion(transformation.MultiStateTransformation):
                         sdutil.change_edge_src(first_state, cand, node)
                         sdutil.change_edge_dest(first_state, cand, node)
                         first_state.remove_node(cand)
+                        removed_nodes.add(cand)
                 continue
 
             if len(candidates) == 0:
@@ -562,6 +574,7 @@ class StateFusion(transformation.MultiStateTransformation):
             sdutil.change_edge_src(first_state, node, n)
             sdutil.change_edge_dest(first_state, node, n)
             first_state.remove_node(node)
+            removed_nodes.add(node)
             merged_nodes.add(n)
 
         # Redirect edges and remove second state

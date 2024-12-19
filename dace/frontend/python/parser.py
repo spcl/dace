@@ -59,9 +59,10 @@ def _get_locals_and_globals(f):
     result.update(f.__globals__)
     # grab the free variables (i.e. locals)
     if f.__closure__ is not None:
-        result.update(
-            {k: v
-             for k, v in zip(f.__code__.co_freevars, [_get_cell_contents_or_none(x) for x in f.__closure__])})
+        result.update({
+            k: v
+            for k, v in zip(f.__code__.co_freevars, [_get_cell_contents_or_none(x) for x in f.__closure__])
+        })
 
     return result
 
@@ -92,14 +93,15 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
             desc = sdfg.arrays[arg_name]
             if not hasattr(desc, 'shape') or not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_values = list(desc.shape) + list(getattr(desc, 'strides', []))
+            symbolic_values = list(desc.shape) + list(getattr(desc, 'strides', [])) + list(getattr(desc, 'offset', []))
             given_values = list(arg_val.shape)
             given_strides = []
             if hasattr(arg_val, 'strides'):
                 # NumPy arrays use bytes in strides
                 factor = getattr(arg_val, 'itemsize', 1)
                 given_strides = [s // factor for s in arg_val.strides]
-            given_values += given_strides
+            given_offset = [o for o in arg_val.offset] if hasattr(arg_val, 'offset') else []
+            given_values += given_strides + given_offset
 
             for sym_dim, real_dim in zip(symbolic_values, given_values):
                 repldict = {}
@@ -141,6 +143,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
 class DaceProgram(pycommon.SDFGConvertible):
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
+
     def __init__(self,
                  f,
                  args,
@@ -153,7 +156,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                  recompile: bool = True,
                  distributed_compilation: bool = False,
                  method: bool = False,
-                 use_experimental_cfg_blocks: bool = False):
+                 use_explicit_cf: bool = True):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
@@ -173,7 +176,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.recreate_sdfg = recreate_sdfg
         self.regenerate_code = regenerate_code
         self.recompile = recompile
-        self.use_experimental_cfg_blocks = use_experimental_cfg_blocks
+        self.use_explicit_cf = use_explicit_cf
         self.distributed_compilation = distributed_compilation
 
         self.global_vars = _get_locals_and_globals(f)
@@ -404,9 +407,10 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Update arguments with symbols in data shapes
         result.update(
-            infer_symbols_from_datadescriptor(
-                sdfg, {k: create_datadescriptor(v)
-                       for k, v in result.items() if k not in self.constant_args}))
+            infer_symbols_from_datadescriptor(sdfg, {
+                k: create_datadescriptor(v)
+                for k, v in result.items() if k not in self.constant_args
+            }))
         return result
 
     def __call__(self, *args, **kwargs):
@@ -486,17 +490,16 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param validate: If True, validates the resulting SDFG after creation.
         :return: The generated SDFG object.
         """
-        # Avoid import loop
-        from dace.transformation.passes import scalar_to_symbol as scal2sym
-        from dace.transformation import helpers as xfh
 
         # Obtain DaCe program as SDFG
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
 
-        if not self.use_experimental_cfg_blocks:
-            sdutils.inline_loop_blocks(sdfg)
-            sdutils.inline_control_flow_regions(sdfg)
-        sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
+        if not self.use_explicit_cf:
+            for nsdfg in sdfg.all_sdfgs_recursive():
+                sdutils.inline_control_flow_regions(nsdfg)
+        sdfg.using_explicit_control_flow = self.use_explicit_cf
+
+        sdfg.reset_cfg_list()
 
         # Apply simplification pass automatically
         if not cached and (simplify == True or
@@ -756,7 +759,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         if sdfg is not None:
             # Set regenerate and recompile flags
-            sdfg._regenerate_code = self.regenerate_code
+            sdfg.regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
 
         return sdfg, self._cache.make_key(argtypes, given_args, self.closure_array_keys, self.closure_constant_keys,
@@ -808,7 +811,9 @@ class DaceProgram(pycommon.SDFGConvertible):
         _, key = self._load_sdfg(None, *args, **kwargs)
         return key
 
-    def _generate_pdp(self, args: Tuple[Any], kwargs: Dict[str, Any],
+    def _generate_pdp(self,
+                      args: Tuple[Any],
+                      kwargs: Dict[str, Any],
                       simplify: Optional[bool] = None) -> Tuple[SDFG, bool]:
         """ Generates the parsed AST representation of a DaCe program.
         
@@ -924,7 +929,7 @@ class DaceProgram(pycommon.SDFGConvertible):
             # TODO: Add to parsed SDFG cache
 
             # Set regenerate and recompile flags
-            sdfg._regenerate_code = self.regenerate_code
+            sdfg.regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
 
         return sdfg, cached

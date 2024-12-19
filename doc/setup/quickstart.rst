@@ -36,5 +36,5 @@ From here on out, you can optimize (:ref:`interactively <vscode>`, :ref:`program
 your code. 
 
 
-For more examples of how to use DaCe, see the `samples <https://github.com/spcl/dace/tree/master/samples>`_ and 
-`tutorials <https://github.com/spcl/dace/tree/master/tutorials>`_ folders on GitHub.
+For more examples of how to use DaCe, see the `samples <https://github.com/spcl/dace/tree/main/samples>`_ and 
+`tutorials <https://github.com/spcl/dace/tree/main/tutorials>`_ folders on GitHub.

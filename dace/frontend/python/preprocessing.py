@@ -527,6 +527,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         elif isinstance(value, symbolic.symbol):
             # Symbols resolve to the symbol name
             newnode = ast.Name(id=value.name, ctx=ast.Load())
+        elif isinstance(value, sympy.Basic):  # Symbolic or constant expression
+            newnode = ast.parse(symbolic.symstr(value)).body[0].value
         elif isinstance(value, ast.Name):
             newnode = ast.Name(id=value.id, ctx=ast.Load())
         elif (dtypes.isconstant(value) or isinstance(value, (StringLiteral, SDFG)) or hasattr(value, '__sdfg__')):
@@ -990,7 +992,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         # Avoid parsing "with dace.tasklet"
         try:
             evald = astutils.evalnode(node.items[0].context_expr, self.globals)
-            if evald is dace.tasklet or isinstance(evald, dace.tasklet):
+            if evald is dace.tasklet or evald is dace.named or isinstance(evald, (dace.tasklet, dace.named)):
                 return self.generic_visit(node)
         except SyntaxError:
             pass

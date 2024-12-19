@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
 from dace import data, dtypes
-from dace.codegen.tools import type_inference
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes, validation
 from dace.sdfg import nodes
@@ -33,9 +32,6 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
         allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
     else:
         allocated_as_scalar = True
-
-    if node.out_connectors[cname].type is not None:
-        return node.out_connectors[cname].type
 
     # If nested SDFG, try to use internal array type
     if isinstance(node, nodes.NestedSDFG):
@@ -116,8 +112,7 @@ def infer_connector_types(sdfg: SDFG):
             for e in state.out_edges(node):
                 cname = e.src_conn
                 if cname and node.out_connectors[cname] is None:
-                    raise TypeError('Ambiguous or uninferable type in'
-                                    ' connector "%s" of node "%s"' % (cname, node))
+                    raise TypeError('Ambiguous or uninferable type in' ' connector "%s" of node "%s"' % (cname, node))
 
 
 #############################################################################
@@ -301,6 +296,12 @@ def _set_default_schedule_in_scope(state: SDFGState,
     else:
         child_schedule = _determine_child_schedule(parent_schedules)
 
+        # Special case for dynamic thread-block neighboring schedules
+        if child_schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+            from dace.transformation.helpers import gpu_map_has_explicit_dyn_threadblocks  # Avoid import loops
+            if gpu_map_has_explicit_dyn_threadblocks(state, parent_node):
+                child_schedule = dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
+
     # Set child schedule type in scope
     for node in child_nodes[parent_node]:
         # Set default schedule types
@@ -392,6 +393,7 @@ def _get_storage_from_parent(data_name: str, sdfg: SDFG) -> dtypes.StorageType:
         return parent_sdfg.arrays[e.data.data].storage
 
     raise ValueError(f'Could not find data descriptor {data_name} in parent SDFG')
+
 
 def infer_aliasing(node: nodes.NestedSDFG, sdfg: SDFG, state: SDFGState) -> None:
     """

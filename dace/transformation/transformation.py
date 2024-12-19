@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """
 This file contains classes that describe data-centric transformations.
 
@@ -20,20 +20,22 @@ All transformations extend the ``TransformationBase`` class. There are three bui
 
 import abc
 import copy
-from dace import dtypes, serialize
+from dace import serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
 from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union, Callable
 import pydoc
 import warnings
+from typing import TypeVar
 
+PassT = TypeVar('PassT', bound=ppl.Pass)
 
-def experimental_cfg_block_compatible(cls: ppl.Pass):
-    cls.__experimental_cfg_block_compatible__ = True
+def explicit_cf_compatible(cls: PassT) -> PassT:
+    cls.__explicit_cf_compatible__ = True
     return cls
 
 
@@ -288,6 +290,100 @@ class PatternTransformation(TransformationBase):
         }
 
     @classmethod
+    def _can_be_applied_and_apply(
+            cls,
+            verify: bool,
+            apply: bool,
+            sdfg: SDFG,
+            options: Optional[Dict[str, Any]] = None,
+            expr_index: int = 0,
+            annotate: bool = True,
+            permissive: bool = False,
+            save: bool = True,
+            **where: Union[nd.Node, SDFGState]):
+        """
+        Applies `can_be_applied()` and/or `apply()` to a given subgraph, defined by
+        a set of nodes.
+
+        The subgraph is defined by the `where` dictionary, where each key is
+        taken from the `PatternNode` fields of the transformation. For example,
+        applying `MapCollapse` on two maps can pe performed as follows:
+
+        If `apply` is `True` then the function will apply the transformation, if `verify`
+        is also `True` the function will first call `can_be_applied()` to ensure the
+        transformation can be applied. If not an error is genrated.
+        If `apply` is `False` the function will only call `can_be_applied()` and
+        returns its result.
+
+        :param sdfg: The SDFG to apply the transformation to.
+        :param verify: Check that `can_be_applied` returns True before applying.
+        :param apply: Also apply the transformation.
+        :param options: A set of parameters to use for applying the
+                        transformation.
+        :param expr_index: The pattern expression index to try to match with.
+        :param annotate: Run memlet propagation after application if necessary.
+        :param permissive: Apply transformation in permissive mode.
+        :param save: Save transformation as part of the SDFG file. Set to
+                     False if composing transformations.
+        :param where: A dictionary of node names (from the transformation) to
+                      nodes in the SDFG or a single state.
+        """
+
+        if not (apply or verify):
+            raise ValueError('Neither "apply" or "verify" must be specialized.')
+
+        if len(where) == 0:
+            raise ValueError('At least one node is required')
+        options = options or {}
+
+        # Check that all keyword arguments are nodes and if interstate or not
+        sample_node = next(iter(where.values()))
+
+        if isinstance(sample_node, ControlFlowBlock):
+            graph = sample_node.parent_graph
+            state_id = -1
+            cfg_id = graph.cfg_id
+        elif isinstance(sample_node, nd.Node):
+            graph = next(s for s in sdfg.states() if sample_node in s.nodes())
+            state_id = graph.block_id
+            cfg_id = graph.parent_graph.cfg_id
+        else:
+            raise TypeError('Invalid node type "%s"' % type(sample_node).__name__)
+
+        # Check that all nodes in the pattern are set
+        required_nodes = cls.expressions()[expr_index].nodes()
+        required_node_names = {
+            pname: pval
+            for pname, pval in cls._get_pattern_nodes().items() if pval in required_nodes
+        }
+        required = set(required_node_names.keys())
+        intersection = required & set(where.keys())
+        if len(required - intersection) > 0:
+            raise ValueError('Missing nodes for transformation subgraph: %s' % (required - intersection))
+
+        # Construct subgraph and instantiate transformation
+        subgraph = {required_node_names[k]: graph.node_id(where[k]) for k in required}
+        instance = cls()
+        instance.setup_match(sdfg, cfg_id, state_id, subgraph, expr_index)
+
+        # Construct transformation parameters
+        for optname, optval in options.items():
+            if not optname in cls.__properties__:
+                raise ValueError('Property "%s" not found in transformation' % optname)
+            setattr(instance, optname, optval)
+
+        if verify:
+            can_be_applied = instance.can_be_applied(graph, expr_index, sdfg, permissive=permissive)
+            if apply and (not can_be_applied):
+                raise ValueError('Transformation cannot be applied on the '
+                                 'given subgraph ("can_be_applied" failed)')
+            elif not apply:
+                return can_be_applied
+
+        # Apply to SDFG
+        return instance.apply_pattern(annotate=annotate, append=save)
+
+    @classmethod
     def apply_to(cls,
                  sdfg: SDFG,
                  options: Optional[Dict[str, Any]] = None,
@@ -322,53 +418,52 @@ class PatternTransformation(TransformationBase):
         :param where: A dictionary of node names (from the transformation) to
                       nodes in the SDFG or a single state.
         """
-        if len(where) == 0:
-            raise ValueError('At least one node is required')
-        options = options or {}
+        return cls._can_be_applied_and_apply(
+                verify=verify,
+                apply=True,
+                sdfg=sdfg,
+                options=options,
+                expr_index=expr_index,
+                annotate=annotate,
+                permissive=permissive,
+                save=save,
+                **where,
+        )
 
-        # Check that all keyword arguments are nodes and if interstate or not
-        sample_node = next(iter(where.values()))
+    @classmethod
+    def can_be_applied_to(cls,
+                          sdfg: SDFG,
+                          options: Optional[Dict[str, Any]] = None,
+                          expr_index: int = 0,
+                          permissive: bool = False,
+                          **where: Union[nd.Node, SDFGState]) -> bool:
+        """
+        Checks if the given transformation can be applied to a subgraph, defined by
+        a set of nodes.
 
-        if isinstance(sample_node, SDFGState):
-            graph = sample_node.parent_graph
-            state_id = -1
-            cfg_id = graph.cfg_id
-        elif isinstance(sample_node, nd.Node):
-            graph = next(s for s in sdfg.states() if sample_node in s.nodes())
-            state_id = graph.block_id
-            cfg_id = graph.parent_graph.cfg_id
-        else:
-            raise TypeError('Invalid node type "%s"' % type(sample_node).__name__)
-
-        # Check that all nodes in the pattern are set
-        required_nodes = cls.expressions()[expr_index].nodes()
-        required_node_names = {
-            pname: pval
-            for pname, pval in cls._get_pattern_nodes().items() if pval in required_nodes
-        }
-        required = set(required_node_names.keys())
-        intersection = required & set(where.keys())
-        if len(required - intersection) > 0:
-            raise ValueError('Missing nodes for transformation subgraph: %s' % (required - intersection))
-
-        # Construct subgraph and instantiate transformation
-        subgraph = {required_node_names[k]: graph.node_id(where[k]) for k in required}
-        instance = cls()
-        instance.setup_match(sdfg, cfg_id, state_id, subgraph, expr_index)
-
-        # Construct transformation parameters
-        for optname, optval in options.items():
-            if not optname in cls.__properties__:
-                raise ValueError('Property "%s" not found in transformation' % optname)
-            setattr(instance, optname, optval)
-
-        if verify:
-            if not instance.can_be_applied(graph, expr_index, sdfg, permissive=permissive):
-                raise ValueError('Transformation cannot be applied on the '
-                                 'given subgraph ("can_be_applied" failed)')
-
-        # Apply to SDFG
-        return instance.apply_pattern(annotate=annotate, append=save)
+        :param sdfg: The SDFG to apply the transformation to.
+        :param options: A set of parameters to use for applying the
+                        transformation.
+        :param expr_index: The pattern expression index to try to match with.
+        :param verify: Check that `can_be_applied` returns True before applying.
+        :param annotate: Run memlet propagation after application if necessary.
+        :param permissive: Apply transformation in permissive mode.
+        :param save: Save transformation as part of the SDFG file. Set to
+                     False if composing transformations.
+        :param where: A dictionary of node names (from the transformation) to
+                      nodes in the SDFG or a single state.
+        """
+        return cls._can_be_applied_and_apply(
+                verify=True,
+                apply=False,
+                sdfg=sdfg,
+                options=options,
+                expr_index=expr_index,
+                annotate=False,
+                permissive=permissive,
+                save=False,
+                **where,
+        )
 
     def __str__(self) -> str:
         return type(self).__name__
@@ -411,7 +506,7 @@ class PatternTransformation(TransformationBase):
 
 
 @make_properties
-@experimental_cfg_block_compatible
+@explicit_cf_compatible
 class SingleStateTransformation(PatternTransformation, abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within a single SDFG state.
@@ -716,8 +811,7 @@ class SubgraphTransformation(TransformationBase):
             self.subgraph = set(subgraph.graph.node_id(n) for n in subgraph.nodes())
 
             if isinstance(subgraph.graph, SDFGState):
-                sdfg = subgraph.graph.parent
-                self.cfg_id = sdfg.cfg_id
+                self.cfg_id = subgraph.graph.parent_graph.cfg_id
                 self.state_id = subgraph.graph.block_id
             elif isinstance(subgraph.graph, SDFG):
                 self.cfg_id = subgraph.graph.cfg_id
@@ -728,13 +822,6 @@ class SubgraphTransformation(TransformationBase):
             self.subgraph = subgraph
             self.cfg_id = cfg_id
             self.state_id = state_id
-
-    def get_subgraph(self, sdfg: SDFG) -> gr.SubgraphView:
-        sdfg = sdfg.cfg_list[self.cfg_id]
-        if self.state_id == -1:
-            return gr.SubgraphView(sdfg, list(map(sdfg.node, self.subgraph)))
-        state = sdfg.node(self.state_id)
-        return st.StateSubgraphView(state, list(map(state.node, self.subgraph)))
 
     @classmethod
     def subclasses_recursive(cls) -> Set[Type['PatternTransformation']]:
@@ -785,36 +872,36 @@ class SubgraphTransformation(TransformationBase):
         return self.apply(sdfg)
 
     @classmethod
-    def apply_to(cls,
-                 sdfg: SDFG,
-                 *where: Union[nd.Node, SDFGState, gr.SubgraphView],
-                 verify: bool = True,
-                 **options: Any):
+    def _can_be_applied_and_apply(cls,
+                                  *where: Union[nd.Node, SDFGState, gr.SubgraphView],
+                                  verify: bool,
+                                  apply: bool,
+                                  sdfg: SDFG,
+                                  **options: Any):
         """
-        Applies this transformation to a given subgraph, defined by a set of
-        nodes. Raises an error if arguments are invalid or transformation is
-        not applicable.
 
-        To apply the transformation on a specific subgraph, the ``where``
-        parameter can be used either on a subgraph object (``SubgraphView``), or
-        on directly on a list of subgraph nodes, given as ``Node`` or ``SDFGState``
-        objects. Transformation properties can then be given as keyword
-        arguments. For example, applying ``SubgraphFusion`` on a subgraph of three
-        nodes can be called in one of two ways:
-        
-        .. code-block:: python
+        Applies `can_be_applied()` and/or `apply()` to a given subgraph, defined by
+        a set of nodes.
 
-            # Subgraph
-            SubgraphFusion.apply_to(
-                sdfg, SubgraphView(state, [node_a, node_b, node_c]))
+        The subgraph is defined by the `where` dictionary, where each key is
+        taken from the `PatternNode` fields of the transformation. For example,
+        applying `MapCollapse` on two maps can pe performed as follows:
 
-            # Simplified API: list of nodes
-            SubgraphFusion.apply_to(sdfg, node_a, node_b, node_c)
-        
+        The subgraph is defined by the ``where`` parameter can be used either
+        on a subgraph object (``SubgraphView``), or on directly on a list of
+        subgraph nodes, given as ``Node`` or ``SDFGState`` objects. Transformation
+        properties can then be given as keyword arguments.
+
+        If `apply` is `True` then the function will apply the transformation, if `verify`
+        is also `True` the function will first call `can_be_applied()` to ensure the
+        transformation can be applied. If not an error is genrated.
+        If `apply` is `False` the function will only call `can_be_applied()` and
+        returns its result.
 
         :param sdfg: The SDFG to apply the transformation to.
-        :param where: A set of nodes in the SDFG/state, or a subgraph thereof.
         :param verify: Check that ``can_be_applied`` returns True before applying.
+        :param apply: Apply the transformation to the subgraph.
+        :param where: A set of nodes in the SDFG/state, or a subgraph thereof.
         :param options: A set of parameters to use for applying the transformation.
         """
         subgraph = None
@@ -855,12 +942,94 @@ class SubgraphTransformation(TransformationBase):
             setattr(instance, optname, optval)
 
         if verify:
-            if not instance.can_be_applied(sdfg, subgraph):
+            can_be_applied = instance.can_be_applied(sdfg, subgraph)
+            if apply and (not can_be_applied):
                 raise ValueError('Transformation cannot be applied on the '
                                  'given subgraph ("can_be_applied" failed)')
+            elif not apply:
+                return can_be_applied
 
         # Apply to SDFG
         return instance.apply(sdfg)
+
+    @classmethod
+    def apply_to(cls,
+                 sdfg: SDFG,
+                 *where: Union[nd.Node, SDFGState, gr.SubgraphView],
+                 verify: bool = True,
+                 **options: Any):
+        """
+        Applies this transformation to a given subgraph, defined by a set of
+        nodes. Raises an error if arguments are invalid or transformation is
+        not applicable.
+
+        To apply the transformation on a specific subgraph, the ``where``
+        parameter can be used either on a subgraph object (``SubgraphView``), or
+        on directly on a list of subgraph nodes, given as ``Node`` or ``SDFGState``
+        objects. Transformation properties can then be given as keyword
+        arguments. For example, applying ``SubgraphFusion`` on a subgraph of three
+        nodes can be called in one of two ways:
+
+        .. code-block:: python
+
+            # Subgraph
+            SubgraphFusion.apply_to(
+                sdfg, SubgraphView(state, [node_a, node_b, node_c]))
+
+            # Simplified API: list of nodes
+            SubgraphFusion.apply_to(sdfg, node_a, node_b, node_c)
+
+
+        :param sdfg: The SDFG to apply the transformation to.
+        :param where: A set of nodes in the SDFG/state, or a subgraph thereof.
+        :param verify: Check that ``can_be_applied`` returns True before applying.
+        :param options: A set of parameters to use for applying the transformation.
+        """
+        return cls._can_be_applied_and_apply(
+                verify=verify,
+                apply=True,
+                sdfg=sdfg,
+                *where,
+                **options,
+        )
+
+    @classmethod
+    def can_be_applied_to(cls,
+                          sdfg: SDFG,
+                          *where: Union[nd.Node, SDFGState, gr.SubgraphView],
+                          **options: Any) -> bool:
+        """
+        Checks if the transformation can be applied to a given subgraph, defined
+        by a set of nodes.
+
+        To apply the transformation on a specific subgraph, the ``where``
+        parameter can be used either on a subgraph object (``SubgraphView``), or
+        on directly on a list of subgraph nodes, given as ``Node`` or ``SDFGState``
+        objects. Transformation properties can then be given as keyword arguments.
+        For example, to check if ``SubgraphFusion`` can be applied on a subgraph
+        of three nodes can be done either:
+
+        .. code-block:: python
+
+            # Subgraph
+            SubgraphFusion.can_be_applied_to(
+                sdfg, SubgraphView(state, [node_a, node_b, node_c]))
+
+            # Simplified API: list of nodes
+            SubgraphFusion.can_be_applied_to(sdfg, node_a, node_b, node_c)
+
+
+        :param sdfg: The SDFG to apply the transformation to.
+        :param where: A set of nodes in the SDFG/state, or a subgraph thereof.
+        :param options: A set of parameters to use for applying the transformation.
+        """
+        return cls._can_be_applied_and_apply(
+                verify=True,
+                apply=False,
+                sdfg=sdfg,
+                *where,
+                **options,
+        )
 
     def to_json(self, parent=None):
         props = serialize.all_properties_to_json(self)
@@ -892,7 +1061,7 @@ def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Ca
                 sdfg = get_sdfg_arg(tgt, *args)
             if sdfg and isinstance(sdfg, SDFG):
                 root_sdfg: SDFG = sdfg.cfg_list[0]
-                if not root_sdfg.using_experimental_blocks:
+                if not root_sdfg.using_explicit_control_flow:
                     return vanilla_method(tgt, *args, **kwargs)
                 else:
                     warnings.warn('Skipping ' + function_name + ' from ' + cls.__name__ +
@@ -915,7 +1084,7 @@ def _subgraph_transformation_extract_sdfg_arg(*args) -> SDFG:
     raise TypeError('Unrecognized graph type "%s"' % type(subgraph).__name__)
 
 
-def single_level_sdfg_only(cls: ppl.Pass):
+def single_level_sdfg_only(cls: PassT) -> PassT:
 
     for function_name in ['apply_pass', 'apply_to']:
         _make_function_blocksafe(cls, function_name, lambda *args: args[1])

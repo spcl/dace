@@ -15,6 +15,7 @@ from typing import Any, AnyStr, Dict, List, Optional, Sequence, Set, Tuple, Type
 import warnings
 
 import dace
+from dace.sdfg.graph import generate_element_id
 import dace.serialize
 from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, symbolic)
 from dace.sdfg.replace import replace_properties_dict
@@ -22,7 +23,7 @@ from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
 from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
-from dace.sdfg.state import ControlFlowBlock, SDFGState, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, ControlFlowRegion
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeScope
 
 
 class NestedDict(dict):
@@ -173,6 +175,7 @@ class InterstateEdge(object):
     assignments = Property(dtype=dict,
                            desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
+    guid = Property(dtype=str, allow_none=False)
 
     def __init__(self,
                  condition: Optional[Union[CodeBlock, str, ast.AST, list]] = None,
@@ -195,11 +198,23 @@ class InterstateEdge(object):
         self._cond_sympy = None
         self._uncond = None
 
+        self.guid = generate_element_id(self)
+
     def __setattr__(self, name: str, value: Any) -> None:
         if name == 'condition' or name == '_condition':
             super().__setattr__('_cond_sympy', None)
             super().__setattr__('_uncond', None)
         return super().__setattr__(name, value)
+
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k == 'guid': # Skip ID
+                continue
+            setattr(result, k, copy.deepcopy(v, memo))
+        return result
 
     @staticmethod
     def _convert_assignment(assignment) -> str:
@@ -445,8 +460,8 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
-    using_experimental_blocks = Property(dtype=bool, default=False,
-                                         desc="Whether the SDFG contains experimental control flow blocks")
+    using_explicit_control_flow = Property(dtype=bool, default=False,
+                                           desc="Whether the SDFG contains explicit control flow constructs")
 
     def __init__(self,
                  name: str,
@@ -512,9 +527,9 @@ class SDFG(ControlFlowRegion):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            # Skip derivative attributes
+            # Skip derivative attributes and GUID
             if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
-                     '_cfg_list', '_transformation_hist'):
+                     '_cfg_list', '_transformation_hist', 'guid'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes
@@ -638,7 +653,7 @@ class SDFG(ControlFlowRegion):
                 for key, value in json_obj.items():
                     if (isinstance(key, str)
                             and (key.startswith('_meta_')
-                                 or key in ['name', 'hash', 'orig_sdfg', 'transformation_hist', 'instrument'])):
+                                 or key in ['name', 'hash', 'orig_sdfg', 'transformation_hist', 'instrument', 'guid'])):
                         keys_to_delete.append(key)
                     else:
                         kv_to_recurse.append((key, value))
@@ -742,17 +757,32 @@ class SDFG(ControlFlowRegion):
 
         super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
 
-    def add_symbol(self, name, stype):
+    def add_symbol(self, name, stype, find_new_name: bool = False):
         """ Adds a symbol to the SDFG.
 
             :param name: Symbol name.
             :param stype: Symbol type.
+            :param find_new_name: Find a new name.
         """
-        if name in self.symbols:
-            raise FileExistsError('Symbol "%s" already exists in SDFG' % name)
+        if find_new_name:
+            name = self._find_new_name(name)
+        else:
+            # We do not check for data constant, because there is a link between the constants and
+            #  the data descriptors.
+            if name in self.symbols:
+                raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
+            if name in self.arrays:
+                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
+            if name in self._subarrays:
+                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a subarray.')
+            if name in self._rdistrarrays:
+                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a RedistrArray.')
+            if name in self._pgrids:
+                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a ProcessGrid.')
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
         self.symbols[name] = stype
+        return name
 
     def remove_symbol(self, name):
         """ Removes a symbol from the SDFG.
@@ -772,6 +802,14 @@ class SDFG(ControlFlowRegion):
     @start_state.setter
     def start_state(self, state_id):
         self.start_block = state_id
+
+    @property
+    def regenerate_code(self):
+        return self._regenerate_code
+
+    @regenerate_code.setter
+    def regenerate_code(self, value):
+        self._regenerate_code = value
 
     def set_global_code(self, cpp_code: str, location: str = 'frame'):
         """
@@ -930,7 +968,11 @@ class SDFG(ControlFlowRegion):
         Clears the instrumentation report folder of this SDFG.
         """
         path = os.path.join(self.build_folder, 'perf')
-        for fname in os.listdir(path):
+        try:
+            files = os.listdir(path)
+        except FileNotFoundError:
+            return
+        for fname in files:
             if not fname.startswith('report-'):
                 continue
             os.unlink(os.path.join(path, fname))
@@ -1009,7 +1051,7 @@ class SDFG(ControlFlowRegion):
 
     def call_with_instrumented_data(self, dreport: 'InstrumentedDataReport', *args, **kwargs):
         """
-        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
+        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary.
         Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
 
         :param dreport: The instrumented data report to use upon calling.
@@ -1036,6 +1078,24 @@ class SDFG(ControlFlowRegion):
         return binaryobj(*args, **kwargs)
 
     ##########################################
+
+    def as_schedule_tree(self, in_place: bool = False) -> 'ScheduleTreeScope':
+        """
+        Creates a schedule tree from this SDFG and all nested SDFGs. The schedule tree is a tree of nodes that represent
+        the execution order of the SDFG.
+        Each node in the tree can either represent a single statement (symbol assignment, tasklet, copy, library node,
+        etc.) or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
+    
+        It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
+        erasing an empty if branch, or merging two consecutive for-loops.
+
+        :param in_place: If True, the SDFG is modified in-place. Otherwise, a copy is made. Note that the SDFG might
+                         not be usable after the conversion if ``in_place`` is True!
+        :return: A schedule tree representing the given SDFG.
+        """
+        # Avoid import loop
+        from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t
+        return s2t.as_schedule_tree(self, in_place=in_place)
 
     @property
     def build_folder(self) -> str:
@@ -1148,21 +1208,30 @@ class SDFG(ControlFlowRegion):
             if isinstance(dtype, dt.Array):
                 return value
             elif isinstance(dtype, dt.Scalar):
-                return dtype.dtype(value)
+                return dtype.dtype.type(value)
             raise TypeError('Unsupported data type %s' % dtype)
 
         result.update({k: cast(*v) for k, v in self.constants_prop.items()})
         return result
 
     def add_constant(self, name: str, value: Any, dtype: dt.Data = None):
-        """ Adds/updates a new compile-time constant to this SDFG. A constant
-            may either be a scalar or a numpy ndarray thereof.
-
-            :param name: The name of the constant.
-            :param value: The constant value.
-            :param dtype: Optional data type of the symbol, or None to deduce
-                          automatically.
         """
+        Adds/updates a new compile-time constant to this SDFG.
+
+        A constant may either be a scalar or a numpy ndarray thereof. It is not an
+        error if there is already a symbol or an array with the same name inside
+        the SDFG. However, the data descriptors must refer to the same type.
+
+        :param name: The name of the constant.
+        :param value: The constant value.
+        :param dtype: Optional data type of the symbol, or None to deduce automatically.
+        """
+        if name in self._subarrays:
+            raise FileExistsError(f'Can not create constant "{name}", the name is used by a subarray.')
+        if name in self._rdistrarrays:
+            raise FileExistsError(f'Can not create constant "{name}", the name is used by a RedistrArray.')
+        if name in self._pgrids:
+            raise FileExistsError(f'Can not create constant "{name}", the name is used by a ProcessGrid.')
         self.constants_prop[name] = (dtype or dt.create_datadescriptor(value), value)
 
     @property
@@ -1237,7 +1306,8 @@ class SDFG(ControlFlowRegion):
                                defined_syms: Optional[Set] = None,
                                free_syms: Optional[Set] = None,
                                used_before_assignment: Optional[Set] = None,
-                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
+                               keep_defined_in_mapping: bool = False,
+                               with_contents: bool = True) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -1258,7 +1328,8 @@ class SDFG(ControlFlowRegion):
                                               keep_defined_in_mapping=keep_defined_in_mapping,
                                               defined_syms=defined_syms,
                                               free_syms=free_syms,
-                                              used_before_assignment=used_before_assignment)
+                                              used_before_assignment=used_before_assignment,
+                                              with_contents=with_contents)
 
     def get_all_toplevel_symbols(self) -> Set[str]:
         """
@@ -1295,7 +1366,7 @@ class SDFG(ControlFlowRegion):
         read_set = set()
         write_set = set()
         for state in self.states():
-            for edge in self.in_edges(state):
+            for edge in state.parent_graph.in_edges(state):
                 read_set |= edge.data.free_symbols & self.arrays.keys()
             # Get dictionaries of subsets read and written from each state
             rs, ws = state._read_and_write_sets()
@@ -1432,9 +1503,11 @@ class SDFG(ControlFlowRegion):
     var sdfg_{uid} = {sdfg};
 </script>
 <script>
-    var sdfv_{uid} = new SDFV();
-    var renderer_{uid} = new SDFGRenderer(sdfv_{uid}, parse_sdfg(sdfg_{uid}),
-        document.getElementById('contents_{uid}'));
+    new SDFGRenderer(
+        checkCompatLoad(parse_sdfg(sdfg_{uid})),
+        document.getElementById("contents_{uid}"),
+        undefined, null, null, false, null, null
+    );
 </script>""".format(
             # Dumping to a string so that Jupyter Javascript can parse it
             # recursively
@@ -1451,7 +1524,7 @@ class SDFG(ControlFlowRegion):
         result = {}
         tstate = {}
 
-        for (i, state) in enumerate(self.nodes()):
+        for (i, state) in enumerate(self.states()):
             scope_dict = state.scope_dict()
             for node in state.nodes():
                 if isinstance(node, nd.AccessNode) and node.desc(self).transient:
@@ -1483,6 +1556,17 @@ class SDFG(ControlFlowRegion):
                 if sym in self.arrays and self.arrays[sym].transient:
                     seen[sym] = interstate_edge
                     shared.append(sym)
+
+        # The same goes for the conditions of conditional blocks.
+        for block in self.all_control_flow_blocks():
+            if isinstance(block, ConditionalBlock):
+                for cond, _ in block.branches:
+                    if cond is not None:
+                        cond_symbols = set(map(str, dace.symbolic.symbols_in_ast(cond.code[0])))
+                        for sym in cond_symbols:
+                            if sym in self.arrays and self.arrays[sym].transient:
+                                seen[sym] = block
+                                shared.append(sym)
 
         # If transient is accessed in more than one state, it is shared
         for state in self.states():
@@ -1594,36 +1678,44 @@ class SDFG(ControlFlowRegion):
         """ Tries to find a new name by adding an underscore and a number. """
 
         names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
-                 | self._rdistrarrays.keys())
+                 | self._rdistrarrays.keys() | self.symbols.keys())
         return dt.find_new_name(name, names)
+
+    def is_name_used(self, name: str) -> bool:
+        """ Checks if `name` is already used inside the SDFG."""
+        if name in self._arrays:
+            return True
+        if name in self.symbols:
+            return True
+        if name in self.constants_prop:
+            return True
+        if name in self._pgrids:
+            return True
+        if name in self._subarrays:
+            return True
+        if name in self._rdistrarrays:
+            return True
+        return False
+
+    def is_name_free(self, name: str) -> bool:
+        """ Test if `name` is free, i.e. is not used by anything else."""
+        return not self.is_name_used(name)
 
     def find_new_constant(self, name: str):
         """
-        Tries to find a new constant name by adding an underscore and a number.
+        Tries to find a new name for a constant.
         """
-        constants = self.constants
-        if name not in constants:
+        if self.is_name_free(name):
             return name
-
-        index = 0
-        while (name + ('_%d' % index)) in constants:
-            index += 1
-
-        return name + ('_%d' % index)
+        return self._find_new_name(name)
 
     def find_new_symbol(self, name: str):
         """
         Tries to find a new symbol name by adding an underscore and a number.
         """
-        symbols = self.symbols
-        if name not in symbols:
+        if self.is_name_free(name):
             return name
-
-        index = 0
-        while (name + ('_%d' % index)) in symbols:
-            index += 1
-
-        return name + ('_%d' % index)
+        return self._find_new_name(name)
 
     def add_array(self,
                   name: str,
@@ -1852,14 +1944,29 @@ class SDFG(ControlFlowRegion):
 
     def temp_data_name(self):
         """ Returns a temporary data descriptor name that can be used in this SDFG. """
-
         name = '__tmp%d' % self._temp_transients
-        while name in self._arrays:
+
+        # NOTE: Consider switching to `_find_new_name`
+        #  The frontend seems to access this variable directly.
+        while self.is_name_used(name):
             self._temp_transients += 1
             name = '__tmp%d' % self._temp_transients
         self._temp_transients += 1
-
         return name
+
+    def refresh_temp_transients(self):
+        """
+        Updates the temporary transient counter of this SDFG by querying the maximum number among the
+        ``__tmp###`` data descriptors.
+        """
+        temp_transients = [k[5:] for k in self.arrays.keys() if k.startswith('__tmp')]
+        max_temp_transient = 0
+        for arr_suffix in temp_transients:
+            try:
+                max_temp_transient = max(max_temp_transient, int(arr_suffix))
+            except ValueError:  # Not of the form __tmp###
+                continue
+        self._temp_transients = max_temp_transient + 1
 
     def add_temp_transient(self,
                            shape,
@@ -1913,29 +2020,47 @@ class SDFG(ControlFlowRegion):
         """
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
-        # If exists, fail
-        while name in self._arrays:
-            if find_new_name:
-                name = self._find_new_name(name)
-            else:
-                raise NameError(f'Array or Stream with name "{name}" already exists in SDFG')
-            # NOTE: Remove illegal characters, such as dots. Such characters may be introduced when creating views to
-            # members of Structures.
-            name = name.replace('.', '_')
-        assert name not in self._arrays
-        self._arrays[name] = datadesc
 
-        def _add_symbols(desc: dt.Data):
+        if find_new_name:
+            # These characters might be introduced through the creation of views to members
+            #  of strictures.
+            # NOTES: If `find_new_name` is `True` and the name (understood as a sequence of
+            #   any characters) is not used, i.e. `assert self.is_name_free(name)`, then it
+            #   is still "cleaned", i.e. dots are replaced with underscores. However, if
+            #   `find_new_name` is `False` then this cleaning is not applied and it is possible
+            #   to create names that are formally invalid. The above code reproduces the exact
+            #   same behaviour and is maintained for  compatibility. This behaviour is
+            #   triggered by tests/python_frontend/structures/structure_python_test.py::test_rgf`.
+            name = self._find_new_name(name)
+            name = name.replace('.', '_')
+            if self.is_name_used(name):
+                name = self._find_new_name(name)
+        else:
+            # We do not check for data constant, because there is a link between the constants and
+            #  the data descriptors.
+            if name in self.arrays:
+                raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
+            if name in self.symbols:
+                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
+            if name in self._subarrays:
+                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a subarray.')
+            if name in self._rdistrarrays:
+                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a RedistrArray.')
+            if name in self._pgrids:
+                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a ProcessGrid.')
+
+        def _add_symbols(sdfg: SDFG, desc: dt.Data):
             if isinstance(desc, dt.Structure):
                 for v in desc.members.values():
                     if isinstance(v, dt.Data):
-                        _add_symbols(v)
+                        _add_symbols(sdfg, v)
             for sym in desc.free_symbols:
-                if sym.name not in self.symbols:
-                    self.add_symbol(sym.name, sym.dtype)
+                if sym.name not in sdfg.symbols:
+                    sdfg.add_symbol(sym.name, sym.dtype)
 
-        # Add free symbols to the SDFG global symbol storage
-        _add_symbols(datadesc)
+        # Add the data descriptor to the SDFG and all symbols that are not yet known.
+        self._arrays[name] = datadesc
+        _add_symbols(self, datadesc)
 
         return name
 
@@ -2040,9 +2165,10 @@ class SDFG(ControlFlowRegion):
                 newshape.append(dace.symbolic.pystr_to_symbolic(s))
         subshape = newshape
 
+        # No need to ensure unique test.
         subarray_name = self._find_new_name('__subarray')
-        self._subarrays[subarray_name] = SubArray(subarray_name, dtype, shape, subshape, pgrid, correspondence)
 
+        self._subarrays[subarray_name] = SubArray(subarray_name, dtype, shape, subshape, pgrid, correspondence)
         self.append_init_code(self._subarrays[subarray_name].init_code())
         self.append_exit_code(self._subarrays[subarray_name].exit_code())
 
@@ -2056,12 +2182,13 @@ class SDFG(ControlFlowRegion):
             :param array_b: Output sub-array descriptor.
             :return: Name of the new redistribution descriptor.
         """
+        # No need to ensure unique test.
+        name = self._find_new_name('__rdistrarray')
 
-        rdistrarray_name = self._find_new_name('__rdistrarray')
-        self._rdistrarrays[rdistrarray_name] = RedistrArray(rdistrarray_name, array_a, array_b)
-        self.append_init_code(self._rdistrarrays[rdistrarray_name].init_code(self))
-        self.append_exit_code(self._rdistrarrays[rdistrarray_name].exit_code(self))
-        return rdistrarray_name
+        self._rdistrarrays[name] = RedistrArray(name, array_a, array_b)
+        self.append_init_code(self._rdistrarrays[name].init_code(self))
+        self.append_exit_code(self._rdistrarrays[name].exit_code(self))
+        return name
 
     def add_loop(
         self,
@@ -2182,14 +2309,16 @@ class SDFG(ControlFlowRegion):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True) -> 'CompiledSDFG':
+    def compile(self, output_file=None, validate=True,
+                return_program_handle=True) -> 'CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
 
             :param output_file: If not None, copies the output library file to
                                 the specified path.
             :param validate: If True, validates the SDFG prior to generating
                              code.
-            :return: A callable CompiledSDFG object.
+            :param return_program_handle: If False, does not load the generated library.
+            :return: A callable CompiledSDFG object, or None if ``return_program_handle=False``.
         """
 
         # Importing these outside creates an import loop
@@ -2207,12 +2336,16 @@ class SDFG(ControlFlowRegion):
         ############################
         # DaCe Compilation Process #
 
-        if self._regenerate_code or not os.path.isdir(build_folder):
+        if self.regenerate_code or not os.path.isdir(build_folder):
             # Clone SDFG as the other modules may modify its contents
             sdfg = copy.deepcopy(self)
             # Fix the build folder name on the copied SDFG to avoid it changing
             # if the codegen modifies the SDFG (thereby changing its hash)
             sdfg.build_folder = build_folder
+
+            # Ensure external nested SDFGs are loaded.
+            for _ in sdfg.all_sdfgs_recursive(load_ext=True):
+                pass
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
@@ -2220,8 +2353,8 @@ class SDFG(ControlFlowRegion):
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
             if self.name != sdfg.name:
-                warnings.warn('SDFG "%s" is already loaded by another object, '
-                              'recompiling under a different name.' % self.name)
+                warnings.warn(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
+                              f"name '{sdfg.name}'.")
 
             try:
                 # Fill in scope entry/exit connectors
@@ -2252,7 +2385,8 @@ class SDFG(ControlFlowRegion):
             shutil.copyfile(shared_library, output_file)
 
         # Get the function handle
-        return compiler.get_program_handle(shared_library, sdfg)
+        if return_program_handle:
+            return compiler.get_program_handle(shared_library, sdfg)
 
     def argument_typecheck(self, args, kwargs, types_only=False):
         """ Checks if arguments and keyword arguments match the SDFG
@@ -2335,12 +2469,12 @@ class SDFG(ControlFlowRegion):
     def predecessor_state_transitions(self, state):
         """ Yields paths (lists of edges) that the SDFG can pass through
             before computing the given state. """
-        return self.bfs_edges(state, reverse=True)
+        return self.edge_bfs(state, reverse=True)
 
     def predecessor_states(self, state):
         """ Returns a list of unique states that the SDFG can pass through
             before computing the given state. """
-        return (e.src for e in self.bfs_edges(state, reverse=True))
+        return (e.src for e in self.edge_bfs(state, reverse=True))
 
     def validate(self, references: Optional[Set[int]] = None, **context: bool) -> None:
         validate_sdfg(self, references, **context)
@@ -2375,6 +2509,38 @@ class SDFG(ControlFlowRegion):
         """
         from dace.transformation.passes.simplify import SimplifyPass
         return SimplifyPass(validate=validate, validate_all=validate_all, verbose=verbose).apply_pass(self, {})
+
+    def auto_optimize(self,
+                      device: dtypes.DeviceType,
+                      validate: bool = True,
+                      validate_all: bool = False,
+                      symbols: Dict[str, int] = None,
+                      use_gpu_storage: bool = False):
+        """
+        Runs a basic sequence of transformations to optimize a given SDFG to decent
+        performance. In particular, performs the following:
+            
+            * Simplify
+            * Auto-parallelization (loop-to-map)
+            * Greedy application of SubgraphFusion
+            * Tiled write-conflict resolution (MapTiling -> AccumulateTransient)
+            * Tiled stream accumulation (MapTiling -> AccumulateTransient)
+            * Collapse all maps to parallelize across all dimensions
+            * Set all library nodes to expand to ``fast`` expansion, which calls
+              the fastest library on the target device
+
+        :param device: the device to optimize for.
+        :param validate: If True, validates the SDFG after all transformations
+                         have been applied.
+        :param validate_all: If True, validates the SDFG after every step.
+        :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
+        :param use_gpu_storage: If True, changes the storage of non-transient data to GPU global memory.
+        :note: Operates in-place on the given SDFG.
+        :note: This function is still experimental and may harm correctness in
+               certain cases. Please report an issue if it does.
+        """
+        from dace.transformation.auto.auto_optimize import auto_optimize
+        auto_optimize(device, validate, validate_all, symbols, use_gpu_storage)
 
     def _initialize_transformations_from_type(
         self,
@@ -2530,7 +2696,7 @@ class SDFG(ControlFlowRegion):
                                               print_report: Optional[bool] = None,
                                               order_by_transformation: bool = True,
                                               progress: Optional[bool] = None) -> int:
-        """ 
+        """
         This function applies a transformation or a set of (unique) transformations
         until throughout the entire SDFG once. Operates in-place.
 
@@ -2578,7 +2744,9 @@ class SDFG(ControlFlowRegion):
                                   permissive=False,
                                   sequential_innermaps=True,
                                   register_transients=True,
-                                  simplify=True):
+                                  simplify=True,
+                                  host_maps=None,
+                                  host_data=None):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
 
@@ -2595,7 +2763,9 @@ class SDFG(ControlFlowRegion):
         self.apply_transformations(GPUTransformSDFG,
                                    options=dict(sequential_innermaps=sequential_innermaps,
                                                 register_trans=register_transients,
-                                                simplify=simplify),
+                                                simplify=simplify,
+                                                host_maps=host_maps,
+                                                host_data=host_data),
                                    validate=validate,
                                    validate_all=validate_all,
                                    permissive=permissive,
@@ -2646,7 +2816,7 @@ class SDFG(ControlFlowRegion):
 
     def generate_code(self):
         """ Generates code from this SDFG and returns it.
-        
+
             :return: A list of `CodeObject` objects containing the generated
                       code of different files and languages.
         """
@@ -2674,14 +2844,14 @@ class SDFG(ControlFlowRegion):
         """
         return dace.Memlet.from_array(array, self.data(array))
 
-    def recheck_using_experimental_blocks(self) -> bool:
-        found_experimental_block = False
+    def recheck_using_explicit_control_flow(self) -> bool:
+        found_explicit_cf_block = False
         for node, graph in self.root_sdfg.all_nodes_recursive():
             if isinstance(graph, ControlFlowRegion) and not isinstance(graph, SDFG):
-                found_experimental_block = True
+                found_explicit_cf_block = True
                 break
             if isinstance(node, ControlFlowBlock) and not isinstance(node, SDFGState):
-                found_experimental_block = True
+                found_explicit_cf_block = True
                 break
-        self.root_sdfg.using_experimental_blocks = found_experimental_block
-        return found_experimental_block
+        self.root_sdfg.using_explicit_control_flow = found_explicit_cf_block
+        return found_explicit_cf_block

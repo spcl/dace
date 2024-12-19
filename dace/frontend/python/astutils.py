@@ -1,9 +1,8 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various AST parsing utilities for DaCe. """
 import ast
 import astunparse
 import copy
-from collections import OrderedDict
 from io import StringIO
 import inspect
 import numbers
@@ -12,7 +11,7 @@ import sympy
 import sys
 from typing import Any, Dict, List, Optional, Set, Union
 
-from dace import dtypes, symbolic
+from dace import symbolic
 
 
 if sys.version_info >= (3, 8):
@@ -392,6 +391,48 @@ def negate_expr(node):
     return ast.fix_missing_locations(newexpr)
 
 
+def and_expr(node_a, node_b):
+    """ Generates the logical AND of two AST expressions.
+    """
+    if type(node_a) is not type(node_b):
+        raise ValueError('Node types do not match')
+
+    # Support for SymPy expressions
+    if isinstance(node_a, sympy.Basic):
+        return sympy.And(node_a, node_b)
+    # Support for numerical constants
+    if isinstance(node_a, (numbers.Number, numpy.bool_)):
+        return str(node_a and node_b)
+    # Support for strings (most likely dace.Data.Scalar names)
+    if isinstance(node_a, str):
+        return f'({node_a}) and ({node_b})'
+
+    from dace.properties import CodeBlock  # Avoid import loop
+    if isinstance(node_a, CodeBlock):
+        node_a = node_a.code
+        node_b = node_b.code
+
+    if hasattr(node_a, "__len__"):
+        if len(node_a) > 1:
+            raise ValueError("and_expr only expects single expressions, got: {}".format(node_a))
+        if len(node_b) > 1:
+            raise ValueError("and_expr only expects single expressions, got: {}".format(node_b))
+        expr_a = node_a[0]
+        expr_b = node_b[0]
+    else:
+        expr_a = node_a
+        expr_b = node_b
+
+    if isinstance(expr_a, ast.Expr):
+        expr_a = expr_a.value
+    if isinstance(expr_b, ast.Expr):
+        expr_b = expr_b.value
+
+    newexpr = ast.Expr(value=ast.BinOp(left=copy_tree(expr_a), op=ast.And, right=copy_tree(expr_b)))
+    newexpr = ast.copy_location(newexpr, expr_a)
+    return ast.fix_missing_locations(newexpr)
+
+
 def copy_tree(node: ast.AST) -> ast.AST:
     """
     Copies an entire AST without copying the non-AST parts (e.g., constant values).
@@ -550,6 +591,36 @@ class ASTFindReplace(ast.NodeTransformer):
                 val = unparse(val)
             node.arg = val
             self.replace_count += 1
+        return self.generic_visit(node)
+
+
+class FindAssignment(ast.NodeVisitor):
+
+    assignments: Dict[str, str]
+    multiple: bool
+
+    def __init__(self):
+        self.assignments = {}
+        self.multiple = False
+
+    def visit_Assign(self, node: ast.Assign) -> Any:
+        for tgt in node.targets:
+            if isinstance(tgt, ast.Name):
+                if tgt.id in self.assignments:
+                    self.multiple = True
+                self.assignments[tgt.id] = unparse(node.value)
+        return self.generic_visit(node)
+
+
+class ASTReplaceAssignmentRHS(ast.NodeVisitor):
+
+    repl_visitor: ASTFindReplace
+
+    def __init__(self, repl: Dict[str, str]):
+        self.repl_visitor = ASTFindReplace(repl)
+
+    def visit_Assign(self, node: ast.Assign) -> Any:
+        self.repl_visitor.visit(node.value)
         return self.generic_visit(node)
 
 

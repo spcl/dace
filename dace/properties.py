@@ -54,15 +54,13 @@ class Property(Generic[T]):
             indirected=False,  # This property belongs to a different class
             category='General',
             desc="",
-            optional=False,
-            optional_condition=lambda _: True):
+            serialize_if=lambda _: True): # By default serialize always
 
         self._getter = getter
         self._setter = setter
         self._dtype = dtype
         self._default = default
-        self._optional = optional
-        self._optional_condition = optional_condition
+        self._serialize_if = serialize_if
 
         if allow_none is False and default is None:
             try:
@@ -203,12 +201,8 @@ class Property(Generic[T]):
         return self._dtype
 
     @property
-    def optional(self):
-        return self._optional
-
-    @property
-    def optional_condition(self):
-        return self._optional_condition
+    def serialize_if(self):
+        return self._serialize_if
 
     def typestring(self):
         typestr = ""
@@ -335,7 +329,7 @@ def make_properties(cls):
         for name, prop in own_properties.items():
             # Only assign our own properties, so we don't overwrite what's been
             # set by the base class
-            if hasattr(obj, name):
+            if hasattr(obj, '_' + name):
                 raise PropertyError("Property {} already assigned in {}".format(name, type(obj).__name__))
             if not prop.indirected:
                 if prop.allow_none or prop.default is not None:
@@ -778,7 +772,11 @@ class DebugInfoProperty(Property):
 
 
 class SetProperty(Property):
-    """Property for a set of elements of one type, e.g., connectors. """
+    """Property for a set of elements of one type, e.g., connectors.
+
+    Despite its name, the property models a `frozenset`, this means that the set can
+    not be modified in place. Instead a new value has to be assigned to the property.
+    """
 
     def __init__(
             self,
@@ -796,7 +794,7 @@ class SetProperty(Property):
             to_json = self.to_json
         super(SetProperty, self).__init__(getter=getter,
                                           setter=setter,
-                                          dtype=set,
+                                          dtype=frozenset,
                                           default=default,
                                           from_json=from_json,
                                           to_json=to_json,
@@ -809,7 +807,13 @@ class SetProperty(Property):
 
     @property
     def dtype(self):
-        return set
+        # For full backwards compatibility we would need to return `set` however
+        #  this would break the implementation of `Property.__set__()`.
+        return frozenset
+
+    def typestring(self):
+        # For backwards compatibility we pretend to be a `set`.
+        return "set"
 
     @staticmethod
     def to_string(l):
@@ -827,28 +831,30 @@ class SetProperty(Property):
     def from_json(self, l, sdfg=None):
         if l is None:
             return None
-        return set(l)
+        return frozenset(l)
 
     def __get__(self, obj, objtype=None):
         val = super(SetProperty, self).__get__(obj, objtype)
         if val is None:
             return val
-        
-        # Copy to avoid changes in the set at callee to be reflected in
-        # the node directly
-        return set(val)
+
+        # `val` is a `frozenset` (see `__set__()`) thus it is safe to return it unprotected.
+        return val
 
     def __set__(self, obj, val):
         if val is None:
             return super(SetProperty, self).__set__(obj, val)
         
         # Check for uniqueness
-        if len(val) != len(set(val)):
+        if isinstance(val, (frozenset, set)):
+            pass
+        elif len(val) != len(set(val)):
             dups = set([x for x in val if val.count(x) > 1])
             raise ValueError('Duplicates found in set: ' + str(dups))
-        # Cast to element type
+
+        # Cast to element type and ensure that it is a frozen set.
         try:
-            new_set = set(self._element_type(elem) for elem in val)
+            new_set = frozenset(self._element_type(elem) for elem in val)
         except (TypeError, ValueError):
             raise ValueError('Some elements could not be converted to %s' % (str(self._element_type)))
 
