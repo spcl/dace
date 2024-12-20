@@ -32,7 +32,7 @@ def test_augmented_assignment_to_indirect_access_regression():
     # Test correctness
     A = np.random.randint(0, 100, 10).astype(np.int32)
     # Create a random permutation so that we don't create duplicate indices (as per NumPy)
-    ind = np.random.permutation(10).astype(np.int32)[:5]
+    ind = np.copy(np.random.permutation(10).astype(np.int32)[:5])
     B = np.random.randint(0, 100, 5).astype(np.int32)
     A_copy = A.copy()
     A_copy[ind] += B
