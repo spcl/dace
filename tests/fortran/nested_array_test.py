@@ -42,8 +42,12 @@ def test_fortran_frontend_nested_array_access():
                     
                     END SUBROUTINE nested_array_access_test_function
                     """
-    sources={"nested_array_access_test_function": test_string}
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "nested_array_access_test",normalize_offsets=True,multiple_sdfgs=False,sources=sources)
+    sources = {"nested_array_access_test_function": test_string}
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "nested_array_access_test",
+                                                  normalize_offsets=True,
+                                                  multiple_sdfgs=False,
+                                                  sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -86,16 +90,20 @@ def test_fortran_frontend_nested_array_access2():
                     
                     END SUBROUTINE nested_array_access2_test_function
                     """
-    sources={"nested_array_access2_test_function": test_string}
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "nested_array_access2_test",normalize_offsets=True,multiple_sdfgs=False,sources=sources)
+    sources = {"nested_array_access2_test_function": test_string}
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "nested_array_access2_test",
+                                                  normalize_offsets=True,
+                                                  multiple_sdfgs=False,
+                                                  sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
     assert (a[0] == 42)
     assert (a[1] == 5.5)
-    assert (a[2] == 42)    
+    assert (a[2] == 42)
+
 
 if __name__ == "__main__":
 
     test_fortran_frontend_nested_array_access2()
-

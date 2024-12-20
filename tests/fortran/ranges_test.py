@@ -3,7 +3,6 @@
 import numpy as np
 
 from dace.frontend.fortran import ast_transforms, fortran_parser
-
 """
 We test for the following patterns:
 * Range 'ALL'
@@ -17,6 +16,7 @@ We test for the following patterns:
 * Arrays with offsets
 * Assignment with arrays that have no range expression on the right
 """
+
 
 def test_fortran_frontend_multiple_ranges_all():
     """
@@ -57,6 +57,7 @@ def test_fortran_frontend_multiple_ranges_all():
     for val in res:
         assert val == 1.0
 
+
 def test_fortran_frontend_multiple_ranges_selection():
     """
     Tests that the generated array map correctly handles offsets.
@@ -92,6 +93,7 @@ def test_fortran_frontend_multiple_ranges_selection():
     sdfg(input1=input1, res=res, outside_init=False)
     for idx, val in enumerate(res):
         assert val == idx + 1.0
+
 
 def test_fortran_frontend_multiple_ranges_selection_var():
     """
@@ -137,6 +139,7 @@ def test_fortran_frontend_multiple_ranges_selection_var():
     for idx, val in enumerate(res):
         assert -val == idx + 1.0
 
+
 def test_fortran_frontend_multiple_ranges_subset():
     """
     Tests that the generated array map correctly handles offsets.
@@ -172,6 +175,7 @@ def test_fortran_frontend_multiple_ranges_subset():
     for idx, val in enumerate(res):
         assert val == -3.0
 
+
 def test_fortran_frontend_multiple_ranges_subset_var():
     """
     Tests that the generated array map correctly handles offsets.
@@ -202,7 +206,7 @@ def test_fortran_frontend_multiple_ranges_subset_var():
     size = 9
     input1 = np.full([size], 0, order="F", dtype=np.float64)
     for i in range(size):
-        input1[i] = 2 ** i
+        input1[i] = 2**i
 
     pos = np.full([4], 0, order="F", dtype=np.int32)
     pos[0] = 2
@@ -215,6 +219,7 @@ def test_fortran_frontend_multiple_ranges_subset_var():
 
     for i in range(len(res)):
         assert res[i] == input1[pos[0] - 1 + i] - input1[pos[2] - 1 + i]
+
 
 def test_fortran_frontend_multiple_ranges_ecrad_pattern():
     """
@@ -247,7 +252,7 @@ def test_fortran_frontend_multiple_ranges_ecrad_pattern():
     input1 = np.full([size, size], 0, order="F", dtype=np.float64)
     for i in range(size):
         for j in range(size):
-            input1[i, j] = i + 2 ** j
+            input1[i, j] = i + 2**j
 
     pos = np.full([2], 0, order="F", dtype=np.int32)
     pos[0] = 2
@@ -259,8 +264,9 @@ def test_fortran_frontend_multiple_ranges_ecrad_pattern():
     for i in range(size):
         for j in range(pos[0], pos[1] + 1):
 
-            print(i , j, res[i - 1, j - 1], input1[i - 1, j - 1])
+            print(i, j, res[i - 1, j - 1], input1[i - 1, j - 1])
             assert res[i - 1, j - 1] == input1[i - 1, j - 1]
+
 
 def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex():
     """
@@ -293,7 +299,7 @@ def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex():
     input1 = np.full([size, size], 0, order="F", dtype=np.float64)
     for i in range(size):
         for j in range(size):
-            input1[i, j] = i + 2 ** j
+            input1[i, j] = i + 2**j
 
     pos = np.full([6], 0, order="F", dtype=np.int32)
     pos[0] = 2
@@ -314,6 +320,7 @@ def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex():
     for i in range(size):
         for j in range(length):
             assert res[i - 1, iter_1 + j - 1] == input1[i - 1, iter_2 + j - 1] + input1[i - 1, iter_3 + j - 1]
+
 
 def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex_offsets():
     """
@@ -346,7 +353,7 @@ def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex_offsets():
     input1 = np.full([size, size], 0, order="F", dtype=np.float64)
     for i in range(size):
         for j in range(size):
-            input1[i, j] = i + 2 ** j
+            input1[i, j] = i + 2**j
 
     pos = np.full([6], 0, order="F", dtype=np.int32)
     pos[0] = 2 + 30
@@ -367,6 +374,7 @@ def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex_offsets():
     for i in range(size):
         for j in range(length):
             assert res[i - 1, iter_1 + j - 1] == input1[i - 1, iter_2 + j - 1] + input1[i - 1, iter_3 + j - 1]
+
 
 def test_fortran_frontend_array_assignment():
     """
@@ -428,6 +436,7 @@ def test_fortran_frontend_array_assignment():
         assert res[i, 3] == input1[i] + input2[i]
         assert res[i, 4] == input1[i] + input2[i]
 
+
 def test_fortran_frontend_multiple_ranges_ecrad_bug():
     """
     Tests that the generated array map correctly handles offsets.
@@ -462,7 +471,7 @@ def test_fortran_frontend_multiple_ranges_ecrad_bug():
     input1 = np.full([size, size], 0, order="F", dtype=np.float64)
     for i in range(size):
         for j in range(size):
-            input1[i, j] = i + 2 ** j
+            input1[i, j] = i + 2**j
 
     pos = np.full([4], 0, order="F", dtype=np.int32)
     pos[0] = 2
@@ -483,6 +492,7 @@ def test_fortran_frontend_multiple_ranges_ecrad_bug():
         assert res[i, iter_1 - 1] == input1[i, iter_2 - 1]
         iter_1 += 1
         iter_2 += 1
+
 
 def test_fortran_frontend_ranges_array_bug():
     """

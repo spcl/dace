@@ -92,8 +92,8 @@ def test_fortran_frontend_missing_func():
 
   END SUBROUTINE acc_wait_if_requested
     """
-    sources={}
-    sources["missing_test"]=test_string
+    sources = {}
+    sources["missing_test"] = test_string
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "missing_test", True, sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
@@ -101,6 +101,7 @@ def test_fortran_frontend_missing_func():
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 6.5)
     assert (a[2, 0] == 42)
+
 
 def test_fortran_frontend_missing_extraction():
     """
@@ -130,9 +131,9 @@ def test_fortran_frontend_missing_extraction():
     END SUBROUTINE missing_extraction_test_function     
        
     """
-    sources={}
-    sources["missing_extraction_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "missing_extraction_test",sources=sources)
+    sources = {}
+    sources["missing_extraction_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "missing_extraction_test", sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
@@ -140,7 +141,7 @@ def test_fortran_frontend_missing_extraction():
     assert (a[1, 0] == 5.5)
     assert (a[2, 0] == 42)
 
+
 if __name__ == "__main__":
     test_fortran_frontend_missing_func()
     test_fortran_frontend_missing_extraction()
-    

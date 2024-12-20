@@ -5,6 +5,7 @@ import pytest
 
 from dace.frontend.fortran import fortran_parser
 
+
 def test_fortran_frontend_arg_extract():
     test_string = """
                     PROGRAM arg_extract
@@ -32,13 +33,11 @@ def test_fortran_frontend_arg_extract():
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "arg_extract", normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
-    
 
-    
     input = np.full([2], 42, order="F", dtype=np.float32)
     res = np.full([2], 42, order="F", dtype=np.float32)
     sdfg(d=input, res=res)
-    assert np.allclose(res, [3,7])
+    assert np.allclose(res, [3, 7])
 
 
 def test_fortran_frontend_arg_extract2():
@@ -68,13 +67,11 @@ def test_fortran_frontend_arg_extract2():
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "arg_extract2", normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
-    
 
-    
     input = np.full([2], 42, order="F", dtype=np.float32)
     res = np.full([2], 42, order="F", dtype=np.float32)
     sdfg(d=input, res=res)
-    assert np.allclose(res, [3,7])
+    assert np.allclose(res, [3, 7])
 
 
 def test_fortran_frontend_arg_extract3():
@@ -106,13 +103,11 @@ def test_fortran_frontend_arg_extract3():
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "arg_extract3", normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
-    
 
-    
     input = np.full([2], 42, order="F", dtype=np.float32)
     res = np.full([2], 42, order="F", dtype=np.float32)
     sdfg(d=input, res=res)
-    assert np.allclose(res, [10,52])    
+    assert np.allclose(res, [10, 52])
 
 
 def test_fortran_frontend_arg_extract4():
@@ -148,13 +143,12 @@ def test_fortran_frontend_arg_extract4():
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "arg_extract4", normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
-    
 
-    
     input = np.full([2], 42, order="F", dtype=np.float32)
     res = np.full([2], 42, order="F", dtype=np.float32)
     sdfg(d=input, res=res)
-    assert np.allclose(res, [10,52])       
+    assert np.allclose(res, [10, 52])
+
 
 if __name__ == "__main__":
 
@@ -162,4 +156,3 @@ if __name__ == "__main__":
     #test_fortran_frontend_arg_extract2()
     test_fortran_frontend_arg_extract3()
     test_fortran_frontend_arg_extract4()
-          

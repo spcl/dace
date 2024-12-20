@@ -221,7 +221,8 @@ end subroutine main
 
 
 def test_fortran_frontend_array_arbitrary():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 subroutine main(d, arrsize, arrsize2)
   integer :: arrsize
   integer :: arrsize2
@@ -269,7 +270,8 @@ end subroutine main
 
 
 def test_fortran_frontend_array_arbitrary_attribute2():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 module lib
 contains
   subroutine main(d, d2)
@@ -296,9 +298,16 @@ end module lib
     arrsize4 = 7
     a = np.full([arrsize, arrsize2], 42, order="F", dtype=np.float64)
     b = np.full([arrsize3, arrsize4], 42, order="F", dtype=np.float64)
-    sdfg(d=a, __f2dace_A_d_d_0_s_0=arrsize, __f2dace_A_d_d_1_s_1=arrsize2,
-         d2=b, __f2dace_A_d2_d_0_s_2=arrsize3, __f2dace_A_d2_d_1_s_3=arrsize4,
-         arrsize=arrsize, arrsize2=arrsize2, arrsize3=arrsize3, arrsize4=arrsize4)
+    sdfg(d=a,
+         __f2dace_A_d_d_0_s_0=arrsize,
+         __f2dace_A_d_d_1_s_1=arrsize2,
+         d2=b,
+         __f2dace_A_d2_d_0_s_2=arrsize3,
+         __f2dace_A_d2_d_1_s_3=arrsize4,
+         arrsize=arrsize,
+         arrsize2=arrsize2,
+         arrsize3=arrsize3,
+         arrsize4=arrsize4)
     assert a[1, 1] == arrsize
     assert a[1, 2] == arrsize2
     assert a[1, 3] == arrsize3

@@ -7,7 +7,6 @@ import sys, os
 import numpy as np
 import pytest
 
-
 from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
 from dace.frontend.fortran import fortran_parser
 from fparser.two.symbol_table import SymbolTable
@@ -17,8 +16,6 @@ import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
-
-
 
 
 def test_fortran_frontend_class():
@@ -87,7 +84,7 @@ SUBROUTINE setup_comm_pattern(p_pat, dst_n_points)
                    d(1)=p_pat%n_pnts               
                    END SUBROUTINE class_test_function
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "class_test",False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "class_test", False, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -97,7 +94,7 @@ SUBROUTINE setup_comm_pattern(p_pat, dst_n_points)
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
     sdfg.view()
     sdfg.compile()
@@ -108,10 +105,6 @@ SUBROUTINE setup_comm_pattern(p_pat, dst_n_points)
     # assert (d[0] == 400)
 
 
-
 if __name__ == "__main__":
 
- 
-
     test_fortran_frontend_class()
-

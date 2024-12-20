@@ -20,6 +20,7 @@ import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 from dace.transformation.passes.lift_struct_views import LiftStructViews
 from dace.transformation import pass_pipeline as ppl
 
+
 def test_fortran_frontend_ptr_assignment_removal():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -48,9 +49,9 @@ def test_fortran_frontend_ptr_assignment_removal():
             d(2,1) = max(1.0, tmp)
         END SUBROUTINE type_in_call_test_function
     """
-    sources={}
-    sources["type_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test",sources=sources)
+    sources = {}
+    sources["type_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test", sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
@@ -87,15 +88,19 @@ def test_fortran_frontend_ptr_assignment_removal_array():
             d(2,1) = max(1.0, tmp(1,1,1))
         END SUBROUTINE type_in_call_test_function
     """
-    sources={}
-    sources["type_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test",sources=sources,normalize_offsets=True)
+    sources = {}
+    sources["type_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "type_in_call_test",
+                                                  sources=sources,
+                                                  normalize_offsets=True)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
+
 
 def test_fortran_frontend_ptr_assignment_removal_array_assumed():
     """
@@ -135,9 +140,9 @@ def test_fortran_frontend_ptr_assignment_removal_array_assumed():
             tmp(2,1,1) = 1410
         END SUBROUTINE type_in_call_test_function2
     """
-    sources={}
-    sources["type_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test",sources=sources)
+    sources = {}
+    sources["type_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test", sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
@@ -145,6 +150,7 @@ def test_fortran_frontend_ptr_assignment_removal_array_assumed():
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 1410)
+
 
 def test_fortran_frontend_ptr_assignment_removal_array_nested():
     """
@@ -188,15 +194,16 @@ def test_fortran_frontend_ptr_assignment_removal_array_nested():
             d(2,1) = tmp(1,1,1)
         END SUBROUTINE type_in_call_test_function
     """
-    sources={}
-    sources["type_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test",sources=sources)
+    sources = {}
+    sources["type_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test", sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
+
 
 if __name__ == "__main__":
     # pointers to non-array fields are broken

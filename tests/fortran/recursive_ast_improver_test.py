@@ -625,7 +625,8 @@ def test_floaters_are_brought_in():
     """
     The same simple program, but this time the subroutine is defined inside the main program that calls it.
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 subroutine fun(z)
   implicit none
   real, intent(out) :: z
@@ -675,7 +676,8 @@ def test_floaters_can_bring_in_more_modules():
     """
     The same simple program, but this time the subroutine is defined inside the main program that calls it.
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 module lib
   implicit none
   real, parameter :: zzz = 5.5

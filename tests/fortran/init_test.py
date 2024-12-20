@@ -33,9 +33,9 @@ def test_fortran_frontend_init():
                     
 
                     """
-    sources={}
-    sources["init_test"]=test_string
-    sources["init_test_module_subroutine.f90"]="""
+    sources = {}
+    sources["init_test"] = test_string
+    sources["init_test_module_subroutine.f90"] = """
                     MODULE init_test_module_subroutine
                     CONTAINS
                     SUBROUTINE init_test_function(d)
@@ -49,16 +49,16 @@ def test_fortran_frontend_init():
                     END SUBROUTINE init_test_function
                     END MODULE init_test_module_subroutine
                     """
-    sources["init_test_module.f90"]="""
+    sources["init_test_module.f90"] = """
                     MODULE init_test_module
                     IMPLICIT NONE
                     REAL outside_init=EPSILON(1.0)
                     END MODULE init_test_module
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "init_test",sources=sources)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "init_test", sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
-    sdfg(d=a,outside_init=0)
+    sdfg(d=a, outside_init=0)
     assert (a[0] == 42)
     assert (a[1] == 5.5)
     assert (a[2] == 42)
@@ -78,9 +78,9 @@ def test_fortran_frontend_init2():
                     
 
                     """
-    sources={}
-    sources["init2_test"]=test_string
-    sources["init2_test_module_subroutine.f90"]="""
+    sources = {}
+    sources["init2_test"] = test_string
+    sources["init2_test_module_subroutine.f90"] = """
                     MODULE init2_test_module_subroutine
                     CONTAINS
                     SUBROUTINE init2_test_function(d)
@@ -93,19 +93,20 @@ def test_fortran_frontend_init2():
                     END SUBROUTINE init2_test_function
                     END MODULE init2_test_module_subroutine
                     """
-    sources["init2_test_module.f90"]="""
+    sources["init2_test_module.f90"] = """
                     MODULE init2_test_module
                     IMPLICIT NONE
                     REAL, PARAMETER :: TORUS_MAX_LAT = 4.0 / 18.0 * ATAN(1.0)
                     END MODULE init2_test_module
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "init2_test",sources=sources)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "init2_test", sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a, torus_max_lat=4.0 / 18.0 * np.arctan(1.0))
     assert (a[0] == 42)
     assert (a[1] == 5.674532920122147)
     assert (a[2] == 42)
+
 
 if __name__ == "__main__":
 

@@ -58,7 +58,7 @@ end
    END SUBROUTINE pointer_test_function
   
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -68,12 +68,10 @@ end
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()   
-    sdfg.validate()             
+    sdfg.reset_sdfg_list()
+    sdfg.validate()
     sdfg.simplify(verbose=True)
     sdfg.view()
-
-
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import pytest
 
 from dace.frontend.fortran import fortran_parser
 
+
 def test_fortran_frontend_optional_adv():
     test_string = """
                     PROGRAM adv_intrinsic_optional_test_function
@@ -73,9 +74,12 @@ def test_fortran_frontend_optional_adv():
 END SUBROUTINE get_indices_c
 
                     """
-    sources={}
-    sources["adv_intrinsic_optional_test_function"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_optional_test_function", True,sources=sources)
+    sources = {}
+    sources["adv_intrinsic_optional_test_function"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "intrinsic_optional_test_function",
+                                                  True,
+                                                  sources=sources)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -86,6 +90,7 @@ END SUBROUTINE get_indices_c
 
     assert res[0] == 5
     assert res2[0] == 0
+
 
 if __name__ == "__main__":
 

@@ -6,6 +6,7 @@ import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 import numpy as np
 
+
 def test_fortran_frontend_long_tasklet():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
@@ -40,15 +41,16 @@ def test_fortran_frontend_long_tasklet():
 
                     END SUBROUTINE long_tasklet_test_function
                     """
-    sources={}
-    sources["long_tasklet_test"]=test_string
+    sources = {}
+    sources["long_tasklet_test"] = test_string
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "long_tasklet_test", True, sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5], 42, order="F", dtype=np.float64)
     sdfg(d=a)
     assert (a[1] == 5.5)
     assert (a[0] == 4)
- 
+
+
 if __name__ == "__main__":
 
     test_fortran_frontend_long_tasklet()

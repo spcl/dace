@@ -6,9 +6,7 @@ from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 from fparser.two.utils import walk
 
-from dace.frontend.fortran.ast_desugaring import (ENTRY_POINT_OBJECT,
-                                                  ENTRY_POINT_OBJECT_TYPES,
-                                                  find_name_of_node,
+from dace.frontend.fortran.ast_desugaring import (ENTRY_POINT_OBJECT, ENTRY_POINT_OBJECT_TYPES, find_name_of_node,
                                                   prune_unused_objects)
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder

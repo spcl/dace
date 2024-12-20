@@ -10,7 +10,8 @@ def test_fortran_frontend_parent():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
     """
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 program main
   implicit none
   double precision d(4)
@@ -58,7 +59,8 @@ module lib
   ! good enough approximation
   integer, parameter :: pi = 4
 end module lib
-""").add_file("""
+""").add_file(
+        """
 program main
   implicit none
   double precision d(4)

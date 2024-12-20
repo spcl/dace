@@ -6,6 +6,7 @@ import pytest
 from dace.frontend.fortran import fortran_parser
 from tests.fortran.fortran_test_helper import create_singular_sdfg_from_string, SourceCodeBuilder
 
+
 def test_fortran_frontend_bit_size():
     test_string = """
                     PROGRAM intrinsic_math_test_bit_size
@@ -38,6 +39,7 @@ def test_fortran_frontend_bit_size():
     sdfg(res=res)
 
     assert np.allclose(res, [32, 32, 32, 64])
+
 
 def test_fortran_frontend_bit_size_symbolic():
     test_string = """
@@ -81,16 +83,17 @@ def test_fortran_frontend_bit_size_symbolic():
     size3 = 7
     res = np.full([size], 42, order="F", dtype=np.int32)
     res2 = np.full([size, size2, size3], 42, order="F", dtype=np.int32)
-    res3 = np.full([size+size2, size2*5, size3 + size*size2], 42, order="F", dtype=np.int32)
+    res3 = np.full([size + size2, size2 * 5, size3 + size * size2], 42, order="F", dtype=np.int32)
     sdfg(res=res, res2=res2, res3=res3, arrsize=size, arrsize2=size2, arrsize3=size3)
 
     assert res[0] == size
-    assert res[1] == size*size2*size3
-    assert res[2] == (size + size2) * (size2 * 5) * (size3 + size2*size)
-    assert res[3] == size * 2 
+    assert res[1] == size * size2 * size3
+    assert res[2] == (size + size2) * (size2 * 5) * (size3 + size2 * size)
+    assert res[3] == size * 2
     assert res[4] == res[0] * res[1] * res[2]
     assert res[5] == size + size2 + size3
-    assert res[6] == size + size2 + size2*5 + size3 + size*size2
+    assert res[6] == size + size2 + size2 * 5 + size3 + size * size2
+
 
 def test_fortran_frontend_size_arbitrary():
     test_string = """
@@ -113,18 +116,23 @@ def test_fortran_frontend_size_arbitrary():
                     END SUBROUTINE intrinsic_basic_size_arbitrary_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_size_arbitrary_test", True,)
+    sdfg = fortran_parser.create_sdfg_from_string(
+        test_string,
+        "intrinsic_basic_size_arbitrary_test",
+        True,
+    )
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
     size = 7
     size2 = 5
     res = np.full([size, size2], 42, order="F", dtype=np.int32)
-    sdfg(res=res,arrsize=size,arrsize2=size2)
+    sdfg(res=res, arrsize=size, arrsize2=size2)
 
-    assert res[0,0] == size*size2
-    assert res[1,0] == size
-    assert res[2,0] == size2
+    assert res[0, 0] == size * size2
+    assert res[1, 0] == size
+    assert res[2, 0] == size2
+
 
 def test_fortran_frontend_present():
     test_string = """
@@ -212,6 +220,7 @@ def test_fortran_frontend_present():
     assert res[0] == 1
     assert res2[0] == 0
 
+
 def test_fortran_frontend_bitwise_ops():
     sources, main = SourceCodeBuilder().add_file("""
     SUBROUTINE bitwise_ops(input, res)
@@ -246,11 +255,12 @@ def test_fortran_frontend_bitwise_ops():
     input = np.full([size], 42, order="F", dtype=np.int32)
     res = np.full([size], 42, order="F", dtype=np.int32)
 
-    input = [32, 32, 33, 1073741825, 53, 530, 12, 1, 128, 1073741824, 12 ]
+    input = [32, 32, 33, 1073741825, 53, 530, 12, 1, 128, 1073741824, 12]
 
     sdfg(input=input, res=res)
 
     assert np.allclose(res, [33, 1073741856, 32, 1, 10, 1010, 384, 1073741824, 4, 1, 12])
+
 
 def test_fortran_frontend_bitwise_ops2():
     sources, main = SourceCodeBuilder().add_file("""
@@ -278,11 +288,12 @@ def test_fortran_frontend_bitwise_ops2():
     input = np.full([size], 42, order="F", dtype=np.int32)
     res = np.full([size], 42, order="F", dtype=np.int32)
 
-    input = [2147483647, 16, 3, 31, 30, 630] 
+    input = [2147483647, 16, 3, 31, 30, 630]
 
     sdfg(input=input, res=res)
 
     assert np.allclose(res, [0, 16, 1, 0, 30, 78])
+
 
 def test_fortran_frontend_allocated():
     # FIXME: this pattern is generally not supported.
@@ -317,12 +328,14 @@ def test_fortran_frontend_allocated():
 
     assert np.allclose(res, [0, 1, 0])
 
+
 def test_fortran_frontend_allocated_nested():
 
     # FIXME: this pattern is generally not supported.
     # this needs an update once defered allocs are merged
 
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
     MODULE allocated_test_interface
         INTERFACE
             SUBROUTINE allocated_test_nested(data, res)
@@ -369,6 +382,7 @@ def test_fortran_frontend_allocated_nested():
     sdfg(res=res, __f2dace_A_data_d_0_s_0=0)
 
     assert np.allclose(res, [0, 1, 0])
+
 
 if __name__ == "__main__":
 

@@ -125,8 +125,7 @@ class FortranASTMatcher:
                  has_attr: Optional[Dict[str, Union["FortranASTMatcher", List["FortranASTMatcher"]]]] = None,
                  has_value: Optional[str] = None):
         # TODO: Include Set[Self] to `has_children` type?
-        assert not ((set() if has_attr is None else has_attr.keys())
-                    & {'children'})
+        assert not ((set() if has_attr is None else has_attr.keys()) & {'children'})
         self.is_type = is_type
         self.has_children = has_children
         self.has_attr = has_attr
@@ -220,7 +219,8 @@ class InternalASTMatcher:
 
     def __init__(self,
                  is_type: Optional[Type] = None,
-                 has_attr: Optional[Dict[str, Union["InternalASTMatcher", List["InternalASTMatcher"], Dict[str, "InternalASTMatcher"]]]] = None,
+                 has_attr: Optional[Dict[str, Union["InternalASTMatcher", List["InternalASTMatcher"],
+                                                    Dict[str, "InternalASTMatcher"]]]] = None,
                  has_empty_attr: Optional[Collection[str]] = None,
                  has_value: Optional[str] = None):
         # TODO: Include Set[Self] to `has_children` type?
@@ -276,10 +276,7 @@ class InternalASTMatcher:
         return cls(Name_Node, {'name': cls(has_value=name)})
 
 
-def create_singular_sdfg_from_string(
-        sources: Dict[str, str],
-        entry_point: str,
-        normalize_offsets: bool = True):
+def create_singular_sdfg_from_string(sources: Dict[str, str], entry_point: str, normalize_offsets: bool = True):
     entry_point = entry_point.split('.')
 
     cfg = ParseConfig(main=sources['main.f90'], sources=sources, entry_points=tuple(entry_point))

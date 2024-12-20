@@ -36,9 +36,9 @@ def test_fortran_frontend_global():
                     
 
                     """
-    sources={}
-    sources["global_test"]=test_string
-    sources["global_test_module_subroutine.f90"]="""
+    sources = {}
+    sources["global_test"] = test_string
+    sources["global_test_module_subroutine.f90"] = """
                     MODULE global_test_module_subroutine
                     
                     CONTAINS
@@ -65,7 +65,7 @@ def test_fortran_frontend_global():
                     END SUBROUTINE global_test_function
                     END MODULE global_test_module_subroutine
                     """
-    sources["global_test_module.f90"]="""
+    sources["global_test_module.f90"] = """
                     MODULE global_test_module
                     IMPLICIT NONE
                     TYPE simple_type
@@ -76,8 +76,8 @@ def test_fortran_frontend_global():
                     integer outside_init=1
                     END MODULE global_test_module
                     """
-    
-    sources["nested_one.f90"]="""
+
+    sources["nested_one.f90"] = """
                     MODULE nested_one
                     IMPLICIT NONE
                     CONTAINS
@@ -93,7 +93,7 @@ def test_fortran_frontend_global():
                     
                     END MODULE nested_one
                     """
-    sources["nested_two.f90"]="""
+    sources["nested_two.f90"] = """
                     MODULE nested_two
                     IMPLICIT NONE
                     CONTAINS
@@ -108,16 +108,17 @@ def test_fortran_frontend_global():
                     END MODULE nested_two
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "global_test",sources=sources,normalize_offsets=True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "global_test", sources=sources, normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.save('test.sdfg')
     a = np.full([4], 42, order="F", dtype=np.float64)
-    a2 = np.full([4,4,4], 42, order="F", dtype=np.float64)
+    a2 = np.full([4, 4, 4], 42, order="F", dtype=np.float64)
     #TODO Add validation - but we need python structs for this.
     #sdfg(d=a,a=a2)
     #assert (a[0] == 42)
     #assert (a[1] == 5.5)
     #assert (a[2] == 42)
+
 
 if __name__ == "__main__":
 

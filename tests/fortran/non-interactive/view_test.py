@@ -63,34 +63,34 @@ aa(1,1)=res(1,1,1)
 
 END SUBROUTINE viewlens
                     """
-    sdfg2 = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg2 = fortran_parser.create_sdfg_from_string(test_string, test_name, False, False)
     sdfg2.view()
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False, True)
     for state in sdfg.nodes():
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG):
-                if node.path!="":
-                    print("TEST: "+node.path)
+                if node.path != "":
+                    print("TEST: " + node.path)
                     tmp_sdfg = SDFG.from_file(node.path)
                     node.sdfg = tmp_sdfg
                     node.sdfg.parent = state
                     node.sdfg.parent_sdfg = sdfg
                     node.sdfg.update_sdfg_list([])
                     node.sdfg.parent_nsdfg_node = node
-                    node.path=""
-    for sd in sdfg.all_sdfgs_recursive():  
+                    node.path = ""
+    for sd in sdfg.all_sdfgs_recursive():
         for state in sd.nodes():
-          for node in state.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-                if node.path!="":
-                    print("TEST: "+node.path)
-                    tmp_sdfg = SDFG.from_file(node.path)
-                    node.sdfg = tmp_sdfg     
-                    node.sdfg.parent = state
-                    node.sdfg.parent_sdfg = sd
-                    node.sdfg.update_sdfg_list([])
-                    node.sdfg.parent_nsdfg_node = node         
-                    node.path=""
+            for node in state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    if node.path != "":
+                        print("TEST: " + node.path)
+                        tmp_sdfg = SDFG.from_file(node.path)
+                        node.sdfg = tmp_sdfg
+                        node.sdfg.parent = state
+                        node.sdfg.parent_sdfg = sd
+                        node.sdfg.update_sdfg_list([])
+                        node.sdfg.parent_nsdfg_node = node
+                        node.path = ""
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -100,8 +100,8 @@ END SUBROUTINE viewlens
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
-    sdfg.view()                
+    sdfg.reset_sdfg_list()
+    sdfg.view()
     sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([1, 1, 2], 42, order="F", dtype=np.float64)
@@ -157,7 +157,7 @@ ENDDO
 
 END SUBROUTINE viewlens
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False, True)
     #sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
@@ -211,7 +211,7 @@ ENDDO
 
 END SUBROUTINE viewlens
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False, True)
     #sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)

@@ -42,6 +42,7 @@ def test_fortran_frontend_parent():
         assert ('scope_test_function', var) in visitor.scope_vars
         assert visitor.scope_vars[('scope_test_function', var)].name == var
 
+
 if __name__ == "__main__":
 
     test_fortran_frontend_parent()

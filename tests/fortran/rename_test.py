@@ -33,9 +33,9 @@ def test_fortran_frontend_rename():
                     
 
                     """
-    sources={}
-    sources["rename_test"]=test_string
-    sources["rename_test_module_subroutine.f90"]="""
+    sources = {}
+    sources["rename_test"] = test_string
+    sources["rename_test_module_subroutine.f90"] = """
                     MODULE rename_test_module_subroutine
                     CONTAINS
                     SUBROUTINE rename_test_function(d)
@@ -48,21 +48,20 @@ def test_fortran_frontend_rename():
                     END SUBROUTINE rename_test_function
                     END MODULE rename_test_module_subroutine
                     """
-    sources["rename_test_module.f90"]="""
+    sources["rename_test_module.f90"] = """
                     MODULE rename_test_module
                     IMPLICIT NONE
                     INTEGER, PARAMETER :: pi4 =  9
                     INTEGER, PARAMETER :: i4 = SELECTED_INT_KIND(pi4)  
                     END MODULE rename_test_module
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "rename_test",sources=sources)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "rename_test", sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
     assert (a[0] == 42)
     assert (a[1] == 9.5)
     assert (a[2] == 42)
-
 
 
 if __name__ == "__main__":

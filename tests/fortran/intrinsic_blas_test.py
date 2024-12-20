@@ -59,6 +59,7 @@ end subroutine main
     sdfg(arg1=arg1, arg2=arg2, res1=res1)
     assert res1[0] == np.dot(arg1, arg2)
 
+
 def test_fortran_frontend_transpose():
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main(arg1, arg2, res1)
@@ -85,8 +86,10 @@ end subroutine main
 
     assert np.all(np.transpose(res1) == arg1)
 
+
 def test_fortran_frontend_transpose_struct():
-    sources, main = SourceCodeBuilder().add_file("""
+    sources, main = SourceCodeBuilder().add_file(
+        """
 
 MODULE test_types
     IMPLICIT NONE
@@ -134,6 +137,7 @@ END MODULE
 
     assert np.all(np.transpose(res1) == arg1)
 
+
 def test_fortran_frontend_matmul():
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main(arg1, arg2, res1)
@@ -165,6 +169,7 @@ end subroutine main
     sdfg(arg1=arg1, arg2=arg2, res1=res1)
 
     assert np.all(np.matmul(arg1, arg2) == res1)
+
 
 if __name__ == "__main__":
     #test_fortran_frontend_dot()

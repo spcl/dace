@@ -7,7 +7,6 @@ import sys, os
 import numpy as np
 import pytest
 
-
 from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
 from dace.frontend.fortran import fortran_parser
 from fparser.two.symbol_table import SymbolTable
@@ -36,7 +35,7 @@ def test_fortran_frontend_int_init():
                    d(1)=INT(z'000000ffffffffff',i8)               
                    END SUBROUTINE int_init_test_function
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "int_init_test",False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "int_init_test", False, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -46,7 +45,7 @@ def test_fortran_frontend_int_init():
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
     sdfg.view()
     sdfg.compile()
@@ -57,10 +56,6 @@ def test_fortran_frontend_int_init():
     # assert (d[0] == 400)
 
 
-
 if __name__ == "__main__":
 
- 
-
     test_fortran_frontend_int_init()
-

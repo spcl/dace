@@ -46,16 +46,15 @@ def test_fortran_frontend_basic_type():
             d(2,1) = 5.5 + s%w(1,1,1)
         END SUBROUTINE type_test_function
     """
-    sources={}
-    sources["type_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_test",sources=sources)
+    sources = {}
+    sources["type_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_test", sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
-
 
 
 def test_fortran_frontend_basic_type2():
@@ -145,7 +144,9 @@ def test_fortran_frontend_type_symbol():
                     
                     END SUBROUTINE internal_function
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_symbol_test",sources={"type_symbol_test":test_string})
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "type_symbol_test",
+                                                  sources={"type_symbol_test": test_string})
     sdfg.validate()
     sdfg.simplify(verbose=True)
     a = np.full([4, 5], 42, order="F", dtype=np.float64)
@@ -153,6 +154,7 @@ def test_fortran_frontend_type_symbol():
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
+
 
 def test_fortran_frontend_type_pardecl():
     """
@@ -194,7 +196,9 @@ def test_fortran_frontend_type_pardecl():
                     
                     END SUBROUTINE internal_function
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_pardecl_test",sources={"type_pardecl_test":test_string})
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "type_pardecl_test",
+                                                  sources={"type_pardecl_test": test_string})
     sdfg.validate()
     sdfg.simplify(verbose=True)
     a = np.full([4, 5], 42, order="F", dtype=np.float32)
@@ -202,6 +206,7 @@ def test_fortran_frontend_type_pardecl():
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
+
 
 def test_fortran_frontend_type_struct():
     """
@@ -246,7 +251,9 @@ def test_fortran_frontend_type_struct():
                     
                     END SUBROUTINE internal_function
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_struct_test",sources={"type_struct_test":test_string})
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "type_struct_test",
+                                                  sources={"type_struct_test": test_string})
     sdfg.validate()
     sdfg.simplify(verbose=True)
     a = np.full([4, 5], 42, order="F", dtype=np.float32)
@@ -312,7 +319,6 @@ def test_fortran_frontend_circular_type():
     assert (a[2, 0] == 42)
 
 
-
 def test_fortran_frontend_type_in_call():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -340,15 +346,16 @@ def test_fortran_frontend_type_in_call():
             d(2,1) = max(1.0, tmp(1,1,1))
         END SUBROUTINE type_in_call_test_function
     """
-    sources={}
-    sources["type_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test",sources=sources)
+    sources = {}
+    sources["type_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test", sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
+
 
 def test_fortran_frontend_type_array():
     """
@@ -388,9 +395,12 @@ def test_fortran_frontend_type_array():
             s%name%w(8,10)%a = 42
         END SUBROUTINE type_in_call_test_function2
     """
-    sources={}
-    sources["type_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test",sources=sources, normalize_offsets=True)
+    sources = {}
+    sources["type_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "type_in_call_test",
+                                                  sources=sources,
+                                                  normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.save('test.sdfg')
     sdfg.compile()
@@ -398,6 +408,7 @@ def test_fortran_frontend_type_array():
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     print(a)
+
 
 def test_fortran_frontend_type_array2():
     """
@@ -443,9 +454,12 @@ def test_fortran_frontend_type_array2():
             s%name%wx(8,x(3,3,3)) = 43
         END SUBROUTINE type_in_call_test_function2
     """
-    sources={}
-    sources["type_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test",sources=sources, normalize_offsets=True)
+    sources = {}
+    sources["type_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "type_in_call_test",
+                                                  sources=sources,
+                                                  normalize_offsets=True)
     sdfg.save("before.sdfg")
     sdfg.simplify(verbose=True)
     sdfg.save("after.sdfg")
@@ -454,6 +468,7 @@ def test_fortran_frontend_type_array2():
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     print(a)
+
 
 def test_fortran_frontend_type_pointer():
     """
@@ -482,9 +497,9 @@ def test_fortran_frontend_type_pointer():
             d(2,1) = max(1.0, tmp(1,1,1))
         END SUBROUTINE type_pointer_test_function
     """
-    sources={}
-    sources["type_pointer_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_pointer_test",sources=sources)
+    sources = {}
+    sources["type_pointer_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_pointer_test", sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
@@ -536,15 +551,14 @@ def test_fortran_frontend_type_arg():
         END SUBROUTINE deepest
 
     """
-    sources={}
-    sources["type_arg_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_arg_test",sources=sources, normalize_offsets=True)
+    sources = {}
+    sources["type_arg_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_arg_test", sources=sources, normalize_offsets=True)
     sdfg.view()
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     print(a)
-
 
 
 def test_fortran_frontend_type_arg2():
@@ -587,15 +601,17 @@ def test_fortran_frontend_type_arg2():
         END SUBROUTINE deepest
 
     """
-    sources={}
-    sources["type_arg2_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_arg2_test",sources=sources, normalize_offsets=True)
+    sources = {}
+    sources["type_arg2_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "type_arg2_test",
+                                                  sources=sources,
+                                                  normalize_offsets=True)
     sdfg.save("before.sdfg")
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     print(a)
-
 
 
 def test_fortran_frontend_type_view():
@@ -632,7 +648,10 @@ def test_fortran_frontend_type_view():
                     
                     END SUBROUTINE internal_function
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_view_test",sources={"type_view_test":test_string},normalize_offsets=True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "type_view_test",
+                                                  sources={"type_view_test": test_string},
+                                                  normalize_offsets=True)
     sdfg.validate()
     sdfg.simplify(verbose=True)
     a = np.full([4, 5], 42, order="F", dtype=np.float32)

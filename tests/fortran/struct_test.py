@@ -5,6 +5,7 @@ import pytest
 
 from dace.frontend.fortran import fortran_parser
 
+
 def test_fortran_struct():
     test_string = """
                     PROGRAM struct_test_range
@@ -42,7 +43,7 @@ def test_fortran_struct():
 
                     END SUBROUTINE struct_test_range2_test_function
                     """
-    sources={}
+    sources = {}
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "res", False, sources=sources)
     sdfg.save('before.sdfg')
     sdfg.simplify(verbose=True)
@@ -54,6 +55,7 @@ def test_fortran_struct():
     res[:] = 0
     sdfg(res=res, start=2, end=5)
     print(res)
+
 
 def test_fortran_struct_lhs():
     test_string = """
@@ -97,7 +99,7 @@ def test_fortran_struct_lhs():
 
                     END SUBROUTINE struct_test_range2_test_function
                     """
-    sources={}
+    sources = {}
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "res", False, sources=sources)
     sdfg.save('before.sdfg')
     sdfg.simplify(verbose=True)
@@ -109,6 +111,7 @@ def test_fortran_struct_lhs():
     res[:] = 0
     sdfg(res=res, start=2, end=5)
     print(res)
+
 
 if __name__ == "__main__":
     test_fortran_struct()

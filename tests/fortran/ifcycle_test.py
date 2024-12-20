@@ -41,16 +41,19 @@ def test_fortran_frontend_if_cycle():
 
                     END SUBROUTINE if_cycle_test_function
                     """
-    sources={}
-    sources["if_cycle"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "if_cycle",normalize_offsets=True,multiple_sdfgs=False,sources=sources)
+    sources = {}
+    sources["if_cycle"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "if_cycle",
+                                                  normalize_offsets=True,
+                                                  multiple_sdfgs=False,
+                                                  sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
     assert (a[0] == 5.5)
     assert (a[1] == 6.5)
     assert (a[2] == 5.5)
-
 
 
 def test_fortran_frontend_if_nested_cycle():
@@ -91,15 +94,19 @@ def test_fortran_frontend_if_nested_cycle():
 
                     END SUBROUTINE if_nested_cycle_test_function
                     """
-    sources={}
-    sources["if_nested_cycle"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "if_nested_cycle",normalize_offsets=True,multiple_sdfgs=False,sources=sources)
+    sources = {}
+    sources["if_nested_cycle"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "if_nested_cycle",
+                                                  normalize_offsets=True,
+                                                  multiple_sdfgs=False,
+                                                  sources=sources)
     sdfg.simplify(verbose=True)
-    a = np.full([4,4], 42, order="F", dtype=np.float64)
+    a = np.full([4, 4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0,0] == 42)
-    assert (a[1,0] == 6.5)
-    assert (a[2,0] == 42)    
+    assert (a[0, 0] == 42)
+    assert (a[1, 0] == 6.5)
+    assert (a[2, 0] == 42)
 
 
 if __name__ == "__main__":

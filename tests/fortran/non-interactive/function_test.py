@@ -76,7 +76,7 @@ end
    END FUNCTION function_test_function
   
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -86,7 +86,7 @@ end
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
     sdfg.view()
 
@@ -136,7 +136,7 @@ PURE FUNCTION function2_test_function (p_x, p_y)  result (p_arc)
 
   
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -146,10 +146,9 @@ PURE FUNCTION function2_test_function (p_x, p_y)  result (p_arc)
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
     sdfg.view()
-
 
 
 def test_fortran_frontend_function_test3():
@@ -256,7 +255,7 @@ ELEMENTAL FUNCTION function3_test_function (v) result(length)
 END FUNCTION function3_test_function
 """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -266,11 +265,10 @@ END FUNCTION function3_test_function
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
     sdfg.view()
     sdfg.compile()
-
 
 
 @pytest.mark.skip(reason="Interactive test (opens SDFG).")
@@ -323,7 +321,7 @@ length=norm(v)+a
 
   
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -333,11 +331,10 @@ length=norm(v)+a
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
     sdfg.view()
     sdfg.compile()
-
 
 
 @pytest.mark.skip(reason="Interactive test (opens SDFG).")
@@ -383,7 +380,7 @@ end
 
   
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name, False, False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -393,10 +390,11 @@ end
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
     sdfg.view()
     sdfg.compile()
+
 
 if __name__ == "__main__":
 

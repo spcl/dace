@@ -20,6 +20,7 @@ import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 from dace.transformation.passes.lift_struct_views import LiftStructViews
 from dace.transformation import pass_pipeline as ppl
 
+
 def test_fortran_frontend_type_array():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -63,13 +64,17 @@ def test_fortran_frontend_type_array():
         END SUBROUTINE deepest
 
     """
-    sources={}
-    sources["type_array_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_array_test",sources=sources, normalize_offsets=True)
+    sources = {}
+    sources["type_array_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "type_array_test",
+                                                  sources=sources,
+                                                  normalize_offsets=True)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     print(a)
+
 
 def test_fortran_frontend_type2_array():
     """
@@ -121,13 +126,17 @@ def test_fortran_frontend_type2_array():
         END SUBROUTINE deepest
 
     """
-    sources={}
-    sources["type2_array_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type2_array_test",sources=sources, normalize_offsets=True)
+    sources = {}
+    sources["type2_array_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "type2_array_test",
+                                                  sources=sources,
+                                                  normalize_offsets=True)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     print(a)
+
 
 def test_fortran_frontend_type3_array():
     """
@@ -206,9 +215,12 @@ def test_fortran_frontend_type3_array():
         END SUBROUTINE deepest
 
     """
-    sources={}
-    sources["type3_array_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type3_array_test",sources=sources, normalize_offsets=True)
+    sources = {}
+    sources["type3_array_test"] = test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string,
+                                                  "type3_array_test",
+                                                  sources=sources,
+                                                  normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
     #a = np.full([5, 5], 42, order="F", dtype=np.float32)
@@ -216,9 +228,7 @@ def test_fortran_frontend_type3_array():
     #print(a)
 
 
-
-
 if __name__ == "__main__":
-  
-   #test_fortran_frontend_type_array()
-   test_fortran_frontend_type3_array()
+
+    #test_fortran_frontend_type_array()
+    test_fortran_frontend_type3_array()
