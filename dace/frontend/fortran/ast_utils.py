@@ -101,7 +101,7 @@ def get_name(node: ast_internal_classes.FNode):
     if isinstance(node, ast_internal_classes.Actual_Arg_Spec_Node):
         actual_node = node.arg
     else:
-        actual_node = node    
+        actual_node = node
     if isinstance(actual_node, ast_internal_classes.Name_Node):
         return actual_node.name
     elif isinstance(actual_node, ast_internal_classes.Array_Subscript_Node):
@@ -142,8 +142,7 @@ class TaskletWriter:
                  input_changes: List[str] = None,
                  placeholders={},
                  placeholders_offsets={},
-                 rename_dict=None
-                 ):
+                 rename_dict=None):
         self.outputs = outputs
         self.outputs_changes = outputs_changes
         self.sdfg = sdfg
@@ -182,7 +181,7 @@ class TaskletWriter:
 
     def actualarg2string(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
         return self.write_code(node.arg)
-    
+
     def arrayconstructor2string(self, node: ast_internal_classes.Array_Constructor_Node):
         str_to_return = "[ "
         for i in node.value_list:
@@ -255,8 +254,8 @@ class TaskletWriter:
             if sdfg_name is None:
                 return name
             else:
-                if self.sdfg.arrays[sdfg_name].shape is None or (
-                        len(self.sdfg.arrays[sdfg_name].shape) == 1 and self.sdfg.arrays[sdfg_name].shape[0] == 1):
+                if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape) == 1
+                                                                 and self.sdfg.arrays[sdfg_name].shape[0] == 1):
                     return "1"
                 size = self.sdfg.arrays[sdfg_name].shape[location[1]]
                 return self.write_code(str(size))
@@ -267,8 +266,8 @@ class TaskletWriter:
             if sdfg_name is None:
                 return name
             else:
-                if self.sdfg.arrays[sdfg_name].shape is None or (
-                        len(self.sdfg.arrays[sdfg_name].shape) == 1 and self.sdfg.arrays[sdfg_name].shape[0] == 1):
+                if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape) == 1
+                                                                 and self.sdfg.arrays[sdfg_name].shape[0] == 1):
                     return "0"
                 offset = self.sdfg.arrays[sdfg_name].offset[location[1]]
                 return self.write_code(str(offset))
@@ -406,7 +405,10 @@ def generate_memlet(op, top_sdfg, state, offset_normalization=False):
                 if i.type == 'ALL':
                     indices.append(None)
                 else:
-                    tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders,
+                    tw = TaskletWriter([], [],
+                                       top_sdfg,
+                                       state.name_mapping,
+                                       placeholders=state.placeholders,
                                        placeholders_offsets=state.placeholders_offsets)
                     text_start = tw.write_code(i.range[0])
                     text_end = tw.write_code(i.range[1])
@@ -414,7 +416,10 @@ def generate_memlet(op, top_sdfg, state, offset_normalization=False):
                     symb_end = sym.pystr_to_symbolic(text_end)
                     indices.append([symb_start, symb_end])
             else:
-                tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders,
+                tw = TaskletWriter([], [],
+                                   top_sdfg,
+                                   state.name_mapping,
+                                   placeholders=state.placeholders,
                                    placeholders_offsets=state.placeholders_offsets)
                 text = tw.write_code(i)
                 # This might need to be replaced with the name in the context of the top/current sdfg
@@ -426,8 +431,8 @@ def generate_memlet(op, top_sdfg, state, offset_normalization=False):
 
     all_indices = indices + [None] * (len(shape) - len(indices))
     if offset_normalization:
-        subset = subsets.Range(
-            [(i[0], i[1], 1) if i is not None else (0, s - 1, 1) for i, s in zip(all_indices, shape)])
+        subset = subsets.Range([(i[0], i[1], 1) if i is not None else (0, s - 1, 1)
+                                for i, s in zip(all_indices, shape)])
     else:
         subset = subsets.Range([(i[0], i[1], 1) if i is not None else (1, s, 1) for i, s in zip(all_indices, shape)])
     return subset
@@ -493,6 +498,7 @@ class ProcessedWriter(TaskletWriter):
 
 
 class Context:
+
     def __init__(self, name):
         self.name = name
         self.constants = {}
@@ -503,6 +509,7 @@ class Context:
 
 
 class NameMap(dict):
+
     def __getitem__(self, k):
         assert isinstance(k, SDFG)
         if k not in self:
@@ -519,6 +526,7 @@ class NameMap(dict):
 
 
 class ModuleMap(dict):
+
     def __getitem__(self, k):
         assert isinstance(k, ast_internal_classes.Module_Node)
         if k not in self:
@@ -535,6 +543,7 @@ class ModuleMap(dict):
 
 
 class FunctionSubroutineLister:
+
     def __init__(self):
         self.list_of_functions = []
         self.names_in_functions = {}
@@ -561,7 +570,6 @@ class FunctionSubroutineLister:
                 self.names_in_types[name] = list_descendent_names(i)
                 self.names_in_types[name] += list_descendent_typenames(i)
                 self.list_of_types.append(name)
-
 
             elif isinstance(i, Function_Stmt):
                 fn_name = singular(children_of_type(i, Name)).string
@@ -602,6 +610,7 @@ class FunctionSubroutineLister:
 
 
 def list_descendent_typenames(node: Base) -> List[str]:
+
     def _list_descendent_typenames(_node: Base, _list_of_names: List[str]) -> List[str]:
         for c in _node.children:
             if isinstance(c, Type_Name):
@@ -615,6 +624,7 @@ def list_descendent_typenames(node: Base) -> List[str]:
 
 
 def list_descendent_names(node: Base) -> List[str]:
+
     def _list_descendent_names(_node: Base, _list_of_names: List[str]) -> List[str]:
         for c in _node.children:
             if isinstance(c, Name):
@@ -628,6 +638,7 @@ def list_descendent_names(node: Base) -> List[str]:
 
 
 def get_defined_modules(node: Base) -> List[str]:
+
     def _get_defined_modules(_node: Base, _defined_modules: List[str]) -> List[str]:
         for m in _node.children:
             if isinstance(m, Module_Stmt):
@@ -640,6 +651,7 @@ def get_defined_modules(node: Base) -> List[str]:
 
 
 class UseAllPruneList:
+
     def __init__(self, module: str, identifiers: List[str]):
         """
         Keeps a list of referenced identifiers to intersect with the identifiers available in the module.

@@ -85,7 +85,7 @@ if __name__ == "__main__":
         ecrad_ast = create_fparser_ast(parse_cfg)
         already_parsed_ast_bool = False
     else:
-        mini_parser=pf().create(std="f2008")
+        mini_parser = pf().create(std="f2008")
         ecrad_ast = mini_parser(ffr(file_candidate=already_parsed_ast))
         already_parsed_ast_bool = True
 
@@ -200,12 +200,12 @@ if __name__ == "__main__":
     #     f"{base_icon_path}/externals/ecrad/ifsaux/ecradhook.F90"
     # ]
 
-    cfg = fortran_parser.FindUsedFunctionsConfig(
-        root='radiation',
-        needed_functions=[['radiation_interface', 'radiation']],
-        skip_functions=['radiation_monochromatic', 'radiation_cloudless_sw',
-                        'radiation_tripleclouds_sw', 'radiation_homogeneous_sw']
-    )
+    cfg = fortran_parser.FindUsedFunctionsConfig(root='radiation',
+                                                 needed_functions=[['radiation_interface', 'radiation']],
+                                                 skip_functions=[
+                                                     'radiation_monochromatic', 'radiation_cloudless_sw',
+                                                     'radiation_tripleclouds_sw', 'radiation_homogeneous_sw'
+                                                 ])
 
     # generate_propagation_info(propagation_info)
 
@@ -226,5 +226,4 @@ if __name__ == "__main__":
         #enum_propagator_ast=radiation_config_ast,
         #enum_propagator_files=enum_propagator_files,
         used_functions_config=cfg,
-        already_parsed_ast=already_parsed_ast_bool
-    )
+        already_parsed_ast=already_parsed_ast_bool)

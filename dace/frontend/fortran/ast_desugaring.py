@@ -27,25 +27,27 @@ from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
+ENTRY_POINT_OBJECT = (Main_Program, Subroutine_Subprogram, Function_Subprogram)
 ENTRY_POINT_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram]
-SCOPE_OBJECT_TYPES = Union[
-    Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def, Interface_Block,
-    Subroutine_Body, Function_Body]
-NAMED_STMTS_OF_INTEREST_TYPES = Union[
-    Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
-    Specific_Binding, Generic_Binding, Interface_Stmt]
+SCOPE_OBJECT = (Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def, Interface_Block,
+                Subroutine_Body, Function_Body)
+SCOPE_OBJECT_TYPES = Union[Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def,
+                           Interface_Block, Subroutine_Body, Function_Body]
+NAMED_STMTS_OF_INTEREST = (Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl,
+                           Entity_Decl, Specific_Binding, Generic_Binding, Interface_Stmt)
+NAMED_STMTS_OF_INTEREST_TYPES = Union[Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt,
+                                      Component_Decl, Entity_Decl, Specific_Binding, Generic_Binding, Interface_Stmt]
 SPEC = Tuple[str, ...]
 SPEC_TABLE = Dict[SPEC, NAMED_STMTS_OF_INTEREST_TYPES]
 
 
 class TYPE_SPEC:
+
     NO_ATTRS = ''
 
-    def __init__(self,
-                 spec: Union[str, SPEC],
-                 attrs: str = NO_ATTRS):
+    def __init__(self, spec: Union[str, SPEC], attrs: str = NO_ATTRS):
         if isinstance(spec, str):
-            spec = (spec,)
+            spec = (spec, )
         self.spec: SPEC = spec
         self.shape: Tuple[str, ...] = self._parse_shape(attrs)
         self.optional: bool = 'OPTIONAL' in attrs
@@ -93,9 +95,9 @@ def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
 
 def find_name_of_node(node: Base) -> Optional[str]:
     """Find the name of the general node if it has one. For anonymous blocks, return `None`."""
-    if isinstance(node, NAMED_STMTS_OF_INTEREST_TYPES):
+    if isinstance(node, NAMED_STMTS_OF_INTEREST):
         return find_name_of_stmt(node)
-    stmt = atmost_one(children_of_type(node, NAMED_STMTS_OF_INTEREST_TYPES))
+    stmt = atmost_one(children_of_type(node, NAMED_STMTS_OF_INTEREST))
     if not stmt:
         return None
     return find_name_of_stmt(stmt)
@@ -103,7 +105,7 @@ def find_name_of_node(node: Base) -> Optional[str]:
 
 def find_scope_ancestor(node: Base) -> Optional[SCOPE_OBJECT_TYPES]:
     anc = node.parent
-    while anc and not isinstance(anc, SCOPE_OBJECT_TYPES):
+    while anc and not isinstance(anc, SCOPE_OBJECT):
         anc = anc.parent
     return anc
 
@@ -112,18 +114,18 @@ def find_named_ancestor(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
     anc = find_scope_ancestor(node)
     if not anc:
         return None
-    return atmost_one(children_of_type(anc, NAMED_STMTS_OF_INTEREST_TYPES))
+    return atmost_one(children_of_type(anc, NAMED_STMTS_OF_INTEREST))
 
 
 def lineage(anc: Base, des: Base) -> Optional[Tuple[Base, ...]]:
     if anc == des:
-        return (anc,)
+        return (anc, )
     if not des.parent:
         return None
     lin = lineage(anc, des.parent)
     if not lin:
         return None
-    return lin + (des,)
+    return lin + (des, )
 
 
 def search_scope_spec(node: Base) -> Optional[SPEC]:
@@ -134,10 +136,8 @@ def search_scope_spec(node: Base) -> Optional[SPEC]:
     assert lin
     par = node.parent
     # TODO: How many other such cases can there be?
-    if (isinstance(scope, Derived_Type_Def)
-            and any(
-                isinstance(x, (Explicit_Shape_Spec, Component_Initialization, Kind_Selector, Char_Selector))
-                for x in lin)):
+    if (isinstance(scope, Derived_Type_Def) and any(
+            isinstance(x, (Explicit_Shape_Spec, Component_Initialization, Kind_Selector, Char_Selector)) for x in lin)):
         # We're using `node` to describe a shape, an initialization etc. inside a type def. So, `node`` must have been
         # defined earlier.
         return search_scope_spec(scope)
@@ -146,7 +146,7 @@ def search_scope_spec(node: Base) -> Optional[SPEC]:
         if kw == node:
             # We're describing a keyword, which is not really an identifiable object.
             return None
-    stmt = singular(children_of_type(scope, NAMED_STMTS_OF_INTEREST_TYPES))
+    stmt = singular(children_of_type(scope, NAMED_STMTS_OF_INTEREST))
     if not find_name_of_stmt(stmt):
         # If this is an anonymous object, the scope has to be outside.
         return search_scope_spec(scope.parent)
@@ -160,16 +160,17 @@ def find_scope_spec(node: Base) -> SPEC:
 
 
 def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> SPEC:
+
     def _ident_spec(_node: NAMED_STMTS_OF_INTEREST_TYPES) -> SPEC:
         """
         Constuct a list of identifier strings that can uniquely determine it through the entire AST.
         """
-        ident_base = (find_name_of_stmt(_node),)
+        ident_base = (find_name_of_stmt(_node), )
         # Find the next named ancestor.
         anc = find_named_ancestor(_node.parent)
         if not anc:
             return ident_base
-        assert isinstance(anc, NAMED_STMTS_OF_INTEREST_TYPES)
+        assert isinstance(anc, NAMED_STMTS_OF_INTEREST)
         return _ident_spec(anc) + ident_base
 
     spec = _ident_spec(node)
@@ -212,13 +213,13 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
         kw, _ = par.children
         if kw == node:
             return None
-    return scope_spec + (name,)
+    return scope_spec + (name, )
 
 
 def search_real_local_alias_spec_from_spec(loc: SPEC, alias_map: SPEC_TABLE) -> Optional[SPEC]:
     while len(loc) > 1 and loc not in alias_map:
         # The name is not immediately available in the current scope, but may be it is in the parent's scope.
-        loc = loc[:-2] + (loc[-1],)
+        loc = loc[:-2] + (loc[-1], )
     return loc if loc in alias_map else None
 
 
@@ -234,8 +235,8 @@ def identifier_specs(ast: Program) -> SPEC_TABLE:
     Maps each identifier of interest in `ast` to its associated node that defines it.
     """
     ident_map: SPEC_TABLE = {}
-    for stmt in walk(ast, NAMED_STMTS_OF_INTEREST_TYPES):
-        assert isinstance(stmt, NAMED_STMTS_OF_INTEREST_TYPES)
+    for stmt in walk(ast, NAMED_STMTS_OF_INTEREST):
+        assert isinstance(stmt, NAMED_STMTS_OF_INTEREST)
         if isinstance(stmt, Interface_Stmt) and not find_name_of_stmt(stmt):
             # There can be anonymous blocks, e.g., interface blocks, which cannot be identified.
             continue
@@ -254,10 +255,10 @@ def alias_specs(ast: Program):
 
     for stmt in walk(ast, Use_Stmt):
         mod_name = singular(children_of_type(stmt, Name)).string
-        mod_spec = (mod_name,)
+        mod_spec = (mod_name, )
 
         scope_spec = find_scope_spec(stmt)
-        use_spec = scope_spec + (mod_name,)
+        use_spec = scope_spec + (mod_name, )
 
         assert mod_spec in ident_map
         # The module's name cannot be used as an identifier in this scope anymore, so just point to the module.
@@ -282,7 +283,7 @@ def alias_specs(ast: Program):
                 elif isinstance(c, Rename):
                     _, src, tgt = c.children
                 src, tgt = src.string, tgt.string
-                src_spec, tgt_spec = scope_spec + (src,), mod_spec + (tgt,)
+                src_spec, tgt_spec = scope_spec + (src, ), mod_spec + (tgt, )
                 # `tgt_spec` must have already been resolved if we have sorted the modules properly.
                 assert tgt_spec in alias_map, f"{src_spec} => {tgt_spec}"
                 alias_map[src_spec] = alias_map[tgt_spec]
@@ -292,7 +293,7 @@ def alias_specs(ast: Program):
 
 
 def search_real_ident_spec(ident: str, in_spec: SPEC, alias_map: SPEC_TABLE) -> Optional[SPEC]:
-    k = in_spec + (ident,)
+    k = in_spec + (ident, )
     if k in alias_map:
         return ident_spec(alias_map[k])
     if not in_spec:
@@ -308,8 +309,7 @@ def find_real_ident_spec(ident: str, in_spec: SPEC, alias_map: SPEC_TABLE) -> SP
 
 def _find_type_decl_node(node: Entity_Decl):
     anc = node.parent
-    while anc and not atmost_one(
-            children_of_type(anc, (Intrinsic_Type_Spec, Declaration_Type_Spec))):
+    while anc and not atmost_one(children_of_type(anc, (Intrinsic_Type_Spec, Declaration_Type_Spec))):
         anc = anc.parent
     return anc
 
@@ -318,7 +318,7 @@ def _eval_selected_int_kind(p: np.int32) -> int:
     # Copied logic from `replace_int_kind()` elsewhere in the project.
     # avoid int overflow in numpy 2.0
     p = int(p)
-    kind = int(math.ceil((math.log2(10 ** p) + 1) / 8))
+    kind = int(math.ceil((math.log2(10**p) + 1) / 8))
     assert kind <= 8
     if kind <= 2:
         return kind
@@ -428,7 +428,7 @@ def _eval_int_literal(x: Union[Signed_Int_Literal_Constant, Int_Literal_Constant
     elif kind in {'1', '2', '4', '8'}:
         kind = np.int32(kind)
     else:
-        kind_spec = search_real_local_alias_spec_from_spec(find_scope_spec(x) + (kind,), alias_map)
+        kind_spec = search_real_local_alias_spec_from_spec(find_scope_spec(x) + (kind, ), alias_map)
         if kind_spec:
             kind_decl = alias_map[kind_spec]
             kind_node, _, _, _ = kind_decl.children
@@ -455,7 +455,7 @@ def _eval_real_literal(x: Union[Signed_Real_Literal_Constant, Real_Literal_Const
         else:
             kind = 4
     else:
-        kind_spec = search_real_local_alias_spec_from_spec(find_scope_spec(x) + (kind,), alias_map)
+        kind_spec = search_real_local_alias_spec_from_spec(find_scope_spec(x) + (kind, ), alias_map)
         if kind_spec:
             kind_decl = alias_map[kind_spec]
             kind_node, _, _, _ = kind_decl.children
@@ -489,19 +489,19 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
         _, iexpr = init.children
         val = _const_eval_basic_type(iexpr, alias_map)
         assert val is not None
-        if typ.spec == ('INTEGER1',):
+        if typ.spec == ('INTEGER1', ):
             val = np.int8(val)
-        elif typ.spec == ('INTEGER2',):
+        elif typ.spec == ('INTEGER2', ):
             val = np.int16(val)
-        elif typ.spec == ('INTEGER4',) or typ.spec == ('INTEGER',):
+        elif typ.spec == ('INTEGER4', ) or typ.spec == ('INTEGER', ):
             val = np.int32(val)
-        elif typ.spec == ('INTEGER8',):
+        elif typ.spec == ('INTEGER8', ):
             val = np.int64(val)
-        elif typ.spec == ('REAL4',) or typ.spec == ('REAL',):
+        elif typ.spec == ('REAL4', ) or typ.spec == ('REAL', ):
             val = np.float32(val)
-        elif typ.spec == ('REAL8',):
+        elif typ.spec == ('REAL8', ):
             val = np.float64(val)
-        elif typ.spec == ('LOGICAL',):
+        elif typ.spec == ('LOGICAL', ):
             val = np.bool_(val)
         else:
             raise ValueError(f"{expr}/{typ.spec} is not a basic type")
@@ -607,7 +607,7 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
         # TODO: How should we handle character lengths? Just treat it as an extra dimension?
         if isinstance(kind, Length_Selector):
             assert typ_name == 'CHARACTER'
-            extra_dim = (':',)
+            extra_dim = (':', )
         elif isinstance(kind, Kind_Selector):
             assert typ_name in {'INTEGER', 'REAL', 'LOGICAL'}
             _, kind, _ = kind.children
@@ -618,7 +618,7 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
                 typ_name = f"{typ_name}4"
             elif typ_name in {'DOUBLE PRECISION'}:
                 typ_name = f"REAL8"
-        spec = (typ_name,)
+        spec = (typ_name, )
     elif isinstance(typ, Declaration_Type_Spec):
         _, typ_name = typ.children
         spec = find_real_ident_spec(typ_name.string, ident_spec(node), alias_map)
@@ -750,11 +750,11 @@ def generic_specs(ast: Program) -> Dict[SPEC, Tuple[SPEC, ...]]:
             plist = []
 
         scope_spec = find_scope_spec(gb)
-        genc_spec = scope_spec + (bname.string,)
+        genc_spec = scope_spec + (bname.string, )
 
         proc_specs = []
         for pname in plist:
-            pspec = scope_spec + (pname.string,)
+            pspec = scope_spec + (pname.string, )
             proc_specs.append(pspec)
 
         # TODO: Is this assumption true?
@@ -774,7 +774,7 @@ def interface_specs(ast: Program, alias_map: SPEC_TABLE) -> Dict[SPEC, Tuple[SPE
             continue
         ib = ifs.parent
         scope_spec = find_scope_spec(ib)
-        ifspec = scope_spec + (name,)
+        ifspec = scope_spec + (name, )
 
         # Get the spec of all the callable things in this block that may end up as a resolution for this interface.
         fns: List[str] = []
@@ -811,7 +811,7 @@ def interface_specs(ast: Program, alias_map: SPEC_TABLE) -> Dict[SPEC, Tuple[SPE
                 cscope = cscope[:-1]
                 fn_spec = find_real_ident_spec(fn_name, cscope, alias_map)
             assert ifspec != fn_spec
-            iface_map[ifspec] = (fn_spec,)
+            iface_map[ifspec] = (fn_spec, )
 
     return iface_map
 
@@ -928,7 +928,7 @@ def correct_for_function_calls(ast: Program):
         if not Intrinsic_Name.match(name):
             # There is no way this is an intrinsic call.
             continue
-        fref_spec = scope_spec + (name,)
+        fref_spec = scope_spec + (name, )
         if fref_spec in alias_map:
             # This is already an alias, so intrinsic object is shadowed.
             continue
@@ -1023,6 +1023,7 @@ def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -
 
     args_sig = []
     for c in args.children:
+
         def _deduct_type(x) -> TYPE_SPEC:
             if isinstance(x, (Real_Literal_Constant, Signed_Real_Literal_Constant)):
                 return TYPE_SPEC('REAL')
@@ -1123,7 +1124,7 @@ def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -
                 items = items.children
                 # TODO: We are assuming there is an element. What if there isn't?
                 t = _deduct_type(items[0])
-                t.shape += (':',)
+                t.shape += (':', )
                 return t
             else:
                 # TODO: Figure out the actual type.
@@ -1139,7 +1140,7 @@ def _compute_argument_signature(args, scope_spec: SPEC, alias_map: SPEC_TABLE) -
 def _compute_candidate_argument_signature(args, cand_spec: SPEC, alias_map: SPEC_TABLE) -> Tuple[TYPE_SPEC, ...]:
     cand_args_sig: List[TYPE_SPEC] = []
     for ca in args:
-        ca_decl = alias_map[cand_spec + (ca.string,)]
+        ca_decl = alias_map[cand_spec + (ca.string, )]
         ca_type = find_type_of_entity(ca_decl, alias_map)
         ca_type.keyword = ca.string
         assert ca_type, f"got: {ca} / {type(ca)}"
@@ -1235,7 +1236,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
     # At this point, we must have replaced all the interface calls with concrete calls.
     for use in walk(ast, Use_Stmt):
         mod_name = singular(children_of_type(use, Name)).string
-        mod_spec = (mod_name,)
+        mod_spec = (mod_name, )
         olist = atmost_one(children_of_type(use, Only_List))
         if not olist:
             # There is nothing directly referring to the interface.
@@ -1272,7 +1273,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         survivors = []
         for c in alist.children:
             assert isinstance(c, Name)
-            c_spec = scope_spec + (c.string,)
+            c_spec = scope_spec + (c.string, )
             assert c_spec in alias_map
             if not isinstance(alias_map[c_spec], Interface_Stmt):
                 # Leave the non-interface usages alone.
@@ -1298,7 +1299,7 @@ def deconstruct_interface_calls(ast: Program) -> Program:
     return ast
 
 
-MATCH_ALL = TYPE_SPEC(('*',), '')  # TODO: Hacky; `_does_type_signature_match()` will match anything with this.
+MATCH_ALL = TYPE_SPEC(('*', ), '')  # TODO: Hacky; `_does_type_signature_match()` will match anything with this.
 
 
 def _does_part_matches(g: TYPE_SPEC, c: TYPE_SPEC) -> bool:
@@ -1414,7 +1415,7 @@ def deconstruct_procedure_calls(ast: Program) -> Program:
         args_sig: Tuple[TYPE_SPEC, ...] = _compute_argument_signature(args, scope_spec, alias_map)
         all_cand_sigs: List[Tuple[SPEC, Tuple[TYPE_SPEC, ...]]] = []
 
-        bspec = dref_type.spec + (bname.string,)
+        bspec = dref_type.spec + (bname.string, )
         if bspec in genc_map and genc_map[bspec]:
             for cand in genc_map[bspec]:
                 cand_stmt = alias_map[proc_map[cand]]
@@ -1477,13 +1478,14 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
     """
     Precondition: All the indirections have been taken out of the program.
     """
-    PRUNABLE_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram, Derived_Type_Def]
+
+    PRUNABLE_OBJECTS = (Main_Program, Subroutine_Subprogram, Function_Subprogram, Derived_Type_Def)
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
     survivors: Set[SPEC] = set()
     keepers = [alias_map[k].parent for k in keepers]
-    assert all(isinstance(k, PRUNABLE_OBJECT_TYPES) for k in keepers)
+    assert all(isinstance(k, PRUNABLE_OBJECTS) for k in keepers)
 
     def _keep_from(node: Base):
         for nm in walk(node, Name):
@@ -1498,7 +1500,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                     continue
                 survivors.add(anc)
                 anc_node = alias_map[anc].parent
-                if isinstance(anc_node, PRUNABLE_OBJECT_TYPES):
+                if isinstance(anc_node, PRUNABLE_OBJECTS):
                     _keep_from(anc_node)
 
             to_keep = search_real_ident_spec(nm.string, sc_spec, alias_map)
@@ -1507,7 +1509,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 continue
             survivors.add(to_keep)
             keep_node = alias_map[to_keep].parent
-            if isinstance(keep_node, PRUNABLE_OBJECT_TYPES):
+            if isinstance(keep_node, PRUNABLE_OBJECTS):
                 _keep_from(keep_node)
 
     for k in keepers:
@@ -1517,7 +1519,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
     killed: Set[SPEC] = set()
     for ns in list(sorted(set(ident_map.keys()) - survivors)):
         ns_node = ident_map[ns].parent
-        if not isinstance(ns_node, PRUNABLE_OBJECT_TYPES):
+        if not isinstance(ns_node, PRUNABLE_OBJECTS):
             continue
         for i in range(len(ns) - 1):
             anc_spec = ns[:i + 1]
@@ -1648,7 +1650,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
     # PHASE 1.a: Remove all the places where any function is imported.
     for use in walk(ast, Use_Stmt):
         mod_name = singular(children_of_type(use, Name)).string
-        mod_spec = (mod_name,)
+        mod_spec = (mod_name, )
         olist = atmost_one(children_of_type(use, Only_List))
         if not olist:
             continue
@@ -1689,7 +1691,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
             # We have chosen to not rename it.
             continue
         uname = uident_map[fspec]
-        ufspec = fspec[:-1] + (uname,)
+        ufspec = fspec[:-1] + (uname, )
         name.string = uname
 
         # Find the nearest execution and its correpsonding specification parts.
@@ -1787,7 +1789,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Pr
     # PHASE 1.a: Remove all the places where any variable is imported.
     for use in walk(ast, Use_Stmt):
         mod_name = singular(children_of_type(use, Name)).string
-        mod_spec = (mod_name,)
+        mod_spec = (mod_name, )
         olist = atmost_one(children_of_type(use, Only_List))
         if not olist:
             continue
@@ -1865,7 +1867,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Pr
             continue
         assert len(vspec) == 2
         mod, _ = vspec
-        if not isinstance(alias_map[(mod,)], Module_Stmt):
+        if not isinstance(alias_map[(mod, )], Module_Stmt):
             # We can only import modules.
             continue
 
@@ -1899,7 +1901,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Pr
             continue
         assert len(kind_spec) == 2
         mod, _ = kind_spec
-        if not isinstance(alias_map[(mod,)], Module_Stmt):
+        if not isinstance(alias_map[(mod, )], Module_Stmt):
             # We can only import modules.
             continue
 
@@ -1972,10 +1974,12 @@ def consolidate_uses(ast: Program) -> Program:
         # Build new use statements.
         nuses: List[Use_Stmt] = [
             Use_Stmt(f"use {k}") if k in all_use else Use_Stmt(f"use {k}, only: {', '.join(use_map[k])}")
-            for k in use_map.keys() | all_use]
+            for k in use_map.keys() | all_use
+        ]
         reuses: List[Use_Stmt] = [
-            Use_Stmt(f"use {k}, only: {', '.join(r for r in use_map[k] if '=>' in r)}")
-            for k in use_map.keys() if any('=>' in r for r in use_map[k])]
+            Use_Stmt(f"use {k}, only: {', '.join(r for r in use_map[k] if '=>' in r)}") for k in use_map.keys()
+            if any('=>' in r for r in use_map[k])
+        ]
         # Remove the old ones, and prepend the new ones.
         sp.content = nuses + reuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
         _reparent_children(sp)
@@ -2011,7 +2015,7 @@ def _prune_branches_in_ifblock(ib: If_Construct, alias_map: SPEC_TABLE):
     isinstance(cut_cond, Else_If_Stmt)
     cut_cond, _ = cut_cond.children
     remove_children(ib, ib.children[1:(cut + 1)])
-    set_children(ifthen, (cut_cond,))
+    set_children(ifthen, (cut_cond, ))
     _prune_branches_in_ifblock(ib, alias_map)
 
 
@@ -2022,9 +2026,8 @@ def prune_branches(ast: Program) -> Program:
     return ast
 
 
-LITERAL_TYPES = Union[
-    Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, Signed_Int_Literal_Constant,
-    Logical_Literal_Constant]
+LITERAL_TYPES = Union[Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant,
+                      Signed_Int_Literal_Constant, Logical_Literal_Constant]
 
 
 def numpy_type_to_literal(val: NUMPY_TYPES) -> Union[LITERAL_TYPES]:
@@ -2052,9 +2055,8 @@ def numpy_type_to_literal(val: NUMPY_TYPES) -> Union[LITERAL_TYPES]:
 
 
 def const_eval_nodes(ast: Program) -> Program:
-    EXPRESSION_TYPES = Union[
-        LITERAL_TYPES, Expr, Add_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr, Level_5_Expr,
-        Intrinsic_Function_Reference]
+    EXPRESSION_TYPES = Union[LITERAL_TYPES, Expr, Add_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr,
+                             Level_5_Expr, Intrinsic_Function_Reference]
 
     alias_map = alias_specs(ast)
 
@@ -2083,8 +2085,8 @@ def const_eval_nodes(ast: Program) -> Program:
         _, kind, _ = knode.children
         _const_eval_node(kind)
 
-    NON_EXPRESSION_TYPES = Union[
-        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization]
+    NON_EXPRESSION_TYPES = Union[Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization,
+                                 Component_Initialization]
     for node in reversed(walk(ast, NON_EXPRESSION_TYPES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)

@@ -6,8 +6,11 @@ from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 from fparser.two.utils import walk
 
+from dace.frontend.fortran.ast_desugaring import (ENTRY_POINT_OBJECT,
+                                                  ENTRY_POINT_OBJECT_TYPES,
+                                                  find_name_of_node,
+                                                  prune_unused_objects)
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
-from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_TYPES, find_name_of_node, prune_unused_objects
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
@@ -23,8 +26,8 @@ def parse_and_improve(sources: Dict[str, str]):
 
 def find_entrypoint_objects_named(ast: Program, name: str) -> List[ENTRY_POINT_OBJECT_TYPES]:
     objs: List[ENTRY_POINT_OBJECT_TYPES] = []
-    for n in walk(ast, ENTRY_POINT_OBJECT_TYPES):
-        assert isinstance(n, ENTRY_POINT_OBJECT_TYPES)
+    for n in walk(ast, ENTRY_POINT_OBJECT):
+        assert isinstance(n, ENTRY_POINT_OBJECT)
         if not isinstance(n.parent, Program):
             continue
         if find_name_of_node(n) == name:
