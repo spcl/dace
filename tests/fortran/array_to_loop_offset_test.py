@@ -17,6 +17,7 @@ def test_fortran_frontend_arr2loop_without_offset():
 
                     SUBROUTINE index_test_function(d)
                     double precision, dimension(5,3) :: d
+                    integer :: i
 
                     do i=1,5
                         d(i, :) = i * 2.0
@@ -88,6 +89,7 @@ def test_fortran_frontend_arr2loop_2d_offset():
 
                     SUBROUTINE index_test_function(d)
                     double precision, dimension(5,7:9) :: d
+                    integer :: i
 
                     do i=1,5
                         d(i, :) = i * 2.0
