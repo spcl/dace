@@ -1,24 +1,25 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import (Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type, TypeVar, Union)
+from typing import (Dict, Iterable, Iterator, List, Optional,
+                    Set, Tuple, Type, TypeVar, Union)
 
-from fparser.two.Fortran2003 import (Derived_Type_Def, Function_Body, Function_Stmt, Interface_Block, Interface_Stmt,
-                                     Module, Module_Stmt, Name, Rename, Specification_Part, Subroutine_Stmt, Type_Name,
-                                     Use_Stmt)
+from fparser.two.Fortran2003 import (Derived_Type_Def, Function_Body,
+                                     Function_Stmt, Interface_Block,
+                                     Interface_Stmt, Module, Module_Stmt, Name,
+                                     Rename, Specification_Part,
+                                     Subroutine_Stmt, Type_Name, Use_Stmt)
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base
 from numpy import finfo as finf
 from numpy import float64 as fl
 
 # dace imports
-from dace import DebugInfo as di
-from dace import Language as lang
 from dace import Memlet
 from dace import data as dat
 from dace import dtypes, subsets
 from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes
-from dace.sdfg import SDFG, InterstateEdge, SDFGState
+from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.nodes import Tasklet
 
 fortrantypes2dacetypes = {
@@ -30,17 +31,6 @@ fortrantypes2dacetypes = {
     "LOGICAL": dtypes.int32,  # This is a hack to allow fortran to pass through external C
     "Unknown": dtypes.float64,  # TMP hack unti lwe have a proper type inference
 }
-
-
-def add_tasklet(substate: SDFGState, name: str, vars_in: Set[str], vars_out: Set[str], code: str, debuginfo: list,
-                source: str):
-    tasklet = substate.add_tasklet(name="T" + name,
-                                   inputs=vars_in,
-                                   outputs=vars_out,
-                                   code=code,
-                                   debuginfo=di(start_line=debuginfo[0], start_column=debuginfo[1], filename=source),
-                                   language=lang.Python)
-    return tasklet
 
 
 def add_memlet_read(substate: SDFGState, var_name: str, tasklet: Tasklet, dest_conn: str, memlet_range: str):
@@ -78,21 +68,6 @@ def add_memlet_write(substate: SDFGState, var_name: str, tasklet: Tasklet, sourc
     else:
         substate.add_memlet_path(tasklet, dst, src_conn=source_conn, memlet=Memlet(expr=var_name))
     return dst
-
-
-def add_simple_state_to_sdfg(state: SDFGState, top_sdfg: SDFG, state_name: str):
-    if state.last_sdfg_states.get(top_sdfg) is not None:
-        substate = top_sdfg.add_state(state_name)
-    else:
-        substate = top_sdfg.add_state(state_name, is_start_state=True)
-    finish_add_state_to_sdfg(state, top_sdfg, substate)
-    return substate
-
-
-def finish_add_state_to_sdfg(state: SDFGState, top_sdfg: SDFG, substate: SDFGState):
-    if state.last_sdfg_states.get(top_sdfg) is not None:
-        top_sdfg.add_edge(state.last_sdfg_states[top_sdfg], substate, InterstateEdge())
-    state.last_sdfg_states[top_sdfg] = substate
 
 
 def get_name(node: ast_internal_classes.FNode):

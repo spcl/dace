@@ -42,6 +42,7 @@ from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import (IntrinsicSDFGTransformation, NeedsTypeInferenceException)
 from dace.properties import CodeBlock
+from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion
 
 global_struct_instance_counter = 0
 
@@ -294,10 +295,6 @@ class AST_translator:
         self.unallocated_arrays = []
         self.all_array_names = []
         self.last_sdfg_states = {}
-        self.last_loop_continues = {}
-        self.last_loop_continues_stack = {}
-        self.already_has_edge_back_continue = {}
-        self.last_loop_breaks = {}
         self.last_returns = {}
         self.module_vars = []
         self.sdfgs_count = 0
@@ -396,28 +393,54 @@ class AST_translator:
             if o_v.name == var_name_tasklet:
                 return ast_utils.generate_memlet(o_v, sdfg, self, self.normalize_offsets)
 
-    def translate(self, node: ast_internal_classes.FNode, sdfg: SDFG):
+
+    def _add_tasklet(self, substate: SDFGState, name: str, vars_in: Set[str], vars_out: Set[str], code: str,
+                     debuginfo: list, source: str):
+        tasklet = substate.add_tasklet(name="T" + name, inputs=vars_in, outputs=vars_out, code=code,
+                                       debuginfo=dtypes.DebugInfo(start_line=debuginfo[0], start_column=debuginfo[1],
+                                                                  filename=source), language=dtypes.Language.Python)
+        return tasklet
+
+
+    def _add_simple_state_to_cfg(self, cfg: ControlFlowRegion, state_name: str):
+        if cfg in self.last_sdfg_states and self.last_sdfg_states[cfg] is not None:
+            substate = cfg.add_state(state_name)
+        else:
+            substate = cfg.add_state(state_name, is_start_state=True)
+        self._finish_add_state_to_cfg(cfg, substate)
+        return substate
+
+
+    def _finish_add_state_to_cfg(self, cfg: ControlFlowRegion, substate: SDFGState):
+        if cfg in self.last_sdfg_states and self.last_sdfg_states[cfg] is not None:
+            cfg.add_edge(self.last_sdfg_states[cfg], substate, InterstateEdge())
+        self.last_sdfg_states[cfg] = substate
+
+
+    def translate(self, node: ast_internal_classes.FNode, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function is responsible for translating the AST into a SDFG.
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region into which the node should be translated
         :note: This function is recursive and will call itself for all child nodes
         :note: This function will call the appropriate function for the node type
         :note: The dictionary ast_elements, part of the class itself contains all functions that are called for the different node types
         """
         if node.__class__ in self.ast_elements:
-            self.ast_elements[node.__class__](node, sdfg)
+            self.ast_elements[node.__class__](node, sdfg, cfg)
         elif isinstance(node, list):
             for i in node:
-                self.translate(i, sdfg)
+                self.translate(i, sdfg, cfg)
         else:
             warnings.warn(f"WARNING: {node.__class__.__name__}")
 
-    def ast2sdfg(self, node: ast_internal_classes.Program_Node, sdfg: SDFG):
+    def ast2sdfg(self, node: ast_internal_classes.Program_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function is responsible for translating the Fortran AST into a SDFG.
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region into which the node should be translated
         :note: This function is recursive and will call itself for all child nodes
         :note: This function will call the appropriate function for the node type
         :note: The dictionary ast_elements, part of the class itself contains all functions that are called for the different node types
@@ -444,7 +467,7 @@ class AST_translator:
             for jj in parse_order:
                 for j in i.specification_part.typedecls:
                     if j.name.name == jj:
-                        self.translate(j, sdfg)
+                        self.translate(j, sdfg, cfg)
                         if j.__class__.__name__ != "Derived_Type_Def_Node":
                             for k in j.vardecl:
                                 self.module_vars.append((k.name, i.name))
@@ -455,7 +478,7 @@ class AST_translator:
                 self.transient_mode = self.do_not_make_internal_variables_argument
 
                 for j in i.specification_part.symbols:
-                    self.translate(j, sdfg)
+                    self.translate(j, sdfg, cfg)
                     if isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node):
                         self.module_vars.append((j.name, i.name))
                     elif isinstance(j, ast_internal_classes.Symbol_Decl_Node):
@@ -463,13 +486,13 @@ class AST_translator:
                     else:
                         raise ValueError("Unknown symbol type")
                 for j in i.specification_part.specifications:
-                    self.translate(j, sdfg)
+                    self.translate(j, sdfg, cfg)
                     for k in j.vardecl:
                         self.module_vars.append((k.name, i.name))
         # this works with CloudSC
         # unsure about ICON
         self.transient_mode = True
-        ast_utils.add_simple_state_to_sdfg(self, sdfg, "GlobalDefEnd")
+        self._add_simple_state_to_cfg(cfg, "GlobalDefEnd")
         if self.startpoint is None:
             self.startpoint = node.main_program
         assert self.startpoint is not None, "No main program or start point found"
@@ -480,15 +503,15 @@ class AST_translator:
             self.transient_mode = self.do_not_make_internal_variables_argument
 
             for i in self.startpoint.specification_part.typedecls:
-                self.translate(i, sdfg)
+                self.translate(i, sdfg, cfg)
             for i in self.startpoint.specification_part.symbols:
-                self.translate(i, sdfg)
+                self.translate(i, sdfg, cfg)
 
             for i in self.startpoint.specification_part.specifications:
-                self.translate(i, sdfg)
+                self.translate(i, sdfg, cfg)
             for i in self.startpoint.specification_part.specifications:
-                ast_utils.add_simple_state_to_sdfg(self, sdfg, "start_struct_size")
-                assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
+                self._add_simple_state_to_cfg(cfg, "start_struct_size")
+                assign_state = self._add_simple_state_to_cfg(cfg, "assign_struct_sizes")
                 for decl in i.vardecl:
                     if decl.name in sdfg.symbols:
                         continue
@@ -508,13 +531,15 @@ class AST_translator:
                     arr.transient = False
 
         self.transient_mode = True
-        self.translate(self.startpoint.execution_part.execution, sdfg)
+        self.translate(self.startpoint.execution_part.execution, sdfg, cfg)
 
-    def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG):
+    def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG,
+                               cfg: ControlFlowRegion):
         """
         This function is responsible for translating Fortran pointer assignments into a SDFG.
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region into which the node should be translated
         """
         if self.name_mapping[sdfg][node.name_pointer.name] in sdfg.arrays:
             shapenames = [
@@ -591,11 +616,13 @@ class AST_translator:
                     self.unallocated_arrays.remove(i)
             self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.name]
 
-    def derivedtypedef2sdfg(self, node: ast_internal_classes.Derived_Type_Def_Node, sdfg: SDFG):
+    def derivedtypedef2sdfg(self, node: ast_internal_classes.Derived_Type_Def_Node, sdfg: SDFG,
+                            cfg: ControlFlowRegion):
         """
         This function is responsible for registering Fortran derived type declarations into a SDFG as nested data types.
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region into which the node should be translated
         """
         name = node.name.name
         if node.component_part is None:
@@ -644,21 +671,23 @@ class AST_translator:
         structure_obj = Structure(dict_setup, name)
         self.registered_types[name] = structure_obj
 
-    def basicblock2sdfg(self, node: ast_internal_classes.Execution_Part_Node, sdfg: SDFG):
+    def basicblock2sdfg(self, node: ast_internal_classes.Execution_Part_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function is responsible for translating Fortran basic blocks into a SDFG.
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region into which the node should be translated
         """
 
         for i in node.execution:
-            self.translate(i, sdfg)
+            self.translate(i, sdfg, cfg)
 
-    def allocate2sdfg(self, node: ast_internal_classes.Allocate_Stmt_Node, sdfg: SDFG):
+    def allocate2sdfg(self, node: ast_internal_classes.Allocate_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function is responsible for translating Fortran allocate statements into a SDFG.
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region into which the node should be translated
         :note: We pair the allocate with a list of unallocated arrays.
         """
         for i in node.allocation_list:
@@ -695,20 +724,21 @@ class AST_translator:
                                    strides=strides,
                                    transient=transient)
 
-    def write2sdfg(self, node: ast_internal_classes.Write_Stmt_Node, sdfg: SDFG):
+    def write2sdfg(self, node: ast_internal_classes.Write_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         # TODO implement
         print("Uh oh")
         # raise NotImplementedError("Fortran write statements are not implemented yet")
 
-    def ifstmt2sdfg(self, node: ast_internal_classes.If_Stmt_Node, sdfg: SDFG):
+    def ifstmt2sdfg(self, node: ast_internal_classes.If_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function is responsible for translating Fortran if statements into a SDFG.
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region into which the node should be translated
         """
 
         name = f"If_l_{str(node.line_number[0])}_c_{str(node.line_number[1])}"
-        begin_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, f"Begin{name}")
+        begin_state = self._add_simple_state_to_cfg(sdfg, f"Begin{name}")
         guard_substate = sdfg.add_state(f"Guard{name}")
         sdfg.add_edge(begin_state, guard_substate, InterstateEdge())
 
@@ -728,7 +758,7 @@ class AST_translator:
                 self.last_returns.get(sdfg),
                 self.already_has_edge_back_continue.get(sdfg)
         ]:
-            body_ifend_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, f"BodyIfEnd{name}")
+            body_ifend_state = self._add_simple_state_to_cfg(sdfg, f"BodyIfEnd{name}")
             sdfg.add_edge(body_ifend_state, final_substate, InterstateEdge())
 
         if len(node.body_else.execution) > 0:
@@ -736,23 +766,22 @@ class AST_translator:
             body_elsestart_state = sdfg.add_state("BodyElseStart" + name_else)
             self.last_sdfg_states[sdfg] = body_elsestart_state
             self.translate(node.body_else, sdfg)
-            body_elseend_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, f"BodyElseEnd{name_else}")
+            body_elseend_state = self._add_simple_state_to_cfg(sdfg, f"BodyElseEnd{name_else}")
             sdfg.add_edge(guard_substate, body_elsestart_state, InterstateEdge("not (" + condition + ")"))
             sdfg.add_edge(body_elseend_state, final_substate, InterstateEdge())
         else:
             sdfg.add_edge(guard_substate, final_substate, InterstateEdge("not (" + condition + ")"))
         self.last_sdfg_states[sdfg] = final_substate
 
-    def whilestmt2sdfg(self, node: ast_internal_classes.While_Stmt_Node, sdfg: SDFG):
+    def whilestmt2sdfg(self, node: ast_internal_classes.While_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
+        """
+        This function is responsible for translating Fortran while statements into a SDFG.
+        :param node: The while statement node to be translated
+        :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region to which the node should be translated
+        """
 
-        # raise NotImplementedError("Fortran while statements are not implemented yet")
         name = "While_l_" + str(node.line_number[0]) + "_c_" + str(node.line_number[1])
-        begin_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "Begin" + name)
-        guard_substate = sdfg.add_state("Guard" + name)
-        final_substate = sdfg.add_state("Merge" + name)
-        self.last_sdfg_states[sdfg] = final_substate
-
-        sdfg.add_edge(begin_state, guard_substate, InterstateEdge())
 
         condition = ast_utils.ProcessedWriter(sdfg,
                                               self.name_mapping,
@@ -760,41 +789,28 @@ class AST_translator:
                                               placeholders_offsets=self.placeholders_offsets,
                                               rename_dict=self.replace_names).write_code(node.cond)
 
-        begin_loop_state = sdfg.add_state("BeginWhile" + name)
-        end_loop_state = sdfg.add_state("EndWhile" + name)
-        self.last_sdfg_states[sdfg] = begin_loop_state
-        self.last_loop_continues[sdfg] = end_loop_state
-        if self.last_loop_continues_stack.get(sdfg) is None:
-            self.last_loop_continues_stack[sdfg] = []
-        self.last_loop_continues_stack[sdfg].append(end_loop_state)
-        self.translate(node.body, sdfg)
+        loop_region = LoopRegion(name, condition, inverted=False, sdfg=sdfg)
 
-        sdfg.add_edge(self.last_sdfg_states[sdfg], end_loop_state, InterstateEdge())
-        sdfg.add_edge(guard_substate, begin_loop_state, InterstateEdge(condition))
-        sdfg.add_edge(end_loop_state, guard_substate, InterstateEdge())
-        sdfg.add_edge(guard_substate, final_substate, InterstateEdge(f"not ({condition})"))
-        self.last_sdfg_states[sdfg] = final_substate
+        is_start = cfg not in self.last_sdfg_states or self.last_sdfg_states[cfg] is None
+        cfg.add_node(loop_region, is_start_block=is_start)
+        if not is_start:
+            cfg.add_edge(self.last_sdfg_states[cfg], loop_region, InterstateEdge())
+        self.last_sdfg_states[cfg] = loop_region
+        self.last_sdfg_states[loop_region] = loop_region.add_state('BeginLoop_' + name, is_start_block=True)
 
-        if len(self.last_loop_continues_stack[sdfg]) > 0:
-            self.last_loop_continues[sdfg] = self.last_loop_continues_stack[sdfg][-1]
-        else:
-            self.last_loop_continues[sdfg] = None
+        self.translate(node.body, sdfg, loop_region)
 
-    def forstmt2sdfg(self, node: ast_internal_classes.For_Stmt_Node, sdfg: SDFG):
+    def forstmt2sdfg(self, node: ast_internal_classes.For_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function is responsible for translating Fortran for statements into a SDFG.
-        :param node: The node to be translated
+        :param node: The for statement node to be translated
         :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region to which the node should be translated
         """
 
-        declloop = False
-        name = "FOR_l_" + str(node.line_number[0]) + "_c_" + str(node.line_number[1])
-        begin_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "Begin" + name)
-        guard_substate = sdfg.add_state("Guard" + name)
-        final_substate = sdfg.add_state("Merge" + name)
-        self.last_sdfg_states[sdfg] = final_substate
+        name = 'FOR_l_' + str(node.line_number[0]) + '_c_' + str(node.line_number[1])
         decl_node = node.init
-        entry = {}
+        init_expr = None
         if isinstance(decl_node, ast_internal_classes.BinOp_Node):
             if sdfg.symbols.get(decl_node.lval.name) is not None:
                 iter_name = decl_node.lval.name
@@ -802,13 +818,12 @@ class AST_translator:
                 iter_name = self.name_mapping[sdfg][decl_node.lval.name]
             else:
                 raise ValueError("Unknown variable " + decl_node.lval.name)
-            entry[iter_name] = ast_utils.ProcessedWriter(sdfg,
-                                                         self.name_mapping,
-                                                         placeholders=self.placeholders,
-                                                         placeholders_offsets=self.placeholders_offsets,
-                                                         rename_dict=self.replace_names).write_code(decl_node.rval)
-
-        sdfg.add_edge(begin_state, guard_substate, InterstateEdge(assignments=entry))
+            init_assignment = ast_utils.ProcessedWriter(sdfg,
+                                                        self.name_mapping,
+                                                        placeholders=self.placeholders,
+                                                        placeholders_offsets=self.placeholders_offsets,
+                                                        rename_dict=self.replace_names).write_code(decl_node.rval)
+            init_expr = f'{iter_name} = {init_assignment}'
 
         condition = ast_utils.ProcessedWriter(sdfg,
                                               self.name_mapping,
@@ -816,40 +831,32 @@ class AST_translator:
                                               placeholders_offsets=self.placeholders_offsets,
                                               rename_dict=self.replace_names).write_code(node.cond)
 
-        increment = "i+0+1"
+        increment_expr = 'i+0+1'
         if isinstance(node.iter, ast_internal_classes.BinOp_Node):
-            increment = ast_utils.ProcessedWriter(sdfg,
-                                                  self.name_mapping,
-                                                  placeholders=self.placeholders,
-                                                  placeholders_offsets=self.placeholders_offsets,
-                                                  rename_dict=self.replace_names).write_code(node.iter.rval)
-        entry = {iter_name: increment}
+            increment_expr = ast_utils.ProcessedWriter(sdfg,
+                                                       self.name_mapping,
+                                                       placeholders=self.placeholders,
+                                                       placeholders_offsets=self.placeholders_offsets,
+                                                       rename_dict=self.replace_names).write_code(node.iter.rval)
 
-        begin_loop_state = sdfg.add_state("BeginLoop" + name)
-        end_loop_state = sdfg.add_state("EndLoop" + name)
-        self.last_sdfg_states[sdfg] = begin_loop_state
-        self.last_loop_continues[sdfg] = end_loop_state
-        if self.last_loop_continues_stack.get(sdfg) is None:
-            self.last_loop_continues_stack[sdfg] = []
-        self.last_loop_continues_stack[sdfg].append(end_loop_state)
-        self.translate(node.body, sdfg)
+        loop_region = LoopRegion(name, condition, iter_name, init_expr, increment_expr, inverted=False, sdfg=sdfg)
 
-        sdfg.add_edge(self.last_sdfg_states[sdfg], end_loop_state, InterstateEdge())
-        sdfg.add_edge(guard_substate, begin_loop_state, InterstateEdge(condition))
-        sdfg.add_edge(end_loop_state, guard_substate, InterstateEdge(assignments=entry))
-        sdfg.add_edge(guard_substate, final_substate, InterstateEdge(f"not ({condition})"))
-        self.last_sdfg_states[sdfg] = final_substate
-        self.last_loop_continues_stack[sdfg].pop()
-        if len(self.last_loop_continues_stack[sdfg]) > 0:
-            self.last_loop_continues[sdfg] = self.last_loop_continues_stack[sdfg][-1]
-        else:
-            self.last_loop_continues[sdfg] = None
+        is_start = cfg not in self.last_sdfg_states or self.last_sdfg_states[cfg] is None
+        cfg.add_node(loop_region, is_start_block=is_start)
+        if not is_start:
+            cfg.add_edge(self.last_sdfg_states[cfg], loop_region, InterstateEdge())
+        self.last_sdfg_states[cfg] = loop_region
+        self.last_sdfg_states[loop_region] = loop_region.add_state('BeginLoop_' + name, is_start_block=True)
 
-    def symbol2sdfg(self, node: ast_internal_classes.Symbol_Decl_Node, sdfg: SDFG):
+        self.translate(node.body, sdfg, loop_region)
+
+
+    def symbol2sdfg(self, node: ast_internal_classes.Symbol_Decl_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function is responsible for translating Fortran symbol declarations into a SDFG.
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region to which the node should be translated
         """
         if node.name == "modname": return
 
@@ -888,11 +895,11 @@ class AST_translator:
         datatype = self.get_dace_type(node.type)
         if node.name not in sdfg.symbols:
             sdfg.add_symbol(node.name, datatype)
-            if self.last_sdfg_states.get(sdfg) is None:
-                bstate = sdfg.add_state("SDFGbegin", is_start_state=True)
-                self.last_sdfg_states[sdfg] = bstate
+            if cfg not in self.last_cfg_states or self.last_sdfg_states[cfg] is None:
+                bstate = cfg.add_state("SDFGbegin", is_start_state=True)
+                self.last_sdfg_states[cfg] = bstate
             if node.init is not None:
-                substate = sdfg.add_state(f"Dummystate_{node.name}")
+                substate = cfg.add_state(f"Dummystate_{node.name}")
                 increment = ast_utils.TaskletWriter([], [],
                                                     sdfg,
                                                     self.name_mapping,
@@ -901,20 +908,22 @@ class AST_translator:
                                                     rename_dict=self.replace_names).write_code(node.init)
 
                 entry = {node.name: increment}
-                sdfg.add_edge(self.last_sdfg_states[sdfg], substate, InterstateEdge(assignments=entry))
-                self.last_sdfg_states[sdfg] = substate
+                cfg.add_edge(self.last_sdfg_states[cfg], substate, InterstateEdge(assignments=entry))
+                self.last_sdfg_states[cfg] = substate
 
-    def symbolarray2sdfg(self, node: ast_internal_classes.Symbol_Array_Decl_Node, sdfg: SDFG):
+    def symbolarray2sdfg(self, node: ast_internal_classes.Symbol_Array_Decl_Node, sdfg: SDFG, cfg: ControlFlowRegion):
 
         return NotImplementedError(
             "Symbol_Decl_Node not implemented. This should be done via a transformation that itemizes the constant array."
         )
 
-    def subroutine2sdfg(self, node: ast_internal_classes.Subroutine_Subprogram_Node, sdfg: SDFG):
+    def subroutine2sdfg(self, node: ast_internal_classes.Subroutine_Subprogram_Node, sdfg: SDFG,
+                        cfg: ControlFlowRegion):
         """
         This function is responsible for translating Fortran subroutine declarations into a SDFG.
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region to which the node should be translated
         """
 
         if node.execution_part is None:
@@ -941,7 +950,7 @@ class AST_translator:
         self.sdfgs_count += 1
         self.actual_offsets_per_sdfg[new_sdfg] = {}
         self.names_of_object_in_parent_sdfg[new_sdfg] = {}
-        substate = ast_utils.add_simple_state_to_sdfg(self, sdfg, "state" + my_name_sdfg)
+        substate = self._add_simple_state_to_cfg(cfg, "state" + my_name_sdfg)
 
         variables_in_call = []
         if self.last_call_expression.get(sdfg) is not None:
@@ -2129,13 +2138,13 @@ class AST_translator:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
             # new_sdfg.save(path.join(self.sdfg_path, new_sdfg.name + ".sdfg"))
 
-    def binop2sdfg(self, node: ast_internal_classes.BinOp_Node, sdfg: SDFG):
+    def binop2sdfg(self, node: ast_internal_classes.BinOp_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
-        This parses binary operations to tasklets in a new state or creates
-        a function call with a nested SDFG if the operation is a function
-        call rather than a simple assignment.
+        This parses binary operations to tasklets in a new state or creates a function call with a nested SDFG if the
+        operation is a function call rather than a simple assignment.
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region to which the node should be translated
         """
 
         calls = ast_transforms.FindFunctionCalls()
@@ -2148,7 +2157,7 @@ class AST_translator:
             ]:
                 augmented_call.args.append(node.lval)
                 augmented_call.hasret = True
-                self.call2sdfg(augmented_call, sdfg)
+                self.call2sdfg(augmented_call, sdfg, cfg)
                 return
 
         outputnodefinder = ast_transforms.FindOutputs(thourough=False)
@@ -2181,14 +2190,13 @@ class AST_translator:
                 input_names.append(mapped_name)
                 input_names_tasklet.append(i.name + "_" + str(count) + "_in")
 
-        substate = ast_utils.add_simple_state_to_sdfg(
-            self, sdfg, "_state_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]))
+        substate = self._add_simple_state_to_cfg(
+            cfg, "_state_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]))
 
         output_names_changed = [o_t + "_out" for o_t in output_names]
 
-        tasklet = ast_utils.add_tasklet(substate, "_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]),
-                                        input_names_tasklet, output_names_changed, "text", node.line_number,
-                                        self.file_name)
+        tasklet = self._add_tasklet(substate, "_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]),
+                                    input_names_tasklet, output_names_changed, "text", node.line_number, self.file_name)
 
         for i, j in zip(input_names, input_names_tasklet):
             memlet_range = self.get_memlet_range(sdfg, input_vars, i, j)
@@ -2224,12 +2232,13 @@ class AST_translator:
         # print(sdfg.name,node.line_number,output_names,output_names_changed,input_names,input_names_tasklet)
         tasklet.code = CodeBlock(text, lang.Python)
 
-    def call2sdfg(self, node: ast_internal_classes.Call_Expr_Node, sdfg: SDFG):
+    def call2sdfg(self, node: ast_internal_classes.Call_Expr_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This parses function calls to a nested SDFG 
         or creates a tasklet with an external library call.
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
+        :param cfg: The control flow region to which the node should be translated
         """
 
         self.last_call_expression[sdfg] = node.args
@@ -2241,20 +2250,20 @@ class AST_translator:
 
                 for i in self.top_level.function_definitions:
                     if i.name.name == node.name.name:
-                        self.function2sdfg(i, sdfg)
+                        self.function2sdfg(i, sdfg, cfg)
                         return
                 for i in self.top_level.subroutine_definitions:
                     if i.name.name == node.name.name:
-                        self.subroutine2sdfg(i, sdfg)
+                        self.subroutine2sdfg(i, sdfg, cfg)
                         return
                 for j in self.top_level.modules:
                     for i in j.function_definitions:
                         if i.name.name == node.name.name:
-                            self.function2sdfg(i, sdfg)
+                            self.function2sdfg(i, sdfg, cfg)
                             return
                     for i in j.subroutine_definitions:
                         if i.name.name == node.name.name:
-                            self.subroutine2sdfg(i, sdfg)
+                            self.subroutine2sdfg(i, sdfg, cfg)
                             return
         else:
             # This part handles the case that it's an external library call
@@ -2321,9 +2330,9 @@ class AST_translator:
 
             else:
                 text = tw.write_code(node)
-            substate = ast_utils.add_simple_state_to_sdfg(self, sdfg, "_state" + str(node.line_number[0]))
+            substate = self._add_simple_state_to_cfg(cfg, "_state" + str(node.line_number[0]))
 
-            tasklet = ast_utils.add_tasklet(substate, str(node.line_number[0]), {
+            tasklet = self._add_tasklet(substate, str(node.line_number[0]), {
                 **input_names_tasklet,
                 **special_list_in
             }, output_names_changed + special_list_out, "text", node.line_number, self.file_name)
@@ -2356,22 +2365,23 @@ class AST_translator:
 
             setattr(tasklet, "code", CodeBlock(text, lang.Python))
 
-    def declstmt2sdfg(self, node: ast_internal_classes.Decl_Stmt_Node, sdfg: SDFG):
+    def declstmt2sdfg(self, node: ast_internal_classes.Decl_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function translates a variable declaration statement to an access node on the sdfg
         :param node: The node to translate
         :param sdfg: The sdfg to attach the access node to
+        :param cfg: The control flow region to which the node should be translated
         :note This function is the top level of the declaration, most implementation is in vardecl2sdfg
         """
         for i in node.vardecl:
-            self.translate(i, sdfg)
+            self.translate(i, sdfg, cfg)
 
-    def vardecl2sdfg(self, node: ast_internal_classes.Var_Decl_Node, sdfg: SDFG):
+    def vardecl2sdfg(self, node: ast_internal_classes.Var_Decl_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function translates a variable declaration to an access node on the sdfg
         :param node: The node to translate
         :param sdfg: The sdfg to attach the access node to
-
+        :param cfg: The control flow region to which the node should be translated
         """
         if node.name == "modname": return
 
@@ -2605,17 +2615,17 @@ class AST_translator:
                 ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
                                                 op="=",
                                                 rval=node.init,
-                                                line_number=node.line_number), sdfg)
+                                                line_number=node.line_number), sdfg, cfg)
 
-    def break2sdfg(self, node: ast_internal_classes.Break_Node, sdfg: SDFG):
+    def break2sdfg(self, node: ast_internal_classes.Break_Node, sdfg: SDFG, cfg: ControlFlowRegion):
+        break_block = BreakBlock(f'Break_l_{node.line_number}')
+        cfg.add_node(break_block)
+        cfg.add_edge(self.last_sdfg_states[cfg], break_block, InterstateEdge())
 
-        self.last_loop_breaks[sdfg] = self.last_sdfg_states[sdfg]
-        sdfg.add_edge(self.last_sdfg_states[sdfg], self.last_loop_continues.get(sdfg), InterstateEdge())
-
-    def continue2sdfg(self, node: ast_internal_classes.Continue_Node, sdfg: SDFG):
-        #
-        sdfg.add_edge(self.last_sdfg_states[sdfg], self.last_loop_continues.get(sdfg), InterstateEdge())
-        self.already_has_edge_back_continue[sdfg] = self.last_sdfg_states[sdfg]
+    def continue2sdfg(self, node: ast_internal_classes.Continue_Node, sdfg: SDFG, cfg: ControlFlowRegion):
+        continue_block = ContinueBlock(f'Continue_l_{node.line_number}')
+        cfg.add_node(continue_block)
+        cfg.add_edge(self.last_sdfg_states[cfg], continue_block, InterstateEdge())
 
 
 def create_ast_from_string(source_string: str,
@@ -2891,7 +2901,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         ast2sdfg.actual_offsets_per_sdfg[g] = {}
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = g
-        ast2sdfg.translate(program, g)
+        ast2sdfg.translate(program, g, g)
         g.apply_transformations(IntrinsicSDFGTransformation)
         g.expand_library_nodes()
         gmap[ep] = g
@@ -3016,7 +3026,7 @@ def create_sdfg_from_string(
     ast2sdfg.actual_offsets_per_sdfg[sdfg] = {}
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
-    ast2sdfg.translate(program, sdfg)
+    ast2sdfg.translate(program, sdfg, sdfg)
 
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
@@ -3064,7 +3074,7 @@ def create_sdfg_from_fortran_file(source_string: str):
     sdfg = SDFG(source_string)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
-    ast2sdfg.translate(program, sdfg)
+    ast2sdfg.translate(program, sdfg, sdfg)
     sdfg.apply_transformations(IntrinsicSDFGTransformation)
     sdfg.expand_library_nodes()
 
@@ -3621,7 +3631,7 @@ def create_sdfg_from_fortran_file_with_options(cfg: ParseConfig,
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = sdfg
 
-        ast2sdfg.translate(program, sdfg)
+        ast2sdfg.translate(program, sdfg, sdfg)
 
         print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz")}')
         sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
@@ -3686,7 +3696,7 @@ def create_sdfg_from_fortran_file_with_options(cfg: ParseConfig,
             ast2sdfg.actual_offsets_per_sdfg[sdfg] = {}
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg
-            ast2sdfg.translate(program, sdfg)
+            ast2sdfg.translate(program, sdfg, sdfg)
 
             sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
 
