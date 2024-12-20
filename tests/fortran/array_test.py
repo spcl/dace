@@ -1,9 +1,8 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
 
 from dace import dtypes, symbolic
-from dace.frontend.fortran.fortran_parser import create_sdfg_from_string
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import AccessNode
 from tests.fortran.fortran_test_helper import SourceCodeBuilder, create_singular_sdfg_from_string

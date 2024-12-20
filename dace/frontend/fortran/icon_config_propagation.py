@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import os
 import sys
@@ -14,10 +14,6 @@ parent = os.path.dirname(current)
 sys.path.append(parent)
 
 from dace.frontend.fortran import fortran_parser
-
-import dace.frontend.fortran.ast_components as ast_components
-import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_internal_classes as ast_internal
 
 
 def find_path_recursive(base_dir):

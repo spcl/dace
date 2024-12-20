@@ -1,3 +1,5 @@
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+
 import math
 import operator
 import re

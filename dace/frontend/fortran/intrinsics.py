@@ -1,3 +1,5 @@
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+
 import copy
 import math
 import sys
@@ -6,13 +8,13 @@ from collections import namedtuple
 from typing import Any, List, Optional, Tuple, Union
 
 from dace.frontend.fortran import ast_internal_classes
-from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, \
-    ScopeVarsDeclarations, TypeInference, par_Decl_Range_Finder, mywalk
+from dace.frontend.fortran.ast_transforms import (NodeTransformer, NodeVisitor, ParentScopeAssigner,
+                                                  ScopeVarsDeclarations, mywalk, par_Decl_Range_Finder)
 from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 from dace.libraries.blas.nodes.dot import dot_libnode
 from dace.libraries.blas.nodes.gemm import gemm_libnode
 from dace.libraries.standard.nodes import Transpose
-from dace.sdfg import SDFGState, SDFG, nodes
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg.graph import OrderedDiGraph
 from dace.transformation import transformation as xf
 

@@ -1,26 +1,24 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
-from itertools import chain
-from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union, Optional
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-import networkx as nx
-from fparser.two.Fortran2003 import Module_Stmt, Name, Interface_Block, Subroutine_Stmt, Specification_Part, Module, \
-    Derived_Type_Def, Function_Stmt, Interface_Stmt, Function_Body, Type_Name, Rename, Entity_Decl, Kind_Selector, \
-    Intrinsic_Type_Spec, Use_Stmt, Declaration_Type_Spec
-from fparser.two.Fortran2008 import Type_Declaration_Stmt, Procedure_Stmt
+from typing import (Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type, TypeVar, Union)
+
+from fparser.two.Fortran2003 import (Derived_Type_Def, Function_Body, Function_Stmt, Interface_Block, Interface_Stmt,
+                                     Module, Module_Stmt, Name, Rename, Specification_Part, Subroutine_Stmt, Type_Name,
+                                     Use_Stmt)
+from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base
 from numpy import finfo as finf
 from numpy import float64 as fl
 
+# dace imports
 from dace import DebugInfo as di
 from dace import Language as lang
 from dace import Memlet
 from dace import data as dat
-from dace import dtypes
-# dace imports
-from dace import subsets
+from dace import dtypes, subsets
 from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes
-from dace.sdfg import SDFG, SDFGState, InterstateEdge
+from dace.sdfg import SDFG, InterstateEdge, SDFGState
 from dace.sdfg.nodes import Tasklet
 
 fortrantypes2dacetypes = {

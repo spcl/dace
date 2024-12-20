@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
 import os
@@ -31,7 +31,7 @@ from dace import dtypes, nodes, pointer
 from dace import subsets as subs
 from dace import symbolic as sym
 from dace.data import Scalar, Structure
-from dace.frontend.fortran.ast_desugaring import (ENTRY_POINT_OBJECT, ENTRY_POINT_OBJECT_TYPES, NAMED_STMTS_OF_INTEREST,
+from dace.frontend.fortran.ast_desugaring import (ENTRY_POINT_OBJECT, NAMED_STMTS_OF_INTEREST,
                                                   SPEC, append_children, consolidate_uses, const_eval_nodes,
                                                   correct_for_function_calls, deconstruct_associations,
                                                   deconstruct_enums, deconstruct_interface_calls,
