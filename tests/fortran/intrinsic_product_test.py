@@ -5,6 +5,7 @@ import pytest
 
 from dace.frontend.fortran import ast_transforms, fortran_parser
 
+
 def test_fortran_frontend_product_array():
     """
     Tests that the generated array map correctly handles offsets.
@@ -44,6 +45,7 @@ def test_fortran_frontend_product_array():
     assert res[1] == np.prod(d)
     assert res[2] == np.prod(d[1:5])
 
+
 def test_fortran_frontend_product_array_dim():
     test_string = """
                     PROGRAM intrinsic_count_test
@@ -64,6 +66,7 @@ def test_fortran_frontend_product_array_dim():
 
     with pytest.raises(NotImplementedError):
         fortran_parser.create_sdfg_from_string(test_string, "intrinsic_count_test", False)
+
 
 def test_fortran_frontend_product_2d():
     """
@@ -108,6 +111,7 @@ def test_fortran_frontend_product_2d():
     assert res[1] == np.prod(d)
     assert res[2] == np.prod(d[1:4, 1])
     assert res[3] == np.prod(d[1:4, 1:3])
+
 
 if __name__ == "__main__":
 
