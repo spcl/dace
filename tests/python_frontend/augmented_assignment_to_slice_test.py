@@ -1,6 +1,8 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
+import numpy as np
+
 
 def test_augmented_assignment_to_indirect_access():
 
@@ -14,6 +16,7 @@ def test_augmented_assignment_to_indirect_access():
     sdfg = _test_prog.to_sdfg()
     assert sdfg.is_valid()
 
+
 def test_augmented_assignment_to_indirect_access_regression():
 
     N = dace.symbol('N')
@@ -25,6 +28,16 @@ def test_augmented_assignment_to_indirect_access_regression():
 
     sdfg = _test_prog.to_sdfg()
     assert sdfg.is_valid()
+
+    # Test correctness
+    A = np.random.randint(0, 100, 10).astype(np.int32)
+    # Create a random permutation so that we don't create duplicate indices (as per NumPy)
+    ind = np.random.permutation(10).astype(np.int32)[:5]
+    B = np.random.randint(0, 100, 5).astype(np.int32)
+    A_copy = A.copy()
+    A_copy[ind] += B
+    _test_prog(A, ind, B)
+    assert np.allclose(A, A_copy)
 
 
 if __name__ == '__main__':
