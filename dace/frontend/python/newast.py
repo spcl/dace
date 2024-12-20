@@ -3494,8 +3494,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 new_name, new_rng = true_name, rng
 
             # Change the range in case indirect indices are used
-            for dim, indarr in indirect_indices.items():
-                new_rng[dim] = (0, self.sdfg.arrays[indarr].shape[0] - 1, 1)
+            if indirect_indices:
+                for dim, indarr in indirect_indices.items():
+                    new_rng[dim] = (0, self.sdfg.arrays[indarr].shape[0] - 1, 1)
 
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
