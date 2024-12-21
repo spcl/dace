@@ -103,6 +103,12 @@ FPGA_STORAGES = [
     StorageType.FPGA_ShiftRegister,
 ]
 
+REALLOCATABLE_STORAGES = [
+    StorageType.CPU_Heap,
+    StorageType.CPU_Pinned,
+    StorageType.GPU_Global,
+]
+
 
 @undefined_safe_enum
 class ReductionType(aenum.AutoNumberEnum):
