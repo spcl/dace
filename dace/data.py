@@ -354,6 +354,13 @@ class Data:
         new_desc.storage = storage
         return new_desc
 
+    @property
+    def shape(self):
+        return self._shape
+
+    @shape.setter
+    def shape(self, value):
+        self._shape = value
 
 def _arrays_to_json(arrays):
     if arrays is None:
@@ -1583,7 +1590,7 @@ class Array(Data):
     def free_symbols(self):
         return self.used_symbols(all_symbols=True)
 
-    def _set_shape_dependent_properties(self, shape, strides, total_size, offset):
+    def _set_shape_dependent_properties(self, shape, strides, total_size, offset, sdfg):
         """
         Used to set properties which depend on the shape of the array
         either to their default value, which depends on the shape, or
@@ -1608,19 +1615,33 @@ class Array(Data):
         else:
             self.offset = [0] * len(shape)
 
+        if self.is_deferred_array and sdfg is not None:
+            size_desc = sdfg.arrays[self.size_desc_name]
+            size_desc.shape = (len(shape), )
+
     def set_shape(
         self,
         new_shape,
         strides=None,
         total_size=None,
         offset=None,
+        sdfg=None,
     ):
         """
         Updates the shape of an array.
         """
         self.shape = new_shape
-        self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
+        self._set_shape_dependent_properties(new_shape, strides, total_size, offset, sdfg)
         self.validate()
+
+    @property
+    def shape(self):
+        return self._shape
+
+    @shape.setter
+    def shape(self, value):
+        self._shape = value
+
 
 
 @make_properties
