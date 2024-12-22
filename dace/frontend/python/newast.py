@@ -4738,15 +4738,17 @@ class ProgramVisitor(ExtNodeVisitor):
         # Modify node value to become an expression
         new_node = ast.copy_location(ast.Expr(value=node.value), node)
 
-        # Return values can either be tuples or a single object
+        # Return values can either be tuples, a single object, or None (no return value)
         if isinstance(node.value, (ast.Tuple, ast.List)):
             ast_tuple = ast.copy_location(
                 ast.parse('(%s,)' % ','.join('__return_%d' % i for i in range(len(node.value.elts)))).body[0].value,
                 node)
             self._visit_assign(new_node, ast_tuple, None, is_return=True)
-        else:
+        elif node.value is not None:
             ast_name = ast.copy_location(ast.Name(id='__return'), node)
             self._visit_assign(new_node, ast_name, None, is_return=True)
+        else:  # No return value
+            pass
 
         if not isinstance(self.cfg_target, SDFG):
             # In a nested control flow region, a return needs to be explicitly marked with a return block.
