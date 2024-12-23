@@ -1329,6 +1329,7 @@ class Merge(LoopBasedReplacement):
 
 
 class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
+
     array1 = xf.PatternNode(nodes.AccessNode)
     array2 = xf.PatternNode(nodes.AccessNode)
     tasklet = xf.PatternNode(nodes.Tasklet)
@@ -1409,6 +1410,7 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
 
 
 class MathFunctions(IntrinsicTransformation):
+
     MathTransformation = namedtuple("MathTransformation", "function return_type")
     MathReplacement = namedtuple("MathReplacement", "function replacement_function return_type")
 

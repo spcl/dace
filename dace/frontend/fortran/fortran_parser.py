@@ -817,11 +817,12 @@ class AST_translator:
 
         increment_expr = 'i+0+1'
         if isinstance(node.iter, ast_internal_classes.BinOp_Node):
-            increment_expr = ast_utils.ProcessedWriter(sdfg,
-                                                       self.name_mapping,
-                                                       placeholders=self.placeholders,
-                                                       placeholders_offsets=self.placeholders_offsets,
-                                                       rename_dict=self.replace_names).write_code(node.iter.rval)
+            increment_rhs = ast_utils.ProcessedWriter(sdfg,
+                                                      self.name_mapping,
+                                                      placeholders=self.placeholders,
+                                                      placeholders_offsets=self.placeholders_offsets,
+                                                      rename_dict=self.replace_names).write_code(node.iter.rval)
+            increment_expr = f'{iter_name} = {increment_rhs}'
 
         loop_region = LoopRegion(name, condition, iter_name, init_expr, increment_expr, inverted=False, sdfg=sdfg)
 
@@ -2106,17 +2107,17 @@ class AST_translator:
                     self.transient_mode = True
                     for j in node.specification_part.symbols:
                         if isinstance(j, ast_internal_classes.Symbol_Decl_Node):
-                            self.symbol2sdfg(j, new_sdfg)
+                            self.symbol2sdfg(j, new_sdfg, new_sdfg)
                         else:
                             raise NotImplementedError("Symbol not implemented")
 
                     for j in node.specification_part.specifications:
-                        self.declstmt2sdfg(j, new_sdfg)
+                        self.declstmt2sdfg(j, new_sdfg, new_sdfg)
                     self.transient_mode = old_mode
 
                 for i in assigns:
-                    self.translate(i, new_sdfg)
-                self.translate(node.execution_part, new_sdfg)
+                    self.translate(i, new_sdfg, new_sdfg)
+                self.translate(node.execution_part, new_sdfg, new_sdfg)
 
         if self.multiple_sdfgs == True:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
@@ -2886,6 +2887,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = g
         ast2sdfg.translate(program, g, g)
+        g.reset_cfg_list()
         g.apply_transformations(IntrinsicSDFGTransformation)
         g.expand_library_nodes()
         gmap[ep] = g

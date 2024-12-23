@@ -10,6 +10,7 @@ from fparser.two.Fortran2003 import Name
 from dace.frontend.fortran.ast_internal_classes import Name_Node
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, SDFGConfig, \
     create_sdfg_from_internal_ast
+from dace.sdfg.sdfg import SDFG
 
 
 @dataclass
@@ -276,7 +277,7 @@ class InternalASTMatcher:
         return cls(Name_Node, {'name': cls(has_value=name)})
 
 
-def create_singular_sdfg_from_string(sources: Dict[str, str], entry_point: str, normalize_offsets: bool = True):
+def create_singular_sdfg_from_string(sources: Dict[str, str], entry_point: str, normalize_offsets: bool = True) -> SDFG:
     entry_point = entry_point.split('.')
 
     cfg = ParseConfig(main=sources['main.f90'], sources=sources, entry_points=tuple(entry_point))
