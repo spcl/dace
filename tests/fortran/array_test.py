@@ -5,6 +5,7 @@ import numpy as np
 from dace import dtypes, symbolic
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import AccessNode
+from dace.sdfg.state import LoopRegion
 from tests.fortran.fortran_test_helper import SourceCodeBuilder, create_singular_sdfg_from_string
 
 
@@ -163,9 +164,10 @@ end subroutine inner_loops
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify()
-    # Expect that start is begin of for loop -> only one out edge to guard defining iterator variable
-    assert len(sdfg.out_edges(sdfg.start_state)) == 1
-    iter_var = symbolic.symbol(list(sdfg.out_edges(sdfg.start_state)[0].data.assignments.keys())[0])
+    # Expect that the start is the outer for loop
+    loop = sdfg.start_block
+    assert isinstance(loop, LoopRegion)
+    iter_var = symbolic.pystr_to_symbolic(loop.loop_variable)
 
     for state in sdfg.states():
         if len(state.nodes()) > 1:

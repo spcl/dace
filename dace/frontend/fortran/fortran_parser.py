@@ -405,7 +405,7 @@ class AST_translator:
         if cfg in self.last_sdfg_states and self.last_sdfg_states[cfg] is not None:
             substate = cfg.add_state(state_name)
         else:
-            substate = cfg.add_state(state_name, is_start_state=True)
+            substate = cfg.add_state(state_name, is_start_block=True)
         self._finish_add_state_to_cfg(cfg, substate)
         return substate
 
@@ -881,7 +881,7 @@ class AST_translator:
         if node.name not in sdfg.symbols:
             sdfg.add_symbol(node.name, datatype)
             if cfg not in self.last_sdfg_states or self.last_sdfg_states[cfg] is None:
-                bstate = cfg.add_state("SDFGbegin", is_start_state=True)
+                bstate = cfg.add_state("SDFGbegin", is_start_block=True)
                 self.last_sdfg_states[cfg] = bstate
             if node.init is not None:
                 substate = cfg.add_state(f"Dummystate_{node.name}")
