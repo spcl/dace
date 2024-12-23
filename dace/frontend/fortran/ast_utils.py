@@ -1,6 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import (Dict, Iterable, Iterator, List, Optional,
+from typing import (Callable, Dict, Iterable, Iterator, List, Optional,
                     Set, Tuple, Type, TypeVar, Union)
 
 from fparser.two.Fortran2003 import (Derived_Type_Def, Function_Body,
@@ -106,6 +106,8 @@ class TaskletWriter:
     :return: python code for a tasklet, as a string
     """
 
+    ast_elements: Dict[ast_internal_classes.FNode, Callable[..., str]]
+
     def __init__(self,
                  outputs: List[str],
                  outputs_changes: List[str],
@@ -163,7 +165,7 @@ class TaskletWriter:
         str_to_return += " ]"
         return str_to_return
 
-    def write_code(self, node: ast_internal_classes.FNode):
+    def write_code(self, node: ast_internal_classes.FNode) -> str:
         """
         :param node: node to write code for
         :return: python code for the node, as a string
@@ -172,7 +174,6 @@ class TaskletWriter:
         :note If the node is not a string, it is checked if it is in the ast_elements dictionary
         :note If it is, the appropriate function is called with the node as an argument, leading to a recursive traversal of the tree spanned by the node
         :note If it not, an error is raised
-
         """
         self.depth += 1
         if node.__class__ in self.ast_elements:

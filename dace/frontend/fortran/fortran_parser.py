@@ -42,7 +42,7 @@ from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import (IntrinsicSDFGTransformation, NeedsTypeInferenceException)
 from dace.properties import CodeBlock
-from dace.sdfg.state import BreakBlock, ContinueBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion
 
 global_struct_instance_counter = 0
 
@@ -295,7 +295,6 @@ class AST_translator:
         self.unallocated_arrays = []
         self.all_array_names = []
         self.last_sdfg_states = {}
-        self.last_returns = {}
         self.module_vars = []
         self.sdfgs_count = 0
         self.libraries = {}
@@ -729,6 +728,7 @@ class AST_translator:
         print("Uh oh")
         # raise NotImplementedError("Fortran write statements are not implemented yet")
 
+
     def ifstmt2sdfg(self, node: ast_internal_classes.If_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function is responsible for translating Fortran if statements into a SDFG.
@@ -736,37 +736,27 @@ class AST_translator:
         :param sdfg: The SDFG to which the node should be translated
         :param cfg: The control flow region into which the node should be translated
         """
+        name = f"Conditional_l_{str(node.line_number[0])}_c_{str(node.line_number[1])}"
 
-        name = f"If_l_{str(node.line_number[0])}_c_{str(node.line_number[1])}"
-        begin_state = self._add_simple_state_to_cfg(sdfg, f"Begin{name}")
-        guard_substate = sdfg.add_state(f"Guard{name}")
-        sdfg.add_edge(begin_state, guard_substate, InterstateEdge())
+        cond_block = ConditionalBlock(name)
+        is_start = cfg not in self.last_sdfg_states or self.last_sdfg_states[cfg] is None
+        cfg.add_node(cond_block, is_start_block=is_start)
+        if not is_start:
+            cfg.add_edge(self.last_sdfg_states[cfg], cond_block, InterstateEdge())
+        self.last_sdfg_states[cfg] = cond_block
 
         condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping, self.placeholders, self.placeholders_offsets,
                                               self.replace_names).write_code(node.cond)
 
-        body_ifstart_state = sdfg.add_state(f"BodyIfStart{name}")
-        self.last_sdfg_states[sdfg] = body_ifstart_state
-        self.translate(node.body, sdfg)
-        final_substate = sdfg.add_state(f"MergeState{name}")
-
-        sdfg.add_edge(guard_substate, body_ifstart_state, InterstateEdge(condition))
-
-        if self.last_sdfg_states[sdfg] not in self.last_returns.get(sdfg):
-            body_ifend_state = self._add_simple_state_to_cfg(sdfg, f"BodyIfEnd{name}")
-            sdfg.add_edge(body_ifend_state, final_substate, InterstateEdge())
+        if_body = ControlFlowRegion(name + '_if_body')
+        cond_block.add_branch(CodeBlock(condition), if_body)
+        self.translate(node.body, sdfg, if_body)
 
         if len(node.body_else.execution) > 0:
-            name_else = f"Else_l_{str(node.line_number[0])}_c_{str(node.line_number[1])}"
-            body_elsestart_state = sdfg.add_state("BodyElseStart" + name_else)
-            self.last_sdfg_states[sdfg] = body_elsestart_state
-            self.translate(node.body_else, sdfg)
-            body_elseend_state = self._add_simple_state_to_cfg(sdfg, f"BodyElseEnd{name_else}")
-            sdfg.add_edge(guard_substate, body_elsestart_state, InterstateEdge("not (" + condition + ")"))
-            sdfg.add_edge(body_elseend_state, final_substate, InterstateEdge())
-        else:
-            sdfg.add_edge(guard_substate, final_substate, InterstateEdge("not (" + condition + ")"))
-        self.last_sdfg_states[sdfg] = final_substate
+            else_body = ControlFlowRegion(name + '_else_body')
+            cond_block.add_branch(None, else_body)
+            self.translate(node.body_else, sdfg, else_body)
+
 
     def whilestmt2sdfg(self, node: ast_internal_classes.While_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
@@ -775,7 +765,6 @@ class AST_translator:
         :param sdfg: The SDFG to which the node should be translated
         :param cfg: The control flow region to which the node should be translated
         """
-
         name = "While_l_" + str(node.line_number[0]) + "_c_" + str(node.line_number[1])
 
         condition = ast_utils.ProcessedWriter(sdfg,
@@ -795,6 +784,7 @@ class AST_translator:
 
         self.translate(node.body, sdfg, loop_region)
 
+
     def forstmt2sdfg(self, node: ast_internal_classes.For_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function is responsible for translating Fortran for statements into a SDFG.
@@ -802,7 +792,6 @@ class AST_translator:
         :param sdfg: The SDFG to which the node should be translated
         :param cfg: The control flow region to which the node should be translated
         """
-
         name = 'FOR_l_' + str(node.line_number[0]) + '_c_' + str(node.line_number[1])
         decl_node = node.init
         init_expr = None
@@ -890,7 +879,7 @@ class AST_translator:
         datatype = self.get_dace_type(node.type)
         if node.name not in sdfg.symbols:
             sdfg.add_symbol(node.name, datatype)
-            if cfg not in self.last_cfg_states or self.last_sdfg_states[cfg] is None:
+            if cfg not in self.last_sdfg_states or self.last_sdfg_states[cfg] is None:
                 bstate = cfg.add_state("SDFGbegin", is_start_state=True)
                 self.last_sdfg_states[cfg] = bstate
             if node.init is not None:
