@@ -2022,15 +2022,34 @@ class ArrayLoopNodeLister(NodeVisitor):
     Finds all array operations that have to be transformed to loops in the AST
     """
 
-    def __init__(self):
+    def __init__(self, scope_vars):
         self.nodes: List[ast_internal_classes.FNode] = []
         self.range_nodes: List[ast_internal_classes.FNode] = []
+
+        self.scope_vars = scope_vars
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         rval_pardecls = [i for i in mywalk(node.rval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
         lval_pardecls = [i for i in mywalk(node.lval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
+
         if not lval_pardecls:
-            return
+
+            # Handle edge case - the left hand side is an array
+            # But we don't have a pardecl
+            if isinstance(node.lval, ast_internal_classes.Name_Node):
+
+                var = self.scope_vars.get_var(node.lval.parent, node.lval.name)
+                if var.sizes is None:
+                    return
+
+                node.lval = ast_internal_classes.Array_Subscript_Node(
+                    name=node.lval, parent=node.parent, type=var.type,
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
+                )
+
+            else:
+                return
+
         if rval_pardecls:
             self.range_nodes.append(node)
         self.nodes.append(node)
@@ -2288,7 +2307,7 @@ class ArrayToLoop(NodeTransformer):
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
         for child in node.execution:
-            lister = ArrayLoopNodeLister()
+            lister = ArrayLoopNodeLister(self.scope_vars)
             lister.visit(child)
             res = lister.nodes
             res_range = lister.range_nodes
