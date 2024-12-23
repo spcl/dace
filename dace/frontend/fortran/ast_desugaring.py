@@ -1477,7 +1477,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
     """
     Precondition: All the indirections have been taken out of the program.
     """
-    PRUNABLE_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram, Derived_Type_Def]
+    PRUNABLE_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram, Derived_Type_Def,Module]
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)

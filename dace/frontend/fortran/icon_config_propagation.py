@@ -214,7 +214,7 @@ if __name__ == "__main__":
     # the previous ASTs can be now disregarded
     # we only keep the list of assignments and propagate it to ECRAD parsing.
     print(f"{base_icon_path}/{icon_file}")
-    #already_parsed_ast_bool = False
+    already_parsed_ast_bool = False
     fortran_parser.create_sdfg_from_fortran_file_with_options(
         parse_cfg,
         ecrad_ast,
