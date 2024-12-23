@@ -53,7 +53,6 @@ def test_fortran_frontend_multiple_ranges_all():
         input2[i] = i
     res = np.full([7], 42, order="F", dtype=np.float64)
     sdfg(input1=input1, input2=input2, res=res)
-    print(res)
     for val in res:
         assert val == 1.0
 
@@ -259,7 +258,6 @@ def test_fortran_frontend_multiple_ranges_ecrad_pattern():
     for i in range(size):
         for j in range(pos[0], pos[1] + 1):
 
-            print(i , j, res[i - 1, j - 1], input1[i - 1, j - 1])
             assert res[i - 1, j - 1] == input1[i - 1, j - 1]
 
 def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex():
@@ -520,6 +518,106 @@ def test_fortran_frontend_ranges_array_bug():
     assert np.all(res == input1 * input1[1])
 
 
+def test_fortran_frontend_ranges_noarray():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM ranges_noarray
+                    implicit none
+                    double precision, dimension(7,4) :: res
+                    CALL ranges_noarray_function(res)
+                    end
+
+                    SUBROUTINE ranges_noarray_function(res)
+                    double precision, dimension(7,4) :: res
+
+                    res = 3
+
+                    END SUBROUTINE ranges_noarray_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "ranges_noarray", True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    res = np.full([7, 4], 42, order="F", dtype=np.float64)
+    sdfg(res=res, outside_init=False)
+
+    assert np.all(res == 3)
+
+def test_fortran_frontend_ranges_noarray2():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM ranges_noarray
+                    implicit none
+                    double precision, dimension(7,4) :: input
+                    double precision, dimension(7,4) :: res
+                    CALL ranges_noarray_function(input, res)
+                    end
+
+                    SUBROUTINE ranges_noarray_function(input, res)
+                    double precision, dimension(7,4) :: input
+                    double precision, dimension(7,4) :: res
+
+                    res = input
+
+                    END SUBROUTINE ranges_noarray_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "ranges_noarray", True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size_x = 7
+    size_y = 4
+    input = np.full([size_x, size_y], 0, order="F", dtype=np.float64)
+    for i in range(size_x):
+        for j in range(size_y):
+            input[i, j] = i + 2 ** j
+    res = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+    sdfg(input=input, res=res, outside_init=False)
+
+    assert np.all(res == input)
+
+def test_fortran_frontend_ranges_noarray3():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM ranges_noarray
+                    implicit none
+                    double precision, dimension(7,4) :: input
+                    double precision, dimension(7,4) :: res
+                    CALL ranges_noarray_function(input, res)
+                    end
+
+                    SUBROUTINE ranges_noarray_function(input, res)
+                    double precision, dimension(7,4) :: input
+                    double precision, dimension(7,4) :: res
+
+                    res = input(:,:)
+
+                    END SUBROUTINE ranges_noarray_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "ranges_noarray", True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size_x = 7
+    size_y = 4
+    input = np.full([size_x, size_y], 0, order="F", dtype=np.float64)
+    for i in range(size_x):
+        for j in range(size_y):
+            input[i, j] = i + 2 ** j
+    res = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+    sdfg(input=input, res=res, outside_init=False)
+
+    assert np.all(res == input)
+
 if __name__ == "__main__":
 
     test_fortran_frontend_multiple_ranges_all()
@@ -533,3 +631,6 @@ if __name__ == "__main__":
     test_fortran_frontend_array_assignment()
     test_fortran_frontend_multiple_ranges_ecrad_bug()
     test_fortran_frontend_ranges_array_bug()
+    test_fortran_frontend_ranges_noarray()
+    test_fortran_frontend_ranges_noarray2()
+    test_fortran_frontend_ranges_noarray3()
