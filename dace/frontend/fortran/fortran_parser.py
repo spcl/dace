@@ -495,7 +495,11 @@ class AST_translator:
                 if arr.transient and arr_name in arg_names:
                     print(f"Changing the transient status to false of {arr_name} because it's a function argument")
                     arr.transient = False
-
+        
+        # for i in sdfg.arrays:
+        #     if i in sdfg.symbols:
+        #         sdfg.arrays.pop(i)
+        
         self.transient_mode = True
         self.translate(self.startpoint.execution_part.execution, sdfg)
 
@@ -2076,10 +2080,18 @@ class AST_translator:
                     for j in node.specification_part.specifications:
                         self.declstmt2sdfg(j, new_sdfg)
                     self.transient_mode = old_mode
+                
+
+                #for i in new_sdfg.arrays:
+                #    if i in new_sdfg.symbols:
+                #        new_sdfg.arrays.pop(i)
 
                 for i in assigns:
                     self.translate(i, new_sdfg)
                 self.translate(node.execution_part, new_sdfg)
+                #import copy
+                #tmp_sdfg=copy.deepcopy(new_sdfg)
+                new_sdfg.simplify()
 
         if self.multiple_sdfgs == True:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
@@ -2536,9 +2548,14 @@ class AST_translator:
             self.contexts[sdfg.name].containers.append(node.name)
 
         if hasattr(node, "init") and node.init is not None:
-            self.translate(
-                ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
-                                                op="=", rval=node.init, line_number=node.line_number), sdfg)
+            if isinstance(node.init, ast_internal_classes.Array_Constructor_Node):
+                new_exec = ast_transforms.ReplaceArrayConstructor().visit(ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
+                                                op="=", rval=node.init, line_number=node.line_number, parent=node.parent,type=node.type))
+                self.translate(new_exec, sdfg)
+            else:    
+                self.translate(
+                    ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
+                                                op="=", rval=node.init, line_number=node.line_number,parent=node.parent,type=node.type), sdfg)
 
     def break2sdfg(self, node: ast_internal_classes.Break_Node, sdfg: SDFG):
 
@@ -3394,6 +3411,7 @@ def create_sdfg_from_fortran_file_with_options(
 
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
+    program = ast_transforms.ReplaceArrayConstructor().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
@@ -3624,11 +3642,11 @@ def create_sdfg_from_fortran_file_with_options(
                 continue
 
             sdfg.validate()
-            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_f.sdfgz"), compress=True)
+            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_7o9.sdfgz"), compress=True)
 
             sdfg.simplify(verbose=True)
             print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_f.sdfgz"), compress=True)
+            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_f_7o9.sdfgz"), compress=True)
 
             print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
             sdfg.compile()

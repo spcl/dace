@@ -2290,6 +2290,15 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
     node.indices = indices
 
+class ReplaceArrayConstructor(NodeTransformer):
+    def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
+        
+        if isinstance(node.rval, ast_internal_classes.Array_Constructor_Node):
+            assigns=[]
+            for i in range(len(node.rval.value_list)):
+                assigns.append(ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Array_Subscript_Node(name=node.lval, indices=[ast_internal_classes.Int_Literal_Node(value=str(i+1))], type=node.type, parent=node.parent), op="=", rval=node.rval.value_list[i], line_number=node.line_number, parent=node.parent, typ=node.type))
+            return ast_internal_classes.Execution_Part_Node(execution=assigns)                                                   
+        return self.generic_visit(node)
 
 class ArrayToLoop(NodeTransformer):
     """
