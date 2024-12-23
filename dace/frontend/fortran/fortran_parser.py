@@ -752,12 +752,7 @@ class AST_translator:
 
         sdfg.add_edge(guard_substate, body_ifstart_state, InterstateEdge(condition))
 
-        if self.last_sdfg_states[sdfg] not in [
-                self.last_loop_breaks.get(sdfg),
-                self.last_loop_continues.get(sdfg),
-                self.last_returns.get(sdfg),
-                self.already_has_edge_back_continue.get(sdfg)
-        ]:
+        if self.last_sdfg_states[sdfg] not in self.last_returns.get(sdfg):
             body_ifend_state = self._add_simple_state_to_cfg(sdfg, f"BodyIfEnd{name}")
             sdfg.add_edge(body_ifend_state, final_substate, InterstateEdge())
 
