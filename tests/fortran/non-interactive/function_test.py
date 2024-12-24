@@ -267,7 +267,6 @@ END FUNCTION function3_test_function
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()
     sdfg.simplify(verbose=True)
-    sdfg.view()
     sdfg.compile()
 
 
