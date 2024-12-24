@@ -308,10 +308,10 @@ end module lib
          arrsize2=arrsize2,
          arrsize3=arrsize3,
          arrsize4=arrsize4)
-    assert a[1, 1] == arrsize
-    assert a[1, 2] == arrsize2
-    assert a[1, 3] == arrsize3
-    assert a[1, 4] == arrsize4
+    assert a[0, 0] == arrsize
+    assert a[0, 1] == arrsize2
+    assert a[0, 2] == arrsize3
+    assert a[0, 3] == arrsize4
 
 
 if __name__ == "__main__":

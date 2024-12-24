@@ -506,7 +506,30 @@ class AST_translator:
             for i in self.startpoint.specification_part.symbols:
                 self.translate(i, sdfg, cfg)
 
+            # Sort the specifications to be translated in such a way that scalars are processed last. This means that
+            # where necessary they can be treated as symbols as opposed to scalars - for instance when they are used to
+            # describe the size of a data container.
+            scalar_vardecls = []
+            non_scalar_vardecls = []
+            other_specifications = []
             for i in self.startpoint.specification_part.specifications:
+                if isinstance(i, ast_internal_classes.Decl_Stmt_Node):
+                    has_array = False
+                    for j in i.vardecl:
+                        if isinstance(j, ast_internal_classes.Var_Decl_Node):
+                            if j.sizes is not None:
+                                has_array = True
+                    if has_array:
+                        non_scalar_vardecls.append(i)
+                    else:
+                        scalar_vardecls.append(i)
+                else:
+                    other_specifications.append(i)
+            for i in non_scalar_vardecls:
+                self.translate(i, sdfg, cfg)
+            for i in other_specifications:
+                self.translate(i, sdfg, cfg)
+            for i in scalar_vardecls:
                 self.translate(i, sdfg, cfg)
             for i in self.startpoint.specification_part.specifications:
                 self._add_simple_state_to_cfg(cfg, "start_struct_size")
