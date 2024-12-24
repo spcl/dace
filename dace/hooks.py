@@ -14,12 +14,14 @@ if TYPE_CHECKING:
     from dace.codegen.compiled_sdfg import CompiledSDFG
 
 CallHookType = Callable[['SDFG'], None]
-CompiledCallHookType = Callable[['CompiledSDFG', Tuple[Any, ...]], None]
+CompiledInitHookType = Callable[['CompiledSDFG', Tuple[Any, ...]], None]
+CompiledCallHookType = CompiledInitHookType
 GeneratorType = Generator[Any, None, None]
 
 # Global list of hooks
 _SDFG_CALL_HOOKS: List[GeneratorType] = []
 _COMPILED_SDFG_CALL_HOOKS: List[GeneratorType] = []
+_COMPILED_SDFG_INIT_HOOKS: List[GeneratorType] = []
 
 
 def _register_hook(hook_list: List[GeneratorType], before_hook: Optional[Callable[..., None]],
@@ -73,6 +75,22 @@ def register_sdfg_call_hook(*,
     return _register_hook(_SDFG_CALL_HOOKS, before_hook, after_hook, context_manager)
 
 
+def register_compiled_sdfg_init_hook(*,
+                                     before_hook: Optional[CompiledInitHookType] = None,
+                                     after_hook: Optional[CompiledInitHookType] = None,
+                                     context_manager: Optional[GeneratorType] = None) -> int:
+    """
+    Registers a hook that is called when a compiled SDFG is initialized.
+    
+    :param before_hook: An optional hook to call before the compiled SDFG is initialized.
+    :param after_hook: An optional hook to call after the compiled SDFG is initialized.
+    :param context_manager: A context manager to use around the compiled SDFG's C function. This field
+                            can only be used if both ``before_hook`` and ``after_hook`` are ``None``.
+    :return: The unique identifier of the hook (for removal).
+    """
+    return _register_hook(_COMPILED_SDFG_INIT_HOOKS, before_hook, after_hook, context_manager)
+
+
 def register_compiled_sdfg_call_hook(*,
                                      before_hook: Optional[CompiledCallHookType] = None,
                                      after_hook: Optional[CompiledCallHookType] = None,
@@ -98,6 +116,17 @@ def unregister_sdfg_call_hook(hook_id: int):
     if hook_id >= len(_SDFG_CALL_HOOKS):
         raise ValueError('Invalid hook ID')
     _SDFG_CALL_HOOKS[hook_id] = None
+
+
+def unregister_compiled_sdfg_init_hook(hook_id: int):
+    """
+    Unregisters a compiled SDFG initialization hook.
+    
+    :param hook_id: The unique identifier of the hook.
+    """
+    if hook_id >= len(_COMPILED_SDFG_INIT_HOOKS):
+        raise ValueError('Invalid hook ID')
+    _COMPILED_SDFG_INIT_HOOKS[hook_id] = None
 
 
 def unregister_compiled_sdfg_call_hook(hook_id: int):
@@ -151,6 +180,44 @@ def on_call(*,
         yield
     finally:
         unregister_sdfg_call_hook(hook_id)
+
+
+@contextmanager
+def on_compiled_sdfg_init(*,
+                          before: Optional[CompiledInitHookType] = None,
+                          after: Optional[CompiledInitHookType] = None,
+                          context_manager: Optional[GeneratorType] = None):
+    """
+    Context manager that registers a function to be called around each compiled SDFG initialization call.
+    Use this to wrap the compiled SDFG's C function call.
+
+    For example, to time the execution of the compiled SDFG:
+
+    .. code-block:: python
+
+        @contextmanager
+        def time_compiled_sdfg(csdfg: dace.codegen.compiled_sdfg.CompiledSDFG, *args, **kwargs):
+            start = time.time()
+            yield
+            end = time.time()
+            print(f'Compiled SDFG {csdfg.sdfg.name} took {end - start} seconds')
+        
+        with dace.hooks.on_compiled_sdfg_call(context_manager=time_compiled_sdfg):
+            some_program(...)
+            other_program(...)
+        
+    :param before: An optional function that is called before the compiled SDFG is called. This function
+                   should take a compiled SDFG object, its arguments and keyword arguments.
+    :param after: An optional function that is called after the compiled SDFG is called. This function
+                  should take a compiled SDFG object, its arguments and keyword arguments.
+    :param context_manager: A context manager to use around the compiled SDFG's C function. This field
+                            can only be used if both ``before`` and ``after`` are ``None``.
+    """
+    hook_id = register_compiled_sdfg_init_hook(before_hook=before, after_hook=after, context_manager=context_manager)
+    try:
+        yield
+    finally:
+        unregister_compiled_sdfg_init_hook(hook_id)
 
 
 @contextmanager
@@ -248,6 +315,25 @@ def invoke_sdfg_call_hooks(sdfg: 'SDFG'):
             if new_sdfg is not None:
                 sdfg = new_sdfg
         yield sdfg
+
+
+@contextmanager
+def invoke_compiled_sdfg_init_hooks(compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
+    """
+    Internal context manager that calls all compiled SDFG initialization hooks in their registered order.
+    """
+    if not _COMPILED_SDFG_INIT_HOOKS:
+        yield compiled_sdfg
+        return
+    with ExitStack() as stack:
+        for hook in _COMPILED_SDFG_INIT_HOOKS:
+            if hook is None:
+                continue
+            new_compiled_sdfg = stack.enter_context(hook(compiled_sdfg, args))
+            if new_compiled_sdfg is not None:
+                compiled_sdfg = new_compiled_sdfg
+
+        yield compiled_sdfg
 
 
 @contextmanager
