@@ -2091,7 +2091,7 @@ class AST_translator:
                 self.translate(node.execution_part, new_sdfg)
                 #import copy
                 #tmp_sdfg=copy.deepcopy(new_sdfg)
-                new_sdfg.simplify()
+                #new_sdfg.simplify()
 
         if self.multiple_sdfgs == True:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
@@ -3350,64 +3350,64 @@ def create_sdfg_from_fortran_file_with_options(
         i.function_definitions = []
     program.function_definitions = []
 
-    # time to trim the ast using the propagation info
-    # adding enums from radiotion config
-    if enum_propagator_files is not None:
-        parser = ParserFactory().create(std="f2008")
-        if enum_propagator_files is not None:
-            for file in enum_propagator_files:
-                config_ast = parser(ffr(file_candidate=file))
-                partial_ast.create_ast(config_ast)
+    # # time to trim the ast using the propagation info
+    # # adding enums from radiotion config
+    # if enum_propagator_files is not None:
+    #     parser = ParserFactory().create(std="f2008")
+    #     if enum_propagator_files is not None:
+    #         for file in enum_propagator_files:
+    #             config_ast = parser(ffr(file_candidate=file))
+    #             partial_ast.create_ast(config_ast)
 
-        radiation_config_internal_ast = partial_ast.create_ast(enum_propagator_ast)
-        enum_propagator = ast_transforms.PropagateEnums()
-        enum_propagator.visit(radiation_config_internal_ast)
+    #     radiation_config_internal_ast = partial_ast.create_ast(enum_propagator_ast)
+    #     enum_propagator = ast_transforms.PropagateEnums()
+    #     enum_propagator.visit(radiation_config_internal_ast)
 
-        program = enum_propagator.generic_visit(program)
-        replacements = 1
-        step = 1
-        while replacements > 0:
-            program = enum_propagator.generic_visit(program)
-            prop = ast_transforms.AssignmentPropagator(propagation_info)
-            program = prop.visit(program)
-            replacements = prop.replacements
-            if_eval = ast_transforms.IfEvaluator()
-            program = if_eval.visit(program)
-            replacements += if_eval.replacements
-            print("Made " + str(replacements) + " replacements in step " + str(step) + " Prop: " + str(
-                prop.replacements) + " If: " + str(if_eval.replacements))
-            step += 1
+    #     program = enum_propagator.generic_visit(program)
+    #     replacements = 1
+    #     step = 1
+    #     while replacements > 0:
+    #         program = enum_propagator.generic_visit(program)
+    #         prop = ast_transforms.AssignmentPropagator(propagation_info)
+    #         program = prop.visit(program)
+    #         replacements = prop.replacements
+    #         if_eval = ast_transforms.IfEvaluator()
+    #         program = if_eval.visit(program)
+    #         replacements += if_eval.replacements
+    #         print("Made " + str(replacements) + " replacements in step " + str(step) + " Prop: " + str(
+    #             prop.replacements) + " If: " + str(if_eval.replacements))
+    #         step += 1
 
-    if used_functions_config is not None:
+    # if used_functions_config is not None:
 
-        unusedFunctionFinder = ast_transforms.FindUnusedFunctions(used_functions_config.root, parse_order)
-        unusedFunctionFinder.visit(program)
-        used_funcs = unusedFunctionFinder.used_names
-        current_list = used_funcs[used_functions_config.root]
-        current_list += used_functions_config.root
+    #     unusedFunctionFinder = ast_transforms.FindUnusedFunctions(used_functions_config.root, parse_order)
+    #     unusedFunctionFinder.visit(program)
+    #     used_funcs = unusedFunctionFinder.used_names
+    #     current_list = used_funcs[used_functions_config.root]
+    #     current_list += used_functions_config.root
 
-        needed = used_functions_config.needed_functions
+    #     needed = used_functions_config.needed_functions
 
-        for i in reversed(parse_order):
-            for j in program.modules:
-                if j.name.name in used_functions_config.skip_functions:
-                    continue
-                if j.name.name == i:
+    #     for i in reversed(parse_order):
+    #         for j in program.modules:
+    #             if j.name.name in used_functions_config.skip_functions:
+    #                 continue
+    #             if j.name.name == i:
 
-                    for k in j.subroutine_definitions:
-                        if k.name.name in current_list:
-                            current_list += used_funcs[k.name.name]
-                            needed.append([j.name.name, k.name.name])
+    #                 for k in j.subroutine_definitions:
+    #                     if k.name.name in current_list:
+    #                         current_list += used_funcs[k.name.name]
+    #                         needed.append([j.name.name, k.name.name])
 
-        for i in program.modules:
-            subroutines = []
-            for j in needed:
-                if i.name.name == j[0]:
+    #     for i in program.modules:
+    #         subroutines = []
+    #         for j in needed:
+    #             if i.name.name == j[0]:
 
-                    for k in i.subroutine_definitions:
-                        if k.name.name == j[1]:
-                            subroutines.append(k)
-            i.subroutine_definitions = subroutines
+    #                 for k in i.subroutine_definitions:
+    #                     if k.name.name == j[1]:
+    #                         subroutines.append(k)
+    #         i.subroutine_definitions = subroutines
 
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
@@ -3445,7 +3445,7 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
-    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
+    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names,ast=program).visit(program)
     # print("Before intrinsics")
     # for transformation in partial_ast.fortran_intrinsics().transformations():
     #     transformation.initialize(program)
@@ -3642,11 +3642,11 @@ def create_sdfg_from_fortran_file_with_options(
                 continue
 
             sdfg.validate()
-            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_7o9.sdfgz"), compress=True)
+            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_dbg.sdfgz"), compress=True)
 
             sdfg.simplify(verbose=True)
             print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_f_7o9.sdfgz"), compress=True)
+            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg.sdfgz"), compress=True)
 
             print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
             sdfg.compile()

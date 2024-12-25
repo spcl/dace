@@ -2543,7 +2543,12 @@ class ForDeclarer(NodeTransformer):
 class ElementalFunctionExpander(NodeTransformer):
     "Makes elemental functions into normal functions by creating a loop around thme if they are called with arrays"
 
-    def __init__(self, func_list: list):
+    def __init__(self, func_list: list, scope_vars=None,ast=None):
+        if scope_vars is None:
+            self.scope_vars = ScopeVarsDeclarations(ast)
+            self.scope_vars.visit(ast)
+        self.ast=ast
+
         self.func_list = func_list
         self.count = 0
 
@@ -2552,27 +2557,47 @@ class ElementalFunctionExpander(NodeTransformer):
         for child in node.execution:
             if isinstance(child, ast_internal_classes.Call_Expr_Node):
                 arrays = False
+                sizes=None
                 for i in self.func_list:
                     if child.name.name == i.name or child.name.name == i.name + "_srt":
+                        print("F: " + child.name.name)
                         if hasattr(i, "elemental"):
+                            print("El: " + str(i.elemental))
                             if i.elemental is True:
                                 if len(child.args) > 0:
                                     for j in child.args:
-                                        # THIS Needs a proper check
-                                        if j.name == "z":
-                                            arrays = True
+                                        if isinstance(j, ast_internal_classes.Array_Subscript_Node):
+                                            pardecls = [k for k in mywalk(j) if isinstance(k, ast_internal_classes.ParDecl_Node)]
+                                            if len(pardecls) > 0:
+                                                arrays = True
+                                                break
+                                        elif isinstance(j, ast_internal_classes.Name_Node):    
+
+                                            var_def = self.scope_vars.get_var(child.parent, j.name)
+                                            
+                                            if var_def.sizes is not None:
+                                                if len(var_def.sizes) > 0:
+                                                    sizes=var_def.sizes
+                                                    arrays = True
+                                                    break
+                                            
 
                 if not arrays:
                     newbody.append(self.visit(child))
                 else:
                     newbody.append(
                         ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                            ast_internal_classes.Symbol_Decl_Node(
+                            ast_internal_classes.Var_Decl_Node(
                                 name="_for_elem_it_" + str(self.count), type="INTEGER", sizes=None, init=None)
                         ]))
                     newargs = []
                     # The range must be determined! It's currently hard set to 10
-                    shape = ["10"]
+                    if sizes is not None:
+                        if len(sizes) > 0:
+                            shape = sizes
+                        if len(sizes) > 1:
+                            raise NotImplementedError("Only 1D arrays are supported")
+                    #shape = ["10"]
                     for i in child.args:
                         if isinstance(i, ast_internal_classes.Name_Node):
                             newargs.append(ast_internal_classes.Array_Subscript_Node(name=i, indices=[
@@ -2585,8 +2610,21 @@ class ElementalFunctionExpander(NodeTransformer):
                                         if j.vardecl[0].name == i.name:
                                             newbody[newbody.index(j)].vardecl[0].sizes = shape
                                             break
+                        elif isinstance(i, ast_internal_classes.Array_Subscript_Node):
+                            raise NotImplementedError("Not yet supported")
+                            pardecl= [k for k in mywalk(i) if isinstance(k, ast_internal_classes.ParDecl_Node)]
+                            if len(pardecl) != 1:
+                                raise NotImplementedError("Only 1d array subscripts are supported")
+                            ranges = []
+                            rangesrval = []
+                            par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars,
+                                          self.ast.structures, False, ranges)
+                            newargs.append(ast_internal_classes.Array_Subscript_Node(name=i.name, indices=[
+                                    ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count))],
+                                                                                         line_number=child.line_number,
+                                                                                         type=i.type))                
                         else:
-                            raise NotImplementedError("Only name nodes are supported")
+                            raise NotImplementedError("Only name nodes and array subscripts are supported")
 
                     newbody.append(ast_internal_classes.For_Stmt_Node(
                         init=ast_internal_classes.BinOp_Node(
@@ -2597,13 +2635,13 @@ class ElementalFunctionExpander(NodeTransformer):
                         cond=ast_internal_classes.BinOp_Node(
                             lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
                             op="<=",
-                            rval=ast_internal_classes.Int_Literal_Node(value=shape[0]),
+                            rval=shape[0],
                             line_number=child.line_number,parent=child.parent),
                         body=ast_internal_classes.Execution_Part_Node(execution=[
                             ast_internal_classes.Call_Expr_Node(type=child.type,
                                                                 name=child.name,
                                                                 args=newargs,
-                                                                line_number=child.line_number,parent=child.parent)
+                                                                line_number=child.line_number,parent=child.parent,subroutine=child.subroutine)
                         ]), line_number=child.line_number,
                         iter=ast_internal_classes.BinOp_Node(
                             lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
