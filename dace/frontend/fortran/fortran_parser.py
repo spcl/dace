@@ -914,7 +914,7 @@ class AST_translator:
         variables_in_call = []
         if self.last_call_expression.get(sdfg) is not None:
             variables_in_call = self.last_call_expression[sdfg]
-
+        
         # Sanity check to make sure the parameter numbers match
         if not ((len(variables_in_call) == len(parameters)) or
                 (len(variables_in_call) == len(parameters) + 1
@@ -979,11 +979,14 @@ class AST_translator:
                                                 rval=litval,
                                                 op="=",
                                                 line_number=node.line_number))
-
+        sym_dict = {}
         # This handles the case where the function is called with symbols
         for parameter, symbol in symbol_arguments:
+            sym_dict[parameter.name]=symbol.name
             if parameter.name != symbol.name:
                 self.local_not_transient_because_assign[my_name_sdfg].append(parameter.name)
+                
+                new_sdfg.add_symbol(parameter.name, dtypes.int32)
                 assigns.append(
                     ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=parameter.name),
                                                     rval=ast_internal_classes.Name_Node(name=symbol.name),
@@ -1777,7 +1780,7 @@ class AST_translator:
                                                offset=array.offset)
 
         # Preparing symbol dictionary for nested sdfg
-        sym_dict = {}
+        
         for i in sdfg.symbols:
             sym_dict[i] = i
 
@@ -1911,6 +1914,7 @@ class AST_translator:
         for i in missing_symbols:
             if i in sdfg.arrays:
                 sym_dict[i] = i
+                print("Force adding symbol to nested sdfg: ", i)
             else:
                 print("Symbol not found in sdfg arrays: ", i)
         if self.multiple_sdfgs == False:
@@ -2091,7 +2095,7 @@ class AST_translator:
                 self.translate(node.execution_part, new_sdfg)
                 #import copy
                 #tmp_sdfg=copy.deepcopy(new_sdfg)
-                #new_sdfg.simplify()
+                #new_sdfg.simplify(verbose=True)
 
         if self.multiple_sdfgs == True:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
@@ -3644,11 +3648,11 @@ def create_sdfg_from_fortran_file_with_options(
             sdfg.validate()
             sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_dbg.sdfgz"), compress=True)
 
-            sdfg.simplify(verbose=True)
-            print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg.sdfgz"), compress=True)
+            #sdfg.simplify(verbose=True)
+            #print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
+            #sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg.sdfgz"), compress=True)
 
-            print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
-            sdfg.compile()
+            #print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
+            #sdfg.compile()
 
     # return sdfg
