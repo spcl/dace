@@ -127,6 +127,24 @@ def test_dsplit_4d():
     return a, b, c
 
 
+def test_compiletime_split():
+
+    @dace.program
+    def tester(x, y, in_indices: dace.compiletime, out_index: dace.compiletime):
+        x0, x1, x2, x3, x4, x5 = np.split(x[:, in_indices], 6, axis=1)
+        factor = 1 / 12
+        o = out_index
+        y[:, o:o + 1] = factor * (-(x1 + x2) + (x0 + x1) - (x0 + x4) + (x3 + x4) + (x2 + x5) - (x3 + x5))
+
+    x = np.random.rand(1000, 8)
+    y = np.empty_like(x)
+    tester(x, y, (1, 2, 3, 4, 5, 7), 0)
+    ref = np.empty_like(y)
+    tester.f(x, ref, (1, 2, 3, 4, 5, 7), 0)
+
+    assert np.allclose(y, ref)
+
+
 if __name__ == "__main__":
     test_split()
     test_uneven_split_fail()
@@ -140,3 +158,4 @@ if __name__ == "__main__":
     test_vsplit()
     test_hsplit()
     test_dsplit_4d()
+    test_compiletime_split()

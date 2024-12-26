@@ -324,6 +324,107 @@ def test_advanced_indexing_syntax(tuple_index):
     assert np.allclose(A, ref)
 
 
+@pytest.mark.parametrize('contiguous', (False, True))
+def test_multidim_tuple_index(contiguous):
+
+    if contiguous:
+
+        @dace.program
+        def indexing_test(A: dace.float64[N, M]):
+            return A[:, (1, 2, 3)]
+    else:
+
+        @dace.program
+        def indexing_test(A: dace.float64[N, M]):
+            return A[:, (1, 3, 0)]
+
+    sdfg = indexing_test.to_sdfg()
+    assert tuple(sdfg.arrays['__return'].shape) == (N, 3)
+
+    A = np.random.rand(20, 10)
+    if contiguous:
+        ref = A[:, (1, 2, 3)]
+    else:
+        ref = A[:, (1, 3, 0)]
+
+    res = indexing_test(A)
+
+    assert np.allclose(res, ref)
+
+
+def test_multidim_tuple_index_longer():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, M]):
+        return A[:, (1, 2, 3, 4, 5, 7)]
+
+    sdfg = indexing_test.to_sdfg()
+    assert tuple(sdfg.arrays['__return'].shape) == (N, 6)
+
+    A = np.random.rand(20, 10)
+    ref = A[:, (1, 2, 3, 4, 5, 7)]
+
+    res = indexing_test(A)
+
+    assert np.allclose(res, ref)
+
+
+def test_multidim_tuple_multidim_index():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, M, N]):
+        return A[:, (1, 2, 3, 4, 5, 7), (0, 1)]
+
+    sdfg = indexing_test.to_sdfg()
+    assert tuple(sdfg.arrays['__return'].shape) == (N, 6, 2)
+
+    A = np.random.rand(20, 10, 20)
+    ref = A[:, (1, 2, 3, 4, 5, 7), (0, 1)]
+
+    res = indexing_test(A)
+
+    assert np.allclose(res, ref)
+
+
+def test_advanced_index_broadcasting():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, N, N], indices: dace.int32[3, 3]):
+        return A[indices, (1, 2, 4), :]
+
+    sdfg = indexing_test.to_sdfg()
+    assert tuple(sdfg.arrays['__return'].shape) == (3, 3, N)
+
+    A = np.random.rand(20, 10, 20)
+    indices = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.int32)
+    ref = A[indices, (1, 2, 4), :]
+
+    res = indexing_test(A, indices)
+
+    assert np.allclose(res, ref)
+
+
+def test_combining_basic_and_advanced_indexing():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, N, N, N, N, N, N], indices: dace.int32[3, 3], indices2: dace.int32[3, 3, 3]):
+        return A[:5, indices, indices2, ..., 1:3, 4]
+
+    n = 6
+    A = np.random.rand(n, n, n, n, n, n, n)
+    indices = np.random.randint(0, n, size=(3, 3))
+    indices2 = np.random.randint(0, n, size=(3, 3, 3))
+    ref = A[:5, indices, indices2, ..., 1:3, 4]
+
+    # Advanced indexing dimensions should be prepended to the shape
+    sdfg = indexing_test.to_sdfg()
+    assert tuple(sdfg.arrays['__return'].shape) == (3, 3, 3, 5, N, N, 2)
+
+    res = indexing_test(A, indices, indices2)
+
+    assert np.allclose(res, ref)
+
+
 if __name__ == '__main__':
     test_flat()
     test_flat_noncontiguous()
@@ -348,3 +449,9 @@ if __name__ == '__main__':
     test_out_index_intarr_multidim()
     test_advanced_indexing_syntax(False)
     test_advanced_indexing_syntax(True)
+    test_multidim_tuple_index(False)
+    test_multidim_tuple_index(True)
+    test_multidim_tuple_index_longer()
+    test_multidim_tuple_multidim_index()
+    test_advanced_index_broadcasting()
+    test_combining_basic_and_advanced_indexing()
