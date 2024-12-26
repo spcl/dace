@@ -40,7 +40,7 @@ import sympy
 
 # register replacements in oprepo
 import dace.frontend.python.replacements
-from dace.frontend.python.replacements import _sym_type, _broadcast_to
+from dace.frontend.python.replacements import _sym_type, _broadcast_to, _broadcast_together
 
 # Type hints
 Size = Union[int, dace.symbolic.symbol]
@@ -449,11 +449,10 @@ def add_indirection_subgraph(sdfg: SDFG,
         for i, r in enumerate(memlet.subset):
             if i in nonsqz_dims:
                 mapped_rng.append(r)
-        ind_entry, ind_exit = graph.add_map('indirection', {
-            '__i%d' % i: '%s:%s+1:%s' % (s, e, t)
-            for i, (s, e, t) in enumerate(mapped_rng)
-        },
-                                            debuginfo=pvisitor.current_lineinfo)
+        ind_entry, ind_exit = graph.add_map(
+            'indirection', {'__i%d' % i: '%s:%s+1:%s' % (s, e, t)
+                            for i, (s, e, t) in enumerate(mapped_rng)},
+            debuginfo=pvisitor.current_lineinfo)
         inp_base_path.insert(0, ind_entry)
         out_base_path.append(ind_exit)
 
@@ -1341,10 +1340,9 @@ class ProgramVisitor(ExtNodeVisitor):
         result.update(self.sdfg.arrays)
 
         # MPI-related stuff
-        result.update({
-            v: self.sdfg.process_grids[v]
-            for k, v in self.variables.items() if v in self.sdfg.process_grids
-        })
+        result.update(
+            {v: self.sdfg.process_grids[v]
+             for k, v in self.variables.items() if v in self.sdfg.process_grids})
         try:
             from mpi4py import MPI
             result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
@@ -2587,14 +2585,11 @@ class ProgramVisitor(ExtNodeVisitor):
         # Looking for the first argument in a tasklet annotation: @dace.tasklet(STRING HERE)
         langInf = None
         side_effects = None
-        if isinstance(node, ast.FunctionDef) and \
-            hasattr(node, 'decorator_list') and \
-            isinstance(node.decorator_list, list) and \
-            len(node.decorator_list) > 0 and \
-            hasattr(node.decorator_list[0], 'args') and \
-            isinstance(node.decorator_list[0].args, list) and \
-            len(node.decorator_list[0].args) > 0 and \
-            hasattr(node.decorator_list[0].args[0], 'value'):
+        if isinstance(node, ast.FunctionDef) and hasattr(node, 'decorator_list') and isinstance(
+                node.decorator_list,
+                list) and len(node.decorator_list) > 0 and hasattr(node.decorator_list[0], 'args') and isinstance(
+                    node.decorator_list[0].args, list) and len(node.decorator_list[0].args) > 0 and hasattr(
+                        node.decorator_list[0].args[0], 'value'):
 
             langArg = node.decorator_list[0].args[0].value
             langInf = dtypes.Language[langArg]
@@ -3898,10 +3893,10 @@ class ProgramVisitor(ExtNodeVisitor):
         # Map internal SDFG symbols by adding keyword arguments
         symbols = sdfg.used_symbols(all_symbols=False)
         try:
-            mapping = infer_symbols_from_datadescriptor(sdfg, {
-                k: self.sdfg.arrays[v]
-                for k, v in args if v in self.sdfg.arrays
-            }, set(sym.arg for sym in node.keywords if sym.arg in symbols))
+            mapping = infer_symbols_from_datadescriptor(
+                sdfg, {k: self.sdfg.arrays[v]
+                       for k, v in args if v in self.sdfg.arrays},
+                set(sym.arg for sym in node.keywords if sym.arg in symbols))
         except ValueError as ex:
             raise DaceSyntaxError(self, node, str(ex))
         if len(mapping) == 0:  # Default to same-symbol mapping
@@ -4772,8 +4767,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     name = self.name
 
-                tasklet, inputs, outputs, sdfg_inp, sdfg_out = \
-                    self._parse_tasklet(state, node, name)
+                tasklet, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(state, node, name)
 
                 # Add memlets
                 inputs = {k: (state, v, set()) for k, v in inputs.items()}
@@ -5365,6 +5359,65 @@ class ProgramVisitor(ExtNodeVisitor):
                 rnode, wnode, Memlet.simple(array, rng, num_accesses=rng.num_elements(), other_subset_str=other_subset))
         return tmp, other_subset
 
+    def _create_output_shape_from_advanced_indexing(self, aname: str, expr: MemletExpr) -> List[symbolic.SymbolicType]:
+        """
+        Creates the output shape of a slicing operation with advanced indexing.
+
+        :param aname: The name of the array being sliced.
+        :param expr: The MemletExpr object representing the slicing operation.
+        :return: A list of symbolic dimensions representing the output shape.
+        """
+        # The output shape is the shape of all contiguous advanced indexing arrays, after broadcasting with each other
+        # Start with all basic indexing dimensions, setting advanced indexing dimensions to None
+        output_shape = [s if i not in expr.arrdims else None for i, s in enumerate(expr.subset.size())]
+        # If any advanced indexing is found, mark any scalar dimension as advanced indices too
+        if expr.arrdims:
+            output_shape = [None if rng[0] == rng[1] else s for s, rng in zip(output_shape, expr.subset.ndrange())]
+
+        # Mark every dimension that starts with None as an advanced indexing "chunk"
+        advanced_dims = [
+            i for i, s in enumerate(output_shape) if s is None and (i == 0 or output_shape[i - 1] is not None)
+        ]
+        # If there is more than one contiguous advanced indexing chunk, move all advanced indices to the beginning
+        prefix_dims = len(advanced_dims) > 1
+        if prefix_dims:
+            output_shape = [None] + [s for s in output_shape if s is not None]
+            dim_position = 0
+        else:
+            dim_position = advanced_dims[0]
+
+        # Contract contiguous None dimensions that appear multiple times in a row
+        output_shape = [
+            s for i, s in enumerate(output_shape) if s is not None or i == 0 or output_shape[i - 1] is not None
+        ]
+
+        # Broadcast all advanced indexing expressions together
+        chunk_shape = None
+        # Get the advanced indexing expressions
+        for i, arrname in expr.arrdims.items():
+            if isinstance(arrname, str):  # Array or constant
+                if arrname in self.sdfg.arrays:
+                    desc = self.sdfg.arrays[arrname]
+                elif arrname in self.sdfg.constants:
+                    desc = self.sdfg.constants[arrname]
+                else:
+                    raise NameError(f'Array "{arrname}" used in indexing "{aname}" not found')
+                shape = desc.shape
+            else:  # Literal list or tuple, add as constant and use shape
+                arrname = [v if isinstance(v, Number) else self._parse_value(v) for v in arrname]
+                carr = numpy.array(arrname, dtype=dtypes.typeclass(int).type)
+                shape = carr.shape
+
+            if chunk_shape is not None:
+                chunk_shape, *_ = _broadcast_together(shape, chunk_shape)
+            else:
+                chunk_shape = tuple(shape)
+
+        # Replace the advanced indexing dimensions with the broadcasted shape
+        output_shape = output_shape[:dim_position] + list(chunk_shape) + output_shape[dim_position + 1:]
+
+        return output_shape
+
     def _array_indirection_subgraph(self, rnode: nodes.AccessNode, expr: MemletExpr) -> str:
         aname = rnode.data
         idesc = self.sdfg.arrays[aname]
@@ -5375,32 +5428,23 @@ class ProgramVisitor(ExtNodeVisitor):
             raise IndexError('New axes unsupported when array indices are used')
 
         # Create output shape dimensions based on the sizes of the arrays
-        output_shape = None
+        output_shape = self._create_output_shape_from_advanced_indexing(aname, expr)
+        # Create constants for array indices
         constant_indices: Dict[int, str] = {}
         for i, arrname in expr.arrdims.items():
             if isinstance(arrname, str):  # Array or constant
-                if arrname in self.sdfg.arrays:
-                    desc = self.sdfg.arrays[arrname]
-                elif arrname in self.sdfg.constants:
-                    desc = self.sdfg.constants[arrname]
+                if arrname in self.sdfg.constants:
                     constant_indices[i] = arrname
+                elif arrname in self.sdfg.arrays:
+                    pass
                 else:
                     raise NameError(f'Array "{arrname}" used in indexing "{aname}" not found')
-                shape = desc.shape
             else:  # Literal list or tuple, add as constant and use shape
                 arrname = [v if isinstance(v, Number) else self._parse_value(v) for v in arrname]
                 carr = numpy.array(arrname, dtype=dtypes.typeclass(int).type)
                 cname = self.sdfg.find_new_constant(f'__ind{i}_{aname}')
                 self.sdfg.add_constant(cname, carr)
                 constant_indices[i] = cname
-                shape = carr.shape
-
-            if output_shape is not None and tuple(shape) != output_shape:
-                raise IndexError(f'Mismatch in array index shapes in access of '
-                                 f'"{aname}": {arrname} (shape {shape}) '
-                                 f'does not match existing shape {output_shape}')
-            elif output_shape is None:
-                output_shape = tuple(shape)
 
         # Check subset shapes for matching the array shapes
         input_index = []
