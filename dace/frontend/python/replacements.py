@@ -1021,6 +1021,16 @@ def _sum_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
     return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=0, identity=0)
 
 
+@oprepo.replaces('numpy.any')
+def _any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(pv, sdfg, state, "lambda x, y: x or y", a, axis=axis, identity=0)
+
+
+@oprepo.replaces('numpy.all')
+def _all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+    return _reduce(pv, sdfg, state, "lambda x, y: x and y", a, axis=axis, identity=0)
+
+
 @oprepo.replaces('numpy.mean')
 def _mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
