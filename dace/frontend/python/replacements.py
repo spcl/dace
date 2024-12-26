@@ -1052,26 +1052,28 @@ def _mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 @oprepo.replaces('numpy.max')
 @oprepo.replaces('numpy.amax')
-def _max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+def _max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, initial=None):
+    initial = initial if initial is not None else dtypes.min_value(sdfg.arrays[a].dtype)
     return _reduce(pv,
                    sdfg,
                    state,
                    "lambda x, y: max(x, y)",
                    a,
                    axis=axis,
-                   identity=dtypes.min_value(sdfg.arrays[a].dtype))
+                   identity=initial)
 
 
 @oprepo.replaces('numpy.min')
 @oprepo.replaces('numpy.amin')
-def _min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
+def _min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None, initial=None):
+    initial = initial if initial is not None else dtypes.max_value(sdfg.arrays[a].dtype)
     return _reduce(pv,
                    sdfg,
                    state,
                    "lambda x, y: min(x, y)",
                    a,
                    axis=axis,
-                   identity=dtypes.max_value(sdfg.arrays[a].dtype))
+                   identity=initial)
 
 
 def _minmax2(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, b: str, ismin=True):
