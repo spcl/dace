@@ -2094,8 +2094,9 @@ class AST_translator:
                     self.translate(i, new_sdfg)
                 self.translate(node.execution_part, new_sdfg)
                 #import copy
-                #tmp_sdfg=copy.deepcopy(new_sdfg)
-                #new_sdfg.simplify(verbose=True)
+                tmp_sdfg=copy.deepcopy(new_sdfg)
+                new_sdfg.validate()
+                new_sdfg.simplify(verbose=True)
 
         if self.multiple_sdfgs == True:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
@@ -3603,14 +3604,16 @@ def create_sdfg_from_fortran_file_with_options(
 
             if subroutine_name is not None:
                 #special for radiation
-                if subroutine_name=='radiation':
-                    if not 'radiation' == j.name.name :
-                        print("Skipping ", j.name.name)
-                        continue
-
-                elif not subroutine_name in j.name.name :
-                    print("Skipping ", j.name.name)
+                if j.name.name!='cloud_generator_2139':
                     continue
+                #if subroutine_name=='radiation':
+                #    if not 'radiation' == j.name.name :
+                #        print("Skipping ", j.name.name)
+                #        continue
+
+                #elif not subroutine_name in j.name.name :
+                #    print("Skipping ", j.name.name)
+                #    continue
 
             if j.execution_part is None:
                 continue
@@ -3648,11 +3651,11 @@ def create_sdfg_from_fortran_file_with_options(
             sdfg.validate()
             sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_dbg.sdfgz"), compress=True)
 
-            #sdfg.simplify(verbose=True)
-            #print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-            #sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg.sdfgz"), compress=True)
+            sdfg.simplify(verbose=True)
+            print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
+            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg.sdfgz"), compress=True)
 
-            #print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
-            #sdfg.compile()
+            print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
+            sdfg.compile()
 
     # return sdfg

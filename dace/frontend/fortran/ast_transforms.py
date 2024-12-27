@@ -898,6 +898,8 @@ class FunctionCallTransformer(NodeTransformer):
                     return self.generic_visit(node)
             if node.rval.name.name.find("__dace_") != -1:
                 return self.generic_visit(node)
+            if node.rval.name.name=="pow":
+                return self.generic_visit(node)
             if node.op != "=":
                 return self.generic_visit(node)
             args = node.rval.args
