@@ -3604,7 +3604,9 @@ def create_sdfg_from_fortran_file_with_options(
 
             if subroutine_name is not None:
                 #special for radiation
-                if j.name.name!='cloud_generator_2139':
+                #if j.name.name!='cloud_generator_2139':
+                if j.name.name!='solver_mcica_lw_3321':
+                    
                     continue
                 #if subroutine_name=='radiation':
                 #    if not 'radiation' == j.name.name :
