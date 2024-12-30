@@ -664,7 +664,7 @@ def _linspace(pv: ProgramVisitor,
     start_shape = sdfg.arrays[start].shape if (isinstance(start, str) and start in sdfg.arrays) else []
     stop_shape = sdfg.arrays[stop].shape if (isinstance(stop, str) and stop in sdfg.arrays) else []
 
-    shape, ranges, outind, ind1, ind2 = _broadcast_together(start_shape, stop_shape)
+    shape, ranges, outind, ind1, ind2 = broadcast_together(start_shape, stop_shape)
     shape_with_axis = _add_axis_to_shape(shape, axis, num)
     ranges_with_axis = _add_axis_to_shape(ranges, axis, ('__sind', f'0:{symbolic.symstr(num)}'))
     if outind:
@@ -1278,10 +1278,10 @@ def _array_array_where(visitor: ProgramVisitor,
     right_shape = right_arr.shape if right_arr else [1]
     cond_shape = cond_arr.shape if cond_arr else [1]
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
 
     # Broadcast condition with broadcasted left+right
-    _, _, _, cond_idx, _ = _broadcast_together(cond_shape, out_shape)
+    _, _, _, cond_idx, _ = broadcast_together(cond_shape, out_shape)
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
@@ -1356,10 +1356,10 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
     return name
 
 
-def _broadcast_to(target_shape, operand_shape):
+def broadcast_to(target_shape, operand_shape):
     # the difference to normal broadcasting is that the broadcasted shape is the same as the target
     # I was unable to find documentation for this in numpy, so we follow the description from ONNX
-    results = _broadcast_together(target_shape, operand_shape, unidirectional=True)
+    results = broadcast_together(target_shape, operand_shape, unidirectional=True)
 
     # the output_shape should be equal to the target_shape
     assert all(i == o for i, o in zip(target_shape, results[0]))
@@ -1367,7 +1367,7 @@ def _broadcast_to(target_shape, operand_shape):
     return results
 
 
-def _broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
+def broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
 
     all_idx_dict, all_idx, a1_idx, a2_idx = {}, [], [], []
 
@@ -1415,9 +1415,9 @@ def _broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
             all_idx_dict[get_idx(i)] = dim1
         else:
             if unidirectional:
-                raise SyntaxError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
+                raise IndexError(f"could not broadcast input array from shape {arr2_shape} into shape {arr1_shape}")
             else:
-                raise SyntaxError("operands could not be broadcast together with shapes {}, {}".format(
+                raise IndexError("operands could not be broadcast together with shapes {}, {}".format(
                     arr1_shape, arr2_shape))
 
     def to_string(idx):
@@ -1435,7 +1435,7 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str, opname
     arr1 = sdfg.arrays[op1]
     arr2 = sdfg.arrays[op2]
 
-    out_shape, all_idx_tup, all_idx, arr1_idx, arr2_idx = _broadcast_together(arr1.shape, arr2.shape)
+    out_shape, all_idx_tup, all_idx, arr1_idx, arr2_idx = broadcast_together(arr1.shape, arr2.shape)
 
     name, _ = sdfg.add_temp_transient(out_shape, restype, arr1.storage)
     state.add_mapped_tasklet("_%s_" % opname,
@@ -1816,7 +1816,7 @@ def _array_array_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
     left_shape = left_arr.shape
     right_shape = right_arr.shape
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
@@ -1884,7 +1884,7 @@ def _array_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
     if right_cast is not None:
         tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'), o=tasklet_args[1])
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
 
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type, storage)
 
@@ -1954,7 +1954,7 @@ def _array_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left
     if right_cast is not None:
         tasklet_args[1] = "{c}({o})".format(c=str(right_cast).replace('::', '.'), o=tasklet_args[1])
 
-    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = _broadcast_together(left_shape, right_shape)
+    (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
 
     out_operand, out_arr = sdfg.add_temp_transient(out_shape, result_type, storage)
 

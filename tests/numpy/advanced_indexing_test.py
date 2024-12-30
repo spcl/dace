@@ -385,7 +385,7 @@ def test_multidim_tuple_index_longer():
 
 
 def test_multidim_tuple_multidim_index():
-    with pytest.raises(SyntaxError, match='could not be broadcast together'):
+    with pytest.raises(IndexError, match='could not be broadcast together'):
 
         @dace.program
         def indexing_test(A: dace.float64[N, M, N]):
@@ -395,7 +395,7 @@ def test_multidim_tuple_multidim_index():
 
 
 def test_multidim_tuple_multidim_index_write():
-    with pytest.raises(SyntaxError, match='could not be broadcast together'):
+    with pytest.raises(IndexError, match='could not be broadcast together'):
 
         @dace.program
         def indexing_test(A: dace.float64[N, M, N]):

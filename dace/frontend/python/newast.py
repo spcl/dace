@@ -40,7 +40,7 @@ import sympy
 
 # register replacements in oprepo
 import dace.frontend.python.replacements
-from dace.frontend.python.replacements import _sym_type, _broadcast_to, _broadcast_together
+from dace.frontend.python.replacements import _sym_type, broadcast_to, broadcast_together
 
 # Type hints
 Size = Union[int, dace.symbolic.symbol]
@@ -2711,7 +2711,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if (indirect_indices or boolarr or len(ssize) != len(osize)
                         or any(inequal_symbols(s, o) for s, o in zip(ssize, osize)) or op):
 
-                    _, all_idx_tuples, _, _, inp_idx = _broadcast_to(squeezed.size(), op_subset.size())
+                    _, all_idx_tuples, _, _, inp_idx = broadcast_to(squeezed.size(), op_subset.size())
 
                     idx = iter(i for i, _ in all_idx_tuples)
                     target_index = ','.join(
@@ -2927,7 +2927,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 wsqz = sqz_wsub.squeeze()
                 sqz_rsub = copy.deepcopy(rtarget_subset)
                 rsqz = sqz_rsub.squeeze()
-                _, all_idx_tuples, _, out_idx, inp_idx = _broadcast_to(sqz_wsub.size(), sqz_osub.size())
+                _, all_idx_tuples, _, out_idx, inp_idx = broadcast_to(sqz_wsub.size(), sqz_osub.size())
                 # Re-add squeezed dimensions from original subset so that memlets match original arrays
                 osqueezed = [i for i in range(len(op_subset)) if i not in osqz]
                 wsqueezed = [i for i in range(len(wtarget_subset)) if i not in wsqz]
@@ -5409,7 +5409,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 shape = carr.shape
 
             if chunk_shape is not None:
-                chunk_shape, *_ = _broadcast_together(shape, chunk_shape)
+                chunk_shape, *_ = broadcast_together(shape, chunk_shape)
             else:
                 chunk_shape = tuple(shape)
 
