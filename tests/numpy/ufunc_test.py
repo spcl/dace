@@ -1288,6 +1288,16 @@ def test_ufunc_clip(A: dace.float32[10]):
     return np.clip(A, 0.2, 0.5)
 
 
+@compare_numpy_output()
+def test_ufunc_clip_min(A: dace.float32[10]):
+    return np.clip(A, 0.2, None)
+
+
+@compare_numpy_output()
+def test_ufunc_clip_max(A: dace.float32[10]):
+    return np.clip(A, None, a_max=0.5)
+
+
 if __name__ == "__main__":
     test_ufunc_add_ff()
     test_ufunc_subtract_ff()
@@ -1523,3 +1533,5 @@ if __name__ == "__main__":
     test_ufunc_trunc_f()
     test_ufunc_trunc_u()
     test_ufunc_clip()
+    test_ufunc_clip_min()
+    test_ufunc_clip_max()
