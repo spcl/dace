@@ -1184,44 +1184,43 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     if(nodedesc.is_hbm_interleaved):
                         print(f"hbm_split_scheme = {nodedesc.hbm_split_scheme[0]} {nodedesc.hbm_split_scheme[1]}")
                         print(f"hbm_placement_scheme = {nodedesc.hbm_placement_scheme[0]} {nodedesc.hbm_placement_scheme[1]} {nodedesc.hbm_placement_scheme[2]} ")
-                        row_length = nodedesc.shape[0]
-                        col_length = nodedesc.shape[1]
+                        hbm_width = nodedesc.shape[1]
+                        hbm_height = nodedesc.shape[0]
                         row_start = s[0][0]
                         col_start = s[1][0]
-                        row_split = nodedesc.hbm_split_scheme[0]
-                        col_split = nodedesc.hbm_split_scheme[1]
+                        height_split = nodedesc.hbm_split_scheme[0]
+                        width_split = nodedesc.hbm_split_scheme[1]
                         channel_start = nodedesc.hbm_placement_scheme[0]
                         channel_end = nodedesc.hbm_placement_scheme[1]
                         channel_stride = nodedesc.hbm_placement_scheme[2]
-                        callsite_stream.write(f"int tile_height = {row_length}/{row_split};")
-                        callsite_stream.write(f"int tile_width = {col_length}/{col_split};")
-                        callsite_stream.write(f"int row_start = {row_start};")
-                        callsite_stream.write(f"int col_start = {col_start};")
-                        for i in range(row_split):
-                            for j in range(col_split):
-                                callsite_stream.write(f"int row_start_{i}_{j} = {i}*tile_height;")
-                                callsite_stream.write(f"int col_start_{i}_{j} = {j}*tile_width;")
-                        
-                        for i in range(row_split):
-                            for j in range(col_split):
-                                callsite_stream.write(
-                                    f"if ((row_start) >= row_start_{i}_{j} && row_start < (row_start_{i}_{j} + tile_height) && "
-                                    f"col_start >= col_start_{i}_{j} && col_start < (col_start_{i}_{j} + tile_width)) {{\n"
-                                )
-                                callsite_stream.write(f"int tile_index = {i}*{col_split} + {j};\n")
-                                callsite_stream.write("}\n")
-
-                        callsite_stream.write(f"int channel_id = {channel_start} + tile_index * {channel_stride};")
-                        funcname = "flex_dma_async_2d"
+                        num_channels = channel_end - channel_start + 1
+                        block_width = length_1
+                        block_height = length_0
+                        callsite_stream.write(f"const int tile_width = {hbm_width}/{width_split};")
+                        callsite_stream.write(f"const int tile_height = {hbm_height}/{height_split};")
+                        callsite_stream.write(f"const int row_start = {row_start};")
+                        callsite_stream.write(f"const int col_start = {col_start};")
+                        callsite_stream.write(f"const int tile_row_index = row_start/tile_height;")
+                        callsite_stream.write(f"const int tile_col_index = col_start/tile_width;")
+                        callsite_stream.write(f"const int tile_row_offset = row_start%tile_height;")
+                        callsite_stream.write(f"const int tile_col_offset = col_start%tile_width;")
+                        callsite_stream.write(f"const int tile_index = tile_row_index*{width_split} + tile_col_index;")
+                        callsite_stream.write(f"const int channel_id = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
+                        callsite_stream.write(f"const int num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
+                        callsite_stream.write(f"const int num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
+                        callsite_stream.write(f"const int block_row_index = tile_row_offset/{block_height};")
+                        callsite_stream.write(f"const int block_col_index = tile_col_offset/{block_width};")
+                        callsite_stream.write(f"const int block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
+                        callsite_stream.write(f"const int total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
+                        callsite_stream.write(f"const int block_addr = {src_name} + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
+                        funcname = "flex_dma_async_1d"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
-                                args=', '.join([f'local({dst_expr})'] + 
-                                            [f'hbm_addr({src_expr} + channel_id * ARCH_HBM_NODE_ADDR_SPACE)'] + 
-                                            [f'{length_1}*{data_size}'] +
-                                            [f'{dst_strides[0]}*{data_size}'] +
-                                            [f'tile_width*{data_size}'] +
-                                            [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
+                                args=', '.join([f'local({dst_expr})']+ 
+                                            [f'hbm_addr(block_addr)'] + 
+                                            [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
                         )
+
                     else:
                         funcname = "flex_dma_async_2d"
                         callsite_stream.write(('    {func}({args});').format(
@@ -1270,6 +1269,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     src_storage == dtypes.StorageType.SoftHier_TCDM
                     and dst_storage == dtypes.StorageType.SoftHier_HBM
                 ):
+                    s = subsets.Indices(memlet.dst_subset)
                     callsite_stream.write(
                         "// SoftHier_TCDM -> SoftHier_HBM"
                     )
@@ -1277,16 +1277,59 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         "if(flex_is_dm_core())"
                     )
                     callsite_stream.write("{", cfg, state_id, src_node)
-                    funcname = "flex_dma_async_2d_dummy"
-                    callsite_stream.write(('    {func}({args});').format(
-                            func=funcname,
-                            args=', '.join([f'hbm_addr({dst_expr})'] + 
-                                           [f'local({src_expr})'] + 
-                                           [f'{length_1}*{data_size}'] +
-                                           [f'{dst_strides[0]}*{data_size}'] +
-                                           [f'{src_strides[0]}*{data_size}'] +
-                                           [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
-                    )
+                    if(nodedesc.is_hbm_interleaved):
+                        print(f"hbm_split_scheme = {nodedesc.hbm_split_scheme[0]} {nodedesc.hbm_split_scheme[1]}")
+                        print(f"hbm_placement_scheme = {nodedesc.hbm_placement_scheme[0]} {nodedesc.hbm_placement_scheme[1]} {nodedesc.hbm_placement_scheme[2]} ")
+                        hbm_width = nodedesc.shape[1]
+                        hbm_height = nodedesc.shape[0]
+                        row_start = s[0][0]
+                        col_start = s[1][0]
+                        height_split = nodedesc.hbm_split_scheme[0]
+                        width_split = nodedesc.hbm_split_scheme[1]
+                        channel_start = nodedesc.hbm_placement_scheme[0]
+                        channel_end = nodedesc.hbm_placement_scheme[1]
+                        channel_stride = nodedesc.hbm_placement_scheme[2]
+                        num_channels = channel_end - channel_start + 1
+                        block_width = length_1
+                        block_height = length_0
+                        callsite_stream.write(f"const int tile_width = {hbm_width}/{width_split};")
+                        callsite_stream.write(f"const int tile_height = {hbm_height}/{height_split};")
+                        callsite_stream.write(f"const int row_start = {row_start};")
+                        callsite_stream.write(f"const int col_start = {col_start};")
+                        callsite_stream.write(f"const int tile_row_index = row_start/tile_height;")
+                        callsite_stream.write(f"const int tile_col_index = col_start/tile_width;")
+                        callsite_stream.write(f"const int tile_row_offset = row_start%tile_height;")
+                        callsite_stream.write(f"const int tile_col_offset = col_start%tile_width;")
+                        callsite_stream.write(f"const int tile_index = tile_row_index*{width_split} + tile_col_index;")
+                        callsite_stream.write(f"const int channel_id = {channel_start} + (tile_index % {num_channels}) * {channel_stride};")
+                        callsite_stream.write(f"const int num_blocks_per_tile = (tile_height/{block_height}) * (tile_width/{block_width});")
+                        callsite_stream.write(f"const int num_blocks_in_previous_tiles_in_channel = (tile_index / {num_channels}) * num_blocks_per_tile;")
+                        callsite_stream.write(f"const int block_row_index = tile_row_offset/{block_height};")
+                        callsite_stream.write(f"const int block_col_index = tile_col_offset/{block_width};")
+                        callsite_stream.write(f"const int block_index = block_row_index * (tile_width/{block_width}) + block_col_index;")
+                        callsite_stream.write(f"const int total_block_index = num_blocks_in_previous_tiles_in_channel + block_index;")
+                        callsite_stream.write(f"const int block_addr = {dst_name} + channel_id * ARCH_HBM_NODE_ADDR_SPACE + total_block_index * {block_height} * {block_width} * {data_size};")
+                        funcname = "flex_dma_async_1d"
+                        callsite_stream.write(('    {func}({args});').format(
+                                func=funcname,
+                                args=', '.join( 
+                                            [f'hbm_addr(block_addr)'] + 
+                                            [f'local({src_expr})']+
+                                            [f'{block_height}*{block_width}*{data_size}'])), cfg, state_id, [src_node, dst_node]
+                                )
+                        if is_sync:
+                            callsite_stream.write("flex_dma_async_wait_all();")
+                    else:
+                        funcname = "flex_dma_async_2d_dummy"
+                        callsite_stream.write(('    {func}({args});').format(
+                                func=funcname,
+                                args=', '.join([f'hbm_addr({dst_expr})'] + 
+                                            [f'local({src_expr})'] + 
+                                            [f'{length_1}*{data_size}'] +
+                                            [f'{dst_strides[0]}*{data_size}'] +
+                                            [f'{src_strides[0]}*{data_size}'] +
+                                            [f'{length_0}'])), cfg, state_id, [src_node, dst_node]
+                        )
                     # if is_sync:
                     #     callsite_stream.write("flex_dma_async_wait_all();")
                     callsite_stream.write("}", cfg, state_id, src_node)
@@ -1638,6 +1681,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         kernel_args_typed = [f'uint32_t {k}'
                              for k, v in prototype_kernel_args.items()]
+        
+        kernel_device_args_typed = []
+        for k, v in prototype_kernel_args.items():
+            kernel_device_args_typed.append(f'const uint32_t {k}')
+
+                
         # print("Kernel Args Typed: ", kernel_args_typed)
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, cfg, dfg_scope, state_id, scope_entry.map, kernel_name, grid_dims, block_dims,
@@ -1665,7 +1714,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Write kernel prototype
         self._localcode.write(
             'void %s(%s) {\n' %
-            (kernel_name, ', '.join(kernel_args_typed)), sdfg, state_id, node)
+            (kernel_name, ', '.join(kernel_device_args_typed)), sdfg, state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)

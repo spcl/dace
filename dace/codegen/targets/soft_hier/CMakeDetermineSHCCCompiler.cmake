@@ -19,7 +19,7 @@ if(SHCC_COMPILER)
     set(CMAKE_SHCC_COMPILER "${SHCC_COMPILER}" CACHE FILEPATH "SHCC compiler path")
     set(CMAKE_SHCC_COMPILER_ENV_VAR "SHCC" CACHE INTERNAL "Environment variable for SHCC compiler")
     set(CMAKE_SHCC_COMPILER_WORKS TRUE CACHE INTERNAL "Flag indicating that SHCC compiler works")
-    set(SOFTHIER_INSTALL_PATH /usr/scratch/badile111/dace4softhier/dace_soft_hier/dace/runtime/include/dace/soft_hier/runtime CACHE PATH "Path to SoftHier installation")
+    set(SOFTHIER_INSTALL_PATH /usr/scratch/badile111/dace4softhier/gvsoc/soft_hier/flex_cluster_sdk/runtime CACHE PATH "Path to SoftHier installation")
     set(SOFTHIER_SW_BUILD_PATH /usr/scratch/badile111/dace4softhier/gvsoc/sw_build CACHE PATH "Path to SoftHier software build directory")
     # Log a message to indicate the SHCC compiler was found
     message(STATUS "SHCC compiler found at: ${SHCC_COMPILER}")

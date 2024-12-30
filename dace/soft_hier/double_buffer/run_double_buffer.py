@@ -503,10 +503,10 @@ def _my_gen_matmul_bd_sdfg_innerK(hardware_matmul_mnk: typing.Tuple,
 if __name__ == "__main__":
     # create input arguments
     parser = argparse.ArgumentParser(description="Run matrix multiplication with specified dimensions.")
-    parser.add_argument("--K", type=int, default=1024, help="Dimension K")
-    parser.add_argument("--M", type=int, default=1024, help="Dimension M")
-    parser.add_argument("--N", type=int, default=1024, help="Dimension N")
-    parser.add_argument("--hardware_matmul_mnk", type=int, nargs=3, default=(64, 64, 64), help="Hardware matmul dimensions (M, N, K)")
+    parser.add_argument("--K", type=int, default=8192, help="Dimension K")
+    parser.add_argument("--M", type=int, default=8192, help="Dimension M")
+    parser.add_argument("--N", type=int, default=8192, help="Dimension N")
+    parser.add_argument("--hardware_matmul_mnk", type=int, nargs=3, default=(256, 256, 256), help="Hardware matmul dimensions (M, N, K)")
     parser.add_argument("--thread_group_dims", type=int, nargs=2, default=(4, 4), help="Thread group dimensions (gM, gN)")
 
     args = parser.parse_args()
@@ -533,23 +533,23 @@ if __name__ == "__main__":
     A_host = np.ones((M, K), dtype=np.float16)
     B_host = np.ones((K, N), dtype=np.float16)
     # random add some zeros to A and B
-    for i in range(M):
-        for j in range(K):
-            if np.random.rand() < 0.5:
-                A_host[i, j] += 1
-    for i in range(K):
-        for j in range(N):
-            if np.random.rand() < 0.5:
-                B_host[i, j] = 1
+    # for i in range(M):
+    #     for j in range(K):
+    #         if np.random.rand() < 0.5:
+    #             A_host[i, j] += 1
+    # for i in range(K):
+    #     for j in range(N):
+    #         if np.random.rand() < 0.5:
+    #             B_host[i, j] = 1
 
-    for i in range(M):
-        for j in range(K):
-            if np.random.rand() < 0.1:
-                A_host[i, j] += 4
-    for i in range(K):
-        for j in range(N):
-            if np.random.rand() < 0.1:
-                B_host[i, j] += 4
+    # for i in range(M):
+    #     for j in range(K):
+    #         if np.random.rand() < 0.1:
+    #             A_host[i, j] += 4
+    # for i in range(K):
+    #     for j in range(N):
+    #         if np.random.rand() < 0.1:
+    #             B_host[i, j] += 4
     C_host = np.zeros((M, N), dtype=np.float16)
 
     A_address = 64 + start_address

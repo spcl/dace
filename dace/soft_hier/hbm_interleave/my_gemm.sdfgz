@@ -17,8 +17,8 @@
           ],
           "is_hbm_interleaved": true,
           "hbm_split_scheme": [
-            "2",
-            "2"
+            "4",
+            "8"
           ],
           "hbm_placement_scheme": [
             "0",
@@ -192,8 +192,8 @@
         "language": "CPP"
       }
     },
-    "guid": "3ab62fef-5272-4cb7-981b-4f8186237e30",
-    "hash": "c27d9fb3386f1e76f624dcec165d4c545a6d444654793c0ec9182c84097d058b"
+    "guid": "3f2b31fa-5127-4b5c-ad2f-a87f336d38ba",
+    "hash": "2c1779533a9ca3d75d39fa9c26c98b1b2c3279f8e5376898b5f461296c370f2c"
   },
   "nodes": [
     {
@@ -259,11 +259,11 @@
             "schedule": "SoftHier_Device",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 32,
-              "end_line": 32,
+              "start_line": 48,
+              "end_line": 48,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1544449/1724677732.py"
+              "filename": "/tmp/ipykernel_3640573/4212301542.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -273,7 +273,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "feb483a0-f28e-404e-a1e8-754f379e1206"
+            "guid": "ae9fff31-cb61-4ed9-a7f2-187aebaeedf7"
           },
           "id": 0,
           "scope_entry": null,
@@ -289,7 +289,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "07f784a2-c3dd-4b96-b334-f31b228641ee"
+            "guid": "041baefc-cac5-4614-bd60-08bfd7e4f7f9"
           },
           "id": 1,
           "scope_entry": "0",
@@ -301,14 +301,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 42,
-              "end_line": 42,
+              "start_line": 58,
+              "end_line": 58,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1544449/1724677732.py"
+              "filename": "/tmp/ipykernel_3640573/4212301542.py"
             },
             "data": "A",
-            "guid": "1c4e71af-936d-49cf-a89c-b48b23fe543a"
+            "guid": "0fd960da-85e6-4ebf-9253-c1d92b97711b"
           },
           "id": 2,
           "scope_entry": null,
@@ -320,14 +320,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 42,
-              "end_line": 42,
+              "start_line": 58,
+              "end_line": 58,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1544449/1724677732.py"
+              "filename": "/tmp/ipykernel_3640573/4212301542.py"
             },
             "data": "B",
-            "guid": "42bf1801-dd3f-4fb4-980a-429963c12e12"
+            "guid": "a114e51c-a7d0-4f0b-9bee-44d160ef0d69"
           },
           "id": 3,
           "scope_entry": null,
@@ -339,14 +339,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 49,
-              "end_line": 49,
+              "start_line": 65,
+              "end_line": 65,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1544449/1724677732.py"
+              "filename": "/tmp/ipykernel_3640573/4212301542.py"
             },
             "data": "C",
-            "guid": "7b32bf82-5f62-46bf-a252-cdd1ad907d0e"
+            "guid": "a93d1999-f634-4f2b-a51b-1350b1fb4859"
           },
           "id": 4,
           "scope_entry": null,
@@ -381,11 +381,11 @@
             "schedule": "SoftHier_Cluster",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 52,
-              "end_line": 52,
+              "start_line": 68,
+              "end_line": 68,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1544449/1724677732.py"
+              "filename": "/tmp/ipykernel_3640573/4212301542.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -395,7 +395,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "922fc893-330d-462f-8d7a-9c3d90efd071"
+            "guid": "9959937e-f3ae-47af-a42d-490a67dc92d5"
           },
           "id": 5,
           "scope_entry": "0",
@@ -411,7 +411,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "0fc799c2-1cd7-4988-b52d-1acae68caac0"
+            "guid": "ee0f1a09-e921-4381-8fbc-67251a9a9d6c"
           },
           "id": 6,
           "scope_entry": "5",
@@ -446,11 +446,11 @@
             "schedule": "SoftHier_Sequential",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 76,
-              "end_line": 76,
+              "start_line": 92,
+              "end_line": 92,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1544449/1724677732.py"
+              "filename": "/tmp/ipykernel_3640573/4212301542.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -460,7 +460,7 @@
               "OUT_A": null,
               "OUT_B": null
             },
-            "guid": "7f7ccf2b-74ac-4172-8a4d-4324a54e385a"
+            "guid": "c17d87d0-e29a-4d80-abc8-50e1865102ac"
           },
           "id": 7,
           "scope_entry": "5",
@@ -476,7 +476,7 @@
             "out_connectors": {
               "OUT_C": null
             },
-            "guid": "7d5f1af9-b679-4bda-bea3-17ea9597b0a6"
+            "guid": "d70a62a7-9623-4b93-87a5-19add6c12690"
           },
           "id": 8,
           "scope_entry": "7",
@@ -504,11 +504,11 @@
             "schedule": "SoftHier_Sequential",
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 100,
-              "end_line": 100,
+              "start_line": 116,
+              "end_line": 116,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1544449/1724677732.py"
+              "filename": "/tmp/ipykernel_3640573/4212301542.py"
             },
             "in_connectors": {
               "IN_A": null,
@@ -520,7 +520,7 @@
               "OUT_B": null,
               "OUT_accumulator": null
             },
-            "guid": "98772334-b759-4845-ba40-feedf2f5a909"
+            "guid": "b1bd4b8f-2944-40ea-ab51-059de5190529"
           },
           "id": 9,
           "scope_entry": "7",
@@ -536,7 +536,7 @@
             "out_connectors": {
               "OUT_accumulator": null
             },
-            "guid": "3f973682-78aa-41e0-bea9-9e6f2956e13f"
+            "guid": "d68d7bed-2bbb-4149-891a-414ee940a8a8"
           },
           "id": 10,
           "scope_entry": "9",
@@ -549,14 +549,14 @@
             "setzero": true,
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 106,
-              "end_line": 106,
+              "start_line": 122,
+              "end_line": 122,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1544449/1724677732.py"
+              "filename": "/tmp/ipykernel_3640573/4212301542.py"
             },
             "data": "accumulator",
-            "guid": "cd66c0da-35e5-49af-ab07-ce712e4d557a"
+            "guid": "e0b88d22-4f6d-4afa-a0e7-62e633070547"
           },
           "id": 11,
           "scope_entry": "7",
@@ -568,14 +568,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 132,
-              "end_line": 132,
+              "start_line": 148,
+              "end_line": 148,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1544449/1724677732.py"
+              "filename": "/tmp/ipykernel_3640573/4212301542.py"
             },
             "data": "local_A",
-            "guid": "1484fa95-823a-435e-8229-00f82783b79c"
+            "guid": "c01cc835-595a-4ab4-a37e-cb4fdf09e3b0"
           },
           "id": 12,
           "scope_entry": "9",
@@ -587,14 +587,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 132,
-              "end_line": 132,
+              "start_line": 148,
+              "end_line": 148,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1544449/1724677732.py"
+              "filename": "/tmp/ipykernel_3640573/4212301542.py"
             },
             "data": "local_B",
-            "guid": "08ce811d-08a6-448c-a432-871b05702d5a"
+            "guid": "01e785f8-0a67-49d5-823d-2e1b10fb9284"
           },
           "id": 13,
           "scope_entry": "9",
@@ -610,11 +610,11 @@
             },
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 143,
-              "end_line": 143,
+              "start_line": 159,
+              "end_line": 159,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1544449/1724677732.py"
+              "filename": "/tmp/ipykernel_3640573/4212301542.py"
             },
             "label": "mmad_redmule",
             "in_connectors": {
@@ -625,7 +625,7 @@
             "out_connectors": {
               "_out_accumulator": null
             },
-            "guid": "094c4511-11ba-4f15-b11c-61683d44a967"
+            "guid": "f106566f-622f-4823-abee-e10d7fbba658"
           },
           "id": 14,
           "scope_entry": "9",
@@ -637,14 +637,14 @@
           "attributes": {
             "debuginfo": {
               "type": "DebugInfo",
-              "start_line": 172,
-              "end_line": 172,
+              "start_line": 188,
+              "end_line": 188,
               "start_column": 0,
               "end_column": 0,
-              "filename": "/tmp/ipykernel_1544449/1724677732.py"
+              "filename": "/tmp/ipykernel_3640573/4212301542.py"
             },
             "data": "accumulator",
-            "guid": "ff6c7357-c6af-476d-9cc6-2a6a0ff3158f"
+            "guid": "a6ae2928-51db-4537-97e3-843fd890ec26"
           },
           "id": 15,
           "scope_entry": "7",
@@ -660,7 +660,7 @@
               "attributes": {
                 "volume": "1",
                 "debuginfo": null,
-                "guid": "d0eee124-f1ae-4d79-918c-6a2cdf8917d9",
+                "guid": "738ff0a5-f769-4000-91f7-6d3da756c2a6",
                 "src_subset": null,
                 "dst_subset": null,
                 "is_data_src": false,
@@ -699,7 +699,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "7c70b888-1770-4306-84cd-3df954f9c43b",
+                "guid": "762128a6-1d0e-4261-b55e-71a7c7db58d3",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -754,7 +754,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "37f05296-7e36-40ce-afe9-76306bfa2e23",
+                "guid": "5409637c-fc4a-4b5d-918e-626e77bcfdd3",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -809,7 +809,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "8c42cb44-a9b2-4693-b057-a24d143ee5e5",
+                "guid": "503db03a-02c8-4254-9d72-784bae774848",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -870,7 +870,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "332fffd4-0478-4846-8482-8bfa883c5438",
+                "guid": "a0406416-80d5-4ec9-a15e-e4a97c21f26a",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -931,7 +931,7 @@
                 },
                 "data": "local_A",
                 "debuginfo": null,
-                "guid": "66d5fe7f-f288-4e9e-86d0-85da37646f28",
+                "guid": "b9f99994-7b6f-46d6-be78-fb4b78a78772",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -986,7 +986,7 @@
                 },
                 "data": "local_B",
                 "debuginfo": null,
-                "guid": "ce13670d-c9fd-4129-819a-23a1c0f5e7ec",
+                "guid": "819e5222-0cca-4905-ab7f-2b08a123016c",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1041,7 +1041,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "c32d2d0b-e58a-45ee-aff5-9f11cb75a768",
+                "guid": "81eecdda-c185-46ef-9d46-ee345a1b3dba",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1096,7 +1096,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "28e0b562-5d7f-4ba4-a11a-f64c7d0af0fc",
+                "guid": "3faf322e-8068-4a02-9ed8-84d0fd42564b",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1151,7 +1151,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "74df42de-0f32-4bd7-aaa4-cf14190cbdb3",
+                "guid": "1fc19faa-27ee-4aa5-9601-7433e539e3a1",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1206,7 +1206,7 @@
                 },
                 "data": "A",
                 "debuginfo": null,
-                "guid": "5c0a27cf-edf6-4572-9b67-66322f191eba",
+                "guid": "87477875-2dec-4976-8d80-64888e172e73",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1261,7 +1261,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "3ef627ec-edb5-44a6-9dac-16670b34e3b6",
+                "guid": "24893f7c-dd33-40c5-aaf7-c434438a736d",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1316,7 +1316,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "f911e3c3-8edd-4fd7-b821-d8b0dc3dcda9",
+                "guid": "4dad203e-7c7e-414c-8bc9-e2efd1ca2edb",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1371,7 +1371,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "2b04eb18-5cd6-4aba-ba8d-96df2bde9198",
+                "guid": "327d395d-d27a-4c25-adcf-673071c92fb7",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1426,7 +1426,7 @@
                 },
                 "data": "B",
                 "debuginfo": null,
-                "guid": "f6e3571c-f8fd-4b1e-b222-c3f1b0748043",
+                "guid": "c65e3805-f226-44bd-82dc-683fc89e7853",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1481,7 +1481,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "c26daa96-e3f4-416a-ab79-fbf4f182e47c",
+                "guid": "a10aa693-a7f1-4eaf-8713-b891a7eac2b3",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1536,7 +1536,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "5a4b4482-9df7-4c4a-8605-51a0bb80d78d",
+                "guid": "b2e49863-0bb1-43b5-b9c5-127e6d042393",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1591,7 +1591,7 @@
                 },
                 "data": "C",
                 "debuginfo": null,
-                "guid": "4a009ceb-481c-4ae9-b172-f7bc38696b52",
+                "guid": "b23376f8-bc34-4fc7-b9f9-82a9f54febe2",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1652,7 +1652,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "6bdb15a1-3071-4467-9b78-8b697251da20",
+                "guid": "e6a18f63-7cba-4a01-bd42-459387739f62",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1719,7 +1719,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "25386b75-e490-4cb1-9e1e-c053947f5bd9",
+                "guid": "a33fd9d7-cbe2-47aa-8562-dcb934920bde",
                 "src_subset": {
                   "type": "Range",
                   "ranges": [
@@ -1786,7 +1786,7 @@
                 },
                 "data": "accumulator",
                 "debuginfo": null,
-                "guid": "b156300f-5e35-4af5-91b2-b10a565063bb",
+                "guid": "09111e38-6fc5-4b0b-92c0-ed2df5190032",
                 "src_subset": null,
                 "dst_subset": {
                   "type": "Range",
@@ -1823,7 +1823,7 @@
         }
       ],
       "attributes": {
-        "guid": "f0446b03-f19c-45b2-93e4-c1ab88150325"
+        "guid": "baf5f0c1-909b-404d-ae83-0ffebbfd8d51"
       }
     }
   ],

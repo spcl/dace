@@ -303,10 +303,10 @@ def _my_gen_matmul_sdfg(hardware_matmul_mnk: typing.Tuple,
 if __name__ == "__main__":
     # create input arguments
     parser = argparse.ArgumentParser(description="Run matrix multiplication with specified dimensions.")
-    parser.add_argument("--K", type=int, default=1024, help="Dimension K")
-    parser.add_argument("--M", type=int, default=1024, help="Dimension M")
-    parser.add_argument("--N", type=int, default=1024, help="Dimension N")
-    parser.add_argument("--hardware_matmul_mnk", type=int, nargs=3, default=(64, 64, 64), help="Hardware matmul dimensions (M, N, K)")
+    parser.add_argument("--K", type=int, default=4096*2, help="Dimension K")
+    parser.add_argument("--M", type=int, default=4096*2, help="Dimension M")
+    parser.add_argument("--N", type=int, default=4096*2, help="Dimension N")
+    parser.add_argument("--hardware_matmul_mnk", type=int, nargs=3, default=(256, 256, 256), help="Hardware matmul dimensions (M, N, K)")
     parser.add_argument("--thread_group_dims", type=int, nargs=2, default=(4, 4), help="Thread group dimensions (gM, gN)")
 
     args = parser.parse_args()
