@@ -288,7 +288,6 @@ def test_out_index_intarr_aug_bcast():
 
     assert np.allclose(A, ref)
 
-
 def test_out_index_intarr_multidim():
 
     @dace.program
@@ -299,6 +298,20 @@ def test_out_index_intarr_multidim():
     indices = [1, 10, 15]
     ref = np.copy(A)
     ref[1:2, indices, 3:4] = 2
+    indexing_test(A, indices, M=3)
+
+    assert np.allclose(A, ref)
+
+def test_out_index_intarr_multidim_range():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, N, N], indices: dace.int32[M]):
+        A[1:2, indices, 3:10] = 2
+
+    A = np.random.rand(20, 20, 20)
+    indices = [1, 10, 15]
+    ref = np.copy(A)
+    ref[1:2, indices, 3:10] = 2
     indexing_test(A, indices, M=3)
 
     assert np.allclose(A, ref)
@@ -425,6 +438,24 @@ def test_combining_basic_and_advanced_indexing():
     assert np.allclose(res, ref)
 
 
+def test_combining_basic_and_advanced_indexing_write():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, N, N, N, N, N, N], indices: dace.int32[3, 3], indices2: dace.int32[3, 3, 3]):
+        A[:5, indices, indices2, ..., 1:3, 4] = 2
+
+    n = 6
+    A = np.random.rand(n, n, n, n, n, n, n)
+    indices = np.random.randint(0, n, size=(3, 3))
+    indices2 = np.random.randint(0, n, size=(3, 3, 3))
+    ref = np.copy(A)
+    A[:5, indices, indices2, ..., 1:3, 4] = 2
+
+    # Advanced indexing dimensions should be prepended to the shape
+    res = indexing_test(A, indices, indices2)
+
+    assert np.allclose(res, ref)
+
 if __name__ == '__main__':
     test_flat()
     test_flat_noncontiguous()
@@ -447,6 +478,7 @@ if __name__ == '__main__':
     test_out_index_intarr_aug()
     test_out_index_intarr_aug_bcast()
     test_out_index_intarr_multidim()
+    test_out_index_intarr_multidim_range()
     test_advanced_indexing_syntax(False)
     test_advanced_indexing_syntax(True)
     test_multidim_tuple_index(False)
@@ -455,3 +487,4 @@ if __name__ == '__main__':
     test_multidim_tuple_multidim_index()
     test_advanced_index_broadcasting()
     test_combining_basic_and_advanced_indexing()
+    test_combining_basic_and_advanced_indexing_write()
