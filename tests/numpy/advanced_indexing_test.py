@@ -46,6 +46,17 @@ def test_ellipsis():
     assert np.allclose(A[1:5, ..., 0], res)
 
 
+def test_ellipsis_and_newaxis():
+
+    @dace.program
+    def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
+        return A[None, 1:5, ..., 0]
+
+    A = np.random.rand(5, 5, 5, 5, 5)
+    res = indexing_test(A)
+    assert np.allclose(A[None, 1:5, ..., 0], res)
+
+
 def test_aug_implicit():
 
     @dace.program
@@ -508,6 +519,7 @@ if __name__ == '__main__':
     test_flat()
     test_flat_noncontiguous()
     test_ellipsis()
+    test_ellipsis_and_newaxis()
     test_aug_implicit()
     test_ellipsis_aug()
     test_newaxis()
