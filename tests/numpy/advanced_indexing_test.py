@@ -519,7 +519,7 @@ def test_combining_basic_and_advanced_indexing_with_newaxes_2():
 
     # Advanced indexing dimensions should be prepended to the shape
     sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (1, 5, 3, 3, 3, N, N, 2, 1)
+    assert tuple(sdfg.arrays['__return'].shape) == (1, 5, 3, 3, 3, N, N, N, 2, 1)
 
     res = indexing_test(A, indices, indices2)
 
