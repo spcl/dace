@@ -288,6 +288,7 @@ def test_out_index_intarr_aug_bcast():
 
     assert np.allclose(A, ref)
 
+
 def test_out_index_intarr_multidim():
 
     @dace.program
@@ -301,6 +302,7 @@ def test_out_index_intarr_multidim():
     indexing_test(A, indices, M=3)
 
     assert np.allclose(A, ref)
+
 
 def test_out_index_intarr_multidim_range():
 
@@ -383,20 +385,23 @@ def test_multidim_tuple_index_longer():
 
 
 def test_multidim_tuple_multidim_index():
+    with pytest.raises(SyntaxError, match='could not be broadcast together'):
 
-    @dace.program
-    def indexing_test(A: dace.float64[N, M, N]):
-        return A[:, (1, 2, 3, 4, 5, 7), (0, 1)]
+        @dace.program
+        def indexing_test(A: dace.float64[N, M, N]):
+            return A[:, (1, 2, 3, 4, 5, 7), (0, 1)]
 
-    sdfg = indexing_test.to_sdfg()
-    assert tuple(sdfg.arrays['__return'].shape) == (N, 6, 2)
+        indexing_test.to_sdfg()
 
-    A = np.random.rand(20, 10, 20)
-    ref = A[:, (1, 2, 3, 4, 5, 7), (0, 1)]
 
-    res = indexing_test(A)
+def test_multidim_tuple_multidim_index_write():
+    with pytest.raises(SyntaxError, match='could not be broadcast together'):
 
-    assert np.allclose(res, ref)
+        @dace.program
+        def indexing_test(A: dace.float64[N, M, N]):
+            A[:, (1, 2, 3, 4, 5, 7), (0, 1)] = 2
+
+        indexing_test.to_sdfg()
 
 
 def test_advanced_index_broadcasting():
@@ -456,6 +461,49 @@ def test_combining_basic_and_advanced_indexing_write():
 
     assert np.allclose(res, ref)
 
+
+def test_combining_basic_and_advanced_indexing_with_newaxes():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, N, N, N, N, N, N], indices: dace.int32[3, 3], indices2: dace.int32[3, 3, 3]):
+        return A[None, :5, indices, indices2, ..., 1:3, 4, np.newaxis]
+
+    n = 6
+    A = np.random.rand(n, n, n, n, n, n, n)
+    indices = np.random.randint(0, n, size=(3, 3))
+    indices2 = np.random.randint(0, n, size=(3, 3, 3))
+    ref = A[None, :5, indices, indices2, ..., 1:3, 4, np.newaxis]
+
+    # Advanced indexing dimensions should be prepended to the shape
+    sdfg = indexing_test.to_sdfg()
+    assert tuple(sdfg.arrays['__return'].shape) == (3, 3, 3, 1, 5, N, N, 2, 1)
+
+    res = indexing_test(A, indices, indices2)
+
+    assert np.allclose(res, ref)
+
+
+def test_combining_basic_and_advanced_indexing_with_newaxes_2():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, N, N, N, N, N, N], indices: dace.int32[3, 3], indices2: dace.int32[3, 3, 3]):
+        return A[None, :5, indices, indices2, ..., 1:3, np.newaxis]
+
+    n = 6
+    A = np.random.rand(n, n, n, n, n, n, n)
+    indices = np.random.randint(0, n, size=(3, 3))
+    indices2 = np.random.randint(0, n, size=(3, 3, 3))
+    ref = A[None, :5, indices, indices2, ..., 1:3, np.newaxis]
+
+    # Advanced indexing dimensions should be prepended to the shape
+    sdfg = indexing_test.to_sdfg()
+    assert tuple(sdfg.arrays['__return'].shape) == (1, 5, 3, 3, 3, N, N, 2, 1)
+
+    res = indexing_test(A, indices, indices2)
+
+    assert np.allclose(res, ref)
+
+
 if __name__ == '__main__':
     test_flat()
     test_flat_noncontiguous()
@@ -485,6 +533,9 @@ if __name__ == '__main__':
     test_multidim_tuple_index(True)
     test_multidim_tuple_index_longer()
     test_multidim_tuple_multidim_index()
+    test_multidim_tuple_multidim_index_write()
     test_advanced_index_broadcasting()
     test_combining_basic_and_advanced_indexing()
     test_combining_basic_and_advanced_indexing_write()
+    test_combining_basic_and_advanced_indexing_with_newaxes()
+    test_combining_basic_and_advanced_indexing_with_newaxes_2()
