@@ -3439,6 +3439,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 defined_arrays = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.scope_arrays, **self.defined})
                 expr: MemletExpr = ParseMemlet(self, defined_arrays, true_target, nslice)
+                
+                # TODO: Use _create_output_shape_from_advanced_indexing
                 rng = expr.subset
                 if isinstance(rng, subsets.Indices):
                     rng = subsets.Range.from_indices(rng)
@@ -5385,6 +5387,15 @@ class ProgramVisitor(ExtNodeVisitor):
             dim_position = 0
         else:
             dim_position = advanced_dims[0]
+
+        # Add new axes
+        for new_axis in expr.new_axes:
+            if prefix_dims:
+                output_shape.insert(new_axis + 1, 1)
+            else:
+                output_shape.insert(new_axis, 1)
+                if new_axis <= dim_position:
+                    dim_position += 1
 
         # Contract contiguous None dimensions that appear multiple times in a row
         output_shape = [
