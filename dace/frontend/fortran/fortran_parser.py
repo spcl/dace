@@ -1505,6 +1505,7 @@ class AST_translator:
                                     self.struct_view_count += 1
 
                         if isinstance(tmpvar, ast_internal_classes.Array_Subscript_Node):
+                            needs_extra_view = False
 
                             changed_indices = 0
                             for i in tmpvar.indices:
@@ -1527,16 +1528,18 @@ class AST_translator:
                                         shape.append("( "+ text_stop + ") - ( "+ text_start + ") ")
                                         mysize=mysize*sym.pystr_to_symbolic("( "+ text_stop + ") - ( "+ text_start + ") ")
                                         index_list.append(None)
+                                        needs_extra_view=True
                                         # raise NotImplementedError("Index in ParDecl should be ALL")
                                 else:
                                     text = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
                                                                      placeholders=self.placeholders,
                                                                      placeholders_offsets=self.placeholders_offsets,
                                                                      rename_dict=self.replace_names).write_code(i)
-                                    index_list.append(sym.pystr_to_symbolic(text))
+                                    index_list.append([sym.pystr_to_symbolic(text), sym.pystr_to_symbolic(text)])
                                     strides.pop(indices - changed_indices)
                                     offsets.pop(indices - changed_indices)
                                     changed_indices += 1
+                                    needs_extra_view = True
                                 indices = indices + 1
 
 
@@ -1633,6 +1636,61 @@ class AST_translator:
                                 # sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)
                             else:
 
+                                if needs_extra_view:
+                                    offsets_zero = []
+                                    for index in offsets:
+                                        offsets_zero.append(0)
+                                    
+                                    viewname, view = sdfg.add_view(last_view_name + "_view_" + str(self.views),
+                                                                shape,
+                                                                array.dtype,
+                                                                storage=array.storage,
+                                                                strides=strides,
+                                                                offset=offsets_zero)
+                                    from dace import subsets
+
+                                    all_indices = [None] * (len(array.shape) - len(index_list)) + index_list
+                                    if self.normalize_offsets:
+                                        subset = subsets.Range([(i[0] - 1, i[1] - 1, 1) if i is not None else (0, s - 1, 1)
+                                                                for i, s in zip(all_indices, array.shape)])
+                                    else:
+                                        subset = subsets.Range([(i[0], i[1], 1) if i is not None else (1, s, 1)
+                                                                for i, s in zip(all_indices, array.shape)])
+                                    smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
+
+                                    # memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
+                                    # memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
+                                    memlet = Memlet(f'{last_view_name}[{subset}]')
+                                    memlet2 = Memlet(f'{last_view_name}[{subset}]')
+                                    wv = None
+                                    rv = None
+                                    if local_name.name in read_names:
+                                        for i in substate_destinations:
+                                            if i.data == last_view_name:
+                                                re = i
+                                                already_there_1 = True
+                                                break
+                                        if not already_there_1:
+                                            re = substate.add_read(last_view_name)
+
+                                        
+                                        wv = substate.add_write(viewname)
+                                        substate.add_edge(re, None, wv, 'views', dpcp(memlet))
+                                    if local_name.name in write_names:
+                                        for i in substate_sources:
+                                            if i.data == last_view_name:
+                                                wr = i
+                                                already_there_3 = True
+                                                break
+                                        if not already_there_3:
+                                            wr = substate.add_write(last_view_name)
+                                        rv = substate.add_read(viewname)
+                                        
+                                        substate.add_edge(rv, 'views', wr, None, dpcp(memlet2))
+
+                                    self.views = self.views + 1
+                                    views.append([last_view_name, wv, rv, variables_in_call.index(variable_in_call)])
+
                                 new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
                                                    shape,
                                                    array.dtype,
@@ -1662,7 +1720,7 @@ class AST_translator:
                                                                               placeholders_offsets=self.placeholders_offsets,
                                                                               rename_dict=self.replace_names).write_code(
                                             stop)
-                                        symb_size = sym.pystr_to_symbolic(text_stop + " - ( " + text_start + " )")
+                                        symb_size = sym.pystr_to_symbolic(text_stop + " - ( " + text_start + " )+1")
                                         shape.append(symb_size)
                                         mysize = mysize * symb_size
                                         index_list.append(
@@ -1974,15 +2032,30 @@ class AST_translator:
             for elem in views:
                 if mapped_name == elem[0] and elem[3] == variables_in_call.index(i):
                     found = True
+                    recursive_view_check_done=False
+                    while not recursive_view_check_done:
+                        recursive_view_check_done=True
+                        for elem2 in views:
+                            if elem[1].label == elem2[0] and elem2[3] == variables_in_call.index(i):
+                                recursive_view_check_done=False
+                                elem = elem2
+                                
+                    #check variable type, if data ref, check lowest level array indices.
+                    tmp_var = i
+
+                    while isinstance(tmp_var, ast_internal_classes.Data_Ref_Node):
+                        tmp_var = tmp_var.part_ref
+                        
+                    memlet = ast_utils.generate_memlet_view(tmp_var, sdfg, self, self.normalize_offsets,mapped_name )
 
                     if local_name.name in write_names:
-                        memlet = subs.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[2].label].shape])
+                        #memlet = subs.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[2].label].shape])
                         substate.add_memlet_path(internal_sdfg,
                                                  elem[2],
                                                  src_conn=self.name_mapping[new_sdfg][local_name.name],
                                                  memlet=Memlet(expr=elem[2].label, subset=memlet))
                     if local_name.name in read_names:
-                        memlet = subs.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[1].label].shape])
+                        #memlet = subs.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[1].label].shape])
                         substate.add_memlet_path(elem[1],
                                                  internal_sdfg,
                                                  dst_conn=self.name_mapping[new_sdfg][local_name.name],
@@ -2094,9 +2167,9 @@ class AST_translator:
                     self.translate(i, new_sdfg)
                 self.translate(node.execution_part, new_sdfg)
                 #import copy
-                tmp_sdfg=copy.deepcopy(new_sdfg)
+                #tmp_sdfg=copy.deepcopy(new_sdfg)
                 new_sdfg.validate()
-                new_sdfg.simplify(verbose=True)
+                #new_sdfg.simplify(verbose=True)
 
         if self.multiple_sdfgs == True:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"

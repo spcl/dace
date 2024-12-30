@@ -18,7 +18,7 @@ from dace.transformation.passes.reference_reduction import ReferenceToView
 from dace.transformation.passes.lift_struct_views import LiftStructViews
 
 SIMPLIFY_PASSES = [
-    #InlineSDFGs,
+    InlineSDFGs,
     ScalarToSymbolPromotion,
     FuseStates,
     OptionalArrayInference,
@@ -27,7 +27,7 @@ SIMPLIFY_PASSES = [
     DeadStateElimination,
     RemoveUnusedSymbols,
     ReferenceToView,
-    #ArrayElimination,
+    ArrayElimination,
     ConsolidateEdges,
     LiftStructViews,
 ]

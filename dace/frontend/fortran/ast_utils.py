@@ -392,13 +392,18 @@ class TaskletWriter:
             return left + op + right
 
 
-def generate_memlet(op, top_sdfg, state, offset_normalization=False):
-    if state.name_mapping.get(top_sdfg).get(get_name(op)) is not None:
-        shape = top_sdfg.arrays[state.name_mapping[top_sdfg][get_name(op)]].shape
-    elif state.name_mapping.get(state.globalsdfg).get(get_name(op)) is not None:
-        shape = state.globalsdfg.arrays[state.name_mapping[state.globalsdfg][get_name(op)]].shape
+def generate_memlet(op, top_sdfg, state, offset_normalization=False,mapped_name=None):
+    if mapped_name is None:
+        if state.name_mapping.get(top_sdfg).get(get_name(op)) is not None:
+            shape = top_sdfg.arrays[state.name_mapping[top_sdfg][get_name(op)]].shape
+        elif state.name_mapping.get(state.globalsdfg).get(get_name(op)) is not None:
+            shape = state.globalsdfg.arrays[state.name_mapping[state.globalsdfg][get_name(op)]].shape
+        else:
+            raise NameError("Variable name not found: ", get_name(op))
     else:
-        raise NameError("Variable name not found: ", get_name(op))
+        
+        shape = top_sdfg.arrays[state.name_mapping[top_sdfg][mapped_name]].shape
+        
     indices = []
     if isinstance(op, ast_internal_classes.Array_Subscript_Node):
         for idx, i in enumerate(op.indices):
@@ -410,8 +415,8 @@ def generate_memlet(op, top_sdfg, state, offset_normalization=False):
                                        placeholders_offsets=state.placeholders_offsets)
                     text_start = tw.write_code(i.range[0])
                     text_end = tw.write_code(i.range[1])
-                    symb_start = sym.pystr_to_symbolic(text_start)
-                    symb_end = sym.pystr_to_symbolic(text_end)
+                    symb_start = sym.pystr_to_symbolic(text_start+"-1")
+                    symb_end = sym.pystr_to_symbolic(text_end+"-1")
                     indices.append([symb_start, symb_end])
             else:
                 tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders,
@@ -432,6 +437,54 @@ def generate_memlet(op, top_sdfg, state, offset_normalization=False):
         subset = subsets.Range([(i[0], i[1], 1) if i is not None else (1, s, 1) for i, s in zip(all_indices, shape)])
     return subset
 
+
+def generate_memlet_view(op, top_sdfg, state, offset_normalization=False,mapped_name=None):
+    if mapped_name is None:
+        if state.name_mapping.get(top_sdfg).get(get_name(op)) is not None:
+            shape = top_sdfg.arrays[state.name_mapping[top_sdfg][get_name(op)]].shape
+        elif state.name_mapping.get(state.globalsdfg).get(get_name(op)) is not None:
+            shape = state.globalsdfg.arrays[state.name_mapping[state.globalsdfg][get_name(op)]].shape
+        else:
+            raise NameError("Variable name not found: ", get_name(op))
+    else:
+        
+        shape = top_sdfg.arrays[state.name_mapping[top_sdfg][mapped_name]].shape
+        
+    indices = []
+    skip=[]
+    if isinstance(op, ast_internal_classes.Array_Subscript_Node):
+        for idx, i in enumerate(op.indices):
+            if isinstance(i, ast_internal_classes.ParDecl_Node):
+                if i.type == 'ALL':
+                    indices.append(None)
+                else:
+                    tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders,
+                                       placeholders_offsets=state.placeholders_offsets)
+                    text_start = tw.write_code(i.range[0])
+                    text_end = tw.write_code(i.range[1])
+                    symb_start = sym.pystr_to_symbolic(text_start+"-1")
+                    symb_end = sym.pystr_to_symbolic(text_end+"-1")
+                    indices.append([symb_start, symb_end])
+            else:
+                skip.append(idx)
+    memlet = '0'
+    if len(shape) == 1:
+        if shape[0] == 1:
+            return memlet
+    tmp_shape = []
+    for idx,i in enumerate(shape):
+        if idx in skip:
+            continue
+        tmp_shape.append(i)
+
+
+    all_indices = indices + [None] * (len(shape) - len(indices)-len(skip))
+    if offset_normalization:
+        subset = subsets.Range(
+            [(i[0], i[1], 1) if i is not None else (0, s - 1, 1) for i, s in zip(all_indices, tmp_shape)])
+    else:
+        subset = subsets.Range([(i[0], i[1], 1) if i is not None else (1, s, 1) for i, s in zip(all_indices, tmp_shape)])
+    return subset
 
 class ProcessedWriter(TaskletWriter):
     """
