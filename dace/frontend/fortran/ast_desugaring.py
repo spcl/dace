@@ -1261,29 +1261,6 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         else:
             remove_self(use)
 
-    # We also remove any access statement that makes these interfaces public/private.
-    for acc in walk(ast, Access_Stmt):
-        # TODO: Add ref.
-        kind, alist = acc.children
-        if not alist:
-            continue
-        scope_spec = find_scope_spec(acc)
-
-        survivors = []
-        for c in alist.children:
-            assert isinstance(c, Name)
-            c_spec = scope_spec + (c.string,)
-            assert c_spec in alias_map
-            if not isinstance(alias_map[c_spec], Interface_Stmt):
-                # Leave the non-interface usages alone.
-                survivors.append(c)
-
-        if survivors:
-            alist.items = survivors
-            _reparent_children(alist)
-        else:
-            remove_self(acc)
-
     # At this point, we must have replaced all references to the interfaces.
     for k in iface_map.keys():
         assert k in alias_map
@@ -1529,25 +1506,6 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
         remove_self(ns_node)
         killed.add(ns)
 
-    # We also remove any access statement that makes the killed objects public/private.
-    for acc in walk(ast, Access_Stmt):
-        # TODO: Add ref.
-        kind, alist = acc.children
-        if not alist:
-            continue
-        scope_spec = find_scope_spec(acc)
-        good_children = []
-        for c in alist.children:
-            assert isinstance(c, Name)
-            c_spec = find_real_ident_spec(c.string, scope_spec, alias_map)
-            assert c_spec in ident_map
-            if c_spec not in killed:
-                good_children.append(c)
-        if good_children:
-            alist.items = good_children
-            _reparent_children(alist)
-        else:
-            remove_self(acc)
 
     return ast
 
