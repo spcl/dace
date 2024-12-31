@@ -1455,12 +1455,12 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
     """
     # NOTE: Modules are not included here, because they are simply containers with no other direct use. Empty modules
     # should be pruned at the end separately.
-    PRUNABLE_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram, Derived_Type_Def]
+    PRUNABLE_OBJECT_TYPES = Union[Program_Stmt, Subroutine_Stmt, Function_Stmt, Derived_Type_Stmt, Entity_Decl]
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
     survivors: Set[SPEC] = set()
-    keepers = [alias_map[k].parent for k in keepers]
+    keepers = [alias_map[k] for k in keepers]
     assert all(isinstance(k, PRUNABLE_OBJECT_TYPES) for k in keepers)
 
     def _keep_from(node: Base):
@@ -1479,9 +1479,9 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 if anc in survivors:
                     continue
                 survivors.add(anc)
-                anc_node = alias_map[anc].parent
+                anc_node = alias_map[anc]
                 if isinstance(anc_node, PRUNABLE_OBJECT_TYPES):
-                    _keep_from(anc_node)
+                    _keep_from(anc_node.parent)
 
             # We keep the definition of that `nm` is an alias of.
             to_keep = search_real_ident_spec(nm.string, sc_spec, alias_map)
@@ -1489,17 +1489,17 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 # If we don't have a valid `to_keep` or `to_keep` is already kept, we move on.
                 continue
             survivors.add(to_keep)
-            keep_node = alias_map[to_keep].parent
+            keep_node = alias_map[to_keep]
             if isinstance(keep_node, PRUNABLE_OBJECT_TYPES):
-                _keep_from(keep_node)
+                _keep_from(keep_node.parent)
 
     for k in keepers:
-        _keep_from(k)
+        _keep_from(k.parent)
 
     # We keep them sorted so that the parent scopes are handled earlier.
     killed: Set[SPEC] = set()
     for ns in list(sorted(set(ident_map.keys()) - survivors)):
-        ns_node = ident_map[ns].parent
+        ns_node = ident_map[ns]
         if not isinstance(ns_node, PRUNABLE_OBJECT_TYPES):
             continue
         for i in range(len(ns) - 1):
@@ -1509,7 +1509,14 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 break
         if ns in killed:
             continue
-        remove_self(ns_node)
+        if isinstance(ns_node, Entity_Decl):
+            elist = ns_node.parent
+            remove_self(ns_node)
+            if not elist.children:
+                assert isinstance(elist.parent, Type_Declaration_Stmt)
+                remove_self(elist.parent)
+        else:
+            remove_self(ns_node.parent)
         killed.add(ns)
 
     consolidate_uses(ast, alias_map)
