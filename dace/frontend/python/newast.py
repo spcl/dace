@@ -4441,8 +4441,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Connect Python state
         self._connect_pystate(tasklet, self.current_state, '__istate', '__ostate')
 
-        if return_type is None:
-            return []
+        if return_type is None:  # Unknown but potentially used return value
+            return [dtypes.pyobject()]
         else:
             return return_names
 
@@ -4996,13 +4996,13 @@ class ProgramVisitor(ExtNodeVisitor):
             operand2, op2type = None, None
 
         # Type-check operands in order to provide a clear error message
-        if (isinstance(operand1, str) and operand1 in self.defined
-                and isinstance(self.defined[operand1].dtype, dtypes.pyobject)):
+        if (isinstance(operand1, dtypes.pyobject) or (isinstance(operand1, str) and operand1 in self.defined
+                and isinstance(self.defined[operand1].dtype, dtypes.pyobject))):
             raise DaceSyntaxError(
                 self, op1, 'Trying to operate on a callback return value with an undefined type. '
                 f'Please add a type hint to "{operand1}" to enable using it within the program.')
-        if (isinstance(operand2, str) and operand2 in self.defined
-                and isinstance(self.defined[operand2].dtype, dtypes.pyobject)):
+        if (isinstance(operand2, dtypes.pyobject) or (isinstance(operand2, str) and operand2 in self.defined
+                and isinstance(self.defined[operand2].dtype, dtypes.pyobject))):
             raise DaceSyntaxError(
                 self, op2, 'Trying to operate on a callback return value with an undefined type. '
                 f'Please add a type hint to "{operand2}" to enable using it within the program.')
@@ -5289,6 +5289,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # Try to construct memlet from subscript
         node.value = ast.Name(id=array)
         defined = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.defined})
+
+        if arrtype is data.Scalar and array in defined and isinstance(defined[array].dtype, dtypes.pyobject):
+            raise DaceSyntaxError(
+                self, node, f'Object "{array}" is defined as a callback return value and cannot be sliced. '
+                'Consider adding a type hint to the variable.')
+
         expr: MemletExpr = ParseMemlet(self, defined, node, nslice)
 
         if inference:

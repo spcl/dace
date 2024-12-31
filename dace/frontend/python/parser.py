@@ -398,7 +398,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Start with default arguments, then add other arguments
         result = {**self.default_args}
         # Reconstruct keyword arguments
-        result.update({aname: arg for aname, arg in zip(self.argnames, args)})
+        result.update({aname: arg for aname, arg in zip(self.argnames, args) if aname not in self.constant_args})
         result.update(kwargs)
 
         # Add closure arguments to the call
