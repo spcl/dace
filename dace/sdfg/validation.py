@@ -452,6 +452,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if sdutil.get_view_edge(state, node) is None:
                     raise InvalidSDFGNodeError("Ambiguous or invalid edge to/from a View access node", sdfg, state_id,
                                                nid)
+                view_node = sdutil.get_view_node(state, node)
+                if view_node is None:
+                    raise InvalidSDFGNodeError("View node not found", sdfg, state_id, nid)
+                if view_node is node:
+                    raise InvalidSDFGNodeError("View node points to itself", sdfg, state_id, nid)
+                if not isinstance(view_node, nd.AccessNode):
+                    raise InvalidSDFGNodeError("View node must point to an AccessNode", sdfg, state_id, nid)
 
             # Find uninitialized transients
             if node.data not in initialized_transients:
