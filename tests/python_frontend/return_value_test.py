@@ -12,6 +12,19 @@ def test_return_scalar():
     assert return_scalar() == 5
 
 
+def test_return_scalar_in_nested_function():
+
+    @dace.program
+    def nested_function() -> dace.int32:
+        return 5
+
+    @dace.program
+    def return_scalar():
+        return nested_function()
+
+    assert return_scalar() == 5
+
+
 def test_return_array():
 
     @dace.program
@@ -91,6 +104,7 @@ def test_return_void_in_for():
 
 if __name__ == '__main__':
     test_return_scalar()
+    test_return_scalar_in_nested_function()
     test_return_array()
     test_return_tuple()
     test_return_array_tuple()
