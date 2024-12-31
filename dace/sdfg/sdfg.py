@@ -463,6 +463,9 @@ class SDFG(ControlFlowRegion):
     using_explicit_control_flow = Property(dtype=bool, default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
 
+    extra_dtypes = ListProperty(dtypes.typeclass, desc='Additional data types to be added in code generation')
+    defs_to_skip = ListProperty(str, desc='List of global definitions for the code generation to skip')
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
@@ -504,6 +507,8 @@ class SDFG(ControlFlowRegion):
         self.orig_sdfg = None
         self.transformation_hist = []
         self.callback_mapping = {}
+        self.extra_dtypes = []
+        self.defs_to_skip = []
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
 
@@ -771,8 +776,8 @@ class SDFG(ControlFlowRegion):
             #  the data descriptors.
             if name in self.symbols:
                 raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
-            if name in self.arrays:
-                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
+            #if name in self.arrays:
+            #    raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
             if name in self._subarrays:
                 raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a subarray.')
             if name in self._rdistrarrays:
@@ -1394,12 +1399,14 @@ class SDFG(ControlFlowRegion):
         if scalars_only:
             data_args = {}
         else:
-            data_args = {k: v for k, v in self.arrays.items() if not v.transient and not isinstance(v, dt.Scalar)}
+            data_args = {k: v for k, v in self.arrays.items() if not v.transient and not isinstance(v, dt.Scalar)
+                         and v.lifetime != dtypes.AllocationLifetime.Global}
 
         scalar_args = {
             k: v
             for k, v in self.arrays.items()
             if not v.transient and isinstance(v, dt.Scalar) and not k.startswith('__dace')
+            and v.lifetime != dtypes.AllocationLifetime.Global
         }
 
         # Add global free symbols used in the generated code to scalar arguments
@@ -2309,7 +2316,7 @@ class SDFG(ControlFlowRegion):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True,
+    def compile(self, output_file=None, validate=True, additional_code_obj=None,
                 return_program_handle=True) -> 'CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
 
@@ -2317,7 +2324,8 @@ class SDFG(ControlFlowRegion):
                                 the specified path.
             :param validate: If True, validates the SDFG prior to generating
                              code.
-            :param return_program_handle: If False, does not load the generated library.
+            :param additional_code_obj: If not None, use these objects in the compilation process.
+            :param return_program_handle: If False, does not load the generated libaray.
             :return: A callable CompiledSDFG object, or None if ``return_program_handle=False``.
         """
 
@@ -2362,11 +2370,15 @@ class SDFG(ControlFlowRegion):
 
                 # Generate code for the program by traversing the SDFG state by state
                 program_objects = codegen.generate_code(sdfg, validate=validate)
+
             except Exception:
                 fpath = os.path.join('_dacegraphs', 'failing.sdfgz')
                 self.save(fpath, compress=True)
                 print(f'Failing SDFG saved for inspection in {os.path.abspath(fpath)}')
                 raise
+
+            if additional_code_obj is not None:
+                program_objects += additional_code_obj
 
             # Generate the program folder and write the source files
             program_folder = compiler.generate_program_folder(sdfg, program_objects, build_folder)

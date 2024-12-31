@@ -428,7 +428,6 @@ class typeclass(object):
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
-        self.ctype_unaligned = self.ctype  # Type in C (without alignment)
         self.dtype = self  # For compatibility support with numpy
         self.bytes = _BYTES[wrapped_type]  # Number of bytes for this type
         self.typename = typename
@@ -627,11 +626,17 @@ def result_type_of(lhs, *rhs):
 class opaque(typeclass):
     """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
 
-    def __init__(self, typename):
+    def __init__(self, typename, define=False):
         self.type = typename
         self.ctype = typename
-        self.ctype_unaligned = typename
         self.dtype = self
+        self.define = define
+        self.bytes = ctypes.sizeof(ctypes.c_void_p)  # Cannot make assumptions on opaque
+
+    def emit_definition(self):
+        if self.define:
+            return f'struct {self.ctype};'
+        return ''
 
     def to_json(self):
         return {'type': 'opaque', 'ctype': self.ctype}
@@ -668,7 +673,6 @@ class pointer(typeclass):
         self.type = wrapped_typeclass.type
         self.bytes = ctypes.sizeof(ctypes.c_void_p)
         self.ctype = wrapped_typeclass.ctype + "*"
-        self.ctype_unaligned = wrapped_typeclass.ctype_unaligned + "*"
         self.dtype = self
 
     def to_json(self):
@@ -683,6 +687,9 @@ class pointer(typeclass):
             return pointer(typeclass(None))
 
         return pointer(json_to_typeclass(json_obj['dtype'], context))
+
+    def as_arg(self, name):
+        return self._typeclass.as_arg('* ' + name)
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -736,10 +743,6 @@ class vector(typeclass):
         else:
             return self.base_type.ocltype
 
-    @property
-    def ctype_unaligned(self):
-        return self.ctype
-
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
         return _FFI_CTYPES[self.type] * self.veclen
@@ -758,6 +761,61 @@ class vector(typeclass):
     @veclen.setter
     def veclen(self, val):
         self._veclen = val
+
+
+class fixedlenarray(typeclass):
+    """
+    A data type for a fixed-length array of an existing typeclass.
+
+    Example use: `dace.fixedlenarray(dace.float32, 4)` becomes float[4].
+    """
+
+    def __init__(self, dtype: typeclass, array_length: int):
+        self.atype = dtype
+        self.type = dtype.type
+        self._arraylen = array_length
+        self.bytes = dtype.bytes * array_length
+        self.dtype = self
+
+    def to_json(self):
+        return {'type': 'fixedlenarray', 'dtype': self.atype.to_json(), 'elements': str(self.arraylen)}
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        from dace.symbolic import pystr_to_symbolic
+        return fixedlenarray(json_to_typeclass(json_obj['dtype'], context), pystr_to_symbolic(json_obj['elements']))
+
+    @property
+    def ctype(self):
+        from dace.symbolic import issymbolic
+        if issymbolic(self.arraylen) or self.arraylen == 0 or (self.arraylen < 0) == True:
+            return f'{self.atype.ctype}[]'
+        return f'{self.atype.ctype}[{self.arraylen}]'
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return _FFI_CTYPES[self.type] * self.arraylen
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
+
+    def as_arg(self, name):
+        from dace.symbolic import issymbolic
+        if issymbolic(self.arraylen) or self.arraylen == 0 or (self.arraylen < 0) == True:
+            return self.atype.as_arg(name) + '[]'
+        return self.atype.as_arg(name) + f'[{self.arraylen}]'
+
+    @property
+    def base_type(self):
+        return self.atype
+
+    @property
+    def arraylen(self):
+        return self._arraylen
+
+    @arraylen.setter
+    def arraylen(self, val):
+        self._arraylen = val
 
 
 class stringtype(pointer):
@@ -794,8 +852,9 @@ class struct(typeclass):
         # TODO: Assuming no alignment! Get from ctypes
         # self.bytes = sum(t.bytes for t in fields_and_types.values())
         self.ctype = name
-        self.ctype_unaligned = name
         self.dtype = self
+        self.packed = False
+        self.opaque = False
         self._parse_field_and_types(**fields_and_types)
 
     @property
@@ -807,8 +866,10 @@ class struct(typeclass):
             'type': 'struct',
             'name': self.name,
             'data': [(k, v.to_json()) for k, v in self._data.items()],
-            'length': [(k, v) for k, v in self._length.items()],
-            'bytes': self.bytes
+            'length': [(k, str(v)) for k, v in self._length.items()],
+            'bytes': str(self.bytes),
+            'packed': self.packed,
+            'opaque': self.opaque,
         }
 
     @staticmethod
@@ -817,11 +878,14 @@ class struct(typeclass):
             raise TypeError("Invalid type for struct")
 
         import dace.serialize  # Avoid import loop
+        from dace.symbolic import pystr_to_symbolic
 
         ret = struct(json_obj['name'])
         ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data']}
-        ret._length = {k: v for k, v in json_obj['length']}
-        ret.bytes = json_obj['bytes']
+        ret._length = {k: pystr_to_symbolic(v) for k, v in json_obj['length']}
+        ret.bytes = pystr_to_symbolic(json_obj['bytes'])
+        ret.packed = json_obj['packed']
+        ret.opaque = json_obj['opaque']
 
         return ret
 
@@ -842,7 +906,7 @@ class struct(typeclass):
                 #     if str(sym) not in fields_and_types.keys():
                 #         raise ValueError(f"Symbol {sym} in {k}'s length {l} is not a field of struct {self.name}")
                 self._data[k] = t
-                self._length[k] = l
+                self._length[k] = str(l)
                 self.bytes += t.bytes
             else:
                 if isinstance(v, pointer):
@@ -876,11 +940,15 @@ class struct(typeclass):
         return numpy.dtype(self.as_ctypes())
 
     def emit_definition(self):
-        return """struct {name} {{
+        if self.opaque:
+            return f'struct {self.name};'
+
+        return """struct {packing}{name} {{
 {typ}
 }};""".format(
             name=self.name,
-            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
+            packing=('__attribute__ ((packed)) ' if self.packed else ''),
+            typ='\n'.join([f"    {t.as_arg(tname)};" for tname, t in self._data.items()]),
         )
 
 
@@ -955,6 +1023,7 @@ class callback(typeclass):
         elif not isinstance(return_types, (list, tuple, set)):
             return_types = [return_types]
         self.dtype = self
+        self.variadic = False
         self.return_types = return_types
         self.input_types = []
         for arg in variadic_args:
@@ -969,7 +1038,6 @@ class callback(typeclass):
             self.input_types.append(arg)
         self.bytes = int64.bytes
         self.type = self
-        self.ctype = self
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -1045,8 +1113,15 @@ class callback(typeclass):
                 else:
                     input_type_cstring.append(pointer(arg.dtype).ctype)
 
+        if self.variadic:
+            input_type_cstring.append('...')
+
         retval = self.cfunc_return_type()
         return f'{retval} (*{name})({", ".join(input_type_cstring)})'
+
+    @property
+    def ctype(self):
+        return self.as_arg('')
 
     def get_trampoline(self, pyfunc, other_arguments, refs):
         from functools import partial
@@ -1169,9 +1244,15 @@ class callback(typeclass):
             return {
                 'type': 'callback',
                 'arguments': [i.to_json() for i in self.input_types],
-                'returntypes': [r.to_json() for r in self.return_types]
+                'returntypes': [r.to_json() for r in self.return_types],
+                'variadic': self.variadic,
             }
-        return {'type': 'callback', 'arguments': [i.to_json() for i in self.input_types], 'returntypes': []}
+        return {
+            'type': 'callback',
+            'arguments': [i.to_json() for i in self.input_types],
+            'returntypes': [],
+            'variadic': self.variadic,
+        }
 
     @staticmethod
     def from_json(json_obj, context=None):

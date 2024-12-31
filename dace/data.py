@@ -375,6 +375,11 @@ class Structure(Data):
                                   from_json=_arrays_from_json,
                                   to_json=_arrays_to_json)
     name = Property(dtype=str, desc="Structure type name")
+    packed = Property(dtype=bool, desc="Whether the structure is tightly packed", default=False)
+    byval = Property(dtype=bool,
+                     default=False,
+                     desc='If True, the structure will be passed by value rather than by pointer.')
+    opaque = Property(dtype=bool, desc="Whether the structure is opaque", default=False)
 
     def __init__(self,
                  members: Union[Dict[str, Data], List[Tuple[str, Data]]],
@@ -383,22 +388,55 @@ class Structure(Data):
                  storage: dtypes.StorageType = dtypes.StorageType.Default,
                  location: Dict[str, str] = None,
                  lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
-                 debuginfo: dtypes.DebugInfo = None):
+                 packed: bool = False,
+                 byval: bool = False,
+                 debuginfo: dtypes.DebugInfo = None,
+                 opaque: bool = False):
 
         self.members = OrderedDict(members)
         for k, v in self.members.items():
             v.transient = transient
 
         self.name = name
+        self.opaque = opaque
+
+        shape = (1, )
+        self.packed = packed
+        self.byval = byval
+        super(Structure, self).__init__(self.get_dtype(), shape, transient, storage, location, lifetime, debuginfo)
+
+    @property
+    def dtype(self):
+        self._dtype = self.get_dtype()
+        return self._dtype
+
+    @dtype.setter
+    def dtype(self, value):
+        self._dtype = value
+
+    def get_dtype(self):
+        # Create typeclass struct on-the-fly based on current members
         fields_and_types = OrderedDict()
         symbols = set()
         for k, v in self.members.items():
             if isinstance(v, Structure):
                 symbols |= v.free_symbols
-                fields_and_types[k] = (v.dtype, str(v.total_size))
+                if v.byval:
+                    fields_and_types[k] = v.dtype
+                else:
+                    fields_and_types[k] = (v.dtype, str(v.total_size))
             elif isinstance(v, Array):
                 symbols |= v.free_symbols
-                fields_and_types[k] = (dtypes.pointer(v.dtype), str(_prod(v.shape)))
+                if v.byval:
+                    curdtype = v.dtype
+                    for s in reversed(v.shape):
+                        if symbolic.issymbolic(s):
+                            curdtype = dtypes.pointer(curdtype)
+                        else:
+                            curdtype = dtypes.fixedlenarray(curdtype, s)
+                    fields_and_types[k] = curdtype
+                else:
+                    fields_and_types[k] = (dtypes.pointer(v.dtype), str(_prod(v.shape)))
             elif isinstance(v, Scalar):
                 symbols |= v.free_symbols
                 fields_and_types[k] = v.dtype
@@ -420,9 +458,12 @@ class Structure(Data):
         #     else:
         #         fields_and_types[str(s)] = dtypes.int32
 
-        dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
-        shape = (1, )
-        super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+        stype = dtypes.struct(self.name, **fields_and_types)
+        stype.packed = self.packed
+        stype.opaque = self.opaque
+        if self.byval:
+            return stype
+        return dtypes.pointer(stype)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -448,6 +489,18 @@ class Structure(Data):
         return 0
 
     @property
+    def optional(self) -> bool:
+        return False
+
+    @property
+    def pool(self) -> bool:
+        return False
+
+    @property
+    def may_alias(self) -> bool:
+        return False
+
+    @property
     def strides(self):
         return [1]
 
@@ -463,8 +516,10 @@ class Structure(Data):
         return f"{self.name} ({', '.join([f'{k}: {v}' for k, v in self.members.items()])})"
 
     def as_arg(self, with_types=True, for_call=False, name=None):
-        if self.storage is dtypes.StorageType.GPU_Global:
+        if self.storage == dtypes.StorageType.GPU_Global:
             return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
+        if self.lifetime == dtypes.AllocationLifetime.Global:
+            return Scalar(self.dtype.base_type).as_arg(with_types, for_call, name)
         if not with_types or for_call:
             return name
         return self.dtype.as_arg(name)
@@ -478,16 +533,6 @@ class Structure(Data):
             return ContainerArray(self, tuple(s))
         return ContainerArray(self, (s, ))
 
-    # NOTE: Like Scalars?
-    @property
-    def may_alias(self) -> bool:
-        return False
-
-    # TODO: Can Structures be optional?
-    @property
-    def optional(self) -> bool:
-        return False
-
     def keys(self):
         result = self.members.keys()
         for k, v in self.members.items():
@@ -498,11 +543,6 @@ class Structure(Data):
     def clone(self):
         return Structure(self.members, self.name, self.transient, self.storage, self.location, self.lifetime,
                          self.debuginfo)
-
-    # NOTE: Like scalars?
-    @property
-    def pool(self) -> bool:
-        return False
 
 
 class TensorIterationTypes(aenum.AutoNumberEnum):
@@ -1384,6 +1424,10 @@ class Array(Data):
                         'If False, the array must not be None. If option is not set, '
                         'it is inferred by other properties and the OptionalArrayInference pass.')
     pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
+    byval = Property(dtype=bool,
+                     default=False,
+                     desc='If True, all instances of this array will be defined by-value (e.g., '
+                     '``int a[5][4];``). This requires the array to not be symbolically-sized.')
 
     def __init__(self,
                  dtype,
@@ -1401,7 +1445,8 @@ class Array(Data):
                  total_size=None,
                  start_offset=None,
                  optional=None,
-                 pool=False):
+                 pool=False,
+                 byval=False):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -1415,6 +1460,7 @@ class Array(Data):
         if optional is None and self.transient:
             self.optional = False
         self.pool = pool
+        self.byval = byval
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -1439,7 +1485,7 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset, self.optional, self.pool)
+                          self.total_size, self.start_offset, self.optional, self.pool, self.byval)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -1539,7 +1585,11 @@ class Array(Data):
 
         if not with_types or for_call:
             return arrname
-        if self.may_alias:
+        if self.byval:
+            return self.dtype.as_arg(arrname + ''.join(f'[{s}]' for s in reversed(self.shape)))
+        if hasattr(self.dtype, 'as_arg'):
+            return self.dtype.as_arg('*' + arrname)
+        if self.may_alias or isinstance(self, Reference):
             return str(self.dtype.ctype) + ' *' + arrname
         return str(self.dtype.ctype) + ' * __restrict__ ' + arrname
 
@@ -1794,19 +1844,21 @@ class ContainerArray(Array):
                  total_size=None,
                  start_offset=None,
                  optional=None,
-                 pool=False):
+                 pool=False,
+                 byval=False):
 
         self.stype = stype
         if stype:
-            if isinstance(stype, Structure):
+            if isinstance(stype, (Structure, Scalar)):
                 dtype = stype.dtype
             else:
                 dtype = dtypes.pointer(stype.dtype)
         else:
             dtype = dtypes.pointer(dtypes.typeclass(None))  # void*
+
         super(ContainerArray,
               self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
-                             lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+                             lifetime, alignment, debuginfo, total_size, start_offset, optional, pool, byval)
 
     @classmethod
     def from_json(cls, json_obj, context=None):
@@ -1825,6 +1877,12 @@ class ContainerArray(Array):
 
         return ret
 
+    def as_arg(self, with_types=True, for_call=False, name=None):
+        if not with_types or for_call:
+            return name
+        if self.byval:
+            return self.stype.as_arg(with_types, for_call, name + ''.join(f'[{s}]' for s in reversed(self.shape)))
+        return self.stype.as_arg(with_types, for_call, '*' + name)
 
 class View:
     """ 
@@ -1867,7 +1925,10 @@ class View:
                                    storage=viewed_container.storage,
                                    location=viewed_container.location,
                                    lifetime=viewed_container.lifetime,
-                                   debuginfo=debuginfo)
+                                   debuginfo=debuginfo,
+                                   byval=viewed_container.byval,
+                                   opaque=viewed_container.opaque,
+                                   packed=viewed_container.packed)
         elif isinstance(viewed_container, ContainerArray):
             result = ContainerView(stype=cp.deepcopy(viewed_container.stype),
                                    shape=viewed_container.shape,
@@ -1883,7 +1944,8 @@ class View:
                                    total_size=viewed_container.total_size,
                                    start_offset=viewed_container.start_offset,
                                    optional=viewed_container.optional,
-                                   pool=viewed_container.pool)
+                                   pool=viewed_container.pool,
+                                   byval=viewed_container.byval)
         elif isinstance(viewed_container, (Array, Scalar)):
             result = ArrayView(dtype=viewed_container.dtype,
                                shape=viewed_container.shape,
@@ -1899,13 +1961,15 @@ class View:
                                total_size=viewed_container.total_size,
                                start_offset=viewed_container.start_offset,
                                optional=viewed_container.optional,
-                               pool=viewed_container.pool)
+                               pool=viewed_container.pool,
+                               byval=getattr(viewed_container, 'byval', False))
         else:
             # In undefined cases, make a container array view of size 1
             result = ContainerView(cp.deepcopy(viewed_container), [1], debuginfo=debuginfo)
 
         # Views are always transient
         result.transient = True
+        result.byval = False
         return result
 
 
@@ -1960,6 +2024,7 @@ class Reference:
 
         # References are always transient
         result.transient = True
+        result.byval = False
         return result
 
 
@@ -2041,10 +2106,11 @@ class ContainerView(ContainerArray, View):
                  total_size=None,
                  start_offset=None,
                  optional=None,
-                 pool=False):
+                 pool=False,
+                 byval=False):
         shape = [1] if shape is None else shape
         super().__init__(stype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
-                         lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+                         lifetime, alignment, debuginfo, total_size, start_offset, optional, pool, byval)
 
     def validate(self):
         super().validate()

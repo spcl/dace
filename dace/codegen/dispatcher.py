@@ -24,9 +24,9 @@ class DefinedType(aenum.AutoNumberEnum):
         :see: DefinedMemlets
     """
     Pointer = ()  # Pointer
-    Scalar = ()   # A copyable scalar moved by value (e.g., POD)
-    Object = ()   # An object moved by reference
-    Stream = ()   # A stream object moved by reference and accessed via a push/pop API
+    Scalar = ()  # A copyable scalar moved by value (e.g., POD)
+    Object = ()  # An object moved by reference
+    Stream = ()  # A stream object moved by reference and accessed via a push/pop API
     StreamArray = ()  # An array of Streams
     FPGA_ShiftRegister = ()  # A shift-register object used in FPGA code generation
     ArrayInterface = ()  # An object representing an interface to an array, used mostly in FPGA
@@ -56,7 +56,8 @@ class DefinedMemlets:
         except KeyError:
             return False
 
-    def get(self, name: str, ancestor: int = 0, is_global: bool = False) -> Tuple[DefinedType, str]:
+    def get(self, name: str, ancestor: int = 0, is_global: bool = False) -> Tuple[DefinedType, dtypes.typeclass]:
+        last_visited_scope = None
         for parent, scope, can_access_parent in reversed(self._scopes):
             last_parent = parent
             if ancestor > 0:
@@ -85,7 +86,14 @@ class DefinedMemlets:
 
         raise KeyError("Variable {} has not been defined".format(name))
 
-    def add(self, name: str, dtype: DefinedType, ctype: str, ancestor: int = 0, allow_shadowing: bool = False):
+    def add(self,
+            name: str,
+            dtype: DefinedType,
+            ctype: dtypes.typeclass,
+            ancestor: int = 0,
+            allow_shadowing: bool = False):
+        if not isinstance(ctype, dtypes.typeclass):
+            raise NotImplementedError('No longer supported')
         if not isinstance(name, str):
             raise TypeError('Variable name type cannot be %s' % type(name).__name__)
         if name.startswith('__state->'):
@@ -95,7 +103,7 @@ class DefinedMemlets:
             if name in scope:
                 err_str = "Shadowing variable {} from type {} to {}".format(name, scope[name], dtype)
                 if (allow_shadowing or config.Config.get_bool("compiler", "allow_shadowing")):
-                    if not allow_shadowing:
+                    if not allow_shadowing and scope[name][0] != dtype:
                         print("WARNING: " + err_str)
                 else:
                     raise cgx.CodegenError(err_str)
@@ -103,7 +111,7 @@ class DefinedMemlets:
                 break
         self._scopes[-1 - ancestor][1][name] = (dtype, ctype)
 
-    def add_global(self, name: str, dtype: DefinedType, ctype: str) -> None:
+    def add_global(self, name: str, dtype: DefinedType, ctype: dtypes.typeclass):
         """
         Adds a global variable (top scope)
         """
@@ -112,7 +120,17 @@ class DefinedMemlets:
 
         self._scopes[0][1][name] = (dtype, ctype)
 
+    def get_all_names(self, ancestor: int = 0) -> Set[str]:
+        global_vars = self._scopes[0][1].keys()
+        result = set(global_vars)
+        for _, scope, can_access_parent in self._scopes[1:len(self._scopes) - ancestor]:
+            if not can_access_parent:
+                result = set(global_vars)
+            result |= scope.keys()
+        return result
+
     def remove(self, name: str, ancestor: int = 0, is_global: bool = False) -> None:
+        last_visited_scope = None
         for parent, scope, can_access_parent in reversed(self._scopes):
             last_parent = parent
             if ancestor > 0:
@@ -546,6 +564,11 @@ class TargetDispatcher(object):
         if dst_is_data and isinstance(dst_node.desc(sdfg), dt.View):
             e = sdutil.get_view_edge(state, dst_node)
             if e is edge:
+                return None
+
+        # Skip reference that is also a view
+        if src_is_data and isinstance(src_node.desc(sdfg), dt.Reference):
+            if edge.src_conn == 'views' and not edge.dst_conn:
                 return None
 
         if (isinstance(src_node, nodes.Tasklet) and not isinstance(dst_node, nodes.Tasklet)):

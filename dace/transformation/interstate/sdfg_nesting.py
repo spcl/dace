@@ -266,6 +266,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         # Callbacks and other types
         sdfg._callback_mapping.update(nsdfg.callback_mapping)
+        sdfg._extra_dtypes.extend([dt for dt in nsdfg.extra_dtypes if dt not in sdfg.extra_dtypes])
+        sdfg._defs_to_skip.extend([dt for dt in nsdfg.defs_to_skip if dt not in sdfg.defs_to_skip])
 
         # Environments
         for node in nstate.nodes():
@@ -352,6 +354,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                     transients[node.data] = name
 
+
         # All transients of edges between code nodes are also added to parent
         for edge in nstate.edges():
             if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
@@ -364,6 +367,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
                         name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                         transients[edge.data.data] = name
+
+        # Add globals that do not exist in the parent SDFG as-is
+        for name, desc in nsdfg.arrays.items():
+            if desc.lifetime == dtypes.AllocationLifetime.Global:
+                if name not in sdfg.arrays:
+                    sdfg.add_datadesc(name, desc, find_new_name=False)
 
         # Collect nodes to add to top-level graph
         new_incoming_edges: Dict[nodes.Node, MultiConnectorEdge] = {}

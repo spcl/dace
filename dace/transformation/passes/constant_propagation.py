@@ -145,8 +145,10 @@ class ConstantPropagation(ppl.Pass):
             result = {k: v for k, v in symbols_replaced.items() if k not in remaining_unknowns}
 
             # Remove single-valued symbols from data descriptors (e.g., symbolic array size)
-            sdfg.replace_dict({k: v
-                               for k, v in result.items() if k in desc_symbols},
+            sdfg.replace_dict({
+                k: v
+                for k, v in result.items() if k in desc_symbols
+            },
                               replace_in_graph=False,
                               replace_keys=False)
 

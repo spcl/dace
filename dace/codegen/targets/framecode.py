@@ -3,12 +3,13 @@ import collections
 import copy
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
+import warnings
 
 import networkx as nx
 import numpy as np
 
 import dace
-from dace import config, data, dtypes
+from dace import config, data, dtypes, Memlet
 from dace import symbolic
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
@@ -22,7 +23,7 @@ from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.analysis import StateReachability, loop_analysis
+from dace.transformation.passes.analysis import StateReachability, FindReferenceSources, loop_analysis
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -50,6 +51,7 @@ class DaCeCodeGenerator(object):
         self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
         self.fsyms: Dict[int, Set[str]] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
+        self.global_variables: Set[str] = set()
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
@@ -109,7 +111,10 @@ class DaCeCodeGenerator(object):
         :note: Post-conditions assume that the SDFG will NOT be changed after this point.
         :param sdfg: The SDFG to modify in-place.
         """
-        pass
+        # Move reference sets into a previous state
+        from dace.transformation.passes.canonicalization import SeparateRefsets
+        for sd in sdfg.all_sdfgs_recursive():
+            SeparateRefsets().apply_pass(sd, {})
 
     def generate_constants(self, sdfg: SDFG, callsite_stream: CodeIOStream):
         # Write constants
@@ -152,32 +157,73 @@ class DaCeCodeGenerator(object):
         #########################################################
         # Custom types
         datatypes = set()
+        skip_types = set()
         # Types of this SDFG
-        for _, arrname, arr in sdfg.arrays_recursive():
+        for sd in sdfg.all_sdfgs_recursive():
+            datatypes.update(sd.extra_dtypes)
+            skip_types.update(sd.defs_to_skip)
+        for sd, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 datatypes.add(arr.dtype)
 
-        emitted = set()
+        emitted_definitions = set()
+        declared_definitions = set()
+        deferred_definitions: Set[dtypes.struct] = set()
 
         def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
-            if isinstance(dtype, dtypes.pointer):
-                wrote_something = _emit_definitions(dtype._typeclass, wrote_something)
+            if dtype in emitted_definitions:
+                return False
+
+            if dtype.base_type is not dtype:  # Pointers, vectors, fixed-length arrays, etc.
+                # Opaque pointer type needs to be forward-declared
+                if isinstance(dtype.base_type, dtypes.opaque):
+                    dtype.base_type.define = True
+                elif isinstance(dtype.base_type, dtypes.struct) and not dtype.base_type.opaque:
+                    deferred_definitions.add(dtype.base_type)
+                    dtype.base_type.opaque = True  # struct pointers
+                wrote_something = _emit_definitions(dtype.base_type, wrote_something)
             elif isinstance(dtype, dtypes.struct):
-                for field in dtype.fields.values():
-                    wrote_something = _emit_definitions(field, wrote_something)
+                if dtype.name in skip_types:
+                    emitted_definitions.add(dtype)
+                    return False
+                if not dtype.opaque:
+                    for field in dtype.fields.values():
+                        wrote_something = _emit_definitions(field, wrote_something)
+                    if dtype in deferred_definitions:
+                        deferred_definitions.remove(dtype)
+            elif isinstance(dtype, dtypes.callback):
+                for inp in dtype.input_types:
+                    wrote_something = _emit_definitions(inp, wrote_something)
+                for ret in dtype.return_types:
+                    wrote_something = _emit_definitions(ret, wrote_something)
+            elif isinstance(dtype, dtypes.opaque):
+                if dtype.ctype in skip_types:
+                    emitted_definitions.add(dtype)
+                    return False
+
             if hasattr(dtype, 'emit_definition'):
                 if not wrote_something:
                     global_stream.write("", sdfg)
-                if dtype not in emitted:
-                    global_stream.write(dtype.emit_definition(), sdfg)
-                    wrote_something = True
-                    emitted.add(dtype)
+                global_stream.write(dtype.emit_definition(), sdfg)
+
+            if isinstance(dtype, dtypes.opaque) or (isinstance(dtype, dtypes.struct) and dtype.opaque):
+                declared_definitions.add(dtype)
+            else:
+                emitted_definitions.add(dtype)
+
             return wrote_something
 
         # Emit unique definitions
         wrote_something = False
-        for typ in datatypes:
+        for typ in sorted(datatypes, key=str):
             wrote_something = _emit_definitions(typ, wrote_something)
+        while deferred_definitions:
+            defs = list(deferred_definitions - emitted_definitions)
+            declared_definitions -= deferred_definitions
+            deferred_definitions.clear()
+            for typ in sorted(defs, key=str):
+                typ.opaque = False
+                wrote_something = _emit_definitions(typ, wrote_something)
         if wrote_something:
             global_stream.write("", sdfg)
 
@@ -566,6 +612,12 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         shared_transients = {}
         fsyms = {}
         reachability = StateReachability().apply_pass(top_sdfg, {})
+
+        # Gather reference sources
+        refsources_pass = FindReferenceSources()
+        refsources_pass.trace_through_code = True
+        refsources = refsources_pass.apply_pass(top_sdfg, {})
+
         access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
@@ -574,14 +626,20 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             #############################################
             # Look for all states in which a scope-allocated array is used in
             instances: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]] = collections.defaultdict(list)
-            array_names = sdfg.arrays.keys(
-            )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
+            array_names = sdfg.arrays.keys()
+            #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
             # Iterate topologically to get state-order
             for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
                 for node in state.data_nodes():
                     if node.data not in array_names:
                         continue
                     instances[node.data].append((state, node))
+
+                    # Find array reference sources and keep them allocated throughout the reference's usage
+                    if node.data in refsources[sdfg.sdfg_id]:
+                        for src in refsources[sdfg.sdfg_id][node.data]:
+                            if isinstance(src, Memlet):
+                                instances[src.data].append((state, node))
 
                 # Look in the surrounding edges for usage
                 edge_fsyms: Set[str] = set()
@@ -618,8 +676,16 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # 5. True if allocation should take place, otherwise False.
             # 6. True if deallocation should take place, otherwise False.
 
-            first_state_instance, first_node_instance = access_instances[sdfg.cfg_id].get(name, [(None, None)])[0]
-            last_state_instance, last_node_instance = access_instances[sdfg.cfg_id].get(name, [(None, None)])[-1]
+            # We will allocate an array when it is first used, but deallocate
+            # when its last reference was seen (e.g., if assigned to a Reference)
+            instances = access_instances[sdfg.cfg_id].get(name, [(None, None)])
+            first_state_instance, first_node_instance = next(
+                ((s, n) for s, n in instances if n is not None and n.data == name), (None, None))
+            last_state_instance, last_node_instance = instances[-1]
+
+            # Determine zero initialization
+            if getattr(desc, 'setzero', False):
+                first_node_instance.setzero = True
 
             # Cases
             if top_lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
@@ -638,20 +704,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
                 self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
-            elif top_lifetime is dtypes.AllocationLifetime.Global:
-                # Global memory is allocated in the beginning of the program
-                # exists in the library state structure (to be passed along
-                # to the right SDFG)
-
-                # If unused, skip
-                if first_node_instance is None:
-                    continue
-
-                definition = desc.as_arg(name=f'__{sdfg.cfg_id}_{name}') + ';'
-                self.statestruct.append(definition)
-
-                self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
-                self.where_allocated[(sdfg, name)] = top_sdfg
+            elif desc.lifetime == dtypes.AllocationLifetime.Global:
+                # Global memory is allocated in the global scope.
+                # If multiple SDFGs contain the same global memory, it will only
+                # appear once. If data descriptors differ, an error is thrown.
+                # See ``allocate_globals`` for implementation.
                 continue
 
             # The rest of the cases change the starting scope we attempt to
@@ -660,7 +717,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # a kernel).
             alloc_scope: Union[nodes.EntryNode, SDFGState, SDFG] = None
             alloc_state: SDFGState = None
-            if (name in shared_transients[sdfg.cfg_id] or top_lifetime is dtypes.AllocationLifetime.SDFG):
+            if name in shared_transients[sdfg.sdfg_id] or desc.lifetime is dtypes.AllocationLifetime.SDFG:
                 # SDFG descriptors are allocated in the beginning of their SDFG
                 alloc_scope = sdfg
                 if first_state_instance is not None:
@@ -696,6 +753,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 for isedge in sdfg.all_interstate_edges():
                     if name in self.free_symbols(isedge.data):
                         multistate = True
+                        break
                 for cfg in sdfg.all_control_flow_regions():
                     block_syms = cfg.used_symbols(all_symbols=True, with_contents=False)
                     if name in block_syms:
@@ -708,7 +766,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     for node in state.nodes():
                         if not isinstance(node, nodes.AccessNode):
                             continue
-                        if node.root_data != name:
+                        if node.root_data != name and (isinstance(desc, data.View) or (state, node) not in instances):
                             continue
 
                         # If already found in another state, set scope to SDFG
@@ -790,6 +848,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     # A view gets "allocated" everywhere it appears
                     if isinstance(desc, data.View):
                         for s, n in instances:
+                            if n is not None and n.data != name:
+                                continue
                             self.to_allocate[s].append((sdfg, s, n, False, True, False))
                             self.to_allocate[s].append((sdfg, s, n, False, False, True))
                         self.where_allocated[(sdfg, name)] = cursdfg
@@ -827,6 +887,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                                                                                         SDFG],
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         """ Dispatches allocation of all arrays in the given scope. """
+        deferred = []
         for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
             if state is not None:
                 state_id = state.block_id
@@ -835,11 +896,38 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             desc = node.desc(tsdfg)
 
+            # Defer view/reference allocations until all arrays were allocated
+            if isinstance(desc, (data.View, data.Reference)):
+                deferred.append((tsdfg, cfg if state is None else state.parent_graph, state, state_id, node, declare,
+                                 allocate, desc))
+                continue
+
             self._dispatcher.dispatch_allocate(tsdfg, cfg if state is None else state.parent_graph, state, state_id,
                                                node, desc, function_stream, callsite_stream, declare, allocate)
 
-    def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState,
-                                                                                          SDFG],
+        for tsdfg, cfg, state, state_id, node, declare, allocate, desc in deferred:
+            self._dispatcher.dispatch_allocate(tsdfg, cfg, state, state_id, node, desc, function_stream, callsite_stream,
+                                               declare, allocate)
+
+    def allocate_globals(self, sdfg: SDFG, global_stream: CodeIOStream):
+        """
+        Allocate globals for SDFG and all nested SDFGs.
+        """
+        allocated: Dict[str, data.Data] = {}
+        for tsdfg, aname, desc in sdfg.arrays_recursive():
+            if desc.lifetime == dtypes.AllocationLifetime.Global:
+                if aname in allocated and allocated[aname] != desc:
+                    warnings.warn(f'Global "{aname}" was already allocated as {allocated[aname]}. Definition '
+                                  f'in SDFG {tsdfg.name} overrides it as {desc}.')
+                elif aname in allocated:
+                    continue  # Do not define same global more than once
+
+                node = nodes.AccessNode(aname)
+                self._dispatcher.dispatch_allocate(tsdfg, None, None, -1, node, desc, global_stream, global_stream, True,
+                                                   True)
+                allocated[aname] = desc
+
+    def deallocate_arrays_in_scope(self, sdfg: SDFG, cfg: ControlFlowRegion, scope: Union[nodes.EntryNode, SDFGState, SDFG],
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Dispatches deallocation of all arrays in the given scope. """
         for tsdfg, state, node, _, _, deallocate in self.to_allocate[scope]:
@@ -881,6 +969,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Analyze allocation lifetime of SDFG and all nested SDFGs
         if is_top_level:
             self.determine_allocation_lifetime(sdfg)
+            self.allocate_globals(sdfg, global_stream)
 
         # Generate code
         ###########################
@@ -905,9 +994,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Define constants as top-level-allocated
         for cname, (ctype, _) in sdfg.constants_prop.items():
             if isinstance(ctype, data.Array):
-                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Pointer, ctype.dtype.ctype)
+                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Pointer, ctype.dtype)
             else:
-                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype.ctype)
+                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype)
 
         # Allocate inter-state variables
         global_symbols = copy.deepcopy(sdfg.symbols)
@@ -954,12 +1043,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     and config.Config.get('compiler', 'fpga', 'vendor').lower() == 'intel_fpga'):
                 # Emit OpenCL type
                 callsite_stream.write(f'{isvarType.ocltype} {isvarName};\n', sdfg)
-                self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
+                self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType)
             else:
                 # If the variable is passed as an input argument to the SDFG, do not need to declare it
                 if isvarName not in outside_symbols:
                     callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
-                    self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
+                    self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType)
+
         callsite_stream.write('\n', sdfg)
 
         #######################################################################

@@ -228,6 +228,19 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
             # If a tasklet has any callbacks, mark as "live" due to potential side effects
             return not node.has_side_effects(sdfg)
 
+        elif isinstance(node, nodes.NestedSDFG):
+            dead = True
+            for nstate in node.sdfg.states():
+                for nnode in nstate.nodes():
+                    if isinstance(nnode, nodes.AccessNode):
+                        if node.sdfg.arrays[nnode.data].lifetime == dtypes.AllocationLifetime.Global:
+                            dead = False
+                            break
+                if not dead:
+                    break
+            # TODO: Test recursively or propagate globals outwards!
+            return dead
+
         elif isinstance(node, nodes.AccessNode):
             # Search for names that are disallowed to remove
             if node.data in PROTECTED_NAMES:
@@ -241,7 +254,8 @@ class DeadDataflowElimination(ppl.ControlFlowRegionPass):
 
             # If access node is persistent, mark as dead only if self.remove_persistent_memory is set
             if not self.remove_persistent_memory:
-                if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+                if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External,
+                                     dtypes.AllocationLifetime.Global):
                     return False
 
             # If data will be used later, cannot remove

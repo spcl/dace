@@ -8,7 +8,7 @@ from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import all_isedges_between
 from dace.transformation.passes import analysis as ap
-
+import networkx as nx
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -126,6 +126,23 @@ class ReferenceToView(ppl.Pass):
                         result.remove(cand)
                         break
                     entry = state.entry_node(entry)
+                if cand not in result:
+                    break
+
+                # If the reference is used to set another referene anywhere else in the target state
+                # (where it would be replaced), and there is no path from the set to the use, it cannot be removed.
+                for other_state in access_states[cand]:
+                    will_be_replaced = [n for n in other_state.data_nodes() if n.data == node.data]
+                    for dn in other_state.data_nodes():
+                        if dn.data == source.data and 'set' in dn.in_connectors:
+                            if any(not nx.has_path(other_state.nx, n, dn) for n in will_be_replaced):
+                                result.remove(cand)
+                                break
+                        if cand not in result:
+                            break
+                    if cand not in result:
+                        break
+
                 if cand not in result:
                     break
 

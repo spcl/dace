@@ -159,6 +159,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Callbacks and other types
         sdfg._callback_mapping.update(nsdfg.callback_mapping)
+        sdfg._extra_dtypes.extend([dt for dt in nsdfg.extra_dtypes if dt not in sdfg.extra_dtypes])
+        sdfg._defs_to_skip.extend([dt for dt in nsdfg.defs_to_skip if dt not in sdfg.defs_to_skip])
 
         # Environments
         for nstate in nsdfg.states():
@@ -272,6 +274,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 sdfg.constants_prop[newname] = (csttype, cstval)
             else:
                 sdfg.constants_prop[cstname] = (csttype, cstval)
+
+        # Add globals that do not exist in the parent SDFG as-is
+        for name, desc in nsdfg.arrays.items():
+            if desc.lifetime == dtypes.AllocationLifetime.Global:
+                if name not in sdfg.arrays:
+                    sdfg.add_datadesc(name, desc, find_new_name=False)
 
         #######################################################
         # Replace data on inlined SDFG nodes/edges
