@@ -680,7 +680,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def remove_node(self, node: NodeT):
         try:
-            for edge in itertools.chain(self.in_edges(node), self.out_edges(node)):
+            for edge in self.all_edges(node):
                 self.remove_edge(edge)
             del self._nodes[node]
             self._nx.remove_node(node)

@@ -507,6 +507,8 @@ class CompiledSDFG(object):
                     raise KeyError("Missing program argument \"{}\"".format(a))
 
         else:
+            if len(sig) > 0:
+                raise KeyError(f"Missing program arguments: {', '.join(sig)}")
             arglist = []
             argtypes = []
             argnames = []
@@ -589,7 +591,7 @@ class CompiledSDFG(object):
         arg_ctypes = tuple(at.dtype.as_ctypes() for at in argtypes)
 
         constants = self.sdfg.constants
-        callparams = tuple((actype(arg.get()) if isinstance(arg, symbolic.symbol) else arg, actype, atype, aname)
+        callparams = tuple((arg, actype, atype, aname)
                            for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames)
                            if not (symbolic.issymbolic(arg) and (hasattr(arg, 'name') and arg.name in constants)))
 

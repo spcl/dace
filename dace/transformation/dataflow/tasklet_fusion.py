@@ -170,10 +170,11 @@ class TaskletFusion(pm.SingleStateTransformation):
         # turn cannot be used anywhere else.
         if graph.out_degree(t1) != 1 or (data is not None and graph.out_degree(data) != 1):
             return False
-        access_node_count = sum(1 for s in sdfg.nodes() for n in s.data_nodes() if n.data == data.data)
-        access_node_count += sum(1 for e in sdfg.edges() if data.data in e.data.free_symbols)
-        if access_node_count > 1:
-            return False
+        if data is not None:
+            access_node_count = sum(1 for s in sdfg.nodes() for n in s.data_nodes() if n.data == data.data)
+            access_node_count += sum(1 for e in sdfg.edges() if data.data in e.data.free_symbols)
+            if access_node_count > 1:
+                return False
 
         # Try to parse the code to check that there is not more than one assignment.
         try:

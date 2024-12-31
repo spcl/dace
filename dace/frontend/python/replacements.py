@@ -315,7 +315,7 @@ def _numpy_full(pv: ProgramVisitor,
     """
     if isinstance(shape, Number) or symbolic.issymbolic(shape):
         shape = [shape]
-    
+
     is_data = False
     if isinstance(fill_value, (Number, np.bool_)):
         vtype = dtypes.dtype_to_typeclass(type(fill_value))
@@ -587,7 +587,7 @@ def _arange(pv: ProgramVisitor,
 
     if any(not isinstance(s, Number) for s in [start, stop, step]):
         if step == 1:  # Common case where ceiling is not necessary
-            shape = (stop - start,)
+            shape = (stop - start, )
         else:
             shape = (symbolic.int_ceil(stop - start, step), )
     else:
@@ -1062,6 +1062,17 @@ def _min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
                    a,
                    axis=axis,
                    identity=dtypes.max_value(sdfg.arrays[a].dtype))
+
+
+@oprepo.replaces('numpy.clip')
+def _clip(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a, a_min=None, a_max=None, **kwargs):
+    if a_min is None and a_max is None:
+        raise ValueError("clip() requires at least one of `a_min` or `a_max`")
+    if a_min is None:
+        return implement_ufunc(pv, None, sdfg, state, 'minimum', [a, a_max], kwargs)[0]
+    if a_max is None:
+        return implement_ufunc(pv, None, sdfg, state, 'maximum', [a, a_min], kwargs)[0]
+    return implement_ufunc(pv, None, sdfg, state, 'clip', [a, a_min, a_max], kwargs)[0]
 
 
 def _minmax2(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, b: str, ismin=True):
@@ -5320,6 +5331,7 @@ def _vsplit(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
 
 ############################################################################################################
 # Fast Fourier Transform numpy package (numpy.fft)
+
 
 def _real_to_complex(real_type: dace.typeclass):
     if real_type == dace.float32:

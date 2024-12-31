@@ -1319,7 +1319,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.sdfg.replace_dict(repl_dict)
 
         propagate_states(self.sdfg)
-        for state, memlet, inner_indices in itertools.chain(self.inputs.values(), self.outputs.values()):
+        for state, memlet, _inner_indices in itertools.chain(self.inputs.values(), self.outputs.values()):
             if state is not None and state.dynamic_executions:
                 memlet.dynamic = True
 
@@ -2366,8 +2366,11 @@ class ProgramVisitor(ExtNodeVisitor):
                                                 init_expr='%s = %s' % (indices[0], astutils.unparse(ast_ranges[0][0])),
                                                 update_expr=incr[indices[0]],
                                                 inverted=False)
-            _, first_subblock, _, _ = self._recursive_visit(node.body, f'for_{node.lineno}', node.lineno,
-                                                            extra_symbols=extra_syms, parent=loop_region,
+            _, first_subblock, _, _ = self._recursive_visit(node.body,
+                                                            f'for_{node.lineno}',
+                                                            node.lineno,
+                                                            extra_symbols=extra_syms,
+                                                            parent=loop_region,
                                                             unconnected_last_block=False)
             loop_region.start_block = loop_region.node_id(first_subblock)
             self._connect_break_blocks(loop_region)
@@ -2449,7 +2452,10 @@ class ProgramVisitor(ExtNodeVisitor):
         loop_region = self._add_loop_region(loop_cond, label=f'while_{node.lineno}', inverted=False)
 
         # Parse body
-        self._recursive_visit(node.body, f'while_{node.lineno}', node.lineno, parent=loop_region,
+        self._recursive_visit(node.body,
+                              f'while_{node.lineno}',
+                              node.lineno,
+                              parent=loop_region,
                               unconnected_last_block=False)
 
         if test_region is not None:
@@ -2540,7 +2546,6 @@ class ProgramVisitor(ExtNodeVisitor):
             node = node.parent_graph
         return False
 
-
     def visit_Break(self, node: ast.Break):
         if not self._has_loop_ancestor(self.cfg_target):
             raise DaceSyntaxError(self, node, "Break block outside loop region")
@@ -2561,7 +2566,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add conditional region
         cond_block = ConditionalBlock(f'if_{node.lineno}')
-        self.cfg_target.add_node(cond_block)
+        self.cfg_target.add_node(cond_block, ensure_unique_name=True)
         self._on_block_added(cond_block)
 
         if_body = ControlFlowRegion(cond_block.label + '_body', sdfg=self.sdfg)
@@ -2572,8 +2577,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
-            else_body = ControlFlowRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}',
-                                          sdfg=self.sdfg)
+            else_body = ControlFlowRegion(f'{cond_block.label}_else_{node.orelse[0].lineno}', sdfg=self.sdfg)
             cond_block.add_branch(None, else_body)
             # Visit recursively
             self._recursive_visit(node.orelse, 'else', node.lineno, else_body, False)
@@ -2933,7 +2937,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 osqueezed = [i for i in range(len(op_subset)) if i not in osqz]
                 wsqueezed = [i for i in range(len(wtarget_subset)) if i not in wsqz]
                 rsqueezed = [i for i in range(len(rtarget_subset)) if i not in rsqz]
-
 
                 if (boolarr or indirect_indices
                         or (sqz_wsub.size() == sqz_osub.size() and sqz_wsub.size() == sqz_rsub.size())):
@@ -3358,8 +3361,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.dtype_to_typeclass().keys())
-            if not (result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
-                    (isinstance(result, str) and any(result in x for x in [self.sdfg.arrays, self.sdfg._pgrids, self.sdfg._subarrays, self.sdfg._rdistrarrays]))):
+            if not (
+                    result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
+                (isinstance(result, str) and any(
+                    result in x
+                    for x in [self.sdfg.arrays, self.sdfg._pgrids, self.sdfg._subarrays, self.sdfg._rdistrarrays]))):
                 raise DaceSyntaxError(
                     self, node, "In assignments, the rhs may only be "
                     "data, numerical/boolean constants "
@@ -3467,7 +3473,9 @@ class ProgramVisitor(ExtNodeVisitor):
                             cname = self.sdfg.find_new_constant(f'__ind{i}_{true_name}')
                             self.sdfg.add_constant(cname, carr)
                             # Add constant to descriptor repository
-                            self.sdfg.add_array(cname, carr.shape, dtypes.dtype_to_typeclass(carr.dtype.type),
+                            self.sdfg.add_array(cname,
+                                                carr.shape,
+                                                dtypes.dtype_to_typeclass(carr.dtype.type),
                                                 transient=True)
                             if numpy.array(arr).dtype == numpy.bool_:
                                 boolarr = cname
@@ -3484,6 +3492,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     new_rng = rng
             else:
                 new_name, new_rng = true_name, rng
+
+            # Change the range in case indirect indices are used
+            if indirect_indices:
+                for dim, indarr in indirect_indices.items():
+                    new_rng[dim] = (0, self.sdfg.arrays[indarr].shape[0] - 1, 1)
 
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
@@ -3939,6 +3952,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 mapping[aname] = arg
         for arg in args_to_remove:
             args.remove(arg)
+
+        # Refresh temporary transient counter of the nested SDFG
+        sdfg.refresh_temp_transients()
 
         # Change connector names
         updated_args = []
@@ -4516,7 +4532,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     name = "call"
                 call_region = FunctionCallRegion(label=f"{name}_{node.lineno}", arguments=[])
-                self.cfg_target.add_node(call_region)
+                self.cfg_target.add_node(call_region, ensure_unique_name=True)
                 self._on_block_added(call_region)
                 previous_last_cfg_target = self.last_cfg_target
                 previous_target = self.cfg_target
@@ -4719,22 +4735,26 @@ class ProgramVisitor(ExtNodeVisitor):
         self.generic_visit(node)
 
     def visit_Return(self, node: ast.Return):
-        # Modify node value to become an expression
-        new_node = ast.copy_location(ast.Expr(value=node.value), node)
-
-        # Return values can either be tuples or a single object
-        if isinstance(node.value, (ast.Tuple, ast.List)):
-            ast_tuple = ast.copy_location(
-                ast.parse('(%s,)' % ','.join('__return_%d' % i for i in range(len(node.value.elts)))).body[0].value,
-                node)
-            self._visit_assign(new_node, ast_tuple, None, is_return=True)
-        else:
-            ast_name = ast.copy_location(ast.Name(id='__return'), node)
-            self._visit_assign(new_node, ast_name, None, is_return=True)
-
-        if not isinstance(self.cfg_target, SDFG):
-            # In a nested control flow region, a return needs to be explicitly marked with a return block.
+        if node.value is None:
+            # If there's no value on the return node or it is None, insert just a return block.
             self._on_block_added(self.cfg_target.add_return(f'return_{self.cfg_target.label}_{node.lineno}'))
+        else:
+            # Modify node value to become an expression
+            new_node = ast.copy_location(ast.Expr(value=node.value), node)
+
+            # Return values can either be tuples or a single object
+            if isinstance(node.value, (ast.Tuple, ast.List)):
+                ast_tuple = ast.copy_location(
+                    ast.parse('(%s,)' % ','.join('__return_%d' % i for i in range(len(node.value.elts)))).body[0].value,
+                    node)
+                self._visit_assign(new_node, ast_tuple, None, is_return=True)
+            else:
+                ast_name = ast.copy_location(ast.Name(id='__return'), node)
+                self._visit_assign(new_node, ast_name, None, is_return=True)
+
+            if not isinstance(self.cfg_target, SDFG):
+                # In a nested control flow region, a return needs to be explicitly marked with a return block.
+                self._on_block_added(self.cfg_target.add_return(f'return_{self.cfg_target.label}_{node.lineno}'))
 
     def visit_With(self, node: ast.With, is_async=False):
         # "with dace.tasklet" syntax
@@ -4766,10 +4786,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 evald = astutils.evalnode(node.items[0].context_expr, self.globals)
                 if hasattr(evald, "name"):
                     named_region_name: str = evald.name
-                else:            
+                else:
                     named_region_name = f"Named Region {node.lineno}"
                 named_region = NamedRegion(named_region_name, debuginfo=self.current_lineinfo)
-                self.cfg_target.add_node(named_region)
+                self.cfg_target.add_node(named_region, ensure_unique_name=True)
                 self._on_block_added(named_region)
                 self._recursive_visit(node.body, "init_named", node.lineno, named_region, unconnected_last_block=False)
                 return

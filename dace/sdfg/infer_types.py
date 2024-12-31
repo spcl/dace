@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
 from dace import data, dtypes
-from dace.codegen.tools import type_inference
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes, validation
 from dace.sdfg import nodes
@@ -33,9 +32,6 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
         allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
     else:
         allocated_as_scalar = True
-
-    if node.out_connectors[cname].type is not None:
-        return node.out_connectors[cname]
 
     # If nested SDFG, try to use internal array type
     if isinstance(node, nodes.NestedSDFG):

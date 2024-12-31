@@ -1,4 +1,4 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
 import pytest
@@ -40,6 +40,17 @@ def test_missing_arguments_regression():
     tester.to_sdfg().compile()
 
 
+def test_missing_arguments_2_regression():
+
+    @dace.program
+    def tester(x: dace.float64[20]):
+        x[:] = 0
+
+    with pytest.raises(KeyError):
+        tester()
+
+
 if __name__ == '__main__':
     test_extra_args()
     test_missing_arguments_regression()
+    test_missing_arguments_2_regression()
