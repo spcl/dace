@@ -5,6 +5,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
 from typing import Dict, Set, Tuple, Any, Optional, Union
 import networkx as nx
@@ -160,9 +161,23 @@ class AccessSets(ppl.Pass):
                 readset, writeset = set(), set()
                 for anode in state.data_nodes():
                     if state.in_degree(anode) > 0:
-                        writeset.add(anode.data)
+                        desc = sdfg.arrays[anode.data]
+                        if isinstance(desc, dt.View):
+                            viewed_edge = sdutil.get_view_edge(state, anode)
+                            if viewed_edge is not None and viewed_edge.src is anode and viewed_edge.src_conn == 'views':
+                                for viewed_node in sdutil.get_all_view_nodes(state, anode):
+                                    writeset.add(viewed_node.data)
+                        else:
+                            writeset.add(anode.data)
                     if state.out_degree(anode) > 0:
-                        readset.add(anode.data)
+                        desc = sdfg.arrays[anode.data]
+                        if isinstance(desc, dt.View):
+                            viewed_edge = sdutil.get_view_edge(state, anode)
+                            if viewed_edge is not None and viewed_edge.dst is anode and viewed_edge.dst_conn == 'views':
+                                for viewed_node in sdutil.get_all_view_nodes(state, anode):
+                                    readset.add(viewed_node.data)
+                        else:
+                            readset.add(anode.data)
 
                 result[state] = (readset, writeset)
 
