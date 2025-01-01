@@ -7,7 +7,7 @@ from fparser.two.parser import ParserFactory
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, deconstruct_enums, \
     deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, \
     assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
-    const_eval_nodes
+    const_eval_nodes, prune_unused_objects
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -18,6 +18,7 @@ def parse_and_improve(sources: Dict[str, str]):
     reader = FortranStringReader(sources['main.f90'])
     ast = parser(reader)
     ast = recursive_ast_improver(ast, sources, [], parser)
+    ast = correct_for_function_calls(ast)
     assert isinstance(ast, Program)
     return ast
 
@@ -382,7 +383,6 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = correct_for_function_calls(ast)
     ast = deconstruct_procedure_calls(ast)
 
     got = ast.tofortran()
@@ -795,7 +795,6 @@ def test_interface_replacer_with_module_procedures():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
   implicit none
-  public :: fun
   interface fun
     module procedure real_fun
   end interface fun
@@ -823,7 +822,6 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = correct_for_function_calls(ast)
     ast = deconstruct_interface_calls(ast)
 
     got = ast.tofortran()
@@ -880,7 +878,6 @@ subroutine fun(z)
 end subroutine fun
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = correct_for_function_calls(ast)
     ast = deconstruct_interface_calls(ast)
 
     got = ast.tofortran()
@@ -907,7 +904,6 @@ def test_interface_replacer_with_optional_args():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
   implicit none
-  public :: fun
   interface fun
     module procedure real_fun, integer_fun
   end interface fun
@@ -938,7 +934,6 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = correct_for_function_calls(ast)
     ast = deconstruct_interface_calls(ast)
 
     got = ast.tofortran()
@@ -980,7 +975,6 @@ def test_interface_replacer_with_keyworded_args():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
   implicit none
-  public :: fun
   interface fun
     module procedure real_fun
   end interface fun
@@ -1009,7 +1003,6 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = correct_for_function_calls(ast)
     ast = deconstruct_interface_calls(ast)
 
     got = ast.tofortran()
@@ -1195,7 +1188,6 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = correct_for_function_calls(ast)
     ast = assign_globally_unique_subprogram_names(ast, {('main',)})
     ast = assign_globally_unique_variable_names(ast, set())
 
@@ -1284,6 +1276,66 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
+def test_object_pruning():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type config
+    integer :: a = 8
+    real :: b = 2.0
+    logical :: c = .false.
+  end type config
+  type used_config
+    integer :: a = -1
+    real :: b = -2.0
+  end type used_config
+  type big_config
+    type(config) :: big
+  end type big_config
+  type(config) :: globalo
+contains
+  subroutine fun(this)
+    implicit none
+    type(config), intent(inout) :: this
+    this%b = 5.1
+  end subroutine fun
+end module lib
+""").add_file("""
+subroutine main
+  use lib
+  implicit none
+  type(used_config) :: ucfg
+  integer :: i = 7
+  real :: a = 1
+  ucfg%b = a*i
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = prune_unused_objects(ast, [('main',)])
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  TYPE :: used_config
+    INTEGER :: a = - 1
+    REAL :: b = - 2.0
+  END TYPE used_config
+  CONTAINS
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: used_config
+  IMPLICIT NONE
+  TYPE(used_config) :: ucfg
+  INTEGER :: i = 7
+  REAL :: a = 1
+  ucfg % b = a * i
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
 def test_constant_resolving_expressions():
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main
@@ -1307,7 +1359,6 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = correct_for_function_calls(ast)
     ast = const_eval_nodes(ast)
 
     got = ast.tofortran()
@@ -1360,7 +1411,6 @@ subroutine main
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
-    ast = correct_for_function_calls(ast)
     ast = const_eval_nodes(ast)
 
     got = ast.tofortran()

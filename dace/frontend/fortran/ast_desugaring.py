@@ -2,8 +2,7 @@ import math
 import operator
 import re
 import sys
-from dataclasses import dataclass
-from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type, Any
+from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type
 
 import networkx as nx
 import numpy as np
@@ -1261,29 +1260,6 @@ def deconstruct_interface_calls(ast: Program) -> Program:
         else:
             remove_self(use)
 
-    # We also remove any access statement that makes these interfaces public/private.
-    for acc in walk(ast, Access_Stmt):
-        # TODO: Add ref.
-        kind, alist = acc.children
-        if not alist:
-            continue
-        scope_spec = find_scope_spec(acc)
-
-        survivors = []
-        for c in alist.children:
-            assert isinstance(c, Name)
-            c_spec = scope_spec + (c.string,)
-            assert c_spec in alias_map
-            if not isinstance(alias_map[c_spec], Interface_Stmt):
-                # Leave the non-interface usages alone.
-                survivors.append(c)
-
-        if survivors:
-            alist.items = survivors
-            _reparent_children(alist)
-        else:
-            remove_self(acc)
-
     # At this point, we must have replaced all references to the interfaces.
     for k in iface_map.keys():
         assert k in alias_map
@@ -1477,46 +1453,53 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
     """
     Precondition: All the indirections have been taken out of the program.
     """
-    PRUNABLE_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram, Derived_Type_Def,Module]
+    # NOTE: Modules are not included here, because they are simply containers with no other direct use. Empty modules
+    # should be pruned at the end separately.
+    PRUNABLE_OBJECT_TYPES = Union[Program_Stmt, Subroutine_Stmt, Function_Stmt, Derived_Type_Stmt, Entity_Decl]
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
     survivors: Set[SPEC] = set()
-    keepers = [alias_map[k].parent for k in keepers]
+    keepers = [alias_map[k] for k in keepers]
     assert all(isinstance(k, PRUNABLE_OBJECT_TYPES) for k in keepers)
 
     def _keep_from(node: Base):
+        """
+        Ensure that `node` is not pruned, along with anything defined in it.
+        """
+        # Go over all the scoped identifiers available under `node`.
         for nm in walk(node, Name):
-            ob = nm.parent
-            sc_spec = search_scope_spec(ob)
+            sc_spec = search_scope_spec(nm.parent)
             if not sc_spec:
                 continue
 
+            # All the scope ancestors of `nm` must live too.
             for j in reversed(range(len(sc_spec))):
                 anc = sc_spec[:j + 1]
                 if anc in survivors:
                     continue
                 survivors.add(anc)
-                anc_node = alias_map[anc].parent
+                anc_node = alias_map[anc]
                 if isinstance(anc_node, PRUNABLE_OBJECT_TYPES):
-                    _keep_from(anc_node)
+                    _keep_from(anc_node.parent)
 
+            # We keep the definition of that `nm` is an alias of.
             to_keep = search_real_ident_spec(nm.string, sc_spec, alias_map)
             if not to_keep or to_keep not in alias_map or to_keep in survivors:
                 # If we don't have a valid `to_keep` or `to_keep` is already kept, we move on.
                 continue
             survivors.add(to_keep)
-            keep_node = alias_map[to_keep].parent
+            keep_node = alias_map[to_keep]
             if isinstance(keep_node, PRUNABLE_OBJECT_TYPES):
-                _keep_from(keep_node)
+                _keep_from(keep_node.parent)
 
     for k in keepers:
-        _keep_from(k)
+        _keep_from(k.parent)
 
     # We keep them sorted so that the parent scopes are handled earlier.
     killed: Set[SPEC] = set()
     for ns in list(sorted(set(ident_map.keys()) - survivors)):
-        ns_node = ident_map[ns].parent
+        ns_node = ident_map[ns]
         if not isinstance(ns_node, PRUNABLE_OBJECT_TYPES):
             continue
         for i in range(len(ns) - 1):
@@ -1526,28 +1509,17 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 break
         if ns in killed:
             continue
-        remove_self(ns_node)
+        if isinstance(ns_node, Entity_Decl):
+            elist = ns_node.parent
+            remove_self(ns_node)
+            if not elist.children:
+                assert isinstance(elist.parent, Type_Declaration_Stmt)
+                remove_self(elist.parent)
+        else:
+            remove_self(ns_node.parent)
         killed.add(ns)
 
-    # We also remove any access statement that makes the killed objects public/private.
-    for acc in walk(ast, Access_Stmt):
-        # TODO: Add ref.
-        kind, alist = acc.children
-        if not alist:
-            continue
-        scope_spec = find_scope_spec(acc)
-        good_children = []
-        for c in alist.children:
-            assert isinstance(c, Name)
-            c_spec = find_real_ident_spec(c.string, scope_spec, alias_map)
-            assert c_spec in ident_map
-            if c_spec not in killed:
-                good_children.append(c)
-        if good_children:
-            alist.items = good_children
-            _reparent_children(alist)
-        else:
-            remove_self(acc)
+    consolidate_uses(ast, alias_map)
 
     return ast
 
@@ -1955,29 +1927,46 @@ def _get_module_or_program_parts(mod: Union[Module, Main_Program]) \
     return stmt, spec, exec, subp
 
 
-def consolidate_uses(ast: Program) -> Program:
+def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Program:
+    alias_map = alias_map or alias_specs(ast)
     for sp in reversed(walk(ast, Specification_Part)):
-        all_use: Set[str] = set()
         use_map: Dict[str, Set[str]] = {}
-        # Build the table.
-        for u in children_of_type(sp, Use_Stmt):
-            name = singular(children_of_type(u, Name)).string
-            olist = atmost_one(children_of_type(u, Only_List))
-            if not olist:
-                all_use.add(name)
+        # Build the table to keep the use statements only if they are actually necessary.
+        for nm in walk(sp.parent, Name):
+            if isinstance(nm.parent, (Only_List, Rename)):
+                # The identifiers in the use statements themselves are not of concern.
+                continue
+            # Where did we _really_ import `nm` from? Find the definition module.
+            sc_spec = search_scope_spec(nm.parent)
+            if not sc_spec:
+                continue
+            spec = search_real_ident_spec(nm.string, sc_spec, alias_map)
+            if not spec or spec not in alias_map:
+                continue
+            if len(spec) != 2:
+                continue
+            if not isinstance(alias_map[spec[:-1]], Module_Stmt):
+                # Objects defined inside a free function cannot be imported; so we must already be in that function.
+                continue
+            nm_mod = spec[0]
+            # And which module are we in right now?
+            sp_mod = sp
+            while sp_mod and not isinstance(sp_mod, (Module, Main_Program)):
+                sp_mod = sp_mod.parent
+            if sp_mod and nm_mod == find_name_of_node(sp_mod):
+                # Nothing to do if the object is defined in the current scope and not imported.
+                continue
+            if nm.string == spec[-1]:
+                u = nm.string
             else:
-                if name not in use_map:
-                    use_map[name] = set()
-                use_map[name].update(c.tofortran() for c in olist.children)
+                u = f"{nm.string} => {spec[-1]}"
+            if nm_mod not in use_map:
+                use_map[nm_mod] = set()
+            use_map[nm_mod].add(u)
         # Build new use statements.
-        nuses: List[Use_Stmt] = [
-            Use_Stmt(f"use {k}") if k in all_use else Use_Stmt(f"use {k}, only: {', '.join(use_map[k])}")
-            for k in use_map.keys() | all_use]
-        reuses: List[Use_Stmt] = [
-            Use_Stmt(f"use {k}, only: {', '.join(r for r in use_map[k] if '=>' in r)}")
-            for k in use_map.keys() if any('=>' in r for r in use_map[k])]
+        nuses: List[Use_Stmt] = [Use_Stmt(f"use {k}, only: {', '.join(use_map[k])}") for k in use_map.keys()]
         # Remove the old ones, and prepend the new ones.
-        sp.content = nuses + reuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
+        sp.content = nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
         _reparent_children(sp)
     return ast
 
