@@ -521,6 +521,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Convert argument into path to full data
         for arg in args_used_in_assignments:
+            complex_replacement = False
             in_edge = input_memlets[arg]
             if not isinstance(nsdfg.arrays[in_edge.data.data], View):
                 if isinstance(nsdfg.arrays[in_edge.data.data], Array):
@@ -552,29 +553,55 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 for i in range(1, len(view_nodes)):
                     view_node = view_nodes[i]
                     view_edge = get_view_edge(outer_state, view_node)
-
+                    tmp_memlet_part = ""
                     if "." in view_edge.data.data:
                         member_name = view_edge.data.data.split(".")[-1]
                         memlet_part = member_name
                         if i < len(view_nodes) - 1:
                             memlet_part += "[" + view_edge.data.subset.__str__() + "]"
                         
-                        data_path.append(memlet_part)
+                        tmp_memlet_part = memlet_part
 
                         current_node = view_node
                         current_desc = current_desc.members[member_name]
+                        current_subset= view_edge.data.subset
                     else:
                         # View on a subset
                         if view_edge.data.subset != Memlet.from_array(current_node.data, current_desc).subset:
+                            #create a list with a length equal to the number of dimensions of the view
+                            collapsed = [False]*len(view_edge.data.subset.size())
+                            components = [""]*len(view_edge.data.subset.size())
+                            #check if the view is collapsed in any dimension
+                            for i in range(len(view_edge.data.subset.size())):
+                                if view_edge.data.subset.size()[i] ==1:
+                                        collapsed[i] = True
+                                        components[i] = str(view_edge.data.subset.ranges[i][0])
+                                elif view_edge.data.subset.size()[i] != current_desc.shape[i]:
+                                    raise NotImplementedError
+                                else:
+                                    components[i] = "__to_be_replaced__"
+                                    complex_replacement = True
+                                    data_path.append((member_name,components))
+                            if all(collapsed):              
+                                data_path.append(member_name+ "[" + view_edge.data.subset.__str__() + "]")
                             # TODO: Non-trivial, memlet offsetting required
-                            raise NotImplementedError
+                            print("Warning: Non-trivial view on a subset")
+                            #raise NotImplementedError
                         else:
                             # We can simply skip
+                            if tmp_memlet_part != "":
+                                data_path.append(tmp_memlet_part)
                             continue
-
-            data_path = ".".join(data_path)
-            for edge in nsdfg.edges():
-                edge.data.replace(arg, data_path)
+            if not complex_replacement:
+                if len(data_path) > 1:                    
+                    data_path = ".".join(data_path)
+                else:
+                    data_path = data_path[0]
+                for edge in nsdfg.edges():
+                    edge.data.replace(arg, data_path)
+            else:
+                for edge in nsdfg.edges():
+                    edge.data.replace_complex(arg, data_path)        
 
         #######################################################
         # Remove old edges to the nested SDFG

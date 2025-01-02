@@ -19,6 +19,7 @@ from dace.transformation.passes.lift_struct_views import LiftStructViews
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
+    LiftStructViews,
     ScalarToSymbolPromotion,
     FuseStates,
     OptionalArrayInference,
@@ -29,7 +30,7 @@ SIMPLIFY_PASSES = [
     ReferenceToView,
     ArrayElimination,
     ConsolidateEdges,
-    LiftStructViews,
+    
 ]
 
 _nonrecursive_passes = [

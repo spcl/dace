@@ -303,6 +303,33 @@ class InterstateEdge(object):
             self._uncond = None
             self._cond_sympy = None
 
+    
+    def replace_complex_iedge(self, oldname,newname, replace_keys=True) -> None:
+        """
+        Replaces all given keys with their corresponding values.
+
+        :param repl: Replacement dictionary.
+        :param replace_keys: If False, skips replacing assignment keys.
+        """
+
+        #if replace_keys:
+        #    for name, new_name in repl.items():
+        #        _replace_dict_keys(self.assignments, name, new_name)
+        repl={oldname: newname}
+        for k, v in self.assignments.items():
+            vast = ast.parse(v)
+            vast = astutils.ASTFindReplaceComplex(repl).visit(vast)
+            newv = astutils.unparse(vast)
+            if newv != v:
+                self.assignments[k] = newv
+        condition = ast.parse(self.condition.as_string)
+        condition = astutils.ASTFindReplaceComplex(repl).visit(condition)
+        newc = astutils.unparse(condition)
+        if newc != condition:
+            self.condition.as_string = newc
+            self._uncond = None
+            self._cond_sympy = None        
+
     def replace(self, name: str, new_name: str, replace_keys=True) -> None:
         """
         Replaces all occurrences of ``name`` with ``new_name``.
@@ -312,6 +339,16 @@ class InterstateEdge(object):
         :param replace_keys: If False, skips replacing assignment keys.
         """
         self.replace_dict({name: new_name}, replace_keys)
+
+    def replace_complex(self, name: str, new_name: List, replace_keys=True) -> None:
+        """
+        Replaces all occurrences of ``name`` with ``new_name``.
+
+        :param name: The source name.
+        :param new_name: The replacement list for iedge memlet replacement.
+        :param replace_keys: If False, skips replacing assignment keys.
+        """
+        self.replace_complex_iedge(name, new_name, replace_keys)    
 
     def new_symbols(self, sdfg, symbols) -> Dict[str, dtypes.typeclass]:
         """
