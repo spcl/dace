@@ -458,6 +458,9 @@ class StateFusion(transformation.MultiStateTransformation):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
 
+        # Cache start block
+        start_block = sdfg.start_block
+
         # Remove interstate edge(s)
         edges = sdfg.edges_between(first_state, second_state)
         for edge in edges:
@@ -465,9 +468,6 @@ class StateFusion(transformation.MultiStateTransformation):
                 for src, dst, other_data in sdfg.in_edges(first_state):
                     other_data.assignments.update(edge.data.assignments)
             sdfg.remove_edge(edge)
-
-        # Cache start block
-        start_block = sdfg.start_block
 
         # Special case 1: first state is empty
         if first_state.is_empty():
