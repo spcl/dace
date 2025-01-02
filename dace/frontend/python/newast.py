@@ -5362,9 +5362,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 rnode, wnode, Memlet.simple(array, rng, num_accesses=rng.num_elements(), other_subset_str=other_subset))
         return tmp, other_subset
 
-    def _create_output_shape_from_advanced_indexing(self, aname: str, expr: MemletExpr) -> List[symbolic.SymbolicType]:
+    def _compute_output_shape_from_advanced_indexing(self, aname: str, expr: MemletExpr) -> List[symbolic.SymbolicType]:
         """
-        Creates the output shape of a slicing operation with advanced indexing.
+        Computes the output shape of a slicing operation with advanced indexing.
 
         :param aname: The name of the array being sliced.
         :param expr: The MemletExpr object representing the slicing operation.
@@ -5406,7 +5406,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Broadcast all advanced indexing expressions together
         chunk_shape = None
         # Get the advanced indexing expressions
-        for i, arrname in expr.arrdims.items():
+        for _, arrname in expr.arrdims.items():
             if isinstance(arrname, str):  # Array or constant
                 if arrname in self.sdfg.arrays:
                     desc = self.sdfg.arrays[arrname]
@@ -5430,97 +5430,192 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return output_shape
 
+    def _create_memlets_from_advanced_indexing(
+            self, aname: str, expr: MemletExpr) -> Tuple[Dict[str, subsets.Range], Memlet, Memlet, List[Memlet]]:
+        """
+        Creates the input memlets and index expression of a slicing operation with advanced indexing.
+        Returns four elements: a dictionary mapping an index name (e.g., ``__i0``) to the range to access, a memlet
+        representing the array access for reading, a memlet representing the array access for writing, and a list of
+        memlets representing any other input index arrays.
+
+        This method also creates new constant arrays for indexing arrays used in advanced indexing expressions.
+
+        :param aname: The name of the array being sliced.
+        :param expr: The MemletExpr object representing the slicing operation.
+        :return: A tuple of (index mapping, input array memlet, output array memlet, input index memlets).
+        """
+        # Compute input subset and index mapping for the basic indexing expressions (ranges and scalars)
+        ndrange = expr.subset.ndrange()
+        output_ndrange = [(dace.symbol(f'__i{i}'), dace.symbol(f'__i{i}'), 1) if rng[0] != rng[1] else (0, 0, 1)
+                          for i, rng in enumerate(ndrange)]
+        # Create the input index subset by offsetting the output index subset
+        input_subset = subsets.Range([(rb + ind * rs, rb + ind * rs, 1)
+                                      for (rb, _, rs), (ind, _, _) in zip(ndrange, output_ndrange)])
+        index_mapping = {
+            f'__i{i}': (0, s - 1, 1)
+            for i, (s, rng) in enumerate(zip(expr.subset.size(), ndrange)) if rng[0] != rng[1]
+        }
+        index_memlets: List[Memlet] = []
+
+        # Fast path: no advanced indexing
+        if not expr.arrdims:
+            for new_axis in reversed(expr.new_axes):
+                output_ndrange.insert(new_axis, (0, 0, 1))
+            return (
+                index_mapping,
+                Memlet(data=aname, subset=input_subset),
+                Memlet(data=aname, subset=subsets.Range(output_ndrange)),
+                index_memlets,
+            )
+
+        # The output shape is the shape of all contiguous advanced indexing arrays, after broadcasting with each other
+
+        # Start with all basic indexing dimensions, setting advanced indexing dimensions to None
+        output_shape = [s if i not in expr.arrdims else None for i, s in enumerate(expr.subset.size())]
+
+        # If any advanced indexing is found, mark any scalar dimension as advanced indices too
+        output_shape = [None if rng[0] == rng[1] else s for s, rng in zip(output_shape, expr.subset.ndrange())]
+
+        # Create output subset based on the shape
+        output_ndrange = [None if output_shape[i] is None else rng for i, rng in enumerate(output_ndrange)]
+
+        # Mark every dimension that starts with None as an advanced indexing "chunk"
+        advanced_dims = [
+            i for i, s in enumerate(output_shape) if s is None and (i == 0 or output_shape[i - 1] is not None)
+        ]
+        # If there is more than one contiguous advanced indexing chunk, move all advanced indices to the beginning
+        prefix_dims = len(advanced_dims) > 1
+        if prefix_dims:
+            output_shape = [None] + [s for s in output_shape if s is not None]
+            output_ndrange = [None] + [rng for rng in output_ndrange if rng is not None]
+            dim_position = 0
+        else:
+            dim_position = advanced_dims[0]
+
+        # Add new axes
+        for new_axis in reversed(expr.new_axes):
+            if prefix_dims:
+                output_shape.insert(new_axis + 1, 1)
+                output_ndrange.insert(new_axis + 1, (0, 0, 1))
+            else:
+                output_shape.insert(new_axis, 1)
+                output_ndrange.insert(new_axis, (0, 0, 1))
+                if new_axis <= dim_position:
+                    dim_position += 1
+
+        # Contract contiguous None dimensions that appear multiple times in a row
+        output_shape = [
+            s for i, s in enumerate(output_shape) if s is not None or i == 0 or output_shape[i - 1] is not None
+        ]
+        output_ndrange = [
+            rng for i, rng in enumerate(output_ndrange)
+            if rng is not None or i == 0 or output_ndrange[i - 1] is not None
+        ]
+
+        # Broadcast all advanced indexing expressions together
+        advidx_shape = None
+        out_idx = None
+        advidx_arrays = {}
+        # Get the advanced indexing expressions
+        for i, idxarrname in expr.arrdims.items():
+            if isinstance(idxarrname, str):  # Array or constant
+                if idxarrname in self.sdfg.arrays:
+                    desc = self.sdfg.arrays[idxarrname]
+                elif idxarrname in self.sdfg.constants:
+                    desc = self.sdfg.constants[idxarrname]
+                else:
+                    raise NameError(f'Array "{idxarrname}" used in indexing "{aname}" not found')
+                shape = desc.shape
+            else:  # Literal list or tuple, add as constant and use shape
+                idxarr = [v if isinstance(v, Number) else self._parse_value(v) for v in idxarrname]
+                carr = numpy.array(idxarr, dtype=dtypes.typeclass(int).type)
+                cname = self.sdfg.find_new_constant(f'__ind{i}_{aname}')
+                self.sdfg.add_constant(cname, carr)
+                self.sdfg.arrays[cname] = self.sdfg.constants_prop[cname][0]
+                self.sdfg.arrays[cname].transient = True
+                idxarrname = cname
+                shape = carr.shape
+
+            # Set the actual name of the advanced indexing array
+            advidx_arrays[i] = (idxarrname, shape)
+
+            # Loop once to get the broadcasted shape
+            if advidx_shape is not None:
+                advidx_shape, _, out_idx, *_ = broadcast_together(shape, advidx_shape)
+            else:
+                advidx_shape = tuple(shape)
+                out_idx = ','.join([f'__i{i}' for i in range(len(shape))])
+
+        # Rename indices to avoid conflicts
+        out_idx = out_idx.replace('__i', '__ind')
+        advidx_index = []
+        # Set the index mapping for the broadcasted array
+        for idx, s in zip(out_idx.split(','), advidx_shape):
+            index_mapping[idx.strip()] = (0, s - 1, 1)
+            symidx = symbolic.symbol(idx.strip())
+            advidx_index.append((symidx, symidx, 1))
+
+        # Loop over the advanced indexing expressions again to create the input memlets
+        for i, (idxarrname, shape) in advidx_arrays.items():
+            # Remove the original index dimension from index mapping
+            del index_mapping[f'__i{i}']
+
+            # NOTE: The indices can be multi-dimensional
+            _, _, out_idx, arr_idx, _ = broadcast_together(shape, advidx_shape)
+
+            # Create the input memlet for this advanced indexing array based on broadcasting rules
+            arr_idx = arr_idx.replace('__i', '__ind').split(',')
+            arr_subset = subsets.Range([(symbolic.symbol(idx.strip()), symbolic.symbol(idx.strip()), 1)
+                                        for idx in arr_idx])
+            index_memlets.append(Memlet(data=idxarrname, subset=arr_subset))
+
+            # Set the subset of the input/output array to be the entire array
+            input_subset[i] = ndrange[i]
+
+        # Replace the advanced indexing dimensions with the broadcasted shape
+        output_shape = output_shape[:dim_position] + list(advidx_shape) + output_shape[dim_position + 1:]
+        output_ndrange = output_ndrange[:dim_position] + advidx_index + output_ndrange[dim_position + 1:]
+
+        return (
+            index_mapping,
+            Memlet(data=aname, subset=input_subset, volume=1),
+            Memlet(data=aname, subset=subsets.Range(output_ndrange), volume=1),
+            index_memlets,
+        )
+
     def _array_indirection_subgraph(self, rnode: nodes.AccessNode, expr: MemletExpr) -> str:
         aname = rnode.data
         idesc = self.sdfg.arrays[aname]
 
-        if expr.new_axes:
-            # NOTE: Matching behavior with numpy would be to append all new
-            # axes in the end
-            raise IndexError('New axes unsupported when array indices are used')
-
         # Create output shape dimensions based on the sizes of the arrays
-        output_shape = self._create_output_shape_from_advanced_indexing(aname, expr)
-        # Create constants for array indices
-        constant_indices: Dict[int, str] = {}
-        for i, arrname in expr.arrdims.items():
-            if isinstance(arrname, str):  # Array or constant
-                if arrname in self.sdfg.constants:
-                    constant_indices[i] = arrname
-                elif arrname in self.sdfg.arrays:
-                    pass
-                else:
-                    raise NameError(f'Array "{arrname}" used in indexing "{aname}" not found')
-            else:  # Literal list or tuple, add as constant and use shape
-                arrname = [v if isinstance(v, Number) else self._parse_value(v) for v in arrname]
-                carr = numpy.array(arrname, dtype=dtypes.typeclass(int).type)
-                cname = self.sdfg.find_new_constant(f'__ind{i}_{aname}')
-                self.sdfg.add_constant(cname, carr)
-                constant_indices[i] = cname
+        output_shape = self._compute_output_shape_from_advanced_indexing(aname, expr)
+        index_mapping, input_memlet, output_memlet, index_memlets = self._create_memlets_from_advanced_indexing(
+            aname, expr)
 
-        # Check subset shapes for matching the array shapes
-        input_index = []
-        i0 = symbolic.pystr_to_symbolic('__i0')
-        for i, elem in enumerate(expr.subset.size()):
-            if i in expr.arrdims:
-                input_index.append((0, elem - 1, 1))
-                continue
-            if len(output_shape) > 1:
-                raise IndexError('Combining multidimensional array indices and '
-                                 'numeric subsets is unsupported (array '
-                                 f'"{aname}").')
-            if (elem, ) != output_shape:
-                # TODO(later): Properly broadcast multiple (and missing) shapes
-                raise IndexError(f'Mismatch in array index shapes in access of '
-                                 f'"{aname}": Subset {expr.subset[i]} '
-                                 f'does not match existing shape {output_shape}')
-
-            # Since there can only be one-dimensional outputs if arrays and
-            # subsets are both involved, express memlet as a function of _i0
-            rb, _, rs = expr.subset[i]
-            input_index.append((rb + i0 * rs, rb + i0 * rs, 1))
-
+        # Create an output array with the right shape
         outname, _ = self.sdfg.add_temp_transient(output_shape, idesc.dtype)
+        output_memlet.data = outname
 
-        # Make slice subgraph - input shape dimensions are len(expr.subset) and
-        # output shape dimensions are len(output_shape)
+        # Make slice subgraph - a mapped tasklet with the proper dimensions
 
-        # Make map with output shape
-        state = self.current_state
-        wnode = state.add_write(outname)
-        maprange = [(f'__i{i}', f'0:{s}') for i, s in enumerate(output_shape)]
-        me, mx = state.add_map('indirect_slice', maprange, debuginfo=self.current_lineinfo)
+        # Compute index expression string
+        access_expr = [f'__inp{i}' for i in range(len(expr.arrdims))]
+        access_str = ', '.join(access_expr)
 
-        # Make indirection tasklet for array-index dimensions
-        array_indices = set(expr.arrdims.keys()) - set(constant_indices.keys())
-        output_str = ', '.join(ind for ind, _ in maprange)
-        access_str = ', '.join(
-            [f'__inp{i}' if i in array_indices else f'{cname}[{output_str}]' for i in expr.arrdims.keys()])
-        t = state.add_tasklet('indirection', {'__arr'} | set(f'__inp{i}' for i in array_indices), {'__out'},
-                              f'__out = __arr[{access_str}]')
-
-        # Offset input memlet according to offset and stride if fixed, or
-        # entire array with volume 1 if array-index
-        input_subset = subsets.Range(input_index)
-        state.add_edge_pair(me, t, rnode, Memlet(data=aname, subset=input_subset, volume=1), internal_connector='__arr')
-        # Add array-index memlets
-        for dim in array_indices:
-            arrname = expr.arrdims[dim]
-            arrnode = state.add_read(arrname)
-            state.add_edge_pair(me,
-                                t,
-                                arrnode,
-                                Memlet(data=arrname, subset=subsets.Range([(ind, ind, 1) for ind, _ in maprange])),
-                                internal_connector=f'__inp{dim}')
-
-        # Output matches the output shape exactly
-        output_index = subsets.Range([(ind, ind, 1) for ind, _ in maprange])
-        state.add_edge_pair(mx,
-                            t,
-                            wnode,
-                            Memlet(data=outname, subset=output_index),
-                            external_memlet=Memlet(data=outname),
-                            internal_connector='__out')
+        # Make mapped tasklet with the proper dimensions
+        self.current_state.add_mapped_tasklet(
+            'indirection',
+            index_mapping,
+            inputs={
+                '__arr': input_memlet,
+                **{f'__inp{i}': m
+                   for i, m in enumerate(index_memlets)}
+            },
+            outputs={'__out': output_memlet},
+            code=f'__out = __arr[{access_str}]',
+            external_edges=True,
+            debuginfo=self.current_lineinfo,
+        )
 
         return outname
 
