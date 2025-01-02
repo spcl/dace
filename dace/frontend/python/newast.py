@@ -2496,7 +2496,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if astr not in self.defined:
                         raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                     # Add to global SDFG symbols if not a scalar
-                    if (astr not in self.sdfg.symbols and astr not in self.variables):
+                    if (astr not in self.sdfg.symbols and astr not in self.variables and astr not in self.sdfg.arrays):
                         self.sdfg.add_symbol(astr, atom.dtype)
 
         # Handle else clause
@@ -3439,7 +3439,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 defined_arrays = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.scope_arrays, **self.defined})
                 expr: MemletExpr = ParseMemlet(self, defined_arrays, true_target, nslice)
-                
+
                 # TODO: Use _create_output_shape_from_advanced_indexing
                 rng = expr.subset
                 if isinstance(rng, subsets.Indices):
@@ -5255,7 +5255,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Obtain array/tuple
         node_parsed = self._gettype(node.value)
 
-        if len(node_parsed) > 1:
+        if len(node_parsed) > 1 or (len(node_parsed) == 1 and isinstance(node_parsed[0], tuple)
+                                    and node_parsed[0][1] in ('symbol', 'NumConstant')):
             # If the value is a tuple of constants (e.g., array.shape) and the
             # slice is constant, return the value itself
             nslice = self.visit(node.slice)
