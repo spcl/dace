@@ -161,10 +161,9 @@ def test_index_intarr_1d_multi():
         return A[indices, 2:7:2, [15, 10, 1]]
 
     A = np.random.rand(20, 10, 30)
-    indices = [1, 10, 15]
+    indices = np.array([1, 10, 15], dtype=np.int32)
     res = indexing_test(A, indices)
-    # FIXME: NumPy behavior is unclear in this case
-    assert np.allclose(np.diag(A[indices, 2:7:2, [15, 10, 1]]), res)
+    assert np.allclose(A[indices, 2:7:2, [15, 10, 1]], res)
 
 
 def test_index_intarr_nd():
@@ -429,7 +428,7 @@ def test_multidim_tuple_multidim_index_write():
 def test_advanced_index_broadcasting():
 
     @dace.program
-    def indexing_test(A: dace.float64[N, N, N], indices: dace.int32[3, 3]):
+    def indexing_test(A: dace.float64[N, M, N], indices: dace.int32[3, 3]):
         return A[indices, (1, 2, 4), :]
 
     sdfg = indexing_test.to_sdfg()
@@ -452,8 +451,8 @@ def test_combining_basic_and_advanced_indexing():
 
     n = 6
     A = np.random.rand(n, n, n, n, n, n, n)
-    indices = np.random.randint(0, n, size=(3, 3))
-    indices2 = np.random.randint(0, n, size=(3, 3, 3))
+    indices = np.random.randint(0, n, size=(3, 3)).astype(np.int32)
+    indices2 = np.random.randint(0, n, size=(3, 3, 3)).astype(np.int32)
     ref = A[:5, indices, indices2, ..., 1:3, 4]
 
     # Advanced indexing dimensions should be prepended to the shape
@@ -473,8 +472,8 @@ def test_combining_basic_and_advanced_indexing_write():
 
     n = 6
     A = np.random.rand(n, n, n, n, n, n, n)
-    indices = np.random.randint(0, n, size=(3, 3))
-    indices2 = np.random.randint(0, n, size=(3, 3, 3))
+    indices = np.random.randint(0, n, size=(3, 3)).astype(np.int32)
+    indices2 = np.random.randint(0, n, size=(3, 3, 3)).astype(np.int32)
     ref = np.copy(A)
     A[:5, indices, indices2, ..., 1:3, 4] = 2
 
@@ -492,8 +491,8 @@ def test_combining_basic_and_advanced_indexing_with_newaxes():
 
     n = 6
     A = np.random.rand(n, n, n, n, n, n, n)
-    indices = np.random.randint(0, n, size=(3, 3))
-    indices2 = np.random.randint(0, n, size=(3, 3, 3))
+    indices = np.random.randint(0, n, size=(3, 3)).astype(np.int32)
+    indices2 = np.random.randint(0, n, size=(3, 3, 3)).astype(np.int32)
     ref = A[None, :5, indices, indices2, ..., 1:3, 4, np.newaxis]
 
     # Advanced indexing dimensions should be prepended to the shape
@@ -513,8 +512,8 @@ def test_combining_basic_and_advanced_indexing_with_newaxes_2():
 
     n = 6
     A = np.random.rand(n, n, n, n, n, n, n)
-    indices = np.random.randint(0, n, size=(3, 3))
-    indices2 = np.random.randint(0, n, size=(3, 3, 3))
+    indices = np.random.randint(0, n, size=(3, 3)).astype(np.int32)
+    indices2 = np.random.randint(0, n, size=(3, 3, 3)).astype(np.int32)
     ref = A[None, :5, indices, indices2, ..., 1:3, np.newaxis]
 
     # Advanced indexing dimensions should be prepended to the shape
