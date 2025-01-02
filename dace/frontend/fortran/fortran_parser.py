@@ -2175,7 +2175,7 @@ class AST_translator:
                 from dace.transformation.pass_pipeline import FixedPointPipeline
                 FixedPointPipeline([LiftStructViews()]).apply_pass(new_sdfg, {})
                 new_sdfg.validate()
-                new_sdfg.simplify(verbose=True)
+                new_sdfg.simplify(verbose=True,validate_all=True)
 
         if self.multiple_sdfgs == True:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"

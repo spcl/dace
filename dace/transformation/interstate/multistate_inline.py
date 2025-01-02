@@ -359,8 +359,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         for argument, in_edge in input_memlets.items():
             # Replace argument by view
+            inner_desc = nsdfg.arrays[argument]
             del nsdfg.arrays[argument]
-            nsdfg.arrays[argument] = View.view(sdfg.arrays[in_edge.src.data])
+            #nsdfg.arrays[argument] = View.view(sdfg.arrays[in_edge.src.data])
+            nsdfg.arrays[argument] = View.view(inner_desc)
 
             # Add outer data to nsdfg
             outer_node: nodes.AccessNode = in_edge.src
@@ -387,8 +389,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for argument, out_edge in output_memlets.items():
             # Replace argument by view
             if argument not in input_memlets:
+                inner_desc = nsdfg.arrays[argument]
                 del nsdfg.arrays[argument]
-                nsdfg.arrays[argument] = View.view(sdfg.arrays[out_edge.dst.data])
+                #nsdfg.arrays[argument] = View.view(sdfg.arrays[out_edge.dst.data])
+                nsdfg.arrays[argument] = View.view(inner_desc)
 
             # Add outer data to nsdfg
             outer_node: nodes.AccessNode = out_edge.dst
@@ -520,7 +524,22 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             in_edge = input_memlets[arg]
             if not isinstance(nsdfg.arrays[in_edge.data.data], View):
                 if isinstance(nsdfg.arrays[in_edge.data.data], Array):
-                    first_data = in_edge.data.data + "[" + str(in_edge.data.subset) + "]"
+                    shape_out=nsdfg.arrays[in_edge.data.data].shape
+                    shape_in=nsdfg.arrays[arg].shape
+                    if len(shape_out) == len(shape_in):
+                        collapsed = 0
+                        for i in range(len(shape_out)):
+                            if shape_out[i] != shape_in[i]:
+                                if shape_in[i] != 1:
+                                    raise NotImplementedError
+                                else:
+                                    collapsed += 1
+                        if collapsed == len(shape_out):            
+                            first_data = in_edge.data.data + "[" + str(in_edge.data.subset) + "]"
+                        if collapsed == 0:            
+                            first_data = in_edge.data.data        
+                    elif len(shape_in)==0:        
+                        first_data = in_edge.data.data + "[" + str(in_edge.data.subset) + "]"
                 else:
                     first_data = in_edge.data.data
 
