@@ -487,13 +487,13 @@ def test_combining_basic_and_advanced_indexing_with_newaxes():
 
     @dace.program
     def indexing_test(A: dace.float64[N, N, N, N, N, N, N], indices: dace.int32[3, 3], indices2: dace.int32[3, 3, 3]):
-        return A[None, :5, indices, indices2, ..., 1:3, 4, np.newaxis]
+        return A[None, :5, indices, indices2, ..., 1:6:3, 4, np.newaxis]
 
     n = 6
     A = np.random.rand(n, n, n, n, n, n, n)
     indices = np.random.randint(0, n, size=(3, 3)).astype(np.int32)
     indices2 = np.random.randint(0, n, size=(3, 3, 3)).astype(np.int32)
-    ref = A[None, :5, indices, indices2, ..., 1:3, 4, np.newaxis]
+    ref = A[None, :5, indices, indices2, ..., 1:6:3, 4, np.newaxis]
 
     # Advanced indexing dimensions should be prepended to the shape
     sdfg = indexing_test.to_sdfg()
@@ -508,13 +508,13 @@ def test_combining_basic_and_advanced_indexing_with_newaxes_2():
 
     @dace.program
     def indexing_test(A: dace.float64[N, N, N, N, N, N, N], indices: dace.int32[3, 3], indices2: dace.int32[3, 3, 3]):
-        return A[None, :5, indices, indices2, ..., 1:3, np.newaxis]
+        return A[None, :5, indices, indices2, ..., 1:6:3, np.newaxis]
 
     n = 6
     A = np.random.rand(n, n, n, n, n, n, n)
     indices = np.random.randint(0, n, size=(3, 3)).astype(np.int32)
     indices2 = np.random.randint(0, n, size=(3, 3, 3)).astype(np.int32)
-    ref = A[None, :5, indices, indices2, ..., 1:3, np.newaxis]
+    ref = A[None, :5, indices, indices2, ..., 1:6:3, np.newaxis]
 
     # Advanced indexing dimensions should be prepended to the shape
     sdfg = indexing_test.to_sdfg()
