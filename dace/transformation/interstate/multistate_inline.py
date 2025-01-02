@@ -539,7 +539,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                             first_data = in_edge.data.data + "[" + str(in_edge.data.subset) + "]"
                         if collapsed == 0:            
                             first_data = in_edge.data.data        
-                    elif len(shape_in)==0:        
+                    elif len(shape_in)==0 or (len(shape_in)==1 and shape_in[0]==1):        
                         first_data = in_edge.data.data + "[" + str(in_edge.data.subset) + "]"
                 else:
                     first_data = in_edge.data.data
@@ -565,6 +565,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         current_node = view_node
                         current_desc = current_desc.members[member_name]
                         current_subset= view_edge.data.subset
+                        if i==len(view_nodes)-1:
+                            data_path.append(tmp_memlet_part)
                     else:
                         # View on a subset
                         if view_edge.data.subset != Memlet.from_array(current_node.data, current_desc).subset:

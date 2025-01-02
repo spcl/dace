@@ -438,7 +438,7 @@ def generate_memlet(op, top_sdfg, state, offset_normalization=False,mapped_name=
     return subset
 
 
-def generate_memlet_view(op, top_sdfg, state, offset_normalization=False,mapped_name=None):
+def generate_memlet_view(op, top_sdfg, state, offset_normalization=False,mapped_name=None,view_name=None,was_data_ref=False):
     if mapped_name is None:
         if state.name_mapping.get(top_sdfg).get(get_name(op)) is not None:
             shape = top_sdfg.arrays[state.name_mapping[top_sdfg][get_name(op)]].shape
@@ -449,6 +449,12 @@ def generate_memlet_view(op, top_sdfg, state, offset_normalization=False,mapped_
     else:
         
         shape = top_sdfg.arrays[state.name_mapping[top_sdfg][mapped_name]].shape
+        view_shape=top_sdfg.arrays[view_name].shape
+        if len(view_shape)!=len(shape):
+            was_data_ref=False
+        else:
+            was_data_ref=True
+        
         
     indices = []
     skip=[]
@@ -466,6 +472,12 @@ def generate_memlet_view(op, top_sdfg, state, offset_normalization=False,mapped_
                     symb_end = sym.pystr_to_symbolic(text_end+"-1")
                     indices.append([symb_start, symb_end])
             else:
+                tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders,
+                                       placeholders_offsets=state.placeholders_offsets)
+                text = tw.write_code(i)
+                symb = sym.pystr_to_symbolic(text)
+                if was_data_ref:
+                    indices.append([symb, symb])
                 skip.append(idx)
     memlet = '0'
     if len(shape) == 1:
@@ -474,8 +486,10 @@ def generate_memlet_view(op, top_sdfg, state, offset_normalization=False,mapped_
     tmp_shape = []
     for idx,i in enumerate(shape):
         if idx in skip:
-            continue
-        tmp_shape.append(i)
+            if was_data_ref:
+                tmp_shape.append(1)
+        else:
+            tmp_shape.append(i)
 
 
     all_indices = indices + [None] * (len(shape) - len(indices)-len(skip))

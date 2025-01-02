@@ -388,6 +388,7 @@ class LiftStructViews(ppl.Pass):
                     edge.data.assignments[k] = astutils.unparse(new_code)
                     assignment_ast = new_code
                     result[data].update(visitor.views_constructed)
+                   
                     lifted_something = True
         if not edge.data.is_unconditional():
             condition_ast = edge.data.condition.code[0]
@@ -402,6 +403,7 @@ class LiftStructViews(ppl.Pass):
                     edge.data.condition = CodeBlock([new_code])
                     condition_ast = new_code
                     result[data].update(visitor.views_constructed)
+                   
                     lifted_something = True
         return lifted_something
 
@@ -445,9 +447,11 @@ class LiftStructViews(ppl.Pass):
                  or None if no accesses were lifted.
         """
         result = defaultdict(set)
-
+        rounds=0
         lifted_something = False
         while True:
+            print(f'Lifting round {rounds}')
+            rounds+=1
             lifted_something_this_round = False
             for cfg in sdfg.all_control_flow_regions(recursive=True):
                 if cfg.sdfg is None:

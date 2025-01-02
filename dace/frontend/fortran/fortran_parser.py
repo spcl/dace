@@ -1024,6 +1024,7 @@ class AST_translator:
                     strides = list(array.strides)
                     offsets = list(array.offset)
                     mysize = 1
+                    needs_extra_view = False
 
                     if isinstance(variable_in_call, ast_internal_classes.Data_Ref_Node):
                         done = False
@@ -1525,7 +1526,7 @@ class AST_translator:
                                                                                 placeholders=self.placeholders,
                                                                                 placeholders_offsets=self.placeholders_offsets,
                                                                                 rename_dict=self.replace_names).write_code(stop)
-                                        shape.append("( "+ text_stop + ") - ( "+ text_start + ") ")
+                                        shape.append(sym.pystr_to_symbolic("( "+ text_stop + ") - ( "+ text_start + ") "))
                                         mysize=mysize*sym.pystr_to_symbolic("( "+ text_stop + ") - ( "+ text_start + ") ")
                                         index_list.append(None)
                                         needs_extra_view=True
@@ -1783,8 +1784,8 @@ class AST_translator:
                                                             for i, s in zip(all_indices, array.shape)])
                                 smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
 
-                                # memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
-                                # memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
+                                #memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
+                                #memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
                                 memlet = Memlet(f'{array_name}[{subset}]')
                                 memlet2 = Memlet(f'{array_name}[{subset}]')
                                 wv = None
@@ -2042,11 +2043,12 @@ class AST_translator:
                                 
                     #check variable type, if data ref, check lowest level array indices.
                     tmp_var = i
-
+                    was_data_ref = False
                     while isinstance(tmp_var, ast_internal_classes.Data_Ref_Node):
+                        was_data_ref = True
                         tmp_var = tmp_var.part_ref
                         
-                    memlet = ast_utils.generate_memlet_view(tmp_var, sdfg, self, self.normalize_offsets,mapped_name )
+                    memlet = ast_utils.generate_memlet_view(tmp_var, sdfg, self, self.normalize_offsets,mapped_name,elem[1].label,was_data_ref )
 
                     if local_name.name in write_names:
                         #memlet = subs.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[2].label].shape])
@@ -2169,6 +2171,7 @@ class AST_translator:
                 #import copy
                 #tmp_sdfg=copy.deepcopy(new_sdfg)
                 new_sdfg.validate()
+                new_sdfg.apply_transformations(IntrinsicSDFGTransformation)
                 from dace.transformation.dataflow import RemoveSliceView
                 new_sdfg.apply_transformations_repeated([RemoveSliceView])
                 from dace.transformation.passes.lift_struct_views import LiftStructViews
@@ -2961,7 +2964,7 @@ def create_sdfg_from_string(
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
-    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
+    #program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names,ast=program).visit(program)
     for i in program.modules:
         count = 0
         for j in i.function_definitions:
@@ -3684,13 +3687,16 @@ def create_sdfg_from_fortran_file_with_options(
             if subroutine_name is not None:
                 #special for radiation
                 #if j.name.name!='cloud_generator_2139':
-                if j.name.name!='solver_mcica_lw_3321':
+                #if j.name.name!='solver_mcica_lw_3321':
+                # if "gas_optics_3057" not in j.name.name:
+                #     print("Skipping 2 ", j.name.name)
+                #     continue
                     
-                    continue
-                #if subroutine_name=='radiation':
-                #    if not 'radiation' == j.name.name :
-                #        print("Skipping ", j.name.name)
-                #        continue
+                #   continue
+                if subroutine_name=='radiation':
+                    if not 'radiation' == j.name.name :
+                        print("Skipping ", j.name.name)
+                        continue
 
                 #elif not subroutine_name in j.name.name :
                 #    print("Skipping ", j.name.name)
