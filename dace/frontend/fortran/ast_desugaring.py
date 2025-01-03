@@ -2172,14 +2172,25 @@ def inject_const_evals(ast: Program,
                     # We replace only when it is not an output of the function.
                     continue
 
-                if isinstance(item, ConstTypeInjection) and root_tspec.spec != item.type_spec:
+                if not all(isinstance(c, Name) for c in rest):
                     continue
-                elif isinstance(item, ConstInstanceInjection) and root_id_spec != item.root_spec:
+                root_dr = None
+                if isinstance(item, ConstTypeInjection):
+                    # Check if anywhere in the path we face the injected type.
+                    for pl in range(len(rest)+1):
+                        comp = Data_Ref(' % '.join(tuple(p.string for p in (root,) + rest[:pl])))
+                        ctspec = find_type_dataref(comp, scope_spec, alias_map)
+                        if ctspec.spec == item.type_spec:
+                            root_dr = comp
+                            rest = rest[pl:]
+                            break
+                elif isinstance(item, ConstInstanceInjection):
+                    if root_id_spec == item.root_spec:
+                        root_dr = dr
+                if not root_dr:
                     continue
 
                 comp_tspec = find_type_dataref(dr, scope_spec, alias_map)
-                if not all(isinstance(c, Name) for c in rest):
-                    continue
                 if comp_tspec.spec == ('CHARACTER',):
                     continue
                 comp_spec: SPEC = tuple(c.string for c in rest)
