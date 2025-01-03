@@ -2,7 +2,8 @@ import math
 import operator
 import re
 import sys
-from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type
+from dataclasses import dataclass
+from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type, Any
 
 import networkx as nx
 import numpy as np
@@ -2078,6 +2079,142 @@ def const_eval_nodes(ast: Program) -> Program:
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
 
+    return ast
+
+
+@dataclass
+class ConstTypeInjection:
+    scope_spec: Optional[SPEC]  # Only replace within this scope object.
+    type_spec: SPEC  # The root config derived type's spec (w.r.t. where it is defined)
+    component_spec: SPEC  # A tuple of strings that identifies the targeted component
+    value: Any  # Literal value to substitue with. The injected literal's type will match the type of the original.
+
+
+@dataclass
+class ConstInstanceInjection:
+    scope_spec: Optional[SPEC]  # Only replace within this scope object.
+    root_spec: SPEC  # The root config object's spec (w.r.t. where it is defined)
+    component_spec: Optional[SPEC]  # A tuple of strings that identifies the targeted component
+    value: Any  # Literal value to substitue with. The injected literal's type will match the type of the original.
+
+
+def _val_2_lit(val: str, type_spec: SPEC) -> LITERAL_TYPES:
+    val = str(val).lower()
+    if type_spec == ('INTEGER1',):
+        val = np.int8(val)
+    elif type_spec == ('INTEGER2',):
+        val = np.int16(val)
+    elif type_spec == ('INTEGER4',):
+        val = np.int32(val)
+    elif type_spec == ('INTEGER8',):
+        val = np.int64(val)
+    elif type_spec == ('REAL4',):
+        val = np.float32(val)
+    elif type_spec == ('REAL8',):
+        val = np.float64(val)
+    elif type_spec == ('LOGICAL',):
+        assert val in {'true', 'false'}
+        val = np.bool_(val == 'true')
+    else:
+        raise NotImplementedError(
+            f"{val} cannot be parsed as the target literal type: {type_spec}")
+    return numpy_type_to_literal(val)
+
+
+def inject_const_evals(ast: Program,
+                       inject_consts: Optional[List[Union[ConstTypeInjection, ConstInstanceInjection]]] = None) \
+        -> Program:
+    inject_consts = inject_consts or []
+    alias_map = alias_specs(ast)
+
+    TOPLEVEL_SPEC = ('*',)
+
+    items_by_scopes = {}
+    for item in inject_consts:
+        scope_spec = item.scope_spec or TOPLEVEL_SPEC
+        if scope_spec not in items_by_scopes:
+            items_by_scopes[scope_spec] = []
+        items_by_scopes[scope_spec].append(item)
+
+        # Validations.
+        if item.scope_spec:
+            assert item.scope_spec in alias_map
+        if isinstance(item, ConstTypeInjection):
+            assert item.type_spec in alias_map
+            tdef = alias_map[item.type_spec].parent
+            assert isinstance(tdef, Derived_Type_Def)
+        elif isinstance(item, ConstInstanceInjection):
+            assert item.root_spec in alias_map
+            rdef = alias_map[item.root_spec]
+            assert isinstance(rdef, Entity_Decl)
+
+    for scope_spec, items in items_by_scopes.items():
+        if scope_spec == TOPLEVEL_SPEC:
+            scope = ast
+        else:
+            scope = alias_map[scope_spec].parent
+
+        drefs = walk(scope, Data_Ref)
+        names = walk(scope, Name)
+
+        for item in items:
+            print(f"INJECTING: {item}")
+            for dr in drefs:
+                scope_spec = find_scope_spec(dr)
+                root, root_tspec, rest = _dataref_root(dr, scope_spec, alias_map)
+                while not isinstance(root, Name):
+                    root, root_tspec, nurest = _dataref_root(root, scope_spec, alias_map)
+                    rest += nurest
+                loc = search_real_local_alias_spec(root, alias_map)
+                assert loc
+                root_id_spec = ident_spec(alias_map[loc])
+                if root_tspec.out:
+                    # We replace only when it is not an output of the function.
+                    continue
+
+                if not all(isinstance(c, Name) for c in rest):
+                    continue
+                root_dr = None
+                if isinstance(item, ConstTypeInjection):
+                    # Check if anywhere in the path we face the injected type.
+                    for pl in range(len(rest)+1):
+                        comp = Data_Ref(' % '.join(tuple(p.string for p in (root,) + rest[:pl])))
+                        ctspec = find_type_dataref(comp, scope_spec, alias_map)
+                        if ctspec.spec == item.type_spec:
+                            root_dr = comp
+                            rest = rest[pl:]
+                            break
+                elif isinstance(item, ConstInstanceInjection):
+                    if root_id_spec == item.root_spec:
+                        root_dr = dr
+                if not root_dr:
+                    continue
+
+                comp_tspec = find_type_dataref(dr, scope_spec, alias_map)
+                if comp_tspec.spec == ('CHARACTER',):
+                    continue
+                comp_spec: SPEC = tuple(c.string for c in rest)
+                if comp_spec != item.component_spec:
+                    continue
+                replace_node(dr, _val_2_lit(item.value, comp_tspec.spec))
+
+            if isinstance(item, ConstInstanceInjection) and item.component_spec is None:
+                for nm in names:
+                    if isinstance(nm.parent, (Entity_Decl, Only_List)):
+                        # We don't want to replace the values in their declarations or imports, but only where their
+                        # values are being used.
+                        continue
+                    loc = search_real_local_alias_spec(nm, alias_map)
+                    if not loc or not isinstance(alias_map[loc], Entity_Decl):
+                        continue
+                    spec = ident_spec(alias_map[loc])
+                    if spec != item.root_spec:
+                        continue
+                    tspec = find_type_of_entity(alias_map[loc], alias_map)
+                    if tspec.out:
+                        # We replace only when it is not an output of the function.
+                        continue
+                    replace_node(nm, _val_2_lit(item.value, tspec.spec))
     return ast
 
 

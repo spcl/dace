@@ -7,7 +7,7 @@ from fparser.two.parser import ParserFactory
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, deconstruct_enums, \
     deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, \
     assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
-    const_eval_nodes, prune_unused_objects
+    const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -1435,6 +1435,140 @@ SUBROUTINE main
     REAL, INTENT(OUT) :: y
     y = x * 8
   END SUBROUTINE not_fun
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_config_injection_type():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type config
+    integer :: a = 8
+    real :: b = 2.0
+    logical :: c = .false.
+  end type config
+  type big_config
+    type(config) :: big
+  end type big_config
+  type(config) :: globalo
+contains
+  subroutine fun(this)
+    implicit none
+    type(config), intent(inout) :: this
+    this%b = 5.1
+  end subroutine fun
+end module lib
+""").add_file("""
+subroutine main
+  use lib
+  implicit none
+  type(big_config) :: cfg
+  real :: a = 1
+  a = cfg%big%b + a * globalo%a
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = inject_const_evals(ast, [
+        ConstTypeInjection(None, ('lib', 'config'), ('a',), '42'),
+        ConstTypeInjection(None, ('lib', 'config'), ('b',), '10000.0')
+    ])
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  TYPE :: config
+    INTEGER :: a = 8
+    REAL :: b = 2.0
+    LOGICAL :: c = .FALSE.
+  END TYPE config
+  TYPE :: big_config
+    TYPE(config) :: big
+  END TYPE big_config
+  TYPE(config) :: globalo
+  CONTAINS
+  SUBROUTINE fun(this)
+    IMPLICIT NONE
+    TYPE(config), INTENT(INOUT) :: this
+    this % b = 5.1
+  END SUBROUTINE fun
+END MODULE lib
+SUBROUTINE main
+  USE lib
+  IMPLICIT NONE
+  TYPE(big_config) :: cfg
+  REAL :: a = 1
+  a = 10000.0 + a * 42
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_config_injection_instance():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type config
+    integer :: a = 8
+    real :: b = 2.0
+    logical :: c = .false.
+  end type config
+  type big_config
+    type(config) :: big
+  end type big_config
+  type(config) :: globalo
+contains
+  subroutine fun(this)
+    implicit none
+    type(config), intent(inout) :: this
+    this%b = 5.1
+  end subroutine fun
+end module lib
+""").add_file("""
+subroutine main
+  use lib
+  implicit none
+  type(big_config) :: cfg
+  real :: a = 1
+  a = cfg%big%b + a * globalo%a
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = inject_const_evals(ast, [
+        ConstInstanceInjection(None, ('lib', 'globalo'), ('a',), '42'),
+        ConstInstanceInjection(None, ('main', 'cfg'), ('big', 'b'), '10000.0')
+    ])
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  TYPE :: config
+    INTEGER :: a = 8
+    REAL :: b = 2.0
+    LOGICAL :: c = .FALSE.
+  END TYPE config
+  TYPE :: big_config
+    TYPE(config) :: big
+  END TYPE big_config
+  TYPE(config) :: globalo
+  CONTAINS
+  SUBROUTINE fun(this)
+    IMPLICIT NONE
+    TYPE(config), INTENT(INOUT) :: this
+    this % b = 5.1
+  END SUBROUTINE fun
+END MODULE lib
+SUBROUTINE main
+  USE lib
+  IMPLICIT NONE
+  TYPE(big_config) :: cfg
+  REAL :: a = 1
+  a = 10000.0 + a * 42
 END SUBROUTINE main
 """.strip()
     assert got == want
