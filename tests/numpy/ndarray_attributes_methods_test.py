@@ -91,15 +91,24 @@ def test_max(A: dace.float32[M, N, N, M]):
     return A.max()
 
 
-# TODO: Need to debug `_argminmax`
-# @compare_numpy_output()
-# def test_argmax(A: dace.float32[M, N, N, M]):
-#     return A.argmax()
+@compare_numpy_output()
+def test_argmax(A: dace.float32[M, N, N, M]):
+    return A.argmax()
+
+
+@compare_numpy_output()
+def test_argmax_dim(A: dace.float32[M, N, N, M]):
+    return A.argmax(1)
 
 
 @compare_numpy_output()
 def test_min(A: dace.float32[M, N, N, M]):
     return A.min()
+
+
+@compare_numpy_output()
+def test_argmin(A: dace.float32[M, N, N, M]):
+    return A.argmin()
 
 
 @compare_numpy_output()
@@ -152,8 +161,10 @@ if __name__ == "__main__":
     test_flatten()
     test_ravel()
     test_max()
-    # test_argmax()
+    test_argmax()
+    test_argmax_dim()
     test_min()
+    test_argmin()
     test_conj()
     test_sum()
     test_mean()
