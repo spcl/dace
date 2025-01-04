@@ -28,6 +28,12 @@ def test_copy(A: dace.float32[M, N]):
 
 
 @compare_numpy_output()
+def test_lhs_flat(A: dace.float64[M, N]):
+    A.flat[150] = 5
+    return A
+
+
+@compare_numpy_output()
 def test_astype(A: dace.int32[M, N]):
     return A.astype(np.float32)
 
@@ -134,6 +140,7 @@ if __name__ == "__main__":
     test_real()
     test_imag()
     test_copy()
+    test_lhs_flat()
     test_astype()
     test_fill()
     test_fill2()

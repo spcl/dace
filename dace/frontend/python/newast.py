@@ -3306,12 +3306,25 @@ class ProgramVisitor(ExtNodeVisitor):
             name = rname(target)
             tokens = name.split('.')
             name = tokens[0]
+            tokens.pop(0)
             true_name = None
             true_array = None
             if name in defined_vars:
-                true_name = defined_vars[name]
-                if len(tokens) > 1:
-                    true_name = '.'.join([true_name, *tokens[1:]])
+                if isinstance(target, ast.Subscript):
+                    true_name = self.visit(target.value)
+                    # Refresh defined variables and arrays
+                    defined_vars = {**self.variables, **self.scope_vars}
+                    defined_arrays = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.scope_arrays})
+                else:
+                    true_name = defined_vars[name]
+                    while len(tokens) > 1:
+                        true_name = true_name + '.' + tokens.pop(0)
+                        if true_name not in self.sdfg.arrays:
+                            break
+                    if tokens:  # The non-struct remainder will be considered an attribute
+                        attribute_name = '.'.join(tokens)
+                        raise DaceSyntaxError(self, target, f'Cannot assign to attribute "{attribute_name}" of variable "{true_name}"')
+                        
                 true_array = defined_arrays[true_name]
 
             # If type was already annotated
@@ -3436,8 +3449,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if isinstance(target, ast.Name):
                     true_target.id = true_name
                 elif isinstance(target, ast.Subscript):
-                    true_target.value = copy.copy(true_target.value)
-                    true_target.value.id = true_name
+                    true_target.value = ast.copy_location(ast.Name(id=true_name, ctx=ast.Store()), true_target.value)
 
                     # Visit slice contents
                     nslice = self._parse_subscript_slice(true_target.slice)
