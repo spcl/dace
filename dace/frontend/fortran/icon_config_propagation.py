@@ -3,10 +3,13 @@
 import os
 import sys
 from pathlib import Path
+from typing import List
 
 from fparser.common.readfortran import FortranFileReader as ffr
 from fparser.two.parser import ParserFactory as pf
 
+from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
+from dace.frontend.fortran.config_propagation_data import deserialse_v2
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_fparser_ast
 
 current = os.path.dirname(os.path.realpath(__file__))
@@ -14,10 +17,6 @@ parent = os.path.dirname(current)
 sys.path.append(parent)
 
 from dace.frontend.fortran import fortran_parser
-
-import dace.frontend.fortran.ast_components as ast_components
-import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_internal_classes as ast_internal
 
 
 def find_path_recursive(base_dir):
@@ -59,6 +58,22 @@ def parse_assignments(assignments: list[str]) -> list[tuple[str, str]]:
     return parsed_assignments
 
 
+def config_injection_list(root: str = 'dace/frontend/fortran/conf_files') -> List[ConstTypeInjection]:
+    cfgs = [
+        (('radiation_aerosol', 'aerosol_type'), f"{root}/aerosol_obj.txt"),
+        (('radiation_cloud', 'cloud_type'), f"{root}/cloud_obj.txt"),
+        (('radiation_config', 'config_type'), f"{root}/config_type_obj.txt"),
+        (('radiation_flux', 'flux_type'), f"{root}/flux_obj.txt"),
+        (('radiation_gas', 'gas_type'), f"{root}/gas_obj.txt"),
+        (('radiation_single_level', 'single_level_type'), f"{root}/single_level_obj.txt"),
+        (('radiation_thermodynamics', 'thermodynamics_type'), f"{root}/thermodynamics_obj.txt"),
+    ]
+    injs = []
+    for k, v in cfgs:
+        injs.extend(deserialse_v2(Path(v).read_text(), k))
+    return injs
+
+
 if __name__ == "__main__":
 
     base_icon_path = sys.argv[1]
@@ -79,6 +94,7 @@ if __name__ == "__main__":
         main=Path(f"{base_icon_path}/{icon_file}"),
         sources=[Path(f) for f in fortran_files],
         entry_points=[('radiation_interface', 'radiation')],
+        config_injections=config_injection_list('conf_files'),
     )
     #already_parsed_ast=None
     if already_parsed_ast is None:
