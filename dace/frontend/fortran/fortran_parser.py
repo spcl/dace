@@ -2044,7 +2044,7 @@ class AST_translator:
                     while isinstance(tmp_var, ast_internal_classes.Data_Ref_Node):
                         was_data_ref = True
                         tmp_var = tmp_var.part_ref
-                        
+
                     memlet = ast_utils.generate_memlet_view(tmp_var, sdfg, self, self.normalize_offsets,mapped_name,elem[1].label,was_data_ref )
 
                     if local_name.name in write_names:
@@ -2993,6 +2993,9 @@ def create_sdfg_from_string(
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
+    program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
+
+
     structs_lister = ast_transforms.StructLister()
     structs_lister.visit(program)
     struct_dep_graph = nx.DiGraph()

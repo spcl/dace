@@ -3503,3 +3503,63 @@ class ReplaceStructArgsLibraryNodes(NodeTransformer):
 
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
+class ParDeclOffsetNormalizer(NodeTransformer):
+
+    def __init__(self, ast):
+        self.ast = ast
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations(ast)
+        self.scope_vars.visit(ast)
+
+    def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
+
+        array_var = self.scope_vars.get_var(node.parent, node.name.name)
+        indices = []
+        for idx, actual_index in enumerate(node.indices):
+
+            self.current_offset = array_var.offsets[idx]
+            if isinstance(self.current_offset, int):
+                self.current_offset = ast_internal_classes.Int_Literal_Node(value=str(self.current_offset))
+            indices.append(self.visit(actual_index))
+
+        self.current_offset = None
+        node.indices = indices
+        return node
+
+    def visit_ParDecl_Node(self, node: ast_internal_classes.ParDecl_Node):
+
+        if self.current_offset is None:
+            return node
+
+        if node.type != 'RANGE':
+            return node
+
+        new_ranges = []
+        for r in node.range:
+
+            if r is None:
+                new_ranges.append(r)
+            else:
+                # lower_boundary - offset + 1
+                # we add +1 because offset normalization is applied later on
+                new_ranges.append(
+                    ast_internal_classes.BinOp_Node(
+                        op = '+',
+                        lval = ast_internal_classes.Int_Literal_Node(value="1"),
+                        rval = ast_internal_classes.BinOp_Node(
+                            op = '-',
+                            lval = r,
+                            rval = self.current_offset,
+                            type = r.type
+                        ),
+                        type = r.type
+                    )
+                )
+
+        node = ast_internal_classes.ParDecl_Node(
+            type='RANGE',
+            range = new_ranges
+        )
+
+        return node
+

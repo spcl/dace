@@ -17,6 +17,7 @@ def test_fortran_frontend_offset_normalizer_1d():
 
                     SUBROUTINE index_test_function(d)
                     double precision, dimension(50:54) :: d
+                    integer :: i
 
                     do i=50,54
                         d(i) = i * 2.0
@@ -65,6 +66,7 @@ def test_fortran_frontend_offset_normalizer_1d_symbol():
                     integer :: arrsize
                     integer :: arrsize2
                     double precision :: d(arrsize:arrsize2)
+                    integer :: i
 
                     do i=arrsize,arrsize2
                         d(i) = i * 2.0
@@ -115,6 +117,7 @@ def test_fortran_frontend_offset_normalizer_2d():
 
                     SUBROUTINE index_test_function(d)
                     double precision, dimension(50:54,7:9) :: d
+                    integer :: i
 
                     do i=50,54
                         do j=7,9
@@ -177,6 +180,7 @@ def test_fortran_frontend_offset_normalizer_2d_symbol():
                     integer :: arrsize2
                     integer :: arrsize3
                     integer :: arrsize4
+                    integer :: i
                     double precision, dimension(arrsize:arrsize2,arrsize3:arrsize4) :: d
 
                     do i=arrsize, arrsize2
@@ -242,6 +246,7 @@ def test_fortran_frontend_offset_normalizer_2d_arr2loop():
 
                     SUBROUTINE index_test_function(d)
                     double precision, dimension(50:54,7:9) :: d
+                    integer :: i
 
                     do i=50,54
                         d(i, :) = i * 2.0
@@ -304,6 +309,7 @@ def test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol():
                     integer :: arrsize3
                     integer :: arrsize4
                     double precision, dimension(arrsize:arrsize2,arrsize3:arrsize4) :: d
+                    integer :: i
 
                     do i=arrsize,arrsize2
                         d(i, :) = i * 2.0
@@ -418,6 +424,50 @@ def test_fortran_frontend_offset_normalizer_struct():
         for j in range(0,3):
             assert a[i, j] == (50 + i) * 2
 
+def test_fortran_frontend_offset_pardecl():
+    """
+    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
+    """
+    test_string = """
+                    PROGRAM index_offset_test
+                    implicit none
+                    double precision, dimension(50:54) :: d
+                    CALL index_test_function(d)
+                    end
+
+                    SUBROUTINE index_test_function(d)
+                    double precision, dimension(50:54) :: d
+
+                    CALL index_test_function2(d(51:53))
+
+                    END SUBROUTINE index_test_function
+
+                    SUBROUTINE index_test_function2(d)
+                    double precision, dimension(3) :: d
+                    integer :: i
+
+                    do i=1,3
+                        d(i) = i * 2.0
+                    end do
+
+                    END SUBROUTINE index_test_function2
+                    """
+
+
+    # Now test to verify it executes correctly
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
+    sdfg.save('test2.sdfg')
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    a = np.full([5], 42, order="F", dtype=np.float64)
+    sdfg(d=a)
+    print(a)
+    for i in range(0,5):
+        assert a[i] == (50+i)* 2
+
+
 if __name__ == "__main__":
 
     #test_fortran_frontend_offset_normalizer_1d()
@@ -426,4 +476,5 @@ if __name__ == "__main__":
     #test_fortran_frontend_offset_normalizer_1d_symbol()
     #test_fortran_frontend_offset_normalizer_2d_symbol()
     #test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol()
-    test_fortran_frontend_offset_normalizer_struct()
+    #test_fortran_frontend_offset_normalizer_struct()
+    test_fortran_frontend_offset_pardecl()
