@@ -2547,6 +2547,8 @@ class ElementalFunctionExpander(NodeTransformer):
 
     def __init__(self, func_list: list, scope_vars=None,ast=None):
         if scope_vars is None:
+            assert ast is not None
+            ParentScopeAssigner().visit(ast)
             self.scope_vars = ScopeVarsDeclarations(ast)
             self.scope_vars.visit(ast)
         self.ast=ast
