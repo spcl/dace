@@ -518,7 +518,7 @@ def test_loop_in_nested_sdfg_in_map_partial_write():
     for edge, memlet in write_approx.items():
         if edge.dst is accessnode:
             write_set = memlet.subset
-    assert (str(write_set) == "0:M, 0:N - 2")
+    assert (str(write_set) == "0:M, 2:N")
 
 
 def test_map_in_nested_sdfg_in_map():

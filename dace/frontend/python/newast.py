@@ -3311,7 +3311,9 @@ class ProgramVisitor(ExtNodeVisitor):
             true_array = None
             if name in defined_vars:
                 if isinstance(target, ast.Subscript):
-                    true_name = self.visit(target.value)
+                    store_target = copy.copy(target.value)
+                    store_target.ctx = ast.Store()
+                    true_name = self.visit(store_target)
                     # Refresh defined variables and arrays
                     defined_vars = {**self.variables, **self.scope_vars}
                     defined_arrays = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.scope_arrays})
@@ -3497,13 +3499,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if boolarr is not None and indirect_indices:
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
 
-            if self.nested and not new_data:
-                new_name, new_rng = self._add_write_access(name, rng, target)
-                # Local symbol or local data dependent
-                if _subset_is_local_symbol_dependent(rng, self):
-                    new_rng = rng
-            else:
-                new_name, new_rng = true_name, rng
+            new_name, new_rng = true_name, rng
 
             # Change the range in case indirect indices are used
             if indirect_indices:
