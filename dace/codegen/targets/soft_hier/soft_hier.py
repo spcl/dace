@@ -1222,7 +1222,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         )
 
                     else:
-                        funcname = "flex_dma_async_2d"
+                        funcname = "flex_dma_sync_2d"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
                                 args=', '.join([f'local({dst_expr})'] + 
@@ -1250,7 +1250,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             "if(flex_is_dm_core())"
                         )
                         callsite_stream.write("{", cfg, state_id, src_node)
-                        funcname = "flex_dma_async_2d_dummy"
+                        funcname = "flex_dma_sync_2d"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
                                 args=', '.join([f'local({dst_expr})'] + 
@@ -1320,7 +1320,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         if is_sync:
                             callsite_stream.write("flex_dma_async_wait_all();")
                     else:
-                        funcname = "flex_dma_async_2d_dummy"
+                        funcname = "flex_dma_sync_2d"
                         callsite_stream.write(('    {func}({args});').format(
                                 func=funcname,
                                 args=', '.join([f'hbm_addr({dst_expr})'] + 
