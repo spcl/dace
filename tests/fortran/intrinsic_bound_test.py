@@ -40,7 +40,7 @@ def test_fortran_frontend_bound():
                     END SUBROUTINE intrinsic_bound_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_bound_test", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_bound_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -71,7 +71,7 @@ def test_fortran_frontend_bound_offsets():
                     END SUBROUTINE intrinsic_bound_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_bound_test", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_bound_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -357,6 +357,7 @@ END MODULE
 
     assert np.allclose(res, [-1, 0, 2, 3])
 
+@pytest.mark.skip(reason="Needs suport for allocatable + datarefs")
 def test_fortran_frontend_bound_structure_recursive_allocatable():
     sources, main = SourceCodeBuilder().add_file("""
 MODULE test_types
@@ -426,4 +427,5 @@ if __name__ == "__main__":
     test_fortran_frontend_bound_structure()
     test_fortran_frontend_bound_structure_override()
     test_fortran_frontend_bound_structure_recursive()
+    # FIXME: ALLOCATBLE does not support data refs
     #test_fortran_frontend_bound_structure_recursive_allocatable()

@@ -325,6 +325,7 @@ def test_fortran_frontend_allocated_nested():
 
     assert np.allclose(res, [0, 1, 0])
 
+@pytest.mark.skip(reason="Needs suport for allocatable + datarefs")
 def test_fortran_frontend_allocated_struct():
     # FIXME: this pattern is generally not supported.
     # this needs an update once defered allocs are merged

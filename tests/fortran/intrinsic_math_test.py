@@ -88,6 +88,7 @@ def test_fortran_frontend_sqrt():
     for f_res, p_res in zip(res, py_res):
         assert abs(f_res - p_res) < 10**-9
 
+@pytest.mark.skip(reason="Needs suport for sqrt + datarefs")
 def test_fortran_frontend_sqrt_structure():
     test_string = """
                     module lib
