@@ -2835,7 +2835,9 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.ElementalFunctionExpander(
-        ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
+        ast_transforms.FindFunctionAndSubroutines.from_node(program).names,
+        ast = program
+    ).visit(program)
     for i in program.modules:
         count = 0
         for j in i.function_definitions:

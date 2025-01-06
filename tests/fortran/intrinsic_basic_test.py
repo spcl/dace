@@ -29,7 +29,7 @@ def test_fortran_frontend_bit_size():
                     END SUBROUTINE intrinsic_math_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_bit_size", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_bit_size", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -72,7 +72,7 @@ def test_fortran_frontend_bit_size_symbolic():
                     END SUBROUTINE intrinsic_math_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_bit_size", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_bit_size", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -113,7 +113,7 @@ def test_fortran_frontend_size_arbitrary():
                     END SUBROUTINE intrinsic_basic_size_arbitrary_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_size_arbitrary_test", True,)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_size_arbitrary_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -154,51 +154,6 @@ def test_fortran_frontend_present():
 
                     END SUBROUTINE tf2
                     """
-    #test_string = """
-    #                PROGRAM intrinsic_basic_present
-    #                implicit none
-    #                integer, dimension(4) :: res
-    #                integer, dimension(4) :: res2
-    #                integer :: a
-    #                CALL test_intrinsic_basic_pre2sent_function(res, res2,a)
-    #                end
-
-    #                SUBROUTINE test_intrinsic_basic_pre2sent_function(res, res2,a)
-    #                integer, dimension(4) :: res
-    #                integer, dimension(4) :: res2
-    #                integer :: a
-
-    #                res(1) = 1
-    #                END SUBROUTINE test_intrinsic_basic_pre2sent_function
-    #                !PROGRAM intrinsic_basic_present
-    #                !implicit none
-    #                !integer, dimension(4) :: res
-    #                !integer, dimension(4) :: res2
-    #                !integer :: a
-    #                !CALL intrinsic_basic_present_function(res, res2, a)
-    #                !end
-
-    #                !SUBROUTINE intrinsic_basic_present_function(res, res2, a)
-    #                !integer, dimension(4) :: res
-    #                !integer, dimension(4) :: res2
-    #                !integer :: a
-
-    #                !res(1) = 5
-    #                !!CALL intrinsic_basic_present_function2(res, a)
-    #                !!CALL intrinsic_basic_present_function2(res2)
-
-    #                !END SUBROUTINE intrinsic_basic_present_function
-
-    #                !SUBROUTINE intrinsic_basic_present_function2(res, a)
-    #                !integer, dimension(4) :: res
-    #                !integer :: a
-
-    #                !!res(1) = PRESENT(a)
-    #                !res(1) = 2
-    #                !res(2) = 2
-
-    #                !END SUBROUTINE intrinsic_basic_present_function2
-    #                """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_present_test", True)
     sdfg.simplify(verbose=True)
@@ -370,6 +325,50 @@ def test_fortran_frontend_allocated_nested():
 
     assert np.allclose(res, [0, 1, 0])
 
+def test_fortran_frontend_allocated_struct():
+    # FIXME: this pattern is generally not supported.
+    # this needs an update once defered allocs are merged
+
+    sources, main = SourceCodeBuilder().add_file("""
+    MODULE allocated_test_interface
+        IMPLICIT NONE
+
+        TYPE array_container
+            integer, allocatable, dimension(:) :: data
+        END TYPE array_container
+
+    END MODULE
+
+    SUBROUTINE allocated_test(res)
+    USE allocated_test_interface
+    implicit none
+
+    type(array_container) :: container
+    integer, dimension(3) :: res
+
+    res(1) = ALLOCATED(container%data)
+
+    ALLOCATE(container%data(6))
+
+    res(2) = ALLOCATED(container%data)
+
+    DEALLOCATE(container%data)
+
+    res(3) = ALLOCATED(container%data)
+
+    END SUBROUTINE allocated_test
+""", "main").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'allocated_test', normalize_offsets=True)
+    #sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 3
+    res = np.full([size], 42, order="F", dtype=np.int32)
+
+    sdfg(res=res)
+
+    assert np.allclose(res, [0, 1, 0])
+
 if __name__ == "__main__":
 
     test_fortran_frontend_bit_size()
@@ -380,3 +379,5 @@ if __name__ == "__main__":
     test_fortran_frontend_bitwise_ops2()
     test_fortran_frontend_allocated()
     test_fortran_frontend_allocated_nested()
+    # FIXME: ALLOCATED does not support data refs
+    #test_fortran_frontend_allocated_struct()

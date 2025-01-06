@@ -2545,10 +2545,11 @@ class ForDeclarer(NodeTransformer):
 class ElementalFunctionExpander(NodeTransformer):
     "Makes elemental functions into normal functions by creating a loop around thme if they are called with arrays"
 
-    def __init__(self, func_list: list, scope_vars=None,ast=None):
-        if scope_vars is None:
-            self.scope_vars = ScopeVarsDeclarations(ast)
-            self.scope_vars.visit(ast)
+    def __init__(self, func_list: list, ast):
+        assert ast is not None
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations(ast)
+        self.scope_vars.visit(ast)
         self.ast=ast
 
         self.func_list = func_list
