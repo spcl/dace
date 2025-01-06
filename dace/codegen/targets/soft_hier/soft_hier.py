@@ -1044,7 +1044,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 self._dispatcher, sdfg, state, edge, src_node, dst_node, self._cpu_codegen._packed_types))
             name = memlet.data
             # print memlet information
-            print(f"memlet: {memlet} {memlet.src_subset} {memlet.dst_subset}")
+            # print(f"memlet: {memlet} {memlet.src_subset} {memlet.dst_subset}")
             nodedesc = sdfg.arrays[name]
             data_size = nodedesc.dtype.bytes
             dims = len(copy_shape)
@@ -1169,8 +1169,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     and dst_storage == dtypes.StorageType.SoftHier_TCDM
                 ):
                     s = subsets.Indices(memlet.src_subset)
-                    print(f"src_subset = {s[0][0]} {s[0][1]} {s[1][0]} {s[1][1]}")
-                    print(f"src data shape = {nodedesc.shape[0]} {nodedesc.shape[1]}")
+                    # print(f"src_subset = {s[0][0]} {s[0][1]} {s[1][0]} {s[1][1]}")
+                    # print(f"src data shape = {nodedesc.shape[0]} {nodedesc.shape[1]}")
                     
 
                     callsite_stream.write(
@@ -1182,8 +1182,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     callsite_stream.write("{", cfg, state_id, src_node)
 
                     if(nodedesc.is_hbm_interleaved):
-                        print(f"hbm_split_scheme = {nodedesc.hbm_split_scheme[0]} {nodedesc.hbm_split_scheme[1]}")
-                        print(f"hbm_placement_scheme = {nodedesc.hbm_placement_scheme[0]} {nodedesc.hbm_placement_scheme[1]} {nodedesc.hbm_placement_scheme[2]} ")
+                        # print(f"hbm_split_scheme = {nodedesc.hbm_split_scheme[0]} {nodedesc.hbm_split_scheme[1]}")
+                        # print(f"hbm_placement_scheme = {nodedesc.hbm_placement_scheme[0]} {nodedesc.hbm_placement_scheme[1]} {nodedesc.hbm_placement_scheme[2]} ")
                         hbm_width = nodedesc.shape[1]
                         hbm_height = nodedesc.shape[0]
                         row_start = s[0][0]
@@ -1278,8 +1278,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     )
                     callsite_stream.write("{", cfg, state_id, src_node)
                     if(nodedesc.is_hbm_interleaved):
-                        print(f"hbm_split_scheme = {nodedesc.hbm_split_scheme[0]} {nodedesc.hbm_split_scheme[1]}")
-                        print(f"hbm_placement_scheme = {nodedesc.hbm_placement_scheme[0]} {nodedesc.hbm_placement_scheme[1]} {nodedesc.hbm_placement_scheme[2]} ")
+                        # print(f"hbm_split_scheme = {nodedesc.hbm_split_scheme[0]} {nodedesc.hbm_split_scheme[1]}")
+                        # print(f"hbm_placement_scheme = {nodedesc.hbm_placement_scheme[0]} {nodedesc.hbm_placement_scheme[1]} {nodedesc.hbm_placement_scheme[2]} ")
                         hbm_width = nodedesc.shape[1]
                         hbm_height = nodedesc.shape[0]
                         row_start = s[0][0]
