@@ -1,18 +1,18 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
-from dataclasses import dataclass
 import os
 import warnings
 from copy import deepcopy as dpcp
+from dataclasses import dataclass
 from itertools import chain
 from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple, Union
 
 import networkx as nx
-from fparser.common.readfortran import FortranFileReader as ffr, FortranStringReader, FortranFileReader
+from fparser.common.readfortran import FortranFileReader as ffr, FortranStringReader
 from fparser.common.readfortran import FortranStringReader as fsr
-from fparser.two.Fortran2003 import Program, Name, Subroutine_Subprogram, Module_Stmt
+from fparser.two.Fortran2003 import Program, Name, Module_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
 from fparser.two.symbol_table import SymbolTable
 from fparser.two.utils import Base, walk
@@ -29,13 +29,13 @@ from dace import subsets as subs
 from dace import symbolic as sym
 from dace.data import Scalar, Structure
 from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES, find_name_of_stmt, find_name_of_node, \
-    identifier_specs, append_children, correct_for_function_calls, remove_access_statements, sort_modules, \
+    identifier_specs, append_children, correct_for_function_calls, sort_modules, \
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
-    deconstruct_associations, assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, \
-    consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
-    remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES
+    deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
+    inject_const_evals, \
+    remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES, ConstTypeInjection, ConstInstanceInjection
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
-from dace.frontend.fortran.ast_utils import UseAllPruneList, children_of_type
+from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
 from dace.properties import CodeBlock
 
@@ -495,11 +495,11 @@ class AST_translator:
                 if arr.transient and arr_name in arg_names:
                     print(f"Changing the transient status to false of {arr_name} because it's a function argument")
                     arr.transient = False
-        
+
         # for i in sdfg.arrays:
         #     if i in sdfg.symbols:
         #         sdfg.arrays.pop(i)
-        
+
         self.transient_mode = True
         self.translate(self.startpoint.execution_part.execution, sdfg)
         sdfg.validate()
@@ -734,15 +734,13 @@ class AST_translator:
         guard_substate = sdfg.add_state("Guard" + name)
         final_substate = sdfg.add_state("Merge" + name)
         self.last_sdfg_states[sdfg] = final_substate
-        
+
         sdfg.add_edge(begin_state, guard_substate, InterstateEdge())
 
         condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping, placeholders=self.placeholders,
                                               placeholders_offsets=self.placeholders_offsets,
                                               rename_dict=self.replace_names).write_code(node.cond)
 
-        
-        
         begin_loop_state = sdfg.add_state("BeginWhile" + name)
         end_loop_state = sdfg.add_state("EndWhile" + name)
         self.last_sdfg_states[sdfg] = begin_loop_state
@@ -762,7 +760,6 @@ class AST_translator:
             self.last_loop_continues[sdfg] = self.last_loop_continues_stack[sdfg][-1]
         else:
             self.last_loop_continues[sdfg] = None
-
 
     def forstmt2sdfg(self, node: ast_internal_classes.For_Stmt_Node, sdfg: SDFG):
         """
@@ -918,7 +915,7 @@ class AST_translator:
         variables_in_call = []
         if self.last_call_expression.get(sdfg) is not None:
             variables_in_call = self.last_call_expression[sdfg]
-        
+
         # Sanity check to make sure the parameter numbers match
         if not ((len(variables_in_call) == len(parameters)) or
                 (len(variables_in_call) == len(parameters) + 1
@@ -986,10 +983,10 @@ class AST_translator:
         sym_dict = {}
         # This handles the case where the function is called with symbols
         for parameter, symbol in symbol_arguments:
-            sym_dict[parameter.name]=symbol.name
+            sym_dict[parameter.name] = symbol.name
             if parameter.name != symbol.name:
                 self.local_not_transient_because_assign[my_name_sdfg].append(parameter.name)
-                
+
                 new_sdfg.add_symbol(parameter.name, dtypes.int32)
                 assigns.append(
                     ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=parameter.name),
@@ -2101,7 +2098,7 @@ class AST_translator:
                     while isinstance(tmp_var, ast_internal_classes.Data_Ref_Node):
                         was_data_ref = True
                         tmp_var = tmp_var.part_ref
-                        
+
                     memlet = ast_utils.generate_memlet_view(tmp_var, sdfg, self, self.normalize_offsets,mapped_name,elem[1].label,was_data_ref )
 
                     if local_name.name in write_names:
@@ -2666,7 +2663,7 @@ class AST_translator:
                 new_exec = ast_transforms.ReplaceArrayConstructor().visit(ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
                                                 op="=", rval=node.init, line_number=node.line_number, parent=node.parent,type=node.type))
                 self.translate(new_exec, sdfg)
-            else:    
+            else:
                 self.translate(
                     ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
                                                 op="=", rval=node.init, line_number=node.line_number,parent=node.parent,type=node.type), sdfg)
@@ -2747,7 +2744,8 @@ class ParseConfig:
                  main: Union[None, Path, str] = None,
                  sources: Union[None, List[Path], Dict[str, str]] = None,
                  includes: Union[None, List[Path], Dict[str, str]] = None,
-                 entry_points: Union[None, SPEC, List[SPEC]] = None):
+                 entry_points: Union[None, SPEC, List[SPEC]] = None,
+                 config_injections: Optional[List[Union[ConstTypeInjection, ConstInstanceInjection]]] = None):
         # Make the configs canonical, by processing the various types upfront.
         if isinstance(main, Path):
             main = main.read_text()
@@ -2767,6 +2765,7 @@ class ParseConfig:
         self.sources = sources
         self.includes = includes
         self.entry_points = entry_points
+        self.config_injections = config_injections
 
 
 def create_fparser_ast(cfg: ParseConfig) -> Program:
@@ -2986,12 +2985,11 @@ def create_sdfg_from_string(
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     program = ast_transforms.IfConditionExtractor().visit(program)
     program = ast_transforms.CallExtractor().visit(program)
-    
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
-    #program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names,ast=program).visit(program)
+    # program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names,ast=program).visit(program)
     for i in program.modules:
         count = 0
         for j in i.function_definitions:
@@ -3022,6 +3020,9 @@ def create_sdfg_from_string(
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
+    program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
+
+
     structs_lister = ast_transforms.StructLister()
     structs_lister.visit(program)
     struct_dep_graph = nx.DiGraph()
@@ -3324,6 +3325,7 @@ def create_sdfg_from_fortran_file_with_options(
         ast = deconstruct_enums(ast)
         ast = deconstruct_associations(ast)
         ast = remove_access_statements(ast)
+        ast = inject_const_evals(ast, cfg.config_injections)
         ast = correct_for_function_calls(ast)
         ast = deconstruct_procedure_calls(ast)
         ast = deconstruct_interface_calls(ast)
@@ -3334,7 +3336,7 @@ def create_sdfg_from_fortran_file_with_options(
         #ast = assign_globally_unique_variable_names(ast, {'config','thermodynamics','flux','gas','cloud','aerosol','single_level'})
         ast = consolidate_uses(ast)
     else:
-        ast = correct_for_function_calls(ast)    
+        ast = correct_for_function_calls(ast)
 
     dep_graph = compute_dep_graph(ast, 'radiation_interface')
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
@@ -3432,7 +3434,7 @@ def create_sdfg_from_fortran_file_with_options(
     # program = ast_transforms.CallToArray(functions_and_subroutines_builder, rename_dict).visit(program)
     # program = ast_transforms.TypeInterference(program).visit(program)
     # program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
-    
+
     program = ast_transforms.IfConditionExtractor().visit(program)
 
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
