@@ -3493,6 +3493,11 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 new_name, new_rng = true_name, rng
 
+            # Change the range in case indirect indices are used
+            if indirect_indices:
+                for dim, indarr in indirect_indices.items():
+                    new_rng[dim] = (0, self.sdfg.arrays[indarr].shape[0] - 1, 1)
+
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
                 read_rng = self.views[result][1].subset
@@ -4730,22 +4735,26 @@ class ProgramVisitor(ExtNodeVisitor):
         self.generic_visit(node)
 
     def visit_Return(self, node: ast.Return):
-        # Modify node value to become an expression
-        new_node = ast.copy_location(ast.Expr(value=node.value), node)
-
-        # Return values can either be tuples or a single object
-        if isinstance(node.value, (ast.Tuple, ast.List)):
-            ast_tuple = ast.copy_location(
-                ast.parse('(%s,)' % ','.join('__return_%d' % i for i in range(len(node.value.elts)))).body[0].value,
-                node)
-            self._visit_assign(new_node, ast_tuple, None, is_return=True)
-        else:
-            ast_name = ast.copy_location(ast.Name(id='__return'), node)
-            self._visit_assign(new_node, ast_name, None, is_return=True)
-
-        if not isinstance(self.cfg_target, SDFG):
-            # In a nested control flow region, a return needs to be explicitly marked with a return block.
+        if node.value is None:
+            # If there's no value on the return node or it is None, insert just a return block.
             self._on_block_added(self.cfg_target.add_return(f'return_{self.cfg_target.label}_{node.lineno}'))
+        else:
+            # Modify node value to become an expression
+            new_node = ast.copy_location(ast.Expr(value=node.value), node)
+
+            # Return values can either be tuples or a single object
+            if isinstance(node.value, (ast.Tuple, ast.List)):
+                ast_tuple = ast.copy_location(
+                    ast.parse('(%s,)' % ','.join('__return_%d' % i for i in range(len(node.value.elts)))).body[0].value,
+                    node)
+                self._visit_assign(new_node, ast_tuple, None, is_return=True)
+            else:
+                ast_name = ast.copy_location(ast.Name(id='__return'), node)
+                self._visit_assign(new_node, ast_name, None, is_return=True)
+
+            if not isinstance(self.cfg_target, SDFG):
+                # In a nested control flow region, a return needs to be explicitly marked with a return block.
+                self._on_block_added(self.cfg_target.add_return(f'return_{self.cfg_target.label}_{node.lineno}'))
 
     def visit_With(self, node: ast.With, is_async=False):
         # "with dace.tasklet" syntax

@@ -210,7 +210,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
     """ Verifies the correctness of an SDFG by applying multiple tests.
-    
+
         :param sdfg: The SDFG to verify.
         :param references: An optional set keeping seen IDs for object
                            miscopy validation.
@@ -279,8 +279,11 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
             # Because of how the code generator works Scalars can not be return values.
             #  TODO: Remove this limitation as the CompiledSDFG contains logic for that.
-            if isinstance(desc, dt.Scalar) and name.startswith("__return") and not desc.transient:
-                raise InvalidSDFGError(f'Can not use scalar "{name}" as return value.', sdfg, None)
+            if (sdfg.parent is None and isinstance(desc, dt.Scalar) and name.startswith("__return")
+                    and not desc.transient):
+                raise InvalidSDFGError(
+                    f'Cannot use scalar data descriptor ("{name}") as return value of a top-level function.', sdfg,
+                    None)
 
             # Validate array names
             if name is not None and not dtypes.validate_name(name):
@@ -331,6 +334,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
+
     except InvalidSDFGError as ex:
         # If the SDFG is invalid, save it
         fpath = os.path.join('_dacegraphs', 'invalid.sdfgz')
