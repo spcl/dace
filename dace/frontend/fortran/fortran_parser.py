@@ -502,6 +502,9 @@ class AST_translator:
         
         self.transient_mode = True
         self.translate(self.startpoint.execution_part.execution, sdfg)
+        sdfg.validate()
+
+
 
     def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG):
         """
@@ -635,6 +638,7 @@ class AST_translator:
 
         for i in node.execution:
             self.translate(i, sdfg)
+            
 
     def allocate2sdfg(self, node: ast_internal_classes.Allocate_Stmt_Node, sdfg: SDFG):
         """
@@ -1976,9 +1980,58 @@ class AST_translator:
                 print("Force adding symbol to nested sdfg: ", i)
             else:
                 print("Symbol not found in sdfg arrays: ", i)
+        memlet_skip = []
+        new_sdfg.parent_sdfg=sdfg        
         if self.multiple_sdfgs == False:
             # print("Adding nested sdfg", new_sdfg.name, "to", sdfg.name)
             # print(sym_dict)
+            if node.execution_part is not None:
+                if node.specification_part is not None and node.specification_part.uses is not None:
+                    for j in node.specification_part.uses:
+                        for k in j.list:
+                            if self.contexts.get(new_sdfg.name) is None:
+                                self.contexts[new_sdfg.name] = ast_utils.Context(name=new_sdfg.name)
+                            if self.contexts[new_sdfg.name].constants.get(
+                                    ast_utils.get_name(k)) is None and self.contexts[
+                                self.globalsdfg.name].constants.get(
+                                ast_utils.get_name(k)) is not None:
+                                self.contexts[new_sdfg.name].constants[ast_utils.get_name(k)] = self.contexts[
+                                    self.globalsdfg.name].constants[ast_utils.get_name(k)]
+
+                            pass
+
+                    old_mode = self.transient_mode
+                    # print("For ",sdfg_name," old mode is ",old_mode)
+                    self.transient_mode = True
+                    for j in node.specification_part.symbols:
+                        if isinstance(j, ast_internal_classes.Symbol_Decl_Node):
+                            self.symbol2sdfg(j, new_sdfg)
+                        else:
+                            raise NotImplementedError("Symbol not implemented")
+
+                    for j in node.specification_part.specifications:
+                        self.declstmt2sdfg(j, new_sdfg)
+                    self.transient_mode = old_mode
+                
+
+                
+                for i in new_sdfg.symbols:
+                    if i in new_sdfg.arrays:
+                        new_sdfg.arrays.pop(i)
+                        if i in ins_in_new_sdfg:
+                            for var in variables_in_call:
+                                if i==ast_utils.get_name(parameters[variables_in_call.index(var)]):
+                                    sym_dict[i]=ast_utils.get_name(var)
+                                    memlet_skip.append(ast_utils.get_name(var))        
+                            ins_in_new_sdfg.remove(i)
+                            
+                        if i in outs_in_new_sdfg:
+                            outs_in_new_sdfg.remove(i)
+                            for var in variables_in_call:
+                                if i==ast_utils.get_name(parameters[variables_in_call.index(var)]):
+                                    sym_dict[i]=ast_utils.get_name(var)
+                                    memlet_skip.append(ast_utils.get_name(var))      
+                            
             internal_sdfg = substate.add_nested_sdfg(new_sdfg,
                                                      sdfg,
                                                      ins_in_new_sdfg,
@@ -2004,7 +2057,8 @@ class AST_translator:
                                           self.name_mapping[new_sdfg][i], memlet)
 
         for i in variables_in_call:
-
+            if ast_utils.get_name(i) in memlet_skip:
+                continue
             local_name = parameters[variables_in_call.index(i)]
             if self.name_mapping.get(sdfg).get(ast_utils.get_name(i)) is not None:
                 var = sdfg.arrays.get(self.name_mapping[sdfg][ast_utils.get_name(i)])
@@ -2132,44 +2186,14 @@ class AST_translator:
                     parent_sdfg = parent_sdfg.parent_sdfg
 
         if self.multiple_sdfgs == False:
-            if node.execution_part is not None:
-                if node.specification_part is not None and node.specification_part.uses is not None:
-                    for j in node.specification_part.uses:
-                        for k in j.list:
-                            if self.contexts.get(new_sdfg.name) is None:
-                                self.contexts[new_sdfg.name] = ast_utils.Context(name=new_sdfg.name)
-                            if self.contexts[new_sdfg.name].constants.get(
-                                    ast_utils.get_name(k)) is None and self.contexts[
-                                self.globalsdfg.name].constants.get(
-                                ast_utils.get_name(k)) is not None:
-                                self.contexts[new_sdfg.name].constants[ast_utils.get_name(k)] = self.contexts[
-                                    self.globalsdfg.name].constants[ast_utils.get_name(k)]
+            
 
-                            pass
-
-                    old_mode = self.transient_mode
-                    # print("For ",sdfg_name," old mode is ",old_mode)
-                    self.transient_mode = True
-                    for j in node.specification_part.symbols:
-                        if isinstance(j, ast_internal_classes.Symbol_Decl_Node):
-                            self.symbol2sdfg(j, new_sdfg)
-                        else:
-                            raise NotImplementedError("Symbol not implemented")
-
-                    for j in node.specification_part.specifications:
-                        self.declstmt2sdfg(j, new_sdfg)
-                    self.transient_mode = old_mode
-                
-
-                #for i in new_sdfg.arrays:
-                #    if i in new_sdfg.symbols:
-                #        new_sdfg.arrays.pop(i)
 
                 for i in assigns:
                     self.translate(i, new_sdfg)
                 self.translate(node.execution_part, new_sdfg)
                 #import copy
-                #tmp_sdfg=copy.deepcopy(new_sdfg)
+                #
                 new_sdfg.validate()
                 new_sdfg.apply_transformations(IntrinsicSDFGTransformation)
                 from dace.transformation.dataflow import RemoveSliceView
@@ -2178,7 +2202,10 @@ class AST_translator:
                 from dace.transformation.pass_pipeline import FixedPointPipeline
                 FixedPointPipeline([LiftStructViews()]).apply_pass(new_sdfg, {})
                 new_sdfg.validate()
-                new_sdfg.simplify(verbose=True,validate_all=True)
+                #tmp_sdfg=copy.deepcopy(new_sdfg)
+                new_sdfg.simplify()
+                new_sdfg.validate()
+                sdfg.validate()
 
         if self.multiple_sdfgs == True:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
@@ -3724,11 +3751,11 @@ def create_sdfg_from_fortran_file_with_options(
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg
             ast2sdfg.translate(program, sdfg)
-
+            sdfg.validate()
             sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
-
+            sdfg.validate()
             sdfg.apply_transformations(IntrinsicSDFGTransformation)
-
+            sdfg.validate() 
             try:
                 sdfg.expand_library_nodes()
             except:
@@ -3737,11 +3764,11 @@ def create_sdfg_from_fortran_file_with_options(
 
             sdfg.validate()
             sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_dbg.sdfgz"), compress=True)
-
+            sdfg.validate()
             sdfg.simplify(verbose=True)
             print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
             sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg.sdfgz"), compress=True)
-
+            sdfg.validate()
             print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
             sdfg.compile()
 
