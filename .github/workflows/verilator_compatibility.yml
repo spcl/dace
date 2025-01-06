@@ -30,8 +30,8 @@ jobs:
         with:
           python-version: '3.12'
           architecture: 'x64'
-      - name: install python packages
-        run: pip install pytest -r requirements.txt
+      #- name: install python packages
+      #  run: pip install pytest -r requirements.txt
       - name: install dace
-        run: pip install .
+        run: pip install .['testing']
       - run: pytest -m "verilator"
