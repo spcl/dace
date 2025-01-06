@@ -28,10 +28,8 @@ jobs:
         with:
           python-version: '3.8'
           architecture: 'x64'
-      - uses: BSFishy/pip-action@v1
-        with:
-          packages: pytest
-          requirements: requirements.txt
+      - name: install python packages
+        run: python3 -m pip install pytest -r requirements.txt
       - name: install dace
         run: python3 -m pip install .
       - run: pytest -m "verilator"
