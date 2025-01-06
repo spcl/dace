@@ -8,6 +8,8 @@ on:
         default: 'Check compatibility'
   schedule:
     - cron: '0 0 1 * *' # monthly
+  pull_request:
+    branches: [ main ] # to be reverted - just for testing the workflow
 jobs:
   build:
     strategy:
