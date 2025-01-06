@@ -3310,10 +3310,16 @@ class ProgramVisitor(ExtNodeVisitor):
             true_name = None
             true_array = None
             visited_target = False
+
             if name in defined_vars:
-                # Handle complex object assignment
-                if isinstance(target, ast.Subscript) and not isinstance(target.value, ast.Name):
-                    store_target = copy.copy(target.value)
+                # Handle complex object assignment (e.g., A.flat[:])
+                if isinstance(target, ast.Subscript):  # In case of nested subscripts, find the root AST node
+                    last_subscript = target
+                    # Find the first non-subscript target
+                    while isinstance(last_subscript.value, ast.Subscript):
+                        last_subscript = last_subscript.value
+                if isinstance(target, ast.Subscript) and not isinstance(last_subscript.value, ast.Name):
+                    store_target = copy.copy(last_subscript.value)
                     store_target.ctx = ast.Store()
                     true_name = self.visit(store_target)
                     # Refresh defined variables and arrays
@@ -3328,8 +3334,9 @@ class ProgramVisitor(ExtNodeVisitor):
                             break
                     if tokens:  # The non-struct remainder will be considered an attribute
                         attribute_name = '.'.join(tokens)
-                        raise DaceSyntaxError(self, target, f'Cannot assign to attribute "{attribute_name}" of variable "{true_name}"')
-                        
+                        raise DaceSyntaxError(
+                            self, target, f'Cannot assign to attribute "{attribute_name}" of variable "{true_name}"')
+
                 true_array = defined_arrays[true_name]
 
             # If type was already annotated
@@ -3449,12 +3456,18 @@ class ProgramVisitor(ExtNodeVisitor):
             if new_data:
                 rng = rng or dace.subsets.Range.from_array(new_data)
             else:
-                true_target = copy.copy(target)
+                true_target = astutils.copy_tree(target)
                 nslice = None
                 if isinstance(target, ast.Name):
                     true_target.id = true_name
                 elif isinstance(target, ast.Subscript):
-                    true_target.value = ast.copy_location(ast.Name(id=true_name, ctx=ast.Store()), true_target.value)
+                    # In case of nested subscripts, find the root AST node
+                    last_subscript = true_target
+                    # Find the first non-subscript target and modify its value to the new name
+                    while isinstance(last_subscript.value, ast.Subscript):
+                        last_subscript = last_subscript.value
+                    last_subscript.value = ast.copy_location(ast.Name(id=true_name, ctx=ast.Store()),
+                                                             last_subscript.value)
 
                     # Visit slice contents
                     nslice = self._parse_subscript_slice(true_target.slice)
