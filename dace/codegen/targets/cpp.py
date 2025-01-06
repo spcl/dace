@@ -1076,7 +1076,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         # Replace values with their code-generated names (for example, persistent arrays)
         desc = self.sdfg.arrays[t.id]
         to_write = ptr(t.id, desc, self.sdfg, self.codegen)
-        if isinstance(desc, data.StructureView):
+        if isinstance(desc, data.View):
             to_write = f"(*{to_write})"
         self.write(to_write)
     
