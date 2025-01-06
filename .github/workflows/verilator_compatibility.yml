@@ -28,10 +28,10 @@ jobs:
         run: git clone https://github.com/verilator/verilator.git && cd verilator && git fetch origin && if [ ! "${{ matrix.verilator_version }}" == "master" ]; then  git checkout v${{ matrix.verilator_version }}; fi && autoconf && ./configure && make -j2 && sudo make install
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.8'
+          python-version: '3.12'
           architecture: 'x64'
       - name: install python packages
-        run: python3 -m pip install pytest -r requirements.txt
+        run: pip install pytest -r requirements.txt
       - name: install dace
-        run: python3 -m pip install .
+        run: pip install .
       - run: pytest -m "verilator"
