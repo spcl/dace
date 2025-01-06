@@ -35,9 +35,6 @@ def deserialse_v2(s: str,
     injs = []
     for k, v in cfg:
         kparts = tuple(k.split('.')[1:])  # Drop the first part that represents the type, but is not specific.
-        if kparts[-1].endswith('_a') or kparts[-1].endswith('_s'):
-            # TODO: Handle the array data, but we need a better format.
-            continue
         if v == 'T':
             v = 'true'
         elif v == 'F':

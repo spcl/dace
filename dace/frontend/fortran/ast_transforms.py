@@ -1,12 +1,14 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
+import re
 from typing import Dict, List, Optional, Tuple, Set, Union
 
 import sympy as sp
 
 from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes, ast_utils
+from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
 
 
 class Structure:
@@ -932,6 +934,74 @@ class NameReplacer(NodeTransformer):
             return ast_internal_classes.Name_Node(name=self.new_name, type=node.type)
         else:
             return self.generic_visit(node)
+
+
+class ArrayDimensionSymbolsMapper(NodeTransformer):
+    def __init__(self):
+        # The dictionary that maps a symbol for array dimension information to a tuple of type and component.
+        # ASSUMPTION: The type name must be globally unique.
+        self.array_dims_symbols: Dict[str, Tuple[str, str]] = {}
+        self.cur_type = None
+
+    def visit_Derived_Type_Def_Node(self, node: ast_internal_classes.Derived_Type_Def_Node):
+        self.cur_type = node
+        out = self.generic_visit(node)
+        self.cur_type = None
+        return out
+
+    def visit_Data_Component_Def_Stmt_Node(self, node: ast_internal_classes.Data_Component_Def_Stmt_Node):
+        assert self.cur_type
+        for v in node.vars.vardecl:
+            if not isinstance(v, ast_internal_classes.Symbol_Decl_Node):
+                continue
+            assert v.name not in self.array_dims_symbols
+            self.array_dims_symbols[v.name] = (self.cur_type.name.name, v.name)
+        return self.generic_visit(node)
+
+
+class ArrayDimensionConfigInjector(NodeTransformer):
+    def __init__(self, array_dims_info: ArrayDimensionSymbolsMapper, cfg: List[ConstTypeInjection]):
+        self.cfg: Dict[str, str] = {}  # Maps the array dimension symbols to their fixed values.
+        self.in_exec_depth = 0  # Whether the visitor is in code (i.e., not declarations) and at what depth.
+
+        for c in cfg:
+            assert c.scope_spec is None  # Cannot support otherwise.
+            typ = c.type_spec[-1]  # We assume globally unique typenames for these configuration objects.
+            assert len(c.component_spec) == 1  # Cannot support otherwise.
+            comp = c.component_spec[-1]
+            if not comp.endswith('_s'):
+                continue
+            comp = comp.removesuffix('_s')
+            SIZE_PATTERN = re.compile(r"(?P<comp>[a-zA-Z0-9_]+)_d(?P<num>[0-9]*)")
+            OFFSET_PATTERN = re.compile(r"(?P<comp>[a-zA-Z0-9_]+)_o(?P<num>[0-9]*)")
+            size_match = SIZE_PATTERN.match(comp)
+            offset_match = OFFSET_PATTERN.match(comp)
+            if size_match:
+                marker = 'SA'
+                comp, num = size_match.groups()
+            elif offset_match:
+                marker = 'SOA'
+                comp, num = offset_match.groups()
+            else:
+                continue
+            for k, v in array_dims_info.array_dims_symbols.items():
+                if v[0] == typ and v[1].startswith(f"__f2dace_{marker}_{comp}_d_{num}_s_"):
+                    assert k not in self.cfg
+                    self.cfg[k] = c.value
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        self.in_exec_depth += 1
+        out = self.generic_visit(node)
+        self.in_exec_depth -= 1
+        return out
+
+    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
+        if 'sw_albedo_weights' in node.name:
+            breakpoint()
+        if self.in_exec_depth > 0 and node.name in self.cfg:
+            print(f"REPLACING: {node.name} with {self.cfg[node.name]}")
+            return ast_internal_classes.Int_Literal_Node(self.cfg[node.name])
+        return node
 
 
 class FunctionToSubroutineDefiner(NodeTransformer):

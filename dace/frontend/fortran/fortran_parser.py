@@ -2732,7 +2732,6 @@ def create_ast_from_string(
 
         program = ast_transforms.ForDeclarer().visit(program)
         program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
-
         program = ast_transforms.optionalArgsExpander(program)
 
     return program, own_ast
@@ -2808,12 +2807,15 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
 class SDFGConfig:
     def __init__(self,
                  entry_points: Dict[str, Union[str, List[str]]],
+                 config_injections: Optional[List[ConstTypeInjection]] = None,
                  normalize_offsets: bool = True,
                  multiple_sdfgs: bool = False):
         for k in entry_points:
             if isinstance(entry_points[k], str):
                 entry_points[k] = [entry_points[k]]
+        config_injections = config_injections or []
         self.entry_points = entry_points
+        self.config_injections = config_injections
         self.normalize_offsets = normalize_offsets
         self.multiple_sdfgs = multiple_sdfgs
 
@@ -3316,7 +3318,8 @@ def create_sdfg_from_fortran_file_with_options(
         enum_propagator_files: Optional[List[str]] = None,
         enum_propagator_ast=None,
         used_functions_config: Optional[FindUsedFunctionsConfig] = None,
-        already_parsed_ast=False
+        already_parsed_ast=False,
+        config_injections: Optional[List[ConstTypeInjection]] = None,
 ):
     """
     Creates an SDFG from a fortran file
@@ -3324,6 +3327,8 @@ def create_sdfg_from_fortran_file_with_options(
     :return: The resulting SDFG
 
     """
+    config_injections = config_injections or []
+
     if not already_parsed_ast:
         ast = deconstruct_enums(ast)
         ast = deconstruct_associations(ast)
@@ -3560,6 +3565,10 @@ def create_sdfg_from_fortran_file_with_options(
 
     print("After intrinsics")
 
+    array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
+    array_dims_info.visit(program)
+    program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
+
     program = ast_transforms.TypeInference(program).visit(program)
     program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
@@ -3574,6 +3583,7 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
+
     structs_lister = ast_transforms.StructLister()
     structs_lister.visit(program)
     struct_dep_graph = nx.DiGraph()

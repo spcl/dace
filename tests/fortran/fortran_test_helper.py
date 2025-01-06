@@ -7,6 +7,7 @@ from typing import Dict, Optional, Tuple, Type, Union, List, Sequence, Collectio
 
 from fparser.two.Fortran2003 import Name
 
+from dace.frontend.fortran.ast_desugaring import ConstTypeInjection, ConstInstanceInjection
 from dace.frontend.fortran.ast_internal_classes import Name_Node
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, SDFGConfig, \
     create_sdfg_from_internal_ast
@@ -279,13 +280,16 @@ class InternalASTMatcher:
 def create_singular_sdfg_from_string(
         sources: Dict[str, str],
         entry_point: str,
-        normalize_offsets: bool = True):
+        normalize_offsets: bool = True,
+        config_injections: Optional[List[ConstTypeInjection]] = None):
     entry_point = entry_point.split('.')
 
-    cfg = ParseConfig(main=sources['main.f90'], sources=sources, entry_points=tuple(entry_point))
+    cfg = ParseConfig(main=sources['main.f90'], sources=sources, entry_points=tuple(entry_point),
+                      config_injections=config_injections)
     own_ast, program = create_internal_ast(cfg)
 
-    cfg = SDFGConfig({entry_point[-1]: entry_point}, normalize_offsets, False)
+    cfg = SDFGConfig({entry_point[-1]: entry_point}, config_injections=config_injections,
+                     normalize_offsets=normalize_offsets, multiple_sdfgs=False)
     gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
     assert gmap.keys() == {entry_point[-1]}
     g = list(gmap.values())[0]

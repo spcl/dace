@@ -2158,6 +2158,9 @@ def inject_const_evals(ast: Program,
         names = walk(scope, Name)
 
         for item in items:
+            if item.component_spec[-1].endswith('_s') or item.component_spec[-1].endswith('_a'):
+                # Ignore the special variables related to array dimensions, since we don't handle them here.
+                continue
             print(f"INJECTING: {item}")
             for dr in drefs:
                 scope_spec = find_scope_spec(dr)
