@@ -113,10 +113,12 @@ def _nested_arrays_from_json(obj, context=None):
 
 def _replace_dict_keys(d, old, new):
     if old in d:
+        
+        d[new] = d[old]
         if new in d:
             warnings.warn('"%s" already exists in SDFG' % new)
-        d[new] = d[old]
-        del d[old]
+        else:    
+            del d[old]
 
 
 def _replace_dict_values(d, old, new):
@@ -1636,7 +1638,22 @@ class SDFG(ControlFlowRegion):
 
     # Dynamic SDFG creation API
     ##############################
-
+    def is_name_used(self, name: str) -> bool:
+        """ Checks if `name` is already used inside the SDFG."""
+        if name in self._arrays:
+            return True
+        if name in self.symbols:
+            return True
+        if name in self.constants_prop:
+            return True
+        if name in self._pgrids:
+            return True
+        if name in self._subarrays:
+            return True
+        if name in self._rdistrarrays:
+            return True
+        return False
+    
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
 
@@ -1958,19 +1975,47 @@ class SDFG(ControlFlowRegion):
                                   exists, finds a new name to add.
             :return: Name of the new data descriptor
         """
-        if not isinstance(name, str):
-            raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
-        # If exists, fail
-        while name in self._arrays:
-            if find_new_name:
-                name = self._find_new_name(name)
-            else:
-                raise NameError(f'Array or Stream with name "{name}" already exists in SDFG')
-            # NOTE: Remove illegal characters, such as dots. Such characters may be introduced when creating views to
-            # members of Structures.
+        # if not isinstance(name, str):
+        #     raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
+        # # If exists, fail
+        # while name in self._arrays:
+        #     if find_new_name:
+        #         name = self._find_new_name(name)
+        #     else:
+        #         raise NameError(f'Array or Stream with name "{name}" already exists in SDFG')
+        #     # NOTE: Remove illegal characters, such as dots. Such characters may be introduced when creating views to
+        #     # members of Structures.
+        #     name = name.replace('.', '_')
+        # assert name not in self._arrays
+        # self._arrays[name] = datadesc
+        if find_new_name:
+            # These characters might be introduced through the creation of views to members
+            #  of strictures.
+            # NOTES: If `find_new_name` is `True` and the name (understood as a sequence of
+            #   any characters) is not used, i.e. `assert self.is_name_free(name)`, then it
+            #   is still "cleaned", i.e. dots are replaced with underscores. However, if
+            #   `find_new_name` is `False` then this cleaning is not applied and it is possible
+            #   to create names that are formally invalid. The above code reproduces the exact
+            #   same behaviour and is maintained for  compatibility. This behaviour is
+            #   triggered by tests/python_frontend/structures/structure_python_test.py::test_rgf`.
+            name = self._find_new_name(name)
             name = name.replace('.', '_')
-        assert name not in self._arrays
-        self._arrays[name] = datadesc
+            if self.is_name_used(name):
+                name = self._find_new_name(name)
+        else:
+            # We do not check for data constant, because there is a link between the constants and
+            #  the data descriptors.
+            if name in self.arrays:
+                raise FileExistsError(f'Data descriptor "{name}" already exists in SDFG')
+            if name in self.symbols:
+                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a symbol.')
+            if name in self._subarrays:
+                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a subarray.')
+            if name in self._rdistrarrays:
+                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a RedistrArray.')
+            if name in self._pgrids:
+                raise FileExistsError(f'Can not create data descriptor "{name}", the name is used by a ProcessGrid.')
+
 
         def _add_symbols(desc: dt.Data):
             if isinstance(desc, dt.Structure):
@@ -1981,6 +2026,7 @@ class SDFG(ControlFlowRegion):
                 if sym.name not in self.symbols:
                     self.add_symbol(sym.name, sym.dtype)
 
+        self._arrays[name] = datadesc
         # Add free symbols to the SDFG global symbol storage
         _add_symbols(datadesc)
 

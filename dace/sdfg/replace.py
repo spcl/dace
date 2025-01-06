@@ -191,6 +191,10 @@ def replace_datadesc_names(sdfg, repl: Dict[str, str]):
         # Replace in interstate edges
         for e in cf.edges():
             e.data.replace_dict(repl, replace_keys=False)
+    
+        
+
+
 
         for block in cf.nodes():
             if isinstance(block, dace.SDFGState):
@@ -204,3 +208,6 @@ def replace_datadesc_names(sdfg, repl: Dict[str, str]):
                     first_name = data_path[0]
                     if first_name in repl:
                         edge.data.data = ".".join([repl[first_name]] + data_path[1:])
+    
+                        
+                        

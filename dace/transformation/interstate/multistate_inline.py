@@ -6,13 +6,13 @@ from copy import deepcopy as dc
 from typing import Dict, List
 
 from dace.data import find_new_name, View, Scalar, Array, ArrayView
-from dace import Memlet, subsets
+from dace import Memlet, subsets,SDFGState
 from dace import symbolic, dtypes
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import InterstateEdge, SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types
-from dace.sdfg.replace import replace_datadesc_names
+from dace.sdfg.replace import replace_datadesc_names, replace
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties
 from dace.sdfg.state import StateSubgraphView
@@ -117,7 +117,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Transients
         for name, desc in nsdfg.arrays.items():
-            if desc.transient and name not in sdfg.arrays:
+            if desc.transient and name not in sdfg.arrays and name not in sdfg.symbols:
                 sdfg.add_datadesc(name, dc(desc))
 
         #######################################################
@@ -308,6 +308,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         replace_datadesc_names(nsdfg, replacements)
 
+
         for state in nsdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.MapEntry):
@@ -372,7 +373,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 outer_desc.transient = (viewed_node != outer_nodes[-1])
                 if viewed_node.data in nsdfg.arrays:
                     del nsdfg.arrays[viewed_node.data]
-                nsdfg.add_datadesc(viewed_node.data, outer_desc)
+                if viewed_node.data not in nsdfg.symbols:
+                    nsdfg.add_datadesc(viewed_node.data, outer_desc)
+                else:
+                    nsdfg_node.symbol_mapping[viewed_node.data] = viewed_node.data
 
             # Provide full desc as argument
             outer_node = outer_nodes[-1]
@@ -523,6 +527,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for arg in args_used_in_assignments:
             complex_replacement = False
             in_edge = input_memlets[arg]
+            if in_edge.data.data in nsdfg.symbols:
+                continue
             if not isinstance(nsdfg.arrays[in_edge.data.data], View):
                 if isinstance(nsdfg.arrays[in_edge.data.data], Array):
                     shape_out=nsdfg.arrays[in_edge.data.data].shape

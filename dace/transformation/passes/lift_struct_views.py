@@ -447,11 +447,8 @@ class LiftStructViews(ppl.Pass):
                  or None if no accesses were lifted.
         """
         result = defaultdict(set)
-        rounds=0
         lifted_something = False
         while True:
-            print(f'Lifting round {rounds}')
-            rounds+=1
             lifted_something_this_round = False
             for cfg in sdfg.all_control_flow_regions(recursive=True):
                 if cfg.sdfg is None:

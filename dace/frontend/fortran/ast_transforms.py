@@ -872,7 +872,7 @@ class ArgumentExtractor(NodeTransformer):
                                 name="tmp_arg_" + str(temp),
                                 type=var_type,
                                 sizes=None,
-                                init=None
+                                init=None,
                             )
                         ])
                     )
@@ -2545,12 +2545,11 @@ class ForDeclarer(NodeTransformer):
 class ElementalFunctionExpander(NodeTransformer):
     "Makes elemental functions into normal functions by creating a loop around thme if they are called with arrays"
 
-    def __init__(self, func_list: list, scope_vars=None,ast=None):
-        if scope_vars is None:
-            assert ast is not None
-            ParentScopeAssigner().visit(ast)
-            self.scope_vars = ScopeVarsDeclarations(ast)
-            self.scope_vars.visit(ast)
+    def __init__(self, func_list: list, ast):
+        assert ast is not None
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations(ast)
+        self.scope_vars.visit(ast)
         self.ast=ast
 
         self.func_list = func_list
@@ -2689,6 +2688,7 @@ class TypeInference(NodeTransformer):
                 if var_def.type != 'VOID':
                     node.type = var_def.type
                 node.dims = len(var_def.sizes) if hasattr(var_def, 'sizes') and var_def.sizes is not None else 1
+                node.sizes = var_def.sizes
             except Exception as e:
                 print(f"Ignore type inference for {node.name}")
                 print(e)
@@ -2701,6 +2701,8 @@ class TypeInference(NodeTransformer):
         if var_def.type != 'VOID':
             node.type = var_def.type
         node.dims = len(var_def.sizes) if var_def.sizes is not None else 1
+
+        node.sizes = var_def.sizes
         return node
 
     def visit_Parenthesis_Expr_Node(self, node: ast_internal_classes.Parenthesis_Expr_Node):
@@ -2710,6 +2712,7 @@ class TypeInference(NodeTransformer):
             node.type = node.expr.type
         if hasattr(node.expr, 'dims'):
             node.dims = node.expr.dims
+        node.sizes = node.expr.sizes
         return node
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
@@ -2739,15 +2742,45 @@ class TypeInference(NodeTransformer):
         #    #assert self._get_dims(node.lval) == self._get_dims(node.rval)
 
         node.type = type_hierarchy[max(idx_left, idx_right)]
+
+
+        """
+            Logic to determine the dimensionality of the operation.
+        """
+
         if hasattr(node.lval, "dims"):
             node.dims = self._get_dims(node.lval)
-        elif hasattr(node.lval, "dims"):
-            node.dims = self._get_dims(node.rval)
+            node.sizes = node.lval.sizes
+        else:
+            lval_definition = self.scope_vars.get_var(node.parent, node.lval.name)
+
+            if hasattr(lval_definition, "dims"):
+                node.dims = lval_definition.dims
+            elif lval_definition.sizes is not None:
+                node.dims = len(lval_definition.sizes)
+            elif hasattr(node.rval, "dims"):
+                node.dims = self._get_dims(node.rval)
+            else:
+                print("Unknown dimensionality for binop!")
+
+            if hasattr(lval_definition, "sizes") and lval_definition.sizes is not None:
+                node.sizes = lval_definition.sizes
+            elif hasattr(node.rval, "sizes"):
+                node.sizes = node.rval.sizes
+            else:
+                print("Unknown size for binop!")
 
         if node.op == '=' and idx_left == idx_void and idx_right != idx_void:
+
             lval_definition = self.scope_vars.get_var(node.parent, node.lval.name)
             lval_definition.type = node.type
             lval_definition.dims = node.dims
+            lval_definition.offsets = [1] * node.dims
+
+            #if lval_definition.dims > 1:
+            assert node.rval.sizes is not None
+            lval_definition.sizes = node.rval.sizes
+
             node.lval.type = node.type
             node.lval.dims = node.dims
 
@@ -2767,6 +2800,7 @@ class TypeInference(NodeTransformer):
         if variable.type != 'VOID':
             node.type = variable.type
         node.dims = len(variable.sizes) if variable.sizes is not None else 1
+        node.sizes = variable.sizes
         return node
 
     def visit_Actual_Arg_Spec_Node(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
@@ -2784,11 +2818,13 @@ class TypeInference(NodeTransformer):
             node.arg.type = func_arg.type
             dims = len(func_arg.sizes) if func_arg.sizes is not None else 1
             node.dims = dims
+            node.sizes = func_arg.sizes
             node.arg.dims = dims
 
         else:
             node.type = func_arg_name_type
             node.dims = self._get_dims(node.arg)
+            node.sizes = func_arg.sizes
 
         return node
 
@@ -2796,6 +2832,7 @@ class TypeInference(NodeTransformer):
         node.lval = self.visit(node.lval)
         if node.lval.type != 'VOID':
             node.type = node.lval.type
+            node.sizes = node.lval.sizes
         return node
 
     def _get_type(self, node):
