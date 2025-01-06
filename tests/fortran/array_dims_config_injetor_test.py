@@ -53,9 +53,6 @@ end subroutine main
         ])
     g.simplify(verbose=True)
     g.compile()
-    g.save('/Users/pmz/Downloads/bleh.sdfg')
-    print(g.free_symbols)
-    print(g.arglist())
 
     # As per the injection, the result should be 3 (first dimension size of a) + 5 (first dimension size of b)
     cfg_T = dace.data.Structure({'a': dace.int32[3, 4], 'b': dace.float32[5, 6, 7]}, 'config')

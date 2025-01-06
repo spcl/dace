@@ -996,10 +996,7 @@ class ArrayDimensionConfigInjector(NodeTransformer):
         return out
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
-        if 'sw_albedo_weights' in node.name:
-            breakpoint()
         if self.in_exec_depth > 0 and node.name in self.cfg:
-            print(f"REPLACING: {node.name} with {self.cfg[node.name]}")
             return ast_internal_classes.Int_Literal_Node(self.cfg[node.name])
         return node
 
@@ -1934,8 +1931,8 @@ class AllocatableReplacerTransformer(NodeTransformer):
                         init = ast_internal_classes.Int_Literal_Node(value="0")
 
                         # if it's an arg, then we don't initialize
-                        if (node.name.name in self.functions_with_alloc and
-                                var_decl.name in self.functions_with_alloc[node.name.name]):
+                        if (node.name.name in self.functions_with_alloc
+                                and var_decl.name in self.functions_with_alloc[node.name.name]):
                             init = None
                             args.append(
                                 ast_internal_classes.Name_Node(name=name)
@@ -3602,7 +3599,6 @@ class ParDeclOffsetNormalizer(NodeTransformer):
         array_var = self.scope_vars.get_var(node.parent, node.name.name)
         indices = []
         for idx, actual_index in enumerate(node.indices):
-
             self.current_offset = array_var.offsets[idx]
             if isinstance(self.current_offset, int):
                 self.current_offset = ast_internal_classes.Int_Literal_Node(value=str(self.current_offset))
