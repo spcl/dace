@@ -510,14 +510,16 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
             array_sizes = self.get_var_declaration(node.parent, arg).sizes
             if array_sizes is None:
 
-                if dims_count != -1:
-                    # for destination array, sizes might be unknown when we use arg extractor
-                    # in that situation, we look at the size of the first argument
-                    dims = dims_count
-                else:
-                    return None
-            else:
-                dims = len(array_sizes)
+                raise NeedsTypeInferenceException(self.func_name(), node.line_number)
+
+            dims = len(array_sizes)
+
+            # it's a scalar!
+            if dims == 0:
+                return ast_internal_classes.Array_Subscript_Node(
+                    name=arg, parent=arg.parent, type='VOID',
+                    indices=[ast_internal_classes.Int_Literal_Node(value="0")]
+                )
 
             array_node = ast_internal_classes.Array_Subscript_Node(
                 name=arg, parent=arg.parent, type='VOID',
@@ -719,6 +721,8 @@ class SumProduct(LoopBasedReplacementTransformation):
     def _initialize(self):
         self.rvals = []
         self.argument_variable = None
+
+        self.function_name = "Sum/Product"
 
     def _update_result_type(self, var: ast_internal_classes.Name_Node):
 
@@ -1275,7 +1279,7 @@ class Merge(LoopBasedReplacement):
             assert isinstance(node.lval, ast_internal_classes.Name_Node)
 
             array_decl = self.get_var_declaration(exec_node.parent, node.lval)
-            if array_decl.sizes is None:
+            if array_decl.sizes is None or len(array_decl.sizes) == 0:
 
                 # for destination array, sizes might be unknown when we use arg extractor
                 # in that situation, we look at the size of the first argument
@@ -1350,7 +1354,7 @@ class Merge(LoopBasedReplacement):
             if self.uses_scalars and isinstance(self.mask_cond, ast_internal_classes.Name_Node):
                 definition = self.scope_vars.get_var(node.parent, self.mask_cond.name)
 
-                if definition.sizes is not None:
+                if definition.sizes is not None and len(definition.sizes) > 0:
                     self.mask_cond = ast_internal_classes.Array_Subscript_Node(
                         name = self.mask_cond,
                         type = self.mask_cond.type,

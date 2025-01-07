@@ -275,19 +275,3 @@ class InternalASTMatcher:
     def NAMED(cls, name: str):
         return cls(Name_Node, {'name': cls(has_value=name)})
 
-
-def create_singular_sdfg_from_string(
-        sources: Dict[str, str],
-        entry_point: str,
-        normalize_offsets: bool = True):
-    entry_point = entry_point.split('.')
-
-    cfg = ParseConfig(main=sources['main.f90'], sources=sources, entry_points=tuple(entry_point))
-    own_ast, program = create_internal_ast(cfg)
-
-    cfg = SDFGConfig({entry_point[-1]: entry_point}, normalize_offsets, False)
-    gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
-    assert gmap.keys() == {entry_point[-1]}
-    g = list(gmap.values())[0]
-
-    return g
