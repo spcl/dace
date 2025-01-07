@@ -49,13 +49,7 @@
     #define DACE_HDFI __host__ __device__ __forceinline__
     #define DACE_HFI __host__ __forceinline__
     #define DACE_DFI __device__ __forceinline__
-    #define DACE_HostDev __host__ __device__
-    #define DACE_Host __host__ 
-    #define DACE_Dev __device__
 #else
-    #define DACE_HostDev
-    #define DACE_Host 
-    #define DACE_Dev
     #define DACE_HDFI inline
     #define DACE_HFI inline
     #define DACE_DFI inline
@@ -67,6 +61,14 @@
     #define __DACE_UNROLL
 #endif
 
+// If CUDA version is 11.4 or higher, __device__ variables can be declared as constexpr
+#if defined(__CUDACC__) && (__CUDACC_VER_MAJOR__ > 11 || (__CUDACC_VER_MAJOR__ == 11 && __CUDACC_VER_MINOR__ >= 4))
+    #define DACE_CONSTEXPR_HOSTDEV constexpr __host__ __device__
+#elif defined(__CUDACC__) || defined(__HIPCC__)
+    #define DACE_CONSTEXPR_HOSTDEV const __host__ __device__
+#else
+    #define DACE_CONSTEXPR_HOSTDEV const
+#endif
 
 
 namespace dace
