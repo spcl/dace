@@ -3572,10 +3572,6 @@ def create_sdfg_from_fortran_file_with_options(
 
     print("After intrinsics")
 
-    array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
-    array_dims_info.visit(program)
-    program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
-
     program = ast_transforms.TypeInference(program).visit(program)
     program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
@@ -3590,6 +3586,10 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
+
+    array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
+    array_dims_info.visit(program)
+    program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
 
     structs_lister = ast_transforms.StructLister()
     structs_lister.visit(program)
