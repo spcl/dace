@@ -2098,6 +2098,9 @@ class ConstInstanceInjection:
     value: Any  # Literal value to substitue with. The injected literal's type will match the type of the original.
 
 
+ConstInjection = Union[ConstTypeInjection, ConstInstanceInjection]
+
+
 def _val_2_lit(val: str, type_spec: SPEC) -> LITERAL_TYPES:
     val = str(val).lower()
     if type_spec == ('INTEGER1',):
@@ -2122,8 +2125,7 @@ def _val_2_lit(val: str, type_spec: SPEC) -> LITERAL_TYPES:
 
 
 def inject_const_evals(ast: Program,
-                       inject_consts: Optional[List[Union[ConstTypeInjection, ConstInstanceInjection]]] = None) \
-        -> Program:
+                       inject_consts: Optional[List[ConstInjection]] = None) -> Program:
     inject_consts = inject_consts or []
     alias_map = alias_specs(ast)
 

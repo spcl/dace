@@ -959,6 +959,10 @@ class ArrayDimensionSymbolsMapper(NodeTransformer):
         return self.generic_visit(node)
 
 
+CONFIG_INJECTOR_SIZE_PATTERN = re.compile(r"(?P<comp>[a-zA-Z0-9_]+)_d(?P<num>[0-9]*)")
+CONFIG_INJECTOR_OFFSET_PATTERN = re.compile(r"(?P<comp>[a-zA-Z0-9_]+)_o(?P<num>[0-9]*)")
+
+
 class ArrayDimensionConfigInjector(NodeTransformer):
     def __init__(self, array_dims_info: ArrayDimensionSymbolsMapper, cfg: List[ConstTypeInjection]):
         self.cfg: Dict[str, str] = {}  # Maps the array dimension symbols to their fixed values.
@@ -972,10 +976,8 @@ class ArrayDimensionConfigInjector(NodeTransformer):
             if not comp.endswith('_s'):
                 continue
             comp = comp.removesuffix('_s')
-            SIZE_PATTERN = re.compile(r"(?P<comp>[a-zA-Z0-9_]+)_d(?P<num>[0-9]*)")
-            OFFSET_PATTERN = re.compile(r"(?P<comp>[a-zA-Z0-9_]+)_o(?P<num>[0-9]*)")
-            size_match = SIZE_PATTERN.match(comp)
-            offset_match = OFFSET_PATTERN.match(comp)
+            size_match = CONFIG_INJECTOR_SIZE_PATTERN.match(comp)
+            offset_match = CONFIG_INJECTOR_OFFSET_PATTERN.match(comp)
             if size_match:
                 marker = 'SA'
                 comp, num = size_match.groups()
@@ -1506,7 +1508,8 @@ class IndexExtractor(NodeTransformer):
 
                                 # it can be a symbol - Name_Node - or a value
 
-                                if not isinstance(offset, (ast_internal_classes.Name_Node, ast_internal_classes.BinOp_Node)):
+                                if not isinstance(offset,
+                                                  (ast_internal_classes.Name_Node, ast_internal_classes.BinOp_Node)):
                                     # check if offset is a number
                                     try:
                                         offset = int(offset)

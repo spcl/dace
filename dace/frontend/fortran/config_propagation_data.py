@@ -2,11 +2,11 @@ import json
 from pathlib import Path
 from typing import List, Union, Any, Dict, Optional
 
-from dace.frontend.fortran.ast_desugaring import ConstTypeInjection, ConstInstanceInjection, SPEC
+from dace.frontend.fortran.ast_desugaring import ConstTypeInjection, ConstInstanceInjection, ConstInjection, SPEC
 
 
-def serialize(x: Union[ConstTypeInjection, ConstInstanceInjection]) -> str:
-    assert isinstance(x, (ConstTypeInjection, ConstInstanceInjection))
+def serialize(x: ConstInjection) -> str:
+    assert isinstance(x, ConstInjection)
     d: Dict[str, Any] = {'type': type(x).__name__,
                          'scope': '.'.join(x.scope_spec) if x.scope_spec else None,
                          'root': '.'.join(x.type_spec if isinstance(x, ConstTypeInjection) else x.root_spec),
@@ -15,7 +15,7 @@ def serialize(x: Union[ConstTypeInjection, ConstInstanceInjection]) -> str:
     return json.dumps(d)
 
 
-def deserialize(s: str) -> Union[ConstTypeInjection, ConstInstanceInjection]:
+def deserialize(s: str) -> ConstInjection:
     d = json.loads(s)
     assert d['type'] in {'ConstTypeInjection', 'ConstInstanceInjection'}
     scope = tuple(d['scope'].split('.')) if d['scope'] else None
@@ -41,3 +41,9 @@ def deserialse_v2(s: str,
             v = 'false'
         injs.append(ConstTypeInjection(scope, typ, kparts, v))
     return injs
+
+
+def config_injection_list() -> List[ConstInjection]:
+    cfgs = [l.strip() for l in PROPAGATED_CONFIGS.splitlines() if l.strip()]
+    cfgs = [deserialize(l) for l in cfgs]
+    return cfgs
