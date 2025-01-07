@@ -2154,70 +2154,82 @@ def inject_const_evals(ast: Program,
         else:
             scope = alias_map[scope_spec].parent
 
-        drefs = walk(scope, Data_Ref)
-        names = walk(scope, Name)
+        drefs: List[Data_Ref] = walk(scope, Data_Ref)
+        names: List[Name] = walk(scope, Name)
 
-        for item in items:
-            if item.component_spec[-1].endswith('_s') or item.component_spec[-1].endswith('_a'):
-                # Ignore the special variables related to array dimensions, since we don't handle them here.
+        # Ignore the special variables related to array dimensions, since we don't handle them here.
+        items = [item for item in items
+                 if not (item.component_spec[-1].endswith('_s') or item.component_spec[-1].endswith('_a'))]
+        item_inst_root_specs: Set[SPEC] = {item.root_spec for item in items
+                                           if isinstance(item, ConstInstanceInjection)}  # For speedup later.
+
+        for dr in drefs:
+            scope_spec = find_scope_spec(dr)
+            root, root_tspec, rest = _dataref_root(dr, scope_spec, alias_map)
+            while not isinstance(root, Name):
+                root, root_tspec, nurest = _dataref_root(root, scope_spec, alias_map)
+                rest += nurest
+            loc = search_real_local_alias_spec(root, alias_map)
+            assert loc
+            root_id_spec = ident_spec(alias_map[loc])
+            if root_tspec.out:
+                # We replace only when it is not an output of the function.
                 continue
-            print(f"INJECTING: {item}")
-            for dr in drefs:
-                scope_spec = find_scope_spec(dr)
-                root, root_tspec, rest = _dataref_root(dr, scope_spec, alias_map)
-                while not isinstance(root, Name):
-                    root, root_tspec, nurest = _dataref_root(root, scope_spec, alias_map)
-                    rest += nurest
-                loc = search_real_local_alias_spec(root, alias_map)
-                assert loc
-                root_id_spec = ident_spec(alias_map[loc])
-                if root_tspec.out:
+            if not all(isinstance(c, Name) for c in rest):
+                continue
+            comp_tspec = find_type_dataref(dr, scope_spec, alias_map)
+            if comp_tspec.spec == ('CHARACTER',):
+                continue
+
+            for item in items:
+                if isinstance(item, ConstTypeInjection):
+                    # `item.component_spec` must be a precise suffix in the data-ref, and everything before that must
+                    # precisely match `item.type_spec`.
+                    if len(item.component_spec) > len(rest):
+                        continue
+                    pre, c_rest = rest[:-len(item.component_spec)], rest[-len(item.component_spec):]
+                    comp_spec: SPEC = tuple(c.string for c in c_rest)
+                    if comp_spec != item.component_spec:
+                        continue
+                    comp = Data_Ref(' % '.join(tuple(p.string for p in (root,) + pre)))
+                    ctspec = find_type_dataref(comp, scope_spec, alias_map)
+                    if ctspec.spec != item.type_spec:
+                        continue
+                elif isinstance(item, ConstInstanceInjection):
+                    # This is a simpler case, where the object must match `item.root_spec`, and the entire component
+                    # parts of the data-ref must precisely match `item.component_spec`.
+                    comp_spec: SPEC = tuple(c.string for c in rest)
+                    if root_id_spec != item.root_spec or comp_spec != item.component_spec:
+                        continue
+
+                replace_node(dr, _val_2_lit(item.value, comp_tspec.spec))
+                break
+
+        for nm in names:
+            # We can also directly inject variables' values with `ConstInstanceInjection`.
+            if isinstance(nm.parent, (Entity_Decl, Only_List)):
+                # We don't want to replace the values in their declarations or imports, but only where their
+                # values are being used.
+                continue
+            loc = search_real_local_alias_spec(nm, alias_map)
+            if not loc or not isinstance(alias_map[loc], Entity_Decl):
+                continue
+            spec = ident_spec(alias_map[loc])
+            if spec not in item_inst_root_specs:
+                continue
+            for item in items:
+                if (not isinstance(item, ConstInstanceInjection)
+                        or item.component_spec is not None
+                        or spec != item.root_spec):
+                    # To inject variables' values, it has to be a `ConstInstanceInjection` without a component and point
+                    # to the (scalar) variable identified by `nm`.
+                    continue
+                tspec = find_type_of_entity(alias_map[loc], alias_map)
+                if tspec.out:
                     # We replace only when it is not an output of the function.
                     continue
-
-                if not all(isinstance(c, Name) for c in rest):
-                    continue
-                root_dr = None
-                if isinstance(item, ConstTypeInjection):
-                    # Check if anywhere in the path we face the injected type.
-                    for pl in range(len(rest)+1):
-                        comp = Data_Ref(' % '.join(tuple(p.string for p in (root,) + rest[:pl])))
-                        ctspec = find_type_dataref(comp, scope_spec, alias_map)
-                        if ctspec.spec == item.type_spec:
-                            root_dr = comp
-                            rest = rest[pl:]
-                            break
-                elif isinstance(item, ConstInstanceInjection):
-                    if root_id_spec == item.root_spec:
-                        root_dr = dr
-                if not root_dr:
-                    continue
-
-                comp_tspec = find_type_dataref(dr, scope_spec, alias_map)
-                if comp_tspec.spec == ('CHARACTER',):
-                    continue
-                comp_spec: SPEC = tuple(c.string for c in rest)
-                if comp_spec != item.component_spec:
-                    continue
-                replace_node(dr, _val_2_lit(item.value, comp_tspec.spec))
-
-            if isinstance(item, ConstInstanceInjection) and item.component_spec is None:
-                for nm in names:
-                    if isinstance(nm.parent, (Entity_Decl, Only_List)):
-                        # We don't want to replace the values in their declarations or imports, but only where their
-                        # values are being used.
-                        continue
-                    loc = search_real_local_alias_spec(nm, alias_map)
-                    if not loc or not isinstance(alias_map[loc], Entity_Decl):
-                        continue
-                    spec = ident_spec(alias_map[loc])
-                    if spec != item.root_spec:
-                        continue
-                    tspec = find_type_of_entity(alias_map[loc], alias_map)
-                    if tspec.out:
-                        # We replace only when it is not an output of the function.
-                        continue
-                    replace_node(nm, _val_2_lit(item.value, tspec.spec))
+                replace_node(nm, _val_2_lit(item.value, tspec.spec))
+                break
     return ast
 
 
