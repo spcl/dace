@@ -102,6 +102,9 @@ def _nested_arrays_from_json(obj, context=None):
 
 
 def _replace_dict_keys(d, old, new):
+    if old == new:
+        warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
+        return
     if old in d:
         if new in d:
             warnings.warn('"%s" already exists in SDFG' % new)
@@ -734,6 +737,12 @@ class SDFG(ControlFlowRegion):
         :param replace_in_graph: Whether to replace in SDFG nodes / edges.
         :param replace_keys: If True, replaces in SDFG property names (e.g., array, symbol, and constant names).
         """
+
+        repldict = {k: v for k, v in repldict.items() if k != v}
+        if symrepl:
+            symrepl = {k: v for k, v in symrepl.items() if str(k) != str(v)}
+
+
         symrepl = symrepl or {
             symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
             for k, v in repldict.items()
