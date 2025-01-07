@@ -59,6 +59,20 @@ def test_aug_implicit():
     assert np.allclose(A, regression)
 
 
+def test_aug_implicit_attribute():
+
+    @dace.program
+    def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
+        A.flat[10:15][0:2] += 5
+
+    A = np.random.rand(5, 5, 5, 5, 5)
+    regression = np.copy(A)
+    # FIXME: NumPy does not support augmented assignment on a sub-iterator of a flat iterator
+    regression.flat[10:12] += 5
+    indexing_test(A)
+    assert np.allclose(A, regression)
+
+
 def test_ellipsis_aug():
 
     @dace.program
@@ -329,6 +343,7 @@ if __name__ == '__main__':
     test_flat_noncontiguous()
     test_ellipsis()
     test_aug_implicit()
+    test_aug_implicit_attribute()
     test_ellipsis_aug()
     test_newaxis()
     test_multiple_newaxis()
