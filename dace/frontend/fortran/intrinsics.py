@@ -1346,17 +1346,6 @@ class Merge(LoopBasedReplacement):
                 copy_second
             ])
 
-            # for scalar operations, we need to extract first element if it's an array
-            if self.uses_scalars and isinstance(self.mask_cond, ast_internal_classes.Name_Node):
-                definition = self.scope_vars.get_var(node.parent, self.mask_cond.name)
-
-                if definition.sizes is not None:
-                    self.mask_cond = ast_internal_classes.Array_Subscript_Node(
-                        name = self.mask_cond,
-                        type = self.mask_cond.type,
-                        indices= [ast_internal_classes.Int_Literal_Node(value="1")] * len(definition.sizes)
-                    )
-
             return ast_internal_classes.If_Stmt_Node(
                 cond=self.mask_cond,
                 body=body_if,
