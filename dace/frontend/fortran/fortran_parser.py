@@ -3010,7 +3010,9 @@ def create_sdfg_from_string(
         raise NameError("Not all functions were transformed to subroutines")
     program.function_definitions = []
     program = ast_transforms.SignToIf().visit(program)
-    program = ast_transforms.ArrayToLoop(program).visit(program)
+    program = ast_transforms.ArgumentExtractor(program).visit(program)
+
+    program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
     for transformation in own_ast.fortran_intrinsics().transformations():
         transformation.initialize(program)
