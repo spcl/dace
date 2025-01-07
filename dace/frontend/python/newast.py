@@ -3292,13 +3292,15 @@ class ProgramVisitor(ExtNodeVisitor):
         if isinstance(node.value, (ast.Tuple, ast.List)):
             for n in node.value.elts:
                 results.extend(self._gettype(n))
-        elif isinstance(node.value, ast.Name) and node.value.id in self.sdfg.arrays and isinstance(self.sdfg.arrays[node.value.id], data.Array) and self.sdfg.arrays[node.value.id].total_size == len(elts):
+        elif isinstance(node.value, ast.Name) and node.value.id in self.sdfg.arrays and isinstance(
+                self.sdfg.arrays[node.value.id],
+                data.Array) and self.sdfg.arrays[node.value.id].total_size == len(elts):
             # In the case where the rhs is an array (not being accessed with a slice) of exactly the same length as the
             # number of elements in the lhs, the array can be expanded with a series of slice/subscript accesses to
             # constant indexes (according to the number of elements in the lhs). These expansions can then be used to
             # perform an unpacking assignment, similar to what Python does natively.
             for i in range(len(elts)):
-                const_node = ast.Constant(i)
+                const_node = NumConstant(i)
                 ast.copy_location(const_node, node)
                 slice_node = ast.Subscript(node.value, const_node, node.value.ctx)
                 ast.copy_location(slice_node, node)
@@ -3525,7 +3527,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if boolarr is not None and indirect_indices:
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
-
 
             if self.nested and not new_data and not visited_target:
                 new_name, new_rng = self._add_write_access(name, rng, target)
@@ -5039,12 +5040,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Type-check operands in order to provide a clear error message
         if (isinstance(operand1, dtypes.pyobject) or (isinstance(operand1, str) and operand1 in self.defined
-                and isinstance(self.defined[operand1].dtype, dtypes.pyobject))):
+                                                      and isinstance(self.defined[operand1].dtype, dtypes.pyobject))):
             raise DaceSyntaxError(
                 self, op1, 'Trying to operate on a callback return value with an undefined type. '
                 f'Please add a type hint to "{operand1}" to enable using it within the program.')
         if (isinstance(operand2, dtypes.pyobject) or (isinstance(operand2, str) and operand2 in self.defined
-                and isinstance(self.defined[operand2].dtype, dtypes.pyobject))):
+                                                      and isinstance(self.defined[operand2].dtype, dtypes.pyobject))):
             raise DaceSyntaxError(
                 self, op2, 'Trying to operate on a callback return value with an undefined type. '
                 f'Please add a type hint to "{operand2}" to enable using it within the program.')
