@@ -3301,12 +3301,37 @@ class ProgramVisitor(ExtNodeVisitor):
             name = rname(target)
             tokens = name.split('.')
             name = tokens[0]
+            tokens.pop(0)
             true_name = None
             true_array = None
+            visited_target = False
+
             if name in defined_vars:
-                true_name = defined_vars[name]
-                if len(tokens) > 1:
-                    true_name = '.'.join([true_name, *tokens[1:]])
+                # Handle complex object assignment (e.g., A.flat[:])
+                if isinstance(target, ast.Subscript):  # In case of nested subscripts, find the root AST node
+                    last_subscript = target
+                    # Find the first non-subscript target
+                    while isinstance(last_subscript.value, ast.Subscript):
+                        last_subscript = last_subscript.value
+                if isinstance(target, ast.Subscript) and not isinstance(last_subscript.value, ast.Name):
+                    store_target = copy.copy(last_subscript.value)
+                    store_target.ctx = ast.Store()
+                    true_name = self.visit(store_target)
+                    # Refresh defined variables and arrays
+                    defined_vars = {**self.variables, **self.scope_vars}
+                    defined_arrays = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.scope_arrays})
+                    visited_target = True
+                else:
+                    true_name = defined_vars[name]
+                    while len(tokens) > 1:
+                        true_name = true_name + '.' + tokens.pop(0)
+                        if true_name not in self.sdfg.arrays:
+                            break
+                    if tokens:  # The non-struct remainder will be considered an attribute
+                        attribute_name = '.'.join(tokens)
+                        raise DaceSyntaxError(
+                            self, target, f'Cannot assign to attribute "{attribute_name}" of variable "{true_name}"')
+
                 true_array = defined_arrays[true_name]
 
             # If type was already annotated
@@ -3426,13 +3451,18 @@ class ProgramVisitor(ExtNodeVisitor):
             if new_data:
                 rng = rng or dace.subsets.Range.from_array(new_data)
             else:
-                true_target = copy.copy(target)
+                true_target = astutils.copy_tree(target)
                 nslice = None
                 if isinstance(target, ast.Name):
                     true_target.id = true_name
                 elif isinstance(target, ast.Subscript):
-                    true_target.value = copy.copy(true_target.value)
-                    true_target.value.id = true_name
+                    # In case of nested subscripts, find the root AST node
+                    last_subscript = true_target
+                    # Find the first non-subscript target and modify its value to the new name
+                    while isinstance(last_subscript.value, ast.Subscript):
+                        last_subscript = last_subscript.value
+                    last_subscript.value = ast.copy_location(ast.Name(id=true_name, ctx=ast.Store()),
+                                                             last_subscript.value)
 
                     # Visit slice contents
                     nslice = self._parse_subscript_slice(true_target.slice)
@@ -3482,7 +3512,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 if boolarr is not None and indirect_indices:
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
 
-            if self.nested and not new_data:
+
+            if self.nested and not new_data and not visited_target:
                 new_name, new_rng = self._add_write_access(name, rng, target)
                 # Local symbol or local data dependent
                 if _subset_is_local_symbol_dependent(rng, self):
@@ -4438,8 +4469,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Connect Python state
         self._connect_pystate(tasklet, self.current_state, '__istate', '__ostate')
 
-        if return_type is None:
-            return []
+        if return_type is None:  # Unknown but potentially used return value
+            return [dtypes.pyobject()]
         else:
             return return_names
 
@@ -4992,13 +5023,13 @@ class ProgramVisitor(ExtNodeVisitor):
             operand2, op2type = None, None
 
         # Type-check operands in order to provide a clear error message
-        if (isinstance(operand1, str) and operand1 in self.defined
-                and isinstance(self.defined[operand1].dtype, dtypes.pyobject)):
+        if (isinstance(operand1, dtypes.pyobject) or (isinstance(operand1, str) and operand1 in self.defined
+                and isinstance(self.defined[operand1].dtype, dtypes.pyobject))):
             raise DaceSyntaxError(
                 self, op1, 'Trying to operate on a callback return value with an undefined type. '
                 f'Please add a type hint to "{operand1}" to enable using it within the program.')
-        if (isinstance(operand2, str) and operand2 in self.defined
-                and isinstance(self.defined[operand2].dtype, dtypes.pyobject)):
+        if (isinstance(operand2, dtypes.pyobject) or (isinstance(operand2, str) and operand2 in self.defined
+                and isinstance(self.defined[operand2].dtype, dtypes.pyobject))):
             raise DaceSyntaxError(
                 self, op2, 'Trying to operate on a callback return value with an undefined type. '
                 f'Please add a type hint to "{operand2}" to enable using it within the program.')
@@ -5286,6 +5317,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # Try to construct memlet from subscript
         node.value = ast.Name(id=array)
         defined = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.defined})
+
+        if arrtype is data.Scalar and array in defined and isinstance(defined[array].dtype, dtypes.pyobject):
+            raise DaceSyntaxError(
+                self, node, f'Object "{array}" is defined as a callback return value and cannot be sliced. '
+                'Consider adding a type hint to the variable.')
+
         expr: MemletExpr = ParseMemlet(self, defined, node, nslice)
 
         if inference:

@@ -277,9 +277,10 @@ def parse_memlet_subset(array: data.Data,
 def ParseMemlet(visitor,
                 defined_arrays_and_symbols: Dict[str, Any],
                 node: MemletType,
-                parsed_slice: Any = None) -> MemletExpr:
+                parsed_slice: Any = None,
+                arrname: Optional[str] = None) -> MemletExpr:
     das = defined_arrays_and_symbols
-    arrname = rname(node)
+    arrname = arrname or rname(node)
     if arrname not in das:
         raise DaceSyntaxError(visitor, node, 'Use of undefined data "%s" in memlet' % arrname)
     array = das[arrname]

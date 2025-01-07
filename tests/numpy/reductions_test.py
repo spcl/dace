@@ -227,6 +227,16 @@ def test_degenerate_reduction_implicit(A: dace.float64[1, 20]):
     return np.sum(A, axis=0)
 
 
+@compare_numpy_output()
+def test_any(A: dace.float64[20]):
+    return np.any(A > 0.8, axis=0)
+
+
+@compare_numpy_output()
+def test_all(A: dace.float64[20]):
+    return np.all(A > 0.8, axis=0)
+
+
 if __name__ == '__main__':
 
     # generated with cat tests/numpy/reductions_test.py | grep -oP '(?<=^def ).*(?=\()' | awk '{print $0 "()"}'
@@ -271,3 +281,6 @@ if __name__ == '__main__':
     test_scalar_reduction()
     test_degenerate_reduction_explicit()
     test_degenerate_reduction_implicit()
+
+    test_any()
+    test_all()
