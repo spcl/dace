@@ -3014,12 +3014,26 @@ def create_sdfg_from_string(
 
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
+    prior_exception: Optional[NeedsTypeInferenceException] = None
     for transformation in own_ast.fortran_intrinsics().transformations():
-        transformation.initialize(program)
-        program = transformation.visit(program)
+        while True:
+            try:
+                transformation.initialize(program)
+                program = transformation.visit(program)
+                break
+            except NeedsTypeInferenceException as e:
 
-    program = ast_transforms.ArgumentExtractor(program).visit(program)
+                if prior_exception is not None:
+                    if e.line_number == prior_exception.line_number and e.func_name == prior_exception.func_name:
+                        print("Running additional type inference didn't help! VOID type in the same place.")
+                        raise RuntimeError()
+                else:
+                    prior_exception = e
+                print("Running additional type inference")
+                # FIXME: optimize func
+                program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
+    program = ast_transforms.ArrayToLoop(program).visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
