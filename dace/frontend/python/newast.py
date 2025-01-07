@@ -3287,6 +3287,17 @@ class ProgramVisitor(ExtNodeVisitor):
         if isinstance(node.value, (ast.Tuple, ast.List)):
             for n in node.value.elts:
                 results.extend(self._gettype(n))
+        elif isinstance(node.value, ast.Name) and node.value.id in self.sdfg.arrays and isinstance(self.sdfg.arrays[node.value.id], data.Array) and self.sdfg.arrays[node.value.id].total_size == len(elts):
+            # In the case where the rhs is an array (not being accessed with a slice) of exactly the same length as the
+            # number of elements in the lhs, the array can be expanded with a series of slice/subscript accesses to
+            # constant indexes (according to the number of elements in the lhs). These expansions can then be used to
+            # perform an unpacking assignment, similar to what Python does natively.
+            for i in range(len(elts)):
+                const_node = ast.Constant(i)
+                ast.copy_location(const_node, node)
+                slice_node = ast.Subscript(node.value, const_node, node.value.ctx)
+                ast.copy_location(slice_node, node)
+                results.extend(self._gettype(slice_node))
         else:
             results.extend(self._gettype(node.value))
 
