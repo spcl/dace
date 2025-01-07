@@ -73,25 +73,35 @@ def test_write_structure():
 def test_write_structure_scalar():
 
     N = dace.symbol('N')
-    SumStruct = dace.data.Structure(dict(sum=dace.data.Scalar(dace.float32)), name='SumStruct')
+    SumStruct = dace.data.Structure(dict(sum=dace.data.Scalar(dace.float64)), name='SumStruct')
     
     @dace.program
-    def struct_member_based_sum(A: dace.float32[N], B: SumStruct):
+    def struct_member_based_sum(A: dace.float64[N], B: SumStruct, C: dace.float64[N]):
         tmp = 0.0
         for i in range(N):
             tmp += A[i]
         B.sum = tmp
+        for i in range(N):
+            C[i] = A[i] + B.sum
     
     N = 40
     A = np.random.rand(N)
-    validation_sum = np.sum(A)
+    C = np.random.rand(N)
+    C_val = np.zeros((N,))
+    sum = 0
+    for i in range(N):
+        sum += A[i]
+    for i in range(N):
+        C_val[i] = A[i] + sum
 
     outB = SumStruct.dtype._typeclass.as_ctypes()(sum=0)
 
     func = struct_member_based_sum.compile()
-    func(A=A, B=outB, N=N)
+    func(A=A, B=outB, C=C, N=N)
 
-    assert np.allclose(outB.sum, validation_sum)
+    # C is used for numerical validation because the Python frontend does not allow directly writing to scalars as an
+    # output (B.sum). Using them as intermediate values is possible though.
+    assert np.allclose(C, C_val)
 
 
 def test_local_structure():
