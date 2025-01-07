@@ -3330,7 +3330,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     true_name = defined_vars[name]
                     while len(tokens) > 1:
                         true_name = true_name + '.' + tokens.pop(0)
-                        if true_name not in self.sdfg.arrays:
+                        if true_name not in defined_arrays:
                             break
                     if tokens:  # The non-struct remainder will be considered an attribute
                         attribute_name = '.'.join(tokens)
