@@ -6,8 +6,8 @@ from dace import dtypes, symbolic
 from dace.frontend.fortran.fortran_parser import create_sdfg_from_string
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import AccessNode
-from tests.fortran.fortran_test_helper import SourceCodeBuilder, create_singular_sdfg_from_string
-
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 
 def test_fortran_frontend_array_access():
     """
@@ -149,6 +149,7 @@ def test_fortran_frontend_memlet_in_map_test():
 subroutine main(INP, OUT)
   real INP(100, 10)
   real OUT(100, 10)
+  integer I
   do I = 1, 100
     call inner_loops(INP(I, :), OUT(I, :))
   end do
@@ -157,6 +158,9 @@ end subroutine main
 subroutine inner_loops(INP, OUT)
   real INP(10)
   real OUT(10)
+  integer J
+                                                
+
   do J = 1, 10
     OUT(J) = INP(J) + 1
   end do

@@ -24,7 +24,7 @@ def test_fortran_frontend_call_extract():
                     END SUBROUTINE intrinsic_call_extract_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_call_extract", normalize_offsets=True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_call_extract_test", normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
     
