@@ -3,7 +3,8 @@
 import numpy as np
 
 from dace.frontend.fortran import ast_transforms, fortran_parser
-from tests.fortran.fortran_test_helper import SourceCodeBuilder, create_singular_sdfg_from_string
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 def test_fortran_frontend_minval_double():
     """

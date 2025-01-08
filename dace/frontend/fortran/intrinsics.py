@@ -1286,6 +1286,7 @@ class Merge(LoopBasedReplacement):
                 dims = len(self.first_array.indices)
             else:
                 dims = len(array_decl.sizes)
+
             self.destination_array = ast_internal_classes.Array_Subscript_Node(
                 name=node.lval, parent=node.lval.parent, type='VOID',
                 indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
@@ -1293,7 +1294,7 @@ class Merge(LoopBasedReplacement):
 
             # type inference! this is necessary when the destination array is
             # not known exactly, e.g., in recursive calls.
-            if array_decl.sizes is None:
+            if array_decl.sizes is None or len(array_decl.sizes) == 0:
 
                 first_input = self.get_var_declaration(node.parent, node.rval.args[0])
                 array_decl.sizes = copy.deepcopy(first_input.sizes)

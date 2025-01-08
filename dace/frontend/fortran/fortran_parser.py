@@ -3025,7 +3025,6 @@ def create_sdfg_from_string(
 
     cfg = SDFGConfig({sdfg_name: f"{sdfg_name}_function"}, normalize_offsets, False)
     gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
-    print(gmap)
     assert gmap.keys() == {sdfg_name}
     g = list(gmap.values())[0]
 

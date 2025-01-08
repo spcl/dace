@@ -1391,7 +1391,7 @@ class IndexExtractor(NodeTransformer):
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
 
-        for child in node.executio:
+        for child in node.execution:
             lister = IndexExtractorNodeLister()
             lister.visit(child)
             res = lister.nodes

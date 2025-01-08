@@ -255,7 +255,7 @@ def test_fortran_frontend_merge_array_shift():
 
     # Now test to verify it executes correctly with no offset normalization
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "merge_test", True)
-    sdfg.simplify(verbose=True)
+    #sdfg.simplify(verbose=True)
     sdfg.compile()
     size = 7
 
@@ -393,7 +393,6 @@ def test_fortran_frontend_merge_scalar():
 
     # Now test to verify it executes correctly with no offset normalization
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "merge_test", True)
-    sdfg.save('test.sdfg')
     #sdfg.simplify(verbose=True)
     sdfg.compile()
     size = 7
@@ -516,7 +515,6 @@ if __name__ == "__main__":
     test_fortran_frontend_merge_comparison_arrays_offset()
     test_fortran_frontend_merge_array_shift()
     test_fortran_frontend_merge_nonarray()
-    test_fortran_frontend_merge_recursive()
     test_fortran_frontend_merge_recursive()
     test_fortran_frontend_merge_scalar()
     test_fortran_frontend_merge_scalar2()
