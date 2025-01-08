@@ -1562,7 +1562,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     # Properties
     axes = ListProperty(element_type=int, allow_none=True)
     wcr = LambdaProperty(default='lambda a, b: a')
-    identity = Property(allow_none=True, dtype=str)
+    identity = Property(allow_none=True, to_json=lambda x: str(x))
 
     def __init__(self,
                  name,
@@ -1575,7 +1575,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         super().__init__(name=name, **kwargs)
         self.wcr = wcr
         self.axes = axes
-        self.identity = str(identity) if identity is not None else None
+        self.identity = identity
         self.debuginfo = debuginfo
         self.schedule = schedule
 
