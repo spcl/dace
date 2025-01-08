@@ -27,7 +27,7 @@ def test_fortran_frontend_offset_normalizer_1d():
                     """
 
     # Test to verify that offset is normalized correctly
-    ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_offset_test", True, True)
+    ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_test", True, True)
 
     for subroutine in ast.subroutine_definitions:
 
@@ -37,7 +37,7 @@ def test_fortran_frontend_offset_normalizer_1d():
 
     # Now test to verify it executes correctly
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -76,7 +76,7 @@ def test_fortran_frontend_offset_normalizer_1d_symbol():
                     """
 
     # Test to verify that offset is normalized correctly
-    ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_offset_test", True, True)
+    ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_test", True, True)
 
     for subroutine in ast.subroutine_definitions:
 
@@ -87,7 +87,7 @@ def test_fortran_frontend_offset_normalizer_1d_symbol():
 
     # Now test to verify it executes correctly
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -117,7 +117,7 @@ def test_fortran_frontend_offset_normalizer_2d():
 
                     SUBROUTINE index_test_function(d)
                     double precision, dimension(50:54,7:9) :: d
-                    integer :: i
+                    integer :: i,j
 
                     do i=50,54
                         do j=7,9
@@ -129,7 +129,7 @@ def test_fortran_frontend_offset_normalizer_2d():
                     """
 
     # Test to verify that offset is normalized correctly
-    ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_offset_test", True, True)
+    ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_test", True, True)
 
     for subroutine in ast.subroutine_definitions:
 
@@ -146,7 +146,7 @@ def test_fortran_frontend_offset_normalizer_2d():
 
     # Now test to verify it executes correctly
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -180,7 +180,7 @@ def test_fortran_frontend_offset_normalizer_2d_symbol():
                     integer :: arrsize2
                     integer :: arrsize3
                     integer :: arrsize4
-                    integer :: i
+                    integer :: i,j
                     double precision, dimension(arrsize:arrsize2,arrsize3:arrsize4) :: d
 
                     do i=arrsize, arrsize2
@@ -193,7 +193,7 @@ def test_fortran_frontend_offset_normalizer_2d_symbol():
                     """
 
     # Test to verify that offset is normalized correctly
-    ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_offset_test", True, True)
+    ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_test", True, True)
 
     for subroutine in ast.subroutine_definitions:
 
@@ -212,7 +212,7 @@ def test_fortran_frontend_offset_normalizer_2d_symbol():
 
     # Now test to verify it executes correctly
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -256,7 +256,7 @@ def test_fortran_frontend_offset_normalizer_2d_arr2loop():
                     """
 
     # Test to verify that offset is normalized correctly
-    ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_offset_test", True, True)
+    ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_test", True, True)
 
     for subroutine in ast.subroutine_definitions:
 
@@ -273,7 +273,7 @@ def test_fortran_frontend_offset_normalizer_2d_arr2loop():
 
     # Now test to verify it executes correctly with no normalization
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", True)
     sdfg.save('test.sdfg')
     sdfg.simplify(verbose=True)
     sdfg.compile()
@@ -319,7 +319,7 @@ def test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol():
                     """
 
     # Test to verify that offset is normalized correctly
-    ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_offset_test", True, True)
+    ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_test", True, True)
 
     for subroutine in ast.subroutine_definitions:
 
@@ -338,7 +338,7 @@ def test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol():
 
     # Now test to verify it executes correctly with no normalization
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -388,22 +388,22 @@ def test_fortran_frontend_offset_normalizer_struct():
                     double precision, dimension(arrsize:arrsize2,arrsize3:arrsize4) :: d
                     type(simple_type) :: struct_data
 
-                    !struct_data%arrsize = arrsize
-                    !struct_data%arrsize2 = arrsize2
-                    !struct_data%arrsize3 = arrsize3
-                    !struct_data%arrsize4 = arrsize4
-                    !struct_data%d = d
+                    struct_data%arrsize = arrsize
+                    struct_data%arrsize2 = arrsize2
+                    struct_data%arrsize3 = arrsize3
+                    struct_data%arrsize4 = arrsize4
+                    struct_data%d = d
 
-                    !do i=struct_data%arrsize,struct_data%arrsize2
-                    !    struct_data%d(i, 1) = i * 2.0
-                    !end do
+                    do i=struct_data%arrsize,struct_data%arrsize2
+                        struct_data%d(i, 1) = i * 2.0
+                    end do
 
                     END SUBROUTINE index_test_function
                     """
 
     # Now test to verify it executes correctly with no normalization
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -438,11 +438,11 @@ def test_fortran_frontend_offset_pardecl():
                     SUBROUTINE index_test_function(d)
                     double precision, dimension(50:54) :: d
 
-                    CALL index_test_function2(d(51:53))
+                    CALL index2_test_function(d(51:53))
 
                     END SUBROUTINE index_test_function
 
-                    SUBROUTINE index_test_function2(d)
+                    SUBROUTINE index2_test_function(d)
                     double precision, dimension(3) :: d
                     integer :: i
 
@@ -450,13 +450,13 @@ def test_fortran_frontend_offset_pardecl():
                         d(i) = i * 2.0
                     end do
 
-                    END SUBROUTINE index_test_function2
+                    END SUBROUTINE index2_test_function
                     """
 
 
     # Now test to verify it executes correctly
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_test", True)
     sdfg.save('test2.sdfg')
     sdfg.simplify(verbose=True)
     sdfg.compile()
@@ -470,11 +470,11 @@ def test_fortran_frontend_offset_pardecl():
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_offset_normalizer_1d()
-    #test_fortran_frontend_offset_normalizer_2d()
-    #test_fortran_frontend_offset_normalizer_2d_arr2loop()
-    #test_fortran_frontend_offset_normalizer_1d_symbol()
-    #test_fortran_frontend_offset_normalizer_2d_symbol()
-    #test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol()
-    #test_fortran_frontend_offset_normalizer_struct()
+    test_fortran_frontend_offset_normalizer_1d()
+    test_fortran_frontend_offset_normalizer_2d()
+    test_fortran_frontend_offset_normalizer_2d_arr2loop()
+    test_fortran_frontend_offset_normalizer_1d_symbol()
+    test_fortran_frontend_offset_normalizer_2d_symbol()
+    test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol()
+    test_fortran_frontend_offset_normalizer_struct()
     test_fortran_frontend_offset_pardecl()
