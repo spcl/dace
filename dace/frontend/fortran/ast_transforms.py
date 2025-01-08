@@ -2319,13 +2319,18 @@ class ArrayToLoop(NodeTransformer):
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
-        for child in node.execution:
+        for child_ in node.execution:
             lister = ArrayLoopNodeLister(self.scope_vars)
-            lister.visit(child)
+            lister.visit(child_)
             res = lister.nodes
             res_range = lister.range_nodes
 
-            if res is not None and len(res) > 0:
+            if res is None or len(res) == 0:
+                newbody.append(self.visit(child_))
+                continue
+
+            #if res is not None and len(res) > 0:
+            for child in res:
 
                 current = child.lval
                 ranges = []
@@ -2397,8 +2402,8 @@ class ArrayToLoop(NodeTransformer):
                 newbody.append(body)
 
                 self.count = self.count + range_index
-            else:
-                newbody.append(self.visit(child))
+            #else:
+            #    newbody.append(self.visit(child))
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
 
