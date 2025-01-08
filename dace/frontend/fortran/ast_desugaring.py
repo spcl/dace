@@ -18,10 +18,10 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Level_2_Unary_Expr, And_Operand, Parenthesis, Level_2_Expr, Level_3_Expr, Array_Constructor, Execution_Part, \
     Specification_Part, Interface_Block, Association, Procedure_Designator, Type_Bound_Procedure_Part, \
     Associate_Construct, Subscript_Triplet, End_Function_Stmt, End_Subroutine_Stmt, Module_Subprogram_Part, \
-    Enumerator_List, Actual_Arg_Spec_List, Only_List, Section_Subscript_List, Char_Selector, Data_Pointer_Object, \
-    Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, Else_If_Stmt, \
-    Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, Assignment_Stmt, \
-    Loop_Control
+    Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Section_Subscript_List, Char_Selector, \
+    Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, \
+    Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, \
+    Assignment_Stmt, Loop_Control, Equivalence_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
@@ -53,6 +53,8 @@ class TYPE_SPEC:
         self.out: bool = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
         self.const: bool = 'PARAMETER' in attrs
         self.keyword: Optional[str] = None
+        if not self.inp and not self.out:
+            self.inp, self.out = True, True
 
     @staticmethod
     def _parse_shape(attrs: str) -> Tuple[str, ...]:
@@ -566,7 +568,11 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
         if op in BINARY_OPS:
             lv = _const_eval_basic_type(lv, alias_map)
             rv = _const_eval_basic_type(rv, alias_map)
-            if lv is None or rv is None:
+            if op == '.AND.' and (lv is np.bool_(False) or rv is np.bool_(False)):
+                return np.bool_(False)
+            elif op == '.OR.' and (lv is np.bool_(True) or rv is np.bool_(True)):
+                return np.bool_(True)
+            elif lv is None or rv is None:
                 return None
             return BINARY_OPS[op](lv, rv)
     elif isinstance(expr, UnaryOpBase):
@@ -1513,9 +1519,37 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
         if isinstance(ns_node, Entity_Decl):
             elist = ns_node.parent
             remove_self(ns_node)
+            # But there are many things to clean-up.
+            # 1. If the variable was declared alone, then the entire line with type declaration must be gone too.
+            elist_tdecl = elist.parent
+            assert isinstance(elist.parent, Type_Declaration_Stmt)
             if not elist.children:
-                assert isinstance(elist.parent, Type_Declaration_Stmt)
-                remove_self(elist.parent)
+                remove_self(elist_tdecl)
+            # 2. There is a case of "equivalence" statement, which is a very Fortran-specific feature to clean up too.
+            elist_spart = elist_tdecl.parent
+            assert isinstance(elist_spart, Specification_Part)
+            for c in elist_spart.children:
+                if not isinstance(c, Equivalence_Stmt):
+                    continue
+                _, eqvs = c.children
+                eqvs = eqvs.children if eqvs else tuple()
+                for eqv in eqvs:
+                    eqa, eqbs = eqv.children
+                    eqbs = eqbs.children if eqbs else tuple()
+                    eqz = (eqa,) + eqbs
+                    assert all(isinstance(z, Part_Ref) for z in eqz)
+                    assert len(eqz) == 2
+                    eqz = tuple(z for z in eqz if search_real_local_alias_spec(z.children[0], alias_map) != ns)
+                    if len(eqz) < 2:
+                        remove_self(eqv)
+                # If there is no remaining equivalent list, remove the entire statement.
+                _, eqvs = c.children
+                eqvs = eqvs.children if eqvs else tuple()
+                if not eqvs:
+                    remove_self(c)
+            # 3. If the entire specification part becomes empty, we have to remove it too.
+            if not elist_spart.children:
+                remove_self(elist_spart)
         else:
             remove_self(ns_node.parent)
         killed.add(ns)
