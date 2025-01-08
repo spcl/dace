@@ -2824,6 +2824,11 @@ class TypeInference(NodeTransformer):
 
         node.sizes = variable.sizes
         node.offsets = variable.offsets
+        if node.sizes is None:
+                    node.sizes = []
+                    variable.sizes = []
+                    node.offsets = []
+                    variable.offsets = []
         return node
 
     def visit_Actual_Arg_Spec_Node(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
