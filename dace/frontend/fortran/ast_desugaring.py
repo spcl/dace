@@ -2403,6 +2403,11 @@ def inject_const_evals(ast: Program,
             replace_node(al, _val_2_lit(item.value, ('LOGICAL',)))
 
         for dr in drefs:
+            if isinstance(dr.parent, Assignment_Stmt):
+                # We cannot replace on the LHS of an assignment.
+                lv, _, _ = dr.parent.children
+                if lv == dr:
+                    continue
             item = _find_matching_item(items, dr, alias_map)
             if not item:
                 continue

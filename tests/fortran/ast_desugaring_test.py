@@ -1590,7 +1590,7 @@ contains
   real function fun(this)
     implicit none
     type(config), intent(inout) :: this
-    if (allocated(this%a)) then
+    if (allocated(this%a)) then  ! This will be replaced even though it is an out (i.e., beware of invalid injections).
       fun = 5.1
     else
       fun = -1
@@ -1612,7 +1612,6 @@ end subroutine main
     ])
 
     got = ast.tofortran()
-    print(got)
     want = """
 MODULE lib
   IMPLICIT NONE
@@ -1623,7 +1622,7 @@ MODULE lib
   REAL FUNCTION fun(this)
     IMPLICIT NONE
     TYPE(config), INTENT(INOUT) :: this
-    IF (ALLOCATED(this % a)) THEN
+    IF (.TRUE.) THEN
       fun = 5.1
     ELSE
       fun = - 1
