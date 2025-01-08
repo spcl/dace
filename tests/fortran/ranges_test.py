@@ -551,7 +551,7 @@ def test_fortran_frontend_ranges_noarray2():
     Tests that the generated array map correctly handles offsets.
     """
     test_string = """
-                    PROGRAM ranges_noarray
+                    PROGRAM ranges_noarra
                     implicit none
                     double precision, dimension(7,4) :: input
                     double precision, dimension(7,4) :: res
@@ -618,19 +618,53 @@ def test_fortran_frontend_ranges_noarray3():
 
     assert np.all(res == input)
 
+def test_fortran_frontend_ranges_scalar():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM multiple_ranges
+                    implicit none
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: res
+                    CALL multiple_ranges_function(input1, input2, res)
+                    end
+
+                    SUBROUTINE multiple_ranges_function(input1, input2, res)
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: res
+
+                    res = 1.0 - input1
+
+                    END SUBROUTINE multiple_ranges_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges", True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 7
+    input1 = np.full([size], 0, order="F", dtype=np.float64)
+    for i in range(size):
+        input1[i] = i + 1
+    res = np.full([7], 42, order="F", dtype=np.float64)
+    sdfg(input1=input1, res=res)
+    assert np.allclose(res, [1.0 - x for x in input1])
+
 if __name__ == "__main__":
 
-    test_fortran_frontend_multiple_ranges_all()
-    test_fortran_frontend_multiple_ranges_selection()
-    test_fortran_frontend_multiple_ranges_selection_var()
-    test_fortran_frontend_multiple_ranges_subset()
-    test_fortran_frontend_multiple_ranges_subset_var()
-    test_fortran_frontend_multiple_ranges_ecrad_pattern()
-    test_fortran_frontend_multiple_ranges_ecrad_pattern_complex()
-    test_fortran_frontend_multiple_ranges_ecrad_pattern_complex_offsets()
-    test_fortran_frontend_array_assignment()
-    test_fortran_frontend_multiple_ranges_ecrad_bug()
-    test_fortran_frontend_ranges_array_bug()
-    test_fortran_frontend_ranges_noarray()
-    test_fortran_frontend_ranges_noarray2()
-    test_fortran_frontend_ranges_noarray3()
+    #test_fortran_frontend_multiple_ranges_all()
+    #test_fortran_frontend_multiple_ranges_selection()
+    #test_fortran_frontend_multiple_ranges_selection_var()
+    #test_fortran_frontend_multiple_ranges_subset()
+    #test_fortran_frontend_multiple_ranges_subset_var()
+    #test_fortran_frontend_multiple_ranges_ecrad_pattern()
+    #test_fortran_frontend_multiple_ranges_ecrad_pattern_complex()
+    #test_fortran_frontend_multiple_ranges_ecrad_pattern_complex_offsets()
+    #test_fortran_frontend_array_assignment()
+    #test_fortran_frontend_multiple_ranges_ecrad_bug()
+    #test_fortran_frontend_ranges_array_bug()
+    #test_fortran_frontend_ranges_noarray()
+    #test_fortran_frontend_ranges_noarray2()
+    #test_fortran_frontend_ranges_noarray3()
+    test_fortran_frontend_ranges_scalar()
