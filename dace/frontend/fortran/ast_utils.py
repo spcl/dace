@@ -230,6 +230,12 @@ class TaskletWriter:
         return self.write_code(node.parent_ref) + "." + self.write_code(node.part_ref)
 
     def arraysub2string(self, node: ast_internal_classes.Array_Subscript_Node):
+        try:
+            arr=self.sdfg.arrays[self.mapping.get(self.sdfg).get(node.name.name)]
+            if arr.shape is None or (len(arr.shape) == 1 and arr.shape[0] == 1):
+                return self.write_code(node.name)
+        except:
+            raise NameError("Variable name not found: ", node.name.name)
         str_to_return = self.write_code(node.name) + "[" + self.write_code(node.indices[0])
         for i in node.indices[1:]:
             str_to_return += ", " + self.write_code(i)
