@@ -3432,6 +3432,15 @@ class ReplaceImplicitParDecls(NodeTransformer):
 
         return node
 
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        args = []
+        for arg in node.args:
+            args.append(self.visit(arg))
+        node.args = args
+
+        return node
+
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
 
         var = self.scope_vars.get_var(node.parent, node.name)
@@ -3649,3 +3658,167 @@ class ParDeclOffsetNormalizer(NodeTransformer):
 
         return node
 
+class ElementalIntrinsicNodeLister(NodeVisitor):
+    """
+    Finds all elemental operations that have to be transformed to loops in the AST
+    """
+
+    def __init__(self, scope_vars, structures):
+        self.nodes: List[ast_internal_classes.FNode] = []
+        self.range_nodes: List[ast_internal_classes.FNode] = []
+
+        self.scope_vars = scope_vars
+        self.structures = structures
+
+        self.ELEMENTAL_INTRINSICS = set(
+            ["EXP"]
+        )
+
+    def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
+
+        rval_pardecls = [i for i in mywalk(node.rval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
+        lval_pardecls = [i for i in mywalk(node.lval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
+
+        # we explicitly ask look for patterns arr = func()
+        if not isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
+            return
+
+        if node.rval.name.name.split('__dace_')[1] not in self.ELEMENTAL_INTRINSICS:
+            return
+
+        if len(lval_pardecls) > 0:
+            self.nodes.append(node)
+        else:
+
+            # Handle edge case - the left hand side is an array
+            # But we don't have a pardecl
+
+            if isinstance(node.lval, ast_internal_classes.Name_Node):
+
+                var = self.scope_vars.get_var(node.lval.parent, node.lval.name)
+                if var.sizes is None or len(var.sizes) == 0:
+                    return
+
+                node.lval = ast_internal_classes.Array_Subscript_Node(
+                    name=node.lval, parent=node.parent, type=var.type,
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
+                )
+                self.nodes.append(node)
+
+            else:
+                _, var_def, last_data_ref_node = self.structures.find_definition(self.scope_vars, node.lval)
+
+                if var_def.sizes is None or len(var_def.sizes) == 0:
+                    return
+
+                last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
+                    name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes)
+                )
+                self.nodes.append(node)
+
+
+class ElementalIntrinsicExpander(NodeTransformer):
+    """
+        Transforms the AST by removing expressions arr = func(input) a replacing them with loops:
+
+        for i in len(input):
+            arr(i) = func(input(i))
+    """
+
+    def __init__(self, ast):
+        self.count = 0
+
+        self.ast = ast
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations(ast)
+        self.scope_vars.visit(ast)
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        newbody = []
+        for child_ in node.execution:
+            lister = ElementalIntrinsicNodeLister(self.scope_vars, self.ast.structures)
+            lister.visit(child_)
+            res = lister.nodes
+            res_range = lister.range_nodes
+
+            if res is None or len(res) == 0:
+                newbody.append(self.visit(child_))
+                continue
+
+            #if res is not None and len(res) > 0:
+            for child in res:
+
+                current = child.lval
+                ranges = []
+                par_Decl_Range_Finder(current, ranges, [], self.count, newbody, self.scope_vars,
+                                    self.ast.structures, True)
+
+                # if res_range is not None and len(res_range) > 0:
+
+                # catch cases where an array is used as name, without range expression
+                visitor = ReplaceImplicitParDecls(self.scope_vars, self.ast.structures)
+                child.rval = visitor.visit(child.rval)
+
+                rvals = [i for i in mywalk(child.rval) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
+                for i in rvals:
+                    rangesrval = []
+
+                    par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars,
+                                        self.ast.structures, False, ranges)
+                    for i, j in zip(ranges, rangesrval):
+                        if i != j:
+                            if isinstance(i, list) and isinstance(j, list) and len(i) == len(j):
+                                for k, l in zip(i, j):
+                                    if k != l:
+                                        if isinstance(k, ast_internal_classes.Name_Range_Node) and isinstance(
+                                                l, ast_internal_classes.Name_Range_Node):
+                                            if k.name != l.name:
+                                                raise NotImplementedError("Ranges must be the same")
+                                        else:
+                                            # this is not actually illegal.
+                                            # raise NotImplementedError("Ranges must be the same")
+                                            continue
+                            else:
+                                raise NotImplementedError("Ranges must be identical")
+
+                range_index = 0
+                body = ast_internal_classes.BinOp_Node(lval=current, op="=", rval=child.rval,
+                                                    line_number=child.line_number,parent=child.parent)
+
+                for i in ranges:
+                    initrange = i[0]
+                    finalrange = i[1]
+                    init = ast_internal_classes.BinOp_Node(
+                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                        op="=",
+                        rval=initrange,
+                        line_number=child.line_number,parent=child.parent)
+                    cond = ast_internal_classes.BinOp_Node(
+                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                        op="<=",
+                        rval=finalrange,
+                        line_number=child.line_number,parent=child.parent)
+                    iter = ast_internal_classes.BinOp_Node(
+                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                        op="=",
+                        rval=ast_internal_classes.BinOp_Node(
+                            lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                            op="+",
+                            rval=ast_internal_classes.Int_Literal_Node(value="1"),parent=child.parent),
+                        line_number=child.line_number,parent=child.parent)
+                    current_for = ast_internal_classes.Map_Stmt_Node(
+                        init=init,
+                        cond=cond,
+                        iter=iter,
+                        body=ast_internal_classes.Execution_Part_Node(execution=[body]),
+                        line_number=child.line_number,parent=child.parent)
+                    body = current_for
+                    range_index += 1
+
+                newbody.append(body)
+
+                self.count = self.count + range_index
+            #else:
+            #    newbody.append(self.visit(child))
+        return ast_internal_classes.Execution_Part_Node(execution=newbody)
