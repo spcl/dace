@@ -1401,6 +1401,21 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
         state.add_edge(input_arr, None, libnode, "_inp", sdfg.make_array_memlet(self.array1.data))
         state.add_edge(libnode, "_out", res, None, sdfg.make_array_memlet(self.out.data))
 
+    @staticmethod
+    def transpose_size(arg_sizes: List[ List[ast_internal_classes.FNode] ]):
+
+        assert len(arg_sizes) == 1
+        return list(reversed(arg_sizes[0]))
+
+    @staticmethod
+    def matmul_size(arg_sizes: List[ List[ast_internal_classes.FNode] ]):
+
+        assert len(arg_sizes) == 2
+        return [
+            arg_sizes[0][0],
+            arg_sizes[1][1]
+        ]
+
     LIBRARY_NODE_TRANSFORMATIONS = {
         "__dace_blas_dot": blas_dot,
         "__dace_transpose": transpose,
@@ -1577,6 +1592,11 @@ class MathFunctions(IntrinsicTransformation):
         "IAND": MathTransformation("bitwise_and", "INTEGER")
     }
 
+    INTRINSIC_SIZE_FUNCTIONS = {
+        "TRANSPOSE": IntrinsicSDFGTransformation.transpose_size,
+        "MATMUL": IntrinsicSDFGTransformation.matmul_size
+    }
+
     class TypeTransformer(IntrinsicNodeTransformer):
 
         def func_type(self, node: ast_internal_classes.Call_Expr_Node):
@@ -1659,9 +1679,28 @@ class MathFunctions(IntrinsicTransformation):
             var = binop_node.lval
             if isinstance(var, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node,
                                 ast_internal_classes.Array_Subscript_Node)):
+
                 var_decl = self.get_var_declaration(var.parent, var)
-                var.type = return_type
-                var_decl.type = return_type
+
+                if var.type == 'VOID':
+                    var.type = return_type
+                    var_decl.type = return_type
+
+                    # we also need to determine the size of the LHS when it's new
+
+                    if func_name in MathFunctions.INTRINSIC_SIZE_FUNCTIONS:
+
+                        size_func = MathFunctions.INTRINSIC_SIZE_FUNCTIONS[func_name]
+
+                        sizes = []
+                        for arg in node.args:
+                            sizes.append(self.get_var_declaration(node.parent, arg).sizes)
+
+                        var_decl.sizes = size_func(sizes)
+                        var_decl.offsets = [1] * len(var_decl.sizes)
+
+                        var.sizes = var_decl.sizes
+                        var.offsets = var_decl.offsets
 
             return binop_node
 
@@ -1719,9 +1758,9 @@ class FortranIntrinsics:
 
     # All functions return an array
     # Our call extraction transformation only supports scalars
+    #
+    # No longer needed!
     EXEMPTED_FROM_CALL_EXTRACTION = [
-        "__dace_TRANSPOSE",
-        "__dace_MATMUL",
     ]
 
     def __init__(self):
