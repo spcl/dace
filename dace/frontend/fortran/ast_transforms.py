@@ -997,6 +997,18 @@ class ArrayDimensionConfigInjector(NodeTransformer):
         self.in_exec_depth -= 1
         return out
 
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+        if isinstance(node.part_ref, ast_internal_classes.Array_Subscript_Node):
+            return self.generic_visit(node)
+        assert isinstance(node.part_ref, ast_internal_classes.Name_Node)
+        if self.in_exec_depth > 0 and node.part_ref.name in self.cfg:
+            val = self.cfg[node.part_ref.name]
+            if val in {'true', 'false'}:
+                return ast_internal_classes.Bool_Literal_Node(val)
+            else:
+                return ast_internal_classes.Int_Literal_Node(val)
+        return node
+
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
         if self.in_exec_depth > 0 and node.name in self.cfg:
             return ast_internal_classes.Int_Literal_Node(self.cfg[node.name])
