@@ -1396,10 +1396,36 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
             False
         )
 
+    def get_read_access(self, state: SDFGState, sdfg: SDFG, array: str)->nodes.AccessNode:
+        found=False
+        for anode in state.all_nodes_recursive():
+            if isinstance(anode[0], nodes.AccessNode) and anode[0].data == self.array1.data:
+                if len(anode[0].in_connectors)>0 and len(anode[0].out_connectors)==0:
+                    found=True
+                    break
+        if not found:
+            return state.add_read(self.array1.data)
+        else:
+            return anode[0]
+
+    def get_write_access(self, state: SDFGState, sdfg: SDFG, array: str)->nodes.AccessNode:
+        
+
+        found=False
+        for anode in state.all_nodes_recursive():
+            if isinstance(anode[0], nodes.AccessNode) and anode[0].data == self.array1.data:
+                if len(anode[0].in_connectors)==0 and len(anode[0].out_connectors)>0:
+                    found=True
+                    break
+        if not found:        
+            return state.add_write(self.out.data)
+        else:     
+            return anode[0]
+
     def transpose(self, state: SDFGState, sdfg: SDFG):
 
-        input_arr = state.add_read(self.array1.data)
-        res = state.add_write(self.out.data)
+        input_arr = self.get_read_access(state, sdfg, self.array1.data)
+        res = self.get_write_access(state, sdfg, self.out.data)
 
         libnode = Transpose("transpose", dtype=sdfg.arrays[self.array1.data].dtype)
         state.add_node(libnode)
