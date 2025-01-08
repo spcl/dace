@@ -1575,7 +1575,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         super().__init__(name=name, **kwargs)
         self.wcr = wcr
         self.axes = axes
-        self.identity = str(identity)
+        self.identity = str(identity) if identity is not None else None
         self.debuginfo = debuginfo
         self.schedule = schedule
 
