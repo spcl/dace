@@ -21,7 +21,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Section_Subscript_List, Char_Selector, \
     Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, \
     Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, \
-    Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt
+    Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
@@ -1030,7 +1030,7 @@ def deconstruct_enums(ast: Program) -> Program:
                 en_dict[c_name] = Expr(f"{next_val} + {next_offset}")
                 next_offset = next_offset + 1
         type_decls = [Type_Declaration_Stmt(f"integer, parameter :: {k} = {v}") for k, v in en_dict.items()]
-        replace_node(en, [Type_Declaration_Stmt(f"integer, parameter :: {k} = {v}") for k, v in en_dict.items()])
+        replace_node(en, type_decls)
     return ast
 
 
@@ -1570,11 +1570,77 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
     return ast
 
 
+def make_practically_constant_global_vars_constants(ast: Program) -> Program:
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast)
+
+    # Start with everything that _could_ be a candidate.
+    never_assigned: Set[SPEC] = {k for k, v in ident_map.items()
+                                 if isinstance(v, Entity_Decl) and search_scope_spec(v)
+                                 and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)}
+
+    for asgn in walk(ast, Assignment_Stmt):
+        lv, _, rv = asgn.children
+        if not isinstance(lv, Name):
+            # Everything else unsupported for now.
+            continue
+        loc = search_real_local_alias_spec(lv, alias_map)
+        assert loc
+        var = alias_map[loc]
+        assert isinstance(var, Entity_Decl)
+        var_spec = ident_spec(var)
+        if var_spec in never_assigned:
+            never_assigned.remove(var_spec)
+
+    for fcall in walk(ast, (Function_Reference, Call_Stmt)):
+        fn, args = fcall.children
+        args = args.children if args else tuple()
+        for a in args:
+            if not isinstance(a, Name):
+                # Everything else unsupported for now.
+                continue
+            loc = search_real_local_alias_spec(a, alias_map)
+            assert loc
+            var = alias_map[loc]
+            assert isinstance(var, Entity_Decl)
+            var_spec = ident_spec(var)
+            if var_spec in never_assigned:
+                never_assigned.remove(var_spec)
+
+    for fixed in never_assigned:
+        edcl = alias_map[fixed]
+        assert isinstance(edcl, Entity_Decl)
+        if not atmost_one(children_of_type(edcl, Initialization)):
+            # Without an initialization, we cannot fix it.
+            continue
+        edclist = edcl.parent
+        tdcl = edclist.parent
+        assert isinstance(tdcl, Type_Declaration_Stmt)
+        typ, attr, _ = tdcl.children
+        if not attr:
+            nuattr = 'parameter'
+        elif 'PARAMETER' in f"{attr}":
+            nuattr = f"{attr}"
+        else:
+            nuattr = f"{attr}, parameter"
+        if len(edclist.children) == 1:
+            replace_node(tdcl, Type_Declaration_Stmt(f"{typ}, {nuattr} :: {edclist}"))
+        else:
+            replace_node(tdcl, Type_Declaration_Stmt(f"{typ}, {nuattr} :: {edcl}"))
+            remove_children(edclist, edcl)
+            attr = f", {attr}" if attr else ''
+            append_children(tdcl.parent, Type_Declaration_Stmt(f"{typ} {attr} :: {edclist}"))
+
+    return ast
+
+
 def make_practically_constant_arguments_constants(ast: Program, keepers: List[SPEC]) -> Program:
     alias_map = alias_specs(ast)
 
     # First, build a table to see what possible values a function argument may see.
     fnargs_possible_values: Dict[SPEC, Set[Optional[NUMPY_TYPES]]] = {}
+    fnargs_undecidables: Set[SPEC] = set()
+    fnargs_optional_presence: Dict[SPEC, Set[bool]] = {}
     for fcall in walk(ast, (Function_Reference, Call_Stmt)):
         fn, args = fcall.children
         if isinstance(fn, Intrinsic_Name):
@@ -1611,6 +1677,11 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
             else:
                 # Pop the next non-keywordd supplied value.
                 v, args = args[0], args[1:]
+            if atype.optional:
+                # The presence should be noted even if it is a writable argument.
+                if aspec not in fnargs_optional_presence:
+                    fnargs_optional_presence[aspec] = set()
+                fnargs_optional_presence[aspec].add(v is not None)
             if atype.out:
                 # Writable arguments are not practically constants anyway.
                 continue
@@ -1629,11 +1700,40 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
                 if aspec not in fnargs_possible_values:
                     fnargs_possible_values[aspec] = set()
                 fnargs_possible_values[aspec].add(v)
+            else:
+                fnargs_undecidables.add(aspec)
 
-    # Keep only the singular values.
-    fnargs_practically_cosnts = {k: vs.pop() for k, vs in fnargs_possible_values.items() if len(vs) == 1}
+    for aspec, vals in fnargs_optional_presence.items():
+        if len(vals) > 1:
+            continue
+        assert len(vals) == 1
+        presence, = vals
 
-    for aspec, val in fnargs_practically_cosnts.items():
+        arg = alias_map[aspec]
+        atype = find_type_of_entity(arg, alias_map)
+        assert atype.optional
+        fn = find_named_ancestor(arg).parent
+        assert isinstance(fn, (Subroutine_Subprogram, Function_Subprogram))
+        fexec = atmost_one(children_of_type(fn, Execution_Part))
+        if not fexec:
+            continue
+
+        for pcall in walk(fexec, Intrinsic_Function_Reference):
+            fn, cargs = pcall.children
+            cargs = cargs.children if cargs else tuple()
+            if fn.string != 'PRESENT':
+                continue
+            assert len(cargs) == 1
+            optvar = cargs[0]
+            if find_name_of_node(arg) != optvar.string:
+                continue
+            replace_node(pcall, numpy_type_to_literal(np.bool_(presence)))
+
+    for aspec, vals in fnargs_possible_values.items():
+        if aspec in fnargs_undecidables or len(vals) > 1:
+            # There are multiple possiblities for the argument: either some undecidables or multiple literals.
+            continue
+        fixed_val, = vals
         arg = alias_map[aspec]
         atype = find_type_of_entity(arg, alias_map)
         fn = find_named_ancestor(arg).parent
@@ -1642,25 +1742,12 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
         if not fexec:
             continue
 
-        if atype.optional:
-            presence = numpy_type_to_literal(np.bool_(val is not None))
-            for pcall in walk(fexec, Intrinsic_Function_Reference):
-                fn, cargs = pcall.children
-                cargs = cargs.children if cargs else tuple()
-                if fn.string != 'PRESENT':
-                    continue
-                assert len(cargs) == 1
-                optvar = cargs[0]
-                if find_name_of_node(arg) != optvar.string:
-                    continue
-                replace_node(pcall, presence)
-
-        if val is not None:
+        if fixed_val is not None:
             for nm in walk(fexec, Name):
                 nmspec = search_real_local_alias_spec(nm, alias_map)
                 if nmspec != aspec:
                     continue
-                replace_node(nm, numpy_type_to_literal(val))
+                replace_node(nm, numpy_type_to_literal(fixed_val))
         # TODO: We could also try removing the argument entirely from the function definition, but that's more work with
         #  little benefit, so maybe another time.
 
@@ -2107,7 +2194,7 @@ def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Pr
                 use_map[nm_mod] = set()
             use_map[nm_mod].add(u)
         # Build new use statements.
-        nuses: List[Use_Stmt] = [Use_Stmt(f"use {k}, only: {', '.join(use_map[k])}") for k in use_map.keys()]
+        nuses: List[Use_Stmt] = [Use_Stmt(f"use {k}, only: {', '.join(sorted(use_map[k]))}") for k in use_map.keys()]
         # Remove the old ones, and prepend the new ones.
         sp.content = nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
         _reparent_children(sp)
@@ -2158,8 +2245,7 @@ def _prune_branches_in_ifstmt(ib: If_Stmt, alias_map: SPEC_TABLE):
     else:
         remove_self(ib)
     expart = ib.parent
-    assert isinstance(expart, Execution_Part)
-    if not expart.children:
+    if isinstance(expart, Execution_Part) and not expart.children:
         remove_self(expart)
 
 
@@ -2203,8 +2289,8 @@ def numpy_type_to_literal(val: NUMPY_TYPES) -> Union[LITERAL_TYPES]:
 
 def const_eval_nodes(ast: Program) -> Program:
     EXPRESSION_TYPES = Union[
-        LITERAL_TYPES, Expr, Add_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr, Level_5_Expr,
-        Intrinsic_Function_Reference]
+        LITERAL_TYPES, Expr, Add_Operand, Or_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr,
+        Level_5_Expr, Intrinsic_Function_Reference]
 
     alias_map = alias_specs(ast)
 

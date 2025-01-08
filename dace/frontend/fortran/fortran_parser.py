@@ -34,7 +34,7 @@ from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES,
     deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
     inject_const_evals, \
     remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES, ConstTypeInjection, ConstInjection, \
-    make_practically_constant_arguments_constants
+    make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -3345,10 +3345,13 @@ def create_sdfg_from_fortran_file_with_options(
         ast = deconstruct_interface_calls(ast)
 
         ast = inject_const_evals(ast, cfg.config_injections)
-        # Prune things once.
+        # Prune things once after fixing global variables.
+        # NOTE: Global vars fixing has to be done before any pruning, because otherwise some assignment may get lost.
+        ast = make_practically_constant_global_vars_constants(ast)
         ast = const_eval_nodes(ast)
         ast = prune_branches(ast)
         ast = prune_unused_objects(ast, cfg.entry_points)
+
         # Another round of pruning after fixing the practically constant arguments, just in case.
         ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
         ast = const_eval_nodes(ast)

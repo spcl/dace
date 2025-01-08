@@ -8,7 +8,7 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, \
     assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
     const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
-    make_practically_constant_arguments_constants
+    make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -1698,7 +1698,6 @@ end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
     ast = make_practically_constant_arguments_constants(ast, [('main',)])
-    ast = prune_branches(ast)
 
     got = ast.tofortran()
     want = """
@@ -1710,15 +1709,21 @@ MODULE lib
     LOGICAL, INTENT(IN) :: cond, kwcond
     LOGICAL, OPTIONAL, INTENT(IN) :: opt
     LOGICAL :: real_opt = .FALSE.
-    real_opt = .TRUE.
-    fun = 4.2
+    IF (.TRUE.) THEN
+      real_opt = .TRUE.
+    END IF
+    IF (.FALSE. .AND. .FALSE. .AND. real_opt) THEN
+      fun = - 2.7
+    ELSE
+      fun = 4.2
+    END IF
   END FUNCTION fun
   REAL FUNCTION not_fun(cond, kwcond, opt)
     IMPLICIT NONE
     LOGICAL, INTENT(IN) :: cond, kwcond
     LOGICAL, OPTIONAL, INTENT(IN) :: opt
     LOGICAL :: real_opt = .FALSE.
-    IF (PRESENT(opt)) THEN
+    IF (.TRUE.) THEN
       real_opt = opt
     END IF
     IF (cond .AND. kwcond .AND. real_opt) THEN
@@ -1743,6 +1748,59 @@ SUBROUTINE main
   IMPLICIT NONE
   CALL user_1
   CALL user_2
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_practically_constant_global_vars_constants():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  logical :: fixed_cond = .false.
+  logical :: movable_cond = .false.
+contains
+  subroutine update(what)
+    implicit none
+    logical, intent(out) :: what
+    what = .true.
+  end subroutine update
+end module lib
+""").add_file("""
+subroutine main
+  use lib
+  implicit none
+  real :: a = 1.0
+  call update(movable_cond)
+  movable_cond = .not. movable_cond
+  if (fixed_cond .and. movable_cond) a = 7.1
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = make_practically_constant_global_vars_constants(ast)
+
+    got = ast.tofortran()
+    print(got)
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  LOGICAL, PARAMETER :: fixed_cond = .FALSE.
+  LOGICAL :: movable_cond = .FALSE.
+  CONTAINS
+  SUBROUTINE update(what)
+    IMPLICIT NONE
+    LOGICAL, INTENT(OUT) :: what
+    what = .TRUE.
+  END SUBROUTINE update
+END MODULE lib
+SUBROUTINE main
+  USE lib
+  IMPLICIT NONE
+  REAL :: a = 1.0
+  CALL update(movable_cond)
+  movable_cond = .NOT. movable_cond
+  IF (fixed_cond .AND. movable_cond) a = 7.1
 END SUBROUTINE main
 """.strip()
     assert got == want
