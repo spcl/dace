@@ -21,7 +21,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Section_Subscript_List, Char_Selector, \
     Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, \
     Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, \
-    Assignment_Stmt, Loop_Control, Equivalence_Stmt
+    Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
@@ -2136,10 +2136,28 @@ def _prune_branches_in_ifblock(ib: If_Construct, alias_map: SPEC_TABLE):
     _prune_branches_in_ifblock(ib, alias_map)
 
 
+def _prune_branches_in_ifstmt(ib: If_Stmt, alias_map: SPEC_TABLE):
+    cond, actions = ib.children
+    cval = _const_eval_basic_type(cond, alias_map)
+    if cval is None:
+        return
+    assert isinstance(cval, np.bool_)
+    if cval:
+        replace_node(ib, actions)
+    else:
+        remove_self(ib)
+    expart = ib.parent
+    assert isinstance(expart, Execution_Part)
+    if not expart.children:
+        remove_self(expart)
+
+
 def prune_branches(ast: Program) -> Program:
     alias_map = alias_specs(ast)
     for ib in walk(ast, If_Construct):
         _prune_branches_in_ifblock(ib, alias_map)
+    for ib in walk(ast, If_Stmt):
+        _prune_branches_in_ifstmt(ib, alias_map)
     return ast
 
 

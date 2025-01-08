@@ -1259,6 +1259,8 @@ subroutine main
     a = k
     b = k
   end if
+  if (k < 5) a = 70 + k
+  if (k > 5) a = 70 - k
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -1271,6 +1273,7 @@ SUBROUTINE main
   INTEGER, PARAMETER :: k = 4
   INTEGER :: a = - 1, b = - 1
   b = k
+  a = 70 + k
 END SUBROUTINE main
 """.strip()
     assert got == want
