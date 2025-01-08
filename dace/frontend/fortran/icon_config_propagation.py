@@ -94,7 +94,7 @@ if __name__ == "__main__":
         main=Path(f"{base_icon_path}/{icon_file}"),
         sources=[Path(f) for f in fortran_files],
         entry_points=[('radiation_interface', 'radiation')],
-        config_injections=config_injection_list('conf_files'),
+        config_injections=config_injection_list('dace/frontend/fortran/conf_files'),
     )
     #already_parsed_ast=None
     if already_parsed_ast is None:
@@ -243,5 +243,5 @@ if __name__ == "__main__":
         #enum_propagator_files=enum_propagator_files,
         used_functions_config=cfg,
         already_parsed_ast=already_parsed_ast_bool,
-        config_injections=config_injection_list('conf_files')
+        config_injections=config_injection_list('dace/frontend/fortran/conf_files')
     )
