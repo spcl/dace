@@ -2350,7 +2350,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         astr = str(atom)
                         # Check for undefined variables
-                        if astr not in self.defined:
+                        if astr not in self.defined and not ('.' in astr and astr in self.sdfg.arrays):
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols if not a scalar
                         if (astr not in self.sdfg.symbols and not (astr in self.variables or astr in self.sdfg.arrays)):
