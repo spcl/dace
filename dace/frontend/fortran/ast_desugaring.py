@@ -43,7 +43,8 @@ class TYPE_SPEC:
 
     def __init__(self,
                  spec: Union[str, SPEC],
-                 attrs: str = NO_ATTRS):
+                 attrs: str = NO_ATTRS,
+                 is_arg: bool = False):
         if isinstance(spec, str):
             spec = (spec,)
         self.spec: SPEC = spec
@@ -51,9 +52,10 @@ class TYPE_SPEC:
         self.optional: bool = 'OPTIONAL' in attrs
         self.inp: bool = 'INTENT(IN)' in attrs or 'INTENT(INOUT)' in attrs
         self.out: bool = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
+        self.alloc: bool = 'ALLOCATABLE' in attrs
         self.const: bool = 'PARAMETER' in attrs
         self.keyword: Optional[str] = None
-        if not self.inp and not self.out:
+        if is_arg and not self.inp and not self.out:
             self.inp, self.out = True, True
 
     @staticmethod
@@ -600,6 +602,7 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
     if not anc:
         return None
     # TODO: Add ref.
+    node_name, _, _, _ = node.children
     typ, attrs, _ = anc.children
     assert isinstance(typ, (Intrinsic_Type_Spec, Declaration_Type_Spec))
     attrs = attrs.tofortran() if attrs else ''
@@ -629,6 +632,14 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
         _, typ_name = typ.children
         spec = find_real_ident_spec(typ_name.string, ident_spec(node), alias_map)
 
+    is_arg = False
+    scope_spec = find_scope_spec(node)
+    assert scope_spec in alias_map
+    if isinstance(alias_map[scope_spec], (Function_Stmt, Subroutine_Stmt)):
+        _, fn, dummy_args, _ = alias_map[scope_spec].children
+        dummy_args = dummy_args.children if dummy_args else tuple()
+        is_arg = any(a == node_name for a in dummy_args)
+
     # TODO: This `attrs` manipulation is a hack. We should design the type specs better.
     # TODO: Add ref.
     attrs = [attrs] if attrs else []
@@ -636,7 +647,7 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
     if shape is not None:
         attrs.append(f"DIMENSION({shape.tofortran()})")
     attrs = ', '.join(attrs)
-    tspec = TYPE_SPEC(spec, attrs)
+    tspec = TYPE_SPEC(spec, attrs, is_arg)
     if extra_dim:
         tspec.shape += extra_dim
     return tspec
@@ -2273,6 +2284,67 @@ def _val_2_lit(val: str, type_spec: SPEC) -> LITERAL_TYPES:
     return numpy_type_to_literal(val)
 
 
+def _find_real_ident_spec(node: Name, alias_map: SPEC_TABLE) -> SPEC:
+    loc = search_real_local_alias_spec(node, alias_map)
+    assert loc
+    return ident_spec(alias_map[loc])
+
+
+def _lookup_dataref(dr: Data_Ref, alias_map: SPEC_TABLE) -> Optional[Tuple[Name, SPEC]]:
+    scope_spec = find_scope_spec(dr)
+    root, root_tspec, rest = _dataref_root(dr, scope_spec, alias_map)
+    while not isinstance(root, Name):
+        root, root_tspec, nurest = _dataref_root(root, scope_spec, alias_map)
+        rest += nurest
+    # NOTE: We should replace only when it is not an output of the function. However, here we pass the responsibilty to
+    # the user to provide valid injections.
+    if not all(isinstance(c, Name) for c in rest):
+        return None
+    return root, rest
+
+
+def _find_matching_item(items: List[ConstInjection], dr: Data_Ref, alias_map: SPEC_TABLE) -> Optional[ConstInjection]:
+    dr_info = _lookup_dataref(dr, alias_map)
+    if not dr_info:
+        return None
+    root, rest = dr_info
+    root_id_spec = _find_real_ident_spec(root, alias_map)
+    scope_spec = find_scope_spec(dr)
+    comp_tspec = find_type_dataref(dr, scope_spec, alias_map)
+    for item in items:
+        if isinstance(item, ConstTypeInjection):
+            # `item.component_spec` must be a precise suffix in the data-ref, and everything before that must
+            # precisely match `item.type_spec`.
+            if len(item.component_spec) > len(rest):
+                continue
+            pre, c_rest = rest[:-len(item.component_spec)], rest[-len(item.component_spec):]
+            comp_spec: SPEC = tuple(c.string for c in c_rest)
+            if comp_spec[:-1] != item.component_spec[:-1]:
+                # All but the last component must exactly match in all case.
+                continue
+            if comp_tspec.alloc:
+                if f"{comp_spec[-1]}_a" != item.component_spec[-1]:
+                    # Allocatable array's special variable didn't match either.
+                    continue
+            else:
+                if comp_spec[-1] != item.component_spec[-1]:
+                    # Otherwise the last component must exactly match too.
+                    continue
+            comp = Data_Ref(' % '.join(tuple(p.string for p in (root,) + pre)))
+            ctspec = find_type_dataref(comp, scope_spec, alias_map)
+            if ctspec.spec != item.type_spec:
+                continue
+        elif isinstance(item, ConstInstanceInjection):
+            # This is a simpler case, where the object must match `item.root_spec`, and the entire component
+            # parts of the data-ref must precisely match `item.component_spec`.
+            comp_spec: SPEC = tuple(c.string for c in rest)
+            if root_id_spec != item.root_spec or comp_spec != item.component_spec:
+                continue
+
+        return item
+    return None
+
+
 def inject_const_evals(ast: Program,
                        inject_consts: Optional[List[ConstInjection]] = None) -> Program:
     inject_consts = inject_consts or []
@@ -2305,56 +2377,41 @@ def inject_const_evals(ast: Program,
         else:
             scope = alias_map[scope_spec].parent
 
-        drefs: List[Data_Ref] = walk(scope, Data_Ref)
+        drefs: List[Data_Ref] = [dr for dr in walk(scope, Data_Ref)
+                                 if find_type_dataref(dr, find_scope_spec(dr), alias_map).spec != ('CHARACTER',)]
         names: List[Name] = walk(scope, Name)
+        allocateds: List[Intrinsic_Function_Reference] = [c for c in walk(scope, Intrinsic_Function_Reference)
+                                                          if c.children[0].string == 'ALLOCATED']
 
         # Ignore the special variables related to array dimensions, since we don't handle them here.
+        alloc_items = [item for item in items if item.component_spec[-1].endswith('_a')]
         items = [item for item in items
                  if not (item.component_spec[-1].endswith('_s') or item.component_spec[-1].endswith('_a'))]
         item_inst_root_specs: Set[SPEC] = {item.root_spec for item in items
                                            if isinstance(item, ConstInstanceInjection)}  # For speedup later.
 
+        for al in allocateds:
+            _, args = al.children
+            assert args and len(args.children) == 1
+            arr, = args.children
+            if not isinstance(arr, Data_Ref):
+                # TODO: We don't support anything else for now.
+                continue
+            item = _find_matching_item(alloc_items, arr, alias_map)
+            if not item:
+                continue
+            replace_node(al, _val_2_lit(item.value, ('LOGICAL',)))
+
         for dr in drefs:
-            scope_spec = find_scope_spec(dr)
-            root, root_tspec, rest = _dataref_root(dr, scope_spec, alias_map)
-            while not isinstance(root, Name):
-                root, root_tspec, nurest = _dataref_root(root, scope_spec, alias_map)
-                rest += nurest
-            loc = search_real_local_alias_spec(root, alias_map)
-            assert loc
-            root_id_spec = ident_spec(alias_map[loc])
-            if root_tspec.out:
-                # We replace only when it is not an output of the function.
+            if isinstance(dr.parent, Assignment_Stmt):
+                # We cannot replace on the LHS of an assignment.
+                lv, _, _ = dr.parent.children
+                if lv == dr:
+                    continue
+            item = _find_matching_item(items, dr, alias_map)
+            if not item:
                 continue
-            if not all(isinstance(c, Name) for c in rest):
-                continue
-            comp_tspec = find_type_dataref(dr, scope_spec, alias_map)
-            if comp_tspec.spec == ('CHARACTER',):
-                continue
-
-            for item in items:
-                if isinstance(item, ConstTypeInjection):
-                    # `item.component_spec` must be a precise suffix in the data-ref, and everything before that must
-                    # precisely match `item.type_spec`.
-                    if len(item.component_spec) > len(rest):
-                        continue
-                    pre, c_rest = rest[:-len(item.component_spec)], rest[-len(item.component_spec):]
-                    comp_spec: SPEC = tuple(c.string for c in c_rest)
-                    if comp_spec != item.component_spec:
-                        continue
-                    comp = Data_Ref(' % '.join(tuple(p.string for p in (root,) + pre)))
-                    ctspec = find_type_dataref(comp, scope_spec, alias_map)
-                    if ctspec.spec != item.type_spec:
-                        continue
-                elif isinstance(item, ConstInstanceInjection):
-                    # This is a simpler case, where the object must match `item.root_spec`, and the entire component
-                    # parts of the data-ref must precisely match `item.component_spec`.
-                    comp_spec: SPEC = tuple(c.string for c in rest)
-                    if root_id_spec != item.root_spec or comp_spec != item.component_spec:
-                        continue
-
-                replace_node(dr, _val_2_lit(item.value, comp_tspec.spec))
-                break
+            replace_node(dr, _val_2_lit(item.value, find_type_dataref(dr, find_scope_spec(dr), alias_map).spec))
 
         for nm in names:
             # We can also directly inject variables' values with `ConstInstanceInjection`.
@@ -2376,9 +2433,8 @@ def inject_const_evals(ast: Program,
                     # to the (scalar) variable identified by `nm`.
                     continue
                 tspec = find_type_of_entity(alias_map[loc], alias_map)
-                if tspec.out:
-                    # We replace only when it is not an output of the function.
-                    continue
+                # NOTE: We should replace only when it is not an output of the function. However, here we pass the
+                # responsibilty to the user to provide valid injections.
                 replace_node(nm, _val_2_lit(item.value, tspec.spec))
                 break
     return ast

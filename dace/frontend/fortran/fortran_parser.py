@@ -3340,11 +3340,11 @@ def create_sdfg_from_fortran_file_with_options(
         ast = deconstruct_enums(ast)
         ast = deconstruct_associations(ast)
         ast = remove_access_statements(ast)
-        ast = inject_const_evals(ast, cfg.config_injections)
         ast = correct_for_function_calls(ast)
         ast = deconstruct_procedure_calls(ast)
         ast = deconstruct_interface_calls(ast)
 
+        ast = inject_const_evals(ast, cfg.config_injections)
         # Prune things once.
         ast = const_eval_nodes(ast)
         ast = prune_branches(ast)
