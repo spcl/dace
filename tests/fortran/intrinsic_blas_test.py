@@ -170,5 +170,5 @@ if __name__ == "__main__":
     #test_fortran_frontend_dot()
     #test_fortran_frontend_dot_range()
     #test_fortran_frontend_transpose()
-    test_fortran_frontend_transpose_struct()
-    #test_fortran_frontend_matmul()
+    #test_fortran_frontend_transpose_struct()
+    test_fortran_frontend_matmul()

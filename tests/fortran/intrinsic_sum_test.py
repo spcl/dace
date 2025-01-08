@@ -29,7 +29,7 @@ def test_fortran_frontend_sum2loop_1d_without_offset():
 
     # Now test to verify it executes correctly with no offset normalization
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 

@@ -24,7 +24,7 @@ def test_fortran_frontend_any_array():
                     END SUBROUTINE intrinsic_any_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -60,7 +60,7 @@ def test_fortran_frontend_any_array_dim():
                     """
 
     with pytest.raises(NotImplementedError):
-        fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", False)
+        fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", True)
 
 
 def test_fortran_frontend_any_array_comparison():
@@ -184,7 +184,7 @@ def test_fortran_frontend_any_array_comparison_wrong_subset():
                     """
 
     with pytest.raises(TypeError):
-        fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", False)
+        fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", True)
 
 def test_fortran_frontend_any_array_2d():
     test_string = """
@@ -204,7 +204,7 @@ def test_fortran_frontend_any_array_2d():
                     END SUBROUTINE intrinsic_any_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 

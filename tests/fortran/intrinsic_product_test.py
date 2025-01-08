@@ -30,7 +30,7 @@ def test_fortran_frontend_product_array():
 
     # Now test to verify it executes correctly with no offset normalization
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -63,7 +63,7 @@ def test_fortran_frontend_product_array_dim():
                     """
 
     with pytest.raises(NotImplementedError):
-        fortran_parser.create_sdfg_from_string(test_string, "intrinsic_count_test", False)
+        fortran_parser.create_sdfg_from_string(test_string, "intrinsic_count_test", True)
 
 def test_fortran_frontend_product_2d():
     """

@@ -8,15 +8,14 @@ from typing import List, Optional, Tuple, Union, Dict, Any
 
 
 class FNode(object):
-    def __init__(self, line_number: int = -1, **kwargs):  # real signature unknown
+    def __init__(self,
+                 line_number: int = -1,
+                 parent: Union[
+                     None, 'Subroutine_Subprogram_Node', 'Function_Subprogram_Node', 'Main_Program_Node',
+                     'Module_Node'] = None,
+                 **kwargs):  # real signature unknown
         self.line_number = line_number
-        self.parent: Union[
-            None,
-            Subroutine_Subprogram_Node,
-            Function_Subprogram_Node,
-            Main_Program_Node,
-            Module_Node
-        ] = None
+        self.parent = parent
         for k, v in kwargs.items():
             setattr(self, k, v)
 
@@ -376,6 +375,18 @@ class Allocate_Stmt_Node(FNode):
 
 
 class Symbol_Decl_Node(Statement_Node):
+    def __init__(self, name: str, type: str,
+                 alloc: Optional[bool] = None, sizes: Optional[List] = None,
+                 init: Optional[FNode] = None, typeref: Optional[Any] = None,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.type = type
+        self.alloc = alloc
+        self.sizes = sizes
+        self.typeref = typeref
+        self.init = init
+
     _attributes = (
         'name',
         'type',
@@ -389,6 +400,19 @@ class Symbol_Decl_Node(Statement_Node):
 
 
 class Symbol_Array_Decl_Node(Statement_Node):
+    def __init__(self, name: str, type: str,
+                 alloc: Optional[bool] = None, sizes: Optional[List] = None, offsets: Optional[List] = None,
+                 init: Optional[FNode] = None, typeref: Optional[Any] = None,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.type = type
+        self.alloc = alloc
+        self.sizes = sizes
+        self.offsets = offsets
+        self.typeref = typeref
+        self.init = init
+
     _attributes = (
         'name',
         'type',
@@ -520,6 +544,14 @@ class Derived_Type_Stmt_Node(FNode):
 
 
 class Derived_Type_Def_Node(FNode):
+    def __init__(self, name: Type_Name_Node,
+                 component_part: 'Component_Part_Node', procedure_part: 'Bound_Procedures_Node',
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.component_part = component_part
+        self.procedure_part = procedure_part
+
     _attributes = ('name',)
     _fields = ('component_part', 'procedure_part')
 
@@ -530,6 +562,10 @@ class Component_Part_Node(FNode):
 
 
 class Data_Component_Def_Stmt_Node(FNode):
+    def __init__(self, vars: Decl_Stmt_Node, **kwargs):
+        super().__init__(**kwargs)
+        self.vars = vars
+
     _attributes = ()
     _fields = ('vars',)
 

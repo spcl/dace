@@ -295,9 +295,9 @@ END MODULE
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_minval_double()
-    #test_fortran_frontend_minval_int()
-    #test_fortran_frontend_maxval_double()
-    #test_fortran_frontend_maxval_int()
+    test_fortran_frontend_minval_double()
+    test_fortran_frontend_minval_int()
+    test_fortran_frontend_maxval_double()
+    test_fortran_frontend_maxval_int()
 
     test_fortran_frontend_minval_struct()
