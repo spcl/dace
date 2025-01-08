@@ -43,7 +43,8 @@ class TYPE_SPEC:
 
     def __init__(self,
                  spec: Union[str, SPEC],
-                 attrs: str = NO_ATTRS):
+                 attrs: str = NO_ATTRS,
+                 is_arg: bool = False):
         if isinstance(spec, str):
             spec = (spec,)
         self.spec: SPEC = spec
@@ -51,9 +52,10 @@ class TYPE_SPEC:
         self.optional: bool = 'OPTIONAL' in attrs
         self.inp: bool = 'INTENT(IN)' in attrs or 'INTENT(INOUT)' in attrs
         self.out: bool = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
+        self.alloc: bool = 'ALLOCATABLE' in attrs
         self.const: bool = 'PARAMETER' in attrs
         self.keyword: Optional[str] = None
-        if not self.inp and not self.out:
+        if is_arg and not self.inp and not self.out:
             self.inp, self.out = True, True
 
     @staticmethod
@@ -600,6 +602,7 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
     if not anc:
         return None
     # TODO: Add ref.
+    node_name, _, _, _ = node.children
     typ, attrs, _ = anc.children
     assert isinstance(typ, (Intrinsic_Type_Spec, Declaration_Type_Spec))
     attrs = attrs.tofortran() if attrs else ''
@@ -629,6 +632,14 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
         _, typ_name = typ.children
         spec = find_real_ident_spec(typ_name.string, ident_spec(node), alias_map)
 
+    is_arg = False
+    scope_spec = find_scope_spec(node)
+    assert scope_spec in alias_map
+    if isinstance(alias_map[scope_spec], (Function_Stmt, Subroutine_Stmt)):
+        _, fn, dummy_args, _ = alias_map[scope_spec].children
+        dummy_args = dummy_args.children if dummy_args else tuple()
+        is_arg = any(a == node_name for a in dummy_args)
+
     # TODO: This `attrs` manipulation is a hack. We should design the type specs better.
     # TODO: Add ref.
     attrs = [attrs] if attrs else []
@@ -636,7 +647,7 @@ def find_type_of_entity(node: Entity_Decl, alias_map: SPEC_TABLE) -> Optional[TY
     if shape is not None:
         attrs.append(f"DIMENSION({shape.tofortran()})")
     attrs = ', '.join(attrs)
-    tspec = TYPE_SPEC(spec, attrs)
+    tspec = TYPE_SPEC(spec, attrs, is_arg)
     if extra_dim:
         tspec.shape += extra_dim
     return tspec
