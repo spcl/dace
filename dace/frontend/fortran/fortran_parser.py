@@ -33,8 +33,8 @@ from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES,
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
     deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
     inject_const_evals, \
-    remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES, ConstTypeInjection, ConstInstanceInjection, \
-    ConstInjection
+    remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES, ConstTypeInjection, ConstInjection, \
+    make_practically_constant_arguments_constants
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -248,7 +248,7 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
 
 
 class AST_translator:
-    """  
+    """
     This class is responsible for translating the internal AST into a SDFG.
     """
 
@@ -325,7 +325,7 @@ class AST_translator:
         }
 
     def get_dace_type(self, type):
-        """  
+        """
         This function matches the fortran type to the corresponding dace type
         by referencing the ast_utils.fortrantypes2dacetypes dictionary.
         """
@@ -354,7 +354,7 @@ class AST_translator:
 
     def get_arrays_in_context(self, sdfg: SDFG):
         """
-        This function returns a copy of the union of arrays 
+        This function returns a copy of the union of arrays
         for the given sdfg and the top-level sdfg.
         """
         a = self.globalsdfg.arrays.copy()
@@ -3344,9 +3344,17 @@ def create_sdfg_from_fortran_file_with_options(
         ast = correct_for_function_calls(ast)
         ast = deconstruct_procedure_calls(ast)
         ast = deconstruct_interface_calls(ast)
+
+        # Prune things once.
         ast = const_eval_nodes(ast)
         ast = prune_branches(ast)
         ast = prune_unused_objects(ast, cfg.entry_points)
+        # Another round of pruning after fixing the practically constant arguments, just in case.
+        ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
+        ast = const_eval_nodes(ast)
+        ast = prune_branches(ast)
+        ast = prune_unused_objects(ast, cfg.entry_points)
+
         # ast = assign_globally_unique_subprogram_names(ast, {('radiation_interface', 'radiation')})
         # ast = assign_globally_unique_variable_names(ast, {'config','thermodynamics','flux','gas','cloud','aerosol','single_level'})
         ast = consolidate_uses(ast)

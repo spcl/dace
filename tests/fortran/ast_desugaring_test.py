@@ -7,7 +7,8 @@ from fparser.two.parser import ParserFactory
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, deconstruct_enums, \
     deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, \
     assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
-    const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection
+    const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
+    make_practically_constant_arguments_constants
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -1569,6 +1570,114 @@ SUBROUTINE main
   TYPE(big_config) :: cfg
   REAL :: a = 1
   a = 10000.0 + a * 42
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_practically_constant_arguments():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+contains
+  real function fun(cond, kwcond, opt)
+    implicit none
+    logical, intent(in) :: cond, kwcond
+    logical, optional, intent(in) :: opt
+    logical :: real_opt = .false.
+    if (present(opt)) then
+      real_opt = opt
+    end if
+    if (cond .and. kwcond .and. real_opt) then
+      fun = -2.7
+    else
+      fun = 4.2
+    end if
+  end function fun
+
+  real function not_fun(cond, kwcond, opt)
+    implicit none
+    logical, intent(in) :: cond, kwcond
+    logical, optional, intent(in) :: opt
+    logical :: real_opt = .false.
+    if (present(opt)) then
+      real_opt = opt
+    end if
+    if (cond .and. kwcond .and. real_opt) then
+      not_fun = -500.1
+    else
+      not_fun = 9600.8
+    end if
+  end function not_fun
+
+  subroutine user_1()
+    implicit none
+    real :: c
+    c = fun(.false., kwcond=.false., opt=.true.)*not_fun(.false., kwcond=.false., opt=.false.)
+  end subroutine user_1
+
+  subroutine user_2()
+    implicit none
+    real :: c
+    c = 3*fun(.false., kwcond=.false., opt=.true.)*not_fun(.true., kwcond=.true., opt=.true.)
+  end subroutine user_2
+end module lib
+""").add_file("""
+subroutine main()
+  use lib
+  implicit none
+  call user_1()
+  call user_2()
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = make_practically_constant_arguments_constants(ast, [('main',)])
+    ast = prune_branches(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  REAL FUNCTION fun(cond, kwcond, opt)
+    IMPLICIT NONE
+    LOGICAL, INTENT(IN) :: cond, kwcond
+    LOGICAL, OPTIONAL, INTENT(IN) :: opt
+    LOGICAL :: real_opt = .FALSE.
+    real_opt = .TRUE.
+    fun = 4.2
+  END FUNCTION fun
+  REAL FUNCTION not_fun(cond, kwcond, opt)
+    IMPLICIT NONE
+    LOGICAL, INTENT(IN) :: cond, kwcond
+    LOGICAL, OPTIONAL, INTENT(IN) :: opt
+    LOGICAL :: real_opt = .FALSE.
+    IF (PRESENT(opt)) THEN
+      real_opt = opt
+    END IF
+    IF (cond .AND. kwcond .AND. real_opt) THEN
+      not_fun = - 500.1
+    ELSE
+      not_fun = 9600.8
+    END IF
+  END FUNCTION not_fun
+  SUBROUTINE user_1
+    IMPLICIT NONE
+    REAL :: c
+    c = fun(.FALSE., kwcond = .FALSE., opt = .TRUE.) * not_fun(.FALSE., kwcond = .FALSE., opt = .FALSE.)
+  END SUBROUTINE user_1
+  SUBROUTINE user_2
+    IMPLICIT NONE
+    REAL :: c
+    c = 3 * fun(.FALSE., kwcond = .FALSE., opt = .TRUE.) * not_fun(.TRUE., kwcond = .TRUE., opt = .TRUE.)
+  END SUBROUTINE user_2
+END MODULE lib
+SUBROUTINE main
+  USE lib
+  IMPLICIT NONE
+  CALL user_1
+  CALL user_2
 END SUBROUTINE main
 """.strip()
     assert got == want
