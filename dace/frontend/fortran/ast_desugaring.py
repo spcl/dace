@@ -18,10 +18,10 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Level_2_Unary_Expr, And_Operand, Parenthesis, Level_2_Expr, Level_3_Expr, Array_Constructor, Execution_Part, \
     Specification_Part, Interface_Block, Association, Procedure_Designator, Type_Bound_Procedure_Part, \
     Associate_Construct, Subscript_Triplet, End_Function_Stmt, End_Subroutine_Stmt, Module_Subprogram_Part, \
-    Enumerator_List, Actual_Arg_Spec_List, Only_List, Section_Subscript_List, Char_Selector, Data_Pointer_Object, \
-    Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, Else_If_Stmt, \
-    Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, Assignment_Stmt, \
-    Loop_Control
+    Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Section_Subscript_List, Char_Selector, \
+    Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, \
+    Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, \
+    Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
@@ -53,6 +53,8 @@ class TYPE_SPEC:
         self.out: bool = 'INTENT(OUT)' in attrs or 'INTENT(INOUT)' in attrs
         self.const: bool = 'PARAMETER' in attrs
         self.keyword: Optional[str] = None
+        if not self.inp and not self.out:
+            self.inp, self.out = True, True
 
     @staticmethod
     def _parse_shape(attrs: str) -> Tuple[str, ...]:
@@ -566,7 +568,11 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
         if op in BINARY_OPS:
             lv = _const_eval_basic_type(lv, alias_map)
             rv = _const_eval_basic_type(rv, alias_map)
-            if lv is None or rv is None:
+            if op == '.AND.' and (lv is np.bool_(False) or rv is np.bool_(False)):
+                return np.bool_(False)
+            elif op == '.OR.' and (lv is np.bool_(True) or rv is np.bool_(True)):
+                return np.bool_(True)
+            elif lv is None or rv is None:
                 return None
             return BINARY_OPS[op](lv, rv)
     elif isinstance(expr, UnaryOpBase):
@@ -1513,14 +1519,139 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
         if isinstance(ns_node, Entity_Decl):
             elist = ns_node.parent
             remove_self(ns_node)
+            # But there are many things to clean-up.
+            # 1. If the variable was declared alone, then the entire line with type declaration must be gone too.
+            elist_tdecl = elist.parent
+            assert isinstance(elist.parent, Type_Declaration_Stmt)
             if not elist.children:
-                assert isinstance(elist.parent, Type_Declaration_Stmt)
-                remove_self(elist.parent)
+                remove_self(elist_tdecl)
+            # 2. There is a case of "equivalence" statement, which is a very Fortran-specific feature to clean up too.
+            elist_spart = elist_tdecl.parent
+            assert isinstance(elist_spart, Specification_Part)
+            for c in elist_spart.children:
+                if not isinstance(c, Equivalence_Stmt):
+                    continue
+                _, eqvs = c.children
+                eqvs = eqvs.children if eqvs else tuple()
+                for eqv in eqvs:
+                    eqa, eqbs = eqv.children
+                    eqbs = eqbs.children if eqbs else tuple()
+                    eqz = (eqa,) + eqbs
+                    assert all(isinstance(z, Part_Ref) for z in eqz)
+                    assert len(eqz) == 2
+                    eqz = tuple(z for z in eqz if search_real_local_alias_spec(z.children[0], alias_map) != ns)
+                    if len(eqz) < 2:
+                        remove_self(eqv)
+                # If there is no remaining equivalent list, remove the entire statement.
+                _, eqvs = c.children
+                eqvs = eqvs.children if eqvs else tuple()
+                if not eqvs:
+                    remove_self(c)
+            # 3. If the entire specification part becomes empty, we have to remove it too.
+            if not elist_spart.children:
+                remove_self(elist_spart)
         else:
             remove_self(ns_node.parent)
         killed.add(ns)
 
     consolidate_uses(ast, alias_map)
+
+    return ast
+
+
+def make_practically_constant_arguments_constants(ast: Program, keepers: List[SPEC]) -> Program:
+    alias_map = alias_specs(ast)
+
+    # First, build a table to see what possible values a function argument may see.
+    fnargs_possible_values: Dict[SPEC, Set[Optional[NUMPY_TYPES]]] = {}
+    for fcall in walk(ast, (Function_Reference, Call_Stmt)):
+        fn, args = fcall.children
+        if isinstance(fn, Intrinsic_Name):
+            # Cannot do anything with intrinsic functions.
+            continue
+        args = args.children if args else tuple()
+        kwargs = tuple(a.children for a in args if isinstance(a, Actual_Arg_Spec))
+        kwargs = {k.string: v for k, v in kwargs}
+        fnspec = search_real_local_alias_spec(fn, alias_map)
+        assert fnspec
+        fnstmt = alias_map[fnspec]
+        fnspec = ident_spec(fnstmt)
+        if fnspec in keepers:
+            # The "entry-point" functions arguments are fair game for external usage.
+            continue
+        fnargs = atmost_one(children_of_type(fnstmt, Dummy_Arg_List))
+        fnargs = fnargs.children if fnargs else tuple()
+        assert len(args) <= len(fnargs), f"Cannot pass more arguments({len(args)}) than defined ({len(fnargs)})"
+        for a in fnargs:
+            aspec = search_real_local_alias_spec(a, alias_map)
+            assert aspec
+            adecl = alias_map[aspec]
+            atype = find_type_of_entity(adecl, alias_map)
+            assert atype
+            if not args:
+                # If we do not have supplied arguments anymore, the remaining arguments must be optional
+                assert atype.optional
+                continue
+            kwargs_zone = isinstance(args[0], Actual_Arg_Spec)  # Whether we are in keyword args territory.
+            if kwargs_zone:
+                # This is an argument, so it must have been supplied as a keyworded value.
+                assert a.string in kwargs or atype.optional
+                v = kwargs.get(a.string)
+            else:
+                # Pop the next non-keywordd supplied value.
+                v, args = args[0], args[1:]
+            if atype.out:
+                # Writable arguments are not practically constants anyway.
+                continue
+            assert atype.inp
+            if atype.shape:
+                # TODO: Cannot handle non-scalar literals yet. So we just skip for it.
+                continue
+            if isinstance(v, LITERAL_TYPES):
+                v = _const_eval_basic_type(v, alias_map)
+                assert v is not None
+                if aspec not in fnargs_possible_values:
+                    fnargs_possible_values[aspec] = set()
+                fnargs_possible_values[aspec].add(v)
+            elif v is None:
+                assert atype.optional
+                if aspec not in fnargs_possible_values:
+                    fnargs_possible_values[aspec] = set()
+                fnargs_possible_values[aspec].add(v)
+
+    # Keep only the singular values.
+    fnargs_practically_cosnts = {k: vs.pop() for k, vs in fnargs_possible_values.items() if len(vs) == 1}
+
+    for aspec, val in fnargs_practically_cosnts.items():
+        arg = alias_map[aspec]
+        atype = find_type_of_entity(arg, alias_map)
+        fn = find_named_ancestor(arg).parent
+        assert isinstance(fn, (Subroutine_Subprogram, Function_Subprogram))
+        fexec = atmost_one(children_of_type(fn, Execution_Part))
+        if not fexec:
+            continue
+
+        if atype.optional:
+            presence = numpy_type_to_literal(np.bool_(val is not None))
+            for pcall in walk(fexec, Intrinsic_Function_Reference):
+                fn, cargs = pcall.children
+                cargs = cargs.children if cargs else tuple()
+                if fn.string != 'PRESENT':
+                    continue
+                assert len(cargs) == 1
+                optvar = cargs[0]
+                if find_name_of_node(arg) != optvar.string:
+                    continue
+                replace_node(pcall, presence)
+
+        if val is not None:
+            for nm in walk(fexec, Name):
+                nmspec = search_real_local_alias_spec(nm, alias_map)
+                if nmspec != aspec:
+                    continue
+                replace_node(nm, numpy_type_to_literal(val))
+        # TODO: We could also try removing the argument entirely from the function definition, but that's more work with
+        #  little benefit, so maybe another time.
 
     return ast
 
@@ -2005,10 +2136,28 @@ def _prune_branches_in_ifblock(ib: If_Construct, alias_map: SPEC_TABLE):
     _prune_branches_in_ifblock(ib, alias_map)
 
 
+def _prune_branches_in_ifstmt(ib: If_Stmt, alias_map: SPEC_TABLE):
+    cond, actions = ib.children
+    cval = _const_eval_basic_type(cond, alias_map)
+    if cval is None:
+        return
+    assert isinstance(cval, np.bool_)
+    if cval:
+        replace_node(ib, actions)
+    else:
+        remove_self(ib)
+    expart = ib.parent
+    assert isinstance(expart, Execution_Part)
+    if not expart.children:
+        remove_self(expart)
+
+
 def prune_branches(ast: Program) -> Program:
     alias_map = alias_specs(ast)
     for ib in walk(ast, If_Construct):
         _prune_branches_in_ifblock(ib, alias_map)
+    for ib in walk(ast, If_Stmt):
+        _prune_branches_in_ifstmt(ib, alias_map)
     return ast
 
 
