@@ -2509,7 +2509,7 @@ class SDFG(ControlFlowRegion):
         warnings.warn('SDFG.apply_strict_transformations is deprecated, use SDFG.simplify instead.', DeprecationWarning)
         return self.simplify(validate, validate_all)
 
-    def simplify(self, validate=True, validate_all=False, verbose=False):
+    def simplify(self, validate=True, validate_all=False, verbose=False, options=None):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
             (safely) and removes redundant arrays.
@@ -2517,7 +2517,8 @@ class SDFG(ControlFlowRegion):
             :note: This is an in-place operation on the SDFG.
         """
         from dace.transformation.passes.simplify import SimplifyPass
-        return SimplifyPass(validate=validate, validate_all=validate_all, verbose=verbose).apply_pass(self, {})
+        return SimplifyPass(validate=validate, validate_all=validate_all, verbose=verbose,
+                            pass_options=options).apply_pass(self, {})
 
     def auto_optimize(self,
                       device: dtypes.DeviceType,
