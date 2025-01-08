@@ -3944,6 +3944,10 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             required_args.extend(symbols)
         required_args = dtypes.deduplicate(required_args)
+        gargs = set(a[0] for a in args)
+        for rarg in required_args:
+            if rarg not in gargs and rarg in self.sdfg.symbols:
+                args.append((rarg, rarg))
 
         # Argument checks
         for aname, arg in kwargs:
