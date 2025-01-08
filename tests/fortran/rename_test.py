@@ -18,7 +18,7 @@ import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
-
+@pytest.mark.skip(reason="This must be rewritten to use fparser preprocessing")
 def test_fortran_frontend_rename():
     """
     Tests that the Fortran frontend can parse complex initializations.

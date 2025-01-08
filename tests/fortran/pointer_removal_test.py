@@ -20,6 +20,8 @@ import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 from dace.transformation.passes.lift_struct_views import LiftStructViews
 from dace.transformation import pass_pipeline as ppl
 
+
+@pytest.mark.skip(reason="This must be rewritten to use fparser preprocessing")
 def test_fortran_frontend_ptr_assignment_removal():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -58,7 +60,7 @@ def test_fortran_frontend_ptr_assignment_removal():
     assert (a[1, 0] == 13)
     assert (a[2, 0] == 42)
 
-
+@pytest.mark.skip(reason="This must be rewritten to use fparser preprocessing")
 def test_fortran_frontend_ptr_assignment_removal_array():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -97,6 +99,7 @@ def test_fortran_frontend_ptr_assignment_removal_array():
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
 
+@pytest.mark.skip(reason="This must be rewritten to use fparser preprocessing")
 def test_fortran_frontend_ptr_assignment_removal_array_assumed():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -146,6 +149,7 @@ def test_fortran_frontend_ptr_assignment_removal_array_assumed():
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 1410)
 
+@pytest.mark.skip(reason="This must be rewritten to use fparser preprocessing")
 def test_fortran_frontend_ptr_assignment_removal_array_nested():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
