@@ -516,10 +516,7 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
 
             # it's a scalar!
             if dims == 0:
-                return ast_internal_classes.Array_Subscript_Node(
-                    name=arg, parent=arg.parent, type='VOID',
-                    indices=[ast_internal_classes.Int_Literal_Node(value="0")]
-                )
+                return None
 
             array_node = ast_internal_classes.Array_Subscript_Node(
                 name=arg, parent=arg.parent, type='VOID',

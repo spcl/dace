@@ -2773,7 +2773,7 @@ class TypeInference(NodeTransformer):
 
         node.type = type_hierarchy[max(idx_left, idx_right)]
 
-        if node.op == '=' and isinstance(node.lval, ast_internal_classes.Name_Node):
+        if node.op == '=' and isinstance(node.lval, ast_internal_classes.Name_Node) and node.lval.type == 'VOID':
 
             lval_definition = self.scope_vars.get_var(node.parent, node.lval.name)
             lval_definition.type = node.type
