@@ -2561,7 +2561,7 @@ class SDFG(ControlFlowRegion):
                certain cases. Please report an issue if it does.
         """
         from dace.transformation.auto.auto_optimize import auto_optimize
-        auto_optimize(device, validate, validate_all, symbols, use_gpu_storage)
+        auto_optimize(self, device, validate, validate_all, symbols, use_gpu_storage)
 
     def _initialize_transformations_from_type(
         self,
