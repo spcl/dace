@@ -437,13 +437,18 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.as_arg(name=name)} = new {nodedesc.dtype.base_type};\n")
             define_var(name, DefinedType.Pointer, nodedesc.dtype)
-            for k, v in nodedesc.members.items():
-                if isinstance(v, data.Data):
-                    ctypedef = dtypes.pointer(v.dtype) if isinstance(v, data.Array) else v.dtype
-                    defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
-                    self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
-                    self.allocate_array(sdfg, cfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
-                                        declaration_stream, allocation_stream)
+            if allocate_nested_data:
+                for k, v in nodedesc.members.items():
+                    if isinstance(v, data.Data):
+                        ctypedef = dtypes.pointer(v.dtype) if isinstance(v, data.Array) else v.dtype
+                        defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
+                        self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
+                        if isinstance(v, data.Scalar):
+                            # NOTE: Scalar members are already defined in the struct definition.
+                            self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
+                        else:
+                            self.allocate_array(sdfg, cfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
+                                                declaration_stream, allocation_stream)
 
             return
         if isinstance(nodedesc, data.View):
