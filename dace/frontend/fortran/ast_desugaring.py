@@ -21,7 +21,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Section_Subscript_List, Char_Selector, \
     Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, \
     Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, \
-    Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt
+    Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
@@ -1030,7 +1030,7 @@ def deconstruct_enums(ast: Program) -> Program:
                 en_dict[c_name] = Expr(f"{next_val} + {next_offset}")
                 next_offset = next_offset + 1
         type_decls = [Type_Declaration_Stmt(f"integer, parameter :: {k} = {v}") for k, v in en_dict.items()]
-        replace_node(en, [Type_Declaration_Stmt(f"integer, parameter :: {k} = {v}") for k, v in en_dict.items()])
+        replace_node(en, type_decls)
     return ast
 
 
@@ -1566,6 +1566,61 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
         killed.add(ns)
 
     consolidate_uses(ast, alias_map)
+
+    return ast
+
+
+def make_practically_constant_global_vars_constants(ast: Program) -> Program:
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast)
+
+    # Start with everything that _could_ be a candidate.
+    never_assigned: Set[SPEC] = {k for k, v in ident_map.items()
+                                 if isinstance(v, Entity_Decl) and search_scope_spec(v)
+                                 and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)}
+
+    for asgn in walk(ast, Assignment_Stmt):
+        lv, _, rv = asgn.children
+        if not isinstance(lv, Name):
+            # Everything else unsupported for now.
+            continue
+        loc = search_real_local_alias_spec(lv, alias_map)
+        assert loc
+        var = alias_map[loc]
+        assert isinstance(var, Entity_Decl)
+        var_spec = ident_spec(var)
+        if var_spec in never_assigned:
+            never_assigned.remove(var_spec)
+
+    for fcall in walk(ast, (Function_Reference, Call_Stmt)):
+        fn, args = fcall.children
+        args = args.children if args else tuple()
+        for a in args:
+            if not isinstance(a, Name):
+                # Everything else unsupported for now.
+                continue
+            loc = search_real_local_alias_spec(a, alias_map)
+            assert loc
+            var = alias_map[loc]
+            assert isinstance(var, Entity_Decl)
+            var_spec = ident_spec(var)
+            if var_spec in never_assigned:
+                never_assigned.remove(var_spec)
+
+    for fixed in never_assigned:
+        edcl = alias_map[fixed]
+        assert isinstance(edcl, Entity_Decl)
+        edclist = edcl.parent
+        tdcl = edclist.parent
+        assert isinstance(tdcl, Type_Declaration_Stmt)
+        typ, attr, _ = tdcl.children
+        nuattr = f"{attr}, parameter" if attr else ', parameter'
+        if len(edclist.children) == 1:
+            replace_node(tdcl, Type_Declaration_Stmt(f"{typ} {nuattr} :: {edclist}"))
+        else:
+            replace_node(tdcl, Type_Declaration_Stmt(f"{typ} {nuattr} :: {edcl}"))
+            remove_children(edclist, edcl)
+            append_children(tdcl.parent, Type_Declaration_Stmt(f"{typ} {attr or ''} :: {edclist}"))
 
     return ast
 
@@ -2226,8 +2281,8 @@ def numpy_type_to_literal(val: NUMPY_TYPES) -> Union[LITERAL_TYPES]:
 
 def const_eval_nodes(ast: Program) -> Program:
     EXPRESSION_TYPES = Union[
-        LITERAL_TYPES, Expr, Add_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr, Level_5_Expr,
-        Intrinsic_Function_Reference]
+        LITERAL_TYPES, Expr, Add_Operand, Or_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr,
+        Level_5_Expr, Intrinsic_Function_Reference]
 
     alias_map = alias_specs(ast)
 
