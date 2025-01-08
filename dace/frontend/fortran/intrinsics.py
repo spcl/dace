@@ -1237,21 +1237,27 @@ class Merge(LoopBasedReplacement):
                     self.uses_scalars = False
 
             # Last argument is either an array or a binary op
+
             arg = node.args[2]
-            array_node = self._parse_array(node, node.args[2], dims_count=len(self.first_array.indices))
-            if array_node is not None:
-
-                self.mask_first_array = array_node
-                self.mask_cond = ast_internal_classes.BinOp_Node(
-                    op="==",
-                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                    lval=self.mask_first_array,
-                    line_number=node.line_number
-                )
-
+            if self.uses_scalars:
+                self.mask_cond = arg
             else:
 
-                self.mask_first_array, self.mask_second_array, self.mask_cond = self._parse_binary_op(node, arg)
+                array_node = self._parse_array(node, node.args[2], dims_count=len(self.first_array.indices))
+                if array_node is not None:
+
+                    self.mask_first_array = array_node
+
+                    self.mask_cond = ast_internal_classes.BinOp_Node(
+                        op="==",
+                        rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                        lval=self.mask_first_array,
+                        line_number=node.line_number
+                    )
+
+                else:
+
+                    self.mask_first_array, self.mask_second_array, self.mask_cond = self._parse_binary_op(node, arg)
 
         def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode,
                             new_func_body: List[ast_internal_classes.FNode]):
