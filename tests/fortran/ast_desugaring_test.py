@@ -1466,10 +1466,10 @@ contains
   end subroutine fun
 end module lib
 """).add_file("""
-subroutine main
+subroutine main(cfg)
   use lib
   implicit none
-  type(big_config) :: cfg
+  type(big_config), intent(in) :: cfg
   real :: a = 1
   a = cfg%big%b + a * globalo%a
 end subroutine main
@@ -1500,10 +1500,10 @@ MODULE lib
     this % b = 5.1
   END SUBROUTINE fun
 END MODULE lib
-SUBROUTINE main
+SUBROUTINE main(cfg)
   USE lib
   IMPLICIT NONE
-  TYPE(big_config) :: cfg
+  TYPE(big_config), INTENT(IN) :: cfg
   REAL :: a = 1
   a = 10000.0 + a * 42
 END SUBROUTINE main
@@ -1533,10 +1533,10 @@ contains
   end subroutine fun
 end module lib
 """).add_file("""
-subroutine main
+subroutine main(cfg)
   use lib
   implicit none
-  type(big_config) :: cfg
+  type(big_config), intent(in) :: cfg
   real :: a = 1
   a = cfg%big%b + a * globalo%a
 end subroutine main
@@ -1567,12 +1567,75 @@ MODULE lib
     this % b = 5.1
   END SUBROUTINE fun
 END MODULE lib
-SUBROUTINE main
+SUBROUTINE main(cfg)
   USE lib
   IMPLICIT NONE
-  TYPE(big_config) :: cfg
+  TYPE(big_config), INTENT(IN) :: cfg
   REAL :: a = 1
   a = 10000.0 + a * 42
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_config_injection_array():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type config
+    integer, allocatable :: a(:, :)
+  end type config
+contains
+  real function fun(this)
+    implicit none
+    type(config), intent(inout) :: this
+    if (allocated(this%a)) then
+      fun = 5.1
+    else
+      fun = -1
+    endif
+  end function fun
+end module lib
+""").add_file("""
+subroutine main(cfg)
+  use lib
+  implicit none
+  type(config), intent(in) :: cfg
+  real :: a = 1
+  if (allocated(cfg%a)) a = 7.2
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = inject_const_evals(ast, [
+        ConstTypeInjection(None, ('lib', 'config'), ('a_a',), 'true'),
+    ])
+
+    got = ast.tofortran()
+    print(got)
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  TYPE :: config
+    INTEGER, ALLOCATABLE :: a(:, :)
+  END TYPE config
+  CONTAINS
+  REAL FUNCTION fun(this)
+    IMPLICIT NONE
+    TYPE(config), INTENT(INOUT) :: this
+    IF (ALLOCATED(this % a)) THEN
+      fun = 5.1
+    ELSE
+      fun = - 1
+    END IF
+  END FUNCTION fun
+END MODULE lib
+SUBROUTINE main(cfg)
+  USE lib
+  IMPLICIT NONE
+  TYPE(config), INTENT(IN) :: cfg
+  REAL :: a = 1
+  IF (.TRUE.) a = 7.2
 END SUBROUTINE main
 """.strip()
     assert got == want
