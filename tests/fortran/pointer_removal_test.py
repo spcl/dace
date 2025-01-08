@@ -200,9 +200,9 @@ def test_fortran_frontend_ptr_assignment_removal_array_nested():
 
 if __name__ == "__main__":
     # pointers to non-array fields are broken
-    #test_fortran_frontend_ptr_assignment_removal()
+    test_fortran_frontend_ptr_assignment_removal()
     test_fortran_frontend_ptr_assignment_removal_array()
     # broken - no idea why
-    #test_fortran_frontend_ptr_assignment_removal_array_assumed()
+    test_fortran_frontend_ptr_assignment_removal_array_assumed()
     # also broken - bug in codegen
-    #test_fortran_frontend_ptr_assignment_removal_array_nested()
+    test_fortran_frontend_ptr_assignment_removal_array_nested()
