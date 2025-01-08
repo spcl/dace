@@ -2,7 +2,9 @@
 
 import numpy as np
 
-from dace.frontend.fortran import ast_transforms, fortran_parser
+from dace.frontend.fortran import fortran_parser
+from tests.fortran.fortran_test_helper import  SourceCodeBuilder
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 
 """
 We test for the following patterns:
@@ -651,6 +653,103 @@ def test_fortran_frontend_ranges_scalar():
     sdfg(input1=input1, res=res)
     assert np.allclose(res, [1.0 - x for x in input1])
 
+def test_fortran_frontend_ranges_struct():
+    sources, main = SourceCodeBuilder().add_file("""
+
+MODULE test_types
+    IMPLICIT NONE
+    TYPE array_container
+        double precision, dimension(5,4) :: arg1
+    END TYPE array_container
+END MODULE
+
+MODULE test_range
+
+    contains
+
+    subroutine test_function(arg1, res1)
+        USE test_types
+        IMPLICIT NONE
+        TYPE(array_container) :: container
+        double precision, dimension(5,4) :: arg1
+        double precision, dimension(5,4) :: res1
+
+        container%arg1(:, :) = arg1
+
+        container%arg1(:, :) = container%arg1 + 1
+
+        res1 = container%arg1
+    end subroutine test_function
+
+END MODULE
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'test_range.test_function', normalize_offsets=True)
+    # TODO: We should re-enable `simplify()` once we merge it.
+    sdfg.simplify()
+    sdfg.compile()
+
+    size_x = 5
+    size_y = 4
+    arg1 = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+    res1 = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+
+    for i in range(size_x):
+        for j in range(size_y):
+            arg1[i, j] = i + 1
+
+    sdfg(arg1=arg1, res1=res1)
+
+    assert np.all(res1 == (arg1 + 1))
+
+def test_fortran_frontend_ranges_struct_implicit():
+    sources, main = SourceCodeBuilder().add_file("""
+
+MODULE test_types
+    IMPLICIT NONE
+    TYPE array_container
+        double precision, dimension(5,4) :: arg1
+    END TYPE array_container
+END MODULE
+
+MODULE test_transpose
+
+    contains
+
+    subroutine test_function(arg1, res1)
+        USE test_types
+        IMPLICIT NONE
+        TYPE(array_container) :: container
+        double precision, dimension(5,4) :: arg1
+        double precision, dimension(5,4) :: res1
+
+        container%arg1 = arg1
+
+        container%arg1 = container%arg1 + 1
+
+        res1 = container%arg1
+    end subroutine test_function
+
+END MODULE
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'test_transpose.test_function', normalize_offsets=True)
+    # TODO: We should re-enable `simplify()` once we merge it.
+    sdfg.save('test.sdfg')
+    sdfg.simplify()
+    sdfg.compile()
+
+    size_x = 5
+    size_y = 4
+    arg1 = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+    res1 = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+
+    for i in range(size_x):
+        for j in range(size_y):
+            arg1[i, j] = i + 1
+
+    sdfg(arg1=arg1, res1=res1)
+
+    assert np.all(res1 == (arg1 + 1))
+
 if __name__ == "__main__":
 
     test_fortran_frontend_multiple_ranges_all()
@@ -668,3 +767,5 @@ if __name__ == "__main__":
     test_fortran_frontend_ranges_noarray2()
     test_fortran_frontend_ranges_noarray3()
     test_fortran_frontend_ranges_scalar()
+    test_fortran_frontend_ranges_struct()
+    test_fortran_frontend_ranges_struct_implicit()

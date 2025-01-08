@@ -61,6 +61,8 @@ class Structures:
         cur_node = top_ref
 
         while True:
+
+            prev_node = cur_node
             cur_node = cur_node.part_ref
 
             if isinstance(cur_node, ast_internal_classes.Array_Subscript_Node):
@@ -77,18 +79,18 @@ class Structures:
             if isinstance(cur_node.parent_ref.name, ast_internal_classes.Name_Node):
 
                 if variable_name is not None and cur_node.parent_ref.name.name == variable_name.name:
-                    return struct_def, struct_def.vars[cur_node.parent_ref.name.name]
+                    return struct_def, struct_def.vars[cur_node.parent_ref.name.name], prev_node
 
                 struct_type = struct_def.vars[cur_node.parent_ref.name.name].type
             else:
 
                 if variable_name is not None and cur_node.parent_ref.name == variable_name.name:
-                    return struct_def, struct_def.vars[cur_node.parent_ref.name]
+                    return struct_def, struct_def.vars[cur_node.parent_ref.name], prev_node
 
                 struct_type = struct_def.vars[cur_node.parent_ref.name].type
             struct_def = self.structures[struct_type]
 
-        return struct_def, cur_var
+        return struct_def, cur_var, prev_node
 
 
 def iter_fields(node: ast_internal_classes.FNode):
@@ -860,7 +862,7 @@ class ArgumentExtractor(NodeTransformer):
                 for i in reversed(range(0, len(res))):
 
                     if isinstance(res[i], ast_internal_classes.Data_Ref_Node):
-                        struct_def, cur_var = self.program.structures.find_definition(self.scope_vars, res[i])
+                        struct_def, cur_var, _ = self.program.structures.find_definition(self.scope_vars, res[i])
 
                         var_type = cur_var.type
                     else:
@@ -1424,7 +1426,7 @@ class IndexExtractor(NodeTransformer):
                                     var_name = j.name
                                     variable = self.scope_vars.get_var(child.parent, var_name)
                                 elif parent_node is not None:
-                                    struct, variable = self.structures.find_definition(
+                                    struct, variable, _ = self.structures.find_definition(
                                         self.scope_vars, parent_node, j.name
                                     )
                                     var_name = j.name.name
@@ -2024,11 +2026,13 @@ class ArrayLoopNodeLister(NodeVisitor):
     Finds all array operations that have to be transformed to loops in the AST
     """
 
-    def __init__(self, scope_vars):
+    def __init__(self, scope_vars, structures):
         self.nodes: List[ast_internal_classes.FNode] = []
         self.range_nodes: List[ast_internal_classes.FNode] = []
 
         self.scope_vars = scope_vars
+
+        self.structures = structures
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         rval_pardecls = [i for i in mywalk(node.rval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
@@ -2040,16 +2044,29 @@ class ArrayLoopNodeLister(NodeVisitor):
             # But we don't have a pardecl
             #
             # BUT: we explicitly exclude patterns like arr = func()
-            if isinstance(node.lval, ast_internal_classes.Name_Node) and not isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
+            if isinstance(node.lval, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node)) and not isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
 
-                var = self.scope_vars.get_var(node.lval.parent, node.lval.name)
-                if var.sizes is None or len(var.sizes) == 0:
-                    return
+                if isinstance(node.lval, ast_internal_classes.Name_Node):
 
-                node.lval = ast_internal_classes.Array_Subscript_Node(
-                    name=node.lval, parent=node.parent, type=var.type,
-                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
-                )
+                    var = self.scope_vars.get_var(node.lval.parent, node.lval.name)
+                    if var.sizes is None or len(var.sizes) == 0:
+                        return
+
+                    node.lval = ast_internal_classes.Array_Subscript_Node(
+                        name=node.lval, parent=node.parent, type=var.type,
+                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
+                    )
+
+                else:
+                    _, var_def, last_data_ref_node = self.structures.find_definition(self.scope_vars, node.lval)
+
+                    if var_def.sizes is None or len(var_def.sizes) == 0:
+                        return
+
+                    last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
+                        name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
+                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes)
+                    )
 
             else:
                 return
@@ -2320,7 +2337,7 @@ class ArrayToLoop(NodeTransformer):
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
         for child_ in node.execution:
-            lister = ArrayLoopNodeLister(self.scope_vars)
+            lister = ArrayLoopNodeLister(self.scope_vars, self.ast.structures)
             lister.visit(child_)
             res = lister.nodes
             res_range = lister.range_nodes
@@ -2340,7 +2357,7 @@ class ArrayToLoop(NodeTransformer):
                 # if res_range is not None and len(res_range) > 0:
 
                 # catch cases where an array is used as name, without range expression
-                visitor = ReplaceImplicitParDecls(self.scope_vars)
+                visitor = ReplaceImplicitParDecls(self.scope_vars, self.ast.structures)
                 child.rval = visitor.visit(child.rval)
 
                 rvals = [i for i in mywalk(child.rval) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
@@ -2798,7 +2815,7 @@ class TypeInference(NodeTransformer):
         if node.type != 'VOID':
             return node
 
-        struct, variable = self.structures.find_definition(
+        struct, variable, _ = self.structures.find_definition(
             self.scope_vars, node
         )
 
@@ -3394,13 +3411,25 @@ class FindUnusedFunctions(NodeVisitor):
 
 class ReplaceImplicitParDecls(NodeTransformer):
 
-    def __init__(self, scope_vars):
+    def __init__(self, scope_vars, structures):
         self.scope_vars = scope_vars
+        self.structures = structures
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
         return node
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+
+        _, var_def, last_data_ref_node = self.structures.find_definition(self.scope_vars, node)
+
+        if var_def.sizes is None or len(var_def.sizes) == 0:
+            return node
+
+        last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
+            name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
+            indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes)
+        )
+
         return node
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
