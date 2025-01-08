@@ -1698,7 +1698,6 @@ end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
     ast = make_practically_constant_arguments_constants(ast, [('main',)])
-    ast = prune_branches(ast)
 
     got = ast.tofortran()
     want = """
@@ -1710,15 +1709,21 @@ MODULE lib
     LOGICAL, INTENT(IN) :: cond, kwcond
     LOGICAL, OPTIONAL, INTENT(IN) :: opt
     LOGICAL :: real_opt = .FALSE.
-    real_opt = .TRUE.
-    fun = 4.2
+    IF (.TRUE.) THEN
+      real_opt = .TRUE.
+    END IF
+    IF (.FALSE. .AND. .FALSE. .AND. real_opt) THEN
+      fun = - 2.7
+    ELSE
+      fun = 4.2
+    END IF
   END FUNCTION fun
   REAL FUNCTION not_fun(cond, kwcond, opt)
     IMPLICIT NONE
     LOGICAL, INTENT(IN) :: cond, kwcond
     LOGICAL, OPTIONAL, INTENT(IN) :: opt
     LOGICAL :: real_opt = .FALSE.
-    IF (PRESENT(opt)) THEN
+    IF (.TRUE.) THEN
       real_opt = opt
     END IF
     IF (cond .AND. kwcond .AND. real_opt) THEN

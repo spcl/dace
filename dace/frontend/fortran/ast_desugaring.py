@@ -1575,6 +1575,8 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
 
     # First, build a table to see what possible values a function argument may see.
     fnargs_possible_values: Dict[SPEC, Set[Optional[NUMPY_TYPES]]] = {}
+    fnargs_undecidables: Set[SPEC] = set()
+    fnargs_optional_presence: Dict[SPEC, Set[bool]] = {}
     for fcall in walk(ast, (Function_Reference, Call_Stmt)):
         fn, args = fcall.children
         if isinstance(fn, Intrinsic_Name):
@@ -1611,6 +1613,11 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
             else:
                 # Pop the next non-keywordd supplied value.
                 v, args = args[0], args[1:]
+            if atype.optional:
+                # The presence should be noted even if it is a writable argument.
+                if aspec not in fnargs_optional_presence:
+                    fnargs_optional_presence[aspec] = set()
+                fnargs_optional_presence[aspec].add(v is not None)
             if atype.out:
                 # Writable arguments are not practically constants anyway.
                 continue
@@ -1629,11 +1636,40 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
                 if aspec not in fnargs_possible_values:
                     fnargs_possible_values[aspec] = set()
                 fnargs_possible_values[aspec].add(v)
+            else:
+                fnargs_undecidables.add(aspec)
 
-    # Keep only the singular values.
-    fnargs_practically_cosnts = {k: vs.pop() for k, vs in fnargs_possible_values.items() if len(vs) == 1}
+    for aspec, vals in fnargs_optional_presence.items():
+        if len(vals) > 1:
+            continue
+        assert len(vals) == 1
+        presence, = vals
 
-    for aspec, val in fnargs_practically_cosnts.items():
+        arg = alias_map[aspec]
+        atype = find_type_of_entity(arg, alias_map)
+        assert atype.optional
+        fn = find_named_ancestor(arg).parent
+        assert isinstance(fn, (Subroutine_Subprogram, Function_Subprogram))
+        fexec = atmost_one(children_of_type(fn, Execution_Part))
+        if not fexec:
+            continue
+
+        for pcall in walk(fexec, Intrinsic_Function_Reference):
+            fn, cargs = pcall.children
+            cargs = cargs.children if cargs else tuple()
+            if fn.string != 'PRESENT':
+                continue
+            assert len(cargs) == 1
+            optvar = cargs[0]
+            if find_name_of_node(arg) != optvar.string:
+                continue
+            replace_node(pcall, numpy_type_to_literal(np.bool_(presence)))
+
+    for aspec, vals in fnargs_possible_values.items():
+        if aspec in fnargs_undecidables or len(vals) > 1:
+            # There are multiple possiblities for the argument: either some undecidables or multiple literals.
+            continue
+        fixed_val, = vals
         arg = alias_map[aspec]
         atype = find_type_of_entity(arg, alias_map)
         fn = find_named_ancestor(arg).parent
@@ -1642,25 +1678,12 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
         if not fexec:
             continue
 
-        if atype.optional:
-            presence = numpy_type_to_literal(np.bool_(val is not None))
-            for pcall in walk(fexec, Intrinsic_Function_Reference):
-                fn, cargs = pcall.children
-                cargs = cargs.children if cargs else tuple()
-                if fn.string != 'PRESENT':
-                    continue
-                assert len(cargs) == 1
-                optvar = cargs[0]
-                if find_name_of_node(arg) != optvar.string:
-                    continue
-                replace_node(pcall, presence)
-
-        if val is not None:
+        if fixed_val is not None:
             for nm in walk(fexec, Name):
                 nmspec = search_real_local_alias_spec(nm, alias_map)
                 if nmspec != aspec:
                     continue
-                replace_node(nm, numpy_type_to_literal(val))
+                replace_node(nm, numpy_type_to_literal(fixed_val))
         # TODO: We could also try removing the argument entirely from the function definition, but that's more work with
         #  little benefit, so maybe another time.
 
