@@ -88,6 +88,16 @@ class InlineSDFGs(ppl.Pass):
     def report(self, pass_retval: int) -> str:
         return f'Inlined {pass_retval} SDFGs.'
 
+    def set_opts(self, opts):
+        opt_keys = [
+            'multistate',
+        ]
+
+        for k in opt_keys:
+            attr_k = InlineSDFGs.__name__ + '.' + k
+            if attr_k in opts:
+                setattr(self, k, opts[attr_k])
+
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
