@@ -54,7 +54,7 @@ def test_fortran_frontend_cond_type():
     """
     sources={}
     sources["type_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_test",sources=sources)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "cond_type_test",sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
