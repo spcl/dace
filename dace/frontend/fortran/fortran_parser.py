@@ -33,7 +33,8 @@ from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES,
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
     deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
     inject_const_evals, \
-    remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES, ConstTypeInjection, ConstInstanceInjection
+    remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES, ConstTypeInjection, ConstInstanceInjection, \
+    ConstInjection
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -2732,7 +2733,6 @@ def create_ast_from_string(
 
         program = ast_transforms.ForDeclarer().visit(program)
         program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
-
         program = ast_transforms.optionalArgsExpander(program)
 
     return program, own_ast
@@ -2744,7 +2744,7 @@ class ParseConfig:
                  sources: Union[None, List[Path], Dict[str, str]] = None,
                  includes: Union[None, List[Path], Dict[str, str]] = None,
                  entry_points: Union[None, SPEC, List[SPEC]] = None,
-                 config_injections: Optional[List[Union[ConstTypeInjection, ConstInstanceInjection]]] = None):
+                 config_injections: Optional[List[ConstInjection]] = None):
         # Make the configs canonical, by processing the various types upfront.
         if isinstance(main, Path):
             main = main.read_text()
@@ -2764,7 +2764,7 @@ class ParseConfig:
         self.sources = sources
         self.includes = includes
         self.entry_points = entry_points
-        self.config_injections = config_injections
+        self.config_injections = config_injections or []
 
 
 def create_fparser_ast(cfg: ParseConfig) -> Program:
@@ -2808,12 +2808,14 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
 class SDFGConfig:
     def __init__(self,
                  entry_points: Dict[str, Union[str, List[str]]],
+                 config_injections: Optional[List[ConstTypeInjection]] = None,
                  normalize_offsets: bool = True,
                  multiple_sdfgs: bool = False):
         for k in entry_points:
             if isinstance(entry_points[k], str):
                 entry_points[k] = [entry_points[k]]
         self.entry_points = entry_points
+        self.config_injections = config_injections or []
         self.normalize_offsets = normalize_offsets
         self.multiple_sdfgs = multiple_sdfgs
 
@@ -2828,15 +2830,14 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     program = ast_transforms.StructConstructorToFunctionCall(
         ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
     program = ast_transforms.CallToArray(ast_transforms.FindFunctionAndSubroutines.from_node(program)).visit(program)
+    program = ast_transforms.IfConditionExtractor().visit(program)
     program = ast_transforms.CallExtractor().visit(program)
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.ElementalFunctionExpander(
-        ast_transforms.FindFunctionAndSubroutines.from_node(program).names,
-        ast=program
-    ).visit(program)
+        ast_transforms.FindFunctionAndSubroutines.from_node(program).names, program).visit(program)
     for i in program.modules:
         count = 0
         for j in i.function_definitions:
@@ -2863,12 +2864,17 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         transformation.initialize(program)
         program = transformation.visit(program)
 
+    array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
+    array_dims_info.visit(program)
+    program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
+
     program = ast_transforms.ArgumentExtractor(program).visit(program)
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, cfg.normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.allocatableReplacer(program)
+    program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
 
     structs_lister = ast_transforms.StructLister()
     structs_lister.visit(program)
@@ -3020,6 +3026,11 @@ def create_sdfg_from_string(
 
     program = ast_transforms.ArgumentExtractor(program).visit(program)
 
+    array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
+    array_dims_info.visit(program)
+    program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
+
+    program = ast_transforms.ArrayToLoop(program).visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
@@ -3316,7 +3327,8 @@ def create_sdfg_from_fortran_file_with_options(
         enum_propagator_files: Optional[List[str]] = None,
         enum_propagator_ast=None,
         used_functions_config: Optional[FindUsedFunctionsConfig] = None,
-        already_parsed_ast=False
+        already_parsed_ast=False,
+        config_injections: Optional[List[ConstTypeInjection]] = None,
 ):
     """
     Creates an SDFG from a fortran file
@@ -3574,6 +3586,11 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
+
+    array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
+    array_dims_info.visit(program)
+    program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
+
     structs_lister = ast_transforms.StructLister()
     structs_lister.visit(program)
     struct_dep_graph = nx.DiGraph()
