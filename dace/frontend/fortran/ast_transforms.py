@@ -2856,6 +2856,19 @@ class TypeInference(NodeTransformer):
             node.offsets = self._get_offsets(node.lval)
         return node
 
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        new_args = []
+        for arg in node.args:
+            new_args.append(arg)
+        node.args = new_args
+
+        # FIXME
+        node.sizes = None
+        node.offsets = None
+
+        return node
+
     def _get_type(self, node):
 
         if isinstance(node, ast_internal_classes.Int_Literal_Node):
@@ -2875,8 +2888,6 @@ class TypeInference(NodeTransformer):
             return [1]
         elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
             return [1]
-        elif isinstance(node, ast_internal_classes.Call_Expr_Node):
-            return None
         else:
             return node.offsets
 
@@ -2888,8 +2899,6 @@ class TypeInference(NodeTransformer):
             return []
         elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
             return []
-        elif isinstance(node, ast_internal_classes.Call_Expr_Node):
-            return None
         else:
             return node.sizes
 
