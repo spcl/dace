@@ -1610,17 +1610,26 @@ def make_practically_constant_global_vars_constants(ast: Program) -> Program:
     for fixed in never_assigned:
         edcl = alias_map[fixed]
         assert isinstance(edcl, Entity_Decl)
+        if not atmost_one(children_of_type(edcl, Initialization)):
+            # Without an initialization, we cannot fix it.
+            continue
         edclist = edcl.parent
         tdcl = edclist.parent
         assert isinstance(tdcl, Type_Declaration_Stmt)
         typ, attr, _ = tdcl.children
-        nuattr = f"{attr}, parameter" if attr else ', parameter'
-        if len(edclist.children) == 1:
-            replace_node(tdcl, Type_Declaration_Stmt(f"{typ} {nuattr} :: {edclist}"))
+        if not attr:
+            nuattr = 'parameter'
+        elif 'PARAMETER' in f"{attr}":
+            nuattr = f"{attr}"
         else:
-            replace_node(tdcl, Type_Declaration_Stmt(f"{typ} {nuattr} :: {edcl}"))
+            nuattr = f"{attr}, parameter"
+        if len(edclist.children) == 1:
+            replace_node(tdcl, Type_Declaration_Stmt(f"{typ}, {nuattr} :: {edclist}"))
+        else:
+            replace_node(tdcl, Type_Declaration_Stmt(f"{typ}, {nuattr} :: {edcl}"))
             remove_children(edclist, edcl)
-            append_children(tdcl.parent, Type_Declaration_Stmt(f"{typ} {attr or ''} :: {edclist}"))
+            attr = f", {attr}" if attr else ''
+            append_children(tdcl.parent, Type_Declaration_Stmt(f"{typ} {attr} :: {edclist}"))
 
     return ast
 
@@ -2236,8 +2245,7 @@ def _prune_branches_in_ifstmt(ib: If_Stmt, alias_map: SPEC_TABLE):
     else:
         remove_self(ib)
     expart = ib.parent
-    assert isinstance(expart, Execution_Part)
-    if not expart.children:
+    if isinstance(expart, Execution_Part) and not expart.children:
         remove_self(expart)
 
 
