@@ -7,7 +7,8 @@ from fparser.two.parser import ParserFactory
 from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, deconstruct_enums, \
     deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, \
     assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
-    const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection
+    const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
+    make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -1258,6 +1259,8 @@ subroutine main
     a = k
     b = k
   end if
+  if (k < 5) a = 70 + k
+  if (k > 5) a = 70 - k
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -1270,6 +1273,7 @@ SUBROUTINE main
   INTEGER, PARAMETER :: k = 4
   INTEGER :: a = - 1, b = - 1
   b = k
+  a = 70 + k
 END SUBROUTINE main
 """.strip()
     assert got == want
@@ -1462,10 +1466,10 @@ contains
   end subroutine fun
 end module lib
 """).add_file("""
-subroutine main
+subroutine main(cfg)
   use lib
   implicit none
-  type(big_config) :: cfg
+  type(big_config), intent(in) :: cfg
   real :: a = 1
   a = cfg%big%b + a * globalo%a
 end subroutine main
@@ -1496,10 +1500,10 @@ MODULE lib
     this % b = 5.1
   END SUBROUTINE fun
 END MODULE lib
-SUBROUTINE main
+SUBROUTINE main(cfg)
   USE lib
   IMPLICIT NONE
-  TYPE(big_config) :: cfg
+  TYPE(big_config), INTENT(IN) :: cfg
   REAL :: a = 1
   a = 10000.0 + a * 42
 END SUBROUTINE main
@@ -1529,10 +1533,10 @@ contains
   end subroutine fun
 end module lib
 """).add_file("""
-subroutine main
+subroutine main(cfg)
   use lib
   implicit none
-  type(big_config) :: cfg
+  type(big_config), intent(in) :: cfg
   real :: a = 1
   a = cfg%big%b + a * globalo%a
 end subroutine main
@@ -1563,12 +1567,240 @@ MODULE lib
     this % b = 5.1
   END SUBROUTINE fun
 END MODULE lib
+SUBROUTINE main(cfg)
+  USE lib
+  IMPLICIT NONE
+  TYPE(big_config), INTENT(IN) :: cfg
+  REAL :: a = 1
+  a = 10000.0 + a * 42
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_config_injection_array():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type config
+    integer, allocatable :: a(:, :)
+  end type config
+contains
+  real function fun(this)
+    implicit none
+    type(config), intent(inout) :: this
+    if (allocated(this%a)) then  ! This will be replaced even though it is an out (i.e., beware of invalid injections).
+      fun = 5.1
+    else
+      fun = -1
+    endif
+  end function fun
+end module lib
+""").add_file("""
+subroutine main(cfg)
+  use lib
+  implicit none
+  type(config), intent(in) :: cfg
+  real :: a = 1
+  if (allocated(cfg%a)) a = 7.2
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = inject_const_evals(ast, [
+        ConstTypeInjection(None, ('lib', 'config'), ('a_a',), 'true'),
+    ])
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  TYPE :: config
+    INTEGER, ALLOCATABLE :: a(:, :)
+  END TYPE config
+  CONTAINS
+  REAL FUNCTION fun(this)
+    IMPLICIT NONE
+    TYPE(config), INTENT(INOUT) :: this
+    IF (.TRUE.) THEN
+      fun = 5.1
+    ELSE
+      fun = - 1
+    END IF
+  END FUNCTION fun
+END MODULE lib
+SUBROUTINE main(cfg)
+  USE lib
+  IMPLICIT NONE
+  TYPE(config), INTENT(IN) :: cfg
+  REAL :: a = 1
+  IF (.TRUE.) a = 7.2
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_practically_constant_arguments():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+contains
+  real function fun(cond, kwcond, opt)
+    implicit none
+    logical, intent(in) :: cond, kwcond
+    logical, optional, intent(in) :: opt
+    logical :: real_opt = .false.
+    if (present(opt)) then
+      real_opt = opt
+    end if
+    if (cond .and. kwcond .and. real_opt) then
+      fun = -2.7
+    else
+      fun = 4.2
+    end if
+  end function fun
+
+  real function not_fun(cond, kwcond, opt)
+    implicit none
+    logical, intent(in) :: cond, kwcond
+    logical, optional, intent(in) :: opt
+    logical :: real_opt = .false.
+    if (present(opt)) then
+      real_opt = opt
+    end if
+    if (cond .and. kwcond .and. real_opt) then
+      not_fun = -500.1
+    else
+      not_fun = 9600.8
+    end if
+  end function not_fun
+
+  subroutine user_1()
+    implicit none
+    real :: c
+    c = fun(.false., kwcond=.false., opt=.true.)*not_fun(.false., kwcond=.false., opt=.false.)
+  end subroutine user_1
+
+  subroutine user_2()
+    implicit none
+    real :: c
+    c = 3*fun(.false., kwcond=.false., opt=.true.)*not_fun(.true., kwcond=.true., opt=.true.)
+  end subroutine user_2
+end module lib
+""").add_file("""
+subroutine main()
+  use lib
+  implicit none
+  call user_1()
+  call user_2()
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = make_practically_constant_arguments_constants(ast, [('main',)])
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  REAL FUNCTION fun(cond, kwcond, opt)
+    IMPLICIT NONE
+    LOGICAL, INTENT(IN) :: cond, kwcond
+    LOGICAL, OPTIONAL, INTENT(IN) :: opt
+    LOGICAL :: real_opt = .FALSE.
+    IF (.TRUE.) THEN
+      real_opt = .TRUE.
+    END IF
+    IF (.FALSE. .AND. .FALSE. .AND. real_opt) THEN
+      fun = - 2.7
+    ELSE
+      fun = 4.2
+    END IF
+  END FUNCTION fun
+  REAL FUNCTION not_fun(cond, kwcond, opt)
+    IMPLICIT NONE
+    LOGICAL, INTENT(IN) :: cond, kwcond
+    LOGICAL, OPTIONAL, INTENT(IN) :: opt
+    LOGICAL :: real_opt = .FALSE.
+    IF (.TRUE.) THEN
+      real_opt = opt
+    END IF
+    IF (cond .AND. kwcond .AND. real_opt) THEN
+      not_fun = - 500.1
+    ELSE
+      not_fun = 9600.8
+    END IF
+  END FUNCTION not_fun
+  SUBROUTINE user_1
+    IMPLICIT NONE
+    REAL :: c
+    c = fun(.FALSE., kwcond = .FALSE., opt = .TRUE.) * not_fun(.FALSE., kwcond = .FALSE., opt = .FALSE.)
+  END SUBROUTINE user_1
+  SUBROUTINE user_2
+    IMPLICIT NONE
+    REAL :: c
+    c = 3 * fun(.FALSE., kwcond = .FALSE., opt = .TRUE.) * not_fun(.TRUE., kwcond = .TRUE., opt = .TRUE.)
+  END SUBROUTINE user_2
+END MODULE lib
 SUBROUTINE main
   USE lib
   IMPLICIT NONE
-  TYPE(big_config) :: cfg
-  REAL :: a = 1
-  a = 10000.0 + a * 42
+  CALL user_1
+  CALL user_2
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_practically_constant_global_vars_constants():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  logical :: fixed_cond = .false.
+  logical :: movable_cond = .false.
+contains
+  subroutine update(what)
+    implicit none
+    logical, intent(out) :: what
+    what = .true.
+  end subroutine update
+end module lib
+""").add_file("""
+subroutine main
+  use lib
+  implicit none
+  real :: a = 1.0
+  call update(movable_cond)
+  movable_cond = .not. movable_cond
+  if (fixed_cond .and. movable_cond) a = 7.1
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = make_practically_constant_global_vars_constants(ast)
+
+    got = ast.tofortran()
+    print(got)
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  LOGICAL, PARAMETER :: fixed_cond = .FALSE.
+  LOGICAL :: movable_cond = .FALSE.
+  CONTAINS
+  SUBROUTINE update(what)
+    IMPLICIT NONE
+    LOGICAL, INTENT(OUT) :: what
+    what = .TRUE.
+  END SUBROUTINE update
+END MODULE lib
+SUBROUTINE main
+  USE lib
+  IMPLICIT NONE
+  REAL :: a = 1.0
+  CALL update(movable_cond)
+  movable_cond = .NOT. movable_cond
+  IF (fixed_cond .AND. movable_cond) a = 7.1
 END SUBROUTINE main
 """.strip()
     assert got == want
