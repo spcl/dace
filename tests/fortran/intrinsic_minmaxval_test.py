@@ -282,7 +282,7 @@ MODULE test_minval
 END MODULE
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'test_minval.minval_test_func')
-    #sdfg.simplify(verbose=True)
+    sdfg.simplify(verbose=True)
     sdfg.compile()
 
     size = 7

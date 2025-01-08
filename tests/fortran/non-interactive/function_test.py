@@ -151,7 +151,7 @@ PURE FUNCTION function2_test_function (p_x, p_y)  result (p_arc)
     sdfg.view()
 
 
-
+@pytest.mark.skip(reason="Interactive test (opens SDFG).")
 def test_fortran_frontend_function_test3():
     """
     Tests to check whether Fortran array slices are correctly translates to DaCe views.
