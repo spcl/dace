@@ -2185,7 +2185,7 @@ def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Pr
                 use_map[nm_mod] = set()
             use_map[nm_mod].add(u)
         # Build new use statements.
-        nuses: List[Use_Stmt] = [Use_Stmt(f"use {k}, only: {', '.join(use_map[k])}") for k in use_map.keys()]
+        nuses: List[Use_Stmt] = [Use_Stmt(f"use {k}, only: {', '.join(sorted(use_map[k]))}") for k in use_map.keys()]
         # Remove the old ones, and prepend the new ones.
         sp.content = nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
         _reparent_children(sp)
