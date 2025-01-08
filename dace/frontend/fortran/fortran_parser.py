@@ -2984,6 +2984,9 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = g
         ast2sdfg.translate(program, g)
+        from dace.transformation.passes.lift_struct_views import LiftStructViews
+        from dace.transformation.pass_pipeline import FixedPointPipeline
+        FixedPointPipeline([LiftStructViews()]).apply_pass(g, {})
         g.apply_transformations(IntrinsicSDFGTransformation)
         g.expand_library_nodes()
         gmap[ep] = g

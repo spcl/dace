@@ -227,10 +227,10 @@ end subroutine main
     assert np.all([2.0 - val for val in x] == res1)
 
 if __name__ == "__main__":
-    #test_fortran_frontend_dot()
-    #test_fortran_frontend_dot_range()
-    #test_fortran_frontend_transpose()
-    #test_fortran_frontend_transpose_hoist_out()
-    #test_fortran_frontend_transpose_struct()
-    #test_fortran_frontend_matmul()
+    # test_fortran_frontend_dot()
+    # test_fortran_frontend_dot_range()
+    # test_fortran_frontend_transpose()
+    # test_fortran_frontend_transpose_hoist_out()
+    test_fortran_frontend_transpose_struct()
+    test_fortran_frontend_matmul()
     test_fortran_frontend_matmul_hoist_out()
