@@ -300,6 +300,8 @@ class AST_translator:
         self.toplevel_subroutine = toplevel_subroutine
         self.subroutine_used_names = subroutine_used_names
         self.normalize_offsets = normalize_offsets
+        self.temporary_sym_dict = {}
+        self.temporary_link_to_parent = {}
         self.do_not_make_internal_variables_argument = do_not_make_internal_variables_argument
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
@@ -1984,7 +1986,9 @@ class AST_translator:
             else:
                 print("Symbol not found in sdfg arrays: ", i)
         memlet_skip = []
-        new_sdfg.parent_sdfg=sdfg        
+        new_sdfg.parent_sdfg=sdfg
+        self.temporary_sym_dict[new_sdfg.name]=sym_dict
+        self.temporary_link_to_parent[new_sdfg.name]=substate
         if self.multiple_sdfgs == False:
             # print("Adding nested sdfg", new_sdfg.name, "to", sdfg.name)
             # print(sym_dict)
@@ -2039,13 +2043,13 @@ class AST_translator:
                                                      sdfg,
                                                      ins_in_new_sdfg,
                                                      outs_in_new_sdfg,
-                                                     symbol_mapping=sym_dict)
+                                                     symbol_mapping=self.temporary_sym_dict[new_sdfg.name])
         else:
             internal_sdfg = substate.add_nested_sdfg(None,
                                                      sdfg,
                                                      ins_in_new_sdfg,
                                                      outs_in_new_sdfg,
-                                                     symbol_mapping=sym_dict,
+                                                     symbol_mapping=self.temporary_sym_dict[new_sdfg.name],
                                                      name="External_nested_" + new_sdfg.name)
             # if self.multiple_sdfgs==False:
             # Now adding memlets
@@ -2505,9 +2509,9 @@ class AST_translator:
                     symname = "tmp_struct_symbol_" + str(count)
                     if sdfg.parent_sdfg is not None:
                         sdfg.parent_sdfg.add_symbol("tmp_struct_symbol_" + str(count), dtypes.int32)
-                        sdfg.parent_nsdfg_node.symbol_mapping[
-                            "tmp_struct_symbol_" + str(count)] = "tmp_struct_symbol_" + str(count)
-                        for edge in sdfg.parent.parent_graph.in_edges(sdfg.parent):
+                        self.temporary_sym_dict[sdfg.name]["tmp_struct_symbol_" + str(count)] = "tmp_struct_symbol_" + str(count)
+                        parent_state=self.temporary_link_to_parent[sdfg.name]
+                        for edge in parent_state.parent_graph.in_edges(parent_state):
                             assign = ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping,
                                                                placeholders=self.placeholders,
                                                                placeholders_offsets=self.placeholders_offsets,
