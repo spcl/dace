@@ -56,7 +56,10 @@ end subroutine main
     sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
-    sdfg(d=a)
+    sdfg(d=a,__f2dace_A_test_d_0_s_6=3,__f2dace_A_test_d_1_s_7=3,__f2dace_A_test_d_2_s_8=3,
+         __f2dace_OA_test_d_0_s_6=1,__f2dace_OA_test_d_1_s_7=1,__f2dace_OA_test_d_2_s_8=1,
+         __f2dace_A_indices_d_0_s_9=3,__f2dace_A_indices_d_1_s_10=3,__f2dace_A_indices_d_2_s_11=3,
+         __f2dace_OA_indices_d_0_s_9=1,__f2dace_OA_indices_d_1_s_10=1,__f2dace_OA_indices_d_2_s_11=1)
     assert (a[0] == 42)
     assert (a[1] == 5.5)
     assert (a[2] == 42)
@@ -64,5 +67,5 @@ end subroutine main
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_nested_array_access()
+    #test_fortran_frontend_nested_array_access()
     test_fortran_frontend_nested_array_access2()
