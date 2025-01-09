@@ -33,7 +33,8 @@ from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES,
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
     deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
     inject_const_evals, \
-    remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES, ConstTypeInjection, ConstInstanceInjection
+    remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES, ConstTypeInjection, ConstInjection, \
+    make_practically_constant_arguments_constants
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -247,7 +248,7 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
 
 
 class AST_translator:
-    """  
+    """
     This class is responsible for translating the internal AST into a SDFG.
     """
 
@@ -326,7 +327,7 @@ class AST_translator:
         }
 
     def get_dace_type(self, type):
-        """  
+        """
         This function matches the fortran type to the corresponding dace type
         by referencing the ast_utils.fortrantypes2dacetypes dictionary.
         """
@@ -355,7 +356,7 @@ class AST_translator:
 
     def get_arrays_in_context(self, sdfg: SDFG):
         """
-        This function returns a copy of the union of arrays 
+        This function returns a copy of the union of arrays
         for the given sdfg and the top-level sdfg.
         """
         a = self.globalsdfg.arrays.copy()
@@ -506,8 +507,6 @@ class AST_translator:
         self.translate(self.startpoint.execution_part.execution, sdfg)
         sdfg.validate()
 
-
-
     def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG):
         """
         This function is responsible for translating Fortran pointer assignments into a SDFG.
@@ -640,7 +639,6 @@ class AST_translator:
 
         for i in node.execution:
             self.translate(i, sdfg)
-            
 
     def allocate2sdfg(self, node: ast_internal_classes.Allocate_Stmt_Node, sdfg: SDFG):
         """
@@ -1527,18 +1525,22 @@ class AST_translator:
                                     else:
                                         start = i.range[0]
                                         stop = i.range[1]
-                                        text_start = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
-                                                                                 placeholders=self.placeholders,
-                                                                                 placeholders_offsets=self.placeholders_offsets,
-                                                                                 rename_dict=self.replace_names).write_code(start)
-                                        text_stop = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
-                                                                                placeholders=self.placeholders,
-                                                                                placeholders_offsets=self.placeholders_offsets,
-                                                                                rename_dict=self.replace_names).write_code(stop)
-                                        shape.append(sym.pystr_to_symbolic("( "+ text_stop + ") - ( "+ text_start + ") "))
-                                        mysize=mysize*sym.pystr_to_symbolic("( "+ text_stop + ") - ( "+ text_start + ") ")
+                                        text_start = ast_utils.ProcessedWriter(
+                                            sdfg, self.name_mapping,
+                                            placeholders=self.placeholders,
+                                            placeholders_offsets=self.placeholders_offsets,
+                                            rename_dict=self.replace_names).write_code(start)
+                                        text_stop = ast_utils.ProcessedWriter(
+                                            sdfg, self.name_mapping,
+                                            placeholders=self.placeholders,
+                                            placeholders_offsets=self.placeholders_offsets,
+                                            rename_dict=self.replace_names).write_code(stop)
+                                        shape.append(
+                                            sym.pystr_to_symbolic("( " + text_stop + ") - ( " + text_start + ") "))
+                                        mysize = mysize * sym.pystr_to_symbolic(
+                                            "( " + text_stop + ") - ( " + text_start + ") ")
                                         index_list.append(None)
-                                        needs_extra_view=True
+                                        needs_extra_view = True
                                         # raise NotImplementedError("Index in ParDecl should be ALL")
                                 else:
                                     text = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
@@ -1650,19 +1652,20 @@ class AST_translator:
                                     offsets_zero = []
                                     for index in offsets:
                                         offsets_zero.append(0)
-                                    
+
                                     viewname, view = sdfg.add_view(last_view_name + "_view_" + str(self.views),
-                                                                shape,
-                                                                array.dtype,
-                                                                storage=array.storage,
-                                                                strides=strides,
-                                                                offset=offsets_zero)
+                                                                   shape,
+                                                                   array.dtype,
+                                                                   storage=array.storage,
+                                                                   strides=strides,
+                                                                   offset=offsets_zero)
                                     from dace import subsets
 
                                     all_indices = [None] * (len(array.shape) - len(index_list)) + index_list
                                     if self.normalize_offsets:
-                                        subset = subsets.Range([(i[0] - 1, i[1] - 1, 1) if i is not None else (0, s - 1, 1)
-                                                                for i, s in zip(all_indices, array.shape)])
+                                        subset = subsets.Range(
+                                            [(i[0] - 1, i[1] - 1, 1) if i is not None else (0, s - 1, 1)
+                                             for i, s in zip(all_indices, array.shape)])
                                     else:
                                         subset = subsets.Range([(i[0], i[1], 1) if i is not None else (1, s, 1)
                                                                 for i, s in zip(all_indices, array.shape)])
@@ -1683,7 +1686,6 @@ class AST_translator:
                                         if not already_there_1:
                                             re = substate.add_read(last_view_name)
 
-                                        
                                         wv = substate.add_write(viewname)
                                         substate.add_edge(re, None, wv, 'views', dpcp(memlet))
                                     if local_name.name in write_names:
@@ -1695,7 +1697,7 @@ class AST_translator:
                                         if not already_there_3:
                                             wr = substate.add_write(last_view_name)
                                         rv = substate.add_read(viewname)
-                                        
+
                                         substate.add_edge(rv, 'views', wr, None, dpcp(memlet2))
 
                                     self.views = self.views + 1
@@ -1793,8 +1795,8 @@ class AST_translator:
                                                             for i, s in zip(all_indices, array.shape)])
                                 smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
 
-                                #memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
-                                #memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
+                                # memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
+                                # memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
                                 memlet = Memlet(f'{array_name}[{subset}]')
                                 memlet2 = Memlet(f'{array_name}[{subset}]')
                                 wv = None
@@ -1848,7 +1850,7 @@ class AST_translator:
                                                offset=array.offset)
 
         # Preparing symbol dictionary for nested sdfg
-        
+
         for i in sdfg.symbols:
             sym_dict[i] = i
 
@@ -1882,7 +1884,7 @@ class AST_translator:
                     namefinder.visit(i)
                 names_list = namefinder.names
         # This handles the case where the function is called with read variables found in a module
-        cached_names=[a[0] for a in self.module_vars]
+        cached_names = [a[0] for a in self.module_vars]
         for i in not_found_read_names:
             if i in names_list:
                 continue
@@ -2019,26 +2021,24 @@ class AST_translator:
                     for j in node.specification_part.specifications:
                         self.declstmt2sdfg(j, new_sdfg)
                     self.transient_mode = old_mode
-                
 
-                
                 for i in new_sdfg.symbols:
                     if i in new_sdfg.arrays:
                         new_sdfg.arrays.pop(i)
                         if i in ins_in_new_sdfg:
                             for var in variables_in_call:
-                                if i==ast_utils.get_name(parameters[variables_in_call.index(var)]):
-                                    sym_dict[i]=ast_utils.get_name(var)
-                                    memlet_skip.append(ast_utils.get_name(var))        
+                                if i == ast_utils.get_name(parameters[variables_in_call.index(var)]):
+                                    sym_dict[i] = ast_utils.get_name(var)
+                                    memlet_skip.append(ast_utils.get_name(var))
                             ins_in_new_sdfg.remove(i)
-                            
+
                         if i in outs_in_new_sdfg:
                             outs_in_new_sdfg.remove(i)
                             for var in variables_in_call:
-                                if i==ast_utils.get_name(parameters[variables_in_call.index(var)]):
-                                    sym_dict[i]=ast_utils.get_name(var)
-                                    memlet_skip.append(ast_utils.get_name(var))      
-                            
+                                if i == ast_utils.get_name(parameters[variables_in_call.index(var)]):
+                                    sym_dict[i] = ast_utils.get_name(var)
+                                    memlet_skip.append(ast_utils.get_name(var))
+
             internal_sdfg = substate.add_nested_sdfg(new_sdfg,
                                                      sdfg,
                                                      ins_in_new_sdfg,
@@ -2094,35 +2094,34 @@ class AST_translator:
             for elem in views:
                 if mapped_name == elem[0] and elem[3] == variables_in_call.index(i):
                     found = True
-                    recursive_view_check_done=False
+                    recursive_view_check_done = False
                     while not recursive_view_check_done:
-                        recursive_view_check_done=True
+                        recursive_view_check_done = True
                         for elem2 in views:
                             if elem!=elem2 and elem[1].label == elem2[0] and elem2[3] == variables_in_call.index(i):
                                 recursive_view_check_done=False
                                 elem = elem2
-                                
-                    #check variable type, if data ref, check lowest level array indices.
+
+                    # check variable type, if data ref, check lowest level array indices.
                     tmp_var = i
                     was_data_ref = False
                     while isinstance(tmp_var, ast_internal_classes.Data_Ref_Node):
                         was_data_ref = True
                         tmp_var = tmp_var.part_ref
 
-                    memlet = ast_utils.generate_memlet_view(tmp_var, sdfg, self, self.normalize_offsets,mapped_name,elem[1].label,was_data_ref )
+                    memlet = ast_utils.generate_memlet_view(
+                        tmp_var, sdfg, self, self.normalize_offsets, mapped_name, elem[1].label, was_data_ref)
 
                     if local_name.name in write_names:
-                        #memlet = subs.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[2].label].shape])
-                        substate.add_memlet_path(internal_sdfg,
-                                                 elem[2],
-                                                 src_conn=self.name_mapping[new_sdfg][local_name.name],
-                                                 memlet=Memlet(expr=elem[2].label, subset=memlet))
+                        # memlet = subs.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[2].label].shape])
+                        substate.add_memlet_path(
+                            internal_sdfg, elem[2], src_conn=self.name_mapping[new_sdfg][local_name.name],
+                            memlet=Memlet(expr=elem[2].label, subset=memlet))
                     if local_name.name in read_names:
-                        #memlet = subs.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[1].label].shape])
-                        substate.add_memlet_path(elem[1],
-                                                 internal_sdfg,
-                                                 dst_conn=self.name_mapping[new_sdfg][local_name.name],
-                                                 memlet=Memlet(expr=elem[1].label, subset=memlet))
+                        # memlet = subs.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[1].label].shape])
+                        substate.add_memlet_path(
+                            elem[1], internal_sdfg, dst_conn=self.name_mapping[new_sdfg][local_name.name],
+                            memlet=Memlet(expr=elem[1].label, subset=memlet))
                     if found:
                         break
 
@@ -2193,26 +2192,24 @@ class AST_translator:
                     parent_sdfg = parent_sdfg.parent_sdfg
 
         if self.multiple_sdfgs == False:
-            
 
-
-                for i in assigns:
-                    self.translate(i, new_sdfg)
-                self.translate(node.execution_part, new_sdfg)
-                #import copy
-                #
-                new_sdfg.validate()
-                new_sdfg.apply_transformations(IntrinsicSDFGTransformation)
-                from dace.transformation.dataflow import RemoveSliceView
-                new_sdfg.apply_transformations_repeated([RemoveSliceView])
-                from dace.transformation.passes.lift_struct_views import LiftStructViews
-                from dace.transformation.pass_pipeline import FixedPointPipeline
-                FixedPointPipeline([LiftStructViews()]).apply_pass(new_sdfg, {})
-                new_sdfg.validate()
-                #tmp_sdfg=copy.deepcopy(new_sdfg)
-                new_sdfg.simplify()
-                new_sdfg.validate()
-                sdfg.validate()
+            for i in assigns:
+                self.translate(i, new_sdfg)
+            self.translate(node.execution_part, new_sdfg)
+            # import copy
+            #
+            new_sdfg.validate()
+            new_sdfg.apply_transformations(IntrinsicSDFGTransformation)
+            from dace.transformation.dataflow import RemoveSliceView
+            new_sdfg.apply_transformations_repeated([RemoveSliceView])
+            from dace.transformation.passes.lift_struct_views import LiftStructViews
+            from dace.transformation.pass_pipeline import FixedPointPipeline
+            FixedPointPipeline([LiftStructViews()]).apply_pass(new_sdfg, {})
+            new_sdfg.validate()
+            # tmp_sdfg=copy.deepcopy(new_sdfg)
+            new_sdfg.simplify()
+            new_sdfg.validate()
+            sdfg.validate()
 
         if self.multiple_sdfgs == True:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
@@ -2670,13 +2667,16 @@ class AST_translator:
 
         if hasattr(node, "init") and node.init is not None:
             if isinstance(node.init, ast_internal_classes.Array_Constructor_Node):
-                new_exec = ast_transforms.ReplaceArrayConstructor().visit(ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
-                                                op="=", rval=node.init, line_number=node.line_number, parent=node.parent,type=node.type))
+                new_exec = ast_transforms.ReplaceArrayConstructor().visit(
+                    ast_internal_classes.BinOp_Node(
+                        lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
+                        op="=", rval=node.init, line_number=node.line_number, parent=node.parent, type=node.type))
                 self.translate(new_exec, sdfg)
             else:
                 self.translate(
-                    ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
-                                                op="=", rval=node.init, line_number=node.line_number,parent=node.parent,type=node.type), sdfg)
+                    ast_internal_classes.BinOp_Node(
+                        lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
+                        op="=", rval=node.init, line_number=node.line_number, parent=node.parent, type=node.type), sdfg)
 
     def break2sdfg(self, node: ast_internal_classes.Break_Node, sdfg: SDFG):
 
@@ -2743,7 +2743,6 @@ def create_ast_from_string(
 
         program = ast_transforms.ForDeclarer().visit(program)
         program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
-
         program = ast_transforms.optionalArgsExpander(program)
 
     return program, own_ast
@@ -2755,7 +2754,7 @@ class ParseConfig:
                  sources: Union[None, List[Path], Dict[str, str]] = None,
                  includes: Union[None, List[Path], Dict[str, str]] = None,
                  entry_points: Union[None, SPEC, List[SPEC]] = None,
-                 config_injections: Optional[List[Union[ConstTypeInjection, ConstInstanceInjection]]] = None):
+                 config_injections: Optional[List[ConstInjection]] = None):
         # Make the configs canonical, by processing the various types upfront.
         if isinstance(main, Path):
             main = main.read_text()
@@ -2775,7 +2774,7 @@ class ParseConfig:
         self.sources = sources
         self.includes = includes
         self.entry_points = entry_points
-        self.config_injections = config_injections
+        self.config_injections = config_injections or []
 
 
 def create_fparser_ast(cfg: ParseConfig) -> Program:
@@ -2819,12 +2818,14 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
 class SDFGConfig:
     def __init__(self,
                  entry_points: Dict[str, Union[str, List[str]]],
+                 config_injections: Optional[List[ConstTypeInjection]] = None,
                  normalize_offsets: bool = True,
                  multiple_sdfgs: bool = False):
         for k in entry_points:
             if isinstance(entry_points[k], str):
                 entry_points[k] = [entry_points[k]]
         self.entry_points = entry_points
+        self.config_injections = config_injections or []
         self.normalize_offsets = normalize_offsets
         self.multiple_sdfgs = multiple_sdfgs
 
@@ -2834,8 +2835,9 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     functions_and_subroutines_builder.visit(program)
 
     program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
+    program = ast_transforms.StructConstructorToFunctionCall(
+        ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
+    program = ast_transforms.CallToArray(ast_transforms.FindFunctionAndSubroutines.from_node(program)).visit(program)
     program = ast_transforms.IfConditionExtractor().visit(program)
     program = ast_transforms.CallExtractor().visit(program)
 
@@ -2846,7 +2848,6 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
         ast_transforms.FindFunctionAndSubroutines.from_node(program).names,
         ast = program
     ).visit(program)
-
     for i in program.modules:
         count = 0
         for j in i.function_definitions:
@@ -2866,6 +2867,8 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
         raise NameError("Not all functions were transformed to subroutines")
     program.function_definitions = []
     program = ast_transforms.SignToIf().visit(program)
+    program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
+
     program = ast_transforms.ArgumentExtractor(program).visit(program)
 
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
@@ -2890,6 +2893,9 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
                 # FIXME: optimize func
                 program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
+    array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
+    array_dims_info.visit(program)
+    program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
 
     program = ast_transforms.ArrayToLoop(program).visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
@@ -2897,6 +2903,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
     program = ast_transforms.allocatableReplacer(program)
+    program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
 
     structs_lister = ast_transforms.StructLister()
     structs_lister.visit(program)
@@ -3180,7 +3187,8 @@ def collect_floating_subprograms(ast: Program, source_list: Dict[str, str], incl
     return ast
 
 
-def name_and_rename_dict_creator(parse_order: list,dep_graph:nx.DiGraph)->Tuple[Dict[str, List[str]], Dict[str, Dict[str, str]]]:
+def name_and_rename_dict_creator(parse_order: list, dep_graph: nx.DiGraph) \
+        -> Tuple[Dict[str, List[str]], Dict[str, Dict[str, str]]]:
     name_dict = {}
     rename_dict = {}
     for i in parse_order:
@@ -3222,7 +3230,8 @@ def create_sdfg_from_fortran_file_with_options(
         enum_propagator_files: Optional[List[str]] = None,
         enum_propagator_ast=None,
         used_functions_config: Optional[FindUsedFunctionsConfig] = None,
-        already_parsed_ast=False
+        already_parsed_ast=False,
+        config_injections: Optional[List[ConstTypeInjection]] = None,
 ):
     """
     Creates an SDFG from a fortran file
@@ -3238,11 +3247,19 @@ def create_sdfg_from_fortran_file_with_options(
         ast = correct_for_function_calls(ast)
         ast = deconstruct_procedure_calls(ast)
         ast = deconstruct_interface_calls(ast)
+
+        # Prune things once.
         ast = const_eval_nodes(ast)
         ast = prune_branches(ast)
         ast = prune_unused_objects(ast, cfg.entry_points)
-        #ast = assign_globally_unique_subprogram_names(ast, {('radiation_interface', 'radiation')})
-        #ast = assign_globally_unique_variable_names(ast, {'config','thermodynamics','flux','gas','cloud','aerosol','single_level'})
+        # Another round of pruning after fixing the practically constant arguments, just in case.
+        ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
+        ast = const_eval_nodes(ast)
+        ast = prune_branches(ast)
+        ast = prune_unused_objects(ast, cfg.entry_points)
+
+        # ast = assign_globally_unique_subprogram_names(ast, {('radiation_interface', 'radiation')})
+        # ast = assign_globally_unique_variable_names(ast, {'config','thermodynamics','flux','gas','cloud','aerosol','single_level'})
         ast = consolidate_uses(ast)
     else:
         ast = correct_for_function_calls(ast)
@@ -3470,7 +3487,8 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
-    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names,ast=program).visit(program)
+    program = ast_transforms.ElementalFunctionExpander(
+        functions_and_subroutines_builder.names, ast=program).visit(program)
     # print("Before intrinsics")
     # for transformation in partial_ast.fortran_intrinsics().transformations():
     #     transformation.initialize(program)
@@ -3479,6 +3497,11 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
+
+    array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
+    array_dims_info.visit(program)
+    program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
+
     structs_lister = ast_transforms.StructLister()
     structs_lister.visit(program)
     struct_dep_graph = nx.DiGraph()
@@ -3568,9 +3591,9 @@ def create_sdfg_from_fortran_file_with_options(
     for j in program.subroutine_definitions:
 
         if subroutine_name is not None:
-            if not subroutine_name+"_decon" in j.name.name :
-                    print("Skipping 1 ", j.name.name)
-                    continue
+            if not subroutine_name + "_decon" in j.name.name:
+                print("Skipping 1 ", j.name.name)
+                continue
 
         if j.execution_part is None:
             continue
@@ -3623,20 +3646,20 @@ def create_sdfg_from_fortran_file_with_options(
         for j in i.subroutine_definitions:
 
             if subroutine_name is not None:
-                #special for radiation
-                #if j.name.name!='cloud_generator_2139':
-                #if j.name.name!='solver_mcica_lw_3321':
+                # special for radiation
+                # if j.name.name!='cloud_generator_2139':
+                # if j.name.name!='solver_mcica_lw_3321':
                 # if "gas_optics_3057" not in j.name.name:
                 #     print("Skipping 2 ", j.name.name)
                 #     continue
-                    
+
                 #   continue
-                if subroutine_name=='radiation':
-                    if not 'radiation' == j.name.name :
+                if subroutine_name == 'radiation':
+                    if not 'radiation' == j.name.name:
                         print("Skipping ", j.name.name)
                         continue
 
-                #elif not subroutine_name in j.name.name :
+                # elif not subroutine_name in j.name.name :
                 #    print("Skipping ", j.name.name)
                 #    continue
 
@@ -3666,7 +3689,7 @@ def create_sdfg_from_fortran_file_with_options(
             sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
             sdfg.validate()
             sdfg.apply_transformations(IntrinsicSDFGTransformation)
-            sdfg.validate() 
+            sdfg.validate()
             try:
                 sdfg.expand_library_nodes()
             except:

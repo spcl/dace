@@ -242,5 +242,6 @@ if __name__ == "__main__":
         #enum_propagator_ast=radiation_config_ast,
         #enum_propagator_files=enum_propagator_files,
         used_functions_config=cfg,
-        already_parsed_ast=already_parsed_ast_bool
+        already_parsed_ast=already_parsed_ast_bool,
+        config_injections=config_injection_list('conf_files')
     )

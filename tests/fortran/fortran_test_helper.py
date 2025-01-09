@@ -7,6 +7,7 @@ from typing import Dict, Optional, Tuple, Type, Union, List, Sequence, Collectio
 
 from fparser.two.Fortran2003 import Name
 
+from dace.frontend.fortran.ast_desugaring import ConstTypeInjection, ConstInstanceInjection
 from dace.frontend.fortran.ast_internal_classes import Name_Node
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, SDFGConfig, \
     create_sdfg_from_internal_ast
@@ -274,4 +275,3 @@ class InternalASTMatcher:
     @classmethod
     def NAMED(cls, name: str):
         return cls(Name_Node, {'name': cls(has_value=name)})
-
