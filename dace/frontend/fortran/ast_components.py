@@ -1355,6 +1355,7 @@ class InternalFortranAst:
                         ast_internal_classes.Symbol_Decl_Node(name=actual_name.name,
                                                               type=testtype,
                                                               sizes=None,
+                                                              offsets=None,
                                                               alloc=alloc,
                                                               init=init,
                                                               optional=optional))

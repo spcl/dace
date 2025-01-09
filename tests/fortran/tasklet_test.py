@@ -30,8 +30,7 @@ def test_fortran_frontend_tasklet():
                     END SUBROUTINE tasklet_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "tasklet", normalize_offsets=True)
-    sdfg.view()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "tasklet_test", normalize_offsets=True)
     sdfg.simplify(verbose=True)
     
     sdfg.compile()

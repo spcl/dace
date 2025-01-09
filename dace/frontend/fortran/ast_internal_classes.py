@@ -397,6 +397,7 @@ class Symbol_Decl_Node(Statement_Node):
         'sizes',
         'typeref',
         'init',
+        'offsets',
     )
 
 
@@ -535,8 +536,8 @@ class Call_Expr_Node(FNode):
         self.subroutine = subroutine
         self.type = type
 
-    _attributes = ('type', 'subroutine')
-    _fields = ('name', 'args')
+    _attributes = ('type', 'subroutine',)
+    _fields = ('name', 'args',)
 
 
 class Derived_Type_Stmt_Node(FNode):
@@ -554,7 +555,7 @@ class Derived_Type_Def_Node(FNode):
         self.procedure_part = procedure_part
 
     _attributes = ('name',)
-    _fields = ('component_part', 'procedure_part')
+    _fields = ('component_part', 'procedure_part',)
 
 
 class Component_Part_Node(FNode):

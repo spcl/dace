@@ -43,7 +43,7 @@ def test_fortran_struct():
                     END SUBROUTINE struct_test_range2_test_function
                     """
     sources={}
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "res", False, sources=sources)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "struct_test_range_test", False, sources=sources)
     sdfg.save('before.sdfg')
     sdfg.simplify(verbose=True)
     sdfg.save('after.sdfg')
@@ -98,7 +98,7 @@ def test_fortran_struct_lhs():
                     END SUBROUTINE struct_test_range2_test_function
                     """
     sources={}
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "res", False, sources=sources)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "struct_test_range_test", False, sources=sources)
     sdfg.save('before.sdfg')
     sdfg.simplify(verbose=True)
     sdfg.save('after.sdfg')

@@ -16,45 +16,41 @@ import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
-
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 from dace.transformation.passes.lift_struct_views import LiftStructViews
 from dace.transformation import pass_pipeline as ppl
-
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 def test_fortran_frontend_cond_type():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
     """
-    test_string = """
-        PROGRAM type_test
-            implicit none
-
-            TYPE simple_type
-                REAL :: w(5,5,5), z(5)
-                INTEGER :: id
-                REAL :: name
-            END TYPE simple_type
-
-            REAL :: d(5,5)
-            CALL cond_type_test_function(d)
-        end
-
-        SUBROUTINE cond_type_test_function(d)
-            REAL d(5,5)
-            TYPE(simple_type) :: ptr_patch
-            LOGICAL :: bla=.TRUE.
-            ptr_patch%w(1,1,1) = 5.5
-            ptr_patch%id = 6
-            if (ptr_patch%id .GT. 5) then
-            d(2,1) = 5.5 + ptr_patch%w(1,1,1)
-            else
-            d(2,1) = 12
-            endif
-        END SUBROUTINE cond_type_test_function
-    """
-    sources={}
-    sources["type_test"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_test",sources=sources)
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  type simple_type
+    real :: w(5, 5, 5), z(5)
+    integer :: id
+    real :: name
+  end type simple_type
+end module lib
+""").add_file("""
+subroutine main(d)
+  use lib
+  implicit none
+  real d(5, 5)
+  type(simple_type) :: ptr_patch
+  logical :: bla = .true.
+  ptr_patch%w(1, 1, 1) = 5.5
+  ptr_patch%id = 6
+  if (ptr_patch%id .gt. 5) then
+    d(2, 1) = 5.5 + ptr_patch%w(1, 1, 1)
+  else
+    d(2, 1) = 12
+  end if
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)

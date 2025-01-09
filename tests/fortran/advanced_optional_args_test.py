@@ -75,7 +75,7 @@ END SUBROUTINE get_indices_c
                     """
     sources={}
     sources["adv_intrinsic_optional_test_function"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_optional_test_function", True,sources=sources)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_optional_test", True,sources=sources)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 

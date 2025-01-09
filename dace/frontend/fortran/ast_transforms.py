@@ -2,7 +2,7 @@
 
 import copy
 import re
-from typing import Dict, List, Optional, Tuple, Set, Union
+from typing import Dict, List, Optional, Tuple, Set, Union, Type
 
 import sympy as sp
 
@@ -63,6 +63,8 @@ class Structures:
         cur_node = top_ref
 
         while True:
+
+            prev_node = cur_node
             cur_node = cur_node.part_ref
 
             if isinstance(cur_node, ast_internal_classes.Array_Subscript_Node):
@@ -79,18 +81,18 @@ class Structures:
             if isinstance(cur_node.parent_ref.name, ast_internal_classes.Name_Node):
 
                 if variable_name is not None and cur_node.parent_ref.name.name == variable_name.name:
-                    return struct_def, struct_def.vars[cur_node.parent_ref.name.name]
+                    return struct_def, struct_def.vars[cur_node.parent_ref.name.name], prev_node
 
                 struct_type = struct_def.vars[cur_node.parent_ref.name.name].type
             else:
 
                 if variable_name is not None and cur_node.parent_ref.name == variable_name.name:
-                    return struct_def, struct_def.vars[cur_node.parent_ref.name]
+                    return struct_def, struct_def.vars[cur_node.parent_ref.name], prev_node
 
                 struct_type = struct_def.vars[cur_node.parent_ref.name].type
             struct_def = self.structures[struct_type]
 
-        return struct_def, cur_var
+        return struct_def, cur_var, prev_node
 
 
 def iter_fields(node: ast_internal_classes.FNode):
@@ -864,7 +866,7 @@ class ArgumentExtractor(NodeTransformer):
                 for i in reversed(range(0, len(res))):
 
                     if isinstance(res[i], ast_internal_classes.Data_Ref_Node):
-                        struct_def, cur_var = self.program.structures.find_definition(self.scope_vars, res[i])
+                        struct_def, cur_var, _ = self.program.structures.find_definition(self.scope_vars, res[i])
 
                         var_type = cur_var.type
                     else:
@@ -874,7 +876,7 @@ class ArgumentExtractor(NodeTransformer):
                         ast_internal_classes.Decl_Stmt_Node(vardecl=[
                             ast_internal_classes.Var_Decl_Node(
                                 name="tmp_arg_" + str(temp),
-                                type=var_type,
+                                type='VOID',
                                 sizes=None,
                                 init=None,
                             )
@@ -1405,7 +1407,6 @@ class IndexExtractorNodeLister(NodeVisitor):
             self.current_parent = node
             set_node = True
 
-        self.visit(node.parent_ref)
         self.visit(node.part_ref)
 
         if set_node:
@@ -1509,7 +1510,7 @@ class IndexExtractor(NodeTransformer):
                                     var_name = j.name
                                     variable = self.scope_vars.get_var(child.parent, var_name)
                                 elif parent_node is not None:
-                                    struct, variable = self.structures.find_definition(
+                                    struct, variable, _ = self.structures.find_definition(
                                         self.scope_vars, parent_node, j.name
                                     )
                                     var_name = j.name.name
@@ -2106,47 +2107,6 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
     return node
 
 
-class ArrayLoopNodeLister(NodeVisitor):
-    """
-    Finds all array operations that have to be transformed to loops in the AST
-    """
-
-    def __init__(self, scope_vars):
-        self.nodes: List[ast_internal_classes.FNode] = []
-        self.range_nodes: List[ast_internal_classes.FNode] = []
-
-        self.scope_vars = scope_vars
-
-    def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
-        rval_pardecls = [i for i in mywalk(node.rval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
-        lval_pardecls = [i for i in mywalk(node.lval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
-
-        if not lval_pardecls:
-
-            # Handle edge case - the left hand side is an array
-            # But we don't have a pardecl
-            if isinstance(node.lval, ast_internal_classes.Name_Node):
-
-                var = self.scope_vars.get_var(node.lval.parent, node.lval.name)
-                if var.sizes is None:
-                    return
-
-                node.lval = ast_internal_classes.Array_Subscript_Node(
-                    name=node.lval, parent=node.parent, type=var.type,
-                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
-                )
-
-            else:
-                return
-
-        if rval_pardecls:
-            self.range_nodes.append(node)
-        self.nodes.append(node)
-
-    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
-        return
-
-
 def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           ranges: list,
                           rangeslen: list,
@@ -2394,118 +2354,6 @@ class ReplaceArrayConstructor(NodeTransformer):
                     typ=node.type))
             return ast_internal_classes.Execution_Part_Node(execution=assigns)
         return self.generic_visit(node)
-
-
-class ArrayToLoop(NodeTransformer):
-    """
-    Transforms the AST by removing array expressions and replacing them with loops
-    """
-
-    def __init__(self, ast):
-        self.count = 0
-
-        self.ast = ast
-        ParentScopeAssigner().visit(ast)
-        self.scope_vars = ScopeVarsDeclarations(ast)
-        self.scope_vars.visit(ast)
-
-    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
-        newbody = []
-        for child in node.execution:
-            lister = ArrayLoopNodeLister(self.scope_vars)
-            lister.visit(child)
-            res = lister.nodes
-            res_range = lister.range_nodes
-
-            # Transpose breaks Array to loop transformation, and fixing it is not trivial - and will likely not involve array to loop at all.
-            calls = [i for i in mywalk(child) if isinstance(i, ast_internal_classes.Call_Expr_Node)]
-            skip_because_of_transpose = False
-            for i in calls:
-                if "__dace_transpose" in i.name.name.lower():
-                    skip_because_of_transpose = True
-            if skip_because_of_transpose:
-                newbody.append(child)
-                continue
-            try:
-                if res is not None and len(res) > 0:
-
-                    current = child.lval
-                    ranges = []
-                    par_Decl_Range_Finder(current, ranges, [], self.count, newbody, self.scope_vars,
-                                          self.ast.structures, True)
-
-                    # if res_range is not None and len(res_range) > 0:
-
-                    # catch cases where an array is used as name, without range expression
-                    visitor = ReplaceImplicitParDecls(self.scope_vars)
-                    child.rval = visitor.visit(child.rval)
-
-                    rvals = [i for i in mywalk(child.rval) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
-                    for i in rvals:
-                        rangesrval = []
-
-                        par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars,
-                                              self.ast.structures, False, ranges)
-                        for i, j in zip(ranges, rangesrval):
-                            if i != j:
-                                if isinstance(i, list) and isinstance(j, list) and len(i) == len(j):
-                                    for k, l in zip(i, j):
-                                        if k != l:
-                                            if isinstance(k, ast_internal_classes.Name_Range_Node) and isinstance(
-                                                    l, ast_internal_classes.Name_Range_Node):
-                                                if k.name != l.name:
-                                                    raise NotImplementedError("Ranges must be the same")
-                                            else:
-                                                # this is not actually illegal.
-                                                # raise NotImplementedError("Ranges must be the same")
-                                                continue
-                                else:
-                                    raise NotImplementedError("Ranges must be identical")
-
-                    range_index = 0
-                    body = ast_internal_classes.BinOp_Node(lval=current, op="=", rval=child.rval,
-                                                           line_number=child.line_number, parent=child.parent)
-
-                    for i in ranges:
-                        initrange = i[0]
-                        finalrange = i[1]
-                        init = ast_internal_classes.BinOp_Node(
-                            lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                            op="=",
-                            rval=initrange,
-                            line_number=child.line_number, parent=child.parent)
-                        cond = ast_internal_classes.BinOp_Node(
-                            lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                            op="<=",
-                            rval=finalrange,
-                            line_number=child.line_number, parent=child.parent)
-                        iter = ast_internal_classes.BinOp_Node(
-                            lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                            op="=",
-                            rval=ast_internal_classes.BinOp_Node(
-                                lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                                op="+",
-                                rval=ast_internal_classes.Int_Literal_Node(value="1"), parent=child.parent),
-                            line_number=child.line_number, parent=child.parent)
-                        current_for = ast_internal_classes.Map_Stmt_Node(
-                            init=init,
-                            cond=cond,
-                            iter=iter,
-                            body=ast_internal_classes.Execution_Part_Node(execution=[body]),
-                            line_number=child.line_number, parent=child.parent)
-                        body = current_for
-                        range_index += 1
-
-                    newbody.append(body)
-
-                    self.count = self.count + range_index
-                else:
-                    newbody.append(self.visit(child))
-            except Exception as e:
-                print("Error in ArrayToLoop, exception caught at line: " + str(child.line_number))
-                newbody.append(child)
-        return ast_internal_classes.Execution_Part_Node(execution=newbody)
-
 
 def mywalk(node):
     """
@@ -2778,12 +2626,18 @@ class TypeInference(NodeTransformer):
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
 
-        if not hasattr(node, 'type') or node.type == 'VOID' or not hasattr(node, 'dims'):
+        if not hasattr(node, 'type') or node.type == 'VOID' or not hasattr(node, 'sizes'):
             try:
                 var_def = self.scope_vars.get_var(node.parent, node.name)
-                if var_def.type != 'VOID':
-                    node.type = var_def.type
-                node.dims = len(var_def.sizes) if hasattr(var_def, 'sizes') and var_def.sizes is not None else 1
+
+                node.type = var_def.type
+                node.sizes = var_def.sizes
+                node.offsets = var_def.offsets
+
+                if node.sizes is None:
+                    node.sizes = []
+                    var_def.sizes = []
+
             except Exception as e:
                 print(f"Ignore type inference for {node.name}")
                 print(e)
@@ -2793,18 +2647,44 @@ class TypeInference(NodeTransformer):
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
         var_def = self.scope_vars.get_var(node.parent, node.name.name)
-        if var_def.type != 'VOID':
-            node.type = var_def.type
-        node.dims = len(var_def.sizes) if var_def.sizes is not None else 1
+        node.type = var_def.type
+
+        new_sizes = []
+        for i, idx in enumerate(node.indices):
+
+            if isinstance(idx, ast_internal_classes.ParDecl_Node):
+
+                if idx.type == 'ALL':
+                    new_sizes.append(var_def.sizes[i])
+                else:
+                    new_sizes.append(
+                        ast_internal_classes.BinOp_Node(
+                            op='+',
+                            rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                            lval=ast_internal_classes.Parenthesis_Expr_Node(
+                                expr = ast_internal_classes.BinOp_Node(
+                                    op='-',
+                                    rval=idx.range[0],
+                                    lval=idx.range[1]
+                                )
+                            ),
+                            type="INTEGER"
+                        )
+                    )
+            else:
+                new_sizes.append(ast_internal_classes.Int_Literal_Node(value="1"))
+
+        node.sizes = new_sizes
+        node.offsets = var_def.offsets
+
         return node
 
     def visit_Parenthesis_Expr_Node(self, node: ast_internal_classes.Parenthesis_Expr_Node):
 
         node.expr = self.visit(node.expr)
-        if node.expr.type != 'VOID':
-            node.type = node.expr.type
-        if hasattr(node.expr, 'dims'):
-            node.dims = node.expr.dims
+        node.type = node.expr.type
+        node.sizes = node.expr.sizes
+        node.offsets = node.expr.offsets
         return node
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
@@ -2834,17 +2714,27 @@ class TypeInference(NodeTransformer):
         #    #assert self._get_dims(node.lval) == self._get_dims(node.rval)
 
         node.type = type_hierarchy[max(idx_left, idx_right)]
-        if hasattr(node.lval, "dims"):
-            node.dims = self._get_dims(node.lval)
-        elif hasattr(node.lval, "dims"):
-            node.dims = self._get_dims(node.rval)
 
-        if node.op == '=' and idx_left == idx_void and idx_right != idx_void:
+        if node.op == '=' and isinstance(node.lval, ast_internal_classes.Name_Node) and node.lval.type == 'VOID':
+
             lval_definition = self.scope_vars.get_var(node.parent, node.lval.name)
             lval_definition.type = node.type
-            lval_definition.dims = node.dims
+
+            lval_definition.sizes = self._get_sizes(node.rval)
+            lval_definition.offsets = self._get_offsets(node.rval)
+
             node.lval.type = node.type
-            node.lval.dims = node.dims
+            node.lval.sizes = lval_definition.sizes
+            node.lval.offsets = lval_definition.offsets
+
+        else:
+
+            node.sizes = self._get_sizes(node.lval)
+            if len(node.sizes) == 0:
+                node.sizes = self._get_sizes(node.rval)
+                node.offsets = self._get_offsets(node.rval)
+            else:
+                node.offsets = self._get_offsets(node.lval)
 
         if node.type == 'VOID':
             print("Couldn't infer the type for binop!")
@@ -2853,15 +2743,25 @@ class TypeInference(NodeTransformer):
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
 
+
         if node.type != 'VOID':
             return node
 
-        struct, variable = self.structures.find_definition(
+        struct, variable, _ = self.structures.find_definition(
             self.scope_vars, node
         )
+
         if variable.type != 'VOID':
             node.type = variable.type
-        node.dims = len(variable.sizes) if variable.sizes is not None else 1
+
+        node.sizes = variable.sizes
+        node.offsets = variable.offsets
+        if node.sizes is None:
+            node.sizes = []
+            variable.sizes = []
+            node.offsets = []
+            variable.offsets = []
+
         return node
 
     def visit_Actual_Arg_Spec_Node(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
@@ -2877,13 +2777,12 @@ class TypeInference(NodeTransformer):
             func_arg = self.scope_vars.get_var(node.parent, node.arg.name)
             node.type = func_arg.type
             node.arg.type = func_arg.type
-            dims = len(func_arg.sizes) if func_arg.sizes is not None else 1
-            node.dims = dims
-            node.arg.dims = dims
+            node.sizes = self._get_sizes(func_arg)
+            node.arg.sizes = self._get_sizes(func_arg)
 
         else:
             node.type = func_arg_name_type
-            node.dims = self._get_dims(node.arg)
+            node.sizes = self._get_sizes(node.arg)
 
         return node
 
@@ -2891,6 +2790,27 @@ class TypeInference(NodeTransformer):
         node.lval = self.visit(node.lval)
         if node.lval.type != 'VOID':
             node.type = node.lval.type
+            node.sizes = self._get_sizes(node.lval)
+            node.offsets = self._get_offsets(node.lval)
+        return node
+
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        from dace.frontend.fortran.intrinsics import MathFunctions
+
+        new_args = []
+        for arg in node.args:
+            new_args.append(self.visit(arg))
+        node.args = new_args
+
+        sizes, offsets = MathFunctions.output_size(node)
+        if sizes is not None:
+            node.sizes = sizes
+            node.offsets = offsets
+        else:
+            node.sizes = None
+            node.offsets = None
+
         return node
 
     def _get_type(self, node):
@@ -2904,17 +2824,27 @@ class TypeInference(NodeTransformer):
         else:
             return node.type
 
-    def _get_dims(self, node):
+    def _get_offsets(self, node):
 
         if isinstance(node, ast_internal_classes.Int_Literal_Node):
-            return 1
+            return [1]
         elif isinstance(node, ast_internal_classes.Real_Literal_Node):
-            return 1
+            return [1]
         elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
-            return 1
+            return [1]
         else:
-            return node.dims
+            return node.offsets
 
+    def _get_sizes(self, node):
+
+        if isinstance(node, ast_internal_classes.Int_Literal_Node):
+            return []
+        elif isinstance(node, ast_internal_classes.Real_Literal_Node):
+            return []
+        elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
+            return []
+        else:
+            return node.sizes
 
 class ReplaceInterfaceBlocks(NodeTransformer):
     """
@@ -3020,7 +2950,9 @@ class PointerRemoval(NodeTransformer):
             cur_ref_node = original_ref_node
             new_ref_node = ast_internal_classes.Data_Ref_Node(
                 parent_ref=cur_ref_node.parent_ref,
-                part_ref=None
+                part_ref=None,
+                type=cur_ref_node.type,
+                line_number=cur_ref_node.line_number
             )
             newer_ref_node = new_ref_node
 
@@ -3028,7 +2960,10 @@ class PointerRemoval(NodeTransformer):
                 cur_ref_node = cur_ref_node.part_ref
                 newest_ref_node = ast_internal_classes.Data_Ref_Node(
                     parent_ref=cur_ref_node.parent_ref,
-                    part_ref=None
+                    part_ref=None,
+                    type=cur_ref_node.type,
+                    line_number=cur_ref_node.line_number
+
                 )
                 newer_ref_node.part_ref = newest_ref_node
                 newer_ref_node = newest_ref_node
@@ -3434,19 +3369,43 @@ class FindUnusedFunctions(NodeVisitor):
 
 class ReplaceImplicitParDecls(NodeTransformer):
 
-    def __init__(self, scope_vars):
+    def __init__(self, scope_vars, structures):
         self.scope_vars = scope_vars
+        self.structures = structures
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
         return node
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+
+        _, var_def, last_data_ref_node = self.structures.find_definition(self.scope_vars, node)
+
+        if var_def.sizes is None or len(var_def.sizes) == 0:
+            return node
+
+        if not isinstance(last_data_ref_node.part_ref, ast_internal_classes.Name_Node):
+            return node
+
+        last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
+            name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
+            indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes)
+        )
+
+        return node
+
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        args = []
+        for arg in node.args:
+            args.append(self.visit(arg))
+        node.args = args
+
         return node
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
 
         var = self.scope_vars.get_var(node.parent, node.name)
-        if var.sizes is not None:
+        if var.sizes is not None and len(var.sizes) > 0:
 
             indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
             return ast_internal_classes.Array_Subscript_Node(
@@ -3609,6 +3568,9 @@ class ParDeclOffsetNormalizer(NodeTransformer):
         self.scope_vars = ScopeVarsDeclarations(ast)
         self.scope_vars.visit(ast)
 
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+        return node
+
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
         array_var = self.scope_vars.get_var(node.parent, node.name.name)
@@ -3659,3 +3621,310 @@ class ParDeclOffsetNormalizer(NodeTransformer):
         )
 
         return node
+
+class ArrayLoopLister(NodeVisitor):
+
+    def __init__(self, scope_vars, structures):
+        self.nodes: List[ast_internal_classes.Array_Subscript_Node] = []
+        self.dataref_nodes: List[Tuple[ast_internal_classes.Data_Ref_Node, ast_internal_classes.Array_Subscript_Node]] = []
+
+        self.scopes_vars = scope_vars
+        self.structures = structures
+
+    def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
+        self.nodes.append(node)
+
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+
+        _, var_def, last_data_ref_node = self.structures.find_definition(self.scopes_vars, node)
+
+        if isinstance(last_data_ref_node.part_ref, ast_internal_classes.Array_Subscript_Node):
+            self.dataref_nodes.append((node, last_data_ref_node.part_ref))
+
+
+class ArrayLoopExpander(NodeTransformer):
+    """
+        Transforms the AST by removing array expressions and replacing them with loops.
+    """
+
+    @staticmethod
+    def lister_type() -> Type:
+        pass
+
+    def __init__(self, ast):
+        self.count = 0
+
+        self.ast = ast
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations(ast)
+        self.scope_vars.visit(ast)
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        newbody = []
+
+        for child_ in node.execution:
+            lister = self.lister_type()(self.scope_vars, self.ast.structures)
+            lister.visit(child_)
+            res = lister.nodes
+            res_range = lister.range_nodes
+
+            if res is None or len(res) == 0:
+                newbody.append(self.visit(child_))
+                continue
+
+            #if res is not None and len(res) > 0:
+            for child in res:
+
+                current = child.lval
+                ranges = []
+                par_Decl_Range_Finder(current, ranges, [], self.count, newbody, self.scope_vars,
+                                    self.ast.structures, True)
+
+                # if res_range is not None and len(res_range) > 0:
+
+                # catch cases where an array is used as name, without range expression
+                visitor = ReplaceImplicitParDecls(self.scope_vars, self.ast.structures)
+                child.rval = visitor.visit(child.rval)
+
+                rval_lister = ArrayLoopLister(self.scope_vars, self.ast.structures)
+                rval_lister.visit(child.rval)
+
+                #rvals = [i for i in mywalk(child.rval) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
+                for i in rval_lister.nodes:
+                    rangesrval = []
+
+                    par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars,
+                                        self.ast.structures, False, ranges)
+                    for i, j in zip(ranges, rangesrval):
+                        if i != j:
+                            if isinstance(i, list) and isinstance(j, list) and len(i) == len(j):
+                                for k, l in zip(i, j):
+                                    if k != l:
+                                        if isinstance(k, ast_internal_classes.Name_Range_Node) and isinstance(
+                                                l, ast_internal_classes.Name_Range_Node):
+                                            if k.name != l.name:
+                                                raise NotImplementedError("Ranges must be the same")
+                                        else:
+                                            # this is not actually illegal.
+                                            # raise NotImplementedError("Ranges must be the same")
+                                            continue
+                            else:
+                                raise NotImplementedError("Ranges must be identical")
+
+                for dataref in rval_lister.dataref_nodes:
+                    rangesrval = []
+
+                    i = dataref[0]
+
+                    par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars,
+                                        self.ast.structures, False, ranges)
+                    for i, j in zip(ranges, rangesrval):
+                        if i != j:
+                            if isinstance(i, list) and isinstance(j, list) and len(i) == len(j):
+                                for k, l in zip(i, j):
+                                    if k != l:
+                                        if isinstance(k, ast_internal_classes.Name_Range_Node) and isinstance(
+                                                l, ast_internal_classes.Name_Range_Node):
+                                            if k.name != l.name:
+                                                raise NotImplementedError("Ranges must be the same")
+                                        else:
+                                            # this is not actually illegal.
+                                            # raise NotImplementedError("Ranges must be the same")
+                                            continue
+                            else:
+                                raise NotImplementedError("Ranges must be identical")
+
+                range_index = 0
+                body = ast_internal_classes.BinOp_Node(lval=current, op="=", rval=child.rval,
+                                                    line_number=child.line_number,parent=child.parent)
+
+                for i in ranges:
+                    initrange = i[0]
+                    finalrange = i[1]
+                    init = ast_internal_classes.BinOp_Node(
+                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                        op="=",
+                        rval=initrange,
+                        line_number=child.line_number,parent=child.parent)
+                    cond = ast_internal_classes.BinOp_Node(
+                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                        op="<=",
+                        rval=finalrange,
+                        line_number=child.line_number,parent=child.parent)
+                    iter = ast_internal_classes.BinOp_Node(
+                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                        op="=",
+                        rval=ast_internal_classes.BinOp_Node(
+                            lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                            op="+",
+                            rval=ast_internal_classes.Int_Literal_Node(value="1"),parent=child.parent),
+                        line_number=child.line_number,parent=child.parent)
+                    current_for = ast_internal_classes.Map_Stmt_Node(
+                        init=init,
+                        cond=cond,
+                        iter=iter,
+                        body=ast_internal_classes.Execution_Part_Node(execution=[body]),
+                        line_number=child.line_number,parent=child.parent)
+                    body = current_for
+                    range_index += 1
+
+                newbody.append(body)
+
+                self.count = self.count + range_index
+            #else:
+            #    newbody.append(self.visit(child))
+        return ast_internal_classes.Execution_Part_Node(execution=newbody)
+
+class ArrayLoopNodeLister(NodeVisitor):
+    """
+    Finds all array operations that have to be transformed to loops in the AST
+    """
+
+    def __init__(self, scope_vars, structures):
+        self.nodes: List[ast_internal_classes.FNode] = []
+        self.range_nodes: List[ast_internal_classes.FNode] = []
+
+        self.scope_vars = scope_vars
+        self.structures = structures
+
+    def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
+        rval_pardecls = [i for i in mywalk(node.rval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
+        lval_pardecls = [i for i in mywalk(node.lval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
+
+        if not lval_pardecls:
+
+            # Handle edge case - the left hand side is an array
+            # But we don't have a pardecl.
+            #
+            # This means that we target a NameNode that refers to an array
+            # Same logic applies to structures
+            #
+            # BUT: we explicitly exclude patterns like arr = func()
+            if isinstance(node.lval, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node)) and not isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
+
+                if isinstance(node.lval, ast_internal_classes.Name_Node):
+
+                    var = self.scope_vars.get_var(node.lval.parent, node.lval.name)
+                    if var.sizes is None or len(var.sizes) == 0:
+                        return
+
+                    node.lval = ast_internal_classes.Array_Subscript_Node(
+                        name=node.lval, parent=node.parent, type=var.type,
+                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
+                    )
+
+                else:
+                    _, var_def, last_data_ref_node = self.structures.find_definition(self.scope_vars, node.lval)
+
+                    if var_def.sizes is None or len(var_def.sizes) == 0:
+                        return
+
+                    if not isinstance(last_data_ref_node.part_ref, ast_internal_classes.Name_Node):
+                        return
+
+                    last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
+                        name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
+                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes)
+                    )
+
+            else:
+                return
+
+        if rval_pardecls:
+            self.range_nodes.append(node)
+        self.nodes.append(node)
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        return
+
+class ArrayToLoop(ArrayLoopExpander):
+    """
+        Transforms the AST by removing expressions arr = func(input) a replacing them with loops:
+
+        for i in len(input):
+            arr(i) = func(input(i))
+    """
+
+    @staticmethod
+    def lister_type() -> Type:
+        return ArrayLoopNodeLister
+
+    def __init__(self, ast):
+        super().__init__(ast)
+
+class ElementalIntrinsicNodeLister(NodeVisitor):
+    """
+    Finds all elemental operations that have to be transformed to loops in the AST
+    """
+
+    def __init__(self, scope_vars, structures):
+        self.nodes: List[ast_internal_classes.FNode] = []
+        self.range_nodes: List[ast_internal_classes.FNode] = []
+
+        self.scope_vars = scope_vars
+        self.structures = structures
+
+        self.ELEMENTAL_INTRINSICS = set(
+            ["EXP"]
+        )
+
+    def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
+
+        lval_pardecls = [i for i in mywalk(node.lval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
+
+        # we explicitly ask look for patterns arr = func()
+        if not isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
+            return
+
+        if node.rval.name.name.split('__dace_')[1] not in self.ELEMENTAL_INTRINSICS:
+            return
+
+        if len(lval_pardecls) > 0:
+            self.nodes.append(node)
+        else:
+
+            # Handle edge case - the left hand side is an array
+            # But we don't have a pardecl
+
+            if isinstance(node.lval, ast_internal_classes.Name_Node):
+
+                var = self.scope_vars.get_var(node.lval.parent, node.lval.name)
+                if var.sizes is None or len(var.sizes) == 0:
+                    return
+
+                node.lval = ast_internal_classes.Array_Subscript_Node(
+                    name=node.lval, parent=node.parent, type=var.type,
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
+                )
+                self.nodes.append(node)
+
+            else:
+                _, var_def, last_data_ref_node = self.structures.find_definition(self.scope_vars, node.lval)
+
+                if var_def.sizes is None or len(var_def.sizes) == 0:
+                    return
+
+                if not isinstance(last_data_ref_node.part_ref, ast_internal_classes.Name_Node):
+                    return
+
+                last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
+                    name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes)
+                )
+                self.nodes.append(node)
+
+class ElementalIntrinsicExpander(ArrayLoopExpander):
+    """
+        Transforms the AST by removing expressions arr = func(input) a replacing them with loops:
+
+        for i in len(input):
+            arr(i) = func(input(i))
+    """
+
+    @staticmethod
+    def lister_type() -> Type:
+        return ElementalIntrinsicNodeLister
+
+    def __init__(self, ast):
+        super().__init__(ast)
+

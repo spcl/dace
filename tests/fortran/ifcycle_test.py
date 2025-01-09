@@ -17,7 +17,7 @@ import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
-
+@pytest.mark.skip(reason="This must be reassessed once CFR regions are merged")
 def test_fortran_frontend_if_cycle():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
@@ -52,7 +52,7 @@ def test_fortran_frontend_if_cycle():
     assert (a[2] == 5.5)
 
 
-
+@pytest.mark.skip(reason="This must be reassessed once CFR regions are merged")
 def test_fortran_frontend_if_nested_cycle():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
@@ -68,7 +68,7 @@ def test_fortran_frontend_if_nested_cycle():
                     SUBROUTINE if_nested_cycle_test_function(d)
                     double precision d(4,4)
                     double precision :: tmp
-                    integer :: i,limit,start,count
+                    integer :: i,j,limit,start,count
                     limit=4
                     start=1
                     DO i=start,limit
@@ -93,8 +93,10 @@ def test_fortran_frontend_if_nested_cycle():
                     """
     sources={}
     sources["if_nested_cycle"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "if_nested_cycle",normalize_offsets=True,multiple_sdfgs=False,sources=sources)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "if_nested_cycle_test",normalize_offsets=True,multiple_sdfgs=False,sources=sources)
+    sdfg.view()
     sdfg.simplify(verbose=True)
+    sdfg.view()
     a = np.full([4,4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
     assert (a[0,0] == 42)

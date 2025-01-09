@@ -42,6 +42,48 @@ class IntrinsicTransformation:
     def has_transformation() -> bool:
         return False
 
+class VariableProcessor:
+
+    def __init__(self, scope_vars, ast):
+        self.scope_vars = scope_vars
+        self.ast = ast
+
+    def get_var(
+        self,
+        parent: ast_internal_classes.FNode,
+        variable: Union[
+            ast_internal_classes.Data_Ref_Node, ast_internal_classes.Name_Node,
+            ast_internal_classes.Array_Subscript_Node
+        ]
+    ):
+
+        if isinstance(variable, ast_internal_classes.Data_Ref_Node):
+
+            _, var_decl, cur_val = self.ast.structures.find_definition(self.scope_vars, variable)
+            return var_decl, cur_val
+
+        assert isinstance(variable, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node))
+        if isinstance(variable, ast_internal_classes.Name_Node):
+            name = variable.name
+        elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
+            name = variable.name.name
+
+        if self.scope_vars.contains_var(parent, name):
+            return self.scope_vars.get_var(parent, name), variable
+        elif name in self.ast.module_declarations:
+            return self.ast.module_declarations[name], variable
+        else:
+            raise RuntimeError(f"Couldn't find the declaration of variable {name} in function {parent.name.name}!")
+
+    def get_var_declaration(
+        self,
+        parent: ast_internal_classes.FNode,
+        variable: Union[
+            ast_internal_classes.Data_Ref_Node, ast_internal_classes.Name_Node,
+            ast_internal_classes.Array_Subscript_Node
+        ]
+    ):
+        return self.get_var(parent, variable)[0]
 
 class IntrinsicNodeTransformer(NodeTransformer):
 
@@ -53,55 +95,17 @@ class IntrinsicNodeTransformer(NodeTransformer):
         self.scope_vars.visit(ast)
         self.ast = ast
 
-    def _parse_struct_ref(self, node: ast_internal_classes.Data_Ref_Node) -> ast_internal_classes.FNode:
+        self.var_processor = VariableProcessor(self.scope_vars, self.ast)
 
-        # we assume starting from the top (left-most) data_ref_node
-        # for struct1 % struct2 % struct3 % var
-        # we find definition of struct1, then we iterate until we find the var
-
-        struct_type = self.scope_vars.get_var(node.parent, node.parent_ref.name).type
-        struct_def = self.ast.structures.structures[struct_type]
-        cur_node = node
-
-        while True:
-            cur_node = cur_node.part_ref
-
-            if isinstance(cur_node, ast_internal_classes.Array_Subscript_Node):
-                struct_def = self.ast.structures.structures[struct_type]
-                return struct_def.vars[cur_node.name.name]
-
-            elif isinstance(cur_node, ast_internal_classes.Name_Node):
-                struct_def = self.ast.structures.structures[struct_type]
-                return struct_def.vars[cur_node.name]
-
-            elif isinstance(cur_node, ast_internal_classes.Data_Ref_Node):
-                struct_type = struct_def.vars[cur_node.parent_ref.name].type
-                struct_def = self.ast.structures.structures[struct_type]
-
-            else:
-                raise NotImplementedError()
-
-    def get_var_declaration(self,
-                            parent: ast_internal_classes.FNode,
-                            variable: Union[
-                                ast_internal_classes.Data_Ref_Node, ast_internal_classes.Name_Node,
-                                ast_internal_classes.Array_Subscript_Node]):
-        if isinstance(variable, ast_internal_classes.Data_Ref_Node):
-            variable = self._parse_struct_ref(variable)
-            return variable
-
-        assert isinstance(variable, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node))
-        if isinstance(variable, ast_internal_classes.Name_Node):
-            name = variable.name
-        elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
-            name = variable.name.name
-
-        if self.scope_vars.contains_var(parent, name):
-            return self.scope_vars.get_var(parent, name)
-        elif name in self.ast.module_declarations:
-            return self.ast.module_declarations[name]
-        else:
-            raise RuntimeError(f"Couldn't find the declaration of variable {name} in function {parent.name.name}!")
+    def get_var_declaration(
+        self,
+        parent: ast_internal_classes.FNode,
+        variable: Union[
+            ast_internal_classes.Data_Ref_Node, ast_internal_classes.Name_Node,
+            ast_internal_classes.Array_Subscript_Node
+        ]
+    ):
+        return self.var_processor.get_var_declaration(parent, variable)
 
     @staticmethod
     @abstractmethod
@@ -503,27 +507,54 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
                      ) -> ast_internal_classes.Array_Subscript_Node:
 
         # supports syntax func(arr)
-        if isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node)):
+        if isinstance(arg, ast_internal_classes.Name_Node):
             # If we access SUM(arr) where arr has many dimensions,
             # We need to create a ParDecl_Node for each dimension
             # array_sizes = self.scope_vars.get_var(node.parent, arg.name).sizes
             array_sizes = self.get_var_declaration(node.parent, arg).sizes
             if array_sizes is None:
 
-                if dims_count != -1:
-                    # for destination array, sizes might be unknown when we use arg extractor
-                    # in that situation, we look at the size of the first argument
-                    dims = dims_count
-                else:
-                    return None
-            else:
-                dims = len(array_sizes)
+                raise NeedsTypeInferenceException(self.func_name(), node.line_number)
 
-            array_node = ast_internal_classes.Array_Subscript_Node(
-                name=arg, parent=arg.parent, type='VOID',
-                indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims)
+            dims = len(array_sizes)
 
-            return array_node
+            # it's a scalar!
+            if dims == 0:
+                return None
+
+            if isinstance(arg, ast_internal_classes.Name_Node):
+                return ast_internal_classes.Array_Subscript_Node(
+                    name=arg, parent=arg.parent, type='VOID',
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims)
+
+        # supports syntax func(struct%arr) and func(struct%arr(:))
+        if isinstance(arg, ast_internal_classes.Data_Ref_Node):
+
+            array_sizes = self.get_var_declaration(node.parent, arg).sizes
+            if array_sizes is None:
+
+                raise NeedsTypeInferenceException(self.func_name(), node.line_number)
+
+            dims = len(array_sizes)
+
+            # it's a scalar!
+            if dims == 0:
+                return None
+
+            _, _, cur_val = self.ast.structures.find_definition(self.scope_vars, arg)
+
+            if isinstance(cur_val.part_ref, ast_internal_classes.Name_Node):
+                cur_val.part_ref = ast_internal_classes.Array_Subscript_Node(
+                    name=cur_val.part_ref, parent=arg.parent, type='VOID',
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+                )
+                ##i
+                #else:
+                #    cur_val.part_ref = ast_internal_classes.Array_Subscript_Node(
+                #        name=cur_val.part_ref.name, parent=arg.parent, type='VOID',
+                #        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+                #    )
+            return arg
 
         # supports syntax func(arr(:))
         if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
@@ -719,6 +750,8 @@ class SumProduct(LoopBasedReplacementTransformation):
     def _initialize(self):
         self.rvals = []
         self.argument_variable = None
+
+        self.function_name = "Sum/Product"
 
     def _update_result_type(self, var: ast_internal_classes.Name_Node):
 
@@ -1057,9 +1090,9 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
 
         for arg in node.args:
 
-            if isinstance(arg, ast_internal_classes.Data_Ref_Node):
-                self.rvals.append(arg)
-                continue
+            #if isinstance(arg, ast_internal_classes.Data_Ref_Node):
+            #    self.rvals.append(arg)
+            #    continue
 
             array_node = self._parse_array(node, arg)
 
@@ -1099,7 +1132,7 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
         body_if = ast_internal_classes.BinOp_Node(
             lval=node.lval,
             op="=",
-            rval=self.argument_variable,
+            rval=copy.deepcopy(self.argument_variable),
             line_number=node.line_number
         )
         return ast_internal_classes.If_Stmt_Node(
@@ -1236,21 +1269,27 @@ class Merge(LoopBasedReplacement):
                     self.uses_scalars = False
 
             # Last argument is either an array or a binary op
+
             arg = node.args[2]
-            array_node = self._parse_array(node, node.args[2], dims_count=len(self.first_array.indices))
-            if array_node is not None:
-
-                self.mask_first_array = array_node
-                self.mask_cond = ast_internal_classes.BinOp_Node(
-                    op="==",
-                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                    lval=self.mask_first_array,
-                    line_number=node.line_number
-                )
-
+            if self.uses_scalars:
+                self.mask_cond = arg
             else:
 
-                self.mask_first_array, self.mask_second_array, self.mask_cond = self._parse_binary_op(node, arg)
+                array_node = self._parse_array(node, node.args[2], dims_count=len(self.first_array.indices))
+                if array_node is not None:
+
+                    self.mask_first_array = array_node
+
+                    self.mask_cond = ast_internal_classes.BinOp_Node(
+                        op="==",
+                        rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                        lval=self.mask_first_array,
+                        line_number=node.line_number
+                    )
+
+                else:
+
+                    self.mask_first_array, self.mask_second_array, self.mask_cond = self._parse_binary_op(node, arg)
 
         def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode,
                             new_func_body: List[ast_internal_classes.FNode]):
@@ -1275,13 +1314,14 @@ class Merge(LoopBasedReplacement):
             assert isinstance(node.lval, ast_internal_classes.Name_Node)
 
             array_decl = self.get_var_declaration(exec_node.parent, node.lval)
-            if array_decl.sizes is None:
+            if array_decl.sizes is None or len(array_decl.sizes) == 0:
 
                 # for destination array, sizes might be unknown when we use arg extractor
                 # in that situation, we look at the size of the first argument
                 dims = len(self.first_array.indices)
             else:
                 dims = len(array_decl.sizes)
+
             self.destination_array = ast_internal_classes.Array_Subscript_Node(
                 name=node.lval, parent=node.lval.parent, type='VOID',
                 indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
@@ -1289,7 +1329,7 @@ class Merge(LoopBasedReplacement):
 
             # type inference! this is necessary when the destination array is
             # not known exactly, e.g., in recursive calls.
-            if array_decl.sizes is None:
+            if array_decl.sizes is None or len(array_decl.sizes) == 0:
 
                 first_input = self.get_var_declaration(node.parent, node.rval.args[0])
                 array_decl.sizes = copy.deepcopy(first_input.sizes)
@@ -1346,6 +1386,17 @@ class Merge(LoopBasedReplacement):
                 copy_second
             ])
 
+            # for scalar operations, we need to extract first element if it's an array
+            if self.uses_scalars and isinstance(self.mask_cond, ast_internal_classes.Name_Node):
+                definition = self.scope_vars.get_var(node.parent, self.mask_cond.name)
+
+                if definition.sizes is not None and len(definition.sizes) > 0:
+                    self.mask_cond = ast_internal_classes.Array_Subscript_Node(
+                        name = self.mask_cond,
+                        type = self.mask_cond.type,
+                        indices= [ast_internal_classes.Int_Literal_Node(value="1")] * len(definition.sizes)
+                    )
+
             return ast_internal_classes.If_Stmt_Node(
                 cond=self.mask_cond,
                 body=body_if,
@@ -1377,16 +1428,29 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
             False
         )
 
-    def transpose(self, state: SDFGState, sdfg: SDFG):
 
-        input_arr = state.add_read(self.array1.data)
-        res = state.add_write(self.out.data)
+    def transpose(self, state: SDFGState, sdfg: SDFG):
 
         libnode = Transpose("transpose", dtype=sdfg.arrays[self.array1.data].dtype)
         state.add_node(libnode)
 
-        state.add_edge(input_arr, None, libnode, "_inp", sdfg.make_array_memlet(self.array1.data))
-        state.add_edge(libnode, "_out", res, None, sdfg.make_array_memlet(self.out.data))
+        state.add_edge(self.array1, None, libnode, "_inp", sdfg.make_array_memlet(self.array1.data))
+        state.add_edge(libnode, "_out", self.out, None, sdfg.make_array_memlet(self.out.data))
+
+    @staticmethod
+    def transpose_size(node: ast_internal_classes.Call_Expr_Node, arg_sizes: List[ List[ast_internal_classes.FNode] ]):
+
+        assert len(arg_sizes) == 1
+        return list(reversed(arg_sizes[0]))
+
+    @staticmethod
+    def matmul_size(node: ast_internal_classes.Call_Expr_Node, arg_sizes: List[ List[ast_internal_classes.FNode] ]):
+
+        assert len(arg_sizes) == 2
+        return [
+            arg_sizes[0][0],
+            arg_sizes[1][1]
+        ]
 
     LIBRARY_NODE_TRANSFORMATIONS = {
         "__dace_blas_dot": blas_dot,
@@ -1564,6 +1628,17 @@ class MathFunctions(IntrinsicTransformation):
         "IAND": MathTransformation("bitwise_and", "INTEGER")
     }
 
+    @staticmethod
+    def one_to_one_size(node: ast_internal_classes.Call_Expr_Node, sizes: List[ast_internal_classes.FNode]):
+        assert len(sizes) == 1
+        return sizes[0]
+
+    INTRINSIC_SIZE_FUNCTIONS = {
+        "TRANSPOSE": IntrinsicSDFGTransformation.transpose_size,
+        "MATMUL": IntrinsicSDFGTransformation.matmul_size,
+        "EXP": one_to_one_size
+    }
+
     class TypeTransformer(IntrinsicNodeTransformer):
 
         def func_type(self, node: ast_internal_classes.Call_Expr_Node):
@@ -1573,10 +1648,8 @@ class MathFunctions(IntrinsicTransformation):
                                 ast_internal_classes.Int_Literal_Node, ast_internal_classes.Call_Expr_Node,
                                 ast_internal_classes.BinOp_Node, ast_internal_classes.UnOp_Node)):
                 return arg.type
-            elif isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node)):
+            elif isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node, ast_internal_classes.Data_Ref_Node)):
                 return self.get_var_declaration(node.parent, arg).type
-            elif isinstance(arg, ast_internal_classes.Data_Ref_Node):
-                return self._parse_struct_ref(arg).type
             else:
                 raise NotImplementedError(type(arg))
 
@@ -1646,9 +1719,28 @@ class MathFunctions(IntrinsicTransformation):
             var = binop_node.lval
             if isinstance(var, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node,
                                 ast_internal_classes.Array_Subscript_Node)):
+
                 var_decl = self.get_var_declaration(var.parent, var)
-                var.type = return_type
-                var_decl.type = return_type
+
+                if var.type == 'VOID':
+                    var.type = return_type
+                    var_decl.type = return_type
+
+                    # we also need to determine the size of the LHS when it's new
+
+                    if func_name in MathFunctions.INTRINSIC_SIZE_FUNCTIONS:
+
+                        size_func = MathFunctions.INTRINSIC_SIZE_FUNCTIONS[func_name]
+
+                        sizes = []
+                        for arg in node.args:
+                            sizes.append(arg.sizes)
+
+                        var_decl.sizes = size_func(node, sizes)
+                        var_decl.offsets = [1] * len(var_decl.sizes)
+
+                        var.sizes = var_decl.sizes
+                        var.offsets = var_decl.offsets
 
             return binop_node
 
@@ -1675,6 +1767,24 @@ class MathFunctions(IntrinsicTransformation):
         # not array accesses
         funcs = list(MathFunctions.INTRINSIC_TO_DACE.keys())
         return [f'__dace_{f}' for f in funcs]
+
+    @staticmethod
+    def output_size(node: ast_internal_classes.Call_Expr_Node):
+
+        name = node.name.name.split('__dace_')
+        if len(name) != 2 or name[1] not in MathFunctions.INTRINSIC_SIZE_FUNCTIONS:
+            return None, None
+
+        # we also need to determine the size of the LHS when it's new
+        size_func = MathFunctions.INTRINSIC_SIZE_FUNCTIONS[name[1]]
+
+        sizes = []
+        for arg in node.args:
+            sizes.append(arg.sizes)
+
+        sizes = size_func(node, sizes)
+
+        return sizes, [1] * len(sizes)
 
     @staticmethod
     def replacable(func_name: str) -> bool:
@@ -1706,9 +1816,9 @@ class FortranIntrinsics:
 
     # All functions return an array
     # Our call extraction transformation only supports scalars
+    #
+    # No longer needed!
     EXEMPTED_FROM_CALL_EXTRACTION = [
-        "__dace_TRANSPOSE",
-        "__dace_MATMUL",
     ]
 
     def __init__(self):

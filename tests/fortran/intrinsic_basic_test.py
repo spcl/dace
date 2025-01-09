@@ -4,17 +4,18 @@ import numpy as np
 import pytest
 
 from dace.frontend.fortran import fortran_parser
-from tests.fortran.fortran_test_helper import create_singular_sdfg_from_string, SourceCodeBuilder
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 def test_fortran_frontend_bit_size():
     test_string = """
                     PROGRAM intrinsic_math_test_bit_size
                     implicit none
                     integer, dimension(4) :: res
-                    CALL intrinsic_math_test_function(res)
+                    CALL intrinsic_math_test_bit_size_function(res)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(res)
+                    SUBROUTINE intrinsic_math_test_bit_size_function(res)
                     integer, dimension(4) :: res
                     logical :: a = .TRUE.
                     integer :: b = 1
@@ -26,7 +27,7 @@ def test_fortran_frontend_bit_size():
                     res(3) = BIT_SIZE(c)
                     res(4) = BIT_SIZE(d)
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_bit_size_function
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_bit_size", True)
@@ -49,10 +50,10 @@ def test_fortran_frontend_bit_size_symbolic():
                     integer :: res(arrsize)
                     integer :: res2(arrsize, arrsize2, arrsize3)
                     integer :: res3(arrsize+arrsize2, arrsize2 * 5, arrsize3 + arrsize2*arrsize)
-                    CALL intrinsic_math_test_function(arrsize, arrsize2, arrsize3, res, res2, res3)
+                    CALL intrinsic_math_test_bit_size_function(arrsize, arrsize2, arrsize3, res, res2, res3)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(arrsize, arrsize2, arrsize3, res, res2, res3)
+                    SUBROUTINE intrinsic_math_test_bit_size_function(arrsize, arrsize2, arrsize3, res, res2, res3)
                     implicit none
                     integer :: arrsize
                     integer :: arrsize2
@@ -69,7 +70,7 @@ def test_fortran_frontend_bit_size_symbolic():
                     res(6) = SIZE(res2, 1) + SIZE(res2, 2) + SIZE(res2, 3)
                     res(7) = SIZE(res3, 1) + SIZE(res3, 2) + SIZE(res3, 3)
 
-                    END SUBROUTINE intrinsic_math_test_function
+                    END SUBROUTINE intrinsic_math_test_bit_size_function
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_bit_size", True)
@@ -120,7 +121,16 @@ def test_fortran_frontend_size_arbitrary():
     size = 7
     size2 = 5
     res = np.full([size, size2], 42, order="F", dtype=np.int32)
-    sdfg(res=res,arrsize=size,arrsize2=size2)
+    sdfg(
+        res=res,
+        arrsize=size,
+        arrsize2=size2,
+        __f2dace_A_res_d_0_s_0=size,
+        __f2dace_A_res_d_1_s_1=size2,
+        __f2dace_OA_res_d_0_s_0=1,
+        __f2dace_OA_res_d_1_s_1=1
+    )
+    print(res)
 
     assert res[0,0] == size*size2
     assert res[1,0] == size
@@ -372,8 +382,8 @@ def test_fortran_frontend_allocated_struct():
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_bit_size()
-    test_fortran_frontend_bit_size_symbolic()
+    #test_fortran_frontend_bit_size()
+    #test_fortran_frontend_bit_size_symbolic()
     test_fortran_frontend_size_arbitrary()
     test_fortran_frontend_present()
     test_fortran_frontend_bitwise_ops()

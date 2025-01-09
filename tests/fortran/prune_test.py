@@ -24,25 +24,26 @@ def test_fortran_frontend_prune_simple():
                     implicit none
                     double precision d(4)
                     double precision dx(4)
-                    CALL test_function(d, dx)
+                    CALL init_test_function(d, dx)
                     end
 
-                    SUBROUTINE test_function(d, dx)
+                    SUBROUTINE init_test_function(d, dx)
 
                     double precision dx(4)
                     double precision d(4)
 
                     d(2) = d(1) + 3.14
 
-                    END SUBROUTINE test_function
+                    END SUBROUTINE init_test_function
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "init_test", False)
     print('a', flush=True)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
+    b = np.full([4], 42, order="F", dtype=np.float64)
     print(a)
-    sdfg(d=a,outside_init=0)
+    sdfg(d=a,dx=b)
     print(a)
     assert (a[0] == 42)
     assert (a[1] == 42 + 3.14)
@@ -57,15 +58,15 @@ def test_fortran_frontend_prune_complex():
                     PROGRAM init_test
                     implicit none
                     double precision d(4)
-                    double precision dx(1)
-                    double precision dy(1)
-                    CALL test_function(dy, d, dx)
+                    double precision dx(2)
+                    double precision dy(2)
+                    CALL init_test_function(dy, d, dx)
                     end
 
-                    SUBROUTINE test_function(dy, d, dx)
+                    SUBROUTINE init_test_function(dy, d, dx)
 
-                    double precision dx(4)
-                    double precision d(1)
+                    double precision d(4)
+                    double precision dx(1)
                     double precision dy(1)
 
                     d(2) = d(1) + 3.14
@@ -73,7 +74,7 @@ def test_fortran_frontend_prune_complex():
                     CALL test_function_another(d, dx)
                     CALL test_function_another(d, dy)
 
-                    END SUBROUTINE test_function
+                    END SUBROUTINE init_test_function
 
                     SUBROUTINE test_function_another(dx, dz)
 
@@ -89,8 +90,9 @@ def test_fortran_frontend_prune_complex():
     print('a', flush=True)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
+    b = np.full([4], 42, order="F", dtype=np.float64)
     print(a)
-    sdfg(d=a,outside_init=0)
+    sdfg(d=a,dx=b,dy=b)
     print(a)
     assert (a[0] == 42)
     assert (a[1] == 42 + 3.14)
@@ -105,10 +107,10 @@ def test_fortran_frontend_prune_actual_param():
                     double precision d(4)
                     double precision dx(1)
                     double precision dy(1)
-                    CALL test_function(dy, d, dx)
+                    CALL init_test_function(dy, d, dx)
                     end
 
-                    SUBROUTINE test_function(dy, d, dx)
+                    SUBROUTINE init_test_function(dy, d, dx)
 
                     double precision d(4)
                     double precision dx(1)
@@ -117,7 +119,7 @@ def test_fortran_frontend_prune_actual_param():
                     CALL test_function_another(d, dx)
                     CALL test_function_another(d, dy)
 
-                    END SUBROUTINE test_function
+                    END SUBROUTINE init_test_function
 
                     SUBROUTINE test_function_another(dx, dz)
 
@@ -133,8 +135,9 @@ def test_fortran_frontend_prune_actual_param():
     print('a', flush=True)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
+    b = np.full([4], 42, order="F", dtype=np.float64)
     print(a)
-    sdfg(d=a,outside_init=0)
+    sdfg(d=a,dx=b,dy=b)
     print(a)
     assert (a[0] == 42)
     assert (a[1] == 42)

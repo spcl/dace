@@ -3,8 +3,8 @@
 import numpy as np
 
 from dace.frontend.fortran import fortran_parser
-from tests.fortran.fortran_test_helper import create_singular_sdfg_from_string, SourceCodeBuilder
-
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 
 def test_fortran_frontend_real_kind_selector():
     """

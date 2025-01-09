@@ -302,6 +302,8 @@ class AST_translator:
         self.toplevel_subroutine = toplevel_subroutine
         self.subroutine_used_names = subroutine_used_names
         self.normalize_offsets = normalize_offsets
+        self.temporary_sym_dict = {}
+        self.temporary_link_to_parent = {}
         self.do_not_make_internal_variables_argument = do_not_make_internal_variables_argument
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
@@ -974,6 +976,9 @@ class AST_translator:
         for lit, litval in zip(literals, literal_values):
             local_name = lit
             self.local_not_transient_because_assign[my_name_sdfg].append(local_name.name)
+            # FIXME: Dirty hack to let translator create clean SDFG state names
+            if node.line_number == -1:
+                node.line_number = (0, 0)
             assigns.append(
                 ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=local_name.name),
                                                 rval=litval,
@@ -987,6 +992,9 @@ class AST_translator:
                 self.local_not_transient_because_assign[my_name_sdfg].append(parameter.name)
 
                 new_sdfg.add_symbol(parameter.name, dtypes.int32)
+                # FIXME: Dirty hack to let translator create clean SDFG state names
+                if node.line_number == -1:
+                    node.line_number = (0, 0)
                 assigns.append(
                     ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=parameter.name),
                                                     rval=ast_internal_classes.Name_Node(name=symbol.name),
@@ -1981,7 +1989,9 @@ class AST_translator:
             else:
                 print("Symbol not found in sdfg arrays: ", i)
         memlet_skip = []
-        new_sdfg.parent_sdfg = sdfg
+        new_sdfg.parent_sdfg=sdfg
+        self.temporary_sym_dict[new_sdfg.name]=sym_dict
+        self.temporary_link_to_parent[new_sdfg.name]=substate
         if self.multiple_sdfgs == False:
             # print("Adding nested sdfg", new_sdfg.name, "to", sdfg.name)
             # print(sym_dict)
@@ -2034,13 +2044,13 @@ class AST_translator:
                                                      sdfg,
                                                      ins_in_new_sdfg,
                                                      outs_in_new_sdfg,
-                                                     symbol_mapping=sym_dict)
+                                                     symbol_mapping=self.temporary_sym_dict[new_sdfg.name])
         else:
             internal_sdfg = substate.add_nested_sdfg(None,
                                                      sdfg,
                                                      ins_in_new_sdfg,
                                                      outs_in_new_sdfg,
-                                                     symbol_mapping=sym_dict,
+                                                     symbol_mapping=self.temporary_sym_dict[new_sdfg.name],
                                                      name="External_nested_" + new_sdfg.name)
             # if self.multiple_sdfgs==False:
             # Now adding memlets
@@ -2089,8 +2099,8 @@ class AST_translator:
                     while not recursive_view_check_done:
                         recursive_view_check_done = True
                         for elem2 in views:
-                            if elem[1].label == elem2[0] and elem2[3] == variables_in_call.index(i):
-                                recursive_view_check_done = False
+                            if elem!=elem2 and elem[1].label == elem2[0] and elem2[3] == variables_in_call.index(i):
+                                recursive_view_check_done=False
                                 elem = elem2
 
                     # check variable type, if data ref, check lowest level array indices.
@@ -2484,7 +2494,7 @@ class AST_translator:
         #        return
         # get the dimensions
         # print(node.name)
-        if node.sizes is not None:
+        if node.sizes is not None and len(node.sizes) > 0:
             sizes = []
             offset = []
             actual_offsets = []
@@ -2497,9 +2507,9 @@ class AST_translator:
                     symname = "tmp_struct_symbol_" + str(count)
                     if sdfg.parent_sdfg is not None:
                         sdfg.parent_sdfg.add_symbol("tmp_struct_symbol_" + str(count), dtypes.int32)
-                        sdfg.parent_nsdfg_node.symbol_mapping[
-                            "tmp_struct_symbol_" + str(count)] = "tmp_struct_symbol_" + str(count)
-                        for edge in sdfg.parent.parent_graph.in_edges(sdfg.parent):
+                        self.temporary_sym_dict[sdfg.name]["tmp_struct_symbol_" + str(count)] = "tmp_struct_symbol_" + str(count)
+                        parent_state=self.temporary_link_to_parent[sdfg.name]
+                        for edge in parent_state.parent_graph.in_edges(parent_state):
                             assign = ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping,
                                                                placeholders=self.placeholders,
                                                                placeholders_offsets=self.placeholders_offsets,
@@ -2820,12 +2830,10 @@ class SDFGConfig:
         self.normalize_offsets = normalize_offsets
         self.multiple_sdfgs = multiple_sdfgs
 
+def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program: FNode, cfg: SDFGConfig, normalize_offsets: bool = True):
 
-def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, program: FNode, cfg: SDFGConfig):
-    # Repeated!
-    # We need that to know in transformations what structures are used.
-    # The actual structure listing is repeated later to resolve cycles.
-    # Not sure if we can actually do it earlier.
+    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
+    functions_and_subroutines_builder.visit(program)
 
     program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.StructConstructorToFunctionCall(
@@ -2838,7 +2846,9 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.ElementalFunctionExpander(
-        ast_transforms.FindFunctionAndSubroutines.from_node(program).names, program).visit(program)
+        ast_transforms.FindFunctionAndSubroutines.from_node(program).names,
+        ast = program
+    ).visit(program)
     for i in program.modules:
         count = 0
         for j in i.function_definitions:
@@ -2859,21 +2869,40 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     program.function_definitions = []
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
-    program = ast_transforms.ArrayToLoop(program).visit(program)
 
+    program = ast_transforms.ArgumentExtractor(program).visit(program)
+
+    program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
+    program = ast_transforms.ElementalIntrinsicExpander(program).visit(program)
+
+    prior_exception: Optional[NeedsTypeInferenceException] = None
     for transformation in own_ast.fortran_intrinsics().transformations():
-        transformation.initialize(program)
-        program = transformation.visit(program)
+        while True:
+            try:
+                transformation.initialize(program)
+                program = transformation.visit(program)
+                break
+            except NeedsTypeInferenceException as e:
+
+                if prior_exception is not None:
+                    if e.line_number == prior_exception.line_number and e.func_name == prior_exception.func_name:
+                        print("Running additional type inference didn't help! VOID type in the same place.")
+                        raise RuntimeError()
+                else:
+                    prior_exception = e
+                print("Running additional type inference")
+                # FIXME: optimize func
+                program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
     array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
     array_dims_info.visit(program)
     program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
 
-    program = ast_transforms.ArgumentExtractor(program).visit(program)
-
+    program = ast_transforms.ArrayToLoop(program).visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
-    program = ast_transforms.IndexExtractor(program, cfg.normalize_offsets).visit(program)
+    program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
+    program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
     program = ast_transforms.allocatableReplacer(program)
     program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
 
@@ -2915,9 +2944,19 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     if len(cycles_we_cannot_ignore) > 0:
         raise NameError("Structs have cyclic dependencies")
 
-    # TODO: `ArgumentPruner` does not cleanly remove arguments (and it's not entirely clear that arguments must be
-    #  pruned on the frontend in the first place), so disable until it is fixed.
+    # TODO: `ArgumentPruner` does not cleanly remove arguments -> disable until fixed.
+    # Check before rerunning CloudSC
     # ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
+
+    return program
+
+def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, program: FNode, cfg: SDFGConfig):
+    # Repeated!
+    # We need that to know in transformations what structures are used.
+    # The actual structure listing is repeated later to resolve cycles.
+    # Not sure if we can actually do it earlier.
+
+    program = run_ast_transformations(own_ast, program, cfg, True)
 
     gmap = {}
     for ep, ep_spec in cfg.entry_points.items():
@@ -2957,12 +2996,33 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = g
         ast2sdfg.translate(program, g)
+        from dace.transformation.passes.lift_struct_views import LiftStructViews
+        from dace.transformation.pass_pipeline import FixedPointPipeline
+        FixedPointPipeline([LiftStructViews()]).apply_pass(g, {})
         g.apply_transformations(IntrinsicSDFGTransformation)
         g.expand_library_nodes()
         gmap[ep] = g
 
     return gmap
 
+def create_singular_sdfg_from_string(
+        sources: Dict[str, str],
+        entry_point: str,
+        normalize_offsets: bool = True,
+        config_injections: Optional[List[ConstTypeInjection]] = None):
+    entry_point = entry_point.split('.')
+
+    cfg = ParseConfig(main=sources['main.f90'], sources=sources, entry_points=tuple(entry_point),
+                      config_injections=config_injections)
+    own_ast, program = create_internal_ast(cfg)
+
+    cfg = SDFGConfig({entry_point[-1]: entry_point}, config_injections=config_injections,
+                     normalize_offsets=normalize_offsets, multiple_sdfgs=False)
+    gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
+    assert gmap.keys() == {entry_point[-1]}
+    g = list(gmap.values())[0]
+
+    return g
 
 def create_sdfg_from_string(
         source_string: str,
@@ -2981,167 +3041,17 @@ def create_sdfg_from_string(
     cfg = ParseConfig(main=source_string, sources=sources)
     own_ast, program = create_internal_ast(cfg)
 
-    # Repeated!
-    # We need that to know in transformations what structures are used.
-    # The actual structure listing is repeated later to resolve cycles.
-    # Not sure if we can actually do it earlier.
+    cfg = SDFGConfig(
+        {sdfg_name: f"{sdfg_name}_function"}, 
+        config_injections=None,
+        normalize_offsets=normalize_offsets,
+        multiple_sdfgs=False
+    )
+    gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
+    assert gmap.keys() == {sdfg_name}
+    g = list(gmap.values())[0]
 
-    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
-    functions_and_subroutines_builder.visit(program)
-    program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
-    program = ast_transforms.IfConditionExtractor().visit(program)
-    program = ast_transforms.CallExtractor().visit(program)
-
-    program = ast_transforms.FunctionCallTransformer().visit(program)
-    program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
-    program = ast_transforms.PointerRemoval().visit(program)
-    # program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names,ast=program).visit(program)
-    for i in program.modules:
-        count = 0
-        for j in i.function_definitions:
-            if isinstance(j, ast_internal_classes.Subroutine_Subprogram_Node):
-                i.subroutine_definitions.append(j)
-                count += 1
-        if count != len(i.function_definitions):
-            raise NameError("Not all functions were transformed to subroutines")
-        i.function_definitions = []
-    program.function_definitions = []
-    count = 0
-    for i in program.function_definitions:
-        if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
-            program.subroutine_definitions.append(i)
-            count += 1
-    if count != len(program.function_definitions):
-        raise NameError("Not all functions were transformed to subroutines")
-    program.function_definitions = []
-    program = ast_transforms.SignToIf().visit(program)
-    program = ast_transforms.ArgumentExtractor(program).visit(program)
-
-    program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
-
-    for transformation in own_ast.fortran_intrinsics().transformations():
-        transformation.initialize(program)
-        program = transformation.visit(program)
-
-    program = ast_transforms.ArgumentExtractor(program).visit(program)
-
-    array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
-    array_dims_info.visit(program)
-    program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
-
-    program = ast_transforms.ArrayToLoop(program).visit(program)
-    program = ast_transforms.ForDeclarer().visit(program)
-    program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
-    program = ast_transforms.optionalArgsExpander(program)
-    program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
-
-    structs_lister = ast_transforms.StructLister()
-    structs_lister.visit(program)
-    struct_dep_graph = nx.DiGraph()
-    for i, name in zip(structs_lister.structs, structs_lister.names):
-        if name not in struct_dep_graph.nodes:
-            struct_dep_graph.add_node(name)
-        struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
-        struct_deps_finder.visit(i)
-        struct_deps = struct_deps_finder.structs_used
-        # print(struct_deps)
-        for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
-                                           struct_deps_finder.pointer_names):
-            if j not in struct_dep_graph.nodes:
-                struct_dep_graph.add_node(j)
-            struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
-    cycles = nx.algorithms.cycles.simple_cycles(struct_dep_graph)
-    has_cycles = list(cycles)
-    cycles_we_cannot_ignore = []
-    for cycle in has_cycles:
-        print(cycle)
-        for i in cycle:
-            is_pointer = struct_dep_graph.get_edge_data(i, cycle[(cycle.index(i) + 1) % len(cycle)])["pointing"]
-            point_name = struct_dep_graph.get_edge_data(i, cycle[(cycle.index(i) + 1) % len(cycle)])["point_name"]
-            # print(i,is_pointer)
-            if is_pointer:
-                actually_used_pointer_node_finder = ast_transforms.StructPointerChecker(i, cycle[
-                    (cycle.index(i) + 1) % len(cycle)], point_name)
-                actually_used_pointer_node_finder.visit(program)
-                # print(actually_used_pointer_node_finder.nodes)
-                if len(actually_used_pointer_node_finder.nodes) == 0:
-                    print("We can ignore this cycle")
-                    program = ast_transforms.StructPointerEliminator(i, cycle[(cycle.index(i) + 1) % len(cycle)],
-                                                                     point_name).visit(program)
-                else:
-                    cycles_we_cannot_ignore.append(cycle)
-    if len(cycles_we_cannot_ignore) > 0:
-        raise NameError("Structs have cyclic dependencies")
-
-    # program =
-    # ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
-
-    ast2sdfg = AST_translator(__file__, multiple_sdfgs=multiple_sdfgs, toplevel_subroutine=sdfg_name,
-                              normalize_offsets=normalize_offsets)
-    sdfg = SDFG(sdfg_name)
-    ast2sdfg.functions_and_subroutines = functions_and_subroutines_builder.names
-    ast2sdfg.structures = program.structures
-    ast2sdfg.placeholders = program.placeholders
-    ast2sdfg.placeholders_offsets = program.placeholders_offsets
-    ast2sdfg.actual_offsets_per_sdfg[sdfg] = {}
-    ast2sdfg.top_level = program
-    ast2sdfg.globalsdfg = sdfg
-    ast2sdfg.translate(program, sdfg)
-
-    for node, parent in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.NestedSDFG):
-            if node.sdfg is not None:
-                if 'test_function' in node.sdfg.name:
-                    sdfg = node.sdfg
-                    break
-    sdfg.parent = None
-    sdfg.parent_sdfg = None
-    sdfg.parent_nsdfg_node = None
-    sdfg.reset_cfg_list()
-
-    sdfg.apply_transformations(IntrinsicSDFGTransformation)
-    sdfg.expand_library_nodes()
-
-    return sdfg
-
-
-def create_sdfg_from_fortran_file(source_string: str):
-    """
-    Creates an SDFG from a fortran file
-    :param source_string: The fortran file name
-    :return: The resulting SDFG
-
-    """
-    parser = pf().create(std="f2008")
-    reader = ffr(source_string)
-    ast = parser(reader)
-    tables = SymbolTable
-    own_ast = ast_components.InternalFortranAst()
-    program = own_ast.create_ast(ast)
-    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
-    functions_and_subroutines_builder.visit(program)
-    own_ast.functions_and_subroutines = functions_and_subroutines_builder.names
-    program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
-    program = ast_transforms.CallExtractor().visit(program)
-    program = ast_transforms.SignToIf().visit(program)
-    program = ast_transforms.ArrayToLoop().visit(program)
-    program = ast_transforms.SumToLoop().visit(program)
-    program = ast_transforms.ForDeclarer().visit(program)
-    program = ast_transforms.IndexExtractor().visit(program)
-    program = ast_transforms.optionalArgsExpander(program)
-    ast2sdfg = AST_translator(__file__)
-    sdfg = SDFG(source_string)
-    ast2sdfg.top_level = program
-    ast2sdfg.globalsdfg = sdfg
-    ast2sdfg.translate(program, sdfg)
-    sdfg.apply_transformations(IntrinsicSDFGTransformation)
-    sdfg.expand_library_nodes()
-
-    return sdfg
-
+    return g
 
 def compute_dep_graph(ast: Program, start_point: Union[str, List[str]]) -> nx.DiGraph:
     """

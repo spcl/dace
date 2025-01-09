@@ -30,7 +30,7 @@ def test_fortran_frontend_while():
                     END SUBROUTINE while_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "while", normalize_offsets=True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "while_test", normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
     

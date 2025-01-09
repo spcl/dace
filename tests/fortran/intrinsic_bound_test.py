@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from dace.frontend.fortran import fortran_parser
-from tests.fortran.fortran_test_helper import SourceCodeBuilder, create_singular_sdfg_from_string
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 """
     Test the implementation of LBOUND/UBOUND functions.

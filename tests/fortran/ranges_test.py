@@ -2,7 +2,9 @@
 
 import numpy as np
 
-from dace.frontend.fortran import ast_transforms, fortran_parser
+from dace.frontend.fortran import fortran_parser
+from tests.fortran.fortran_test_helper import  SourceCodeBuilder
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 
 """
 We test for the following patterns:
@@ -41,7 +43,7 @@ def test_fortran_frontend_multiple_ranges_all():
                     END SUBROUTINE multiple_ranges_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_function", True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -323,17 +325,17 @@ def test_fortran_frontend_multiple_ranges_ecrad_pattern_complex_offsets():
                     double precision, dimension(7, 21:27) :: input1
                     double precision, dimension(7, 31:37) :: res
                     integer, dimension(6) :: pos
-                    CALL multiple_ranges_ecrad_function(input1, res, pos)
+                    CALL multiple_ranges_ecrad_offset_function(input1, res, pos)
                     end
 
-                    SUBROUTINE multiple_ranges_ecrad_function(input1, res, pos)
+                    SUBROUTINE multiple_ranges_ecrad_offset_function(input1, res, pos)
                     double precision, dimension(7, 21:27) :: input1
                     double precision, dimension(7, 31:37) :: res
                     integer, dimension(6) :: pos
 
                     res(:, pos(1):pos(2)) = input1(:, pos(3):pos(4)) + input1(:, pos(5):pos(6))
 
-                    END SUBROUTINE multiple_ranges_ecrad_function
+                    END SUBROUTINE multiple_ranges_ecrad_offset_function
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_ecrad_offset", True)
@@ -436,10 +438,10 @@ def test_fortran_frontend_multiple_ranges_ecrad_bug():
                     double precision, dimension(7, 7) :: input1
                     double precision, dimension(7, 7) :: res
                     integer, dimension(4) :: pos
-                    CALL multiple_ranges_ecrad_function(input1, res, pos)
+                    CALL multiple_ranges_ecrad_bug_function(input1, res, pos)
                     end
 
-                    SUBROUTINE multiple_ranges_ecrad_function(input1, res, pos)
+                    SUBROUTINE multiple_ranges_ecrad_bug_function(input1, res, pos)
                     double precision, dimension(7, 7) :: input1
                     double precision, dimension(7, 7) :: res
                     integer, dimension(4) :: pos
@@ -449,7 +451,7 @@ def test_fortran_frontend_multiple_ranges_ecrad_bug():
 
                     res(nval, pos(1):pos(2)) = input1(nval, pos(3):pos(4))
 
-                    END SUBROUTINE multiple_ranges_ecrad_function
+                    END SUBROUTINE multiple_ranges_ecrad_bug_function
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_ecrad_bug", True)
@@ -491,16 +493,16 @@ def test_fortran_frontend_ranges_array_bug():
                     implicit none
                     double precision, dimension(7) :: input1
                     double precision, dimension(7) :: res
-                    CALL multiple_ranges_ecrad_function(input1, res)
+                    CALL multiple_ranges_ecrad_bug_function(input1, res)
                     end
 
-                    SUBROUTINE multiple_ranges_ecrad_function(input1, res)
+                    SUBROUTINE multiple_ranges_ecrad_bug_function(input1, res)
                     double precision, dimension(7) :: input1
                     double precision, dimension(7) :: res
 
                     res(:) = input1(2) * input1(:)
 
-                    END SUBROUTINE multiple_ranges_ecrad_function
+                    END SUBROUTINE multiple_ranges_ecrad_bug_function
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges_ecrad_bug", True)
@@ -551,7 +553,7 @@ def test_fortran_frontend_ranges_noarray2():
     Tests that the generated array map correctly handles offsets.
     """
     test_string = """
-                    PROGRAM ranges_noarray
+                    PROGRAM ranges_noarra
                     implicit none
                     double precision, dimension(7,4) :: input
                     double precision, dimension(7,4) :: res
@@ -618,6 +620,136 @@ def test_fortran_frontend_ranges_noarray3():
 
     assert np.all(res == input)
 
+def test_fortran_frontend_ranges_scalar():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM multiple_ranges
+                    implicit none
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: res
+                    CALL multiple_ranges_function(input1, input2, res)
+                    end
+
+                    SUBROUTINE multiple_ranges_function(input1, input2, res)
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: res
+
+                    res = 1.0 - input1
+
+                    END SUBROUTINE multiple_ranges_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges", True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 7
+    input1 = np.full([size], 0, order="F", dtype=np.float64)
+    for i in range(size):
+        input1[i] = i + 1
+    res = np.full([7], 42, order="F", dtype=np.float64)
+    sdfg(input1=input1, res=res)
+    assert np.allclose(res, [1.0 - x for x in input1])
+
+def test_fortran_frontend_ranges_struct():
+    sources, main = SourceCodeBuilder().add_file("""
+
+MODULE test_types
+    IMPLICIT NONE
+    TYPE array_container
+        double precision, dimension(5,4) :: arg1
+    END TYPE array_container
+END MODULE
+
+MODULE test_range
+
+    contains
+
+    subroutine test_function(arg1, res1)
+        USE test_types
+        IMPLICIT NONE
+        TYPE(array_container) :: container
+        double precision, dimension(5,4) :: arg1
+        double precision, dimension(5,4) :: res1
+
+        container%arg1(:, :) = arg1
+
+        container%arg1(:, :) = container%arg1 + 1
+
+        res1 = container%arg1
+    end subroutine test_function
+
+END MODULE
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'test_range.test_function', normalize_offsets=True)
+    # TODO: We should re-enable `simplify()` once we merge it.
+    sdfg.simplify()
+    sdfg.compile()
+
+    size_x = 5
+    size_y = 4
+    arg1 = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+    res1 = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+
+    for i in range(size_x):
+        for j in range(size_y):
+            arg1[i, j] = i + 1
+
+    sdfg(arg1=arg1, res1=res1)
+
+    assert np.all(res1 == (arg1 + 1))
+
+def test_fortran_frontend_ranges_struct_implicit():
+    sources, main = SourceCodeBuilder().add_file("""
+
+MODULE test_types
+    IMPLICIT NONE
+    TYPE array_container
+        double precision, dimension(5,4) :: data
+    END TYPE array_container
+END MODULE
+
+MODULE test_transpose
+
+    contains
+
+    subroutine test_function(arg1, res1)
+        USE test_types
+        IMPLICIT NONE
+        TYPE(array_container) :: container
+        double precision, dimension(5,4) :: arg1
+        double precision, dimension(5,4) :: res1
+
+        container%data = arg1
+
+        container%data = container%data + 1
+
+        res1 = container%data
+    end subroutine test_function
+
+END MODULE
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'test_transpose.test_function', normalize_offsets=True)
+    # TODO: We should re-enable `simplify()` once we merge it.
+    sdfg.save('test.sdfg')
+    sdfg.simplify()
+    sdfg.compile()
+
+    size_x = 5
+    size_y = 4
+    arg1 = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+    res1 = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+
+    for i in range(size_x):
+        for j in range(size_y):
+            arg1[i, j] = i + 1
+
+    sdfg(arg1=arg1, res1=res1)
+
+    assert np.all(res1 == (arg1 + 1))
+
 if __name__ == "__main__":
 
     test_fortran_frontend_multiple_ranges_all()
@@ -634,3 +766,6 @@ if __name__ == "__main__":
     test_fortran_frontend_ranges_noarray()
     test_fortran_frontend_ranges_noarray2()
     test_fortran_frontend_ranges_noarray3()
+    test_fortran_frontend_ranges_scalar()
+    test_fortran_frontend_ranges_struct()
+    test_fortran_frontend_ranges_struct_implicit()
