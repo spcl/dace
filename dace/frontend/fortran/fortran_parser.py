@@ -2959,7 +2959,6 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
 
     gmap = {}
     for ep, ep_spec in cfg.entry_points.items():
-        print(ep, ep_spec)
         # Find where to look for the entry point.
         assert ep_spec
         mod, pt = ep_spec[:-1], ep_spec[-1]
