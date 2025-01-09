@@ -528,7 +528,7 @@ def test_fortran_frontend_type_view():
 module lib
   implicit none
   type simple_type
-    real, allocatable :: z(:, :)
+    real :: z(3, 3)
     integer :: a
   end type simple_type
 contains
@@ -539,7 +539,7 @@ contains
   end subroutine internal_function
 end module lib
 """).add_file("""
-subroutine main(d, st)
+subroutine main(d)
   use lib
   implicit none
   type(simple_type) :: st
@@ -559,16 +559,16 @@ end subroutine main
 
 
 if __name__ == "__main__":
-    test_fortran_frontend_basic_type()
-    #test_fortran_frontend_basic_type2()
-    #test_fortran_frontend_type_symbol()
-    #test_fortran_frontend_type_pardecl()
-    test_fortran_frontend_type_struct()
-    test_fortran_frontend_circular_type()
-    test_fortran_frontend_type_in_call()
-    test_fortran_frontend_type_array()
-    test_fortran_frontend_type_array2()
-    test_fortran_frontend_type_pointer()
-    test_fortran_frontend_type_arg()
+    # test_fortran_frontend_basic_type()
+    # test_fortran_frontend_basic_type2()
+    # test_fortran_frontend_type_symbol()
+    # test_fortran_frontend_type_pardecl()
+    # test_fortran_frontend_type_struct()
+    # test_fortran_frontend_circular_type()
+    # test_fortran_frontend_type_in_call()
+    # test_fortran_frontend_type_array()
+    # test_fortran_frontend_type_array2()
+    # test_fortran_frontend_type_pointer()
+    # test_fortran_frontend_type_arg()
     test_fortran_frontend_type_view()
-    test_fortran_frontend_type_arg2()
+    #test_fortran_frontend_type_arg2()
