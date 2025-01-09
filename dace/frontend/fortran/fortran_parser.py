@@ -34,7 +34,8 @@ from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES,
     deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
     inject_const_evals, \
     remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES, ConstTypeInjection, ConstInjection, \
-    make_practically_constant_arguments_constants
+    make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
+    exploit_locally_constant_variables
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -3247,20 +3248,33 @@ def create_sdfg_from_fortran_file_with_options(
 
     """
     if not already_parsed_ast:
+        print("FParser Op: Removing indirections from AST...")
         ast = deconstruct_enums(ast)
         ast = deconstruct_associations(ast)
         ast = remove_access_statements(ast)
-        ast = inject_const_evals(ast, cfg.config_injections)
         ast = correct_for_function_calls(ast)
         ast = deconstruct_procedure_calls(ast)
         ast = deconstruct_interface_calls(ast)
 
-        # Prune things once.
+        print("FParser Op: Inject configs & fix global vars & prune...")
+        ast = inject_const_evals(ast, cfg.config_injections)
+        # Prune things once after fixing global variables.
+        # NOTE: Global vars fixing has to be done before any pruning, because otherwise some assignment may get lost.
+        ast = make_practically_constant_global_vars_constants(ast)
         ast = const_eval_nodes(ast)
         ast = prune_branches(ast)
         ast = prune_unused_objects(ast, cfg.entry_points)
+
+        print("FParser Op: Fix arguments & prune...")
         # Another round of pruning after fixing the practically constant arguments, just in case.
         ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
+        ast = const_eval_nodes(ast)
+        ast = prune_branches(ast)
+        ast = prune_unused_objects(ast, cfg.entry_points)
+
+        print("FParser Op: Fix local vars & prune...")
+        # Another round of pruning after fixing the locally constant variables, just in case.
+        ast = exploit_locally_constant_variables(ast)
         ast = const_eval_nodes(ast)
         ast = prune_branches(ast)
         ast = prune_unused_objects(ast, cfg.entry_points)
@@ -3329,11 +3343,7 @@ def create_sdfg_from_fortran_file_with_options(
 
     program = partial_ast.create_ast(ast)
     program.module_declarations = ast_utils.parse_module_declarations(program)
-    # except:
 
-    #        print(" top level module could not be parsed ", partial_ast.unsupported_fortran_syntax["top level"])
-    # print(partial_ast.unsupported_fortran_syntax["top level"])
-    #        return
 
     structs_lister = ast_transforms.StructLister()
     structs_lister.visit(program)
@@ -3344,7 +3354,7 @@ def create_sdfg_from_fortran_file_with_options(
         struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
         struct_deps_finder.visit(i)
         struct_deps = struct_deps_finder.structs_used
-        # print(struct_deps)
+  
         for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
                                            struct_deps_finder.pointer_names):
             if j not in struct_dep_graph.nodes:
@@ -3363,10 +3373,6 @@ def create_sdfg_from_fortran_file_with_options(
     program.iblocks = functions_and_subroutines_builder.iblocks
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     program = ast_transforms.functionStatementEliminator(program)
-    # program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
-    # program = ast_transforms.CallToArray(functions_and_subroutines_builder, rename_dict).visit(program)
-    # program = ast_transforms.TypeInterference(program).visit(program)
-    # program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
 
     program = ast_transforms.IfConditionExtractor().visit(program)
 
@@ -3377,7 +3383,6 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
 
     program = ast_transforms.optionalArgsExpander(program)
-    # program = ast_transforms.ArgumentExtractor(program).visit(program)
 
     count = 0
     for i in program.function_definitions:
@@ -3399,64 +3404,6 @@ def create_sdfg_from_fortran_file_with_options(
         i.function_definitions = []
     program.function_definitions = []
 
-    # # time to trim the ast using the propagation info
-    # # adding enums from radiotion config
-    # if enum_propagator_files is not None:
-    #     parser = ParserFactory().create(std="f2008")
-    #     if enum_propagator_files is not None:
-    #         for file in enum_propagator_files:
-    #             config_ast = parser(ffr(file_candidate=file))
-    #             partial_ast.create_ast(config_ast)
-
-    #     radiation_config_internal_ast = partial_ast.create_ast(enum_propagator_ast)
-    #     enum_propagator = ast_transforms.PropagateEnums()
-    #     enum_propagator.visit(radiation_config_internal_ast)
-
-    #     program = enum_propagator.generic_visit(program)
-    #     replacements = 1
-    #     step = 1
-    #     while replacements > 0:
-    #         program = enum_propagator.generic_visit(program)
-    #         prop = ast_transforms.AssignmentPropagator(propagation_info)
-    #         program = prop.visit(program)
-    #         replacements = prop.replacements
-    #         if_eval = ast_transforms.IfEvaluator()
-    #         program = if_eval.visit(program)
-    #         replacements += if_eval.replacements
-    #         print("Made " + str(replacements) + " replacements in step " + str(step) + " Prop: " + str(
-    #             prop.replacements) + " If: " + str(if_eval.replacements))
-    #         step += 1
-
-    # if used_functions_config is not None:
-
-    #     unusedFunctionFinder = ast_transforms.FindUnusedFunctions(used_functions_config.root, parse_order)
-    #     unusedFunctionFinder.visit(program)
-    #     used_funcs = unusedFunctionFinder.used_names
-    #     current_list = used_funcs[used_functions_config.root]
-    #     current_list += used_functions_config.root
-
-    #     needed = used_functions_config.needed_functions
-
-    #     for i in reversed(parse_order):
-    #         for j in program.modules:
-    #             if j.name.name in used_functions_config.skip_functions:
-    #                 continue
-    #             if j.name.name == i:
-
-    #                 for k in j.subroutine_definitions:
-    #                     if k.name.name in current_list:
-    #                         current_list += used_funcs[k.name.name]
-    #                         needed.append([j.name.name, k.name.name])
-
-    #     for i in program.modules:
-    #         subroutines = []
-    #         for j in needed:
-    #             if i.name.name == j[0]:
-
-    #                 for k in i.subroutine_definitions:
-    #                     if k.name.name == j[1]:
-    #                         subroutines.append(k)
-    #         i.subroutine_definitions = subroutines
 
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
@@ -3496,11 +3443,7 @@ def create_sdfg_from_fortran_file_with_options(
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.ElementalFunctionExpander(
         functions_and_subroutines_builder.names, ast=program).visit(program)
-    # print("Before intrinsics")
-    # for transformation in partial_ast.fortran_intrinsics().transformations():
-    #     transformation.initialize(program)
-    #     program = transformation.visit(program)
-    # print("After intrinsics")
+   
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
