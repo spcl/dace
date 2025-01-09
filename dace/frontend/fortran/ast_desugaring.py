@@ -22,7 +22,8 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Section_Subscript_List, Char_Selector, \
     Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, \
     Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, \
-    Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt
+    Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt, Save_Stmt, Contains_Stmt, \
+    Implicit_Stmt, Implicit_Part
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
@@ -264,7 +265,7 @@ def alias_specs(ast: Program):
         scope_spec = find_scope_spec(stmt)
         use_spec = scope_spec + (mod_name,)
 
-        assert mod_spec in ident_map
+        assert mod_spec in ident_map, mod_spec
         # The module's name cannot be used as an identifier in this scope anymore, so just point to the module.
         alias_map[use_spec] = ident_map[mod_spec]
 
@@ -667,6 +668,8 @@ def _dataref_root(dref: Union[Name, Data_Ref], scope_spec: SPEC, alias_map: SPEC
         root_type = find_type_of_entity(alias_map[root_spec], alias_map)
     elif isinstance(root, Data_Ref):
         root_type = find_type_dataref(root, scope_spec, alias_map)
+    elif isinstance(root, Part_Ref):
+        root_type = find_type_dataref(root, scope_spec, alias_map)
     assert root_type
 
     return root, root_type, rest
@@ -706,6 +709,20 @@ def find_dataref_component_spec(dref: Union[Name, Data_Ref], scope_spec: SPEC, a
 def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
     _, root_type, rest = _dataref_root(dref, scope_spec, alias_map)
     cur_type = root_type
+
+    def _subscripted_type(t: TYPE_SPEC, pref: Part_Ref):
+        pname, subs = pref.children
+        if not t.shape:
+            # The object was not an array in the first place.
+            assert not subs, f"{t} / {pname}, {t.spec}, {dref}"
+        elif subs:
+            # TODO: This is a hack to deduce a array type instead of scalar.
+            # We may have subscripted away all the dimensions.
+            t.shape = tuple(s.tofortran() for s in subs.children if ':' in s.tofortran())
+        return t
+
+    if isinstance(dref, Part_Ref):
+        return _subscripted_type(cur_type, dref)
     for comp in rest:
         assert isinstance(comp, (Name, Part_Ref))
         if isinstance(comp, Part_Ref):
@@ -714,13 +731,7 @@ def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref], scope_spec: SPEC, a
             comp_spec = find_real_ident_spec(part_name.string, cur_type.spec, alias_map)
             assert comp_spec in alias_map, f"cannot find {comp_spec} / {dref} in {scope_spec}"
             cur_type = find_type_of_entity(alias_map[comp_spec], alias_map)
-            if not cur_type.shape:
-                # The object was not an array in the first place.
-                assert not subsc, f"{cur_type} / {part_name}, {cur_type.spec}, {comp}"
-            elif subsc:
-                # TODO: This is a hack to deduce a array type instead of scalar.
-                # We may have subscripted away all the dimensions.
-                cur_type.shape = tuple(s.tofortran() for s in subsc.children if ':' in s.tofortran())
+            cur_type = _subscripted_type(cur_type, comp)
         elif isinstance(comp, Name):
             comp_spec = find_real_ident_spec(comp.string, cur_type.spec, alias_map)
             assert comp_spec in alias_map, f"cannot find {comp_spec} / {dref} in {scope_spec}"
@@ -1484,17 +1495,27 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
 
     def _keep_from(node: Base):
         """
-        Ensure that `node` is not pruned, along with anything defined in it.
+        Ensure that `node` is not pruned. Things defined in it can be pruned, but only if unused.
         """
         # Go over all the scoped identifiers available under `node`.
         for nm in walk(node, Name):
-            sc_spec = search_scope_spec(nm.parent)
-            if not sc_spec:
+            loc = search_real_local_alias_spec(nm, alias_map)
+            scope_spec = search_scope_spec(nm.parent)
+            if not loc or not scope_spec:
+                continue
+            nm_spec = ident_spec(alias_map[loc])
+            if isinstance(nm.parent, Entity_Decl) and nm == nm.parent.children[0]:
+                fnargs = atmost_one(children_of_type(alias_map[scope_spec], Dummy_Arg_List))
+                fnargs = fnargs.children if fnargs else tuple()
+                if any(a.string == nm.string for a in fnargs):
+                    # We cannot remove function arguments yet.
+                    continue
+                # Otherwise, this is a declaration of the variable, which is not a use, and so a fair game for removal.
                 continue
 
             # All the scope ancestors of `nm` must live too.
-            for j in reversed(range(len(sc_spec))):
-                anc = sc_spec[:j + 1]
+            for j in reversed(range(len(scope_spec))):
+                anc = scope_spec[:j + 1]
                 if anc in survivors:
                     continue
                 survivors.add(anc)
@@ -1503,12 +1524,11 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                     _keep_from(anc_node.parent)
 
             # We keep the definition of that `nm` is an alias of.
-            to_keep = search_real_ident_spec(nm.string, sc_spec, alias_map)
-            if not to_keep or to_keep not in alias_map or to_keep in survivors:
+            if not nm_spec or nm_spec not in alias_map or nm_spec in survivors:
                 # If we don't have a valid `to_keep` or `to_keep` is already kept, we move on.
                 continue
-            survivors.add(to_keep)
-            keep_node = alias_map[to_keep]
+            survivors.add(nm_spec)
+            keep_node = alias_map[nm_spec]
             if isinstance(keep_node, PRUNABLE_OBJECT_TYPES):
                 _keep_from(keep_node.parent)
 
@@ -1565,6 +1585,15 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
         else:
             remove_self(ns_node.parent)
         killed.add(ns)
+
+    # Cleanup the empty modules.
+    for m in walk(ast, Module):
+        _, sp, ex, sub = _get_module_or_program_parts(m)
+        empty_specification = not sp or all(isinstance(c, (Save_Stmt, Implicit_Part)) for c in sp.children)
+        empty_execution = not ex or not ex.children
+        empty_subprogram = not sub or all(isinstance(c, Contains_Stmt) for c in sub.children)
+        if empty_specification and empty_execution and empty_subprogram:
+            remove_self(m)
 
     consolidate_uses(ast, alias_map)
 
