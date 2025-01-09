@@ -1,12 +1,9 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.frontend.fortran import fortran_parser
-
-import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 import numpy as np
-from tests.fortran.fortran_test_helper import SourceCodeBuilder
+
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_long_tasklet():

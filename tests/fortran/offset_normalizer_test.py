@@ -2,14 +2,10 @@
 
 import numpy as np
 
-from dace.frontend.fortran import ast_internal_classes, ast_transforms, fortran_parser
+from dace.frontend.fortran import ast_internal_classes
+from dace.frontend.fortran.fortran_parser import create_internal_ast, ParseConfig, create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
-import numpy as np
-
-from dace.frontend.fortran import ast_internal_classes, fortran_parser
-from dace.frontend.fortran.fortran_parser import create_internal_ast, ParseConfig
-from tests.fortran.fortran_test_helper import  SourceCodeBuilder
-from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 
 def test_fortran_frontend_offset_normalizer_1d():
     """
@@ -177,12 +173,7 @@ end subroutine main
     sdfg.compile()
 
     from dace.symbolic import evaluate
-    values = {
-        'arrsize': 50,
-        'arrsize2': 54,
-        'arrsize3': 7,
-        'arrsize4': 9
-    }
+    values = {'arrsize': 50, 'arrsize2': 54, 'arrsize3': 7, 'arrsize4': 9}
     assert len(sdfg.data('d').shape) == 2
     assert evaluate(sdfg.data('d').shape[0], values) == 5
     assert evaluate(sdfg.data('d').shape[1], values) == 3
@@ -279,12 +270,7 @@ end subroutine main
     sdfg.compile()
 
     from dace.symbolic import evaluate
-    values = {
-        'arrsize': 50,
-        'arrsize2': 54,
-        'arrsize3': 7,
-        'arrsize4': 9
-    }
+    values = {'arrsize': 50, 'arrsize2': 54, 'arrsize3': 7, 'arrsize4': 9}
     assert len(sdfg.data('d').shape) == 2
     assert evaluate(sdfg.data('d').shape[0], values) == 5
     assert evaluate(sdfg.data('d').shape[1], values) == 3
@@ -336,12 +322,7 @@ end subroutine main
     sdfg.compile()
 
     from dace.symbolic import evaluate
-    values = {
-        'arrsize': 50,
-        'arrsize2': 54,
-        'arrsize3': 7,
-        'arrsize4': 9
-    }
+    values = {'arrsize': 50, 'arrsize2': 54, 'arrsize3': 7, 'arrsize4': 9}
     assert len(sdfg.data('d').shape) == 2
     assert evaluate(sdfg.data('d').shape[0], values) == 5
     assert evaluate(sdfg.data('d').shape[1], values) == 3
