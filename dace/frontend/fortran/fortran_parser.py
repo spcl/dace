@@ -3043,7 +3043,7 @@ def create_sdfg_from_string(
 
     cfg = SDFGConfig(
         {sdfg_name: f"{sdfg_name}_function"}, 
-        config_injections=config_injections,
+        config_injections=None,
         normalize_offsets=normalize_offsets,
         multiple_sdfgs=False
     )

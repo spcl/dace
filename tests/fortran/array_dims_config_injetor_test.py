@@ -6,6 +6,7 @@ import dace
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, SDFGConfig, \
     create_sdfg_from_internal_ast, create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def construct_internal_ast(sources: Dict[str, str]):
