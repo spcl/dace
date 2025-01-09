@@ -522,11 +522,25 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
             if dims == 0:
                 return None
 
-            array_node = ast_internal_classes.Array_Subscript_Node(
-                name=arg, parent=arg.parent, type='VOID',
-                indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims)
+            if isinstance(arg, ast_internal_classes.Name_Node):
+                return ast_internal_classes.Array_Subscript_Node(
+                    name=arg, parent=arg.parent, type='VOID',
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims)
+            else:
 
-            return array_node
+                _, _, cur_val = self.ast.structures.find_definition(self.scope_vars, arg)
+
+                if isinstance(cur_val.part_ref, ast_internal_classes.Name_Node):
+                    cur_val.part_ref = ast_internal_classes.Array_Subscript_Node(
+                        name=cur_val.part_ref, parent=arg.parent, type='VOID',
+                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+                    )
+                else:
+                    cur_val.part_ref = ast_internal_classes.Array_Subscript_Node(
+                        name=cur_val.part_ref.name, parent=arg.parent, type='VOID',
+                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+                    )
+                return arg
 
         # supports syntax func(arr(:))
         if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
@@ -1062,9 +1076,9 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
 
         for arg in node.args:
 
-            if isinstance(arg, ast_internal_classes.Data_Ref_Node):
-                self.rvals.append(arg)
-                continue
+            #if isinstance(arg, ast_internal_classes.Data_Ref_Node):
+            #    self.rvals.append(arg)
+            #    continue
 
             array_node = self._parse_array(node, arg)
 
@@ -1104,7 +1118,7 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
         body_if = ast_internal_classes.BinOp_Node(
             lval=node.lval,
             op="=",
-            rval=self.argument_variable,
+            rval=copy.deepcopy(self.argument_variable),
             line_number=node.line_number
         )
         return ast_internal_classes.If_Stmt_Node(
