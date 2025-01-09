@@ -707,7 +707,7 @@ def test_fortran_frontend_ranges_struct_implicit():
 MODULE test_types
     IMPLICIT NONE
     TYPE array_container
-        double precision, dimension(5,4) :: arg1
+        double precision, dimension(5,4) :: data
     END TYPE array_container
 END MODULE
 
@@ -722,11 +722,11 @@ MODULE test_transpose
         double precision, dimension(5,4) :: arg1
         double precision, dimension(5,4) :: res1
 
-        container%arg1 = arg1
+        container%data = arg1
 
-        container%arg1 = container%arg1 + 1
+        container%data = container%data + 1
 
-        res1 = container%arg1
+        res1 = container%data
     end subroutine test_function
 
 END MODULE
