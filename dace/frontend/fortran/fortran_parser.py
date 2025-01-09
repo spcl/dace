@@ -600,7 +600,7 @@ class AST_translator:
                 datatype = self.get_dace_type(k.type)
                 if isinstance(datatype, dat.Structure):
                     complex_datatype = True
-                if k.sizes is not None:
+                if k.sizes:
                     sizes = []
                     offset = []
                     offset_value = 0 if self.normalize_offsets else -1
