@@ -229,8 +229,9 @@ class TaskletWriter:
 
     def dataref2string(self, node: ast_internal_classes.Data_Ref_Node):
         self.data_ref_stack.append(node.parent_ref)
-        return self.write_code(node.parent_ref) + "." + self.write_code(node.part_ref)
+        ret=self.write_code(node.parent_ref) + "." + self.write_code(node.part_ref)
         self.data_ref_stack.pop()
+        return ret
 
     def arraysub2string(self, node: ast_internal_classes.Array_Subscript_Node):
         local_name=node.name.name
@@ -533,6 +534,7 @@ class ProcessedWriter(TaskletWriter):
         self.placeholders = placeholders
         self.placeholders_offsets = placeholders_offsets
         self.rename_dict = rename_dict
+        self.data_ref_stack = []
         self.ast_elements = {
             ast_internal_classes.BinOp_Node: self.binop2string,
             ast_internal_classes.Actual_Arg_Spec_Node: self.actualarg2string,
