@@ -770,3 +770,18 @@ END PROGRAM main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+if __name__ == "__main__":
+    test_minimal_no_pruning()
+    test_toplevel_subroutine_no_pruning()
+    test_program_contains_subroutine_no_pruning()
+    test_standalone_subroutine_no_pruning()
+    test_toplevel_subroutine_uses_another_module_no_pruning()
+    test_uses_module_which_uses_module_no_pruning()
+    test_module_contains_interface_block_no_pruning()
+    test_uses_module_but_prunes_unused_defs()
+    test_module_contains_used_and_unused_types_prunes_unused_defs()
+    test_module_contains_used_and_unused_variables()
+    test_use_statement_multiple()
+    test_use_statement_multiple_with_useall_prunes_unused()
+    test_subroutine_contains_function_no_pruning()
