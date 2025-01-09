@@ -154,6 +154,7 @@ class TaskletWriter:
         self.input_changes = input_changes
         self.rename_dict = rename_dict
         self.depth = 0
+        self.data_ref_stack = []
 
         self.ast_elements = {
             ast_internal_classes.BinOp_Node: self.binop2string,
@@ -227,14 +228,27 @@ class TaskletWriter:
             raise NameError("Error in code generation: " + node.__class__.__name__)
 
     def dataref2string(self, node: ast_internal_classes.Data_Ref_Node):
+        self.data_ref_stack.append(node.parent_ref)
         return self.write_code(node.parent_ref) + "." + self.write_code(node.part_ref)
+        self.data_ref_stack.pop()
 
     def arraysub2string(self, node: ast_internal_classes.Array_Subscript_Node):
-        try:
-            arr=self.sdfg.arrays[self.mapping.get(self.sdfg).get(node.name.name)]
-            if arr.shape is None or (len(arr.shape) == 1 and arr.shape[0] == 1):
-                return self.write_code(node.name)
-        except:
+        local_name=node.name.name
+        local_name_node=node.name
+        #special handling if the array is in a structure - we must get the view to the member
+        if len(self.data_ref_stack)>0:
+            name_prefix=""
+            for i in self.data_ref_stack:
+                name_prefix+=self.write_code(i)+"_"
+            local_name=name_prefix+local_name    
+        if self.mapping.get(self.sdfg).get(local_name) is not None:
+            if self.sdfg.arrays.get(self.mapping.get(self.sdfg).get(local_name)) is not None:
+                arr = self.sdfg.arrays[self.mapping.get(self.sdfg).get(local_name)]
+                if arr.shape is None or (len(arr.shape) == 1 and arr.shape[0] == 1):
+                    return self.write_code(local_name_node)
+            else:
+                raise NameError("Variable name not found: ", node.name.name) 
+        else:
             raise NameError("Variable name not found: ", node.name.name)
         str_to_return = self.write_code(node.name) + "[" + self.write_code(node.indices[0])
         for i in node.indices[1:]:
