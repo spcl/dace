@@ -2865,6 +2865,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     program = ast_transforms.ArgumentExtractor(program).visit(program)
 
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
+    program = ast_transforms.ElementalIntrinsicExpander(program).visit(program)
 
     prior_exception: Optional[NeedsTypeInferenceException] = None
     for transformation in own_ast.fortran_intrinsics().transformations():
