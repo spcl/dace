@@ -264,7 +264,7 @@ MODULE test_minval
     SUBROUTINE minval_test_func(input, res)
         TYPE(array_container) :: container
         INTEGER, DIMENSION(7) :: input
-        INTEGER, DIMENSION(3) :: res
+        INTEGER, DIMENSION(4) :: res
 
         container%data = input
 
@@ -273,11 +273,12 @@ MODULE test_minval
 
     SUBROUTINE minval_test_func_internal(container, res)
         TYPE(array_container), INTENT(IN) :: container
-        INTEGER, DIMENSION(3) :: res
+        INTEGER, DIMENSION(4) :: res
 
         res(1) = MAXVAL(container%data)
         res(2) = MAXVAL(container%data(:))
         res(3) = MAXVAL(container%data(3:6))
+        res(4) = MAXVAL(container%data(2:5))
     END SUBROUTINE
 END MODULE
 """, 'main').check_with_gfortran().get()
@@ -288,11 +289,14 @@ END MODULE
     size = 7
     input = np.full([size], 0, order="F", dtype=np.int32)
     for i in range(size):
-        d[i] = i + 1
+        input[i] = i + 1
     res = np.full([4], 42, order="F", dtype=np.int32)
-    # FIXME: this test is unfinished
-    sdfg(d=d, res=res)
-    print(res)
+    sdfg(input=input, res=res)
+
+    assert res[0] == input[6]
+    assert res[1] == input[6]
+    assert res[2] == input[5]
+    assert res[3] == input[4]
 
 if __name__ == "__main__":
 
