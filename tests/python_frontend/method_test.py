@@ -127,7 +127,7 @@ def test_static_withclass():
     assert np.allclose(MyTestClass.static_withclass(A), A + 3)
 
 
-@pytest.mark.skip(reason="Python 3.13 killed chained @classmethods, making this impossible for now")
+@pytest.mark.skip(reason="Python 3.13 removed chained @classmethods, making this impossible for now")
 def test_classmethod():
     # Only available in Python 3.9+
     if sys.version_info >= (3, 9):
