@@ -8,7 +8,8 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     deconstruct_interface_calls, deconstruct_procedure_calls, deconstruct_associations, \
     assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
     const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
-    make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants
+    make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
+    exploit_locally_constant_variables
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -1781,7 +1782,6 @@ end subroutine main
     ast = make_practically_constant_global_vars_constants(ast)
 
     got = ast.tofortran()
-    print(got)
     want = """
 MODULE lib
   IMPLICIT NONE
@@ -1801,6 +1801,158 @@ SUBROUTINE main
   CALL update(movable_cond)
   movable_cond = .NOT. movable_cond
   IF (fixed_cond .AND. movable_cond) a = 7.1
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_exploit_locally_constant_variables():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main()
+  implicit none
+  logical :: cond = .true.
+  real :: out = 0.
+
+  if (cond) out = out + 1.
+  out = out*2
+  if (cond) then
+    out = out + 1.
+  else
+    out = out - 1.
+  end if
+
+  if (out .gt. 20) cond = .false.
+  if (cond) out = out + 100.
+
+  cond = .true.
+  out = 7.2
+  out = out*2.0
+  out = fun(.not. cond, out)
+
+  if (cond) out = out + 1.
+
+contains
+  real function fun(cond, out)
+    implicit none
+    logical, intent(in) :: cond
+    real, intent(inout) :: out
+    if (cond) out = out + 42
+    fun = out + 1.0
+  end function fun
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = exploit_locally_constant_variables(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  LOGICAL :: cond = .TRUE.
+  REAL :: out = 0.
+  IF (.TRUE.) out = 0. + 1.
+  out = out * 2
+  IF (.TRUE.) THEN
+    out = out + 1.
+  ELSE
+    out = out - 1.
+  END IF
+  IF (out .GT. 20) cond = .FALSE.
+  IF (cond) out = out + 100.
+  cond = .TRUE.
+  out = 7.2
+  out = 7.2 * 2.0
+  out = fun(.NOT. .TRUE., out)
+  IF (.TRUE.) out = out + 1.
+  CONTAINS
+  REAL FUNCTION fun(cond, out)
+    IMPLICIT NONE
+    LOGICAL, INTENT(IN) :: cond
+    REAL, INTENT(INOUT) :: out
+    IF (cond) out = out + 42
+    fun = out + 1.0
+  END FUNCTION fun
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_exploit_locally_constant_struct_members():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main()
+  implicit none
+  type config
+    logical :: cond = .true.
+  end type config
+  type(config) :: cond
+  real :: out = 0.
+
+  cond % cond = .true.
+  if (cond % cond) out = out + 1.
+  out = out*2
+  if (cond % cond) then
+    out = out + 1.
+  else
+    out = out - 1.
+  end if
+
+  if (out .gt. 20) cond % cond = .false.
+  if (cond % cond) out = out + 100.
+
+  cond % cond = .true.
+  out = 7.2
+  out = out*2.0
+  out = fun(.not. cond % cond, out)
+
+  if (cond % cond) out = out + 1.
+
+contains
+  real function fun(cond, out)
+    implicit none
+    logical, intent(in) :: cond
+    real, intent(inout) :: out
+    if (cond) out = out + 42
+    fun = out + 1.0
+  end function fun
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = exploit_locally_constant_variables(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main
+  IMPLICIT NONE
+  TYPE :: config
+    LOGICAL :: cond = .TRUE.
+  END TYPE config
+  TYPE(config) :: cond
+  REAL :: out = 0.
+  cond % cond = .TRUE.
+  IF (.TRUE.) out = 0. + 1.
+  out = out * 2
+  IF (.TRUE.) THEN
+    out = out + 1.
+  ELSE
+    out = out - 1.
+  END IF
+  IF (out .GT. 20) cond % cond = .FALSE.
+  IF (cond % cond) out = out + 100.
+  cond % cond = .TRUE.
+  out = 7.2
+  out = 7.2 * 2.0
+  out = fun(.NOT. .TRUE., out)
+  IF (.TRUE.) out = out + 1.
+  CONTAINS
+  REAL FUNCTION fun(cond, out)
+    IMPLICIT NONE
+    LOGICAL, INTENT(IN) :: cond
+    REAL, INTENT(INOUT) :: out
+    IF (cond) out = out + 42
+    fun = out + 1.0
+  END FUNCTION fun
 END SUBROUTINE main
 """.strip()
     assert got == want
