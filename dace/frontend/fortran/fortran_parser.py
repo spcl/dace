@@ -2812,6 +2812,7 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     iast = ast_components.InternalFortranAst()
     prog = iast.create_ast(ast)
     assert isinstance(prog, FNode)
+    prog.module_declarations = ast_utils.parse_module_declarations(prog)
     iast.finalize_ast(prog)
     return iast, prog
 
