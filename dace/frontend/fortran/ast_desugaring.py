@@ -2,6 +2,7 @@ import math
 import operator
 import re
 import sys
+from copy import copy
 from dataclasses import dataclass
 from typing import Union, Tuple, Dict, Optional, List, Iterable, Set, Type, Any
 
@@ -21,7 +22,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Section_Subscript_List, Char_Selector, \
     Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, \
     Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, \
-    Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand
+    Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
@@ -1754,6 +1755,182 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
     return ast
 
 
+LITERAL_TYPES = Union[
+    Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, Signed_Int_Literal_Constant,
+    Logical_Literal_Constant]
+
+
+def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
+                        plus: Optional[Dict[Union[SPEC, Tuple[SPEC, SPEC]], LITERAL_TYPES]] = None,
+                        minus: Optional[Set[Union[SPEC, Tuple[SPEC, SPEC]]]] = None) \
+        -> Tuple[Dict[SPEC, LITERAL_TYPES], Set[SPEC]]:
+    plus: Dict[Union[SPEC, Tuple[SPEC, SPEC]], LITERAL_TYPES] = copy(plus) if plus else {}
+    minus: Set[Union[SPEC, Tuple[SPEC, SPEC]]] = copy(minus) if minus else set()
+
+    def _root_comp(dref: Data_Ref):
+        scope_spec = search_scope_spec(dref)
+        assert scope_spec
+        root, _, _ = _dataref_root(dref, scope_spec, alias_map)
+        assert isinstance(root, Name)
+        loc = search_real_local_alias_spec(root, alias_map)
+        assert loc
+        root_spec = ident_spec(alias_map[loc])
+        comp_spec = find_dataref_component_spec(dref, scope_spec, alias_map)
+        return root_spec, comp_spec
+
+    def _integrate_subresults(tp: Dict[SPEC, LITERAL_TYPES], tm: Set[SPEC]):
+        assert not (tm & tp.keys())
+        for k in tm:
+            if k in plus:
+                del plus[k]
+            minus.add(k)
+        for k, v in tp.items():
+            if k in minus:
+                minus.remove(k)
+            plus[k] = v
+
+    def _inject_knowns(x: Base):
+        if isinstance(x, LITERAL_TYPES):
+            pass
+        elif isinstance(x, Assignment_Stmt):
+            lv, op, rv = x.children
+            _inject_knowns(rv)
+        elif isinstance(x, Name):
+            loc = search_real_local_alias_spec(x, alias_map)
+            assert loc
+            spec = ident_spec(alias_map[loc])
+            if spec in plus:
+                assert spec not in minus
+                replace_node(x, plus[spec])
+        elif isinstance(x, Data_Ref):
+            spec = _root_comp(x)
+            if spec in plus:
+                assert spec not in minus
+                replace_node(x, plus[spec])
+        elif isinstance(x, UnaryOpBase):
+            op, val = x.children
+            _inject_knowns(val)
+        elif isinstance(x, BinaryOpBase):
+            assert not isinstance(x, Assignment_Stmt)
+            lv, op, rv = x.children
+            _inject_knowns(lv)
+            _inject_knowns(rv)
+        elif isinstance(x, (Function_Reference, Call_Stmt, Intrinsic_Function_Reference)):
+            _, args = x.children
+            args = args.children if args else tuple()
+            for a in args:
+                # TODO: For now, we assume that all arguments are writable.
+                if not isinstance(a, Name):
+                    _inject_knowns(a)
+        else:
+            raise NotImplementedError(f"cannot handle {x} | {type(x)}")
+
+    if isinstance(node, Execution_Part):
+        scpart = atmost_one(children_of_type(node.parent, Specification_Part))
+        knowns: Dict[SPEC, LITERAL_TYPES] = {}
+        if scpart:
+            for tdcls in scpart.children:
+                if not isinstance(tdcls, Type_Declaration_Stmt):
+                    continue
+                _, _, edcls = tdcls.children
+                edcls = edcls.children if edcls else tuple()
+                for var in edcls:
+                    _, _, _, init = var.children
+                    if init:
+                        _, init = init.children
+                    if init and isinstance(init, LITERAL_TYPES):
+                        knowns[ident_spec(var)] = init
+        _integrate_subresults(knowns, set())
+        for op in node.children:
+            # TODO: We wouldn't need the exception handling once we implement for all node types.
+            try:
+                tp, tm = _track_local_consts(op, alias_map, plus, minus)
+                _integrate_subresults(tp, tm)
+            except NotImplementedError:
+                plus, minus = {}, set()
+    elif isinstance(node, Assignment_Stmt):
+        lv, op, rv = node.children
+        _inject_knowns(rv)
+        lv, op, rv = node.children
+        lspec = None
+        if isinstance(lv, Name):
+            loc = search_real_local_alias_spec(lv, alias_map)
+            assert loc
+            lspec = ident_spec(alias_map[loc])
+        elif isinstance(lv, Data_Ref):
+            lspec = _root_comp(lv)
+        if lspec:
+            rval = _const_eval_basic_type(rv, alias_map)
+            if rval is None:
+                _integrate_subresults({}, {lspec})
+            else:
+                plus[lspec] = numpy_type_to_literal(rval)
+                if lspec in minus:
+                    minus.remove(lspec)
+        tp, tm = _track_local_consts(rv, alias_map)
+        _integrate_subresults(tp, tm)
+    elif isinstance(node, If_Stmt):
+        cond, body = node.children
+        _inject_knowns(cond)
+        _inject_knowns(body)
+        cond, body = node.children
+        tp, tm = _track_local_consts(cond, alias_map)
+        _integrate_subresults(tp, tm)
+        tp, tm = _track_local_consts(body, alias_map)
+        _integrate_subresults({}, tm | tp.keys())
+    elif isinstance(node, If_Construct):
+        for c in node.children:
+            if isinstance(c, (If_Then_Stmt, Else_If_Stmt)):
+                cond, = c.children
+                _inject_knowns(cond)
+        for c in node.children:
+            if isinstance(c, (If_Then_Stmt, Else_If_Stmt, Else_Stmt, End_If_Stmt)):
+                continue
+            tp, tm = _track_local_consts(c, alias_map)
+            _integrate_subresults({}, tm | tp.keys())
+    elif isinstance(node, Union[Name, LITERAL_TYPES]):
+        pass
+    elif isinstance(node, UnaryOpBase):
+        _inject_knowns(node)
+        op, val = node.children
+        tp, tm = _track_local_consts(val, alias_map)
+        _integrate_subresults(tp, tm)
+    elif isinstance(node, BinaryOpBase):
+        assert not isinstance(node, Assignment_Stmt)
+        lv, op, rv = node.children
+        _inject_knowns(lv)
+        _inject_knowns(rv)
+        lv, op, rv = node.children
+        tp, tm = _track_local_consts(lv, alias_map)
+        _integrate_subresults(tp, tm)
+        tp, tm = _track_local_consts(rv, alias_map)
+        _integrate_subresults(tp, tm)
+    elif isinstance(node, (Function_Reference, Call_Stmt, Intrinsic_Function_Reference)):
+        # TODO: For now, we assume that all arguments are writable.
+        _, args = node.children
+        args = args.children if args else tuple()
+        for a in args:
+            _inject_knowns(a)
+        _, args = node.children
+        args = args.children if args else tuple()
+        for a in args:
+            tp, tm = _track_local_consts(a, alias_map)
+            _integrate_subresults({}, tm | tp.keys())
+    else:
+        raise NotImplementedError(f"cannot handle {node} | {type(node)}")
+
+    return plus, minus
+
+
+def exploit_locally_constant_variables(ast: Program) -> Program:
+    alias_map = alias_specs(ast)
+
+    for expart in walk(ast, Execution_Part):
+        _track_local_consts(expart, alias_map)
+
+    return ast
+
+
 def deconstruct_associations(ast: Program) -> Program:
     for assoc in walk(ast, Associate_Construct):
         # TODO: Add ref.
@@ -2256,11 +2433,6 @@ def prune_branches(ast: Program) -> Program:
     for ib in walk(ast, If_Stmt):
         _prune_branches_in_ifstmt(ib, alias_map)
     return ast
-
-
-LITERAL_TYPES = Union[
-    Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, Signed_Int_Literal_Constant,
-    Logical_Literal_Constant]
 
 
 def numpy_type_to_literal(val: NUMPY_TYPES) -> Union[LITERAL_TYPES]:
