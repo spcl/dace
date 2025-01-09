@@ -3328,20 +3328,15 @@ class ProgramVisitor(ExtNodeVisitor):
                     visited_target = True
                 else:
                     true_name = defined_vars[name]
-                    while len(tokens) > 1:
+                    while len(tokens):
                         true_name = true_name + '.' + tokens.pop(0)
                         if true_name not in defined_arrays:
                             break
                     if tokens:  # The non-struct remainder will be considered an attribute
                         attribute_name = '.'.join(tokens)
-                        combined_name = true_name + '.' + attribute_name
-                        if (combined_name in defined_arrays and true_name in defined_arrays
-                                and isinstance(defined_arrays[true_name], data.Structure)):
-                            true_name = combined_name
-                        else:
-                            raise DaceSyntaxError(
-                                self, target,
-                                f'Cannot assign to attribute "{attribute_name}" of variable "{true_name}"')
+                        raise DaceSyntaxError(
+                            self, target,
+                            f'Cannot assign to attribute "{attribute_name}" of variable "{true_name}"')
 
                 true_array = defined_arrays[true_name]
 
