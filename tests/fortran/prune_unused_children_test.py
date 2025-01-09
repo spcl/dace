@@ -6,8 +6,10 @@ from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 from fparser.two.utils import walk
 
+from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_TYPES, find_name_of_node, prune_unused_objects, \
+    SPEC, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES
+from dace.frontend.fortran.ast_utils import children_of_type, singular
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
-from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_TYPES, find_name_of_node, prune_unused_objects
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
@@ -21,14 +23,15 @@ def parse_and_improve(sources: Dict[str, str]):
     return ast
 
 
-def find_entrypoint_objects_named(ast: Program, name: str) -> List[ENTRY_POINT_OBJECT_TYPES]:
-    objs: List[ENTRY_POINT_OBJECT_TYPES] = []
+def find_entrypoint_objects_named(ast: Program, name: str) -> List[SPEC]:
+    objs: List[SPEC] = []
     for n in walk(ast, ENTRY_POINT_OBJECT_TYPES):
         assert isinstance(n, ENTRY_POINT_OBJECT_TYPES)
         if not isinstance(n.parent, Program):
             continue
         if find_name_of_node(n) == name:
-            objs.append(n)
+            stmt = singular(children_of_type(n, NAMED_STMTS_OF_INTEREST_TYPES))
+            objs.append(ident_spec(stmt))
     return objs
 
 
@@ -207,7 +210,7 @@ PROGRAM main
   CALL fun(d)
 END PROGRAM main
 SUBROUTINE fun(d)
-  USE lib
+  USE lib, ONLY: val
   IMPLICIT NONE
   DOUBLE PRECISION :: d(4)
   d(2) = val
@@ -265,9 +268,10 @@ MODULE lib
   END SUBROUTINE fun
 END MODULE lib
 MODULE lib_indirect
-  USE lib
+  USE lib, ONLY: fun
   CONTAINS
   SUBROUTINE fun_indirect(d)
+    USE lib, ONLY: fun
     IMPLICIT NONE
     DOUBLE PRECISION :: d(4)
     CALL fun(d)
@@ -347,7 +351,7 @@ MODULE lib_indirect
   END FUNCTION fun2
 END MODULE lib_indirect
 PROGRAM main
-  USE lib_indirect, ONLY: fun, fun2
+  USE lib, ONLY: fun
   IMPLICIT NONE
   DOUBLE PRECISION :: d(4)
   d(2) = fun()
@@ -474,6 +478,7 @@ PROGRAM main
   CALL type_test_function(d)
   CONTAINS
   SUBROUTINE type_test_function(d)
+    USE lib, ONLY: used_type
     REAL :: d(5, 5)
     TYPE(used_type) :: s
     s % w(1, 1, 1) = 5.5
@@ -485,7 +490,7 @@ END PROGRAM main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
-def test_module_contains_used_and_unused_variables_doesnt_prune_variables():
+def test_module_contains_used_and_unused_variables():
     """
     Module has unused variables. But we don't prune variables.
     """
@@ -520,7 +525,6 @@ end program main
 MODULE lib
   IMPLICIT NONE
   INTEGER, PARAMETER :: used = 1
-  REAL, PARAMETER :: unused = 4.2
 END MODULE lib
 PROGRAM main
   USE lib, ONLY: used
@@ -529,6 +533,7 @@ PROGRAM main
   CALL type_test_function(d)
   CONTAINS
   SUBROUTINE type_test_function(d)
+    USE lib, ONLY: used
     REAL :: d(5, 5)
     d(2, 1) = used
   END SUBROUTINE type_test_function
@@ -573,15 +578,15 @@ end program main
 MODULE lib
   IMPLICIT NONE
   INTEGER, PARAMETER :: used = 1
-  REAL, PARAMETER :: unused = 4.2
 END MODULE lib
 PROGRAM main
-  USE lib
+  USE lib, ONLY: used
   IMPLICIT NONE
   REAL :: d(5, 5)
   CALL type_test_function(d)
   CONTAINS
   SUBROUTINE type_test_function(d)
+    USE lib, ONLY: used
     REAL :: d(5, 5)
     d(2, 1) = used
   END SUBROUTINE type_test_function
@@ -591,7 +596,7 @@ END PROGRAM main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
-def test_use_statement_multiple_doesnt_prune_variables():
+def test_use_statement_multiple():
     """
     We have multiple uses of the same module.
     """
@@ -630,16 +635,15 @@ MODULE lib
   IMPLICIT NONE
   INTEGER, PARAMETER :: a = 1
   REAL, PARAMETER :: b = 4.2
-  REAL, PARAMETER :: c = - 7.1
 END MODULE lib
 PROGRAM main
-  USE lib, ONLY: a
-  USE lib, ONLY: b
+  USE lib, ONLY: a, b
   IMPLICIT NONE
   REAL :: d(5, 5)
   CALL type_test_function(d)
   CONTAINS
   SUBROUTINE type_test_function(d)
+    USE lib, ONLY: a, b
     REAL :: d(5, 5)
     d(1, 1) = a
     d(1, 1) = b
@@ -689,16 +693,15 @@ MODULE lib
   IMPLICIT NONE
   INTEGER, PARAMETER :: a = 1
   REAL, PARAMETER :: b = 4.2
-  REAL, PARAMETER :: c = - 7.1
 END MODULE lib
 PROGRAM main
-  USE lib
-  USE lib, ONLY: a
+  USE lib, ONLY: a, b
   IMPLICIT NONE
   REAL :: d(5, 5)
   CALL type_test_function(d)
   CONTAINS
   SUBROUTINE type_test_function(d)
+    USE lib, ONLY: a, b
     REAL :: d(5, 5)
     d(1, 1) = a
     d(1, 1) = b
@@ -768,7 +771,6 @@ END PROGRAM main
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
-
 if __name__ == "__main__":
     test_minimal_no_pruning()
     test_toplevel_subroutine_no_pruning()
@@ -779,8 +781,7 @@ if __name__ == "__main__":
     test_module_contains_interface_block_no_pruning()
     test_uses_module_but_prunes_unused_defs()
     test_module_contains_used_and_unused_types_prunes_unused_defs()
-    test_module_contains_used_and_unused_variables_doesnt_prune_variables()
-    test_module_contains_used_and_unused_variables_with_use_all_prunes_unused()
-    test_use_statement_multiple_doesnt_prune_variables()
+    test_module_contains_used_and_unused_variables()
+    test_use_statement_multiple()
     test_use_statement_multiple_with_useall_prunes_unused()
-    test_subroutine_contains_function_no_pruning()    
+    test_subroutine_contains_function_no_pruning()
