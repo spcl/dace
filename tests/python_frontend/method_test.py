@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests dace.program as class methods """
+import pytest
 import dace
 import numpy as np
 import sys
@@ -126,6 +127,7 @@ def test_static_withclass():
     assert np.allclose(MyTestClass.static_withclass(A), A + 3)
 
 
+@pytest.mark.skip(reason="Python 3.13 removed chained @classmethods, making this impossible for now")
 def test_classmethod():
     # Only available in Python 3.9+
     if sys.version_info >= (3, 9):
@@ -282,7 +284,7 @@ if __name__ == '__main__':
     test_callable()
     test_static()
     test_static_withclass()
-    test_classmethod()
+    #test_classmethod()
     test_nested_methods()
     test_decorator()
     test_sdfgattr_method_jit()
