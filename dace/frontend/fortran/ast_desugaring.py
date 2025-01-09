@@ -667,6 +667,8 @@ def _dataref_root(dref: Union[Name, Data_Ref], scope_spec: SPEC, alias_map: SPEC
         root_type = find_type_of_entity(alias_map[root_spec], alias_map)
     elif isinstance(root, Data_Ref):
         root_type = find_type_dataref(root, scope_spec, alias_map)
+    elif isinstance(root, Part_Ref):
+        root_type = find_type_dataref(root, scope_spec, alias_map)
     assert root_type
 
     return root, root_type, rest
@@ -706,6 +708,20 @@ def find_dataref_component_spec(dref: Union[Name, Data_Ref], scope_spec: SPEC, a
 def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref], scope_spec: SPEC, alias_map: SPEC_TABLE) -> TYPE_SPEC:
     _, root_type, rest = _dataref_root(dref, scope_spec, alias_map)
     cur_type = root_type
+
+    def _subscripted_type(t: TYPE_SPEC, pref: Part_Ref):
+        pname, subs = pref.children
+        if not t.shape:
+            # The object was not an array in the first place.
+            assert not subs, f"{t} / {pname}, {t.spec}, {dref}"
+        elif subs:
+            # TODO: This is a hack to deduce a array type instead of scalar.
+            # We may have subscripted away all the dimensions.
+            t.shape = tuple(s.tofortran() for s in subs.children if ':' in s.tofortran())
+        return t
+
+    if isinstance(dref, Part_Ref):
+        return _subscripted_type(cur_type, dref)
     for comp in rest:
         assert isinstance(comp, (Name, Part_Ref))
         if isinstance(comp, Part_Ref):
@@ -714,13 +730,7 @@ def find_type_dataref(dref: Union[Name, Part_Ref, Data_Ref], scope_spec: SPEC, a
             comp_spec = find_real_ident_spec(part_name.string, cur_type.spec, alias_map)
             assert comp_spec in alias_map, f"cannot find {comp_spec} / {dref} in {scope_spec}"
             cur_type = find_type_of_entity(alias_map[comp_spec], alias_map)
-            if not cur_type.shape:
-                # The object was not an array in the first place.
-                assert not subsc, f"{cur_type} / {part_name}, {cur_type.spec}, {comp}"
-            elif subsc:
-                # TODO: This is a hack to deduce a array type instead of scalar.
-                # We may have subscripted away all the dimensions.
-                cur_type.shape = tuple(s.tofortran() for s in subsc.children if ':' in s.tofortran())
+            cur_type = _subscripted_type(cur_type, comp)
         elif isinstance(comp, Name):
             comp_spec = find_real_ident_spec(comp.string, cur_type.spec, alias_map)
             assert comp_spec in alias_map, f"cannot find {comp_spec} / {dref} in {scope_spec}"
