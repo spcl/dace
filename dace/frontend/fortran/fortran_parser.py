@@ -2829,7 +2829,7 @@ class SDFGConfig:
         self.normalize_offsets = normalize_offsets
         self.multiple_sdfgs = multiple_sdfgs
 
-def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program: FNode, normalize_offsets: bool = True):
+def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program: FNode, cfg: SDFGConfig, normalize_offsets: bool = True):
 
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
@@ -2955,7 +2955,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
     # The actual structure listing is repeated later to resolve cycles.
     # Not sure if we can actually do it earlier.
 
-    program = run_ast_transformations(own_ast, program, True)
+    program = run_ast_transformations(own_ast, program, cfg, True)
 
     gmap = {}
     for ep, ep_spec in cfg.entry_points.items():
@@ -3008,13 +3008,16 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
 def create_singular_sdfg_from_string(
         sources: Dict[str, str],
         entry_point: str,
-        normalize_offsets: bool = True):
+        normalize_offsets: bool = True,
+        config_injections: Optional[List[ConstTypeInjection]] = None):
     entry_point = entry_point.split('.')
 
-    cfg = ParseConfig(main=sources['main.f90'], sources=sources, entry_points=tuple(entry_point))
+    cfg = ParseConfig(main=sources['main.f90'], sources=sources, entry_points=tuple(entry_point),
+                      config_injections=config_injections)
     own_ast, program = create_internal_ast(cfg)
 
-    cfg = SDFGConfig({entry_point[-1]: entry_point}, normalize_offsets, False)
+    cfg = SDFGConfig({entry_point[-1]: entry_point}, config_injections=config_injections,
+                     normalize_offsets=normalize_offsets, multiple_sdfgs=False)
     gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
     assert gmap.keys() == {entry_point[-1]}
     g = list(gmap.values())[0]
@@ -3038,7 +3041,12 @@ def create_sdfg_from_string(
     cfg = ParseConfig(main=source_string, sources=sources)
     own_ast, program = create_internal_ast(cfg)
 
-    cfg = SDFGConfig({sdfg_name: f"{sdfg_name}_function"}, normalize_offsets, False)
+    cfg = SDFGConfig(
+        {sdfg_name: f"{sdfg_name}_function"}, 
+        config_injections=config_injections,
+        normalize_offsets=normalize_offsets,
+        multiple_sdfgs=False
+    )
     gmap = create_sdfg_from_internal_ast(own_ast, program, cfg)
     assert gmap.keys() == {sdfg_name}
     g = list(gmap.values())[0]
