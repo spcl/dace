@@ -3524,66 +3524,26 @@ class ParDeclOffsetNormalizer(NodeTransformer):
 
         return node
 
-class ElementalIntrinsicNodeLister(NodeVisitor):
-    """
-    Finds all elemental operations that have to be transformed to loops in the AST
-    """
+
+class ArrayLoopLister(NodeVisitor):
 
     def __init__(self, scope_vars, structures):
-        self.nodes: List[ast_internal_classes.FNode] = []
-        self.range_nodes: List[ast_internal_classes.FNode] = []
+        self.nodes: List[ast_internal_classes.Array_Subscript_Node] = []
+        self.dataref_nodes: List[Tuple[ast_internal_classes.Data_Ref_Node, ast_internal_classes.Array_Subscript_Node]] = []
 
-        self.scope_vars = scope_vars
+        self.scopes_vars = scope_vars
         self.structures = structures
 
-        self.ELEMENTAL_INTRINSICS = set(
-            ["EXP"]
-        )
+    def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
+        self.nodes.append(node)
 
-    def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
 
-        lval_pardecls = [i for i in mywalk(node.lval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
+        _, var_def, last_data_ref_node = self.structures.find_definition(self.scopes_vars, node)
 
-        # we explicitly ask look for patterns arr = func()
-        if not isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
-            return
+        if isinstance(last_data_ref_node.part_ref, ast_internal_classes.Array_Subscript_Node):
+            self.dataref_nodes.append((node, last_data_ref_node.part_ref))
 
-        if node.rval.name.name.split('__dace_')[1] not in self.ELEMENTAL_INTRINSICS:
-            return
-
-        if len(lval_pardecls) > 0:
-            self.nodes.append(node)
-        else:
-
-            # Handle edge case - the left hand side is an array
-            # But we don't have a pardecl
-
-            if isinstance(node.lval, ast_internal_classes.Name_Node):
-
-                var = self.scope_vars.get_var(node.lval.parent, node.lval.name)
-                if var.sizes is None or len(var.sizes) == 0:
-                    return
-
-                node.lval = ast_internal_classes.Array_Subscript_Node(
-                    name=node.lval, parent=node.parent, type=var.type,
-                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
-                )
-                self.nodes.append(node)
-
-            else:
-                _, var_def, last_data_ref_node = self.structures.find_definition(self.scope_vars, node.lval)
-
-                if var_def.sizes is None or len(var_def.sizes) == 0:
-                    return
-
-                if not isinstance(last_data_ref_node.part_ref, ast_internal_classes.Name_Node):
-                    return
-
-                last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
-                    name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
-                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes)
-                )
-                self.nodes.append(node)
 
 class ArrayLoopExpander(NodeTransformer):
     """
@@ -3629,9 +3589,35 @@ class ArrayLoopExpander(NodeTransformer):
                 visitor = ReplaceImplicitParDecls(self.scope_vars, self.ast.structures)
                 child.rval = visitor.visit(child.rval)
 
-                rvals = [i for i in mywalk(child.rval) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
-                for i in rvals:
+                rval_lister = ArrayLoopLister(self.scope_vars, self.ast.structures)
+                rval_lister.visit(child.rval)
+
+                #rvals = [i for i in mywalk(child.rval) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
+                for i in rval_lister.nodes:
                     rangesrval = []
+
+                    par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars,
+                                        self.ast.structures, False, ranges)
+                    for i, j in zip(ranges, rangesrval):
+                        if i != j:
+                            if isinstance(i, list) and isinstance(j, list) and len(i) == len(j):
+                                for k, l in zip(i, j):
+                                    if k != l:
+                                        if isinstance(k, ast_internal_classes.Name_Range_Node) and isinstance(
+                                                l, ast_internal_classes.Name_Range_Node):
+                                            if k.name != l.name:
+                                                raise NotImplementedError("Ranges must be the same")
+                                        else:
+                                            # this is not actually illegal.
+                                            # raise NotImplementedError("Ranges must be the same")
+                                            continue
+                            else:
+                                raise NotImplementedError("Ranges must be identical")
+
+                for dataref in rval_lister.dataref_nodes:
+                    rangesrval = []
+
+                    i = dataref[0]
 
                     par_Decl_Range_Finder(i, rangesrval, [], self.count, newbody, self.scope_vars,
                                         self.ast.structures, False, ranges)
@@ -3769,6 +3755,66 @@ class ArrayToLoop(ArrayLoopExpander):
     def __init__(self, ast):
         super().__init__(ast)
 
+class ElementalIntrinsicNodeLister(NodeVisitor):
+    """
+    Finds all elemental operations that have to be transformed to loops in the AST
+    """
+
+    def __init__(self, scope_vars, structures):
+        self.nodes: List[ast_internal_classes.FNode] = []
+        self.range_nodes: List[ast_internal_classes.FNode] = []
+
+        self.scope_vars = scope_vars
+        self.structures = structures
+
+        self.ELEMENTAL_INTRINSICS = set(
+            ["EXP"]
+        )
+
+    def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
+
+        lval_pardecls = [i for i in mywalk(node.lval) if isinstance(i, ast_internal_classes.ParDecl_Node)]
+
+        # we explicitly ask look for patterns arr = func()
+        if not isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
+            return
+
+        if node.rval.name.name.split('__dace_')[1] not in self.ELEMENTAL_INTRINSICS:
+            return
+
+        if len(lval_pardecls) > 0:
+            self.nodes.append(node)
+        else:
+
+            # Handle edge case - the left hand side is an array
+            # But we don't have a pardecl
+
+            if isinstance(node.lval, ast_internal_classes.Name_Node):
+
+                var = self.scope_vars.get_var(node.lval.parent, node.lval.name)
+                if var.sizes is None or len(var.sizes) == 0:
+                    return
+
+                node.lval = ast_internal_classes.Array_Subscript_Node(
+                    name=node.lval, parent=node.parent, type=var.type,
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var.sizes)
+                )
+                self.nodes.append(node)
+
+            else:
+                _, var_def, last_data_ref_node = self.structures.find_definition(self.scope_vars, node.lval)
+
+                if var_def.sizes is None or len(var_def.sizes) == 0:
+                    return
+
+                if not isinstance(last_data_ref_node.part_ref, ast_internal_classes.Name_Node):
+                    return
+
+                last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
+                    name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * len(var_def.sizes)
+                )
+                self.nodes.append(node)
 
 class ElementalIntrinsicExpander(ArrayLoopExpander):
     """
