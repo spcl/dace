@@ -3,7 +3,7 @@
 Installation
 ============
 
-DaCe is routinely tested on and officially supports Python 3.7 or newer (Python 3.6 is also supported, but not actively tested).
+DaCe is routinely tested on and officially supports Python 3.9 to 3.13.
 
 .. _dependencies:
 
