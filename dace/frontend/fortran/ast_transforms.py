@@ -1971,7 +1971,7 @@ class AllocatableReplacerTransformer(NodeTransformer):
                     newspec.append(ast_internal_classes.Decl_Stmt_Node(vardecl=newdecls))
 
         if len(newspec) > 0:
-            node.specification_part.specifications.append(*newspec)
+            node.specification_part.specifications.extend(newspec)
 
         return ast_internal_classes.Subroutine_Subprogram_Node(
             name=node.name,
