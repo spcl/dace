@@ -264,7 +264,7 @@ MODULE test_minval
     SUBROUTINE minval_test_func(input, res)
         TYPE(array_container) :: container
         INTEGER, DIMENSION(7) :: input
-        INTEGER, DIMENSION(3) :: res
+        INTEGER, DIMENSION(4) :: res
 
         container%data = input
 
@@ -273,39 +273,36 @@ MODULE test_minval
 
     SUBROUTINE minval_test_func_internal(container, res)
         TYPE(array_container), INTENT(IN) :: container
-        INTEGER, DIMENSION(3) :: res
+        INTEGER, DIMENSION(4) :: res
 
         res(1) = MAXVAL(container%data)
         res(2) = MAXVAL(container%data(:))
         res(3) = MAXVAL(container%data(3:6))
+        res(4) = MAXVAL(container%data(2:5))
     END SUBROUTINE
 END MODULE
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'test_minval.minval_test_func')
-    sdfg.save('test.sdfg')
-    #sdfg.simplify(verbose=True)
+    sdfg.simplify(verbose=True)
     sdfg.compile()
 
     size = 7
     input = np.full([size], 0, order="F", dtype=np.int32)
     for i in range(size):
         input[i] = i + 1
-    res = np.full([3], 42, order="F", dtype=np.int32)
+    res = np.full([4], 42, order="F", dtype=np.int32)
     sdfg(input=input, res=res)
-    print(res)
-    print(input)
 
     assert res[0] == input[6]
-    #assert res[1] == d[2]
-    #assert res[2] == d[2]
-    ## It should be the dace max for integer
-    #assert res[3] == np.iinfo(np.int32).min
+    assert res[1] == input[6]
+    assert res[2] == input[5]
+    assert res[3] == input[4]
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_minval_double()
-    #test_fortran_frontend_minval_int()
-    #test_fortran_frontend_maxval_double()
-    #test_fortran_frontend_maxval_int()
+    test_fortran_frontend_minval_double()
+    test_fortran_frontend_minval_int()
+    test_fortran_frontend_maxval_double()
+    test_fortran_frontend_maxval_int()
 
     test_fortran_frontend_minval_struct()

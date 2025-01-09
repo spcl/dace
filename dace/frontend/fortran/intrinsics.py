@@ -507,7 +507,7 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
                      ) -> ast_internal_classes.Array_Subscript_Node:
 
         # supports syntax func(arr)
-        if isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node)):
+        if isinstance(arg, ast_internal_classes.Name_Node):
             # If we access SUM(arr) where arr has many dimensions,
             # We need to create a ParDecl_Node for each dimension
             # array_sizes = self.scope_vars.get_var(node.parent, arg.name).sizes
@@ -526,21 +526,35 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
                 return ast_internal_classes.Array_Subscript_Node(
                     name=arg, parent=arg.parent, type='VOID',
                     indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims)
-            else:
 
-                _, _, cur_val = self.ast.structures.find_definition(self.scope_vars, arg)
+        # supports syntax func(struct%arr) and func(struct%arr(:))
+        if isinstance(arg, ast_internal_classes.Data_Ref_Node):
 
-                if isinstance(cur_val.part_ref, ast_internal_classes.Name_Node):
-                    cur_val.part_ref = ast_internal_classes.Array_Subscript_Node(
-                        name=cur_val.part_ref, parent=arg.parent, type='VOID',
-                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
-                    )
-                else:
-                    cur_val.part_ref = ast_internal_classes.Array_Subscript_Node(
-                        name=cur_val.part_ref.name, parent=arg.parent, type='VOID',
-                        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
-                    )
-                return arg
+            array_sizes = self.get_var_declaration(node.parent, arg).sizes
+            if array_sizes is None:
+
+                raise NeedsTypeInferenceException(self.func_name(), node.line_number)
+
+            dims = len(array_sizes)
+
+            # it's a scalar!
+            if dims == 0:
+                return None
+
+            _, _, cur_val = self.ast.structures.find_definition(self.scope_vars, arg)
+
+            if isinstance(cur_val.part_ref, ast_internal_classes.Name_Node):
+                cur_val.part_ref = ast_internal_classes.Array_Subscript_Node(
+                    name=cur_val.part_ref, parent=arg.parent, type='VOID',
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+                )
+                ##i
+                #else:
+                #    cur_val.part_ref = ast_internal_classes.Array_Subscript_Node(
+                #        name=cur_val.part_ref.name, parent=arg.parent, type='VOID',
+                #        indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+                #    )
+            return arg
 
         # supports syntax func(arr(:))
         if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
