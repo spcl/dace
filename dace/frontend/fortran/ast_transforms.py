@@ -1571,7 +1571,7 @@ class SignToIf(NodeTransformer):
                 ast_internal_classes.BinOp_Node(lval=copy.deepcopy(lval),
                                                 op="=",
                                                 rval=ast_internal_classes.Call_Expr_Node(
-                                                    name=ast_internal_classes.Name_Node(name="abs"),
+                                                    name=ast_internal_classes.Name_Node(name="__dace_ABS"),
                                                     type="DOUBLE",
                                                     args=[copy.deepcopy(args[0])],
                                                     line_number=node.line_number, parent=node.parent,
@@ -1586,7 +1586,7 @@ class SignToIf(NodeTransformer):
                                                     op="-",
                                                     type="VOID",
                                                     lval=ast_internal_classes.Call_Expr_Node(
-                                                        name=ast_internal_classes.Name_Node(name="abs"),
+                                                        name=ast_internal_classes.Name_Node(name="__dace_ABS"),
                                                         args=[copy.deepcopy(args[0])],
                                                         type="DOUBLE",
                                                         subroutine=False,
