@@ -1000,7 +1000,7 @@ class ArrayDimensionConfigInjector(NodeTransformer):
         return out
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
-        if isinstance(node.part_ref, ast_internal_classes.Array_Subscript_Node):
+        if isinstance(node.part_ref, (ast_internal_classes.Array_Subscript_Node, ast_internal_classes.Data_Ref_Node)):
             return self.generic_visit(node)
         assert isinstance(node.part_ref, ast_internal_classes.Name_Node)
         if self.in_exec_depth > 0 and node.part_ref.name in self.cfg:
