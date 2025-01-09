@@ -2545,12 +2545,12 @@ class SDFG(ControlFlowRegion):
         :param validate_all: If True, validates the SDFG after every step.
         :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
         :param use_gpu_storage: If True, changes the storage of non-transient data to GPU global memory.
-        :note: Operates in-place on the given SDFG.
+        :note: Operates in-place on this SDFG.
         :note: This function is still experimental and may harm correctness in
                certain cases. Please report an issue if it does.
         """
         from dace.transformation.auto.auto_optimize import auto_optimize
-        auto_optimize(device, validate, validate_all, symbols, use_gpu_storage)
+        auto_optimize(self, device, validate, validate_all, symbols, use_gpu_storage)
 
     def _initialize_transformations_from_type(
         self,
