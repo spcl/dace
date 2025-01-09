@@ -1565,18 +1565,22 @@ def _representative_num(dtype: Union[dtypes.typeclass, Number]) -> Number:
         nptype = dtype.type
     else:
         nptype = dtype
-    if issubclass(type(nptype), bool):
+    if isinstance(nptype, type):
+        nptype_class = nptype
+    else:
+        nptype_class = type(nptype)
+    if issubclass(nptype_class, bool):
         return True
-    elif issubclass(type(nptype), np.bool_):
+    elif issubclass(nptype_class, np.bool_):
         return np.bool_(True)
-    elif issubclass(type(nptype), Integral):
+    elif issubclass(nptype_class, Integral):
         # NOTE: Returning the max representable integer seems a better choice
         # than 1, however it was causing issues with some programs. This should
         # be revisited in the future.
         # return nptype(np.iinfo(nptype).max)
         return nptype(1)
     else:
-        return nptype(np.finfo(nptype).resolution)
+        return nptype(np.finfo(nptype_class).resolution)
 
 
 def _np_result_type(nptypes):
