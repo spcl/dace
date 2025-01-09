@@ -42,6 +42,48 @@ class IntrinsicTransformation:
     def has_transformation() -> bool:
         return False
 
+class VariableProcessor:
+
+    def __init__(self, scope_vars, ast):
+        self.scope_vars = scope_vars
+        self.ast = ast
+
+    def get_var(
+        self,
+        parent: ast_internal_classes.FNode,
+        variable: Union[
+            ast_internal_classes.Data_Ref_Node, ast_internal_classes.Name_Node,
+            ast_internal_classes.Array_Subscript_Node
+        ]
+    ):
+
+        if isinstance(variable, ast_internal_classes.Data_Ref_Node):
+
+            _, var_decl, cur_val = self.ast.structures.find_definition(self.scope_vars, variable)
+            return var_decl, cur_val
+
+        assert isinstance(variable, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node))
+        if isinstance(variable, ast_internal_classes.Name_Node):
+            name = variable.name
+        elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
+            name = variable.name.name
+
+        if self.scope_vars.contains_var(parent, name):
+            return self.scope_vars.get_var(parent, name), variable
+        elif name in self.ast.module_declarations:
+            return self.ast.module_declarations[name], variable
+        else:
+            raise RuntimeError(f"Couldn't find the declaration of variable {name} in function {parent.name.name}!")
+
+    def get_var_declaration(
+        self,
+        parent: ast_internal_classes.FNode,
+        variable: Union[
+            ast_internal_classes.Data_Ref_Node, ast_internal_classes.Name_Node,
+            ast_internal_classes.Array_Subscript_Node
+        ]
+    ):
+        return self.get_var(parent, variable)[0]
 
 class IntrinsicNodeTransformer(NodeTransformer):
 
@@ -53,55 +95,17 @@ class IntrinsicNodeTransformer(NodeTransformer):
         self.scope_vars.visit(ast)
         self.ast = ast
 
-    def _parse_struct_ref(self, node: ast_internal_classes.Data_Ref_Node) -> ast_internal_classes.FNode:
+        self.var_processor = VariableProcessor(self.scope_vars, self.ast)
 
-        # we assume starting from the top (left-most) data_ref_node
-        # for struct1 % struct2 % struct3 % var
-        # we find definition of struct1, then we iterate until we find the var
-
-        struct_type = self.scope_vars.get_var(node.parent, node.parent_ref.name).type
-        struct_def = self.ast.structures.structures[struct_type]
-        cur_node = node
-
-        while True:
-            cur_node = cur_node.part_ref
-
-            if isinstance(cur_node, ast_internal_classes.Array_Subscript_Node):
-                struct_def = self.ast.structures.structures[struct_type]
-                return struct_def.vars[cur_node.name.name]
-
-            elif isinstance(cur_node, ast_internal_classes.Name_Node):
-                struct_def = self.ast.structures.structures[struct_type]
-                return struct_def.vars[cur_node.name]
-
-            elif isinstance(cur_node, ast_internal_classes.Data_Ref_Node):
-                struct_type = struct_def.vars[cur_node.parent_ref.name].type
-                struct_def = self.ast.structures.structures[struct_type]
-
-            else:
-                raise NotImplementedError()
-
-    def get_var_declaration(self,
-                            parent: ast_internal_classes.FNode,
-                            variable: Union[
-                                ast_internal_classes.Data_Ref_Node, ast_internal_classes.Name_Node,
-                                ast_internal_classes.Array_Subscript_Node]):
-        if isinstance(variable, ast_internal_classes.Data_Ref_Node):
-            variable = self._parse_struct_ref(variable)
-            return variable
-
-        assert isinstance(variable, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node))
-        if isinstance(variable, ast_internal_classes.Name_Node):
-            name = variable.name
-        elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
-            name = variable.name.name
-
-        if self.scope_vars.contains_var(parent, name):
-            return self.scope_vars.get_var(parent, name)
-        elif name in self.ast.module_declarations:
-            return self.ast.module_declarations[name]
-        else:
-            raise RuntimeError(f"Couldn't find the declaration of variable {name} in function {parent.name.name}!")
+    def get_var_declaration(
+        self,
+        parent: ast_internal_classes.FNode,
+        variable: Union[
+            ast_internal_classes.Data_Ref_Node, ast_internal_classes.Name_Node,
+            ast_internal_classes.Array_Subscript_Node
+        ]
+    ):
+        return self.var_processor.get_var_declaration(parent, variable)
 
     @staticmethod
     @abstractmethod
@@ -1409,7 +1413,6 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
             return anode[0]
 
     def get_write_access(self, state: SDFGState, sdfg: SDFG, array: str)->nodes.AccessNode:
-        
 
         found=False
         for anode in state.all_nodes_recursive():
@@ -1434,13 +1437,13 @@ class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
         state.add_edge(libnode, "_out", res, None, sdfg.make_array_memlet(self.out.data))
 
     @staticmethod
-    def transpose_size(arg_sizes: List[ List[ast_internal_classes.FNode] ]):
+    def transpose_size(node: ast_internal_classes.Call_Expr_Node, arg_sizes: List[ List[ast_internal_classes.FNode] ]):
 
         assert len(arg_sizes) == 1
         return list(reversed(arg_sizes[0]))
 
     @staticmethod
-    def matmul_size(arg_sizes: List[ List[ast_internal_classes.FNode] ]):
+    def matmul_size(node: ast_internal_classes.Call_Expr_Node, arg_sizes: List[ List[ast_internal_classes.FNode] ]):
 
         assert len(arg_sizes) == 2
         return [
@@ -1624,9 +1627,15 @@ class MathFunctions(IntrinsicTransformation):
         "IAND": MathTransformation("bitwise_and", "INTEGER")
     }
 
+    @staticmethod
+    def one_to_one_size(node: ast_internal_classes.Call_Expr_Node, sizes: List[ast_internal_classes.FNode]):
+        assert len(sizes) == 1
+        return sizes[0]
+
     INTRINSIC_SIZE_FUNCTIONS = {
         "TRANSPOSE": IntrinsicSDFGTransformation.transpose_size,
-        "MATMUL": IntrinsicSDFGTransformation.matmul_size
+        "MATMUL": IntrinsicSDFGTransformation.matmul_size,
+        "EXP": one_to_one_size
     }
 
     class TypeTransformer(IntrinsicNodeTransformer):
@@ -1638,10 +1647,8 @@ class MathFunctions(IntrinsicTransformation):
                                 ast_internal_classes.Int_Literal_Node, ast_internal_classes.Call_Expr_Node,
                                 ast_internal_classes.BinOp_Node, ast_internal_classes.UnOp_Node)):
                 return arg.type
-            elif isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node)):
+            elif isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node, ast_internal_classes.Data_Ref_Node)):
                 return self.get_var_declaration(node.parent, arg).type
-            elif isinstance(arg, ast_internal_classes.Data_Ref_Node):
-                return self._parse_struct_ref(arg).type
             else:
                 raise NotImplementedError(type(arg))
 
@@ -1726,9 +1733,9 @@ class MathFunctions(IntrinsicTransformation):
 
                         sizes = []
                         for arg in node.args:
-                            sizes.append(self.get_var_declaration(node.parent, arg).sizes)
+                            sizes.append(arg.sizes)
 
-                        var_decl.sizes = size_func(sizes)
+                        var_decl.sizes = size_func(node, sizes)
                         var_decl.offsets = [1] * len(var_decl.sizes)
 
                         var.sizes = var_decl.sizes
@@ -1759,6 +1766,24 @@ class MathFunctions(IntrinsicTransformation):
         # not array accesses
         funcs = list(MathFunctions.INTRINSIC_TO_DACE.keys())
         return [f'__dace_{f}' for f in funcs]
+
+    @staticmethod
+    def output_size(node: ast_internal_classes.Call_Expr_Node):
+
+        name = node.name.name.split('__dace_')
+        if len(name) != 2 or name[1] not in MathFunctions.INTRINSIC_SIZE_FUNCTIONS:
+            return None, None
+
+        # we also need to determine the size of the LHS when it's new
+        size_func = MathFunctions.INTRINSIC_SIZE_FUNCTIONS[name[1]]
+
+        sizes = []
+        for arg in node.args:
+            sizes.append(arg.sizes)
+
+        sizes = size_func(node, sizes)
+
+        return sizes, [1] * len(sizes)
 
     @staticmethod
     def replacable(func_name: str) -> bool:

@@ -2041,7 +2041,10 @@ class ArrayLoopNodeLister(NodeVisitor):
         if not lval_pardecls:
 
             # Handle edge case - the left hand side is an array
-            # But we don't have a pardecl
+            # But we don't have a pardecl.
+            #
+            # This means that we target a NameNode that refers to an array
+            # Same logic applies to structures
             #
             # BUT: we explicitly exclude patterns like arr = func()
             if isinstance(node.lval, (ast_internal_classes.Name_Node, ast_internal_classes.Data_Ref_Node)) and not isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
@@ -2061,6 +2064,9 @@ class ArrayLoopNodeLister(NodeVisitor):
                     _, var_def, last_data_ref_node = self.structures.find_definition(self.scope_vars, node.lval)
 
                     if var_def.sizes is None or len(var_def.sizes) == 0:
+                        return
+
+                    if not isinstance(last_data_ref_node.part_ref, ast_internal_classes.Name_Node):
                         return
 
                     last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
@@ -2825,10 +2831,11 @@ class TypeInference(NodeTransformer):
         node.sizes = variable.sizes
         node.offsets = variable.offsets
         if node.sizes is None:
-                    node.sizes = []
-                    variable.sizes = []
-                    node.offsets = []
-                    variable.offsets = []
+            node.sizes = []
+            variable.sizes = []
+            node.offsets = []
+            variable.offsets = []
+
         return node
 
     def visit_Actual_Arg_Spec_Node(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
@@ -2863,14 +2870,20 @@ class TypeInference(NodeTransformer):
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
+        from dace.frontend.fortran.intrinsics import MathFunctions
+
         new_args = []
         for arg in node.args:
-            new_args.append(arg)
+            new_args.append(self.visit(arg))
         node.args = new_args
 
-        # FIXME
-        node.sizes = None
-        node.offsets = None
+        sizes, offsets = MathFunctions.output_size(node)
+        if sizes is not None:
+            node.sizes = sizes
+            node.offsets = offsets
+        else:
+            node.sizes = None
+            node.offsets = None
 
         return node
 
@@ -3620,6 +3633,9 @@ class ParDeclOffsetNormalizer(NodeTransformer):
         self.scope_vars = ScopeVarsDeclarations(ast)
         self.scope_vars.visit(ast)
 
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+        return node
+
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
         array_var = self.scope_vars.get_var(node.parent, node.name.name)
@@ -3731,6 +3747,7 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
                 )
                 self.nodes.append(node)
 
+# FIXME: This sis copy-paste of ArrayToLoop - we need to merge those
 
 class ElementalIntrinsicExpander(NodeTransformer):
     """
