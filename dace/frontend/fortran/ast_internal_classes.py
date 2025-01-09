@@ -536,7 +536,7 @@ class Data_Component_Def_Stmt_Node(FNode):
 
 
 class Data_Ref_Node(FNode):
-    _attributes = ()
+    _attributes = ('type')
     _fields = ('parent_ref', 'part_ref',)
 
 

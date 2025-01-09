@@ -2651,6 +2651,7 @@ class TypeInference(NodeTransformer):
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
 
+
         if node.type != 'VOID':
             return node
 
@@ -2857,7 +2858,9 @@ class PointerRemoval(NodeTransformer):
             cur_ref_node = original_ref_node
             new_ref_node = ast_internal_classes.Data_Ref_Node(
                 parent_ref=cur_ref_node.parent_ref,
-                part_ref=None
+                part_ref=None,
+                type=cur_ref_node.type,
+                line_number=cur_ref_node.line_number
             )
             newer_ref_node = new_ref_node
 
@@ -2865,7 +2868,10 @@ class PointerRemoval(NodeTransformer):
                 cur_ref_node = cur_ref_node.part_ref
                 newest_ref_node = ast_internal_classes.Data_Ref_Node(
                     parent_ref=cur_ref_node.parent_ref,
-                    part_ref=None
+                    part_ref=None,
+                    type=cur_ref_node.type,
+                    line_number=cur_ref_node.line_number
+
                 )
                 newer_ref_node.part_ref = newest_ref_node
                 newer_ref_node = newest_ref_node
