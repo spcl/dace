@@ -460,11 +460,11 @@ class Component_Spec_List_Node(FNode):
 
 
 class Allocate_Object_List_Node(FNode):
-    _fields = ('list', )
+    _fields = ('list',)
 
 
 class Deallocate_Stmt_Node(FNode):
-    _fields = ('list', )
+    _fields = ('list',)
 
 
 class Decl_Stmt_Node(Statement_Node):
@@ -835,7 +835,6 @@ class Use_Stmt_Node(FNode):
 class Write_Stmt_Node(FNode):
     _attributes = ()
     _fields = ('args',)
-
 
 
 class Break_Node(FNode):

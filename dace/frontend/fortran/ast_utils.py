@@ -201,6 +201,7 @@ class TaskletWriter:
         :note If the node is not a string, it is checked if it is in the ast_elements dictionary
         :note If it is, the appropriate function is called with the node as an argument, leading to a recursive traversal of the tree spanned by the node
         :note If it not, an error is raised
+
         """
         self.depth += 1
         if node.__class__ in self.ast_elements:
@@ -581,7 +582,6 @@ class ProcessedWriter(TaskletWriter):
 
 
 class Context:
-
     def __init__(self, name):
         self.name = name
         self.constants = {}
@@ -592,7 +592,6 @@ class Context:
 
 
 class NameMap(dict):
-
     def __getitem__(self, k):
         assert isinstance(k, SDFG)
         if k not in self:
@@ -609,7 +608,6 @@ class NameMap(dict):
 
 
 class ModuleMap(dict):
-
     def __getitem__(self, k):
         assert isinstance(k, ast_internal_classes.Module_Node)
         if k not in self:
