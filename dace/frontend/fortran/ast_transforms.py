@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
 import re
@@ -1277,8 +1277,10 @@ class ParentScopeAssigner(NodeVisitor):
     def visit(self, node: ast_internal_classes.FNode, parent_node: Optional[ast_internal_classes.FNode] = None):
 
         parent_node_types = [
-            ast_internal_classes.Subroutine_Subprogram_Node, ast_internal_classes.Function_Subprogram_Node,
-            ast_internal_classes.Main_Program_Node, ast_internal_classes.Module_Node
+            ast_internal_classes.Subroutine_Subprogram_Node,
+            ast_internal_classes.Function_Subprogram_Node,
+            ast_internal_classes.Main_Program_Node,
+            ast_internal_classes.Module_Node
         ]
 
         if parent_node is not None and type(parent_node) in parent_node_types:
@@ -3766,7 +3768,7 @@ class ArrayLoopExpander(NodeTransformer):
                     body = current_for
                     range_index += 1
 
-                    newbody.append(body)
+                newbody.append(body)
 
                 self.count = self.count + range_index
             #else:
