@@ -2617,7 +2617,9 @@ class TypeInference(NodeTransformer):
         self.ast = ast
         if assign_scopes:
             ParentScopeAssigner().visit(ast)
-        if scope_vars is None:
+        #if scope_vars is None:
+        #we must always recompute, things might have changed
+        if (True):
             self.scope_vars = ScopeVarsDeclarations(ast)
             self.scope_vars.visit(ast)
         else:
@@ -3901,7 +3903,7 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
         self.structures = structures
 
         self.ELEMENTAL_INTRINSICS = set(
-            ["EXP"]
+            ["EXP","MAX","MIN"]
         )
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
