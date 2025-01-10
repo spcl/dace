@@ -137,9 +137,9 @@ def test_compiletime_split():
         y[:, o:o + 1] = factor * (-(x1 + x2) + (x0 + x1) - (x0 + x4) + (x3 + x4) + (x2 + x5) - (x3 + x5))
 
     x = np.random.rand(1000, 8)
-    y = np.empty_like(x)
+    y = np.zeros_like(x)
     tester(x, y, (1, 2, 3, 4, 5, 7), 0)
-    ref = np.empty_like(y)
+    ref = np.zeros_like(y)
     tester.f(x, ref, (1, 2, 3, 4, 5, 7), 0)
 
     assert np.allclose(y, ref)
