@@ -889,7 +889,7 @@ def test_fortran_frontend_exp2():
     d[1] = 4.5
     res = np.full([2], 42, order="F", dtype=np.float64)
     sdfg(d=d, res=res)
-    py_res = np.exp(d)
+    py_res = np.exp(-1.66*d)
 
     for f_res, p_res in zip(res, py_res):
         assert abs(f_res - p_res) < 10**-9

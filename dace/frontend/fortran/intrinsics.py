@@ -5,6 +5,8 @@ from abc import abstractmethod
 from collections import namedtuple
 from typing import Any, List, Optional, Tuple, Union
 
+from numpy import array_repr
+
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, \
     ScopeVarsDeclarations, TypeInference, par_Decl_Range_Finder, mywalk
@@ -645,7 +647,6 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
             idx_var = array.indices[i]
             start_loop = loop_ranges_main[i][0]
             end_loop = loop_ranges_array[i][0]
-            
 
             difference = ast_internal_classes.BinOp_Node(
                 lval=end_loop,
@@ -884,25 +885,35 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
         arg = node.args[0]
 
         array_node = self._parse_array(node, arg)
-        if array_node is not None:
-            self.first_array = array_node
-            self.cond = ast_internal_classes.BinOp_Node(
-                op="==",
-                rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                lval=self.first_array,
-                line_number=node.line_number
+        if array_node is None:
+            # it's just a scalar - create a fake array for processing
+            range_const = ast_internal_classes.Int_Literal_Node(value="0")
+            array_node = ast_internal_classes.Array_Subscript_Node(
+                name=arg, parent=arg.parent, type='VOID',
+                indices=[
+                    ast_internal_classes.ParDecl_Node(
+                        type='RANGE',
+                        range=[range_const, range_const]
+                    )
+                ],
+                sizes = []
             )
-        else:
-            self.first_array, self.second_array, self.cond = self._parse_binary_op(node, arg)
 
-            assert self.first_array is not None
+        self.first_array = array_node
+        self.cond = ast_internal_classes.BinOp_Node(
+            op="==",
+            rval=ast_internal_classes.Int_Literal_Node(value="1"),
+            lval=self.first_array,
+            line_number=node.line_number
+        )
 
     def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode,
                         new_func_body: List[ast_internal_classes.FNode]):
 
         rangeslen_left = []
         par_Decl_Range_Finder(self.first_array, self.loop_ranges, rangeslen_left, self.count, new_func_body,
-                              self.scope_vars, self.ast.structures, True)
+                            self.scope_vars, self.ast.structures, True)
+
         if self.second_array is None:
             return
 
@@ -1286,10 +1297,12 @@ class Merge(LoopBasedReplacement):
                         lval=self.mask_first_array,
                         line_number=node.line_number
                     )
-
                 else:
+                    self.mask_cond = arg
 
-                    self.mask_first_array, self.mask_second_array, self.mask_cond = self._parse_binary_op(node, arg)
+                #else:
+
+                #    self.mask_first_array, self.mask_second_array, self.mask_cond = self._parse_binary_op(node, arg)
 
         def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode,
                             new_func_body: List[ast_internal_classes.FNode]):
@@ -1322,11 +1335,6 @@ class Merge(LoopBasedReplacement):
             else:
                 dims = len(array_decl.sizes)
 
-            self.destination_array = ast_internal_classes.Array_Subscript_Node(
-                name=node.lval, parent=node.lval.parent, type='VOID',
-                indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
-            )
-
             # type inference! this is necessary when the destination array is
             # not known exactly, e.g., in recursive calls.
             if array_decl.sizes is None or len(array_decl.sizes) == 0:
@@ -1336,8 +1344,17 @@ class Merge(LoopBasedReplacement):
                 array_decl.offsets = [1] * len(array_decl.sizes)
                 array_decl.type = first_input.type
 
-            par_Decl_Range_Finder(self.destination_array, [], [], self.count,
-                                  new_func_body, self.scope_vars, self.ast.structures, True)
+                node.lval.sizes = array_decl.sizes
+
+            if len(node.lval.sizes) > 0:
+                self.destination_array = ast_internal_classes.Array_Subscript_Node(
+                    name=node.lval, parent=node.lval.parent, type='VOID',
+                    indices=[ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+                )
+                par_Decl_Range_Finder(self.destination_array, [], [], self.count,
+                                    new_func_body, self.scope_vars, self.ast.structures, True)
+            else:
+                self.destination_array = node.lval
 
             if self.mask_first_array is not None:
                 loop_ranges = []
