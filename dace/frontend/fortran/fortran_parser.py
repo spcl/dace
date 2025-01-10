@@ -3348,8 +3348,6 @@ def create_sdfg_from_fortran_file_with_options(
 
     program = partial_ast.create_ast(ast)
     program.module_declarations = ast_utils.parse_module_declarations(program)
-
-
     structs_lister = ast_transforms.StructLister()
     structs_lister.visit(program)
     struct_dep_graph = nx.DiGraph()
@@ -3365,134 +3363,137 @@ def create_sdfg_from_fortran_file_with_options(
             if j not in struct_dep_graph.nodes:
                 struct_dep_graph.add_node(j)
             struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
-    program = ast_transforms.PropagateEnums().visit(program)
-    program = ast_transforms.Flatten_Classes(structs_lister.structs).visit(program)
+    # program = ast_transforms.PropagateEnums().visit(program)
+    # program = ast_transforms.Flatten_Classes(structs_lister.structs).visit(program)
     program.structures = ast_transforms.Structures(structs_lister.structs)
+    program = run_ast_transformations(partial_ast, program, cfg, True)
 
-    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
-    functions_and_subroutines_builder.visit(program)
-    listnames = [i.name for i in functions_and_subroutines_builder.names]
-    for i in functions_and_subroutines_builder.iblocks:
-        if i not in listnames:
-            functions_and_subroutines_builder.names.append(ast_internal_classes.Name_Node(name=i, type="VOID"))
-    program.iblocks = functions_and_subroutines_builder.iblocks
-    partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
-    program = ast_transforms.functionStatementEliminator(program)
+    
 
-    program = ast_transforms.IfConditionExtractor().visit(program)
+    # functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
+    # functions_and_subroutines_builder.visit(program)
+    # listnames = [i.name for i in functions_and_subroutines_builder.names]
+    # for i in functions_and_subroutines_builder.iblocks:
+    #     if i not in listnames:
+    #         functions_and_subroutines_builder.names.append(ast_internal_classes.Name_Node(name=i, type="VOID"))
+    # program.iblocks = functions_and_subroutines_builder.iblocks
+    # partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
+    # program = ast_transforms.functionStatementEliminator(program)
 
-    program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
-    program = ast_transforms.CallExtractor().visit(program)
-    program = ast_transforms.ArgumentExtractor(program).visit(program)
-    program = ast_transforms.FunctionCallTransformer().visit(program)
-    program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
+    # program = ast_transforms.IfConditionExtractor().visit(program)
 
-    program = ast_transforms.optionalArgsExpander(program)
+    # program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
+    # program = ast_transforms.CallExtractor().visit(program)
+    # program = ast_transforms.ArgumentExtractor(program).visit(program)
+    # program = ast_transforms.FunctionCallTransformer().visit(program)
+    # program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
 
-    count = 0
-    for i in program.function_definitions:
-        if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
-            program.subroutine_definitions.append(i)
-            partial_ast.functions_and_subroutines.append(i.name)
-            count += 1
-    if count != len(program.function_definitions):
-        raise NameError("Not all functions were transformed to subroutines")
-    for i in program.modules:
-        count = 0
-        for j in i.function_definitions:
-            if isinstance(j, ast_internal_classes.Subroutine_Subprogram_Node):
-                i.subroutine_definitions.append(j)
-                partial_ast.functions_and_subroutines.append(j.name)
-                count += 1
-        if count != len(i.function_definitions):
-            raise NameError("Not all functions were transformed to subroutines")
-        i.function_definitions = []
-    program.function_definitions = []
+    # program = ast_transforms.optionalArgsExpander(program)
+
+    # count = 0
+    # for i in program.function_definitions:
+    #     if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
+    #         program.subroutine_definitions.append(i)
+    #         partial_ast.functions_and_subroutines.append(i.name)
+    #         count += 1
+    # if count != len(program.function_definitions):
+    #     raise NameError("Not all functions were transformed to subroutines")
+    # for i in program.modules:
+    #     count = 0
+    #     for j in i.function_definitions:
+    #         if isinstance(j, ast_internal_classes.Subroutine_Subprogram_Node):
+    #             i.subroutine_definitions.append(j)
+    #             partial_ast.functions_and_subroutines.append(j.name)
+    #             count += 1
+    #     if count != len(i.function_definitions):
+    #         raise NameError("Not all functions were transformed to subroutines")
+    #     i.function_definitions = []
+    # program.function_definitions = []
 
 
-    program = ast_transforms.SignToIf().visit(program)
-    program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
-    program = ast_transforms.ReplaceArrayConstructor().visit(program)
-    program = ast_transforms.ArrayToLoop(program).visit(program)
-    program = ast_transforms.optionalArgsExpander(program)
-    program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
-    program = ast_transforms.ArgumentExtractor(program).visit(program)
-    program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
-    program = ast_transforms.ArrayToLoop(program).visit(program)
-    print("Before intrinsics")
+    # program = ast_transforms.SignToIf().visit(program)
+    # program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
+    # program = ast_transforms.ReplaceArrayConstructor().visit(program)
+    # program = ast_transforms.ArrayToLoop(program).visit(program)
+    # program = ast_transforms.optionalArgsExpander(program)
+    # program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
+    # program = ast_transforms.ArgumentExtractor(program).visit(program)
+    # program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
+    # program = ast_transforms.ArrayToLoop(program).visit(program)
+    # print("Before intrinsics")
 
-    prior_exception: Optional[NeedsTypeInferenceException] = None
-    for transformation in partial_ast.fortran_intrinsics().transformations():
-        while True:
-            try:
-                transformation.initialize(program)
-                program = transformation.visit(program)
-                break
-            except NeedsTypeInferenceException as e:
+    # prior_exception: Optional[NeedsTypeInferenceException] = None
+    # for transformation in partial_ast.fortran_intrinsics().transformations():
+    #     while True:
+    #         try:
+    #             transformation.initialize(program)
+    #             program = transformation.visit(program)
+    #             break
+    #         except NeedsTypeInferenceException as e:
 
-                if prior_exception is not None:
-                    if e.line_number == prior_exception.line_number and e.func_name == prior_exception.func_name:
-                        print("Running additional type inference didn't help! VOID type in the same place.")
-                        raise RuntimeError()
-                else:
-                    prior_exception = e
-                print("Running additional type inference")
-                # FIXME: optimize func
-                program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
+    #             if prior_exception is not None:
+    #                 if e.line_number == prior_exception.line_number and e.func_name == prior_exception.func_name:
+    #                     print("Running additional type inference didn't help! VOID type in the same place.")
+    #                     raise RuntimeError()
+    #             else:
+    #                 prior_exception = e
+    #             print("Running additional type inference")
+    #             # FIXME: optimize func
+    #             program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
 
-    print("After intrinsics")
+    # print("After intrinsics")
 
-    program = ast_transforms.TypeInference(program).visit(program)
-    program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
-    program = ast_transforms.optionalArgsExpander(program)
-    program = ast_transforms.ArgumentExtractor(program).visit(program)
-    program = ast_transforms.ElementalFunctionExpander(
-        functions_and_subroutines_builder.names, ast=program).visit(program)
+    # program = ast_transforms.TypeInference(program).visit(program)
+    # program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
+    # program = ast_transforms.optionalArgsExpander(program)
+    # program = ast_transforms.ArgumentExtractor(program).visit(program)
+    # program = ast_transforms.ElementalFunctionExpander(
+    #     functions_and_subroutines_builder.names, ast=program).visit(program)
    
-    program = ast_transforms.ForDeclarer().visit(program)
-    program = ast_transforms.PointerRemoval().visit(program)
-    program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
+    # program = ast_transforms.ForDeclarer().visit(program)
+    # program = ast_transforms.PointerRemoval().visit(program)
+    # program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
 
-    array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
-    array_dims_info.visit(program)
-    program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
+    # array_dims_info = ast_transforms.ArrayDimensionSymbolsMapper()
+    # array_dims_info.visit(program)
+    # program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
 
-    structs_lister = ast_transforms.StructLister()
-    structs_lister.visit(program)
-    struct_dep_graph = nx.DiGraph()
-    for i, name in zip(structs_lister.structs, structs_lister.names):
-        if name not in struct_dep_graph.nodes:
-            struct_dep_graph.add_node(name)
-        struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
-        struct_deps_finder.visit(i)
-        struct_deps = struct_deps_finder.structs_used
-        for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
-                                           struct_deps_finder.pointer_names):
-            if j not in struct_dep_graph.nodes:
-                struct_dep_graph.add_node(j)
-            struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
-    cycles = nx.algorithms.cycles.simple_cycles(struct_dep_graph)
-    has_cycles = list(cycles)
-    cycles_we_cannot_ignore = []
-    for cycle in has_cycles:
-        print(cycle)
-        for i in cycle:
-            is_pointer = struct_dep_graph.get_edge_data(i, cycle[(cycle.index(i) + 1) % len(cycle)])["pointing"]
-            point_name = struct_dep_graph.get_edge_data(i, cycle[(cycle.index(i) + 1) % len(cycle)])["point_name"]
-            # print(i,is_pointer)
-            if is_pointer:
-                actually_used_pointer_node_finder = ast_transforms.StructPointerChecker(i, cycle[
-                    (cycle.index(i) + 1) % len(cycle)], point_name, structs_lister, struct_dep_graph, "simple")
-                actually_used_pointer_node_finder.visit(program)
-                # print(actually_used_pointer_node_finder.nodes)
-                if len(actually_used_pointer_node_finder.nodes) == 0:
-                    print("We can ignore this cycle")
-                    program = ast_transforms.StructPointerEliminator(i, cycle[(cycle.index(i) + 1) % len(cycle)],
-                                                                     point_name).visit(program)
-                else:
-                    cycles_we_cannot_ignore.append(cycle)
-    if len(cycles_we_cannot_ignore) > 0:
-        raise NameError("Structs have cyclic dependencies")
+    # structs_lister = ast_transforms.StructLister()
+    # structs_lister.visit(program)
+    # struct_dep_graph = nx.DiGraph()
+    # for i, name in zip(structs_lister.structs, structs_lister.names):
+    #     if name not in struct_dep_graph.nodes:
+    #         struct_dep_graph.add_node(name)
+    #     struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
+    #     struct_deps_finder.visit(i)
+    #     struct_deps = struct_deps_finder.structs_used
+    #     for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
+    #                                        struct_deps_finder.pointer_names):
+    #         if j not in struct_dep_graph.nodes:
+    #             struct_dep_graph.add_node(j)
+    #         struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
+    # cycles = nx.algorithms.cycles.simple_cycles(struct_dep_graph)
+    # has_cycles = list(cycles)
+    # cycles_we_cannot_ignore = []
+    # for cycle in has_cycles:
+    #     print(cycle)
+    #     for i in cycle:
+    #         is_pointer = struct_dep_graph.get_edge_data(i, cycle[(cycle.index(i) + 1) % len(cycle)])["pointing"]
+    #         point_name = struct_dep_graph.get_edge_data(i, cycle[(cycle.index(i) + 1) % len(cycle)])["point_name"]
+    #         # print(i,is_pointer)
+    #         if is_pointer:
+    #             actually_used_pointer_node_finder = ast_transforms.StructPointerChecker(i, cycle[
+    #                 (cycle.index(i) + 1) % len(cycle)], point_name, structs_lister, struct_dep_graph, "simple")
+    #             actually_used_pointer_node_finder.visit(program)
+    #             # print(actually_used_pointer_node_finder.nodes)
+    #             if len(actually_used_pointer_node_finder.nodes) == 0:
+    #                 print("We can ignore this cycle")
+    #                 program = ast_transforms.StructPointerEliminator(i, cycle[(cycle.index(i) + 1) % len(cycle)],
+    #                                                                  point_name).visit(program)
+    #             else:
+    #                 cycles_we_cannot_ignore.append(cycle)
+    # if len(cycles_we_cannot_ignore) > 0:
+    #     raise NameError("Structs have cyclic dependencies")
     # print("Deleting struct members...")
     # struct_members_deleted = 0
     # for struct, name in zip(structs_lister.structs, structs_lister.names):
@@ -3539,7 +3540,8 @@ def create_sdfg_from_fortran_file_with_options(
     program.placeholders_offsets = partial_ast.placeholders_offsets
     program.functions_and_subroutines = partial_ast.functions_and_subroutines
     unordered_modules = program.modules
-
+    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
+    functions_and_subroutines_builder.visit(program)
     # arg_pruner = ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes)
     # arg_pruner.visit(program)
 
