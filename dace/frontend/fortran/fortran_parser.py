@@ -3031,7 +3031,7 @@ def create_singular_sdfg_from_string(
         sources: Dict[str, str],
         entry_point: str,
         normalize_offsets: bool = True,
-        config_injections: Optional[List[ConstTypeInjection]] = None):
+        config_injections: Optional[List[ConstTypeInjection]] = None) -> SDFG:
     entry_point = entry_point.split('.')
 
     cfg = ParseConfig(main=sources['main.f90'], sources=sources, entry_points=tuple(entry_point),
