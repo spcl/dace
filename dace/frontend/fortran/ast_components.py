@@ -813,7 +813,7 @@ class InternalFortranAst:
         line = get_line(node)
         # child 0 is the base, child 2 is the exponent
         # child 1 is "**"
-        return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name="pow"),
+        return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name="__dace_POW"),
                                                    args=[children[0], children[2]],
                                                    line_number=line, type="REAL", subroutine=False)
 
