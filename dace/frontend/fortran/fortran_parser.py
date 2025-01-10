@@ -457,7 +457,7 @@ class AST_translator:
             for jj in parse_order:
                 for j in i.specification_part.typedecls:
                     if j.name.name == jj:
-                        self.translate(j, sdfg)
+                        self.translate(j, sdfg, cfg)
                         if j.__class__.__name__ != "Derived_Type_Def_Node":
                             for k in j.vardecl:
                                 self.module_vars.append((k.name, i.name))
@@ -468,7 +468,7 @@ class AST_translator:
                 self.transient_mode = self.do_not_make_internal_variables_argument
 
                 for j in i.specification_part.symbols:
-                    self.translate(j, sdfg)
+                    self.translate(j, sdfg, cfg)
                     if isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node):
                         self.module_vars.append((j.name, i.name))
                     elif isinstance(j, ast_internal_classes.Symbol_Decl_Node):
@@ -476,7 +476,7 @@ class AST_translator:
                     else:
                         raise ValueError("Unknown symbol type")
                 for j in i.specification_part.specifications:
-                    self.translate(j, sdfg)
+                    self.translate(j, sdfg, cfg)
                     for k in j.vardecl:
                         self.module_vars.append((k.name, i.name))
         # this works with CloudSC
@@ -493,12 +493,12 @@ class AST_translator:
             self.transient_mode = self.do_not_make_internal_variables_argument
 
             for i in self.startpoint.specification_part.typedecls:
-                self.translate(i, sdfg)
+                self.translate(i, sdfg, cfg)
             for i in self.startpoint.specification_part.symbols:
-                self.translate(i, sdfg)
+                self.translate(i, sdfg, cfg)
 
             for i in self.startpoint.specification_part.specifications:
-                self.translate(i, sdfg)
+                self.translate(i, sdfg, cfg)
             for i in self.startpoint.specification_part.specifications:
                 ast_utils.add_simple_state_to_sdfg(self, sdfg, "start_struct_size")
                 assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
@@ -527,7 +527,7 @@ class AST_translator:
         #         sdfg.arrays.pop(i)
 
         self.transient_mode = True
-        self.translate(self.startpoint.execution_part.execution, sdfg)
+        self.translate(self.startpoint.execution_part.execution, sdfg, cfg)
         sdfg.validate()
 
     def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG,
@@ -666,7 +666,7 @@ class AST_translator:
         """
 
         for i in node.execution:
-            self.translate(i, sdfg)
+            self.translate(i, sdfg, cfg)
 
     def allocate2sdfg(self, node: ast_internal_classes.Allocate_Stmt_Node, sdfg: SDFG,
                       cfg: ControlFlowRegion):
@@ -725,7 +725,7 @@ class AST_translator:
 
         cond_block = ConditionalBlock(name)
         is_start = cfg not in self.last_sdfg_states or self.last_sdfg_states[cfg] is None
-        cfg.add_node(cond_block, is_start_block=is_start)
+        cfg.add_node(cond_block, ensure_unique_name=True, is_start_block=is_start)
         if not is_start:
             cfg.add_edge(self.last_sdfg_states[cfg], cond_block, InterstateEdge())
         self.last_sdfg_states[cfg] = cond_block
@@ -733,12 +733,12 @@ class AST_translator:
         condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping, self.placeholders, self.placeholders_offsets,
                                               self.replace_names).write_code(node.cond)
 
-        if_body = ControlFlowRegion(name + '_if_body')
+        if_body = ControlFlowRegion(cond_block.label + '_if_body')
         cond_block.add_branch(CodeBlock(condition), if_body)
         self.translate(node.body, sdfg, if_body)
 
         if len(node.body_else.execution) > 0:
-            else_body = ControlFlowRegion(name + '_else_body')
+            else_body = ControlFlowRegion(cond_block.label + '_else_body')
             cond_block.add_branch(None, else_body)
             self.translate(node.body_else, sdfg, else_body)
 
@@ -761,11 +761,12 @@ class AST_translator:
         loop_region = LoopRegion(name, condition, inverted=False, sdfg=sdfg)
 
         is_start = cfg not in self.last_sdfg_states or self.last_sdfg_states[cfg] is None
-        cfg.add_node(loop_region, is_start_block=is_start)
+        cfg.add_node(loop_region, ensure_unique_name=True, is_start_block=is_start)
         if not is_start:
             cfg.add_edge(self.last_sdfg_states[cfg], loop_region, InterstateEdge())
         self.last_sdfg_states[cfg] = loop_region
-        self.last_sdfg_states[loop_region] = loop_region.add_state('BeginLoop_' + name, is_start_block=True)
+        self.last_sdfg_states[loop_region] = loop_region.add_state('BeginLoop_' + loop_region.label,
+                                                                   is_start_block=True)
 
         self.translate(node.body, sdfg, loop_region)
 
@@ -812,11 +813,12 @@ class AST_translator:
         loop_region = LoopRegion(name, condition, iter_name, init_expr, increment_expr, inverted=False, sdfg=sdfg)
 
         is_start = cfg not in self.last_sdfg_states or self.last_sdfg_states[cfg] is None
-        cfg.add_node(loop_region, is_start_block=is_start)
+        cfg.add_node(loop_region, ensure_unique_name=True, is_start_block=is_start)
         if not is_start:
             cfg.add_edge(self.last_sdfg_states[cfg], loop_region, InterstateEdge())
         self.last_sdfg_states[cfg] = loop_region
-        self.last_sdfg_states[loop_region] = loop_region.add_state('BeginLoop_' + name, is_start_block=True)
+        self.last_sdfg_states[loop_region] = loop_region.add_state('BeginLoop_' + loop_region.label,
+                                                                   is_start_block=True)
 
         self.translate(node.body, sdfg, loop_region)
 
@@ -2022,12 +2024,12 @@ class AST_translator:
                     self.transient_mode = True
                     for j in node.specification_part.symbols:
                         if isinstance(j, ast_internal_classes.Symbol_Decl_Node):
-                            self.symbol2sdfg(j, new_sdfg)
+                            self.symbol2sdfg(j, new_sdfg, new_sdfg)
                         else:
                             raise NotImplementedError("Symbol not implemented")
 
                     for j in node.specification_part.specifications:
-                        self.declstmt2sdfg(j, new_sdfg)
+                        self.declstmt2sdfg(j, new_sdfg, new_sdfg)
                     self.transient_mode = old_mode
 
                 for i in new_sdfg.symbols:
@@ -2202,10 +2204,11 @@ class AST_translator:
         if self.multiple_sdfgs == False:
 
             for i in assigns:
-                self.translate(i, new_sdfg)
-            self.translate(node.execution_part, new_sdfg)
+                self.translate(i, new_sdfg, new_sdfg)
+            self.translate(node.execution_part, new_sdfg, new_sdfg)
             # import copy
             #
+            new_sdfg.reset_cfg_list()
             new_sdfg.validate()
             new_sdfg.apply_transformations(IntrinsicSDFGTransformation)
             from dace.transformation.dataflow import RemoveSliceView
@@ -2684,21 +2687,22 @@ class AST_translator:
                     ast_internal_classes.BinOp_Node(
                         lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
                         op="=", rval=node.init, line_number=node.line_number, parent=node.parent, type=node.type))
-                self.translate(new_exec, sdfg)
+                self.translate(new_exec, sdfg, cfg)
             else:
                 self.translate(
                     ast_internal_classes.BinOp_Node(
                         lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
-                        op="=", rval=node.init, line_number=node.line_number, parent=node.parent, type=node.type), sdfg)
+                        op="=", rval=node.init, line_number=node.line_number, parent=node.parent, type=node.type), sdfg,
+                        cfg)
 
     def break2sdfg(self, node: ast_internal_classes.Break_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         break_block = BreakBlock(f'Break_l_{node.line_number}')
-        cfg.add_node(break_block)
+        cfg.add_node(break_block, ensure_unique_name=True)
         cfg.add_edge(self.last_sdfg_states[cfg], break_block, InterstateEdge())
 
     def continue2sdfg(self, node: ast_internal_classes.Continue_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         continue_block = ContinueBlock(f'Continue_l_{node.line_number}')
-        cfg.add_node(continue_block)
+        cfg.add_node(continue_block, ensure_unique_name=True)
         cfg.add_edge(self.last_sdfg_states[cfg], continue_block, InterstateEdge())
 
 
@@ -3012,7 +3016,8 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         ast2sdfg.actual_offsets_per_sdfg[g] = {}
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = g
-        ast2sdfg.translate(program, g)
+        ast2sdfg.translate(program, g, g)
+        g.reset_cfg_list()
         from dace.transformation.passes.lift_struct_views import LiftStructViews
         from dace.transformation.pass_pipeline import FixedPointPipeline
         FixedPointPipeline([LiftStructViews()]).apply_pass(g, {})
@@ -3578,7 +3583,7 @@ def create_sdfg_from_fortran_file_with_options(
         ast2sdfg.top_level = program
         ast2sdfg.globalsdfg = sdfg
 
-        ast2sdfg.translate(program, sdfg)
+        ast2sdfg.translate(program, sdfg, sdfg)
 
         print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz")}')
         sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
@@ -3651,7 +3656,7 @@ def create_sdfg_from_fortran_file_with_options(
             ast2sdfg.actual_offsets_per_sdfg[sdfg] = {}
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg
-            ast2sdfg.translate(program, sdfg)
+            ast2sdfg.translate(program, sdfg, sdfg)
             sdfg.validate()
             sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
             sdfg.validate()

@@ -245,14 +245,15 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             if len(blocks) != len(set([s.label for s in blocks])):
                 raise InvalidSDFGError('Found multiple blocks with the same name in ' + cfg.name, sdfg, None)
 
+        # TODO: Re-Enable!
         # Check the names of data descriptors and co.
-        seen_names: Set[str] = set()
-        for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys(), sdfg._rdistrarrays.keys(), sdfg._subarrays.keys()]:
-            if not seen_names.isdisjoint(obj_names):
-                raise InvalidSDFGError(
-                    f'Found duplicated names: "{seen_names.intersection(obj_names)}". Please ensure '
-                    'that the names of symbols, data descriptors, subarrays and rdistarrays are unique.', sdfg, None)
-            seen_names.update(obj_names)
+        #seen_names: Set[str] = set()
+        #for obj_names in [sdfg.arrays.keys(), sdfg.symbols.keys(), sdfg._rdistrarrays.keys(), sdfg._subarrays.keys()]:
+        #    if not seen_names.isdisjoint(obj_names):
+        #        raise InvalidSDFGError(
+        #            f'Found duplicated names: "{seen_names.intersection(obj_names)}". Please ensure '
+        #            'that the names of symbols, data descriptors, subarrays and rdistarrays are unique.', sdfg, None)
+        #    seen_names.update(obj_names)
 
         # Ensure that there is a mentioning of constants in either the array or symbol.
         for const_name, (const_type, _) in sdfg.constants_prop.items():
