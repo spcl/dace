@@ -68,3 +68,7 @@ end subroutine main
     c = np.zeros(2, dtype=np.float32)
     g(cfg=cfg, c=c)
     assert c[0] == 3 + 5
+
+
+if __name__ == '__main__':
+    test_minimal()
