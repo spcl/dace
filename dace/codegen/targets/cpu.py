@@ -463,6 +463,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, data.Scalar):
             if top_desc is not None and isinstance(top_desc, (data.Structure, data.StructureView)):
                 # If this scalar is a field of a structure, there is no need for allocation.
+                self._dispatcher.defined_vars.add(name, DefinedType.Scalar, nodedesc.dtype.ctype)
                 return
 
             if node.setzero:
