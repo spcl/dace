@@ -2683,8 +2683,8 @@ class TypeInference(NodeTransformer):
 
         node.expr = self.visit(node.expr)
         node.type = node.expr.type
-        node.sizes = node.expr.sizes
-        node.offsets = node.expr.offsets
+        node.sizes = self._get_sizes(node.expr)
+        node.offsets = self._get_offsets(node.expr)
         return node
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
