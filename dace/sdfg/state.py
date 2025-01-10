@@ -49,8 +49,10 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
     if old_dinfo is not None:
         return old_dinfo
 
-    caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
-    return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+    #caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
+    
+    #return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
+    return dtypes.DebugInfo(1, 0, 1, 0, "skipped")
 
 
 def _make_iterators(ndrange):
@@ -779,8 +781,10 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
                 # Get a list of all incoming (writes) and outgoing (reads) edges of the
                 #  access node, ignore all empty memlets as they do not carry any data.
-                in_edges = [in_edge for in_edge in subgraph.in_edges(n) if not in_edge.data.is_empty()]
-                out_edges = [out_edge for out_edge in subgraph.out_edges(n) if not out_edge.data.is_empty()]
+                in_edges = [in_edge for in_edge in subgraph.in_edges(n)
+                            if (not in_edge.data.is_empty() and not in_edge.dst_conn == 'views')]
+                out_edges = [out_edge for out_edge in subgraph.out_edges(n)
+                             if (not out_edge.data.is_empty() and not out_edge.src_conn == 'views')]
 
                 # Extract the subsets that describes where we read and write the data
                 #  and store them for the later filtering.
@@ -1714,7 +1718,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if isinstance(outputs, (set, collections.abc.KeysView)):
             outputs = {k: None for k in outputs}
 
-        s = nd.NestedSDFG(
+        s = nd.ExternalNestedSDFG(
             name,
             sdfg,
             inputs,

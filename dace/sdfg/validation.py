@@ -457,6 +457,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Node validation
         try:
             if isinstance(node, nd.NestedSDFG):
+                if node.sdfg is None:
+                    continue
                 node.validate(sdfg, state, references, **context)
             else:
                 node.validate(sdfg, state)
@@ -525,6 +527,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if sdutil.get_view_edge(state, node) is None:
                     raise InvalidSDFGNodeError("Ambiguous or invalid edge to/from a View access node", sdfg, state_id,
                                                nid)
+                view_node = sdutil.get_view_node(state, node)
+                if view_node is None:
+                    raise InvalidSDFGNodeError("View node not found", sdfg, state_id, nid)
+                if view_node is node:
+                    raise InvalidSDFGNodeError("View node points to itself", sdfg, state_id, nid)
+                if not isinstance(view_node, nd.AccessNode):
+                    raise InvalidSDFGNodeError("View node must point to an AccessNode", sdfg, state_id, nid)
 
             # Find uninitialized transients
             if node.data not in initialized_transients:
@@ -742,12 +751,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Check memlet subset validity with respect to source/destination nodes
         if e.data.data is not None and e.data.allow_oob == False:
             subset_node = (dst_node
-                           if isinstance(dst_node, nd.AccessNode) and e.data.data == dst_node.data else src_node)
+                           if isinstance(dst_node, nd.AccessNode) and validate_memlet_data(e.data.data, dst_node.data) else src_node)
             other_subset_node = (dst_node
-                                 if isinstance(dst_node, nd.AccessNode) and e.data.data != dst_node.data else src_node)
+                                 if isinstance(dst_node, nd.AccessNode) and not validate_memlet_data(e.data.data, dst_node.data) else src_node)
 
             if isinstance(subset_node, nd.AccessNode):
                 arr = sdfg.arrays[e.data.data]
+
                 # Dimensionality
                 if e.data.subset.dims() != len(arr.shape):
                     raise InvalidSDFGEdgeError(

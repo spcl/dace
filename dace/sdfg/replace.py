@@ -73,8 +73,14 @@ def replace_dict(subgraph: 'StateSubgraphView',
 
     # Replace in memlets
     for edge in subgraph.edges():
-        if edge.data.data in repl:
-            edge.data.data = str(repl[edge.data.data])
+        if edge.data.data is not None:
+            members = edge.data.data.split(".")
+            new_members = []
+            for member in members:
+                if member in repl:
+                    member = str(repl[member])
+                new_members.append(member)
+            edge.data.data = ".".join(new_members)
         if (edge.data.subset is not None and repl.keys() & edge.data.subset.free_symbols):
             edge.data.subset = _replsym(edge.data.subset, symrepl)
         if (edge.data.other_subset is not None and repl.keys() & edge.data.other_subset.free_symbols):
@@ -189,6 +195,10 @@ def replace_datadesc_names(sdfg: 'dace.SDFG', repl: Dict[str, str]):
         # Replace in interstate edges
         for e in cf.edges():
             e.data.replace_dict(repl, replace_keys=False)
+    
+        
+
+
 
         for block in cf.nodes():
             if isinstance(block, dace.SDFGState):

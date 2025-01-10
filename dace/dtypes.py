@@ -784,7 +784,7 @@ class stringtype(pointer):
 class struct(typeclass):
     """ A data type for a struct of existing typeclasses.
 
-        Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
+        Example use: `dace.struct('example', a=dace.int32, b=dace.float64)`.
     """
 
     def __init__(self, name, fields_and_types=None, **fields):
@@ -881,7 +881,7 @@ class struct(typeclass):
 {typ}
 }};""".format(
             name=self.name,
-            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
+            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in sorted(self._data.items())]),
         )
 
 

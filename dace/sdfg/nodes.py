@@ -605,6 +605,7 @@ class NestedSDFG(CodeNode):
                          default=False)
 
     unique_name = Property(dtype=str, desc="Unique name of the SDFG", default="")
+    path = Property(dtype=str, default = "",desc="Path to the SDFG file (if any)")
 
     def __init__(self,
                  label,
@@ -1402,6 +1403,11 @@ class LibraryNode(CodeNode):
     def from_json(cls, json_obj, context=None):
         if cls == LibraryNode:
             clazz = pydoc.locate(json_obj['classpath'])
+            # TODO: REMOVE BEFORE MERGING!!!
+            if clazz == UnregisteredLibraryNode and (json_obj['label'].startswith('perm_') or
+                                                     json_obj['label'].startswith('unperm_')):
+                from dace.libraries.standard import TensorTranspose
+                clazz = TensorTranspose
             if clazz is None:
                 warnings.warn(f'Could not find class "{json_obj["classpath"]}" while deserializing. Falling back '
                               'to UnregisteredLibraryNode.')

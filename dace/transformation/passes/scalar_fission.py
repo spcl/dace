@@ -6,6 +6,7 @@ from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
+from dace.data import View
 
 
 @transformation.explicit_cf_compatible
@@ -41,6 +42,8 @@ class ScalarFission(ppl.Pass):
 
         for name, write_scope_dict in shadow_scope_dict.items():
             desc = sdfg.arrays[name]
+            if isinstance(desc, View):
+                continue
 
             # If this isn't a scalar or an array of size 1, don't do anything.
             if desc.total_size != 1:

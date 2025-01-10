@@ -552,6 +552,79 @@ class NameFound(Exception):
     pass
 
 
+class ASTFindReplaceComplex(ast.NodeTransformer):
+    def __init__(self, repldict: Dict[str, List], trigger_names: Set[str] = None):
+        self.replace_count = 0
+        self.repldict = repldict
+        self.trigger_names = trigger_names or set()
+        # If ast.Names were given, use them as keys as well
+        self.repldict.update({k.id: v for k, v in self.repldict.items() if isinstance(k, ast.Name)})
+
+        
+    def visit_Subscript(self, node: ast.Subscript):
+        if not hasattr(node.value,"id"):
+            return self.generic_visit(node)
+        elif node.value.id in self.repldict:
+            val = self.repldict[node.value.id]
+            if len(val)<2:
+                raise ValueError("The value of the key in the dictionary should be a list of length 2")
+            current_val=0
+            first=True
+            expression_under_construction=""
+            while isinstance(val[current_val],str):
+                if first: 
+                    first=False
+                else:
+                    expression_under_construction+="."
+                expression_under_construction+=val[current_val]    
+                current_val+=1
+
+            expression_under_construction+="."    
+            last_index_expression_from_outside_context=val[-1]
+            name=last_index_expression_from_outside_context[0]
+            indices=last_index_expression_from_outside_context[1]
+            current_local_index=0
+            expression_under_construction += name
+            only_one_index=False
+            expression_under_construction+="["
+            first=True
+            for i, dim in enumerate(indices):
+                if first:
+                    first=False
+                else:
+                    expression_under_construction+=","
+                if dim=="__to_be_replaced__":
+                    if only_one_index:
+                        raise ValueError("if slice is not a list, only one index can be replaced")
+                    if hasattr(node.slice,"dims"):
+                        expression_under_construction+=unparse(node.slice.dims[current_local_index])
+                    else:
+                        expression_under_construction+=unparse(node.slice)
+                        only_one_index=True    
+                    current_local_index+=1
+                else:
+                    expression_under_construction+=dim
+            expression_under_construction+="]"
+                    
+            new_node = ast.copy_location(ast.parse(expression_under_construction), node)
+            print(ast.unparse(new_node))
+            self.replace_count += 1
+            return new_node
+        return self.generic_visit(node)
+
+    def visit_keyword(self, node: ast.keyword):
+        if node.arg in self.trigger_names:
+            raise NameFound(node.arg)
+        if node.arg in self.repldict:
+            val = self.repldict[node.arg]
+            if isinstance(val, ast.AST):
+                val = unparse(val)
+            node.arg = val
+            self.replace_count += 1
+        return self.generic_visit(node)
+
+
+
 class ASTFindReplace(ast.NodeTransformer):
     def __init__(self, repldict: Dict[str, str], trigger_names: Set[str] = None):
         self.replace_count = 0

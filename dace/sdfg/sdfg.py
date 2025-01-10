@@ -51,8 +51,11 @@ class NestedDict(dict):
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__getitem__(token)
+        
         while tokens:
             token = tokens.pop(0)
+            if isinstance(result, dt.ContainerArray):
+                result = result.stype
             result = result.members[token]
         return result
 
@@ -106,10 +109,12 @@ def _replace_dict_keys(d, old, new):
         warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
         return
     if old in d:
+        
+        d[new] = d[old]
         if new in d:
             warnings.warn('"%s" already exists in SDFG' % new)
-        d[new] = d[old]
-        del d[old]
+        else:    
+            del d[old]
 
 
 def _replace_dict_values(d, old, new):
@@ -311,6 +316,33 @@ class InterstateEdge(object):
             self._uncond = None
             self._cond_sympy = None
 
+    
+    def replace_complex_iedge(self, oldname,newname, replace_keys=True) -> None:
+        """
+        Replaces all given keys with their corresponding values.
+
+        :param repl: Replacement dictionary.
+        :param replace_keys: If False, skips replacing assignment keys.
+        """
+
+        #if replace_keys:
+        #    for name, new_name in repl.items():
+        #        _replace_dict_keys(self.assignments, name, new_name)
+        repl={oldname: newname}
+        for k, v in self.assignments.items():
+            vast = ast.parse(v)
+            vast = astutils.ASTFindReplaceComplex(repl).visit(vast)
+            newv = astutils.unparse(vast)
+            if newv != v:
+                self.assignments[k] = newv
+        condition = ast.parse(self.condition.as_string)
+        condition = astutils.ASTFindReplaceComplex(repl).visit(condition)
+        newc = astutils.unparse(condition)
+        if newc != condition:
+            self.condition.as_string = newc
+            self._uncond = None
+            self._cond_sympy = None        
+
     def replace(self, name: str, new_name: str, replace_keys=True) -> None:
         """
         Replaces all occurrences of ``name`` with ``new_name``.
@@ -320,6 +352,16 @@ class InterstateEdge(object):
         :param replace_keys: If False, skips replacing assignment keys.
         """
         self.replace_dict({name: new_name}, replace_keys)
+
+    def replace_complex(self, name: str, new_name: List, replace_keys=True) -> None:
+        """
+        Replaces all occurrences of ``name`` with ``new_name``.
+
+        :param name: The source name.
+        :param new_name: The replacement list for iedge memlet replacement.
+        :param replace_keys: If False, skips replacing assignment keys.
+        """
+        self.replace_complex_iedge(name, new_name, replace_keys)    
 
     def new_symbols(self, sdfg, symbols) -> Dict[str, dtypes.typeclass]:
         """
@@ -441,6 +483,7 @@ class SDFG(ControlFlowRegion):
                                desc='Whether to generate OpenMP sections in code')
 
     debuginfo = DebugInfoProperty(allow_none=True)
+    
 
     _pgrids = DictProperty(str,
                            ProcessGrid,
@@ -1328,6 +1371,8 @@ class SDFG(ControlFlowRegion):
 
         defined_syms |= set(self.constants_prop.keys())
 
+        init_code_symbols=set()
+        exit_code_symbols=set()
         # Add used symbols from init and exit code
         init_code_symbols = set()
         exit_code_symbols = set()
@@ -1423,7 +1468,9 @@ class SDFG(ControlFlowRegion):
         }
 
         # Add global free symbols used in the generated code to scalar arguments
+        #TODO LATER investiagte why all_symbols=False leads to bug
         free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
+        free_symbols = set(filter(lambda x: not str(x).startswith('__f2dace_STRUCTARRAY'), free_symbols))
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary
@@ -1693,7 +1740,22 @@ class SDFG(ControlFlowRegion):
 
     # Dynamic SDFG creation API
     ##############################
-
+    def is_name_used(self, name: str) -> bool:
+        """ Checks if `name` is already used inside the SDFG."""
+        if name in self._arrays:
+            return True
+        if name in self.symbols:
+            return True
+        if name in self.constants_prop:
+            return True
+        if name in self._pgrids:
+            return True
+        if name in self._subarrays:
+            return True
+        if name in self._rdistrarrays:
+            return True
+        return False
+    
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
 

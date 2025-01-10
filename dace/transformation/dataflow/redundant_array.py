@@ -842,6 +842,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
         # and are of the same type (e.g., Stream->Stream)
         if in_desc.storage != out_desc.storage:
             return False
+        if isinstance(out_desc, data.View):
+            e = sdutil.get_view_edge(graph, out_array)
+            if "." in e.data.data:
+                return False
         if type(in_desc) != type(out_desc):
             if isinstance(in_desc, data.View):
                 # Case View -> Access
@@ -1534,7 +1538,9 @@ class RemoveSliceView(pm.SingleStateTransformation):
         desc = self.view.desc(sdfg)
 
         # Ensure view
-        if not isinstance(desc, data.View):
+        if not isinstance(desc, data.View) or isinstance(desc, data.StructureView):
+            return False
+        if isinstance(desc, (data.ContainerArray, data.ContainerView)):
             return False
         if isinstance(desc, data.StructureView):
             return False
@@ -1542,6 +1548,8 @@ class RemoveSliceView(pm.SingleStateTransformation):
         # Get viewed node and non-viewed edges
         view_edge = sdutil.get_view_edge(state, self.view)
         if view_edge is None:
+            return False
+        if "." in view_edge.data.data:
             return False
 
         # Gather metadata
@@ -1558,6 +1566,9 @@ class RemoveSliceView(pm.SingleStateTransformation):
             non_view_edges = state.in_edges(self.view)
             subset = view_edge.data.get_dst_subset(view_edge, state)
             is_src = False
+
+        if isinstance(sdfg.arrays[viewed.data], (data.ContainerArray, data.ContainerView)):
+            return False
 
         if subset is None:
             # `subset = None` means the entire viewed data container is used
@@ -1624,8 +1635,10 @@ class RemoveSliceView(pm.SingleStateTransformation):
         for edge in non_view_edges:
             # Update all memlets in tree
             for e in state.memlet_tree(edge):
-                if e.data.data == self.view.data:
-                    e.data.data = viewed.data
+                data_path = e.data.data.split(".")
+                if self.view.data in data_path:
+                    new_data_path = [viewed.data if data == self.view.data else data for data in data_path]
+                    e.data.data = ".".join(new_data_path)
 
                     # Update subsets with instructions as follows:
                     #   * Dimensions in mapping are offset by view subset, size is taken from view subset
@@ -1636,7 +1649,6 @@ class RemoveSliceView(pm.SingleStateTransformation):
                     elif subset is not None:
                         # Fill in the subset from the original memlet
                         e.data.subset = copy.deepcopy(subset)
-
                 else:  # The memlet points to the other side, use ``other_subset``
                     if e.data.other_subset is not None:
                         e.data.other_subset = self._offset_subset(mapping, subset, e.data.other_subset)
