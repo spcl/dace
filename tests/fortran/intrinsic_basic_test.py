@@ -381,9 +381,8 @@ def test_fortran_frontend_allocated_struct():
     assert np.allclose(res, [0, 1, 0])
 
 if __name__ == "__main__":
-
-    #test_fortran_frontend_bit_size()
-    #test_fortran_frontend_bit_size_symbolic()
+    test_fortran_frontend_bit_size()
+    test_fortran_frontend_bit_size_symbolic()
     test_fortran_frontend_size_arbitrary()
     test_fortran_frontend_present()
     test_fortran_frontend_bitwise_ops()
