@@ -1578,6 +1578,7 @@ class MathFunctions(IntrinsicTransformation):
         "MAX": MathTransformation("max", "FIRST_ARG"),
         "SQRT": MathTransformation("sqrt", "FIRST_ARG"),
         "ABS": MathTransformation("abs", "FIRST_ARG"),
+        "POW": MathTransformation("pow", "FIRST_ARG"),
         "EXP": MathTransformation("exp", "FIRST_ARG"),
         "EPSILON": MathReplacement(None, generate_epsilon, "FIRST_ARG"),
         # Documentation states that the return type of LOG is always REAL,
