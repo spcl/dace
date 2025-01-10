@@ -2040,7 +2040,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
     2. All public/private access statements were cleanly removed.
     TODO: Make structure names unique too.
     """
-    SUFFIX, COUNTER = 'deconglobalfn', 0
+    SUFFIX, COUNTER = 'fn', 0
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
@@ -2187,7 +2187,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Pr
     1. All indirections are already removed from the program, except for the explicit renames.
     2. All public/private access statements were cleanly removed.
     """
-    SUFFIX, COUNTER = 'deconglobalvar', 0
+    SUFFIX, COUNTER = 'var', 0
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
