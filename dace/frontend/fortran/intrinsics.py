@@ -1774,7 +1774,7 @@ class MathFunctions(IntrinsicTransformation):
 
         name = node.name.name.split('__dace_')
         if len(name) != 2 or name[1] not in MathFunctions.INTRINSIC_SIZE_FUNCTIONS:
-            return None, None
+            return None, None, 'VOID'
 
         # we also need to determine the size of the LHS when it's new
         size_func = MathFunctions.INTRINSIC_SIZE_FUNCTIONS[name[1]]
@@ -1785,7 +1785,22 @@ class MathFunctions(IntrinsicTransformation):
 
         sizes = size_func(node, sizes)
 
-        return sizes, [1] * len(sizes)
+        # FIXME: copy-paste from code above; we used to do this in intrinsics, we should now connect
+        # to type infernece when possible
+        input_type = node.args[0].type
+        return_type = 'VOID'
+
+        if input_type != 'VOID':
+            replacement_rule = MathFunctions.INTRINSIC_TO_DACE[name[1]]
+            if isinstance(replacement_rule, dict):
+                replacement_rule = replacement_rule[input_type]
+
+            if replacement_rule.return_type == "FIRST_ARG":
+                return_type = input_type
+            else:
+                return_type = replacement_rule.return_type
+
+        return sizes, [1] * len(sizes), return_type
 
     @staticmethod
     def replacable(func_name: str) -> bool:

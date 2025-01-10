@@ -2715,7 +2715,7 @@ class TypeInference(NodeTransformer):
 
         node.type = type_hierarchy[max(idx_left, idx_right)]
 
-        if node.op == '=' and isinstance(node.lval, ast_internal_classes.Name_Node) and node.lval.type == 'VOID':
+        if node.op == '=' and isinstance(node.lval, ast_internal_classes.Name_Node) and node.lval.type == 'VOID' and node.rval.type != 'VOID':
 
             lval_definition = self.scope_vars.get_var(node.parent, node.lval.name)
             lval_definition.type = node.type
@@ -2729,12 +2729,45 @@ class TypeInference(NodeTransformer):
 
         else:
 
-            node.sizes = self._get_sizes(node.lval)
-            if len(node.sizes) == 0:
+            # We handle the following cases:
+            #
+            # (1)   Both sides of the binop have known types
+            # (1a)  Both are not scalars - we take the lval for simplicity.
+            #       The array must have same sizes, otherwise the program is malformed.
+            #       But we can't determine this as sizes might be symbolic.
+            # (1b)  One side is scalar and the other one is not - we take the array size.
+            # (1c)  Both sides are scalar - trivial
+            #
+            # (2)   Only left or rval have determined sizes - we take that side.
+            #
+            # (3)   No sizes are known - we leave it like that.
+            #       We need more information to determine that.
+
+            left_size = self._get_sizes(node.lval) if node.lval.type != 'VOID' else None
+            right_size = self._get_sizes(node.rval) if node.rval.type != 'VOID' else None
+
+            if left_size is not None and right_size is not None:
+
+                if len(left_size) > 0:
+                    node.sizes = self._get_sizes(node.lval)
+                    node.offsets = self._get_offsets(node.lval)
+                elif len(right_size) > 0:
+                    node.sizes = self._get_sizes(node.rval)
+                    node.offsets = self._get_offsets(node.rval)
+                else:
+                    node.sizes = self._get_sizes(node.lval)
+                    node.offsets = self._get_offsets(node.lval)
+
+            elif left_size is not None:
+
+                node.sizes = self._get_sizes(node.lval)
+                node.offsets = self._get_offsets(node.lval)
+
+            elif right_size is not None:
+
                 node.sizes = self._get_sizes(node.rval)
                 node.offsets = self._get_offsets(node.rval)
-            else:
-                node.offsets = self._get_offsets(node.lval)
+
 
         if node.type == 'VOID':
             print("Couldn't infer the type for binop!")
@@ -2803,13 +2836,16 @@ class TypeInference(NodeTransformer):
             new_args.append(self.visit(arg))
         node.args = new_args
 
-        sizes, offsets = MathFunctions.output_size(node)
+        sizes, offsets, return_type = MathFunctions.output_size(node)
         if sizes is not None:
             node.sizes = sizes
             node.offsets = offsets
         else:
             node.sizes = None
             node.offsets = None
+
+        if return_type != 'VOID':
+            node.type = return_type
 
         return node
 
