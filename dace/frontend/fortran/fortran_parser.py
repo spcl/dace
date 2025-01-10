@@ -3369,26 +3369,27 @@ def create_sdfg_from_fortran_file_with_options(
 
     program = partial_ast.create_ast(ast)
     program.module_declarations = ast_utils.parse_module_declarations(program)
-    program = run_ast_transformations(partial_ast, program, cfg, True)
-
-    # structs_lister = ast_transforms.StructLister()
-    # structs_lister.visit(program)
-    # struct_dep_graph = nx.DiGraph()
-    # for i, name in zip(structs_lister.structs, structs_lister.names):
-    #     if name not in struct_dep_graph.nodes:
-    #         struct_dep_graph.add_node(name)
-    #     struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
-    #     struct_deps_finder.visit(i)
-    #     struct_deps = struct_deps_finder.structs_used
+    structs_lister = ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph = nx.DiGraph()
+    for i, name in zip(structs_lister.structs, structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder = ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps = struct_deps_finder.structs_used
   
-    #     for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
-    #                                        struct_deps_finder.pointer_names):
-    #         if j not in struct_dep_graph.nodes:
-    #             struct_dep_graph.add_node(j)
-    #         struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
+        for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
+                                           struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
     # program = ast_transforms.PropagateEnums().visit(program)
     # program = ast_transforms.Flatten_Classes(structs_lister.structs).visit(program)
-    # program.structures = ast_transforms.Structures(structs_lister.structs)
+    program.structures = ast_transforms.Structures(structs_lister.structs)
+    program = run_ast_transformations(partial_ast, program, cfg, True)
+
+    
 
     # functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     # functions_and_subroutines_builder.visit(program)
@@ -3560,7 +3561,8 @@ def create_sdfg_from_fortran_file_with_options(
     program.placeholders_offsets = partial_ast.placeholders_offsets
     program.functions_and_subroutines = partial_ast.functions_and_subroutines
     unordered_modules = program.modules
-
+    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
+    functions_and_subroutines_builder.visit(program)
     # arg_pruner = ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes)
     # arg_pruner.visit(program)
 
