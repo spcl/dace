@@ -70,6 +70,40 @@ def test_write_structure():
     func(A=A, B=outB, M=tmp.shape[0], N=tmp.shape[1], nnz=tmp.nnz)
 
 
+def test_write_structure_scalar():
+
+    N = dace.symbol('N')
+    SumStruct = dace.data.Structure(dict(sum=dace.data.Scalar(dace.float64)), name='SumStruct')
+    
+    @dace.program
+    def struct_member_based_sum(A: dace.float64[N], B: SumStruct, C: dace.float64[N]):
+        tmp = 0.0
+        for i in range(N):
+            tmp += A[i]
+        B.sum = tmp
+        for i in range(N):
+            C[i] = A[i] + B.sum
+    
+    N = 40
+    A = np.random.rand(N)
+    C = np.random.rand(N)
+    C_val = np.zeros((N,))
+    sum = 0
+    for i in range(N):
+        sum += A[i]
+    for i in range(N):
+        C_val[i] = A[i] + sum
+
+    outB = SumStruct.dtype._typeclass.as_ctypes()(sum=0)
+
+    func = struct_member_based_sum.compile()
+    func(A=A, B=outB, C=C, N=N)
+
+    # C is used for numerical validation because the Python frontend does not allow directly writing to scalars as an
+    # output (B.sum). Using them as intermediate values is possible though.
+    assert np.allclose(C, C_val)
+
+
 def test_local_structure():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
@@ -227,6 +261,7 @@ def test_read_structure_gpu():
 if __name__ == '__main__':
     test_read_structure()
     test_write_structure()
+    test_write_structure_scalar()
     test_local_structure()
     test_rgf()
     # test_read_structure_gpu()
