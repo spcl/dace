@@ -1,23 +1,10 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from fparser.common.readfortran import FortranStringReader
-from fparser.common.readfortran import FortranFileReader
-from fparser.two.parser import ParserFactory
-import sys, os
 import numpy as np
-import pytest
 
-from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
 from dace.frontend.fortran import fortran_parser
-from fparser.two.symbol_table import SymbolTable
-from dace.sdfg import utils as sdutil
 
-import dace.frontend.fortran.ast_components as ast_components
-import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_utils as ast_utils
-import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
-@pytest.mark.skip(reason="This must be reassessed once CFR regions are merged")
 def test_fortran_frontend_if_cycle():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
@@ -30,7 +17,7 @@ def test_fortran_frontend_if_cycle():
                     end
 
                     SUBROUTINE if_cycle_test_function(d)
-                    double precision d(4,5)
+                    double precision d(4)
                     integer :: i
                     DO i=1,4              
                      if (i .eq. 2) CYCLE
@@ -42,8 +29,8 @@ def test_fortran_frontend_if_cycle():
                     END SUBROUTINE if_cycle_test_function
                     """
     sources={}
-    sources["if_cycle"]=test_string
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "if_cycle",normalize_offsets=True,multiple_sdfgs=False,sources=sources)
+    sources["if_cycle_test"]=test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "if_cycle_test",normalize_offsets=True,multiple_sdfgs=False,sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
@@ -52,7 +39,6 @@ def test_fortran_frontend_if_cycle():
     assert (a[2] == 5.5)
 
 
-@pytest.mark.skip(reason="This must be reassessed once CFR regions are merged")
 def test_fortran_frontend_if_nested_cycle():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
@@ -68,18 +54,17 @@ def test_fortran_frontend_if_nested_cycle():
                     SUBROUTINE if_nested_cycle_test_function(d)
                     double precision d(4,4)
                     double precision :: tmp
-                    integer :: i,j,limit,start,count
-                    limit=4
+                    integer :: i,j,stop,start,count
+                    stop=4
                     start=1
-                    DO i=start,limit
+                    DO i=start,stop
                         count=0
-                        
-                        DO j=start,limit             
+                        DO j=start,stop
                             if (j .eq. 2) count=count+2
                         ENDDO
                         if (count .eq. 2) CYCLE
                         if (count .eq. 3) CYCLE
-                        DO j=start,limit
+                        DO j=start,stop
                              
                             d(i,j)=d(i,j)+1.5
                         ENDDO
@@ -94,9 +79,7 @@ def test_fortran_frontend_if_nested_cycle():
     sources={}
     sources["if_nested_cycle"]=test_string
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "if_nested_cycle_test",normalize_offsets=True,multiple_sdfgs=False,sources=sources)
-    sdfg.view()
     sdfg.simplify(verbose=True)
-    sdfg.view()
     a = np.full([4,4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
     assert (a[0,0] == 42)
@@ -105,5 +88,5 @@ def test_fortran_frontend_if_nested_cycle():
 
 
 if __name__ == "__main__":
-
+    test_fortran_frontend_if_cycle()
     test_fortran_frontend_if_nested_cycle()

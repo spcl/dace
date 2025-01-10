@@ -878,7 +878,7 @@ class AST_translator:
 
                 entry = {node.name: increment}
                 cfg.add_edge(self.last_sdfg_states[sdfg], substate, InterstateEdge(assignments=entry))
-                self.last_sdfg_states[sdfg] = substate
+                self.last_sdfg_states[cfg] = substate
 
     def symbolarray2sdfg(self, node: ast_internal_classes.Symbol_Array_Decl_Node, sdfg: SDFG,
                          cfg: ControlFlowRegion):
@@ -2696,14 +2696,18 @@ class AST_translator:
                         cfg)
 
     def break2sdfg(self, node: ast_internal_classes.Break_Node, sdfg: SDFG, cfg: ControlFlowRegion):
-        break_block = BreakBlock(f'Break_l_{node.line_number}')
-        cfg.add_node(break_block, ensure_unique_name=True)
-        cfg.add_edge(self.last_sdfg_states[cfg], break_block, InterstateEdge())
+        break_block = BreakBlock(f'Break_l_{str(node.line_number[0])}_c_{str(node.line_number[1])}')
+        is_start = cfg not in self.last_sdfg_states or self.last_sdfg_states[cfg] is None
+        cfg.add_node(break_block, ensure_unique_name=True, is_start_block=is_start)
+        if not is_start:
+            cfg.add_edge(self.last_sdfg_states[cfg], break_block, InterstateEdge())
 
     def continue2sdfg(self, node: ast_internal_classes.Continue_Node, sdfg: SDFG, cfg: ControlFlowRegion):
-        continue_block = ContinueBlock(f'Continue_l_{node.line_number}')
-        cfg.add_node(continue_block, ensure_unique_name=True)
-        cfg.add_edge(self.last_sdfg_states[cfg], continue_block, InterstateEdge())
+        continue_block = ContinueBlock(f'Continue_l_{str(node.line_number[0])}_c_{str(node.line_number[1])}')
+        is_start = cfg not in self.last_sdfg_states or self.last_sdfg_states[cfg] is None
+        cfg.add_node(continue_block, ensure_unique_name=True, is_start_block=is_start)
+        if not is_start:
+            cfg.add_edge(self.last_sdfg_states[cfg], continue_block, InterstateEdge())
 
 
 def create_ast_from_string(

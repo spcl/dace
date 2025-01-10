@@ -33,9 +33,15 @@ ENTRY_POINT_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_S
 SCOPE_OBJECT_TYPES = Union[
     Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def, Interface_Block,
     Subroutine_Body, Function_Body]
+SCOPE_OBJECT_CLASSES = (
+    Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def, Interface_Block,
+    Subroutine_Body, Function_Body)
 NAMED_STMTS_OF_INTEREST_TYPES = Union[
     Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
     Specific_Binding, Generic_Binding, Interface_Stmt]
+NAMED_STMTS_OF_INTEREST_CLASSES = (
+    Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
+    Specific_Binding, Generic_Binding, Interface_Stmt)
 SPEC = Tuple[str, ...]
 SPEC_TABLE = Dict[SPEC, NAMED_STMTS_OF_INTEREST_TYPES]
 
@@ -99,9 +105,9 @@ def find_name_of_stmt(node: NAMED_STMTS_OF_INTEREST_TYPES) -> Optional[str]:
 
 def find_name_of_node(node: Base) -> Optional[str]:
     """Find the name of the general node if it has one. For anonymous blocks, return `None`."""
-    if isinstance(node, NAMED_STMTS_OF_INTEREST_TYPES):
+    if isinstance(node, NAMED_STMTS_OF_INTEREST_CLASSES):
         return find_name_of_stmt(node)
-    stmt = atmost_one(children_of_type(node, NAMED_STMTS_OF_INTEREST_TYPES))
+    stmt = atmost_one(children_of_type(node, NAMED_STMTS_OF_INTEREST_CLASSES))
     if not stmt:
         return None
     return find_name_of_stmt(stmt)
@@ -109,7 +115,7 @@ def find_name_of_node(node: Base) -> Optional[str]:
 
 def find_scope_ancestor(node: Base) -> Optional[SCOPE_OBJECT_TYPES]:
     anc = node.parent
-    while anc and not isinstance(anc, SCOPE_OBJECT_TYPES):
+    while anc and not isinstance(anc, SCOPE_OBJECT_CLASSES):
         anc = anc.parent
     return anc
 
@@ -118,7 +124,7 @@ def find_named_ancestor(node: Base) -> Optional[NAMED_STMTS_OF_INTEREST_TYPES]:
     anc = find_scope_ancestor(node)
     if not anc:
         return None
-    return atmost_one(children_of_type(anc, NAMED_STMTS_OF_INTEREST_TYPES))
+    return atmost_one(children_of_type(anc, NAMED_STMTS_OF_INTEREST_CLASSES))
 
 
 def lineage(anc: Base, des: Base) -> Optional[Tuple[Base, ...]]:
@@ -152,7 +158,7 @@ def search_scope_spec(node: Base) -> Optional[SPEC]:
         if kw == node:
             # We're describing a keyword, which is not really an identifiable object.
             return None
-    stmt = singular(children_of_type(scope, NAMED_STMTS_OF_INTEREST_TYPES))
+    stmt = singular(children_of_type(scope, NAMED_STMTS_OF_INTEREST_CLASSES))
     if not find_name_of_stmt(stmt):
         # If this is an anonymous object, the scope has to be outside.
         return search_scope_spec(scope.parent)
@@ -175,7 +181,7 @@ def ident_spec(node: NAMED_STMTS_OF_INTEREST_TYPES) -> SPEC:
         anc = find_named_ancestor(_node.parent)
         if not anc:
             return ident_base
-        assert isinstance(anc, NAMED_STMTS_OF_INTEREST_TYPES)
+        assert isinstance(anc, NAMED_STMTS_OF_INTEREST_CLASSES)
         return _ident_spec(anc) + ident_base
 
     spec = _ident_spec(node)
@@ -240,8 +246,8 @@ def identifier_specs(ast: Program) -> SPEC_TABLE:
     Maps each identifier of interest in `ast` to its associated node that defines it.
     """
     ident_map: SPEC_TABLE = {}
-    for stmt in walk(ast, NAMED_STMTS_OF_INTEREST_TYPES):
-        assert isinstance(stmt, NAMED_STMTS_OF_INTEREST_TYPES)
+    for stmt in walk(ast, NAMED_STMTS_OF_INTEREST_CLASSES):
+        assert isinstance(stmt, NAMED_STMTS_OF_INTEREST_CLASSES)
         if isinstance(stmt, Interface_Stmt) and not find_name_of_stmt(stmt):
             # There can be anonymous blocks, e.g., interface blocks, which cannot be identified.
             continue
