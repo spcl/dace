@@ -45,7 +45,7 @@ end subroutine fun
     size = 6
     res = np.full([size], 42, order="F", dtype=np.int32)
     res[:] = 0
-    sdfg(res=res, start=2, end=5)
+    sdfg(res=res, startidx=2, endidx=5)
     print(res)
 
 
