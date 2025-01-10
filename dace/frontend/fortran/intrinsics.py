@@ -1654,7 +1654,7 @@ class MathFunctions(IntrinsicTransformation):
     INTRINSIC_SIZE_FUNCTIONS = {
         "TRANSPOSE": IntrinsicSDFGTransformation.transpose_size,
         "MATMUL": IntrinsicSDFGTransformation.matmul_size,
-        "EXP": one_to_one_size
+        "EXP": one_to_one_size.__func__,
     }
 
     class TypeTransformer(IntrinsicNodeTransformer):

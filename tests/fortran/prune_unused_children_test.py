@@ -6,8 +6,8 @@ from fparser.two.Fortran2003 import Program
 from fparser.two.parser import ParserFactory
 from fparser.two.utils import walk
 
-from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_TYPES, find_name_of_node, prune_unused_objects, \
-    SPEC, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES
+from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAMED_STMTS_OF_INTEREST_CLASSES, \
+    find_name_of_node, prune_unused_objects, SPEC, ident_spec
 from dace.frontend.fortran.ast_utils import children_of_type, singular
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
@@ -25,12 +25,12 @@ def parse_and_improve(sources: Dict[str, str]):
 
 def find_entrypoint_objects_named(ast: Program, name: str) -> List[SPEC]:
     objs: List[SPEC] = []
-    for n in walk(ast, ENTRY_POINT_OBJECT_TYPES):
-        assert isinstance(n, ENTRY_POINT_OBJECT_TYPES)
+    for n in walk(ast, ENTRY_POINT_OBJECT_CLASSES):
+        assert isinstance(n, ENTRY_POINT_OBJECT_CLASSES)
         if not isinstance(n.parent, Program):
             continue
         if find_name_of_node(n) == name:
-            stmt = singular(children_of_type(n, NAMED_STMTS_OF_INTEREST_TYPES))
+            stmt = singular(children_of_type(n, NAMED_STMTS_OF_INTEREST_CLASSES))
             objs.append(ident_spec(stmt))
     return objs
 
