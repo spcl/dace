@@ -365,7 +365,6 @@ end subroutine fun
 
 
 if __name__ == "__main__":
-
     test_fortran_frontend_offset_normalizer_1d()
     test_fortran_frontend_offset_normalizer_2d()
     test_fortran_frontend_offset_normalizer_2d_arr2loop()

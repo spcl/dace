@@ -648,6 +648,270 @@ class InternalFortranAst:
         name = get_child(children, ast_internal_classes.Name_Node)
         return ast_internal_classes.Component_Decl_Node(name=name)
 
+    def finalize_ast(self, prog: Program_Node):
+        structs_lister = StructLister()
+        structs_lister.visit(prog)
+        struct_dep_graph = nx.DiGraph()
+        for i, name in zip(structs_lister.structs, structs_lister.names):
+            if name not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(name)
+            struct_deps_finder = StructDependencyLister(structs_lister.names)
+            struct_deps_finder.visit(i)
+            struct_deps = struct_deps_finder.structs_used
+            # print(struct_deps)
+            for j, pointing, point_name in zip(struct_deps, struct_deps_finder.is_pointer,
+                                               struct_deps_finder.pointer_names):
+                if j not in struct_dep_graph.nodes:
+                    struct_dep_graph.add_node(j)
+                struct_dep_graph.add_edge(name, j, pointing=pointing, point_name=point_name)
+        prog.structures = Structures(structs_lister.structs)
+        prog.placeholders = self.placeholders
+        prog.placeholders_offsets = self.placeholders_offsets
+
+    def suffix(self, node: FASTNode):
+        children = self.create_children(node)
+        name = children[0]
+        return ast_internal_classes.Suffix_Node(name=name)
+
+    def data_ref(self, node: FASTNode):
+        children = self.create_children(node)
+        idx = len(children) - 1
+        parent = children[idx - 1]
+        part_ref = children[idx]
+        part_ref.isStructMember = True
+        # parent.isStructMember=True
+        idx = idx - 1
+        current = ast_internal_classes.Data_Ref_Node(parent_ref=parent, part_ref=part_ref, type="VOID")
+
+        while idx > 0:
+            parent = children[idx - 1]
+            current = ast_internal_classes.Data_Ref_Node(parent_ref=parent, part_ref=current, type="VOID")
+            idx = idx - 1
+        return current
+
+    def end_type_stmt(self, node: FASTNode):
+        return None
+
+    def access_stmt(self, node: FASTNode):
+        return None
+
+    def generic_binding(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Generic_Binding_Node(name=children[1], binding=children[2])
+
+    def private_components_stmt(self, node: FASTNode):
+        return None
+
+    def deallocate_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        line = get_line(node)
+        return ast_internal_classes.Deallocate_Stmt_Node(list=children[0].list, line_number=line)
+
+    def proc_component_ref(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Data_Ref_Node(parent_ref=children[0], part_ref=children[2], type="VOID")
+
+    def component_spec(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Actual_Arg_Spec_Node(arg_name=children[0], arg=children[1], type="VOID")
+
+    def allocate_object_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Allocate_Object_List_Node(list=children)
+
+    def read_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Read_Stmt_Node(args=children[0], line_number=node.item.span)
+
+    def close_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        if node.item is None:
+            line = '-1'
+        else:
+            line = node.item.span
+        return ast_internal_classes.Close_Stmt_Node(args=children[0], line_number=line)
+
+    def io_control_spec(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.IO_Control_Spec_Node(name=children[0], args=children[1])
+
+    def io_control_spec_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.IO_Control_Spec_List_Node(list=children)
+
+    def close_spec_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Close_Spec_List_Node(list=children)
+
+    def close_spec(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Close_Spec_Node(name=children[0], args=children[1])
+
+    def stop_code(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Stop_Stmt_Node(code=node.string)
+
+    def error_stop_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Error_Stmt_Node(error=children[1])
+
+    def pointer_object_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Pointer_Object_List_Node(list=children)
+
+    def nullify_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Nullify_Stmt_Node(list=children[1].list)
+
+    def binding_name_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return children
+
+    def connect_spec(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Connect_Spec_Node(type=children[0], args=children[1])
+
+    def connect_spec_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Connect_Spec_List_Node(list=children)
+
+    def open_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Open_Stmt_Node(args=children[1].list, line_number=node.item.span)
+
+    def namelist_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Namelist_Stmt_Node(name=children[0][0], list=children[0][1])
+
+    def namelist_group_object_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Namelist_Group_Object_List_Node(list=children)
+
+    def associate_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Associate_Stmt_Node(args=children[1].list)
+
+    def association(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Association_Node(name=children[0], expr=children[2])
+
+    def association_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Association_List_Node(list=children)
+
+    def subroutine_body(self, node: FASTNode):
+        children = self.create_children(node)
+        return children
+
+    def function_reference(self, node: Function_Reference):
+        name, args = self.create_children(node)
+        line = get_line(node)
+        return ast_internal_classes.Call_Expr_Node(name=name,
+                                                   args=args.args if args else [],
+                                                   type="VOID",
+                                                   subroutine=False,
+                                                   line_number=line)
+
+    def end_associate_stmt(self, node: FASTNode):
+        return None
+
+    def associate_construct(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Associate_Construct_Node(associate=children[0], body=children[1])
+
+    def enum_def_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        return None
+
+    def enumerator(self, node: FASTNode):
+        children = self.create_children(node)
+        return children
+
+    def enumerator_def_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        return children[1]
+
+    def enumerator_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return children
+
+    def end_enum_stmt(self, node: FASTNode):
+        return None
+
+    def enum_def(self, node: FASTNode):
+        children = self.create_children(node)
+        return children[1:-1]
+
+    def exit_stmt(self, node: FASTNode):
+        line = get_line(node)
+        return ast_internal_classes.Exit_Node(line_number=line)
+
+    def deferred_shape_spec(self, node: FASTNode):
+        return ast_internal_classes.Defer_Shape_Node()
+
+    def deferred_shape_spec_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return children
+
+    def component_initialization(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Component_Initialization_Node(init=children[1])
+
+    def procedure_designator(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Procedure_Separator_Node(parent_ref=children[0], part_ref=children[2])
+
+    def derived_type_def(self, node: FASTNode):
+        children = self.create_children(node)
+        name = children[0].name
+        component_part = get_child(children, ast_internal_classes.Component_Part_Node)
+        procedure_part = get_child(children, ast_internal_classes.Bound_Procedures_Node)
+        from dace.frontend.fortran.ast_transforms import PartialRenameVar
+        if component_part is not None:
+            component_part = PartialRenameVar(oldname="__f2dace_A", newname="__f2dace_SA").visit(component_part)
+            component_part = PartialRenameVar(oldname="__f2dace_OA", newname="__f2dace_SOA").visit(component_part)
+            new_placeholder = {}
+            new_placeholder_offsets = {}
+            for k, v in self.placeholders.items():
+                if "__f2dace_A" in k:
+                    new_placeholder[k.replace("__f2dace_A", "__f2dace_SA")] = self.placeholders[k]
+                else:
+                    new_placeholder[k] = self.placeholders[k]
+            self.placeholders = new_placeholder
+            for k, v in self.placeholders_offsets.items():
+                if "__f2dace_OA" in k:
+                    new_placeholder_offsets[k.replace("__f2dace_OA", "__f2dace_SOA")] = self.placeholders_offsets[k]
+                else:
+                    new_placeholder_offsets[k] = self.placeholders_offsets[k]
+            self.placeholders_offsets = new_placeholder_offsets
+        return ast_internal_classes.Derived_Type_Def_Node(name=name,
+                                                          component_part=component_part,
+                                                          procedure_part=procedure_part)
+
+    def derived_type_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        name = get_child(children, ast_internal_classes.Type_Name_Node)
+        return ast_internal_classes.Derived_Type_Stmt_Node(name=name)
+
+    def component_part(self, node: FASTNode):
+        children = self.create_children(node)
+        component_def_stmts = [i for i in children if isinstance(i, ast_internal_classes.Data_Component_Def_Stmt_Node)]
+        return ast_internal_classes.Component_Part_Node(component_def_stmts=component_def_stmts)
+
+    def data_component_def_stmt(self, node: FASTNode):
+        children = self.type_declaration_stmt(node)
+        return ast_internal_classes.Data_Component_Def_Stmt_Node(vars=children)
+
+    def component_decl_list(self, node: FASTNode):
+        children = self.create_children(node)
+        component_decls = [i for i in children if isinstance(i, ast_internal_classes.Component_Decl_Node)]
+        return ast_internal_classes.Component_Decl_List_Node(component_decls=component_decls)
+
+    def component_decl(self, node: FASTNode):
+        children = self.create_children(node)
+        name = get_child(children, ast_internal_classes.Name_Node)
+        return ast_internal_classes.Component_Decl_Node(name=name)
+
     def write_stmt(self, node: FASTNode):
         # children=[]
         # if node.children[0] is not None:

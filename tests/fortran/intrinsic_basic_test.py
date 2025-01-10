@@ -392,3 +392,4 @@ if __name__ == "__main__":
     test_fortran_frontend_allocated_nested()
     # FIXME: ALLOCATED does not support data refs
     #test_fortran_frontend_allocated_struct()
+

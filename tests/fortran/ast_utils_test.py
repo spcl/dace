@@ -6,6 +6,7 @@ from dace.frontend.fortran.ast_utils import TaskletWriter
 
 
 def test_floatlit2string():
+
     def parse(fl: str) -> float:
         t = TaskletWriter([], [])  # The parameters won't matter.
         return t.floatlit2string(Real_Literal_Node(value=fl))

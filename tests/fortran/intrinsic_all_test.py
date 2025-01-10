@@ -111,6 +111,7 @@ def test_fortran_frontend_all_array_comparison():
     for val in res:
         assert val == False
 
+
 def test_fortran_frontend_all_array_scalar_comparison():
     test_string = """
                     PROGRAM intrinsic_all_test
@@ -211,13 +212,14 @@ def test_fortran_frontend_all_array_2d():
     d = np.full(sizes, True, order="F", dtype=np.int32)
     res = np.full([2], 42, order="F", dtype=np.int32)
 
-    d[2,2] = False
+    d[2, 2] = False
     sdfg(d=d, res=res)
     assert res[0] == False
 
-    d[2,2] = True
+    d[2, 2] = True
     sdfg(d=d, res=res)
     assert res[0] == True
+
 
 def test_fortran_frontend_all_array_comparison_2d():
     test_string = """
@@ -253,7 +255,7 @@ def test_fortran_frontend_all_array_comparison_2d():
     sizes = [5, 4]
     first = np.full(sizes, 1, order="F", dtype=np.int32)
     second = np.full(sizes, 1, order="F", dtype=np.int32)
-    second[2,2] = 2
+    second[2, 2] = 2
     res = np.full([7], 0, order="F", dtype=np.int32)
 
     sdfg(first=first, second=second, res=res)
@@ -265,6 +267,7 @@ def test_fortran_frontend_all_array_comparison_2d():
     sdfg(first=first, second=second, res=res)
     for val in res:
         assert val == True
+
 
 def test_fortran_frontend_all_array_comparison_2d_subset():
     test_string = """
@@ -308,6 +311,7 @@ def test_fortran_frontend_all_array_comparison_2d_subset():
     sdfg(first=first, second=second, res=res)
     assert list(res) == [0, 1]
 
+
 def test_fortran_frontend_all_array_comparison_2d_subset_offset():
     test_string = """
                     PROGRAM intrinsic_all_test
@@ -349,6 +353,7 @@ def test_fortran_frontend_all_array_comparison_2d_subset_offset():
 
     sdfg(first=first, second=second, res=res)
     assert list(res) == [0, 1]
+
 
 if __name__ == "__main__":
 
