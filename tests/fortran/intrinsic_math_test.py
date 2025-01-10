@@ -856,23 +856,63 @@ def test_fortran_frontend_trig_inverse():
 
     assert np.allclose(res, [-0.523598790, 0.00000000, 1.57079637, 2.09439516, 1.57079637, 0.00000000, 0.00000000, 0.785398185, 1.26248074, 0.00000000, 0.785398185, 1.57079637])
 
+
+
+def test_fortran_frontend_exp2():
+    test_string = """
+                    PROGRAM intrinsic_math_test_exp2
+                    implicit none
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    CALL intrinsic_math_test_exp2_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_exp2_function(d, res)
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    integer :: n
+
+                    do n=1,2
+                        res(n) = EXP(- 1.66D0 * d(n))
+                    end do
+
+                    END SUBROUTINE intrinsic_math_test_exp2_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp2", True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 2
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    d[0] = 2
+    d[1] = 4.5
+    res = np.full([2], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+    py_res = np.exp(d)
+
+    for f_res, p_res in zip(res, py_res):
+        assert abs(f_res - p_res) < 10**-9
+
+
 if __name__ == "__main__":
 
-    test_fortran_frontend_min_max()
-    test_fortran_frontend_sqrt()
+    # test_fortran_frontend_min_max()
+    # test_fortran_frontend_sqrt()
     #test_fortran_frontend_sqrt_structure()
-    test_fortran_frontend_abs()
-    test_fortran_frontend_exp()
-    test_fortran_frontend_log()
-    test_fortran_frontend_mod_float()
-    test_fortran_frontend_mod_integer()
-    test_fortran_frontend_modulo_float()
-    test_fortran_frontend_modulo_integer()
-    test_fortran_frontend_floor()
-    test_fortran_frontend_scale()
-    test_fortran_frontend_exponent()
-    test_fortran_frontend_int()
-    test_fortran_frontend_real()
-    test_fortran_frontend_trig()
-    test_fortran_frontend_hyperbolic()
-    test_fortran_frontend_trig_inverse()
+    # test_fortran_frontend_abs()
+    # test_fortran_frontend_exp()
+    # test_fortran_frontend_log()
+    # test_fortran_frontend_mod_float()
+    # test_fortran_frontend_mod_integer()
+    # test_fortran_frontend_modulo_float()
+    # test_fortran_frontend_modulo_integer()
+    # test_fortran_frontend_floor()
+    # test_fortran_frontend_scale()
+    # test_fortran_frontend_exponent()
+    # test_fortran_frontend_int()
+    # test_fortran_frontend_real()
+    # test_fortran_frontend_trig()
+    # test_fortran_frontend_hyperbolic()
+    # test_fortran_frontend_trig_inverse()
+    test_fortran_frontend_exp2()
