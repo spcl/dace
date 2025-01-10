@@ -1,10 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
-import pytest
 
 from dace.frontend.fortran import fortran_parser
-@pytest.mark.skip("Skipped until merging CFG - simplify wrongly eliminates branch")
+
 def test_fortran_frontend_arg_extract():
     test_string = """
                     PROGRAM arg_extract
@@ -122,8 +121,7 @@ def test_fortran_frontend_arg_extract4():
     assert np.allclose(res, [10,52])       
 
 if __name__ == "__main__":
-
-    #test_fortran_frontend_arg_extract()
+    test_fortran_frontend_arg_extract()
     test_fortran_frontend_arg_extract3()
     test_fortran_frontend_arg_extract4()
           
