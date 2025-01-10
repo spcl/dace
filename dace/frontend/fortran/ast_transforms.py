@@ -1517,6 +1517,7 @@ class IndexExtractor(NodeTransformer):
                                 else:
                                     var_name = j.name.name
                                     variable = self.scope_vars.get_var(child.parent, var_name)
+
                                 offset = variable.offsets[idx]
 
                                 # it can be a symbol - Name_Node - or a value
@@ -2617,7 +2618,9 @@ class TypeInference(NodeTransformer):
         self.ast = ast
         if assign_scopes:
             ParentScopeAssigner().visit(ast)
-        if scope_vars is None:
+        #if scope_vars is None:
+        #we must always recompute, things might have changed
+        if (True):
             self.scope_vars = ScopeVarsDeclarations(ast)
             self.scope_vars.visit(ast)
         else:
@@ -2637,6 +2640,8 @@ class TypeInference(NodeTransformer):
                 if node.sizes is None:
                     node.sizes = []
                     var_def.sizes = []
+                    node.offsets = [1]
+                    var_def.offsets = [1]
 
             except Exception as e:
                 print(f"Ignore type inference for {node.name}")
@@ -2673,6 +2678,9 @@ class TypeInference(NodeTransformer):
                     )
             else:
                 new_sizes.append(ast_internal_classes.Int_Literal_Node(value="1"))
+
+        if len(new_sizes) == 1 and isinstance(new_sizes[0], ast_internal_classes.Int_Literal_Node) and new_sizes[0].value == "1":
+            new_sizes = []
 
         node.sizes = new_sizes
         node.offsets = var_def.offsets
@@ -3610,8 +3618,10 @@ class ParDeclOffsetNormalizer(NodeTransformer):
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
         array_var = self.scope_vars.get_var(node.parent, node.name.name)
+
         indices = []
         for idx, actual_index in enumerate(node.indices):
+
             self.current_offset = array_var.offsets[idx]
             if isinstance(self.current_offset, int):
                 self.current_offset = ast_internal_classes.Int_Literal_Node(value=str(self.current_offset))
@@ -3901,7 +3911,7 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
         self.structures = structures
 
         self.ELEMENTAL_INTRINSICS = set(
-            ["EXP"]
+            ["EXP","MAX","MIN"]
         )
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):

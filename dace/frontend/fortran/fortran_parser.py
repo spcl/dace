@@ -28,12 +28,11 @@ from dace import dtypes
 from dace import subsets as subs
 from dace import symbolic as sym
 from dace.data import Scalar, Structure
-from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES, find_name_of_stmt, find_name_of_node, \
-    identifier_specs, append_children, correct_for_function_calls, sort_modules, \
+from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAMED_STMTS_OF_INTEREST_CLASSES, SPEC, \
+    find_name_of_stmt, find_name_of_node, identifier_specs, append_children, correct_for_function_calls, sort_modules, \
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
     deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
-    inject_const_evals, \
-    remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES, ConstTypeInjection, ConstInjection, \
+    inject_const_evals, remove_access_statements, ident_spec, ConstTypeInjection, ConstInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
@@ -2824,8 +2823,8 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
 
     if not cfg.entry_points:
         # Keep all the possible entry points.
-        entry_points = [ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_TYPES)))
-                        for c in ast.children if isinstance(c, ENTRY_POINT_OBJECT_TYPES)]
+        entry_points = [ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_CLASSES)))
+                        for c in ast.children if isinstance(c, ENTRY_POINT_OBJECT_CLASSES)]
     else:
         eps = cfg.entry_points
         if isinstance(eps, tuple):
