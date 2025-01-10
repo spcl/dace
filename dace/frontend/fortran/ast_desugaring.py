@@ -30,6 +30,7 @@ from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
 ENTRY_POINT_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_Subprogram]
+ENTRY_POINT_OBJECT_CLASSES = (Main_Program, Subroutine_Subprogram, Function_Subprogram)
 SCOPE_OBJECT_TYPES = Union[
     Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def, Interface_Block,
     Subroutine_Body, Function_Body]
@@ -410,9 +411,11 @@ BINARY_OPS = {
     '**': operator.pow,
 }
 
-NUMPY_INTS = Union[np.int8, np.int16, np.int32, np.int64]
-NUMPY_REALS = Union[np.float32, np.float64]
-NUMPY_TYPES = Union[NUMPY_INTS, NUMPY_REALS, np.bool_]
+NUMPY_INTS_TYPES = Union[np.int8, np.int16, np.int32, np.int64]
+NUMPY_INTS = (np.int8, np.int16, np.int32, np.int64)
+NUMPY_REALS = (np.float32, np.float64)
+NUMPY_REALS_TYPES = Union[np.float32, np.float64]
+NUMPY_TYPES = Union[NUMPY_INTS_TYPES, NUMPY_REALS_TYPES, np.bool_]
 
 
 def _count_bytes(t: Type[NUMPY_TYPES]) -> int:
@@ -433,7 +436,8 @@ def _count_bytes(t: Type[NUMPY_TYPES]) -> int:
     raise ValueError(f"{t} is not an expected type; expected {NUMPY_TYPES}")
 
 
-def _eval_int_literal(x: Union[Signed_Int_Literal_Constant, Int_Literal_Constant], alias_map: SPEC_TABLE) -> NUMPY_INTS:
+def _eval_int_literal(x: Union[Signed_Int_Literal_Constant, Int_Literal_Constant],
+                      alias_map: SPEC_TABLE) -> NUMPY_INTS_TYPES:
     num, kind = x.children
     if kind is None:
         kind = 4
@@ -458,7 +462,7 @@ def _eval_int_literal(x: Union[Signed_Int_Literal_Constant, Int_Literal_Constant
 
 
 def _eval_real_literal(x: Union[Signed_Real_Literal_Constant, Real_Literal_Constant],
-                       alias_map: SPEC_TABLE) -> NUMPY_REALS:
+                       alias_map: SPEC_TABLE) -> NUMPY_REALS_TYPES:
     num, kind = x.children
     if kind is None:
         if 'D' in num:
@@ -1491,13 +1495,13 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
     """
     # NOTE: Modules are not included here, because they are simply containers with no other direct use. Empty modules
     # should be pruned at the end separately.
-    PRUNABLE_OBJECT_TYPES = Union[Program_Stmt, Subroutine_Stmt, Function_Stmt, Derived_Type_Stmt, Entity_Decl]
+    PRUNABLE_OBJECT_CLASSES = (Program_Stmt, Subroutine_Stmt, Function_Stmt, Derived_Type_Stmt, Entity_Decl)
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
     survivors: Set[SPEC] = set()
     keepers = [alias_map[k] for k in keepers]
-    assert all(isinstance(k, PRUNABLE_OBJECT_TYPES) for k in keepers)
+    assert all(isinstance(k, PRUNABLE_OBJECT_CLASSES) for k in keepers)
 
     def _keep_from(node: Base):
         """
@@ -1526,7 +1530,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                     continue
                 survivors.add(anc)
                 anc_node = alias_map[anc]
-                if isinstance(anc_node, PRUNABLE_OBJECT_TYPES):
+                if isinstance(anc_node, PRUNABLE_OBJECT_CLASSES):
                     _keep_from(anc_node.parent)
 
             # We keep the definition of that `nm` is an alias of.
@@ -1535,7 +1539,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 continue
             survivors.add(nm_spec)
             keep_node = alias_map[nm_spec]
-            if isinstance(keep_node, PRUNABLE_OBJECT_TYPES):
+            if isinstance(keep_node, PRUNABLE_OBJECT_CLASSES):
                 _keep_from(keep_node.parent)
 
     for k in keepers:
@@ -1545,7 +1549,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
     killed: Set[SPEC] = set()
     for ns in list(sorted(set(ident_map.keys()) - survivors)):
         ns_node = ident_map[ns]
-        if not isinstance(ns_node, PRUNABLE_OBJECT_TYPES):
+        if not isinstance(ns_node, PRUNABLE_OBJECT_CLASSES):
             continue
         for i in range(len(ns) - 1):
             anc_spec = ns[:i + 1]
@@ -1725,7 +1729,7 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
             if atype.shape:
                 # TODO: Cannot handle non-scalar literals yet. So we just skip for it.
                 continue
-            if isinstance(v, LITERAL_TYPES):
+            if isinstance(v, LITERAL_CLASSES):
                 v = _const_eval_basic_type(v, alias_map)
                 assert v is not None
                 if aspec not in fnargs_possible_values:
@@ -1793,6 +1797,9 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
 LITERAL_TYPES = Union[
     Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, Signed_Int_Literal_Constant,
     Logical_Literal_Constant]
+LITERAL_CLASSES = (
+    Real_Literal_Constant, Signed_Real_Literal_Constant, Int_Literal_Constant, Signed_Int_Literal_Constant,
+    Logical_Literal_Constant)
 
 
 def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
@@ -1825,7 +1832,7 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
             plus[k] = v
 
     def _inject_knowns(x: Base):
-        if isinstance(x, LITERAL_TYPES):
+        if isinstance(x, LITERAL_CLASSES):
             pass
         elif isinstance(x, Assignment_Stmt):
             lv, op, rv = x.children
@@ -1873,7 +1880,7 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
                     _, _, _, init = var.children
                     if init:
                         _, init = init.children
-                    if init and isinstance(init, LITERAL_TYPES):
+                    if init and isinstance(init, LITERAL_CLASSES):
                         knowns[ident_spec(var)] = init
         _integrate_subresults(knowns, set())
         for op in node.children:
@@ -1923,7 +1930,7 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
                 continue
             tp, tm = _track_local_consts(c, alias_map)
             _integrate_subresults({}, tm | tp.keys())
-    elif isinstance(node, Union[Name, LITERAL_TYPES]):
+    elif isinstance(node, (Name, *LITERAL_CLASSES)):
         pass
     elif isinstance(node, UnaryOpBase):
         _inject_knowns(node)
@@ -2495,9 +2502,9 @@ def numpy_type_to_literal(val: NUMPY_TYPES) -> Union[LITERAL_TYPES]:
 
 
 def const_eval_nodes(ast: Program) -> Program:
-    EXPRESSION_TYPES = Union[
-        LITERAL_TYPES, Expr, Add_Operand, Or_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr,
-        Level_5_Expr, Intrinsic_Function_Reference]
+    EXPRESSION_CLASSES = (
+        LITERAL_CLASSES, Expr, Add_Operand, Or_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr,
+        Level_5_Expr, Intrinsic_Function_Reference)
 
     alias_map = alias_specs(ast)
 
@@ -2514,7 +2521,7 @@ def const_eval_nodes(ast: Program) -> Program:
         lv, op, rv = asgn.children
         assert op == '='
         _const_eval_node(rv)
-    for expr in reversed(walk(ast, EXPRESSION_TYPES)):
+    for expr in reversed(walk(ast, EXPRESSION_CLASSES)):
         # Try to const-eval the expression.
         if _const_eval_node(expr):
             # If the node is successfully replaced, then nothing else to do.
@@ -2526,9 +2533,9 @@ def const_eval_nodes(ast: Program) -> Program:
         _, kind, _ = knode.children
         _const_eval_node(kind)
 
-    NON_EXPRESSION_TYPES = Union[
-        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization]
-    for node in reversed(walk(ast, NON_EXPRESSION_TYPES)):
+    NON_EXPRESSION_CLASSES = (
+        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization)
+    for node in reversed(walk(ast, NON_EXPRESSION_CLASSES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
 
