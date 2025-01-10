@@ -3328,14 +3328,15 @@ class ProgramVisitor(ExtNodeVisitor):
                     visited_target = True
                 else:
                     true_name = defined_vars[name]
-                    while len(tokens) > 1:
+                    while len(tokens):
                         true_name = true_name + '.' + tokens.pop(0)
-                        if true_name not in self.sdfg.arrays:
+                        if true_name not in defined_arrays:
                             break
                     if tokens:  # The non-struct remainder will be considered an attribute
                         attribute_name = '.'.join(tokens)
                         raise DaceSyntaxError(
-                            self, target, f'Cannot assign to attribute "{attribute_name}" of variable "{true_name}"')
+                            self, target,
+                            f'Cannot assign to attribute "{attribute_name}" of variable "{true_name}"')
 
                 true_array = defined_arrays[true_name]
 
@@ -3514,7 +3515,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if boolarr is not None and indirect_indices:
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
-
 
             if self.nested and not new_data and not visited_target:
                 new_name, new_rng = self._add_write_access(name, rng, target)
@@ -5032,12 +5032,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Type-check operands in order to provide a clear error message
         if (isinstance(operand1, dtypes.pyobject) or (isinstance(operand1, str) and operand1 in self.defined
-                and isinstance(self.defined[operand1].dtype, dtypes.pyobject))):
+                                                      and isinstance(self.defined[operand1].dtype, dtypes.pyobject))):
             raise DaceSyntaxError(
                 self, op1, 'Trying to operate on a callback return value with an undefined type. '
                 f'Please add a type hint to "{operand1}" to enable using it within the program.')
         if (isinstance(operand2, dtypes.pyobject) or (isinstance(operand2, str) and operand2 in self.defined
-                and isinstance(self.defined[operand2].dtype, dtypes.pyobject))):
+                                                      and isinstance(self.defined[operand2].dtype, dtypes.pyobject))):
             raise DaceSyntaxError(
                 self, op2, 'Trying to operate on a callback return value with an undefined type. '
                 f'Please add a type hint to "{operand2}" to enable using it within the program.')
