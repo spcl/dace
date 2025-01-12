@@ -301,7 +301,7 @@ subroutine main(d, arrsize, arrsize2, arrsize3, arrsize4)
   integer :: arrsize
   integer :: arrsize2
   integer :: arrsize3
-  integer :: arrsize4,i
+  integer :: arrsize4,i,j
   double precision, dimension(arrsize:arrsize2, arrsize3:arrsize4) :: d
   type(simple_type) :: struct_data
 
@@ -309,11 +309,15 @@ subroutine main(d, arrsize, arrsize2, arrsize3, arrsize4)
   struct_data%arrsize2 = arrsize2
   struct_data%arrsize3 = arrsize3
   struct_data%arrsize4 = arrsize4
-  struct_data%d = d
 
   do i=struct_data%arrsize,struct_data%arrsize2
-      struct_data%d(i, 1) = i * 2.0
+    do j=struct_data%arrsize3,struct_data%arrsize4          
+      struct_data%d(i, j) = i * 2.0 +j
+      d(i, j) = struct_data%d(i, j)
+    end do          
   end do
+              
+     
 
 end subroutine main
 """).check_with_gfortran().get()
@@ -331,7 +335,7 @@ end subroutine main
     sdfg(d=a, **values)
     for i in range(0, 5):
         for j in range(0, 3):
-            assert a[i, j] == (50 + i) * 2
+            assert a[i, j] == (i+50) * 2 +7+j
 
 
 def test_fortran_frontend_offset_pardecl():

@@ -1541,7 +1541,7 @@ class MathFunctions(IntrinsicTransformation):
 
         # I and RADIX(X) are both integers
         rval = ast_internal_classes.Call_Expr_Node(
-            name=ast_internal_classes.Name_Node(name="pow"),
+            name=ast_internal_classes.Name_Node(name="dace_POW"),
             type="INTEGER",
             args=[const_two, i],
             line_number=line,
