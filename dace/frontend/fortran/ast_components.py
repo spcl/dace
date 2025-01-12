@@ -1,6 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, List, Optional, Type, TypeVar, Union, overload, TYPE_CHECKING, Dict
 
+import fparser
 import networkx as nx
 from fparser.two import Fortran2003 as f03
 from fparser.two import Fortran2008 as f08
@@ -813,9 +814,12 @@ class InternalFortranAst:
         line = get_line(node)
         # child 0 is the base, child 2 is the exponent
         # child 1 is "**"
-        return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name="__dace_POW"),
-                                                   args=[children[0], children[2]],
-                                                   line_number=line, type="REAL", subroutine=False)
+        return ast_internal_classes.Call_Expr_Node(name=self.intrinsic_handler.replace_function_name(ast_internal_classes.Name_Node(name="POW")),
+                                           args=[children[0], children[2]],
+                                           line_number=line, type="VOID", subroutine=False)
+        #return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name="__dace_POW"),
+        #                                           args=[children[0], children[2]],
+        #                                           line_number=line, type="REAL", subroutine=False)
 
     def array_constructor(self, node: FASTNode):
         children = self.create_children(node)
