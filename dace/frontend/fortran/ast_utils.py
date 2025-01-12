@@ -148,11 +148,20 @@ class TaskletWriter:
             raise NameError("Error in code generation" + node.__class__.__name__)
 
     def arraysub2string(self, node: ast_internal_classes.Array_Subscript_Node):
-        str_to_return = self.write_code(node.name) + "[" + self.write_code(node.indices[0])
-        for i in node.indices[1:]:
-            str_to_return += ", " + self.write_code(i)
-        str_to_return += "]"
-        return str_to_return
+        name = node.name
+        # We need to look up the array to find its shape -- its access behave differently based on the dimension sizes.
+        arr_name = self.mapping.get(self.sdfg).get(name.name)
+        assert arr_name and arr_name in self.sdfg.arrays, f"Variable name not found: {name.name}"
+        arr = self.sdfg.arrays[arr_name]
+
+        assert (not arr.shape and not node.indices) or len(arr.shape) == len(node.indices)
+        # Ignore 1-sized dimensions if the arrays are on input/output connectors.
+        perceived_indices = [i for s, i in zip(arr.shape, node.indices) if s != 1] if arr.shape else []
+        arr = self.write_code(name)
+        if not perceived_indices:
+            return arr
+        acc = ', '.join(self.write_code(i) for i in perceived_indices)
+        return f"{arr}[{acc}]"
 
     def name2string(self, node):
         if isinstance(node, str):
