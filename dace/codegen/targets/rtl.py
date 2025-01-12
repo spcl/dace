@@ -715,6 +715,9 @@ std::cout << std::flush;
     CPP_GENERAL_HEADER_TEMPLATE = """\
 {debug_include}
 // verilator includes
+#include <atomic>
+#include <thread>
+
 #include <verilated.h>
 """
 
