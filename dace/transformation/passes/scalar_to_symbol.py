@@ -342,10 +342,11 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
         """
         arrname, tasklet_slice = astutils.subscript_to_ast_slice(node)
         arrname = arrname if arrname in self.arrays else None
-        # Unsqueeze all index dimensions from orig_subset into tasklet_subset
-        for i, (start, end, _) in reversed(list(enumerate(memlet_subset.ndrange()))):
-            if start == end:
-                tasklet_slice.insert(i, (None, None, None))
+        if len(tasklet_slice) < len(memlet_subset):
+            # Unsqueeze all index dimensions from orig_subset into tasklet_subset
+            for i, (start, end, _) in reversed(list(enumerate(memlet_subset.ndrange()))):
+                if start == end:
+                    tasklet_slice.insert(i, (None, None, None))
         tasklet_subset = subsets.Range(astutils.astrange_to_symrange(tasklet_slice, self.arrays, arrname))
         return memlet_subset.compose(tasklet_subset)
 
