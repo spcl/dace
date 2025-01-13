@@ -1200,45 +1200,45 @@ MODULE lib
   TYPE :: Square
     REAL :: sides(2, 2)
   END TYPE Square
-  INTEGER, PARAMETER :: k_deconglobalvar_3 = 4
-  REAL :: circle_deconglobalvar_4 = 2.0_k_deconglobalvar_3
+  INTEGER, PARAMETER :: k = 4
+  REAL :: circle = 2.0_k
   CONTAINS
-  REAL FUNCTION perim_deconglobalfn_5(this_deconglobalvar_6, m_deconglobalvar_7)
+  REAL FUNCTION perim(this_var_0, m_var_1)
     IMPLICIT NONE
-    CLASS(Square), INTENT(IN) :: this_deconglobalvar_6
-    REAL, INTENT(IN) :: m_deconglobalvar_7
-    perim_deconglobalfn_5 = m_deconglobalvar_7 * SUM(this_deconglobalvar_6 % sides)
-  END FUNCTION perim_deconglobalfn_5
-  FUNCTION area_deconglobalfn_8(this_deconglobalvar_9, m_deconglobalvar_10)
+    CLASS(Square), INTENT(IN) :: this_var_0
+    REAL, INTENT(IN) :: m_var_1
+    perim = m_var_1 * SUM(this_var_0 % sides)
+  END FUNCTION perim
+  FUNCTION area_fn_2(this_var_3, m_var_4)
     IMPLICIT NONE
-    CLASS(Square), INTENT(IN) :: this_deconglobalvar_9
-    REAL, INTENT(IN) :: m_deconglobalvar_10
-    REAL, DIMENSION(2, 2) :: area_deconglobalfn_8
-    area_deconglobalfn_8 = m_deconglobalvar_10 * SUM(this_deconglobalvar_9 % sides)
-  END FUNCTION area_deconglobalfn_8
+    CLASS(Square), INTENT(IN) :: this_var_3
+    REAL, INTENT(IN) :: m_var_4
+    REAL, DIMENSION(2, 2) :: area_fn_2
+    area_fn_2 = m_var_4 * SUM(this_var_3 % sides)
+  END FUNCTION area_fn_2
 END MODULE lib
 SUBROUTINE main
-  USE lib, ONLY: circle_deconglobalvar_4
-  USE lib, ONLY: area_deconglobalfn_8
-  USE lib, ONLY: perim_deconglobalfn_5
-  USE lib, ONLY: perim_deconglobalfn_5
+  USE lib, ONLY: circle
+  USE lib, ONLY: area_fn_2
+  USE lib, ONLY: perim
+  USE lib, ONLY: perim
   USE lib
   IMPLICIT NONE
-  TYPE(Square) :: s_deconglobalvar_13
-  REAL :: a_deconglobalvar_14
-  INTEGER :: i_deconglobalvar_15, j_deconglobalvar_16
-  s_deconglobalvar_13 % sides = 0.5
-  s_deconglobalvar_13 % sides(1, 1) = 1.0
-  s_deconglobalvar_13 % sides(2, 1) = 1.0
-  DO i_deconglobalvar_15 = 1, 2
-    DO j_deconglobalvar_16 = 1, 2
-      s_deconglobalvar_13 % sides(i_deconglobalvar_15, j_deconglobalvar_16) = 7.0
+  TYPE(Square) :: s
+  REAL :: a
+  INTEGER :: i, j
+  s % sides = 0.5
+  s % sides(1, 1) = 1.0
+  s % sides(2, 1) = 1.0
+  DO i = 1, 2
+    DO j = 1, 2
+      s % sides(i, j) = 7.0
     END DO
   END DO
-  a_deconglobalvar_14 = perim_deconglobalfn_5(s_deconglobalvar_13, 1.0)
-  a_deconglobalvar_14 = perim_deconglobalfn_5(s_deconglobalvar_13, 1.0)
-  s_deconglobalvar_13 % sides = area_deconglobalfn_8(s_deconglobalvar_13, 4.1)
-  circle_deconglobalvar_4 = 5.0
+  a = perim(s, 1.0)
+  a = perim(s, 1.0)
+  s % sides = area_fn_2(s, 4.1)
+  circle = 5.0
 END SUBROUTINE main
 """.strip()
     assert got == want
