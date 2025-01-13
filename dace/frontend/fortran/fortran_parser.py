@@ -1947,7 +1947,7 @@ class AST_translator:
                     if i in write_names:
                         outs_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
 
-                    array = sdfg.arrays[self.name_mapping[sdfg][i]]
+                    array_in_global = sdfg.arrays[self.name_mapping[sdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
                     elif (hasattr(array_in_global, 'type') and array_in_global.type == "Array") or isinstance(
