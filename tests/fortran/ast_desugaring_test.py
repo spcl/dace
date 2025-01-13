@@ -1966,6 +1966,8 @@ module lib
   logical :: inited_var = .false.
   logical :: uninited_var
   integer, parameter :: const = 1
+  integer, dimension(3) :: iarr1 = [1, 2, 3]
+  integer :: iarr2(3) = [2, 3, 4]
   type cfg
     real :: foo = 1.9
     integer :: bar
@@ -1998,6 +2000,8 @@ MODULE lib
   LOGICAL :: inited_var = .FALSE.
   LOGICAL :: uninited_var
   INTEGER, PARAMETER :: const = 1
+  INTEGER, DIMENSION(3) :: iarr1 = [1, 2, 3]
+  INTEGER :: iarr2(3) = [2, 3, 4]
   TYPE :: cfg
     REAL :: foo = 1.9
     INTEGER :: bar
@@ -2009,11 +2013,11 @@ MODULE lib
     LOGICAL, INTENT(OUT) :: what
     what = .TRUE.
   END SUBROUTINE update
-  SUBROUTINE type_init_cfg_4(this)
+  SUBROUTINE type_init_cfg_0(this)
     IMPLICIT NONE
     TYPE(cfg) :: this
     this % foo = 1.9
-  END SUBROUTINE type_init_cfg_4
+  END SUBROUTINE type_init_cfg_0
 END MODULE
 SUBROUTINE main
   USE lib
@@ -2026,11 +2030,15 @@ SUBROUTINE main
 END SUBROUTINE main
 SUBROUTINE global_init_fn
   USE lib, ONLY: inited_var
+  USE lib, ONLY: iarr1
+  USE lib, ONLY: iarr2
   USE lib, ONLY: globalo
-  USE lib, ONLY: type_init_cfg_4
+  USE lib, ONLY: type_init_cfg_0
   IMPLICIT NONE
   inited_var = .FALSE.
-  CALL type_init_cfg_4(globalo)
+  iarr1 = [1, 2, 3]
+  iarr2 = [2, 3, 4]
+  CALL type_init_cfg_0(globalo)
 END SUBROUTINE global_init_fn
 """.strip()
     assert got == want

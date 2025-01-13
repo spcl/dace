@@ -2794,7 +2794,9 @@ def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Progra
                 uses.append(f"use {find_name_of_node(tmod)}, only: {var_init}")
                 execs.append(f"call {var_init}({'this % ' if this else ''}{find_name_of_node(var)})")
             else:
-                execs.append(f"{'this % ' if this else ''}{var.tofortran()}")
+                name, _, _, init_val = var.children
+                assert init_val
+                execs.append(f"{'this % ' if this else ''}{name.tofortran()}{init_val.tofortran()}")
         init_fn = f"""
 subroutine {fn_name}({'this' if this else ''})
 {'\n'.join(uses)}
@@ -2806,8 +2808,9 @@ end subroutine {fn_name}
         init_fn = Subroutine_Subprogram(get_reader(init_fn.strip()))
         append_children(box, init_fn)
 
-    type_defs: Dict[SPEC, Tuple[str, List[SPEC]]] = \
-        {k: (f"type_init_{k[-1]}_{idx}", []) for idx, k in enumerate(ident_map.keys()) if isinstance(ident_map[k], Derived_Type_Stmt)}
+    type_defs: List[SPEC] = [k for k in ident_map.keys() if isinstance(ident_map[k], Derived_Type_Stmt)]
+    type_defs: Dict[SPEC, Tuple[str, List[SPEC]]] =\
+        {k: (f"type_init_{k[-1]}_{idx}", []) for idx, k in enumerate(type_defs)}
     for k, v in ident_map.items():
         if not isinstance(v, Component_Decl) or not atmost_one(children_of_type(v, Component_Initialization)):
             continue
