@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes implementing the different types of nodes of the stateful
     dataflow multigraph representation. """
 
@@ -19,6 +19,7 @@ from dace.properties import (EnumProperty, Property, CodeProperty, LambdaPropert
 from dace.frontend.operations import detect_reduction_type
 from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
+from dace.sdfg import tasklet_validation as tval
 import pydoc
 import warnings
 
@@ -60,7 +61,7 @@ class Node(object):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k == 'guid': # Skip ID
+            if k == 'guid':  # Skip ID
                 continue
             setattr(result, k, dcpy(v, memo))
         return result
@@ -126,7 +127,12 @@ class Node(object):
         self.in_connectors[connector_name] = dtype
         return True
 
-    def add_out_connector(self, connector_name: str, dtype: Any = None, force: bool = False,) -> bool:
+    def add_out_connector(
+        self,
+        connector_name: str,
+        dtype: Any = None,
+        force: bool = False,
+    ) -> bool:
         """ Adds a new output connector to the node. The operation will fail if
             a connector (either input or output) with the same name already
             exists in the node.
@@ -145,10 +151,10 @@ class Node(object):
         return True
 
     def _add_scope_connectors(
-            self,
-            connector_name: str,
-            dtype: Optional[dtypes.typeclass] = None,
-            force: bool = False,
+        self,
+        connector_name: str,
+        dtype: Optional[dtypes.typeclass] = None,
+        force: bool = False,
     ) -> None:
         """ Adds input and output connector names to `self` in one step.
 
@@ -170,14 +176,14 @@ class Node(object):
                 return False
         # We force unconditionally because we have performed the tests above.
         self.add_in_connector(
-                connector_name=in_connector_name,
-                dtype=dtype,
-                force=True,
+            connector_name=in_connector_name,
+            dtype=dtype,
+            force=True,
         )
         self.add_out_connector(
-                connector_name=out_connector_name,
-                dtype=dtype,
-                force=True,
+            connector_name=out_connector_name,
+            dtype=dtype,
+            force=True,
         )
         return True
 
@@ -404,7 +410,8 @@ class Tasklet(CodeNode):
                             'additional side effects on the system state (e.g., callback). '
                             'Defaults to None, which lets the framework make assumptions based on '
                             'the tasklet contents')
-    ignored_symbols = SetProperty(element_type=str, desc='A set of symbols to ignore when computing '
+    ignored_symbols = SetProperty(element_type=str,
+                                  desc='A set of symbols to ignore when computing '
                                   'the symbols used by this tasklet. Used to skip certain symbols in non-Python '
                                   'tasklets, where only string analysis is possible; and to skip globals in Python '
                                   'tasklets that should not be given as parameters to the SDFG.')
@@ -449,7 +456,7 @@ class Tasklet(CodeNode):
     def name(self):
         return self._label
 
-    def validate(self, sdfg, state):
+    def validate(self, sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState'):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid tasklet name "%s"' % self.label)
         for in_conn in self.in_connectors:
@@ -458,6 +465,13 @@ class Tasklet(CodeNode):
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
+        if self.language == dtypes.Language.Python and self.code.code:
+            validator = tval.ConnectorDimensionalityValidator({e.dst_conn: e.data
+                                                               for e in state.in_edges(self)},
+                                                              {e.src_conn: e.data
+                                                               for e in state.out_edges(self)}, sdfg)
+            for stmt in self.code.code:
+                validator.visit(stmt)
 
     @property
     def free_symbols(self) -> Set[str]:
@@ -465,7 +479,6 @@ class Tasklet(CodeNode):
         symbols_to_ignore |= self.ignored_symbols
 
         return self.code.get_free_symbols(symbols_to_ignore)
-
 
     def has_side_effects(self, sdfg) -> bool:
         """
@@ -582,7 +595,9 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
-    ext_sdfg_path = Property(dtype=str, default=None, allow_none=True,
+    ext_sdfg_path = Property(dtype=str,
+                             default=None,
+                             allow_none=True,
                              desc='Path to a file containing the SDFG for this nested SDFG')
     schedule = EnumProperty(dtype=dtypes.ScheduleType,
                             desc="SDFG schedule",
@@ -638,7 +653,7 @@ class NestedSDFG(CodeNode):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             # Skip GUID.
-            if k in ('guid',):
+            if k in ('guid', ):
                 continue
             setattr(result, k, dcpy(v, memo))
         if result._sdfg is not None:
@@ -722,9 +737,8 @@ class NestedSDFG(CodeNode):
             connectors = self.in_connectors.keys() | self.out_connectors.keys()
             for conn in connectors:
                 if conn in self.sdfg.symbols:
-                    raise ValueError(
-                        f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
-                        'To pass symbols use "symbol_mapping".')
+                    raise ValueError(f'Connector "{conn}" was given, but it refers to a symbol, which is not allowed. '
+                                     'To pass symbols use "symbol_mapping".')
                 if conn not in self.sdfg.arrays:
                     raise NameError(
                         f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
@@ -779,7 +793,6 @@ class EntryNode(Node):
         self.map.validate(sdfg, state, self)
 
     add_scope_connectors = Node._add_scope_connectors
-
 
 
 # ------------------------------------------------------------------------------
@@ -947,7 +960,9 @@ class Map(object):
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    unroll_factor = Property(dtype=int, allow_none=True, default=0,
+    unroll_factor = Property(dtype=int,
+                             allow_none=True,
+                             default=0,
                              desc="How much iterations should be unrolled."
                              " To prevent unrolling, set this value to 1.")
     collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
