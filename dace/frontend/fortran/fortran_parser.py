@@ -2753,7 +2753,7 @@ def create_ast_from_string(
     if transform:
         program = ast_transforms.functionStatementEliminator(program)
         program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
-        program = ast_transforms.CallExtractor().visit(program)
+        program = ast_transforms.CallExtractor(program).visit(program)
         program = ast_transforms.SignToIf().visit(program)
         program = ast_transforms.ArrayToLoop(program).visit(program)
 
@@ -2860,7 +2860,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     #    ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
     #program = ast_transforms.CallToArray(ast_transforms.FindFunctionAndSubroutines.from_node(program)).visit(program)
     program = ast_transforms.IfConditionExtractor().visit(program)
-    program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.CallExtractor(program).visit(program)
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
@@ -2891,7 +2891,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     program = ast_transforms.SignToIf().visit(program)
     # run it again since signtoif might introduce patterns that have to be extracted
     # example: ABS call inside an UnOpNode
-    program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.CallExtractor(program).visit(program)
     program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
 
     program = ast_transforms.ArgumentExtractor(program).visit(program)
