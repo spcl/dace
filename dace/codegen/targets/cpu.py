@@ -543,7 +543,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', sdfg, state_id, node)
-            
+
             # NOTE: Special case: double pointer
             ctype_str = nodedesc.dtype.ctype
             format_str = "{name} = new {ctype} DACE_ALIGN(64)[{size}];\n"
