@@ -7,7 +7,6 @@ import sys, os
 import numpy as np
 import pytest
 
-
 from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
 from dace.frontend.fortran import fortran_parser
 from fparser.two.symbol_table import SymbolTable
