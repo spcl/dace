@@ -2783,8 +2783,10 @@ def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Progra
             if not this:
                 uses.append(f"use {find_name_of_node(mod)}, only: {find_name_of_stmt(var)}")
             var_t = find_type_of_entity(var, alias_map)
-            assert not var_t.shape
             if var_t.spec in type_defs:
+                if var_t.shape:
+                    # TODO: We need to create loops for this initialization.
+                    continue
                 var_init, _ = type_defs[var_t.spec]
                 tmod = ident_map[var_t.spec]
                 while not isinstance(tmod, Module):
