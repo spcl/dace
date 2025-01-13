@@ -38,19 +38,27 @@ def test_warp_softmax(vector_length=1):
     sdfg = softmax_fwd.to_sdfg(simplify=True)
 
     # Apply transformations
-    sdfg.apply_transformations_repeated(ReduceExpansion)
+    sdfg.apply_transformations_repeated(ReduceExpansion, validate_all=True)
     MultiExpansion.apply_to(sdfg, sdfg.node(0).nodes())
     SubgraphFusion.apply_to(sdfg, sdfg.node(0).nodes())
     sdfg.expand_library_nodes()
     sdfg.simplify()
-    sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion])
-    sdfg.apply_transformations(GPUTransformSDFG)
+    sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion], validate_all=True)
+    sdfg.apply_transformations(GPUTransformSDFG, validate_all=True)
     assert sdfg.apply_transformations(WarpTiling) == 1
-    sdfg.apply_transformations_repeated([HoistState, InlineSDFG, StateFusion])
-    sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion])
+    sdfg.apply_transformations_repeated([HoistState, InlineSDFG, StateFusion], validate_all=True)
+    sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion], validate_all=True)
     if vector_length != 1:
         sdfg.apply_transformations_repeated(
-            Vectorization, dict(vector_len=vector_length, preamble=False, postamble=False, strided_map=False))
+            Vectorization,
+            dict(
+                vector_len=vector_length,
+                preamble=False,
+                postamble=False,
+                strided_map=False
+            ),
+            validate_all=True
+        )
     sdfg.specialize(dict(dn1=2, dn2=16, dn3=128, dr=128))
 
     # Check validity
