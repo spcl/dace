@@ -35,7 +35,7 @@ from dace.frontend.fortran.ast_desugaring import SPEC, ENTRY_POINT_OBJECT_TYPES,
     inject_const_evals, \
     remove_access_statements, ident_spec, NAMED_STMTS_OF_INTEREST_TYPES, ConstTypeInjection, ConstInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
-    exploit_locally_constant_variables
+    exploit_locally_constant_variables, assign_globally_unique_variable_names, assign_globally_unique_subprogram_names
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -3284,8 +3284,8 @@ def create_sdfg_from_fortran_file_with_options(
         ast = prune_branches(ast)
         ast = prune_unused_objects(ast, cfg.entry_points)
 
-        # ast = assign_globally_unique_subprogram_names(ast, {('radiation_interface', 'radiation')})
-        # ast = assign_globally_unique_variable_names(ast, {'config','thermodynamics','flux','gas','cloud','aerosol','single_level'})
+        ast = assign_globally_unique_subprogram_names(ast, {('radiation_interface', 'radiation')})
+        ast = assign_globally_unique_variable_names(ast, {'config','thermodynamics','flux','gas','cloud','aerosol','single_level'})
         ast = consolidate_uses(ast)
     else:
         ast = correct_for_function_calls(ast)

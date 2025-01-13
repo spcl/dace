@@ -2040,17 +2040,25 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
     2. All public/private access statements were cleanly removed.
     TODO: Make structure names unique too.
     """
-    SUFFIX, COUNTER = 'deconglobalfn', 0
+    SUFFIX, COUNTER = 'fn', 0
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
+
+    name_collisions: Dict[str, int] = {k[-1]: 0 for k in ident_map.keys()}
+    for k in ident_map.keys():
+        name_collisions[k[-1]] += 1
+    name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1}
 
     # Make new unique names for the identifiers.
     uident_map: Dict[SPEC, str] = {}
     for k in ident_map.keys():
         if k in keepers:
             continue
-        uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
+        if k[-1] in name_collisions:
+            uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
+        else:
+            uname = k[-1]
         uident_map[k] = uname
 
     # PHASE 1.a: Remove all the places where any function is imported.
@@ -2179,17 +2187,25 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Pr
     1. All indirections are already removed from the program, except for the explicit renames.
     2. All public/private access statements were cleanly removed.
     """
-    SUFFIX, COUNTER = 'deconglobalvar', 0
+    SUFFIX, COUNTER = 'var', 0
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
+
+    name_collisions: Dict[str, int] = {k[-1]: 0 for k in ident_map.keys()}
+    for k in ident_map.keys():
+        name_collisions[k[-1]] += 1
+    name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1}
 
     # Make new unique names for the identifiers.
     uident_map: Dict[SPEC, str] = {}
     for k in ident_map.keys():
         if k[-1] in keepers:
             continue
-        uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
+        if k[-1] in name_collisions:
+            uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
+        else:
+            uname = k[-1]
         uident_map[k] = uname
 
     # PHASE 1.a: Remove all the places where any variable is imported.
