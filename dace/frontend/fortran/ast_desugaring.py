@@ -389,12 +389,12 @@ UNARY_OPS = {
 }
 
 BINARY_OPS = {
-    '<': operator.le,
-    '>': operator.ge,
+    '<': operator.lt,
+    '>': operator.gt,
     '==': operator.eq,
     '/=': operator.ne,
-    '<=': operator.lt,
-    '>=': operator.gt,
+    '<=': operator.le,
+    '>=': operator.ge,
     '+': operator.add,
     '-': operator.sub,
     '*': operator.mul,
