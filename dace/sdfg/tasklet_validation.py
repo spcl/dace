@@ -1,6 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from typing import TYPE_CHECKING
+from dace import data
 
 if TYPE_CHECKING:
     from dace.sdfg.sdfg import SDFG
@@ -22,8 +23,14 @@ class ConnectorDimensionalityValidator(ast.NodeVisitor):
 
     def __init__(self, in_edges: dict[str, 'Memlet'], out_edges: dict[str, 'Memlet'], sdfg: 'SDFG') -> None:
         self.edges = {**in_edges, **out_edges}
-        self.arrays = {k: sdfg.arrays[v.data] for k, v in in_edges.items() if k is not None}
-        self.arrays.update({k: sdfg.arrays[v.data] for k, v in out_edges.items() if k is not None})
+        self.arrays = {
+            k: sdfg.arrays[v.data]
+            for k, v in in_edges.items() if k is not None and isinstance(v, data.Array)
+        }
+        self.arrays.update({
+            k: sdfg.arrays[v.data]
+            for k, v in out_edges.items() if k is not None and isinstance(v, data.Array)
+        })
 
     def visit_Subscript(self, node: ast.Subscript):
         # A connector we should check
