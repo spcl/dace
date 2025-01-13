@@ -1366,7 +1366,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
         parent_sdfg = parent_state.sdfg
         parent_state_id = parent_state.block_id
 
-        if multistate:
+        if multistate and len(nsdfg.nodes()) != 1 or isinstance(nsdfg.nodes()[0], AbstractControlFlowRegion):
             candidate = {
                 InlineMultistateSDFG.nested_sdfg: nsdfg_node,
             }

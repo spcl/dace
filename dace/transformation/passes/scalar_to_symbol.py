@@ -684,6 +684,8 @@ class ScalarToSymbolPromotion(passes.Pass):
                 in_edge = state.in_edges(node)[0]
                 input = in_edge.src
 
+                to_remove = set([node])
+
                 # There is only zero or one incoming edges by definition
                 tasklet_inputs = [e.src for e in state.edge_bfs(input, reverse=True)]
                 # Step 2.1
@@ -695,6 +697,8 @@ class ScalarToSymbolPromotion(passes.Pass):
                 node: nodes.AccessNode = new_state.sink_nodes()[0]
                 input = new_state.in_edges(node)[0].src
                 if isinstance(input, nodes.Tasklet):
+                    to_remove.add(input)
+
                     # Convert tasklet to interstate edge
                     newcode: str = ''
                     if input.language is dtypes.Language.Python:
@@ -708,42 +712,22 @@ class ScalarToSymbolPromotion(passes.Pass):
                     # Replace tasklet inputs with incoming edges
                     for e in new_state.in_edges(input):
                         view_nodes = sdutils.get_all_view_nodes(new_state, e.src)[::-1]
-                        
-                        current_node = view_nodes[0]
-                        current_desc = sdfg.arrays[current_node.data]
-                        memlet_path = [current_node.data]
-                        for i in range(1, len(view_nodes)):
-                            view_node = view_nodes[i]
-                            view_edge = sdutils.get_view_edge(new_state, view_node)
-                            
-                            # View on a member?
-                            if "." in view_edge.data.data:
-                                member_name = view_edge.data.data.split(".")[-1]
-                                memlet_part = member_name
-                                if i < len(view_nodes) - 1:
-                                    memlet_part += "[" + view_edge.data.subset.__str__() + "]"
-                                
-                                memlet_path.append(memlet_part)
 
-                                current_node = view_node
-                                current_desc = current_desc.members[member_name]
-                            else:
-                                # View on a subset
-                                if view_edge.data.subset != mm.Memlet.from_array(current_node.data, current_desc).subset:
-                                    # TODO: Non-trivial, memlet offsetting required
-                                    raise NotImplementedError
-                                else:
-                                    # We can simply skip
-                                    continue
+                        if not isinstance(sdfg.arrays[view_nodes[-1].data], dt.View):
+                            # If the access node is not to a view, it is a direct read from an array, in which case
+                            # we simply access on the interstate edge and remove the access node. By definition, it can
+                            # not have any incoming edges (see `find_promotable_scalars`).
+                            to_remove.add(view_nodes[-1])
+                        # For anything view related, the view remains there and the interestate edge accesses the view.
 
-                        memlet_str = ".".join(memlet_path)
-
+                        memlet_str = e.src.data
                         if (e.data.subset is not None and not isinstance(sdfg.arrays[e.data.data], dt.Scalar)):
                             memlet_str += '[%s]' % e.data.subset
                         newcode = re.sub(r'\b%s\b' % re.escape(e.dst_conn), memlet_str, newcode)
                     # Add interstate edge assignment
                     new_isedge.data.assignments[node.data] = newcode
                 elif isinstance(input, nodes.AccessNode):
+                    to_remove.add(input)
                     memlet: mm.Memlet = in_edge.data
                     if (memlet.src_subset and not isinstance(sdfg.arrays[memlet.data], dt.Scalar)):
                         new_isedge.data.assignments[node.data] = '%s[%s]' % (input.data, memlet.src_subset)
@@ -751,7 +735,7 @@ class ScalarToSymbolPromotion(passes.Pass):
                         new_isedge.data.assignments[node.data] = input.data
 
                 # Clean up all nodes after assignment was transferred
-                new_state.remove_nodes_from(new_state.nodes())
+                new_state.remove_nodes_from(to_remove)
 
         # Step 3: Scalar reads
         remove_scalar_reads(sdfg, {k: k for k in to_promote})
