@@ -23,14 +23,25 @@ class ConnectorDimensionalityValidator(ast.NodeVisitor):
 
     def __init__(self, in_edges: dict[str, 'Memlet'], out_edges: dict[str, 'Memlet'], sdfg: 'SDFG') -> None:
         self.edges = {**in_edges, **out_edges}
-        self.arrays = {
-            k: sdfg.arrays[v.data]
-            for k, v in in_edges.items() if k is not None and isinstance(v, data.Array)
-        }
-        self.arrays.update({
-            k: sdfg.arrays[v.data]
-            for k, v in out_edges.items() if k is not None and isinstance(v, data.Array)
-        })
+        try:
+            self.arrays = {
+                k: sdfg.arrays[v.data]
+                for k, v in in_edges.items()
+                if k is not None and v.data is not None and isinstance(sdfg.arrays[v.data], data.Array)
+            }
+            self.arrays.update({
+                k: sdfg.arrays[v.data]
+                for k, v in out_edges.items()
+                if k is not None and v.data is not None and isinstance(sdfg.arrays[v.data], data.Array)
+            })
+        except KeyError as ex:  # Memlet data not found in SDFG arrays
+            found_connector = next((k for k, v in in_edges.items() if v.data == ex.args[0]), False)
+            if found_connector is False:
+                found_connector = next((k for k, v in out_edges.items() if v.data == ex.args[0]), False)
+            if found_connector is False:  # Cannot find relevant connector, raise general error
+                raise NameError(f'Data container "{ex}" used in connected memlet not found in SDFG')
+            raise NameError(f'Memlet connected to connector "{found_connector}" points to data container "{ex}", '
+                            'which does not exist in the SDFG')
 
     def visit_Subscript(self, node: ast.Subscript):
         # A connector we should check
