@@ -67,6 +67,21 @@ def test_multiple_targets_parentheses():
 
 
 @dace.program
+def multiple_targets_unpacking(a: dace.float32[2]):
+    b, c = a
+    return b, c
+
+
+def test_multiple_targets_unpacking():
+    a = np.zeros((2, ), dtype=np.float32)
+    a[0] = np.pi
+    a[1] = 2 * np.pi
+    b, c = multiple_targets_unpacking(a=a)
+    assert (b[0] == a[0])
+    assert (c[0] == a[1])
+
+
+@dace.program
 def starred_target(a: dace.float32[1]):
     b, *c, d, e = a, 2 * a, 3 * a, 4 * a, 5 * a, 6 * a
     return b, c, d, e
@@ -175,6 +190,7 @@ if __name__ == "__main__":
     test_single_target_parentheses()
     test_multiple_targets()
     test_multiple_targets_parentheses()
+    test_multiple_targets_unpacking()
 
     # test_starred_target()
     # test_attribute_reference()
