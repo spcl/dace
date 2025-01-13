@@ -1877,8 +1877,11 @@ class FortranIntrinsics:
         return FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION
 
     def replace_function_name(self, node: FASTNode) -> ast_internal_classes.Name_Node:
-
-        func_name = node.string
+        if isinstance(node, ast_internal_classes.Name_Node):
+            func_name = node.name
+        else:
+            func_name = node.string
+        
         replacements = {
             "SIGN": "__dace_sign",
             # TODO implement and categorize the intrinsic functions below
