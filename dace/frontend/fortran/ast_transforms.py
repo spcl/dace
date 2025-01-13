@@ -2653,6 +2653,11 @@ class TypeInference(NodeTransformer):
 
         return node
 
+    def visit_Name_Range_Node(self, node: ast_internal_classes.Name_Range_Node):
+        node.sizes = []
+        node.offsets = [1]
+        return node
+
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
         var_def = self.scope_vars.get_var(node.parent, node.name.name)
