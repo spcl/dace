@@ -2823,8 +2823,8 @@ end subroutine {fn_name}
 
     global_inited_vars: List[SPEC] = [
         k for k, v in ident_map.items()
-        if isinstance(v, Entity_Decl) and
-           (find_type_of_entity(v, alias_map).spec in type_defs or atmost_one(children_of_type(v, Initialization)))
+        if isinstance(v, Entity_Decl) and not find_type_of_entity(v, alias_map).const
+           and (find_type_of_entity(v, alias_map).spec in type_defs or atmost_one(children_of_type(v, Initialization)))
            and search_scope_spec(v) and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)
     ]
     global_init_fn_name = 'global_init_fn'

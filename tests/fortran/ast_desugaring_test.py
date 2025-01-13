@@ -1965,6 +1965,7 @@ module lib
   implicit none
   logical :: inited_var = .false.
   logical :: uninited_var
+  integer, parameter :: const = 1
   type cfg
     real :: foo = 1.9
     integer :: bar
@@ -1996,6 +1997,7 @@ MODULE lib
   IMPLICIT NONE
   LOGICAL :: inited_var = .FALSE.
   LOGICAL :: uninited_var
+  INTEGER, PARAMETER :: const = 1
   TYPE :: cfg
     REAL :: foo = 1.9
     INTEGER :: bar
@@ -2007,11 +2009,11 @@ MODULE lib
     LOGICAL, INTENT(OUT) :: what
     what = .TRUE.
   END SUBROUTINE update
-  SUBROUTINE type_init_cfg_3(this)
+  SUBROUTINE type_init_cfg_4(this)
     IMPLICIT NONE
     TYPE(cfg) :: this
     this % foo = 1.9
-  END SUBROUTINE type_init_cfg_3
+  END SUBROUTINE type_init_cfg_4
 END MODULE
 SUBROUTINE main
   USE lib
@@ -2025,10 +2027,10 @@ END SUBROUTINE main
 SUBROUTINE global_init_fn
   USE lib, ONLY: inited_var
   USE lib, ONLY: globalo
-  USE lib, ONLY: type_init_cfg_3
+  USE lib, ONLY: type_init_cfg_4
   IMPLICIT NONE
   inited_var = .FALSE.
-  CALL type_init_cfg_3(globalo)
+  CALL type_init_cfg_4(globalo)
 END SUBROUTINE global_init_fn
 """.strip()
     assert got == want
