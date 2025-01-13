@@ -398,7 +398,8 @@ class CPUCodeGen(TargetCodeGenerator):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
-            declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
+            if not declared:
+                declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
             if allocate_nested_data:
                 for k, v in nodedesc.members.items():
@@ -476,21 +477,21 @@ class CPUCodeGen(TargetCodeGenerator):
             declaration_stream.write(definition, cfg, state_id, node)
             define_var(name, DefinedType.Stream, ctypedef)
 
-        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and
+        elif (top_storage == dtypes.StorageType.CPU_Heap
+              or (top_storage == dtypes.StorageType.Register and
                   ((symbolic.issymbolic(arrsize, sdfg.constants)) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
 
-            if nodedesc.storage == dtypes.StorageType.Register:
+            if top_storage == dtypes.StorageType.Register:
 
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn('Variable-length array %s with size %s '
                                   'detected and was allocated on heap instead of '
-                                  '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
+                                  '%s' % (name, cpp.sym2cpp(arrsize), top_storage))
                 elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
                     warnings.warn("Array {} with size {} detected and was allocated on heap instead of "
                                   "{} since its size is greater than max_stack_array_size ({})".format(
-                                      name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
+                                      name, cpp.sym2cpp(arrsize_bytes), top_storage,
                                       Config.get("compiler", "max_stack_array_size")))
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
@@ -510,7 +511,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                         node)
 
             return
-        elif (nodedesc.storage == dtypes.StorageType.Register):
+        elif (top_storage == dtypes.StorageType.Register):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
@@ -531,7 +532,7 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             define_var(name, DefinedType.Pointer, ctypedef)
             return
-        elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
+        elif top_storage is dtypes.StorageType.CPU_ThreadLocal:
             # Define pointer once
             # NOTE: OpenMP threadprivate storage MUST be declared globally.
             if not declared:
@@ -566,7 +567,7 @@ class CPUCodeGen(TargetCodeGenerator):
             allocation_stream.write('}')
             self._dispatcher.defined_vars.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
         else:
-            raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
+            raise NotImplementedError("Unimplemented storage type " + str(top_storage))
 
     def deallocate_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                          node: nodes.AccessNode, nodedesc: data.Data, function_stream: CodeIOStream,
