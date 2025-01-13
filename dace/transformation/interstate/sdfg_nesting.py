@@ -285,9 +285,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
         struct_views : Dict[str, str] = {}
 
         for e in list(state.in_edges(nsdfg_node)):
-            
+            outer_memlet = state.memlet_path(e)[-1].data
+            if outer_memlet.is_empty():
+                continue
+
             # Structure treatment
-            outer_dataname = state.memlet_path(e)[-1].data.data
+            outer_dataname = outer_memlet.data
             outer_tokens = outer_dataname.split('.')
             outer_dataname = outer_tokens[0]
             outer_descriptor = sdfg.arrays[outer_dataname]
@@ -318,6 +321,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     views[d] = (arr, mem)
 
         for e in list(state.out_edges(nsdfg_node)):
+            outer_memlet = state.memlet_path(e)[0].data
+            if outer_memlet.is_empty():
+                continue
 
             # Structure treatment
             outer_dataname = state.memlet_path(e)[0].data.data

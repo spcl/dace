@@ -2709,12 +2709,6 @@ class AST_translator:
             cfg.add_edge(self.last_sdfg_states[cfg], continue_block, InterstateEdge())
 
 
-    def continue2sdfg(self, node: ast_internal_classes.Continue_Node, sdfg: SDFG):
-        #
-        sdfg.add_edge(self.last_sdfg_states[sdfg], self.last_loop_continues.get(sdfg), InterstateEdge())
-        self.already_has_edge_back_continue[sdfg] = self.last_sdfg_states[sdfg]
-
-
 def create_ast_from_string(
         source_string: str,
         sdfg_name: str,
