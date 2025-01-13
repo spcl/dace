@@ -1718,7 +1718,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if isinstance(outputs, (set, collections.abc.KeysView)):
             outputs = {k: None for k in outputs}
 
-        s = nd.ExternalNestedSDFG(
+        s = nd.NestedSDFG(
             name,
             sdfg,
             inputs,

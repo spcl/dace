@@ -155,7 +155,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         outer_start_state = sdfg.start_state
 
-        outer_state.parent_grpah.add_nodes_from(set(nsdfg.nodes()))
+        outer_state.parent_graph.add_nodes_from(set(nsdfg.nodes()))
         for ise in nsdfg.edges():
             outer_state.parent_graph.add_edge(ise.src, ise.dst, ise.data)
 
@@ -275,7 +275,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
     def _isolate_nsdfg_node(self, nsdfg_node: nodes.NestedSDFG, sdfg: SDFG, outer_state: SDFGState) -> SDFGState:
         # Push nsdfg plus childs into new state
-        nsdfg_state = helpers.state_fission_after(sdfg, outer_state, nsdfg_node)
+        nsdfg_state = helpers.state_fission_after(outer_state, nsdfg_node)
 
         # Split nsdfg from its childs
         direct_subgraph = set()
@@ -289,7 +289,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     direct_subgraph.add(view_node)
 
         direct_subgraph = StateSubgraphView(nsdfg_state, direct_subgraph)
-        new_state = helpers.state_fission(sdfg, direct_subgraph)
+        new_state = helpers.state_fission(direct_subgraph)
         return new_state
 
     def _replace_arguments_by_views(

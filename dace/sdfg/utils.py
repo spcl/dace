@@ -788,7 +788,7 @@ def get_all_view_nodes(state: SDFGState, view: nd.AccessNode) -> List[nd.AccessN
     Given a view access node, returns a list of viewed access nodes
     if existent, else None
     """
-    sdfg = state.parent
+    sdfg = state.sdfg
     node = view
     desc = sdfg.arrays[node.data]
     result = [node]
@@ -806,7 +806,7 @@ def get_all_view_edges(state: SDFGState, view: nd.AccessNode) -> List[gr.MultiCo
     Given a view access node, returns a list of viewed access nodes as edges
     if existent, else None
     """
-    sdfg = state.parent
+    sdfg = state.sdfg
     node = view
     desc = sdfg.arrays[node.data]
     result = []
