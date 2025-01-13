@@ -1606,8 +1606,8 @@ def make_practically_constant_global_vars_constants(ast: Program) -> Program:
 
     # Start with everything that _could_ be a candidate.
     never_assigned: Set[SPEC] = {k for k, v in ident_map.items()
-                                 if isinstance(v, Entity_Decl) and search_scope_spec(v)
-                                 and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)}
+                                 if isinstance(v, Entity_Decl) and not find_type_of_entity(v, alias_map).const
+                                 and search_scope_spec(v) and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)}
 
     for asgn in walk(ast, Assignment_Stmt):
         lv, _, rv = asgn.children
@@ -2822,7 +2822,8 @@ end subroutine {fn_name}
         type_defs[td][1].append(k)
     for t, v in type_defs.items():
         init_fn_name, comps = v
-        _make_init_fn(init_fn_name, comps, t)
+        if comps:
+            _make_init_fn(init_fn_name, comps, t)
 
     global_inited_vars: List[SPEC] = [
         k for k, v in ident_map.items()
@@ -2830,20 +2831,20 @@ end subroutine {fn_name}
            and (find_type_of_entity(v, alias_map).spec in type_defs or atmost_one(children_of_type(v, Initialization)))
            and search_scope_spec(v) and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)
     ]
-    global_init_fn_name = 'global_init_fn'
-    _make_init_fn(global_init_fn_name, global_inited_vars, None)
-
-    for ep in entry_points:
-        assert ep in ident_map
-        fn = ident_map[ep]
-        if not isinstance(fn, (Function_Stmt, Subroutine_Stmt)):
-            # Not a function (or subroutine), so there is nothing to exectue here.
-            continue
-        ex = atmost_one(children_of_type(fn.parent, Execution_Part))
-        if not ex:
-            # The function does nothing. We could still initialize, but there is no point.
-            continue
-        init_call = Call_Stmt(f"call {global_init_fn_name}")
-        prepend_children(ex, init_call)
+    if global_inited_vars:
+        global_init_fn_name = 'global_init_fn'
+        _make_init_fn(global_init_fn_name, global_inited_vars, None)
+        for ep in entry_points:
+            assert ep in ident_map
+            fn = ident_map[ep]
+            if not isinstance(fn, (Function_Stmt, Subroutine_Stmt)):
+                # Not a function (or subroutine), so there is nothing to exectue here.
+                continue
+            ex = atmost_one(children_of_type(fn.parent, Execution_Part))
+            if not ex:
+                # The function does nothing. We could still initialize, but there is no point.
+                continue
+            init_call = Call_Stmt(f"call {global_init_fn_name}")
+            prepend_children(ex, init_call)
 
     return ast
