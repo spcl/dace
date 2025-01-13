@@ -9,7 +9,7 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
     const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
-    exploit_locally_constant_variables
+    exploit_locally_constant_variables, create_global_initializers
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -1954,6 +1954,92 @@ SUBROUTINE main
     fun = out + 1.0
   END FUNCTION fun
 END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_create_global_initializers():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  logical :: inited_var = .false.
+  logical :: uninited_var
+  integer, parameter :: const = 1
+  integer, dimension(3) :: iarr1 = [1, 2, 3]
+  integer :: iarr2(3) = [2, 3, 4]
+  type cfg
+    real :: foo = 1.9
+    integer :: bar
+  end type cfg
+  type(cfg) :: globalo
+contains
+  subroutine update(what)
+    implicit none
+    logical, intent(out) :: what
+    what = .true.
+  end subroutine update
+end module
+""").add_file("""
+subroutine main
+  use lib
+  implicit none
+  real :: a = 1.0
+  call update(inited_var)
+  call update(uninited_var)
+  if (inited_var .and. uninited_var) a = 7.1
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = create_global_initializers(ast, [('main',)])
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  LOGICAL :: inited_var = .FALSE.
+  LOGICAL :: uninited_var
+  INTEGER, PARAMETER :: const = 1
+  INTEGER, DIMENSION(3) :: iarr1 = [1, 2, 3]
+  INTEGER :: iarr2(3) = [2, 3, 4]
+  TYPE :: cfg
+    REAL :: foo = 1.9
+    INTEGER :: bar
+  END TYPE cfg
+  TYPE(cfg) :: globalo
+  CONTAINS
+  SUBROUTINE update(what)
+    IMPLICIT NONE
+    LOGICAL, INTENT(OUT) :: what
+    what = .TRUE.
+  END SUBROUTINE update
+  SUBROUTINE type_init_cfg_0(this)
+    IMPLICIT NONE
+    TYPE(cfg) :: this
+    this % foo = 1.9
+  END SUBROUTINE type_init_cfg_0
+END MODULE
+SUBROUTINE main
+  USE lib
+  IMPLICIT NONE
+  REAL :: a = 1.0
+  CALL global_init_fn
+  CALL update(inited_var)
+  CALL update(uninited_var)
+  IF (inited_var .AND. uninited_var) a = 7.1
+END SUBROUTINE main
+SUBROUTINE global_init_fn
+  USE lib, ONLY: inited_var
+  USE lib, ONLY: iarr1
+  USE lib, ONLY: iarr2
+  USE lib, ONLY: globalo
+  USE lib, ONLY: type_init_cfg_0
+  IMPLICIT NONE
+  inited_var = .FALSE.
+  iarr1 = [1, 2, 3]
+  iarr2 = [2, 3, 4]
+  CALL type_init_cfg_0(globalo)
+END SUBROUTINE global_init_fn
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()

@@ -23,7 +23,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, \
     Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, \
     Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt, Save_Stmt, Contains_Stmt, \
-    Implicit_Stmt, Implicit_Part
+    Implicit_Part, Component_Part, End_Module_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
@@ -1606,8 +1606,8 @@ def make_practically_constant_global_vars_constants(ast: Program) -> Program:
 
     # Start with everything that _could_ be a candidate.
     never_assigned: Set[SPEC] = {k for k, v in ident_map.items()
-                                 if isinstance(v, Entity_Decl) and search_scope_spec(v)
-                                 and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)}
+                                 if isinstance(v, Entity_Decl) and not find_type_of_entity(v, alias_map).const
+                                 and search_scope_spec(v) and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)}
 
     for asgn in walk(ast, Assignment_Stmt):
         lv, _, rv = asgn.children
@@ -2746,4 +2746,115 @@ def inject_const_evals(ast: Program,
 def lower_identifier_names(ast: Program) -> Program:
     for nm in walk(ast, Name):
         nm.string = nm.string.lower()
+    return ast
+
+
+def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Program:
+    # TODO: Ordering of the initializations may matter, but for that we need to find how Fortran's global initialization
+    # works and then reorder the initialization calls appropriately.
+
+    ident_map = identifier_specs(ast)
+    alias_map = alias_specs(ast)
+
+    created_init_fns: Set[str] = set()
+    used_init_fns: Set[str] = set()
+    def _make_init_fn(fn_name: str, inited_vars: List[SPEC], this: Optional[SPEC]):
+        if this:
+            assert this in ident_map and isinstance(ident_map[this], Derived_Type_Stmt)
+            box = ident_map[this]
+            while not isinstance(box, Specification_Part):
+                box = box.parent
+            box = box.parent
+            assert isinstance(box, Module)
+            sp_part = atmost_one(children_of_type(box, Module_Subprogram_Part))
+            if not sp_part:
+                rest, end_mod = box.children[:-1], box.children[-1]
+                assert isinstance(end_mod, End_Module_Stmt)
+                sp_part = Module_Subprogram_Part('contains')
+                set_children(box, rest + [sp_part, end_mod])
+            box = sp_part
+        else:
+            box = ast
+
+        uses, execs = [], []
+        for v in inited_vars:
+            var = ident_map[v]
+            mod = var
+            while not isinstance(mod, Module):
+                mod = mod.parent
+            if not this:
+                uses.append(f"use {find_name_of_node(mod)}, only: {find_name_of_stmt(var)}")
+            var_t = find_type_of_entity(var, alias_map)
+            if var_t.spec in type_defs:
+                if var_t.shape:
+                    # TODO: We need to create loops for this initialization.
+                    continue
+                var_init, _ = type_defs[var_t.spec]
+                tmod = ident_map[var_t.spec]
+                while not isinstance(tmod, Module):
+                    tmod = tmod.parent
+                uses.append(f"use {find_name_of_node(tmod)}, only: {var_init}")
+                execs.append(f"call {var_init}({'this % ' if this else ''}{find_name_of_node(var)})")
+                used_init_fns.add(var_init)
+            else:
+                name, _, _, init_val = var.children
+                assert init_val
+                execs.append(f"{'this % ' if this else ''}{name.tofortran()}{init_val.tofortran()}")
+        init_fn = f"""
+subroutine {fn_name}({'this' if this else ''})
+{'\n'.join(uses)}
+implicit none
+{f"type({this[-1]}) :: this" if this else ''}
+{'\n'.join(execs)}
+end subroutine {fn_name}
+"""
+        init_fn = Subroutine_Subprogram(get_reader(init_fn.strip()))
+        append_children(box, init_fn)
+        created_init_fns.add(fn_name)
+
+    type_defs: List[SPEC] = [k for k in ident_map.keys() if isinstance(ident_map[k], Derived_Type_Stmt)]
+    type_defs: Dict[SPEC, Tuple[str, List[SPEC]]] =\
+        {k: (f"type_init_{k[-1]}_{idx}", []) for idx, k in enumerate(type_defs)}
+    for k, v in ident_map.items():
+        if not isinstance(v, Component_Decl) or not atmost_one(children_of_type(v, Component_Initialization)):
+            continue
+        td = k[:-1]
+        assert td in ident_map and isinstance(ident_map[td], Derived_Type_Stmt)
+        if td not in type_defs:
+            type_init_fn = f"type_init_{td[-1]}_{len(type_defs)}"
+            type_defs[td] = type_init_fn, []
+        type_defs[td][1].append(k)
+    for t, v in type_defs.items():
+        init_fn_name, comps = v
+        if comps:
+            _make_init_fn(init_fn_name, comps, t)
+
+    global_inited_vars: List[SPEC] = [
+        k for k, v in ident_map.items()
+        if isinstance(v, Entity_Decl) and not find_type_of_entity(v, alias_map).const
+           and (find_type_of_entity(v, alias_map).spec in type_defs or atmost_one(children_of_type(v, Initialization)))
+           and search_scope_spec(v) and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)
+    ]
+    if global_inited_vars:
+        global_init_fn_name = 'global_init_fn'
+        _make_init_fn(global_init_fn_name, global_inited_vars, None)
+        for ep in entry_points:
+            assert ep in ident_map
+            fn = ident_map[ep]
+            if not isinstance(fn, (Function_Stmt, Subroutine_Stmt)):
+                # Not a function (or subroutine), so there is nothing to exectue here.
+                continue
+            ex = atmost_one(children_of_type(fn.parent, Execution_Part))
+            if not ex:
+                # The function does nothing. We could still initialize, but there is no point.
+                continue
+            init_call = Call_Stmt(f"call {global_init_fn_name}")
+            prepend_children(ex, init_call)
+            used_init_fns.add(global_init_fn_name)
+
+    unused_init_fns = created_init_fns - used_init_fns
+    for fn in walk(ast, Subroutine_Subprogram):
+        if find_name_of_node(fn) in unused_init_fns:
+            remove_self(fn)
+
     return ast
