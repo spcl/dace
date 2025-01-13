@@ -2756,6 +2756,8 @@ def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Progra
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
 
+    created_init_fns: Set[str] = set()
+    used_init_fns: Set[str] = set()
     def _make_init_fn(fn_name: str, inited_vars: List[SPEC], this: Optional[SPEC]):
         if this:
             assert this in ident_map and isinstance(ident_map[this], Derived_Type_Stmt)
@@ -2793,6 +2795,7 @@ def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Progra
                     tmod = tmod.parent
                 uses.append(f"use {find_name_of_node(tmod)}, only: {var_init}")
                 execs.append(f"call {var_init}({'this % ' if this else ''}{find_name_of_node(var)})")
+                used_init_fns.add(var_init)
             else:
                 name, _, _, init_val = var.children
                 assert init_val
@@ -2807,6 +2810,7 @@ end subroutine {fn_name}
 """
         init_fn = Subroutine_Subprogram(get_reader(init_fn.strip()))
         append_children(box, init_fn)
+        created_init_fns.add(fn_name)
 
     type_defs: List[SPEC] = [k for k in ident_map.keys() if isinstance(ident_map[k], Derived_Type_Stmt)]
     type_defs: Dict[SPEC, Tuple[str, List[SPEC]]] =\
@@ -2846,5 +2850,11 @@ end subroutine {fn_name}
                 continue
             init_call = Call_Stmt(f"call {global_init_fn_name}")
             prepend_children(ex, init_call)
+            used_init_fns.add(global_init_fn_name)
+
+    unused_init_fns = created_init_fns - used_init_fns
+    for fn in walk(ast, Subroutine_Subprogram):
+        if find_name_of_node(fn) in unused_init_fns:
+            remove_self(fn)
 
     return ast
