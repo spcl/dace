@@ -54,11 +54,12 @@ class ConnectorDimensionalityValidator(ast.NodeVisitor):
             else:
                 slices = [node.slice]
             # Compute number of non-scalar dimensions in memlet
-            nonscalar_dims = sum(1 if end != start else 0
-                                 for start, end, _ in self.edges[node.value.id].subset.ndrange())
+            nonscalar_dims = self.edges[node.value.id].subset.data_dims()
             # Validate length
             if len(slices) != nonscalar_dims:
-                raise IndexError(f'Subscript expression "{ast.unparse(node)}" contains an invalid number of dimensions.'
-                                 f' Expected {nonscalar_dims} non-scalar dimensions, got {len(slices)}')
+                raise IndexError(
+                    f'Subscript expression "{ast.unparse(node)}" contains an invalid number of dimensions. '
+                    f'Expected {nonscalar_dims} non-scalar dimensions due to memlet "{self.edges[node.value.id]}", '
+                    f'but got {len(slices)}')
 
         return self.generic_visit(node)
