@@ -1812,6 +1812,7 @@ subroutine main()
   implicit none
   logical :: cond = .true.
   real :: out = 0.
+  integer :: i
 
   if (cond) out = out + 1.
   out = out*2
@@ -1828,6 +1829,10 @@ subroutine main()
   out = 7.2
   out = out*2.0
   out = fun(.not. cond, out)
+
+  do i=1, 20
+    out = out + 1.
+  end do
 
   if (cond) out = out + 1.
 
@@ -1850,6 +1855,7 @@ SUBROUTINE main
   IMPLICIT NONE
   LOGICAL :: cond = .TRUE.
   REAL :: out = 0.
+  INTEGER :: i
   IF (.TRUE.) out = 0. + 1.
   out = out * 2
   IF (.TRUE.) THEN
@@ -1863,6 +1869,9 @@ SUBROUTINE main
   out = 7.2
   out = 7.2 * 2.0
   out = fun(.NOT. .TRUE., out)
+  DO i = 1, 20
+    out = out + 1.
+  END DO
   IF (.TRUE.) out = out + 1.
   CONTAINS
   REAL FUNCTION fun(cond, out)

@@ -23,8 +23,11 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, \
     Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, \
     Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt, Save_Stmt, Contains_Stmt, \
-    Implicit_Stmt, Implicit_Part, Component_Part, End_Module_Stmt, Data_Component_Def_Stmt
-from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
+    Implicit_Part, Component_Part, End_Module_Stmt, Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, Do_Construct, \
+    Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, \
+    Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
+    Continue_Stmt, Format_Stmt
+from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
@@ -1842,23 +1845,35 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
             plus[k] = v
 
     def _inject_knowns(x: Base):
-        if isinstance(x, LITERAL_TYPES):
+        if isinstance(x, (LITERAL_TYPES, Char_Literal_Constant, Write_Stmt, Close_Stmt, Goto_Stmt)):
             pass
         elif isinstance(x, Assignment_Stmt):
             lv, op, rv = x.children
             _inject_knowns(rv)
         elif isinstance(x, Name):
             loc = search_real_local_alias_spec(x, alias_map)
-            assert loc
-            spec = ident_spec(alias_map[loc])
-            if spec in plus:
-                assert spec not in minus
-                replace_node(x, plus[spec])
+            if loc:
+                spec = ident_spec(alias_map[loc])
+                if spec in plus:
+                    assert spec not in minus
+                    replace_node(x, plus[spec])
         elif isinstance(x, Data_Ref):
             spec = _root_comp(x)
             if spec in plus:
                 assert spec not in minus
                 replace_node(x, plus[spec])
+        elif isinstance(x, Part_Ref):
+            par, subsc = x.children
+            assert isinstance(subsc, Section_Subscript_List)
+            for c in subsc.children:
+                _inject_knowns(c)
+        elif isinstance(x, Subscript_Triplet):
+            for c in x.children:
+                if c:
+                    _inject_knowns(c)
+        elif isinstance(x, Parenthesis):
+            _, y, _ = x.children
+            _inject_knowns(y)
         elif isinstance(x, UnaryOpBase):
             op, val = x.children
             _inject_knowns(val)
@@ -1874,6 +1889,9 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
                 # TODO: For now, we assume that all arguments are writable.
                 if not isinstance(a, Name):
                     _inject_knowns(a)
+        elif isinstance(x, Actual_Arg_Spec):
+            _, val = x.children
+            _inject_knowns(val)
         else:
             raise NotImplementedError(f"cannot handle {x} | {type(x)}")
 
@@ -1931,16 +1949,42 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
         tp, tm = _track_local_consts(body, alias_map)
         _integrate_subresults({}, tm | tp.keys())
     elif isinstance(node, If_Construct):
-        for c in node.children:
-            if isinstance(c, (If_Then_Stmt, Else_If_Stmt)):
+        for c in children_of_type(node, (If_Then_Stmt, Else_If_Stmt)):
+            if isinstance(c, If_Then_Stmt):
                 cond, = c.children
-                _inject_knowns(cond)
+            elif isinstance(c, Else_If_Stmt):
+                cond, _ = c.children
+            _inject_knowns(cond)
         for c in node.children:
             if isinstance(c, (If_Then_Stmt, Else_If_Stmt, Else_Stmt, End_If_Stmt)):
                 continue
             tp, tm = _track_local_consts(c, alias_map)
             _integrate_subresults({}, tm | tp.keys())
-    elif isinstance(node, Union[Name, LITERAL_TYPES]):
+    elif isinstance(node, (Block_Nonlabel_Do_Construct, Block_Label_Do_Construct)):
+        do_stmt = node.children[0]
+        assert isinstance(do_stmt, (Label_Do_Stmt, Nonlabel_Do_Stmt))
+        assert isinstance(node.children[-1], End_Do_Stmt)
+        do_ops = node.children[1:-1]
+        for op in do_ops:
+            tp, tm = _track_local_consts(op, alias_map, plus, minus)
+            _integrate_subresults(tp, tm)
+
+        _, loop_ctl = do_stmt.children
+        _, loop_var, _, _ = loop_ctl.children
+        if loop_var:
+            loop_var, _ = loop_var
+            assert isinstance(loop_var, Name)
+            loop_var_spec = search_real_local_alias_spec(loop_var, alias_map)
+            assert loop_var_spec
+            loop_var_spec = ident_spec(alias_map[loop_var_spec])
+            minus.add(loop_var_spec)
+    elif isinstance(node, Union[
+        Name, LITERAL_TYPES, Char_Literal_Constant, Data_Ref, Part_Ref, Return_Stmt, Write_Stmt, Error_Stop_Stmt,
+        Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt]):
+        # These don't modify variables or give any new information.
+        pass
+    elif isinstance(node, Union[Allocate_Stmt, Deallocate_Stmt]):
+        # These are not expected to exit in the pruned AST, so don't bother tracking them.
         pass
     elif isinstance(node, UnaryOpBase):
         _inject_knowns(node)
@@ -1956,6 +2000,10 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
         tp, tm = _track_local_consts(lv, alias_map)
         _integrate_subresults(tp, tm)
         tp, tm = _track_local_consts(rv, alias_map)
+        _integrate_subresults(tp, tm)
+    elif isinstance(node, Parenthesis):
+        _, val, _ = node.children
+        tp, tm = _track_local_consts(val, alias_map)
         _integrate_subresults(tp, tm)
     elif isinstance(node, (Function_Reference, Call_Stmt, Intrinsic_Function_Reference)):
         # TODO: For now, we assume that all arguments are writable.
