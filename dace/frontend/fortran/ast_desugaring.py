@@ -2878,3 +2878,48 @@ end subroutine {fn_name}
             remove_self(fn)
 
     return ast
+
+
+def convert_data_statements_into_assignments(ast: Program) -> Program:
+    # TODO: Data statements have unusual syntax even within Fortran and not everything is covered here yet.
+    alias_map = alias_specs(ast)
+
+    for spart in walk(ast, Specification_Part):
+        box = spart.parent
+        xpart = atmost_one(children_of_type(box, Execution_Part))
+        for dst in reversed(walk(spart, Data_Stmt)):
+            repls: List[Assignment_Stmt] = []
+            for ds in dst.children:
+                assert isinstance(ds, Data_Stmt_Set)
+                varz, valz = ds.children
+                varz, valz = varz.children, valz.children
+                assert len(varz) == len(valz)
+                for k, v in zip(varz, valz):
+                    scope_spec = find_scope_spec(k)
+                    kroot, ktyp, rest = _dataref_root(k, scope_spec, alias_map)
+                    if isinstance(v, Data_Stmt_Value):
+                        repeat, elem = v.children
+                        repeat = 1 if not repeat else int(_const_eval_basic_type(repeat, alias_map))
+                        assert repeat
+                    else:
+                        elem = v
+                    # TODO: Support other types of data expressions.
+                    assert isinstance(elem, LITERAL_TYPES),\
+                        f"only supports literal values in data data statements: {elem}"
+                    if ktyp.shape:
+                        if rest:
+                            assert len(rest) == 1 and isinstance(rest[0], Section_Subscript_List)
+                            subsc = rest[0].tofortran()
+                        else:
+                            subsc = ','.join([':' for _ in ktyp.shape])
+                        repls.append(Assignment_Stmt(f"{kroot.string}({subsc}) = {elem.tofortran()}"))
+                    else:
+                        assert isinstance(k, Name)
+                        repls.append(Assignment_Stmt(f"{k.string} = {elem.tofortran()}"))
+            remove_self(dst)
+            if not xpart:
+                # NOTE: Since the function does nothing at all (hence, no execution part), don't bother with the inits.
+                continue
+            prepend_children(xpart, repls)
+
+    return ast
