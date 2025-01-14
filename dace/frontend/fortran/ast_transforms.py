@@ -1127,8 +1127,10 @@ class CallExtractor(NodeTransformer):
     It then creates a new temporary variable for each of them and replaces the call with the variable.
     """
 
-    def __init__(self, count=0):
+    def __init__(self, ast, count=0):
         self.count = count
+
+        ParentScopeAssigner().visit(ast)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
@@ -1214,7 +1216,8 @@ class CallExtractor(NodeTransformer):
                     # We go in reverse order, counting from end-1 to 0.
                     temp = self.count + len(res) - 1
                     for i in reversed(range(0, len(res))):
-                        newbody.append(
+
+                        node.parent.specification_part.specifications.append(
                             ast_internal_classes.Decl_Stmt_Node(vardecl=[
                                 ast_internal_classes.Var_Decl_Node(
                                     name="tmp_call_" + str(temp),
@@ -1222,7 +1225,8 @@ class CallExtractor(NodeTransformer):
                                     sizes=None,
                                     init=None
                                 )
-                            ]))
+                            ])
+                        )
                         newbody.append(
                             ast_internal_classes.BinOp_Node(op="=",
                                                             lval=ast_internal_classes.Name_Node(
@@ -2647,6 +2651,11 @@ class TypeInference(NodeTransformer):
                 print(f"Ignore type inference for {node.name}")
                 print(e)
 
+        return node
+
+    def visit_Name_Range_Node(self, node: ast_internal_classes.Name_Range_Node):
+        node.sizes = []
+        node.offsets = [1]
         return node
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):

@@ -1955,7 +1955,7 @@ class AST_translator:
                     if i in write_names:
                         outs_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
 
-                    array = sdfg.arrays[self.name_mapping[sdfg][i]]
+                    array_in_global = sdfg.arrays[self.name_mapping[sdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
                     elif (hasattr(array_in_global, 'type') and array_in_global.type == "Array") or isinstance(
@@ -2753,7 +2753,7 @@ def create_ast_from_string(
     if transform:
         program = ast_transforms.functionStatementEliminator(program)
         program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
-        program = ast_transforms.CallExtractor().visit(program)
+        program = ast_transforms.CallExtractor(program).visit(program)
         program = ast_transforms.SignToIf().visit(program)
         program = ast_transforms.ArrayToLoop(program).visit(program)
 
@@ -2860,7 +2860,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     #    ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
     #program = ast_transforms.CallToArray(ast_transforms.FindFunctionAndSubroutines.from_node(program)).visit(program)
     program = ast_transforms.IfConditionExtractor().visit(program)
-    program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.CallExtractor(program).visit(program)
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
@@ -2891,7 +2891,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     program = ast_transforms.SignToIf().visit(program)
     # run it again since signtoif might introduce patterns that have to be extracted
     # example: ABS call inside an UnOpNode
-    program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.CallExtractor(program).visit(program)
     program = ast_transforms.ReplaceStructArgsLibraryNodes(program).visit(program)
 
     program = ast_transforms.ArgumentExtractor(program).visit(program)
