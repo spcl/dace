@@ -23,7 +23,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, \
     Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, \
     Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt, Save_Stmt, Contains_Stmt, \
-    Implicit_Part, Component_Part, End_Module_Stmt
+    Implicit_Stmt, Implicit_Part, Component_Part, End_Module_Stmt, Data_Component_Def_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
@@ -1485,7 +1485,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
     """
     # NOTE: Modules are not included here, because they are simply containers with no other direct use. Empty modules
     # should be pruned at the end separately.
-    PRUNABLE_OBJECT_TYPES = Union[Program_Stmt, Subroutine_Stmt, Function_Stmt, Derived_Type_Stmt, Entity_Decl]
+    PRUNABLE_OBJECT_TYPES = Union[Program_Stmt, Subroutine_Stmt, Function_Stmt, Derived_Type_Stmt, Entity_Decl, Component_Decl]
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
@@ -1509,8 +1509,12 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 fnargs = fnargs.children if fnargs else tuple()
                 if any(a.string == nm.string for a in fnargs):
                     # We cannot remove function arguments yet.
+                    survivors.add(nm_spec)
                     continue
                 # Otherwise, this is a declaration of the variable, which is not a use, and so a fair game for removal.
+                continue
+            if isinstance(nm.parent, Component_Decl) and nm == nm.parent.children[0]:
+                # This is a declaration of the component, which is not a use, and so a fair game for removal.
                 continue
 
             # All the scope ancestors of `nm` must live too.
@@ -1531,13 +1535,23 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
             keep_node = alias_map[nm_spec]
             if isinstance(keep_node, PRUNABLE_OBJECT_TYPES):
                 _keep_from(keep_node.parent)
+        # Go over all the data-refs available under `node`.
+        for dr in walk(node, Data_Ref):
+            root, rest = _lookup_dataref(dr, alias_map)
+            scope_spec = find_scope_spec(dr)
+            # All the data-ref ancestors of `dr` must live too.
+            for upto in range(1, len(rest)+1):
+                anc: Tuple[Name, ...] = (root,) + rest[:upto]
+                ancref = Data_Ref('%'.join([c.tofortran() for c in anc]))
+                ancspec = find_dataref_component_spec(ancref, scope_spec, alias_map)
+                survivors.add(ancspec)
 
     for k in keepers:
         _keep_from(k.parent)
 
     # We keep them sorted so that the parent scopes are handled earlier.
     killed: Set[SPEC] = set()
-    for ns in list(sorted(set(ident_map.keys()) - survivors)):
+    for ns in sorted(set(ident_map.keys()) - survivors):
         ns_node = ident_map[ns]
         if not isinstance(ns_node, PRUNABLE_OBJECT_TYPES):
             continue
@@ -1554,7 +1568,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
             # But there are many things to clean-up.
             # 1. If the variable was declared alone, then the entire line with type declaration must be gone too.
             elist_tdecl = elist.parent
-            assert isinstance(elist.parent, Type_Declaration_Stmt)
+            assert isinstance(elist_tdecl, Type_Declaration_Stmt)
             if not elist.children:
                 remove_self(elist_tdecl)
             # 2. There is a case of "equivalence" statement, which is a very Fortran-specific feature to clean up too.
@@ -1582,6 +1596,15 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
             # 3. If the entire specification part becomes empty, we have to remove it too.
             if not elist_spart.children:
                 remove_self(elist_spart)
+        elif isinstance(ns_node, Component_Decl):
+            clist = ns_node.parent
+            remove_self(ns_node)
+            # But there are many things to clean-up.
+            # 1. If the component was declared alone, then the entire line within type defintion must be gone too.
+            tdef = clist.parent
+            assert isinstance(tdef, Data_Component_Def_Stmt)
+            if not clist.children:
+                remove_self(tdef)
         else:
             remove_self(ns_node.parent)
         killed.add(ns)
@@ -2598,19 +2621,16 @@ def _lookup_dataref(dr: Data_Ref, alias_map: SPEC_TABLE) -> Optional[Tuple[Name,
     root, root_tspec, rest = _dataref_root(dr, scope_spec, alias_map)
     while not isinstance(root, Name):
         root, root_tspec, nurest = _dataref_root(root, scope_spec, alias_map)
-        rest += nurest
-    # NOTE: We should replace only when it is not an output of the function. However, here we pass the responsibilty to
-    # the user to provide valid injections.
-    if not all(isinstance(c, Name) for c in rest):
-        return None
+        rest = nurest + rest
     return root, rest
 
 
 def _find_matching_item(items: List[ConstInjection], dr: Data_Ref, alias_map: SPEC_TABLE) -> Optional[ConstInjection]:
-    dr_info = _lookup_dataref(dr, alias_map)
-    if not dr_info:
+    root, rest = _lookup_dataref(dr, alias_map)
+    # NOTE: We should replace only when it is not an output of the function. However, here we pass the responsibilty to
+    # the user to provide valid injections.
+    if not all(isinstance(c, Name) for c in rest):
         return None
-    root, rest = dr_info
     root_id_spec = _find_real_ident_spec(root, alias_map)
     scope_spec = find_scope_spec(dr)
     comp_tspec = find_type_dataref(dr, scope_spec, alias_map)
