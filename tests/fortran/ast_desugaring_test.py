@@ -1323,7 +1323,6 @@ end subroutine main
 MODULE lib
   IMPLICIT NONE
   TYPE :: used_config
-    INTEGER :: a = - 1
     REAL :: b = - 2.0
   END TYPE used_config
   CONTAINS
