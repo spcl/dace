@@ -1537,9 +1537,17 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 _keep_from(keep_node.parent)
         # Go over all the data-refs available under `node`.
         for dr in walk(node, Data_Ref):
+            dr_info = _lookup_dataref(dr, alias_map)
+            if not dr_info:
+                continue
+            root, rest = dr_info
             scope_spec = find_scope_spec(dr)
-            cspec = find_dataref_component_spec(dr, scope_spec, alias_map)
-            survivors.add(cspec)
+            # All the data-ref ancestors of `dr` must live too.
+            for upto in range(1, len(rest)+1):
+                anc: Tuple[Name, ...] = (root,) + rest[:upto]
+                ancref = Data_Ref('%'.join([c.tofortran() for c in anc]))
+                ancspec = find_dataref_component_spec(ancref, scope_spec, alias_map)
+                survivors.add(ancspec)
 
     for k in keepers:
         _keep_from(k.parent)
