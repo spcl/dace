@@ -1537,10 +1537,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                 _keep_from(keep_node.parent)
         # Go over all the data-refs available under `node`.
         for dr in walk(node, Data_Ref):
-            dr_info = _lookup_dataref(dr, alias_map)
-            if not dr_info:
-                continue
-            root, rest = dr_info
+            root, rest = _lookup_dataref(dr, alias_map)
             scope_spec = find_scope_spec(dr)
             # All the data-ref ancestors of `dr` must live too.
             for upto in range(1, len(rest)+1):
@@ -2625,18 +2622,15 @@ def _lookup_dataref(dr: Data_Ref, alias_map: SPEC_TABLE) -> Optional[Tuple[Name,
     while not isinstance(root, Name):
         root, root_tspec, nurest = _dataref_root(root, scope_spec, alias_map)
         rest = nurest + rest
-    # NOTE: We should replace only when it is not an output of the function. However, here we pass the responsibilty to
-    # the user to provide valid injections.
-    if not all(isinstance(c, Name) for c in rest):
-        return None
     return root, rest
 
 
 def _find_matching_item(items: List[ConstInjection], dr: Data_Ref, alias_map: SPEC_TABLE) -> Optional[ConstInjection]:
-    dr_info = _lookup_dataref(dr, alias_map)
-    if not dr_info:
+    root, rest = _lookup_dataref(dr, alias_map)
+    # NOTE: We should replace only when it is not an output of the function. However, here we pass the responsibilty to
+    # the user to provide valid injections.
+    if not all(isinstance(c, Name) for c in rest):
         return None
-    root, rest = dr_info
     root_id_spec = _find_real_ident_spec(root, alias_map)
     scope_spec = find_scope_spec(dr)
     comp_tspec = find_type_dataref(dr, scope_spec, alias_map)
