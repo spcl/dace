@@ -2822,10 +2822,15 @@ def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Progra
     # works and then reorder the initialization calls appropriately.
 
     ident_map = identifier_specs(ast)
+    GLOBAL_INIT_FN_NAME = 'global_init_fn'
+    if (GLOBAL_INIT_FN_NAME,) in ident_map:
+        # We already have the global initialisers.
+        return ast
     alias_map = alias_specs(ast)
 
     created_init_fns: Set[str] = set()
     used_init_fns: Set[str] = set()
+
     def _make_init_fn(fn_name: str, inited_vars: List[SPEC], this: Optional[SPEC]):
         if this:
             assert this in ident_map and isinstance(ident_map[this], Derived_Type_Stmt)
@@ -2904,8 +2909,7 @@ end subroutine {fn_name}
            and search_scope_spec(v) and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)
     ]
     if global_inited_vars:
-        global_init_fn_name = 'global_init_fn'
-        _make_init_fn(global_init_fn_name, global_inited_vars, None)
+        _make_init_fn(GLOBAL_INIT_FN_NAME, global_inited_vars, None)
         for ep in entry_points:
             assert ep in ident_map
             fn = ident_map[ep]
@@ -2916,9 +2920,9 @@ end subroutine {fn_name}
             if not ex:
                 # The function does nothing. We could still initialize, but there is no point.
                 continue
-            init_call = Call_Stmt(f"call {global_init_fn_name}")
+            init_call = Call_Stmt(f"call {GLOBAL_INIT_FN_NAME}")
             prepend_children(ex, init_call)
-            used_init_fns.add(global_init_fn_name)
+            used_init_fns.add(GLOBAL_INIT_FN_NAME)
 
     unused_init_fns = created_init_fns - used_init_fns
     for fn in walk(ast, Subroutine_Subprogram):
