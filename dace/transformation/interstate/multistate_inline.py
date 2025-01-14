@@ -235,7 +235,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         outer_symbols = set(sdfg.arrays.keys()) | {str(sym) for sym in sdfg.symbols.keys()} | set(sdfg.constants.keys())
         
         transient_replacements: Dict[str, str] = {}
-        for nstate in nsdfg.nodes():
+        for nstate in nsdfg.states():
             for node in nstate.nodes():
                 if isinstance(node, nodes.AccessNode):
                     datadesc = nsdfg.arrays[node.data]
@@ -536,6 +536,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         args_used_in_assignments = set()
         for edge in nsdfg.all_interstate_edges():
             args_used_in_assignments |= edge.data.free_symbols
+        for cfr in nsdfg.all_control_flow_regions():
+            args_used_in_assignments |= cfr.used_symbols(all_symbols=True, with_contents=False)
         
         args_used_in_assignments &= input_memlets.keys()
 
@@ -623,9 +625,13 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     data_path = data_path[0]
                 for edge in nsdfg.all_interstate_edges():
                     edge.data.replace(arg, data_path)
+                for cfr in nsdfg.all_control_flow_regions():
+                    cfr.replace_meta_accesses({ arg: data_path })
             else:
                 for edge in nsdfg.all_interstate_edges():
                     edge.data.replace_complex(arg, data_path)        
+                for cfr in nsdfg.all_control_flow_regions():
+                    cfr.replace_meta_accesses({ arg: data_path })
 
         #######################################################
         # Remove old edges to the nested SDFG
