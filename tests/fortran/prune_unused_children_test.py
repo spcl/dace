@@ -466,9 +466,7 @@ end program main
 MODULE lib
   IMPLICIT NONE
   TYPE :: used_type
-    REAL :: w(5, 5, 5), z(5)
-    INTEGER :: a
-    REAL :: name
+    REAL :: w(5, 5, 5)
   END TYPE used_type
 END MODULE lib
 PROGRAM main
