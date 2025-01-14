@@ -15,7 +15,7 @@ from dace.sdfg import utils as sdutil, infer_types
 from dace.sdfg.replace import replace_datadesc_names, replace
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties
-from dace.sdfg.state import ReturnBlock, StateSubgraphView
+from dace.sdfg.state import LoopRegion, ReturnBlock, StateSubgraphView
 from dace.sdfg.utils import get_all_view_nodes, get_view_edge
 
 
@@ -206,8 +206,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 continue
             inner_assignments.add(inner_sym)
         
-        for e in nsdfg.edges():
+        for e in nsdfg.all_interstate_edges():
             inner_assignments |= set(e.data.assignments.keys())
+        for region in nsdfg.all_control_flow_regions():
+            if isinstance(region, LoopRegion) and region.loop_variable is not None:
+                inner_assignments.add(region.loop_variable)
 
         outer_symbols = {str(sym) for sym in sdfg.symbols.keys()} | set(sdfg.arrays.keys())
         assignments_to_replace = inner_assignments
@@ -435,7 +438,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Dataflow: Extend access nodes with towers of views
 
-        for nstate in nsdfg.nodes():
+        for nstate in nsdfg.states():
             for node in list(nstate.nodes()):
                 if isinstance(node, nodes.AccessNode):
                     if node.data not in input_memlets and node.data not in output_memlets:
@@ -531,7 +534,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Find arguments to be replaced
         args_used_in_assignments = set()
-        for edge in nsdfg.edges():
+        for edge in nsdfg.all_interstate_edges():
             args_used_in_assignments |= edge.data.free_symbols
         
         args_used_in_assignments &= input_memlets.keys()
@@ -618,10 +621,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     data_path = ".".join(data_path)
                 else:
                     data_path = data_path[0]
-                for edge in nsdfg.edges():
+                for edge in nsdfg.all_interstate_edges():
                     edge.data.replace(arg, data_path)
             else:
-                for edge in nsdfg.edges():
+                for edge in nsdfg.all_interstate_edges():
                     edge.data.replace_complex(arg, data_path)        
 
         #######################################################
