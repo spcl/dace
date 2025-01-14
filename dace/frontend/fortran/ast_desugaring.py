@@ -2624,7 +2624,7 @@ def _lookup_dataref(dr: Data_Ref, alias_map: SPEC_TABLE) -> Optional[Tuple[Name,
     root, root_tspec, rest = _dataref_root(dr, scope_spec, alias_map)
     while not isinstance(root, Name):
         root, root_tspec, nurest = _dataref_root(root, scope_spec, alias_map)
-        rest += nurest
+        rest = nurest + rest
     # NOTE: We should replace only when it is not an output of the function. However, here we pass the responsibilty to
     # the user to provide valid injections.
     if not all(isinstance(c, Name) for c in rest):
