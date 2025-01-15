@@ -2,7 +2,7 @@
 
 from dace import properties
 from dace.sdfg.sdfg import SDFG, InterstateEdge
-from dace.sdfg.state import ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import transformation
 from dace.transformation.interstate.loop_detection import DetectLoop
 
@@ -82,8 +82,22 @@ class LoopLifting(DetectLoop, transformation.MultiStateTransformation):
                     added.add(e)
                     if e is incr_edge:
                         if left_over_incr_assignments != {}:
-                            dst = loop.add_state(label + '_tail') if not inverted else e.dst
-                            loop.add_edge(e.src, dst, InterstateEdge(assignments=left_over_incr_assignments))
+                            assignments = left_over_incr_assignments
+                            dst = e.dst
+                            if e.dst is first_state:
+                                if not update_before_condition:
+                                    left_over_incr_cond_region = ConditionalBlock(label + '_post_incr_conditional')
+                                    incr_graph = ControlFlowRegion(label + '_post_incr')
+                                    left_over_incr_cond_region.add_branch(cond_edge.data.condition, incr_graph)
+                                    incr_graph.add_edge(incr_graph.add_state(label + '_post_incr_start',
+                                                                            is_start_block=True),
+                                                        incr_graph.add_state(label + '_post_incr_end'),
+                                                        InterstateEdge(assignments=left_over_incr_assignments))
+                                    dst = left_over_incr_cond_region
+                                    assignments = {}
+                                else:
+                                    dst = loop.add_state(label + '_tail')
+                            loop.add_edge(e.src, dst, InterstateEdge(assignments=assignments))
                     elif e is cond_edge:
                         if not inverted:
                             e.data.condition = properties.CodeBlock('1')

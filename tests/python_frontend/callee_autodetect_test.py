@@ -325,7 +325,7 @@ def test_explicit_type_hints_in_nested_call(decorated):
     a_ref = A * 2
 
     if decorated:
-        with pytest.raises(SyntaxError):
+        with pytest.raises(IndexError):
             outer(A)
     else:
         outer(A)
