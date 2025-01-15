@@ -713,7 +713,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         size_str = " * ".join(new_size_strs)
         callsite_stream.write(
-            f"{dst_node.data} = static_cast<{dtype} *>(std::realloc(static_cast<void *>({dst_node.data}), {size_str} * sizeof({dtype})));"
+            f"{dst_node.data} = static_cast<{dtype} *>(std::malloc({size_str} * sizeof({dtype})));"
         )
 
     def _emit_copy(

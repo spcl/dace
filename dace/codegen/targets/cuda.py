@@ -2812,55 +2812,20 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             size_array_name, new_size_array_name, desc.shape
         )
 
-
         # Call realloc only after no __dace_defer is left in size_array (must be true)
         # Save new and old sizes before registering them, because we need both to compute the bound of the new array
         old_size_str = " * ".join(old_size_strs)
         old_size_str += f" * sizeof({dtype.ctype})"
         new_size_str = " * ".join(new_size_strs)
         new_size_str += f" * sizeof({dtype.ctype})"
-        tmp_storage_name = "__tmp_realloc_move_storage"
 
-        callsite_stream.write(f"if ({dst_node.data} == nullptr) {{", cfg, state_id, dst_node.guid)
         if desc.storage == dtypes.StorageType.GPU_Global:
             self._alloc_gpu_global(dst_node, desc, callsite_stream, data_name, new_size_str)
-        else:
+        elif desc.storage == dtypes.StorageType.CPU_Pinned:
             assert desc.storage == dtypes.StorageType.CPU_Pinned
             callsite_stream.write(f"DACE_GPU_CHECK({self.backend}MallocHost(reinterpret_cast<void**>(&{data_name}), {new_size_str}));", cfg, state_id, dst_node.guid)
-        callsite_stream.write("} else {\n", cfg, state_id, dst_node.guid)
-        callsite_stream.write(f"{dtype}* {tmp_storage_name};")
-        if desc.storage == dtypes.StorageType.GPU_Global:
-            self._alloc_gpu_global(None, desc, callsite_stream, tmp_storage_name, new_size_str)
-        else:
-            assert desc.storage == dtypes.StorageType.CPU_Pinned
-            callsite_stream.write(f"DACE_GPU_CHECK({self.backend}MallocHost(reinterpret_cast<void**>(&{tmp_storage_name}), {new_size_str}));", cfg, state_id, dst_node.guid)
-
-        s = ""
-        copy_size_str = f"Min({old_size_str}, {new_size_str})"
-        if desc.storage == dtypes.StorageType.GPU_Global:
-            if not desc.pool:  # If pooled, will be freed somewhere else
-                s += f"DACE_GPU_CHECK({self.backend}Memcpy(static_cast<void *>({tmp_storage_name}), static_cast<void *>({data_name}), {copy_size_str}, cudaMemcpyDeviceToDevice));\n"
-                s += f"DACE_GPU_CHECK({self.backend}Free({data_name}));\n"
-                s += f"{data_name} = {tmp_storage_name};\n"
-            else:
-                cudastream = getattr(dst_node, '_cuda_stream', 'nullptr')
-                if cudastream != 'nullptr':
-                    cudastream = f'__state->gpu_context->streams[{cudastream}]'
-                s += f'DACE_GPU_CHECK({self.backend}MallocAsync(reinterpret_cast<void**>(&{tmp_storage_name}), {new_size_str}, {cudastream}));\n'
-                s += f"DACE_GPU_CHECK({self.backend}MemcpyAsync(static_cast<void *>({tmp_storage_name}), static_cast<void *>({data_name}), {copy_size_str}, {cudastream}), cudaMemcpyDeviceToDevice));\n"
-                s += f"DACE_GPU_CHECK({self.backend}FreeAsync({data_name}, {cudastream}));\n"
-                callsite_stream.write(s)
-                self._emit_sync(callsite_stream)
-                callsite_stream.write(f"{data_name} = {tmp_storage_name};\n")
-                s = ""
-        elif desc.storage == dtypes.StorageType.CPU_Pinned:
-            s += f"DACE_GPU_CHECK({self.backend}Memcpy(static_cast<void *>({tmp_storage_name}), static_cast<void *>({data_name}), {copy_size_str}, cudaMemcpyHostToHost));\n"
-            s += f"DACE_GPU_CHECK({self.backend}FreeHost({data_name}));\n"
-            s += f"{data_name} = {tmp_storage_name};\n"
         else:
             raise Exception("Realloc in CUDA, storage type must be CPU_Pinned or GPU_Global")
-        s += "}\n"
-        callsite_stream.write(s)
 
         for size_assignment in size_assignment_strs:
             callsite_stream.write(size_assignment)

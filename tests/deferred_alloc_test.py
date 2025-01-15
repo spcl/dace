@@ -40,6 +40,69 @@ def _get_trivial_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient: bo
 
     return sdfg
 
+def _get_double_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient: bool, write_size="0:2"):
+    sdfg = dace.sdfg.SDFG(name=f"deferred_alloc_double_alloc_test")
+
+    sdfg.add_array(name="A", shape=(15, "__dace_defer"), dtype=dace.float32, storage=storage_type, transient=transient)
+
+    state = sdfg.add_state("main")
+
+    an_1 = state.add_access('A')
+    an_1.add_in_connector('_write_size')
+    an_1.add_out_connector('_read_size')
+    an_4 = state.add_access('A')
+    an_4.add_in_connector('_write_size')
+
+
+    sdfg.add_array(name="user_size", shape=(2,), dtype=dace.uint64)
+    sdfg.add_array(name="user_size2", shape=(2,), dtype=dace.uint64)
+    an_2 = state.add_access("user_size")
+    an_3 = state.add_access("user_size2")
+
+    state.add_edge(an_2, None, an_1, '_write_size',
+                dace.Memlet(expr=f"user_size[{write_size}]") )
+    state.add_edge(an_1, "_read_size", an_3, 'None',
+                dace.Memlet(expr=f"A_size[0:2]") )
+    state.add_edge(an_3, None, an_4, '_write_size',
+                dace.Memlet(expr=f"user_size2[0:2]") )
+
+    return sdfg
+
+def _get_read_before_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient: bool, write_size="0:2"):
+    sdfg = dace.sdfg.SDFG(name=f"deferred_alloc_read_before_alloc_test")
+
+    sdfg.add_array(name="A", shape=(15, "__dace_defer"), dtype=dace.float32, storage=storage_type, transient=transient)
+
+    state = sdfg.add_state("main")
+
+    an_1 = state.add_access('A')
+    an_1.add_out_connector('_read_size')
+
+    sdfg.add_array(name="user_size", shape=(2,), dtype=dace.uint64)
+    an_2 = state.add_access("user_size")
+
+    state.add_edge(an_1, "_read_size", an_2, None,
+                dace.Memlet(expr=f"A_size[{write_size}]") )
+
+    return sdfg
+
+def _get_write_before_alloc_sdfg(storage_type: dace.dtypes.StorageType, transient: bool, write_size="0:2"):
+    sdfg = dace.sdfg.SDFG(name=f"deferred_alloc_write_before_alloc_test")
+
+    sdfg.add_array(name="A", shape=(15, "__dace_defer"), dtype=dace.float32, storage=storage_type, transient=transient)
+
+    state = sdfg.add_state("main")
+
+    an_1 = state.add_access('A')
+
+    sdfg.add_array(name="user_size", shape=(2,), dtype=dace.uint64)
+    an_2 = state.add_access("user_size")
+
+    state.add_edge(an_2, None, an_1, None,
+                dace.Memlet(expr=f"user_size[0:2]") )
+
+    return sdfg
+
 def _get_assign_map_sdfg(storage_type: dace.dtypes.StorageType, transient: bool, schedule_type: dace.dtypes.ScheduleType.Default):
     sdfg = dace.sdfg.SDFG(name=f"deferred_alloc_test_2")
 
@@ -432,6 +495,80 @@ def test_incomplete_write_dimensions_2():
 
     pytest.fail("Realloc-use with non-transient data and incomplete write did not fail when it was expected to.")
 
+@pytest.mark.gpu
+def test_double_alloc_gpu():
+    sdfg =_get_double_alloc_sdfg(dace.dtypes.StorageType.GPU_Global, True)
+    try:
+        sdfg.validate()
+    except Exception as e:
+        if "allocated twice" in str(e):
+            return
+        else:
+            pytest.fail(f"Unexpected exception message: {e}, should have received the double allocation error")
+
+    pytest.fail("Double-alloc with transient data did not fail on GPU variant when it was expected to.")
+
+def test_double_alloc_cpu():
+    sdfg =_get_double_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True)
+    try:
+        sdfg.validate()
+    except Exception as e:
+        if "allocated twice" in str(e):
+            return
+        else:
+            pytest.fail(f"Unexpected exception message: {e}, should have received the double allocation error")
+
+    pytest.fail("Double-alloc with transient data did not fail on CPU variant when it was expected to.")
+
+def test_read_before_alloc_gpu():
+    sdfg =_get_read_before_alloc_sdfg(dace.dtypes.StorageType.GPU_Global, True)
+    try:
+        sdfg.validate()
+    except Exception as e:
+        if "is read before it was allocated" in str(e):
+            return
+        else:
+            pytest.fail(f"Unexpected exception message: {e}, should have received the read-before-allocation error")
+
+    pytest.fail("Read-before-alloc with transient data did not fail on GPU variant when it was expected to.")
+
+def test_read_before_alloc_cpu():
+    sdfg =_get_read_before_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True)
+    try:
+        sdfg.validate()
+    except Exception as e:
+        if "is read before it was allocated" in str(e):
+            return
+        else:
+            pytest.fail(f"Unexpected exception message: {e}, should have received the read-before-allocation error")
+
+    pytest.fail("Read-before-alloc with transient data did not fail on CPU variant when it was expected to.")
+
+def test_write_before_alloc_gpu():
+    sdfg =_get_write_before_alloc_sdfg(dace.dtypes.StorageType.GPU_Global, True)
+    try:
+        sdfg.validate()
+    except Exception as e:
+        if "is written before it was allocated" in str(e):
+            return
+        else:
+            pytest.fail(f"Unexpected exception message: {e}, should have received the write-before-allocation error")
+
+    pytest.fail("Write-before-alloc with transient data did not fail on CPU variant when it was expected to.")
+
+
+def test_write_before_alloc_cpu():
+    sdfg =_get_write_before_alloc_sdfg(dace.dtypes.StorageType.CPU_Heap, True)
+    try:
+        sdfg.validate()
+    except Exception as e:
+        if "is written before it was allocated" in str(e):
+            return
+        else:
+            pytest.fail(f"Unexpected exception message: {e}, should have received the write-before-allocation error")
+
+    pytest.fail("Write-before-alloc with transient data did not fail on CPU variant when it was expected to.")
+
 
 if __name__ == "__main__":
     print(f"Trivial Realloc within map, cpu")
@@ -487,3 +624,16 @@ if __name__ == "__main__":
     test_conditional_alloc_with_expr_gpu()
     print(f"Test conditional alloc with use and the shape as a non-trivial expression, cpu pinned")
     test_conditional_alloc_with_expr_cpu_pinned()
+
+    print(f"Test double alloc validation gpu")
+    test_double_alloc_gpu()
+    print(f"Test double alloc validation cpu")
+    test_double_alloc_cpu()
+    print(f"Test read before alloc gpu")
+    test_read_before_alloc_gpu()
+    print(f"Test read before alloc cpu")
+    test_read_before_alloc_cpu()
+    print(f"Test write before alloc gpu")
+    test_write_before_alloc_gpu()
+    print(f"Test write before alloc cpu")
+    test_write_before_alloc_cpu()

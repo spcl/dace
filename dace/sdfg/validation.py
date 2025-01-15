@@ -225,6 +225,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     from dace import data as dt
     from dace.codegen.targets import fpga
     from dace.sdfg.scope import is_devicelevel_fpga, is_devicelevel_gpu
+    from dace.sdfg import utils as sdutil
+    from dace import nodes
 
     references = references or set()
 
@@ -381,6 +383,42 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
+
+        # Ensure a deferred array is not allocated twice and and ensure a deferred array is not used before being allocated
+        deferred_arrays = [k for k, v in sdfg.arrays.items() if v.is_deferred_array]
+        deferred_arrays_allocation_dict = {desc_name: False for desc_name in deferred_arrays}
+
+        # Reallocating twice is not allowed
+
+        for cfg in sdfg.bfs_nodes():
+            for node in sdutil.dfs_topological_sort(cfg):
+                if isinstance(node, nodes.AccessNode):
+                    # Ensure deferred array / size was allocated = ensure allocation dict value is true
+                    if node.data in deferred_arrays:
+                        for ie in cfg.in_edges(node):
+                            # If writing to size_array, set deferred array to allocatqed
+                            # If writing to deferred array (different inconn), ensure deferred array was allocated
+                            if ie.dst_conn == "_write_size":
+                                # Rellocating twice is not allowed (if already True)
+                                if deferred_arrays_allocation_dict[node.data]:
+                                    raise InvalidSDFGError(
+                                        f"Deferred array ({node.data}) is allocated twice."
+                                        , sdfg, cfg.block_id
+                                    )
+                                deferred_arrays_allocation_dict[node.data] = True
+                            else:
+                                if not deferred_arrays_allocation_dict[node.data]:
+                                    raise InvalidSDFGError(
+                                        f"Deferred array ({node.data}) is written before it was allocated."
+                                        , sdfg, cfg.block_id
+                                    )
+                        # If reading from size_array, ensure deferred array was allocated
+                        # If reading from deferred array, ensure deferred array was allocated
+                        if len(cfg.out_edges(node)) > 0 and not deferred_arrays_allocation_dict[node.data]:
+                            raise InvalidSDFGError(
+                                f"Deferred array/size ({node.data}) is read before it was allocated."
+                                , sdfg, cfg.block_id
+                            )
 
     except InvalidSDFGError as ex:
         # If the SDFG is invalid, save it
