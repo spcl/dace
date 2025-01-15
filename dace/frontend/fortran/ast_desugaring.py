@@ -23,8 +23,11 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, \
     Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, \
     Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt, Save_Stmt, Contains_Stmt, \
-    Implicit_Stmt, Implicit_Part, Component_Part, End_Module_Stmt, Data_Component_Def_Stmt
-from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt
+    Implicit_Part, Component_Part, End_Module_Stmt, Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, Do_Construct, \
+    Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, \
+    Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
+    Continue_Stmt, Format_Stmt
+from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
@@ -1856,23 +1859,35 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
             plus[k] = v
 
     def _inject_knowns(x: Base):
-        if isinstance(x, LITERAL_CLASSES):
+        if isinstance(x, (*LITERAL_CLASSES, Char_Literal_Constant, Write_Stmt, Close_Stmt, Goto_Stmt)):
             pass
         elif isinstance(x, Assignment_Stmt):
             lv, op, rv = x.children
             _inject_knowns(rv)
         elif isinstance(x, Name):
             loc = search_real_local_alias_spec(x, alias_map)
-            assert loc
-            spec = ident_spec(alias_map[loc])
-            if spec in plus:
-                assert spec not in minus
-                replace_node(x, plus[spec])
+            if loc:
+                spec = ident_spec(alias_map[loc])
+                if spec in plus:
+                    assert spec not in minus
+                    replace_node(x, plus[spec])
         elif isinstance(x, Data_Ref):
             spec = _root_comp(x)
             if spec in plus:
                 assert spec not in minus
                 replace_node(x, plus[spec])
+        elif isinstance(x, Part_Ref):
+            par, subsc = x.children
+            assert isinstance(subsc, Section_Subscript_List)
+            for c in subsc.children:
+                _inject_knowns(c)
+        elif isinstance(x, Subscript_Triplet):
+            for c in x.children:
+                if c:
+                    _inject_knowns(c)
+        elif isinstance(x, Parenthesis):
+            _, y, _ = x.children
+            _inject_knowns(y)
         elif isinstance(x, UnaryOpBase):
             op, val = x.children
             _inject_knowns(val)
@@ -1888,6 +1903,9 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
                 # TODO: For now, we assume that all arguments are writable.
                 if not isinstance(a, Name):
                     _inject_knowns(a)
+        elif isinstance(x, Actual_Arg_Spec):
+            _, val = x.children
+            _inject_knowns(val)
         else:
             raise NotImplementedError(f"cannot handle {x} | {type(x)}")
 
@@ -1945,16 +1963,42 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
         tp, tm = _track_local_consts(body, alias_map)
         _integrate_subresults({}, tm | tp.keys())
     elif isinstance(node, If_Construct):
-        for c in node.children:
-            if isinstance(c, (If_Then_Stmt, Else_If_Stmt)):
+        for c in children_of_type(node, (If_Then_Stmt, Else_If_Stmt)):
+            if isinstance(c, If_Then_Stmt):
                 cond, = c.children
-                _inject_knowns(cond)
+            elif isinstance(c, Else_If_Stmt):
+                cond, _ = c.children
+            _inject_knowns(cond)
         for c in node.children:
             if isinstance(c, (If_Then_Stmt, Else_If_Stmt, Else_Stmt, End_If_Stmt)):
                 continue
             tp, tm = _track_local_consts(c, alias_map)
             _integrate_subresults({}, tm | tp.keys())
-    elif isinstance(node, (Name, *LITERAL_CLASSES)):
+    elif isinstance(node, (Block_Nonlabel_Do_Construct, Block_Label_Do_Construct)):
+        do_stmt = node.children[0]
+        assert isinstance(do_stmt, (Label_Do_Stmt, Nonlabel_Do_Stmt))
+        assert isinstance(node.children[-1], End_Do_Stmt)
+        do_ops = node.children[1:-1]
+        for op in do_ops:
+            tp, tm = _track_local_consts(op, alias_map, plus, minus)
+            _integrate_subresults(tp, tm)
+
+        _, loop_ctl = do_stmt.children
+        _, loop_var, _, _ = loop_ctl.children
+        if loop_var:
+            loop_var, _ = loop_var
+            assert isinstance(loop_var, Name)
+            loop_var_spec = search_real_local_alias_spec(loop_var, alias_map)
+            assert loop_var_spec
+            loop_var_spec = ident_spec(alias_map[loop_var_spec])
+            minus.add(loop_var_spec)
+    elif isinstance(node, (
+        Name, *LITERAL_CLASSES, Char_Literal_Constant, Data_Ref, Part_Ref, Return_Stmt, Write_Stmt, Error_Stop_Stmt,
+        Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt)):
+        # These don't modify variables or give any new information.
+        pass
+    elif isinstance(node, (Allocate_Stmt, Deallocate_Stmt)):
+        # These are not expected to exit in the pruned AST, so don't bother tracking them.
         pass
     elif isinstance(node, UnaryOpBase):
         _inject_knowns(node)
@@ -1970,6 +2014,10 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
         tp, tm = _track_local_consts(lv, alias_map)
         _integrate_subresults(tp, tm)
         tp, tm = _track_local_consts(rv, alias_map)
+        _integrate_subresults(tp, tm)
+    elif isinstance(node, Parenthesis):
+        _, val, _ = node.children
+        tp, tm = _track_local_consts(val, alias_map)
         _integrate_subresults(tp, tm)
     elif isinstance(node, (Function_Reference, Call_Stmt, Intrinsic_Function_Reference)):
         # TODO: For now, we assume that all arguments are writable.
@@ -2788,10 +2836,15 @@ def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Progra
     # works and then reorder the initialization calls appropriately.
 
     ident_map = identifier_specs(ast)
+    GLOBAL_INIT_FN_NAME = 'global_init_fn'
+    if (GLOBAL_INIT_FN_NAME,) in ident_map:
+        # We already have the global initialisers.
+        return ast
     alias_map = alias_specs(ast)
 
     created_init_fns: Set[str] = set()
     used_init_fns: Set[str] = set()
+
     def _make_init_fn(fn_name: str, inited_vars: List[SPEC], this: Optional[SPEC]):
         if this:
             assert this in ident_map and isinstance(ident_map[this], Derived_Type_Stmt)
@@ -2870,8 +2923,7 @@ end subroutine {fn_name}
            and search_scope_spec(v) and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)
     ]
     if global_inited_vars:
-        global_init_fn_name = 'global_init_fn'
-        _make_init_fn(global_init_fn_name, global_inited_vars, None)
+        _make_init_fn(GLOBAL_INIT_FN_NAME, global_inited_vars, None)
         for ep in entry_points:
             assert ep in ident_map
             fn = ident_map[ep]
@@ -2882,13 +2934,58 @@ end subroutine {fn_name}
             if not ex:
                 # The function does nothing. We could still initialize, but there is no point.
                 continue
-            init_call = Call_Stmt(f"call {global_init_fn_name}")
+            init_call = Call_Stmt(f"call {GLOBAL_INIT_FN_NAME}")
             prepend_children(ex, init_call)
-            used_init_fns.add(global_init_fn_name)
+            used_init_fns.add(GLOBAL_INIT_FN_NAME)
 
     unused_init_fns = created_init_fns - used_init_fns
     for fn in walk(ast, Subroutine_Subprogram):
         if find_name_of_node(fn) in unused_init_fns:
             remove_self(fn)
+
+    return ast
+
+
+def convert_data_statements_into_assignments(ast: Program) -> Program:
+    # TODO: Data statements have unusual syntax even within Fortran and not everything is covered here yet.
+    alias_map = alias_specs(ast)
+
+    for spart in walk(ast, Specification_Part):
+        box = spart.parent
+        xpart = atmost_one(children_of_type(box, Execution_Part))
+        for dst in reversed(walk(spart, Data_Stmt)):
+            repls: List[Assignment_Stmt] = []
+            for ds in dst.children:
+                assert isinstance(ds, Data_Stmt_Set)
+                varz, valz = ds.children
+                varz, valz = varz.children, valz.children
+                assert len(varz) == len(valz)
+                for k, v in zip(varz, valz):
+                    scope_spec = find_scope_spec(k)
+                    kroot, ktyp, rest = _dataref_root(k, scope_spec, alias_map)
+                    if isinstance(v, Data_Stmt_Value):
+                        repeat, elem = v.children
+                        repeat = 1 if not repeat else int(_const_eval_basic_type(repeat, alias_map))
+                        assert repeat
+                    else:
+                        elem = v
+                    # TODO: Support other types of data expressions.
+                    assert isinstance(elem, LITERAL_TYPES),\
+                        f"only supports literal values in data data statements: {elem}"
+                    if ktyp.shape:
+                        if rest:
+                            assert len(rest) == 1 and isinstance(rest[0], Section_Subscript_List)
+                            subsc = rest[0].tofortran()
+                        else:
+                            subsc = ','.join([':' for _ in ktyp.shape])
+                        repls.append(Assignment_Stmt(f"{kroot.string}({subsc}) = {elem.tofortran()}"))
+                    else:
+                        assert isinstance(k, Name)
+                        repls.append(Assignment_Stmt(f"{k.string} = {elem.tofortran()}"))
+            remove_self(dst)
+            if not xpart:
+                # NOTE: Since the function does nothing at all (hence, no execution part), don't bother with the inits.
+                continue
+            prepend_children(xpart, repls)
 
     return ast

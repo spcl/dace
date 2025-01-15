@@ -35,7 +35,7 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     inject_const_evals, remove_access_statements, ident_spec, ConstTypeInjection, ConstInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, assign_globally_unique_variable_names, assign_globally_unique_subprogram_names, \
-    create_global_initializers
+    create_global_initializers, convert_data_statements_into_assignments
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -3304,8 +3304,12 @@ def create_sdfg_from_fortran_file_with_options(
         ast = deconstruct_procedure_calls(ast)
         ast = deconstruct_interface_calls(ast)
 
-        print("FParser Op: Inject configs & fix global vars & prune...")
+        print("FParser Op: Inject configs & prune...")
         ast = inject_const_evals(ast, cfg.config_injections)
+        ast = const_eval_nodes(ast)
+        ast = convert_data_statements_into_assignments(ast)
+
+        print("FParser Op: Fix global vars & prune...")
         # Prune things once after fixing global variables.
         # NOTE: Global vars fixing has to be done before any pruning, because otherwise some assignment may get lost.
         ast = make_practically_constant_global_vars_constants(ast)

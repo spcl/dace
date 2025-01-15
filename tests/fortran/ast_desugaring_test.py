@@ -9,7 +9,7 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
     const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
-    exploit_locally_constant_variables, create_global_initializers
+    exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -1812,6 +1812,7 @@ subroutine main()
   implicit none
   logical :: cond = .true.
   real :: out = 0.
+  integer :: i
 
   if (cond) out = out + 1.
   out = out*2
@@ -1828,6 +1829,10 @@ subroutine main()
   out = 7.2
   out = out*2.0
   out = fun(.not. cond, out)
+
+  do i=1, 20
+    out = out + 1.
+  end do
 
   if (cond) out = out + 1.
 
@@ -1850,6 +1855,7 @@ SUBROUTINE main
   IMPLICIT NONE
   LOGICAL :: cond = .TRUE.
   REAL :: out = 0.
+  INTEGER :: i
   IF (.TRUE.) out = 0. + 1.
   out = out * 2
   IF (.TRUE.) THEN
@@ -1863,6 +1869,9 @@ SUBROUTINE main
   out = 7.2
   out = 7.2 * 2.0
   out = fun(.NOT. .TRUE., out)
+  DO i = 1, 20
+    out = out + 1.
+  END DO
   IF (.TRUE.) out = out + 1.
   CONTAINS
   REAL FUNCTION fun(cond, out)
@@ -2039,6 +2048,49 @@ SUBROUTINE global_init_fn
   iarr2 = [2, 3, 4]
   CALL type_init_cfg_0(globalo)
 END SUBROUTINE global_init_fn
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_convert_data_statements_into_assignments():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine fun(res)
+  implicit none
+  real :: val = 0.0
+  real, dimension(2) :: d
+  real, dimension(2), intent(out) :: res
+  data val/1.0/, d/2*4.2/
+  data d(1:2)/2*4.2/
+  res(:) = val*d(:)
+end subroutine fun
+
+subroutine main(res)
+  implicit none
+  real, dimension(2) :: res
+  call fun(res)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = convert_data_statements_into_assignments(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE fun(res)
+  IMPLICIT NONE
+  REAL :: val = 0.0
+  REAL, DIMENSION(2) :: d
+  REAL, DIMENSION(2), INTENT(OUT) :: res
+  val = 1.0
+  d(:) = 4.2
+  d(1 : 2) = 4.2
+  res(:) = val * d(:)
+END SUBROUTINE fun
+SUBROUTINE main(res)
+  IMPLICIT NONE
+  REAL, DIMENSION(2) :: res
+  CALL fun(res)
+END SUBROUTINE main
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()
