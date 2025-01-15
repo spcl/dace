@@ -385,10 +385,36 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
         # Ensure a deferred array is not allocated twice and and ensure a deferred array is not used before being allocated
-        deferred_arrays = [k for k, v in sdfg.arrays.items() if v.is_deferred_array]
-        deferred_arrays_allocation_dict = {desc_name: False for desc_name in deferred_arrays}
+        deferred_arrays = [k for k, v in sdfg.arrays.items() if type(v) == dt.Array and v.is_deferred_array]
+        deferred_arrays_allocation_location_dict = {desc_name: set() for desc_name in deferred_arrays}
 
         # Reallocating twice is not allowed
+        def allocation_in_predecessor(sdfg, state, deferred_arrays_allocation_location_dict, node):
+            # If no allocation has been done, then there cant be an allocation in a predecessor
+            if len(deferred_arrays_allocation_location_dict[node.data]) == 0:
+                return False
+
+            for other_state in deferred_arrays_allocation_location_dict[node.data]:
+                # If the reallocation state is our state, then check the nodes
+                if other_state == state:
+                    # Check the nodes now, if an allocation is done before our node, then we are good
+                    for node in state.bfs_nodes():
+                        if isinstance(node, nodes.AccessNode):
+                            for ie in cfg.in_edges(node):
+                                if ie.dst_conn == "_write_size":
+                                    allocated = True
+                                    return True
+                                else:
+                                    if not allocated:
+                                        return False
+                    return True
+                # If the allocation state is a nother state, then check the simple paths,
+                # If a path exists from that state to ours, then we have allocation in a predecessor
+                else:
+                    paths = sdutil.nodes_in_all_simple_paths(sdfg, other_state, state)
+                    if len(paths) > 0:
+                        return True
+            return False
 
         for cfg in sdfg.bfs_nodes():
             for node in sdutil.dfs_topological_sort(cfg):
@@ -400,21 +426,23 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                             # If writing to deferred array (different inconn), ensure deferred array was allocated
                             if ie.dst_conn == "_write_size":
                                 # Rellocating twice is not allowed (if already True)
-                                if deferred_arrays_allocation_dict[node.data]:
+                                # If our state is a successor
+                                if allocation_in_predecessor(sdfg, cfg, deferred_arrays_allocation_location_dict, node):
                                     raise InvalidSDFGError(
                                         f"Deferred array ({node.data}) is allocated twice."
                                         , sdfg, cfg.block_id
                                     )
-                                deferred_arrays_allocation_dict[node.data] = True
+                                deferred_arrays_allocation_location_dict[node.data].add(cfg)
                             else:
-                                if not deferred_arrays_allocation_dict[node.data]:
+                                if not allocation_in_predecessor(sdfg, cfg, deferred_arrays_allocation_location_dict, node):
                                     raise InvalidSDFGError(
                                         f"Deferred array ({node.data}) is written before it was allocated."
                                         , sdfg, cfg.block_id
                                     )
                         # If reading from size_array, ensure deferred array was allocated
                         # If reading from deferred array, ensure deferred array was allocated
-                        if len(cfg.out_edges(node)) > 0 and not deferred_arrays_allocation_dict[node.data]:
+                        if (len(cfg.out_edges(node)) > 0 and
+                            not allocation_in_predecessor(sdfg, cfg, deferred_arrays_allocation_location_dict, node)):
                             raise InvalidSDFGError(
                                 f"Deferred array/size ({node.data}) is read before it was allocated."
                                 , sdfg, cfg.block_id
