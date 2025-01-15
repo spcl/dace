@@ -736,16 +736,12 @@ class AST_translator:
         self.last_sdfg_states[cfg] = cond_block
 
         if_body = ControlFlowRegion(cond_block.label + '_if_body')
-        if_body.parent_graph = cond_block
-        if_body.sdfg = sdfg
+        cond_block.add_branch(CodeBlock(condition), if_body)
         self.translate(node.body, sdfg, if_body)
         if len(if_body.nodes()) == 0:
             # If there's nothing inside the branch, add a noop state to get a valid SDFG and let simplify take care of
             # the rest.
             if_body.add_state('noop', is_start_block=True)
-
-        if len(if_body.nodes()) > 0:
-            cond_block.add_branch(CodeBlock(condition), if_body)
 
         if len(node.body_else.execution) > 0:
             else_body = ControlFlowRegion(cond_block.label + '_else_body')
