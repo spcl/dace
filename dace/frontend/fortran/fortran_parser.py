@@ -745,8 +745,7 @@ class AST_translator:
 
         if len(node.body_else.execution) > 0:
             else_body = ControlFlowRegion(cond_block.label + '_else_body')
-            else_body.parent_graph = cond_block
-            else_body.sdfg = sdfg
+            cond_block.add_branch(None, else_body)
             self.translate(node.body_else, sdfg, else_body)
 
             if len(else_body.nodes()) == 0:
