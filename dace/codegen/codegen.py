@@ -147,6 +147,8 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
     # Query instrumentation provider of SDFG
     if sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
+    if sdfg.save_restore_initial_state != dtypes.DataInstrumentationType.No_Instrumentation:
+        disp.instrumentation[sdfg.save_restore_initial_state] = provider_mapping[sdfg.save_restore_initial_state]
 
 
 def generate_code(sdfg, validate=True) -> List[CodeObject]:

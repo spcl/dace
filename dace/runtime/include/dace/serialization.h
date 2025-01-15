@@ -8,6 +8,7 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <iostream>
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
@@ -89,6 +90,10 @@ public:
         this->folder = folder;
     }
 
+    const char* get_folder() {
+        return this->folder.c_str();
+    }
+
     template <typename T>
     void save_symbol(const std::string &symbol_name, const std::string &filename, const T symbol_value) {
         if (!this->enable) return;
@@ -96,11 +101,11 @@ public:
 
         // Update version
         int version;
-        if (this->version.find(symbol_name) == this->version.end())
+        if (this->version.find(symbol_name + ".." + filename) == this->version.end())
             version = 0;
         else
-            version = this->version[symbol_name] + 1;
-        this->version[symbol_name] = version;
+            version = this->version[symbol_name + ".." + filename] + 1;
+        this->version[symbol_name + ".." + filename] = version;
 
         std::stringstream ss;
         ss << this->folder << "/" << symbol_name;
@@ -124,11 +129,11 @@ public:
 
         // Update version
         int version;
-        if (this->version.find(symbol_name) == this->version.end())
+        if (this->version.find(symbol_name + ".." + filename) == this->version.end())
             version = 0;
         else
-            version = this->version[symbol_name] + 1;
-        this->version[symbol_name] = version;
+            version = this->version[symbol_name + ".." + filename] + 1;
+        this->version[symbol_name + ".." + filename] = version;
 
         // Read contents from file
         std::stringstream ss;
@@ -145,15 +150,16 @@ public:
     void save(const T *buffer, size_t size, const std::string &arrayname, const std::string &filename, Args... shape_stride) {
         // NOTE: The "shape_stride" parameter is two concatenated tuples of shape, strides
         if (!this->enable) return;
+        if (!buffer) return;
         std::lock_guard<std::mutex> guard(this->_mutex);
 
         // Update version
         int version;
-        if (this->version.find(filename) == this->version.end())
+        if (this->version.find(arrayname + ".." + filename) == this->version.end())
             version = 0;
         else
-            version = this->version[filename] + 1;
-        this->version[filename] = version;
+            version = this->version[arrayname + ".." + filename] + 1;
+        this->version[arrayname + ".." + filename] = version;
 
         std::stringstream ss;
         ss << this->folder << "/" << arrayname;
@@ -180,16 +186,21 @@ public:
 
         // Update version
         int version;
-        if (this->version.find(filename) == this->version.end())
+        if (this->version.find(arrayname + ".." + filename) == this->version.end())
             version = 0;
         else
-            version = this->version[filename] + 1;
-        this->version[filename] = version;
+            version = this->version[arrayname + ".." + filename] + 1;
+        this->version[arrayname + ".." + filename] = version;
 
         // Read contents from file
         std::stringstream ss;
         ss << this->folder << "/" << arrayname << "/" << filename << "_" << version << ".bin";
-        std::ifstream ifs(ss.str(), std::ios::binary);
+        const std::string fname = ss.str();
+        // Do not restore anything if the target file does not exist.
+        struct stat statbuff;
+        if (stat(fname.c_str(), &statbuff) == -1)
+            return;
+        std::ifstream ifs(fname, std::ios::binary);
         
         // Ignore header (dimensions, shape, and strides)
         uint32_t ndims;
