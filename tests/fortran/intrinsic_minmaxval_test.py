@@ -3,6 +3,8 @@
 import numpy as np
 
 from dace.frontend.fortran import ast_transforms, fortran_parser
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 def test_fortran_frontend_minval_double():
     """
@@ -57,6 +59,7 @@ def test_fortran_frontend_minval_double():
     assert res[2] == d[5]
     # It should be the dace max for integer
     assert res[3] == np.finfo(np.float64).max
+
 
 def test_fortran_frontend_minval_int():
     """
@@ -124,6 +127,7 @@ def test_fortran_frontend_minval_int():
     # It should be the dace max for integer
     assert res[3] == np.iinfo(np.int32).max
 
+
 def test_fortran_frontend_maxval_double():
     """
     Tests that the generated array map correctly handles offsets.
@@ -177,6 +181,7 @@ def test_fortran_frontend_maxval_double():
     assert res[2] == d[2]
     # It should be the dace max for integer
     assert res[3] == np.finfo(np.float64).min
+
 
 def test_fortran_frontend_maxval_int():
     """
@@ -244,9 +249,63 @@ def test_fortran_frontend_maxval_int():
     # It should be the dace max for integer
     assert res[3] == np.iinfo(np.int32).min
 
+def test_fortran_frontend_minval_struct():
+    sources, main = SourceCodeBuilder().add_file("""
+MODULE test_types
+    IMPLICIT NONE
+    TYPE array_container
+        INTEGER, DIMENSION(7) :: data
+    END TYPE array_container
+END MODULE
+
+MODULE test_minval
+    USE test_types
+    IMPLICIT NONE
+
+    CONTAINS
+
+    SUBROUTINE minval_test_func(input, res)
+        TYPE(array_container) :: container
+        INTEGER, DIMENSION(7) :: input
+        INTEGER, DIMENSION(4) :: res
+
+        container%data = input
+
+        CALL minval_test_func_internal(container, res)
+    END SUBROUTINE
+
+    SUBROUTINE minval_test_func_internal(container, res)
+        TYPE(array_container), INTENT(IN) :: container
+        INTEGER, DIMENSION(4) :: res
+
+        res(1) = MAXVAL(container%data)
+        res(2) = MAXVAL(container%data(:))
+        res(3) = MAXVAL(container%data(3:6))
+        res(4) = MAXVAL(container%data(2:5))
+    END SUBROUTINE
+END MODULE
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'test_minval.minval_test_func')
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 7
+    input = np.full([size], 0, order="F", dtype=np.int32)
+    for i in range(size):
+        input[i] = i + 1
+    res = np.full([4], 42, order="F", dtype=np.int32)
+    sdfg(input=input, res=res)
+
+    assert res[0] == input[6]
+    assert res[1] == input[6]
+    assert res[2] == input[5]
+    assert res[3] == input[4]
+
 if __name__ == "__main__":
 
     test_fortran_frontend_minval_double()
     test_fortran_frontend_minval_int()
     test_fortran_frontend_maxval_double()
     test_fortran_frontend_maxval_int()
+
+    test_fortran_frontend_minval_struct()

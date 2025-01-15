@@ -5,19 +5,20 @@ import pytest
 
 from dace.frontend.fortran import ast_transforms, fortran_parser
 
+
 def test_fortran_frontend_product_array():
     """
     Tests that the generated array map correctly handles offsets.
     """
     test_string = """
-                    PROGRAM index_offset_test
+                    PROGRAM intrinsic_product_array
                     implicit none
                     double precision, dimension(7) :: d
                     double precision, dimension(3) :: res
-                    CALL index_test_function(d, res)
+                    CALL intrinsic_product_array_function(d, res)
                     end
 
-                    SUBROUTINE index_test_function(d, res)
+                    SUBROUTINE intrinsic_product_array_function(d, res)
                     double precision, dimension(7) :: d
                     double precision, dimension(3) :: res
 
@@ -25,12 +26,12 @@ def test_fortran_frontend_product_array():
                     res(2) = PRODUCT(d(:))
                     res(3) = PRODUCT(d(2:5))
 
-                    END SUBROUTINE index_test_function
+                    END SUBROUTINE intrinsic_product_array_function
                     """
 
     # Now test to verify it executes correctly with no offset normalization
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_product_array", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -44,40 +45,42 @@ def test_fortran_frontend_product_array():
     assert res[1] == np.prod(d)
     assert res[2] == np.prod(d[1:5])
 
+
 def test_fortran_frontend_product_array_dim():
     test_string = """
-                    PROGRAM intrinsic_count_test
+                    PROGRAM intrinsic_product_array_dim
                     implicit none
                     logical, dimension(5) :: d
                     logical, dimension(2) :: res
-                    CALL intrinsic_count_test_function(d, res)
+                    CALL intrinsic_product_array_dim_function(d, res)
                     end
 
-                    SUBROUTINE intrinsic_count_test_function(d, res)
+                    SUBROUTINE intrinsic_product_array_dim_function(d, res)
                     logical, dimension(5) :: d
                     logical, dimension(2) :: res
 
                     res(1) = PRODUCT(d, 1)
 
-                    END SUBROUTINE intrinsic_count_test_function
+                    END SUBROUTINE intrinsic_product_array_dim_function
                     """
 
     with pytest.raises(NotImplementedError):
-        fortran_parser.create_sdfg_from_string(test_string, "intrinsic_count_test", False)
+        fortran_parser.create_sdfg_from_string(test_string, "intrinsic_product_array_dim", True)
+
 
 def test_fortran_frontend_product_2d():
     """
     Tests that the generated array map correctly handles offsets.
     """
     test_string = """
-                    PROGRAM index_offset_test
+                    PROGRAM intrinsic_product_2d_test
                     implicit none
                     double precision, dimension(5,3) :: d
                     double precision, dimension(4) :: res
-                    CALL index_test_function(d,res)
+                    CALL intrinsic_product_2d_test_function(d,res)
                     end
 
-                    SUBROUTINE index_test_function(d, res)
+                    SUBROUTINE intrinsic_product_2d_test_function(d, res)
                     double precision, dimension(5,3) :: d
                     double precision, dimension(4) :: res
 
@@ -86,12 +89,12 @@ def test_fortran_frontend_product_2d():
                     res(3) = PRODUCT(d(2:4, 2))
                     res(4) = PRODUCT(d(2:4, 2:3))
 
-                    END SUBROUTINE index_test_function
+                    END SUBROUTINE intrinsic_product_2d_test_function
                     """
 
     # Now test to verify it executes correctly with no offset normalization
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_product_2d_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -108,6 +111,7 @@ def test_fortran_frontend_product_2d():
     assert res[1] == np.prod(d)
     assert res[2] == np.prod(d[1:4, 1])
     assert res[3] == np.prod(d[1:4, 1:3])
+
 
 if __name__ == "__main__":
 
