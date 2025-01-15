@@ -723,12 +723,8 @@ class AST_translator:
         """
         name = f"Conditional_l_{str(node.line_number[0])}_c_{str(node.line_number[1])}"
 
-        cond_block = ConditionalBlock(name)
-        is_start = cfg not in self.last_sdfg_states or self.last_sdfg_states[cfg] is None
-        cfg.add_node(cond_block, ensure_unique_name=True, is_start_block=is_start)
-        if not is_start:
-            cfg.add_edge(self.last_sdfg_states[cfg], cond_block, InterstateEdge())
-        self.last_sdfg_states[cfg] = cond_block
+        prev_block = None if cfg not in self.last_sdfg_states else self.last_sdfg_states[cfg]
+        is_start = prev_block is None
 
         condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping, self.placeholders, self.placeholders_offsets,
                                               self.replace_names).write_code(node.cond)
