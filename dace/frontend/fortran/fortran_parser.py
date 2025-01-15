@@ -733,15 +733,37 @@ class AST_translator:
         condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping, self.placeholders, self.placeholders_offsets,
                                               self.replace_names).write_code(node.cond)
 
+<<<<<<< Updated upstream
         if_body = ControlFlowRegion(cond_block.label + '_if_body')
         cond_block.add_branch(CodeBlock(condition), if_body)
         self.translate(node.body, sdfg, if_body)
+=======
+        cond_block = ConditionalBlock(name)
+        cfg.add_node(cond_block, ensure_unique_name=True, is_start_block=is_start)
+        if not is_start:
+            cfg.add_edge(self.last_sdfg_states[cfg], cond_block, InterstateEdge())
+        self.last_sdfg_states[cfg] = cond_block
+
+        if_body = ControlFlowRegion(cond_block.label + '_if_body')
+        cond_block.add_branch(CodeBlock(condition), if_body)
+        self.translate(node.body, sdfg, if_body)
+        if len(if_body.nodes()) == 0:
+            # If there's nothing inside the branch, add a noop state to get a valid SDFG and let simplify take care of
+            # the rest.
+            if_body.add_state('noop', is_start_block=True)
+>>>>>>> Stashed changes
 
         if len(node.body_else.execution) > 0:
             else_body = ControlFlowRegion(cond_block.label + '_else_body')
             cond_block.add_branch(None, else_body)
             self.translate(node.body_else, sdfg, else_body)
 
+<<<<<<< Updated upstream
+=======
+            if len(else_body.nodes()) == 0:
+                else_body.add_state('noop', is_start_block=True)
+
+>>>>>>> Stashed changes
 
     def whilestmt2sdfg(self, node: ast_internal_classes.While_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
