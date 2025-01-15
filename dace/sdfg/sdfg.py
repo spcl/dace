@@ -109,6 +109,8 @@ def _replace_dict_keys(d, old, new):
         warnings.warn(f"Trying to replace key with the same name {old} ... skipping.")
         return
     if old in d:
+        if new in d:
+            warnings.warn('"%s" already exists in SDFG' % new)
         d[new] = d[old]
         del d[old]
 
