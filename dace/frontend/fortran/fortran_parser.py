@@ -35,7 +35,7 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     inject_const_evals, remove_access_statements, ident_spec, ConstTypeInjection, ConstInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, assign_globally_unique_variable_names, assign_globally_unique_subprogram_names, \
-    create_global_initializers
+    create_global_initializers, convert_data_statements_into_assignments
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -730,12 +730,19 @@ class AST_translator:
                                               self.replace_names).write_code(node.cond)
 
         cond_block = ConditionalBlock(name)
-        cond_block.parent_graph = cfg
-        cond_block.sdfg = sdfg
+        cfg.add_node(cond_block, ensure_unique_name=True, is_start_block=is_start)
+        if not is_start:
+            cfg.add_edge(self.last_sdfg_states[cfg], cond_block, InterstateEdge())
+        self.last_sdfg_states[cfg] = cond_block
+
         if_body = ControlFlowRegion(cond_block.label + '_if_body')
         if_body.parent_graph = cond_block
         if_body.sdfg = sdfg
         self.translate(node.body, sdfg, if_body)
+        if len(if_body.nodes()) == 0:
+            # If there's nothing inside the branch, add a noop state to get a valid SDFG and let simplify take care of
+            # the rest.
+            if_body.add_state('noop', is_start_block=True)
 
         if len(if_body.nodes()) > 0:
             cond_block.add_branch(CodeBlock(condition), if_body)
@@ -746,14 +753,8 @@ class AST_translator:
             else_body.sdfg = sdfg
             self.translate(node.body_else, sdfg, else_body)
 
-            if len(else_body.nodes()) > 0:
-                cond_block.add_branch(None, else_body)
-
-        if len(cond_block.branches) > 0:
-            cfg.add_node(cond_block, ensure_unique_name=True, is_start_block=is_start)
-            if not is_start:
-                cfg.add_edge(self.last_sdfg_states[cfg], cond_block, InterstateEdge())
-            self.last_sdfg_states[cfg] = cond_block
+            if len(else_body.nodes()) == 0:
+                else_body.add_state('noop', is_start_block=True)
 
 
     def whilestmt2sdfg(self, node: ast_internal_classes.While_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
@@ -3295,8 +3296,12 @@ def create_sdfg_from_fortran_file_with_options(
         ast = deconstruct_procedure_calls(ast)
         ast = deconstruct_interface_calls(ast)
 
-        print("FParser Op: Inject configs & fix global vars & prune...")
+        print("FParser Op: Inject configs & prune...")
         ast = inject_const_evals(ast, cfg.config_injections)
+        ast = const_eval_nodes(ast)
+        ast = convert_data_statements_into_assignments(ast)
+
+        print("FParser Op: Fix global vars & prune...")
         # Prune things once after fixing global variables.
         # NOTE: Global vars fixing has to be done before any pruning, because otherwise some assignment may get lost.
         ast = make_practically_constant_global_vars_constants(ast)
