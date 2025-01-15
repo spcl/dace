@@ -227,6 +227,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     from dace.sdfg.scope import is_devicelevel_fpga, is_devicelevel_gpu
     from dace.sdfg import utils as sdutil
     from dace import nodes
+    from dace.sdfg.state import ReturnBlock
 
     references = references or set()
 
@@ -417,6 +418,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             return False
 
         for cfg in sdfg.bfs_nodes():
+            if isinstance(cfg, ReturnBlock):
+                continue
             for node in sdutil.dfs_topological_sort(cfg):
                 if isinstance(node, nodes.AccessNode):
                     # Ensure deferred array / size was allocated = ensure allocation dict value is true
