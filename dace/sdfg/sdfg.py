@@ -180,8 +180,7 @@ class InterstateEdge(object):
         loop iterates).
     """
 
-    assignments = Property(dtype=dict,
-                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
+    assignments = Property(dtype=dict, desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
     guid = Property(dtype=str, allow_none=False)
 
@@ -219,7 +218,7 @@ class InterstateEdge(object):
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
-            if k == 'guid': # Skip ID
+            if k == 'guid':  # Skip ID
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         return result
@@ -458,7 +457,11 @@ class SDFG(ControlFlowRegion):
 
     name = Property(dtype=str, desc="Name of the SDFG")
     arg_names = ListProperty(element_type=str, desc='Ordered argument names (used for calling conventions).')
-    constants_prop = Property(dtype=dict, default={}, desc="Compile-time constants")
+    constants_prop: Dict[str, Tuple[dt.Data, Any]] = Property(
+        dtype=dict,
+        default={},
+        desc='Compile-time constants. The dictionary maps between a constant name to '
+        'a tuple of its type and the actual constant data.')
     _arrays = Property(dtype=NestedDict,
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
@@ -506,7 +509,8 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
-    using_explicit_control_flow = Property(dtype=bool, default=False,
+    using_explicit_control_flow = Property(dtype=bool,
+                                           default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
 
     def __init__(self,
@@ -655,9 +659,7 @@ class SDFG(ControlFlowRegion):
 
         ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret,
-                                                json_obj,
-                                                ignore_properties={'constants_prop', 'name', 'hash'})
+        dace.serialize.set_properties_from_json(ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
 
         nodelist = []
         for n in nodes:
@@ -784,7 +786,6 @@ class SDFG(ControlFlowRegion):
         repldict = {k: v for k, v in repldict.items() if k != v}
         if symrepl:
             symrepl = {k: v for k, v in symrepl.items() if str(k) != str(v)}
-
 
         symrepl = symrepl or {
             symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
@@ -2391,8 +2392,7 @@ class SDFG(ControlFlowRegion):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True,
-                return_program_handle=True) -> 'CompiledSDFG':
+    def compile(self, output_file=None, validate=True, return_program_handle=True) -> 'CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
 
             :param output_file: If not None, copies the output library file to

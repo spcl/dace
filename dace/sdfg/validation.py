@@ -258,7 +258,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         # Ensure that there is a mentioning of constants in either the array or symbol.
         for const_name, (const_type, _) in sdfg.constants_prop.items():
             if const_name in sdfg.arrays:
-                if const_type != sdfg.arrays[const_name].dtype:
+                if const_type.dtype != sdfg.arrays[const_name].dtype:
                     # This should actually be an error, but there is a lots of code that depends on it.
                     warnings.warn(f'Mismatch between constant and data descriptor of "{const_name}", '
                                   f'expected to find "{const_type}" but found "{sdfg.arrays[const_name]}".')
