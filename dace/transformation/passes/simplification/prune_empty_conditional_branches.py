@@ -55,7 +55,7 @@ class PruneEmptyConditionalBranches(ppl.ControlFlowRegionPass):
                     region.remove_branch(branch)
                 removed_branches += 1
         # If the else branch remains, make sure it now has the new negate-all condition.
-        if new_else_cond is not None and region.branches[-1][0] is None:
+        if region.branches and new_else_cond is not None and region.branches[-1][0] is None:
             region._branches[-1] = (new_else_cond, region._branches[-1][1])
 
         if len(region.branches) == 0:

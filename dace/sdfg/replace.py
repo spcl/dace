@@ -196,10 +196,23 @@ def replace_datadesc_names(sdfg: 'dace.SDFG', repl: Dict[str, str]):
                 for node in block.data_nodes():
                     if node.data in repl:
                         node.data = repl[node.data]
+                    elif '.' in node.data:
+                        # Handle structure member accesses where the structure name is being replaced.
+                        parts = node.data.split('.')
+                        if parts[0] in repl:
+                            node.data = repl[parts[0]] + '.' + '.'.join(parts[1:])
+
                 # Replace in memlets
                 for edge in block.edges():
+                    if edge.data.data is None:
+                        continue
                     if edge.data.data in repl:
                         edge.data.data = repl[edge.data.data]
+                    elif '.' in edge.data.data:
+                        # Handle structure member accesses where the structure name is being replaced.
+                        parts = edge.data.data.split('.')
+                        if parts[0] in repl:
+                            edge.data.data = repl[parts[0]] + '.' + '.'.join(parts[1:])
 
         # Replace in loop or branch conditions:
         cf.replace_meta_accesses(repl)

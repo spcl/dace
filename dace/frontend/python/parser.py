@@ -156,7 +156,8 @@ class DaceProgram(pycommon.SDFGConvertible):
                  recompile: bool = True,
                  distributed_compilation: bool = False,
                  method: bool = False,
-                 use_explicit_cf: bool = True):
+                 use_explicit_cf: bool = True,
+                 ignore_type_hints: bool = False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
@@ -178,6 +179,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.recompile = recompile
         self.use_explicit_cf = use_explicit_cf
         self.distributed_compilation = distributed_compilation
+        self.ignore_type_hints = ignore_type_hints
 
         self.global_vars = _get_locals_and_globals(f)
         self.signature = inspect.signature(f)
@@ -396,7 +398,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Start with default arguments, then add other arguments
         result = {**self.default_args}
         # Reconstruct keyword arguments
-        result.update({aname: arg for aname, arg in zip(self.argnames, args)})
+        result.update({aname: arg for aname, arg in zip(self.argnames, args) if aname not in self.constant_args})
         result.update(kwargs)
 
         # Add closure arguments to the call
@@ -557,6 +559,8 @@ class DaceProgram(pycommon.SDFGConvertible):
                 continue
 
             ann = sig_arg.annotation
+            if self.ignore_type_hints:
+                ann = inspect._empty
 
             # Variable-length arguments: obtain from the remainder of given_*
             if sig_arg.kind is sig_arg.VAR_POSITIONAL:
@@ -699,7 +703,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Set __return* arrays from return type annotations
         rettype = self.signature.return_annotation
-        if not _is_empty(rettype):
+        if not self.ignore_type_hints and not _is_empty(rettype):
             if isinstance(rettype, tuple):
                 for i, subrettype in enumerate(rettype):
                     types[f'__return_{i}'] = create_datadescriptor(subrettype)
