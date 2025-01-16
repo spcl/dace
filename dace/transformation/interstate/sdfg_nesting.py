@@ -439,7 +439,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     orig_data[node] = node.data
                     node.data = repldict[node.data]
         for edge in nstate.edges():
-            if '.' in edge.data.data:
+            if edge.data.data is not None and '.' in edge.data.data:
                 parts = edge.data.data.split('.')
                 root_container = parts[0]
                 if root_container in repldict:
