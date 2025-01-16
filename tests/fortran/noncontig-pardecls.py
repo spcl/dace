@@ -247,26 +247,17 @@ module lib
         integer, dimension(3) :: cols
     end type
 
-    type test_type2
-        integer :: startcol 
-        integer :: endcol
-    end type
 end module lib
 
 subroutine main(d, d2)
-  use lib, only: test_type, test_type2
+  use lib, only: test_type
   implicit none
 
   double precision, dimension(4, 5) :: d
   double precision, dimension(3, 3) :: d2
 
   type(test_type) :: data
-  type(test_type2) :: data2
-  integer, dimension(3) :: cols
-
-  cols(1) = 1
-  cols(2) = 3
-  cols(3) = 5
+  integer :: startcol, endcol
 
   data%cols(1) = 1
   data%cols(2) = 3
@@ -274,11 +265,10 @@ subroutine main(d, d2)
 
   data%input_data = d
 
-  data2%startcol = 2
-  data2%endcol = 4
+  startcol = 2
+  endcol = 4
 
-  !call fun( data%input_data( data2%startcol : data2%endcol , data%cols), d2)
-  call fun( data%input_data( 2 : 4, cols), d2)
+  call fun( data%input_data( startcol : endcol , data%cols), d2)
 end subroutine main
 
 subroutine fun(d, d2)
@@ -294,7 +284,6 @@ subroutine fun(d, d2)
 end subroutine fun
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.save('test.sdfg')
     sdfg.simplify(verbose=True)
     sdfg.compile()
 

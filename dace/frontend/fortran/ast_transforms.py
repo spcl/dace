@@ -4026,7 +4026,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                 )
 
                 dest_indices = copy.deepcopy(tmp_array.indices)
-                for idx, var in tmp_array.noncontig_dims:
+                for idx, _, _ in tmp_array.noncontig_dims:
                     iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
                     dest_indices[idx] = iter_var
 
@@ -4038,15 +4038,18 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                 )
 
                 source_indices = copy.deepcopy(tmp_array.indices)
-                for idx, var in tmp_array.noncontig_dims:
+                for idx, main_var, var in tmp_array.noncontig_dims:
 
                     iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
-                    source_indices[idx] = ast_internal_classes.Array_Subscript_Node(
-                        name = ast_internal_classes.Name_Node(name=var.name),
-                        type = var.type,
-                        indices = [iter_var],
-                        line_numbe = child.line_number
-                    )
+
+                    var.indices = [iter_var]
+                    source_indices[idx] = main_var
+                    #source_indices[idx] = ast_internal_classes.Array_Subscript_Node(
+                    #    name = ast_internal_classes.Name_Node(name=var.name),
+                    #    type = var.type,
+                    #    indices = [iter_var],
+                    #    line_numbe = child.line_number
+                    #)
 
                 source, main_source = tmp_array.source
                 main_source.indices = source_indices
@@ -4059,7 +4062,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     parent=child.parent
                 )
 
-                for idx, var in tmp_array.noncontig_dims:
+                for idx, _, _ in tmp_array.noncontig_dims:
 
                     initrange = ast_internal_classes.Int_Literal_Node(value="1")
                     finalrange = tmp_array.sizes[idx]
@@ -4159,7 +4162,19 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
         cont_sizes = []
         noncont_sizes = []
 
-        for idx, actual_index in enumerate(node.indices):
+        for idx, index in enumerate(node.indices):
+
+            index = self.visit(index)
+
+            if isinstance(index, ast_internal_classes.Data_Ref_Node):
+
+                struct, variable, last_var = self.structures.find_definition(
+                    self.scope_vars, index
+                )
+
+                actual_index = last_var.part_ref
+            else:
+                actual_index = index
 
             if isinstance(actual_index, ast_internal_classes.Name_Node):
 
@@ -4169,7 +4184,19 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
                     self.needs_copy = True
                     new_sizes.append(var.sizes[0])
-                    noncont_sizes.append((idx, actual_index))
+
+                    idx_arr = ast_internal_classes.Array_Subscript_Node(
+                        name = ast_internal_classes.Name_Node(name=actual_index.name),
+                        type = actual_index.type,
+                        # will be fixed in further processing
+                        indices = None,
+                        line_number = actual_index.line_number
+                    )
+                    if isinstance(index, ast_internal_classes.Data_Ref_Node):
+                        last_var.part_ref = idx_arr
+                        noncont_sizes.append((idx, index, idx_arr))
+                    else:
+                        noncont_sizes.append((idx, idx_arr, idx_arr))
 
                 elif len(var.sizes) == 0:
                     """
@@ -4213,14 +4240,13 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     raise NotImplementedError()
 
             else:
-                # FIXME: pardecl
                 """
                     For scalar-based access, the size of new dimension is just 1.
                 """
                 new_sizes.append(ast_internal_classes.Int_Literal_Node(value="1"))
                 new_offsets.append(1)
 
-            indices.append(self.visit(actual_index))
+            indices.append(index)
 
         if self.needs_copy:
 
