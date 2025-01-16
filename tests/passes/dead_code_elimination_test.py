@@ -1,9 +1,11 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various tests for dead code elimination passes. """
 
 import numpy as np
 import pytest
 import dace
+from dace.properties import CodeBlock
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
@@ -43,6 +45,80 @@ def test_dse_unconditional():
 
     DeadStateElimination().apply_pass(sdfg, {})
     assert set(sdfg.states()) == {s, s2, e}
+
+
+def test_dse_edge_condition_with_integer_as_boolean_regression():
+    """
+    This is a regression test for issue #1129, which describes dead state elimination incorrectly eliminating interstate
+    edges when integers are used as boolean values in interstate edge conditions. Code taken from issue #1129.
+    """
+    sdfg = dace.SDFG('dse_edge_condition_with_integer_as_boolean_regression')
+    sdfg.add_scalar('N', dtype=dace.int32, transient=True)
+    sdfg.add_scalar('result', dtype=dace.int32)
+    state_init = sdfg.add_state()
+    state_middle = sdfg.add_state()
+    state_end = sdfg.add_state()
+    sdfg.add_edge(state_init, state_end, dace.InterstateEdge(condition='(not ((N > 20) != 0))',
+                                                             assignments={'result': 'N'}))
+    sdfg.add_edge(state_init, state_middle, dace.InterstateEdge(condition='((N > 20) != 0)'))
+    sdfg.add_edge(state_middle, state_end, dace.InterstateEdge(assignments={'result': '20'}))
+
+    res = DeadStateElimination().apply_pass(sdfg, {})
+    assert res is None
+
+
+def test_dse_inside_loop():
+    sdfg = dace.SDFG('dse_inside_loop')
+    sdfg.add_symbol('a', dace.int32)
+    loop = LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
+    start = sdfg.add_state(is_start_block=True)
+    sdfg.add_node(loop)
+    end = sdfg.add_state()
+    sdfg.add_edge(start, loop, dace.InterstateEdge())
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    s = loop.add_state(is_start_block=True)
+    s1 = loop.add_state()
+    s2 = loop.add_state()
+    s3 = loop.add_state()
+    e = loop.add_state()
+    loop.add_edge(s, s1, dace.InterstateEdge('a > 0'))
+    loop.add_edge(s, s2, dace.InterstateEdge('a >= a'))  # Always True
+    loop.add_edge(s, s3, dace.InterstateEdge('a < 0'))
+    loop.add_edge(s1, e, dace.InterstateEdge())
+    loop.add_edge(s2, e, dace.InterstateEdge())
+    loop.add_edge(s3, e, dace.InterstateEdge())
+
+    DeadStateElimination().apply_pass(sdfg, {})
+    assert set(sdfg.states()) == {start, s, s2, e, end}
+
+
+def test_dse_inside_loop_conditional():
+    sdfg = dace.SDFG('dse_inside_loop')
+    sdfg.add_symbol('a', dace.int32)
+    loop = LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
+    start = sdfg.add_state(is_start_block=True)
+    sdfg.add_node(loop)
+    end = sdfg.add_state()
+    sdfg.add_edge(start, loop, dace.InterstateEdge())
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    s = loop.add_state(is_start_block=True)
+    cond_block = ConditionalBlock('cond', sdfg, loop)
+    loop.add_node(cond_block)
+    b1 = ControlFlowRegion('b1', sdfg)
+    b1.add_state()
+    cond_block.add_branch(CodeBlock('a > 0'), b1)
+    b2 = ControlFlowRegion('b2', sdfg)
+    s2 = b2.add_state()
+    cond_block.add_branch(CodeBlock('a >= a'), b2)
+    b3 = ControlFlowRegion('b3', sdfg)
+    b3.add_state()
+    cond_block.add_branch(CodeBlock('a < 0'), b3)
+    e = loop.add_state()
+    loop.add_edge(s, cond_block, dace.InterstateEdge())
+    loop.add_edge(cond_block, e, dace.InterstateEdge())
+
+    DeadStateElimination().apply_pass(sdfg, {})
+    assert set(sdfg.states()) == {start, s, s2, e, end}
 
 
 def test_dde_simple():
@@ -209,12 +285,12 @@ def test_dce():
     sdfg = dce_tester.to_sdfg(simplify=False)
     result = Pipeline([DeadDataflowElimination(), DeadStateElimination()]).apply_pass(sdfg, {})
     sdfg.simplify()
-    assert sdfg.number_of_nodes() <= 5
+    assert sdfg.number_of_nodes() <= 4
 
     # Check that arrays were removed
     assert all('c' not in [n.data for n in state.data_nodes()] for state in sdfg.nodes())
     assert any('f' in [n.data for n in rstate if isinstance(n, dace.nodes.AccessNode)]
-               for rstate in result['DeadDataflowElimination'].values())
+               for rstate in result[DeadDataflowElimination.__name__][0].values())
 
 
 def test_dce_callback():
@@ -307,6 +383,9 @@ _out = _tmp
 if __name__ == '__main__':
     test_dse_simple()
     test_dse_unconditional()
+    test_dse_edge_condition_with_integer_as_boolean_regression()
+    test_dse_inside_loop()
+    test_dse_inside_loop_conditional()
     test_dde_simple()
     test_dde_libnode()
     test_dde_access_node_in_scope(False)

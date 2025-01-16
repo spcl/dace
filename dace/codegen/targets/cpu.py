@@ -855,7 +855,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # Instrumentation: Pre-copy
             for instr in self._dispatcher.instrumentation.values():
                 if instr is not None:
-                    instr.on_copy_begin(sdfg, state_dfg, src_node, dst_node, edge, stream, None, copy_shape,
+                    instr.on_copy_begin(sdfg, cfg, state_dfg, src_node, dst_node, edge, stream, None, copy_shape,
                                         src_strides, dst_strides)
 
             nc = True
@@ -917,7 +917,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Post-copy
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
-                instr.on_copy_end(sdfg, state_dfg, src_node, dst_node, edge, stream, None)
+                instr.on_copy_end(sdfg, cfg, state_dfg, src_node, dst_node, edge, stream, None)
         #############################################################
 
     ###########################################################################
@@ -1507,7 +1507,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Pre-tasklet
         instr = self._dispatcher.instrumentation[node.instrument]
         if instr is not None:
-            instr.on_node_begin(sdfg, state_dfg, node, outer_stream_begin, inner_stream, function_stream)
+            instr.on_node_begin(sdfg, cfg, state_dfg, node, outer_stream_begin, inner_stream, function_stream)
 
         inner_stream.write("\n    ///////////////////\n", cfg, state_id, node)
 
@@ -1536,7 +1536,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Instrumentation: Post-tasklet
         if instr is not None:
-            instr.on_node_end(sdfg, state_dfg, node, outer_stream_end, inner_stream, function_stream)
+            instr.on_node_end(sdfg, cfg, state_dfg, node, outer_stream_end, inner_stream, function_stream)
 
         callsite_stream.write(outer_stream_begin.getvalue(), cfg, state_id, node)
         callsite_stream.write('{', cfg, state_id, node)
@@ -1711,7 +1711,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # If the SDFG has a unique name, use it
             sdfg_label = node.unique_name
         else:
-            sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.cfg_id, state_id, dfg.node_id(node))
+            sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, cfg.cfg_id, state_id, dfg.node_id(node))
 
         code_already_generated = False
         if unique_functions and not inline:
@@ -1858,7 +1858,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Pre-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
         if instr is not None:
-            instr.on_scope_entry(sdfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
+            instr.on_scope_entry(sdfg, cfg, state_dfg, node, callsite_stream, inner_stream, function_stream)
 
         # TODO: Refactor to generate_scope_preamble once a general code
         #  generator (that CPU inherits from) is implemented
@@ -1979,7 +1979,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Post-scope
         instr = self._dispatcher.instrumentation[node.map.instrument]
         if instr is not None and not is_devicelevel_gpu(sdfg, state_dfg, node):
-            instr.on_scope_exit(sdfg, state_dfg, node, outer_stream, callsite_stream, function_stream)
+            instr.on_scope_exit(sdfg, cfg, state_dfg, node, outer_stream, callsite_stream, function_stream)
 
         self.generate_scope_postamble(sdfg, dfg, state_id, function_stream, outer_stream, callsite_stream)
 
@@ -2164,7 +2164,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # Instrumentation: Pre-node
         instr = self._dispatcher.instrumentation[node.instrument]
         if instr is not None:
-            instr.on_node_begin(sdfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
+            instr.on_node_begin(sdfg, cfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
 
         sdict = state_dfg.scope_dict()
         for edge in state_dfg.in_edges(node):
@@ -2207,7 +2207,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Instrumentation: Post-node
         if instr is not None:
-            instr.on_node_end(sdfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
+            instr.on_node_end(sdfg, cfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
 
     # Methods for subclasses to override
 

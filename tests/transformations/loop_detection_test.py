@@ -19,7 +19,8 @@ def test_pyloop():
         for i in range(1, 20):
             a[i] = a[i - 1] + 1
 
-    sdfg = tester.to_sdfg()
+    tester.use_explicit_cf = False
+    sdfg = tester.to_sdfg(simplify=False)
     xform = CountLoops()
     assert sdfg.apply_transformations(xform) == 1
     itvar, rng, _ = xform.loop_information()
