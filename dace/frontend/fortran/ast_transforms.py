@@ -3987,6 +3987,17 @@ class ElementalIntrinsicExpander(ArrayLoopExpander):
 
 class ParDeclNonContigArrayExpander(NodeTransformer):
 
+    """
+        Variable processer lets the main function know that the following array needs to be processed:
+        - Counter to determine iterator name and the name of temporary array.
+        - Tuple of (source, main_source) containing original array. For structures, this contains the variable defining array
+          and the surrounding data ref node.
+        - Type of temporary array.
+        - Sizes and offsets of temporary array.
+        - Indices for each dimension.
+        - For each non-contiguous dimension, we send tuple (idx, main_var, var) - index of dimension, and the two variables defining
+          array index. main_var is used to send data ref nodes for structure references
+    """
     NonContigArray = namedtuple("NonContigArray", "counter name source type sizes offsets indices noncontig_dims")
 
     def __init__(self, ast):
@@ -4012,6 +4023,14 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
             for tmp_array in self.nodes_to_process:
 
+                """
+                    For each variable with non-contiguous slices:
+                    - Generate the temporary array.
+                    - Determine the copy operation b[idx] = a[indices[idx]].
+                    - Generate loop, with one iterator for each dimension
+                      that needs a copy.
+                """
+
                 node.parent.specification_part.specifications.append(
                     ast_internal_classes.Decl_Stmt_Node(vardecl=[
                         ast_internal_classes.Var_Decl_Node(
@@ -4019,7 +4038,6 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                             type=tmp_array.type,
                             sizes=tmp_array.sizes,
                             offsets=tmp_array.offsets,
-                            #offsets=[1] * len(tmp_array.sizes),
                             init=None,
                         )
                     ])
@@ -4044,12 +4062,6 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
                     var.indices = [iter_var]
                     source_indices[idx] = main_var
-                    #source_indices[idx] = ast_internal_classes.Array_Subscript_Node(
-                    #    name = ast_internal_classes.Name_Node(name=var.name),
-                    #    type = var.type,
-                    #    indices = [iter_var],
-                    #    line_numbe = child.line_number
-                    #)
 
                 source, main_source = tmp_array.source
                 main_source.indices = source_indices
@@ -4137,6 +4149,15 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
 
+        """
+            When processing a data reference:
+
+            struct%val
+
+            We note down structure reference and take val for further analysis.
+            This way, we reuse the same logic without excessive specialization to datarefs.
+        """
+
         struct, variable, last_var = self.structures.find_definition(
             self.scope_vars, node
         )
@@ -4164,7 +4185,13 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
         for idx, index in enumerate(node.indices):
 
-            index = self.visit(index)
+            """
+                For structure references:
+                index -> full index var inserted in array node
+                actual_index -> the variable that contains actual data
+
+                For other, both are the same.
+            """
 
             if isinstance(index, ast_internal_classes.Data_Ref_Node):
 
@@ -4180,15 +4207,17 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
                 var = self.scope_vars.get_var(node.parent, actual_index.name)
 
-                if len(var.sizes) == 1:
+                if var.sizes is not None and len(var.sizes) == 1:
 
                     self.needs_copy = True
                     new_sizes.append(var.sizes[0])
 
+                    """
+                        We will later assign actual indices when processing the loop code.
+                    """
                     idx_arr = ast_internal_classes.Array_Subscript_Node(
                         name = ast_internal_classes.Name_Node(name=actual_index.name),
                         type = actual_index.type,
-                        # will be fixed in further processing
                         indices = None,
                         line_number = actual_index.line_number
                     )
@@ -4198,7 +4227,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     else:
                         noncont_sizes.append((idx, idx_arr, idx_arr))
 
-                elif len(var.sizes) == 0:
+                elif var.sizes is None or len(var.sizes) == 0:
                     """
                         For scalar-based access, the size of new dimension is just 1.
                     """
@@ -4211,9 +4240,23 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
             elif isinstance(actual_index, ast_internal_classes.ParDecl_Node):
 
                 var = self.scope_vars.get_var(node.parent, node.name.name)
+
+                """
+                    For range from a:b, we do not generate the code manually.
+                    Instead, we will let ArrayToLoop transformation to expand this copy.
+
+                    To make sure that we correctly generate copy indices, the destination
+                    array needs to have the same offset as the low range boundary, e.g,
+                    tmp_dest(40:45, ...) = source(40:45, ...)
+
+                    This offset will be normalized before translating to SDFG, in IndexExtractor transformation.
+                """
+
                 if actual_index.type == 'ALL':
+
                     new_sizes.append(var.sizes[idx])
                     new_offsets.append(var.offsets[idx])
+
                 elif actual_index.type == 'RANGE':
 
                     if isinstance(actual_index.range[0], ast_internal_classes.Int_Literal_Node):
@@ -4221,6 +4264,10 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     else:
                         new_offsets.append(actual_index.range[0])
 
+                    """
+                        For range-based offsets, the array size is given as:
+                        high - low + 1
+                    """
                     new_sizes.append(
                         ast_internal_classes.BinOp_Node(
                             lval = ast_internal_classes.BinOp_Node(
@@ -4253,6 +4300,9 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
             if len(node.indices) > 2:
                 raise NotImplementedError("Non-contiguous array slices are supported only for 1D/2D arrays!")
 
+            """
+                We will later assign actual indices when processing the loop code.
+            """
             source = ast_internal_classes.Array_Subscript_Node(
                 name = ast_internal_classes.Name_Node(name=node.name.name),
                 type = node.type,
