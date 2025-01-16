@@ -3987,7 +3987,7 @@ class ElementalIntrinsicExpander(ArrayLoopExpander):
 
 class ParDeclNonContigArrayExpander(NodeTransformer):
 
-    NonContigArray = namedtuple("NonContigArray", "counter name source_name type sizes indices noncontig_dims")
+    NonContigArray = namedtuple("NonContigArray", "counter name source_name type sizes offsets indices noncontig_dims")
 
     def __init__(self, ast):
         self.ast = ast
@@ -4017,7 +4017,8 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                             name=tmp_array.name,
                             type=tmp_array.type,
                             sizes=tmp_array.sizes,
-                            offsets=[1] * len(tmp_array.sizes),
+                            offsets=tmp_array.offsets,
+                            #offsets=[1] * len(tmp_array.sizes),
                             init=None,
                         )
                     ])
@@ -4119,6 +4120,8 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
         indices = []
         needs_process = False
         new_sizes = []
+        new_offsets = []
+        cont_sizes = []
         noncont_sizes = []
 
         for idx, actual_index in enumerate(node.indices):
@@ -4142,12 +4145,46 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                 else:
                     raise NotImplementedError("Non-contiguous array slices are supported only for 1D indices!")
 
+                new_offsets.append(1)
+
+            elif isinstance(actual_index, ast_internal_classes.ParDecl_Node):
+
+                var = self.scope_vars.get_var(node.parent, node.name.name)
+                if actual_index.type == 'ALL':
+                    new_sizes.append(var.sizes[idx])
+                    new_offsets.append(var.offsets[idx])
+                elif actual_index.type == 'RANGE':
+
+                    if isinstance(actual_index.range[0], ast_internal_classes.Int_Literal_Node):
+                        new_offsets.append(actual_index.range[0].value)
+                    else:
+                        new_offsets.append(actual_index.range[0])
+
+                    new_sizes.append(
+                        ast_internal_classes.BinOp_Node(
+                            lval = ast_internal_classes.BinOp_Node(
+                                lval = actual_index.range[1],
+                                op = "-",
+                                rval = actual_index.range[0],
+                                line_number = node.line_number,
+                                parent = node.parent
+                            ),
+                            op = "+",
+                            rval = ast_internal_classes.Int_Literal_Node(value="1"),
+                            line_number = node.line_number,
+                            parent = node.parent
+                        )
+                    )
+                else:
+                    raise NotImplementedError()
+
             else:
                 # FIXME: pardecl
                 """
                     For scalar-based access, the size of new dimension is just 1.
                 """
                 new_sizes.append(ast_internal_classes.Int_Literal_Node(value="1"))
+                new_offsets.append(1)
 
             indices.append(self.visit(actual_index))
 
@@ -4158,7 +4195,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
             name = f"tmp_noncontig_{self.counter}"
             self.nodes_to_process.append(
-                self.NonContigArray(self.counter, name, node.name.name, node.type, new_sizes, indices, noncont_sizes)
+                self.NonContigArray(self.counter, name, node.name.name, node.type, new_sizes, new_offsets, indices, noncont_sizes)
             )
             self.counter += 1
 
