@@ -2725,8 +2725,17 @@ class ProgramVisitor(ExtNodeVisitor):
 
                     fake_subset = dace.subsets.Range(missing_dimensions + op_dimensions)
 
-                    # use this fake subset to calculate the offset
-                    fake_subset.offset(squeezed, True)
+                    # Use this fake subset to calculate the offset. Constant indices are ignored, as they do not depend
+                    # on the broadcasting operation.
+                    offset_indices_to_ignore = set()
+                    for i, idx in enumerate(inp_idx):
+                        if not symbolic.issymbolic(pystr_to_symbolic(idx)):
+                            offset_indices_to_ignore.add(i)
+                    fake_subset_offs_indices = []
+                    for i in range(len(fake_subset)):
+                        if i not in offset_indices_to_ignore:
+                            fake_subset_offs_indices.append(i)
+                    fake_subset.offset(squeezed, True, indices=fake_subset_offs_indices)
 
                     # we access the inp subset using the computed offset
                     # since the inp_subset may be missing leading dimensions, we reverse-zip-reverse
@@ -3394,9 +3403,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     visited_target = True
                 else:
                     true_name = defined_vars[name]
-                    while len(tokens) > 1:
+                    while len(tokens):
                         true_name = true_name + '.' + tokens.pop(0)
-                        if true_name not in self.sdfg.arrays:
+                        if true_name not in defined_arrays:
                             break
                     if tokens:  # The non-struct remainder will be considered an attribute
                         attribute_name = '.'.join(tokens)

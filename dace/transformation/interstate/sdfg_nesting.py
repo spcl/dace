@@ -427,11 +427,26 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         orig_data: Dict[Union[nodes.AccessNode, MultiConnectorEdge], str] = {}
         for node in nstate.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data in repldict:
-                orig_data[node] = node.data
-                node.data = repldict[node.data]
+            if isinstance(node, nodes.AccessNode):
+                if '.' in node.data:
+                    parts = node.data.split('.')
+                    root_container = parts[0]
+                    if root_container in repldict:
+                        orig_data[node] = node.data
+                        full_data = [repldict[root_container]] + parts[1:]
+                        node.data = '.'.join(full_data)
+                elif node.data in repldict:
+                    orig_data[node] = node.data
+                    node.data = repldict[node.data]
         for edge in nstate.edges():
-            if edge.data.data in repldict:
+            if edge.data.data is not None and '.' in edge.data.data:
+                parts = edge.data.data.split('.')
+                root_container = parts[0]
+                if root_container in repldict:
+                    orig_data[edge] = edge.data.data
+                    full_data = [repldict[root_container]] + parts[1:]
+                    edge.data.data = '.'.join(full_data)
+            elif edge.data.data in repldict:
                 orig_data[edge] = edge.data.data
                 edge.data.data = repldict[edge.data.data]
 
