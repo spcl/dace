@@ -2,6 +2,7 @@
 
 import copy
 import re
+from collections import namedtuple
 from typing import Dict, List, Optional, Tuple, Set, Union, Type
 
 import sympy as sp
@@ -3982,4 +3983,176 @@ class ElementalIntrinsicExpander(ArrayLoopExpander):
 
     def __init__(self, ast):
         super().__init__(ast)
+
+
+class ParDeclNonContigArrayExpander(NodeTransformer):
+
+    NonContigArray = namedtuple("NonContigArray", "counter name source_name type sizes noncontig_dims")
+
+    def __init__(self, ast):
+        self.ast = ast
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations(ast)
+        self.scope_vars.visit(ast)
+
+        self.nodes_to_process = []
+        self.counter = 0
+
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+        return node
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        newbody = []
+
+        for child in node.execution:
+
+            self.nodes_to_process = []
+            n = self.visit(child)
+
+            for tmp_array in self.nodes_to_process:
+
+                node.parent.specification_part.specifications.append(
+                    ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                        ast_internal_classes.Var_Decl_Node(
+                            name=tmp_array.name,
+                            type=tmp_array.type,
+                            sizes=tmp_array.sizes,
+                            offsets=[1] * len(tmp_array.sizes),
+                            init=None,
+                        )
+                    ])
+                )
+
+                body = []
+
+                for idx, var in tmp_array.noncontig_dims:
+
+                    initrange = ast_internal_classes.Int_Literal_Node(value="1")
+                    finalrange = tmp_array.sizes[idx]
+
+                    iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
+
+                    node.parent.specification_part.specifications.append(
+                        ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                            ast_internal_classes.Var_Decl_Node(
+                                name=iter_var.name,
+                                type='INTEGER',
+                                sizes=[],
+                                offsets=[1],
+                                init=None
+                            )
+                        ])
+                    )
+
+                    dest = ast_internal_classes.Array_Subscript_Node(
+                        name = ast_internal_classes.Name_Node(name=tmp_array.name),
+                        type = tmp_array.type,
+                        indices = [iter_var],
+                        line_numbe = child.line_number
+                    )
+
+                    source_idx = ast_internal_classes.Array_Subscript_Node(
+                        name = ast_internal_classes.Name_Node(name=var.name),
+                        type = tmp_array.type,
+                        indices = [iter_var],
+                        line_numbe = child.line_number
+                    )
+                    source = ast_internal_classes.Array_Subscript_Node(
+                        name = ast_internal_classes.Name_Node(name=tmp_array.source_name),
+                        type = tmp_array.type,
+                        indices = [source_idx],
+                        line_numbe = child.line_number
+                    )
+
+                    body.append(
+                        ast_internal_classes.BinOp_Node(
+                            lval=dest,
+                            op="=",
+                            rval=source,
+                            line_number=child.line_number,
+                            parent=child.parent
+                        )
+                    )
+
+                    init = ast_internal_classes.BinOp_Node(
+                        lval=iter_var,
+                        op="=",
+                        rval=initrange,
+                        line_number=child.line_number,parent=child.parent)
+                    cond = ast_internal_classes.BinOp_Node(
+                        lval=iter_var,
+                        op="<=",
+                        rval=finalrange,
+                        line_number=child.line_number,parent=child.parent)
+                    iter = ast_internal_classes.BinOp_Node(
+                        lval=iter_var,
+                        op="=",
+                        rval=ast_internal_classes.BinOp_Node(
+                            lval=iter_var,
+                            op="+",
+                            rval=ast_internal_classes.Int_Literal_Node(value="1"),parent=child.parent),
+                        line_number=child.line_number,parent=child.parent)
+                    current_for = ast_internal_classes.Map_Stmt_Node(
+                        init=init,
+                        cond=cond,
+                        iter=iter,
+                        body=ast_internal_classes.Execution_Part_Node(execution=body),
+                        line_number=child.line_number,
+                        parent=child.parent
+                    )
+                    newbody.append(current_for)
+
+            newbody.append(n)
+
+        return ast_internal_classes.Execution_Part_Node(execution=newbody)
+
+    def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
+
+        indices = []
+        needs_process = False
+        new_sizes = []
+        noncont_sizes = []
+
+        for idx, actual_index in enumerate(node.indices):
+
+            if isinstance(actual_index, ast_internal_classes.Name_Node):
+
+                var = self.scope_vars.get_var(node.parent, actual_index.name)
+                print(actual_index.name, var.sizes)
+
+                if len(var.sizes) == 1:
+
+                    needs_process = True
+                    new_sizes.append(var.sizes[0])
+                    noncont_sizes.append((idx, actual_index))
+
+                elif len(var.sizes) == 0:
+                    new_sizes.append(actual_index)
+                else:
+                    raise NotImplementedError("Non-contiguous array slices are supported only for 1D indices!")
+
+            else:
+                new_sizes.append(actual_index)
+
+            indices.append(self.visit(actual_index))
+
+        if needs_process:
+
+            if len(node.indices) > 2:
+                raise NotImplementedError("Non-contiguous array slices are supported only for 1D/2D arrays!")
+
+            name = f"tmp_noncontig_{self.counter}"
+            self.nodes_to_process.append(
+                self.NonContigArray(self.counter, name, node.name.name, node.type, new_sizes, noncont_sizes)
+            )
+            self.counter += 1
+
+            return ast_internal_classes.Name_Node(
+                name = name,
+                type = node.type,
+                line_number = node.line_number
+            )
+        else:
+            node.indices = indices
+            return node
 
