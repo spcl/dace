@@ -20,7 +20,7 @@ from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
 @registry.extensible_enum
 class DefinedType(aenum.AutoNumberEnum):
     """ Data types for `DefinedMemlets`.
-    
+
         :see: DefinedMemlets
     """
     Pointer = ()  # Pointer
@@ -159,6 +159,8 @@ class TargetDispatcher(object):
     _state_dispatchers: List[Tuple[Callable, target.TargetCodeGenerator]]
     _generic_state_dispatcher: Optional[target.TargetCodeGenerator]
 
+    _generic_reallocate_dispatchers: Dict[dtypes.StorageType, target.TargetCodeGenerator]
+
     _declared_arrays: DefinedMemlets
     _defined_vars: DefinedMemlets
 
@@ -181,6 +183,7 @@ class TargetDispatcher(object):
         self._node_dispatchers = []
         self._generic_node_dispatcher = None
         self._state_dispatchers = []
+        self._generic_reallocate_dispatchers = {}
         self._generic_state_dispatcher = None
 
         self._declared_arrays = DefinedMemlets()
@@ -189,7 +192,7 @@ class TargetDispatcher(object):
     @property
     def declared_arrays(self) -> DefinedMemlets:
         """ Returns a list of declared variables.
-        
+
             This is used for variables that must have their declaration and
             allocation separate. It includes all such variables that have been
             declared by the dispatcher.
@@ -199,7 +202,7 @@ class TargetDispatcher(object):
     @property
     def defined_vars(self) -> DefinedMemlets:
         """ Returns a list of defined variables.
-        
+
             This includes all variables defined by the dispatcher.
         """
         return self._defined_vars
@@ -353,6 +356,15 @@ class TargetDispatcher(object):
             self._copy_dispatchers[dispatcher] = []
 
         self._copy_dispatchers[dispatcher].append((predicate, func))
+
+    def register_reallocate_dispatcher(self, node_storage: dtypes.StorageType,
+                                      func: target.TargetCodeGenerator,
+                                      predicate: Optional[Callable] = None) -> None:
+
+        if not isinstance(node_storage, dtypes.StorageType): raise TypeError(node_storage, dtypes.StorageType, isinstance(node_storage, dtypes.StorageType))
+        dispatcher = node_storage
+        self._generic_reallocate_dispatchers[dispatcher] = func
+        return
 
     def get_state_dispatcher(self, sdfg: SDFG, state: SDFGState) -> target.TargetCodeGenerator:
         # Check if the state satisfies any predicates that delegate to a
@@ -594,6 +606,14 @@ class TargetDispatcher(object):
 
         return target
 
+    def get_reallocate_dispatcher(self, node: Union[nodes.CodeNode, nodes.AccessNode],
+                            edge: MultiConnectorEdge[Memlet],
+                            sdfg: SDFG, state: SDFGState) -> Optional[target.TargetCodeGenerator]:
+        node_storage = sdfg.arrays[node.data].storage
+        target = self._generic_reallocate_dispatchers[node_storage]
+        return target
+
+
     def dispatch_copy(self, src_node: nodes.Node, dst_node: nodes.Node, edge: MultiConnectorEdge[Memlet], sdfg: SDFG,
                       cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, function_stream: CodeIOStream,
                       output_stream: CodeIOStream) -> None:
@@ -608,6 +628,17 @@ class TargetDispatcher(object):
         # Dispatch copy
         self._used_targets.add(target)
         target.copy_memory(sdfg, cfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)
+
+    def dispatch_reallocate(self, src_node: nodes.Node, node: nodes.Node, edge: MultiConnectorEdge[Memlet], sdfg: SDFG,
+                      cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, function_stream: CodeIOStream,
+                      output_stream: CodeIOStream) -> None:
+        state = cfg.state(state_id)
+        target = self.get_reallocate_dispatcher(node, edge, sdfg, state)
+        assert target is not None
+
+        self._used_targets.add(target)
+        target.reallocate(sdfg, cfg, dfg, state_id, src_node, node, edge, function_stream, output_stream)
+
 
     # Dispatches definition code for a memlet that is outgoing from a tasklet
     def dispatch_output_definition(self, src_node: nodes.Node, dst_node: nodes.Node, edge, sdfg: SDFG,
