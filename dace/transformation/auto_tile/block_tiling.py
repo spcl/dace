@@ -517,10 +517,16 @@ class BlockTiling(transformation.SingleStateTransformation):
                 d[param] = dtypes.typeclass("intc")
             m.param_types = d
         """
+
+        # We need to move any transient allocation before the outer work map entry
+        # We need to move any assignment to transients after the outer work map exit (with a sequential assignment map)
+
         # Any access node created after the outer work map should be moved before the outer work map
+        # 1.
         nodes_to_check = state.all_nodes_between(outer_work_map_entry, thread_coarsened_map_entry)
 
-        # A tmp data is created if we have an edge going to it no connectors
+        # A tmp data is created if we have an edge going to it has no connectors
+        # Start 1a.
         for node in nodes_to_check:
             if (isinstance(node, dace.nodes.AccessNode) and
                 len(state.in_edges(node)) == 1 and
@@ -545,9 +551,11 @@ class BlockTiling(transformation.SingleStateTransformation):
                 outer_work_map_entry.add_out_connector(oe.dst_conn.replace("IN_", "OUT_"))
                 state.add_edge(outer_work_map_entry, oe.dst_conn.replace("IN_", "OUT_"),
                             thread_coarsened_map_entry, oe.dst_conn, copy.deepcopy(oe.data))
+        # End 1a.
 
         # Move any assignment to any tmp-variable after the outer work map
         # Check all outoing edges from the inner work map, if tmp is accessed, move remaining chain after the otuer work map
+        # Start 2a.
         work_map_exit = state.exit_node(work_map_entry)
         thread_coarsened_map_exit = state.exit_node(thread_coarsened_map_entry)
         outer_work_map_exit = state.exit_node(outer_work_map_entry)
@@ -569,22 +577,25 @@ class BlockTiling(transformation.SingleStateTransformation):
                               unroll=True)
                 __i += 1
 
-                # Find the data points accessed
+                # Find the data accessed in this chain
                 _nodes = state.all_nodes_between(v, thread_coarsened_map_exit)
-
-                # Edges from the thread-coarsened map, these variables are not used
-                # in the inner work map, we need to re-route them
+                # Edges that directly come from the thread-coarsened map are not used
+                # in the inner work map, we need to re-route them to by-pass the new inner-work map
+                # Start 2b.
+                # Filter edges from thread-coarsened-map
                 edges_from_thread_coarsened = set()
                 for node in _nodes:
                     for ie in state.in_edges(node):
                         if ie.src == thread_coarsened_map_entry:
                             edges_from_thread_coarsened.add(ie)
 
+                # Filter the data that has been accessed.
+                # These edges need to be removed, but they now go directly to the assignment map
+                # entry and exit
                 needed_accesses = set()
                 for e in edges_from_thread_coarsened:
                     if e.data is not None:
                         if e.data.data is not None:
-                            #an = state.add_access(e.data.data)
                             needed_accesses.add(e.data.data)
                             edges_to_rm.add(e)
                             edges_to_add.add((amap_entry,
@@ -593,32 +604,35 @@ class BlockTiling(transformation.SingleStateTransformation):
                                             e.dst_conn,
                                             copy.deepcopy(e.data)))
                             amap_entry.add_out_connector(e.src_conn)
+                            edges_to_add.add((amap_entry, e.src_conn, e.dst, e.dst_conn,
+                                            copy.deepcopy(e.data)))
 
                 # For all needed accesses add an edge in form of:
-                # outerwork map -> access node -> assignment map
+                # thread block map entry -> assignment map
                 for access_name in needed_accesses:
-                    from_outer_work_to_tblock_exit = [
+                    edges_from_outer_work_map_exit_to_tblock_map_exit = [
                         e for e in state.out_edges(outer_work_map_exit)
                         if e.dst == om
                     ]
                     assert om == thread_block_map_exit
-                    same_as_an = [e for e in from_outer_work_to_tblock_exit
+                    edges_to_accessnode = [e for e in edges_from_outer_work_map_exit_to_tblock_map_exit
                                   if e.data is not None and e.data.data == access_name]
-                    assert len(same_as_an) == 1
-                    data_copy_edge = same_as_an[0]
+                    assert len(edges_to_accessnode) == 1
+                    data_copy_edge = edges_to_accessnode[0]
                     edges_to_rm.add(data_copy_edge)
-                    # Thread coarsened to thread coarsened to bypass
-                    #thread_block_map_entry = state.entry_node(outer_work_map_entry)
+                    # From thread block map to assignment map directly
                     edges_to_add.add((thread_block_map_entry,
                                       data_copy_edge.src_conn,
                                       amap_entry,
                                       data_copy_edge.dst_conn,
                                       copy.deepcopy(data_copy_edge.data)))
-
-                    amap_entry.add_in_connector(data_copy_edge.dst_conn)
+                    # From assignment map exit to outer maps, propagate data
                     edges_to_add.add((amap_exit, data_copy_edge.src_conn,
                                       om, data_copy_edge.dst_conn,
                                       copy.deepcopy(data_copy_edge.data)))
+
+                    # Update connectors
+                    amap_entry.add_in_connector(data_copy_edge.dst_conn)
                     amap_exit.add_out_connector(data_copy_edge.src_conn)
 
                     # Rm any in connector referencing the data, or edges from there
@@ -646,13 +660,11 @@ class BlockTiling(transformation.SingleStateTransformation):
 
                     thread_block_map_entry.add_out_connector(data_copy_edge.src_conn)
                     thread_block_map_exit.add_in_connector(data_copy_edge.dst_conn)
+                # End 2b.
 
-                # Nodes starts within the map
-                for e in edges_from_thread_coarsened:
-                    edges_to_add.add((amap_entry, e.src_conn, e.dst, e.dst_conn,
-                                      copy.deepcopy(e.data)))
-
-                _nodes_to_thread_coarsened = [n for n in _nodes if  thread_coarsened_map_exit in
+                # The threads that originally connect to the thread coarsened map
+                # should connected to the assignment map now
+                _nodes_to_thread_coarsened = [n for n in _nodes if thread_coarsened_map_exit in
                                               [e.dst for e in state.out_edges(n)] ]
                 for node in _nodes_to_thread_coarsened:
                     assert state.out_degree(node) == 1
@@ -660,15 +672,16 @@ class BlockTiling(transformation.SingleStateTransformation):
                     edges_to_rm.add(oe2)
                     edges_to_add.add((oe2.src, oe2.src_conn, amap_exit, oe2.dst_conn, copy.deepcopy(oe2.data)))
                     amap_exit.add_in_connector(oe2.dst_conn)
-                    #edges_to_add.add((amap_exit, oe2.dst_conn.replace("IN_", "OUT_"), om, oe2.dst_conn, copy.deepcopy(oe2.data)))
-                #for e in edges_from_thread_coarsened:
-                #    edges_to_add.add((amap_exit, e.src_conn, om, e.src_conn.replace("OUT_", "IN_"), copy.deepcopy(e.data)))
-                #    amap_exit.add_out_connector(e.src_conn)
 
-                # Special case: tmp access, for this rm previous edge
-                edges_to_rm.add(oe)
+                # If we are dealing with the access node used
+                # Then we need to remove to edge going to int, going out from it
+                # and add edges that go:
+                # outer work map exit -> access node -> assignment map entry
+                # and then assignment map exit -> outer map (thread block)
                 assert state.out_degree(v) == 1
+                edges_to_rm.add(oe)
                 edges_to_rm.add(state.out_edges(v)[0])
+                oe3 = state.out_edges(v)[0]
 
                 conn_name = None
                 for ie in state.in_edges(work_map_exit):
@@ -678,34 +691,38 @@ class BlockTiling(transformation.SingleStateTransformation):
 
                 out_conn = "OUT_" + conn_name
                 in_conn = "IN_" + conn_name
+
+                # Outer work map exit -> access node
                 edges_to_add.add((outer_work_map_exit, out_conn,
                                   v, None,
                                   dace.memlet.Memlet(v.data)))
+                # Access node -> assignment map entry
                 edges_to_add.add((v, None,
                                   amap_entry, in_conn,
                                   dace.memlet.Memlet(v.data)))
-                oe3 = state.out_edges(v)[0]
+                # Assignment map entry -> whatever came after the access node originally
                 edges_to_add.add((amap_entry, out_conn,
                                   oe3.dst, oe3.dst_conn, copy.deepcopy(oe3.data)))
-                amap_entry.add_in_connector(in_conn)
-                amap_entry.add_out_connector(out_conn)
 
-                # From inner work map exit to outer work map exit
+                # The missing edges from inner work map -> thread coarsened map and
+                # thread coarsened map -> outer work map need to be added
                 edges_to_add.add((work_map_exit, out_conn,
                                   thread_coarsened_map_exit, in_conn,
                                   dace.memlet.Memlet(v.data)))
-                thread_coarsened_map_exit.add_in_connector(in_conn)
                 edges_to_add.add((thread_coarsened_map_exit, out_conn,
                                   outer_work_map_exit, in_conn,
                                   dace.memlet.Memlet(v.data)))
+
+                # Add missing connectors
+                thread_coarsened_map_exit.add_in_connector(in_conn)
                 thread_coarsened_map_exit.add_out_connector(out_conn)
                 outer_work_map_exit.add_in_connector(in_conn)
-                edges_to_add.add((outer_work_map_exit, out_conn,
-                                  v, None,
-                                  dace.memlet.Memlet(v.data)))
                 outer_work_map_exit.add_out_connector(out_conn)
+                amap_entry.add_in_connector(in_conn)
+                amap_entry.add_out_connector(out_conn)
+        # End 2a.
 
-
+        # Now update the edges
         for e in edges_to_rm:
             state.remove_edge(e)
         for e in edges_to_add:
