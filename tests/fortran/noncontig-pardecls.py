@@ -10,7 +10,7 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
     - 2D copy from array, single dimension
     - 2D copy from array, both dimensions
     - 2D copy with pardecl
-    - FIXME 2D copy from array, data refs in array and indices
+    - 2D copy from array, data refs in array and indices
     - FIXME 2D copy, transpose (ECRAD example) 
 """
 
@@ -57,7 +57,7 @@ end subroutine fun
 
 def test_fortran_frontend_noncontiguous_slices_2d():
     """
-    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
+    Tests that the Fortran frontend can also work with slicing across one dimension.
     """
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main(d, d2)
@@ -98,7 +98,7 @@ end subroutine fun
 
 def test_fortran_frontend_noncontiguous_slices_2d_double_copy():
     """
-    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
+    Tests that the Fortran frontend can parse non-contiguous accesses in multiple dimensions.
     """
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main(d, d2)
@@ -146,7 +146,7 @@ end subroutine fun
 
 def test_fortran_frontend_noncontiguous_slices_2d_pardecl():
     """
-    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
+    Tests that the Fortran frontend can parse array non-contiguous accesses together with a range.
     """
     sources, main = SourceCodeBuilder().add_file("""
 subroutine main(d, d2)
@@ -186,8 +186,126 @@ end subroutine fun
             d[i, j] = i + 20 * j
 
     sdfg(d=d, d2=d2)
-    print(d)
-    print(d2)
+
+    assert np.all(d[1:4][:, [0, 2, 4]] * 2 == d2)
+
+def test_fortran_frontend_noncontiguous_slices_2d_pardecl2():
+    """
+    As above, but pass the whole subset across one dimension.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(d, d2)
+  double precision, dimension(4, 5) :: d
+  double precision, dimension(3, 3) :: d2
+  integer, dimension(3) :: cols
+
+  cols(1) = 1
+  cols(2) = 3
+  cols(3) = 5
+
+  call fun( d(:, cols), d2)
+end subroutine main
+
+subroutine fun(d, d2)
+  double precision, dimension(4, 3) :: d
+  double precision, dimension(3, 3) :: d2
+  integer :: i, j
+
+  do j = 1, 3
+    do i = 1, 3
+        d2(j, i) = d(j + 1, i)*2.0
+    end do
+  end do
+end subroutine fun
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
+    sdfg.save('test.sdfg')
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size_x, size_y = 4, 5
+    d = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+    d2 = np.full([3, 3], 42, order="F", dtype=np.float64)
+    for i in range(0, size_x):
+        for j in range(0, size_y):
+            d[i, j] = i + 20 * j
+
+    sdfg(d=d, d2=d2)
+
+    assert np.all(d[1:4][:, [0, 2, 4]] * 2 == d2)
+
+def test_fortran_frontend_noncontiguous_slices_2d_data_refs():
+    """
+    As above, but pass the whole subset across one dimension.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+
+module lib
+    implicit none
+    type test_type
+        double precision, dimension(4,5) :: input_data
+        integer, dimension(3) :: cols
+    end type
+
+    type test_type2
+        integer :: startcol 
+        integer :: endcol
+    end type
+end module lib
+
+subroutine main(d, d2)
+  use lib, only: test_type, test_type2
+  implicit none
+
+  double precision, dimension(4, 5) :: d
+  double precision, dimension(3, 3) :: d2
+
+  type(test_type) :: data
+  type(test_type2) :: data2
+  integer, dimension(3) :: cols
+
+  cols(1) = 1
+  cols(2) = 3
+  cols(3) = 5
+
+  data%cols(1) = 1
+  data%cols(2) = 3
+  data%cols(3) = 5
+
+  data%input_data = d
+
+  data2%startcol = 2
+  data2%endcol = 4
+
+  !call fun( data%input_data( data2%startcol : data2%endcol , data%cols), d2)
+  call fun( data%input_data( 2 : 4, cols), d2)
+end subroutine main
+
+subroutine fun(d, d2)
+  double precision, dimension(3, 3) :: d
+  double precision, dimension(3, 3) :: d2
+  integer :: i, j
+
+  do j = 1, 3
+    do i = 1, 3
+        d2(j, i) = d(j, i)*2.0
+    end do
+  end do
+end subroutine fun
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
+    sdfg.save('test.sdfg')
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size_x, size_y = 4, 5
+    d = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+    d2 = np.full([3, 3], 42, order="F", dtype=np.float64)
+    for i in range(0, size_x):
+        for j in range(0, size_y):
+            d[i, j] = i + 20 * j
+
+    sdfg(d=d, d2=d2)
 
     assert np.all(d[1:4][:, [0, 2, 4]] * 2 == d2)
 
@@ -195,4 +313,6 @@ if __name__ == "__main__":
     #test_fortran_frontend_noncontiguous_slices()
     #test_fortran_frontend_noncontiguous_slices_2d()
     #test_fortran_frontend_noncontiguous_slices_2d_double_copy()
-    test_fortran_frontend_noncontiguous_slices_2d_pardecl()
+    #test_fortran_frontend_noncontiguous_slices_2d_pardecl()
+    #test_fortran_frontend_noncontiguous_slices_2d_pardecl2()
+    test_fortran_frontend_noncontiguous_slices_2d_data_refs()

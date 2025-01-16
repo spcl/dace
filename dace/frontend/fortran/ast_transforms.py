@@ -3987,7 +3987,7 @@ class ElementalIntrinsicExpander(ArrayLoopExpander):
 
 class ParDeclNonContigArrayExpander(NodeTransformer):
 
-    NonContigArray = namedtuple("NonContigArray", "counter name source_name type sizes offsets indices noncontig_dims")
+    NonContigArray = namedtuple("NonContigArray", "counter name source type sizes offsets indices noncontig_dims")
 
     def __init__(self, ast):
         self.ast = ast
@@ -3995,11 +3995,12 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
         self.scope_vars = ScopeVarsDeclarations(ast)
         self.scope_vars.visit(ast)
 
+        self.structures = ast.structures
+
         self.nodes_to_process = []
         self.counter = 0
 
-    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
-        return node
+        self.data_ref_stack = []
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
@@ -4047,12 +4048,8 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                         line_numbe = child.line_number
                     )
 
-                source = ast_internal_classes.Array_Subscript_Node(
-                    name = ast_internal_classes.Name_Node(name=tmp_array.source_name),
-                    type = tmp_array.type,
-                    indices = source_indices,
-                    line_numbe = child.line_number
-                )
+                source, main_source = tmp_array.source
+                main_source.indices = source_indices
 
                 body = ast_internal_classes.BinOp_Node(
                     lval=dest,
@@ -4115,10 +4112,48 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
+    #def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+
+    def _handle_name_node(self, idx, actual_index, var, new_sizes, noncont_sizes, new_offsets):
+
+        if len(var.sizes) == 1:
+
+            needs_process = True
+            new_sizes.append(var.sizes[0])
+            noncont_sizes.append((idx, actual_index))
+
+        elif len(var.sizes) == 0:
+            """
+                For scalar-based access, the size of new dimension is just 1.
+            """
+            new_sizes.append(ast_internal_classes.Int_Literal_Node(value="1"))
+        else:
+            raise NotImplementedError("Non-contiguous array slices are supported only for 1D indices!")
+
+        new_offsets.append(1)
+
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+
+        struct, variable, last_var = self.structures.find_definition(
+            self.scope_vars, node
+        )
+
+        if not isinstance(last_var.part_ref, ast_internal_classes.Array_Subscript_Node):
+            return node
+
+        self.data_ref_stack.append(copy.deepcopy(node))
+        node.part_ref = self.visit(node.part_ref)
+        self.data_ref_stack.pop()
+
+        if self.needs_copy:
+            return node.part_ref
+        else:
+            return node
+
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
         indices = []
-        needs_process = False
+        self.needs_copy = False
         new_sizes = []
         new_offsets = []
         cont_sizes = []
@@ -4129,11 +4164,10 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
             if isinstance(actual_index, ast_internal_classes.Name_Node):
 
                 var = self.scope_vars.get_var(node.parent, actual_index.name)
-                print(actual_index.name, var.sizes)
 
                 if len(var.sizes) == 1:
 
-                    needs_process = True
+                    self.needs_copy = True
                     new_sizes.append(var.sizes[0])
                     noncont_sizes.append((idx, actual_index))
 
@@ -4188,14 +4222,26 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
             indices.append(self.visit(actual_index))
 
-        if needs_process:
+        if self.needs_copy:
 
             if len(node.indices) > 2:
                 raise NotImplementedError("Non-contiguous array slices are supported only for 1D/2D arrays!")
 
+            source = ast_internal_classes.Array_Subscript_Node(
+                name = ast_internal_classes.Name_Node(name=node.name.name),
+                type = node.type,
+                # will be fixed in further processing
+                indices = None,
+                line_number = node.line_number
+            )
+            main_source = source
+            for dataref in self.data_ref_stack[::-1]:
+                dataref.part_ref = source
+                source = dataref
+
             name = f"tmp_noncontig_{self.counter}"
             self.nodes_to_process.append(
-                self.NonContigArray(self.counter, name, node.name.name, node.type, new_sizes, new_offsets, indices, noncont_sizes)
+                self.NonContigArray(self.counter, name, (source, main_source), node.type, new_sizes, new_offsets, indices, noncont_sizes)
             )
             self.counter += 1
 
