@@ -1,0 +1,103 @@
+
+import numpy as np
+
+from dace.frontend.fortran.fortran_parser import create_internal_ast, ParseConfig, create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
+
+"""
+    Tested scenarios:
+    - 1D copy from array
+    - 2D copy from array, single dimension
+    - FIXME 2D copy from array, both dimensions
+    - FIXME 2D copy with pardecl
+    - FIXME 2D copy, transpose (ECRAD example) 
+    - FIXME 2D copy from array, data refs
+"""
+
+def test_fortran_frontend_noncontiguous_slices():
+    """
+    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(d, d2)
+  double precision, dimension(5) :: d
+  double precision, dimension(3) :: d2
+  integer, dimension(3) :: cols
+
+  cols(1) = 1
+  cols(2) = 3
+  cols(3) = 5
+
+  call fun( d(cols), d2)
+end subroutine main
+
+subroutine fun(d, d2)
+  double precision, dimension(3) :: d
+  double precision, dimension(3) :: d2
+  integer :: i
+  do i = 1, 3
+    d2(i) = d(i)*2.0
+  end do
+end subroutine fun
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 5
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    d2 = np.full([3], 42, order="F", dtype=np.float64)
+    for i in range(0, size):
+        d[i] = i + 1
+
+    sdfg(d=d, d2=d2)
+
+    assert np.all(d == [1, 2, 3, 4, 5])
+    assert np.all(d2 == [2, 6, 10])
+
+def test_fortran_frontend_noncontiguous_slices_2d():
+    """
+    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(d, d2)
+  double precision, dimension(4, 5) :: d
+  double precision, dimension(3) :: d2
+  integer, dimension(3) :: cols
+
+  cols(1) = 1
+  cols(2) = 3
+  cols(3) = 5
+
+  call fun( d(2, cols), d2)
+end subroutine main
+
+subroutine fun(d, d2)
+  double precision, dimension(5) :: d
+  double precision, dimension(3) :: d2
+  integer :: i
+  do i = 1, 3
+    d2(i) = d(i)*2.0
+  end do
+end subroutine fun
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
+    sdfg.save('test.sdfg')
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size_x, size_y = 4, 5
+    d = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+    d2 = np.full([3], 42, order="F", dtype=np.float64)
+    for i in range(0, size_x):
+        for j in range(0, size_y):
+            d[i, j] = i + 20 * j
+
+    sdfg(d=d, d2=d2)
+
+    assert np.all(d[1, [0, 2, 4]] * 2 == d2)
+
+
+if __name__ == "__main__":
+    test_fortran_frontend_noncontiguous_slices()
+    test_fortran_frontend_noncontiguous_slices_2d()

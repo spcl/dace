@@ -3987,7 +3987,7 @@ class ElementalIntrinsicExpander(ArrayLoopExpander):
 
 class ParDeclNonContigArrayExpander(NodeTransformer):
 
-    NonContigArray = namedtuple("NonContigArray", "counter name source_name type sizes noncontig_dims")
+    NonContigArray = namedtuple("NonContigArray", "counter name source_name type sizes indices noncontig_dims")
 
     def __init__(self, ast):
         self.ast = ast
@@ -4023,7 +4023,43 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     ])
                 )
 
-                body = []
+                dest_indices = copy.deepcopy(tmp_array.indices)
+                for idx, var in tmp_array.noncontig_dims:
+                    iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
+                    dest_indices[idx] = iter_var
+
+                dest = ast_internal_classes.Array_Subscript_Node(
+                    name = ast_internal_classes.Name_Node(name=tmp_array.name),
+                    type = tmp_array.type,
+                    indices = dest_indices,
+                    line_numbe = child.line_number
+                )
+
+                source_indices = copy.deepcopy(tmp_array.indices)
+                for idx, var in tmp_array.noncontig_dims:
+
+                    iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
+                    source_indices[idx] = ast_internal_classes.Array_Subscript_Node(
+                        name = ast_internal_classes.Name_Node(name=var.name),
+                        type = var.type,
+                        indices = [iter_var],
+                        line_numbe = child.line_number
+                    )
+
+                source = ast_internal_classes.Array_Subscript_Node(
+                    name = ast_internal_classes.Name_Node(name=tmp_array.source_name),
+                    type = tmp_array.type,
+                    indices = source_indices,
+                    line_numbe = child.line_number
+                )
+
+                body = ast_internal_classes.BinOp_Node(
+                    lval=dest,
+                    op="=",
+                    rval=source,
+                    line_number=child.line_number,
+                    parent=child.parent
+                )
 
                 for idx, var in tmp_array.noncontig_dims:
 
@@ -4042,36 +4078,6 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                                 init=None
                             )
                         ])
-                    )
-
-                    dest = ast_internal_classes.Array_Subscript_Node(
-                        name = ast_internal_classes.Name_Node(name=tmp_array.name),
-                        type = tmp_array.type,
-                        indices = [iter_var],
-                        line_numbe = child.line_number
-                    )
-
-                    source_idx = ast_internal_classes.Array_Subscript_Node(
-                        name = ast_internal_classes.Name_Node(name=var.name),
-                        type = tmp_array.type,
-                        indices = [iter_var],
-                        line_numbe = child.line_number
-                    )
-                    source = ast_internal_classes.Array_Subscript_Node(
-                        name = ast_internal_classes.Name_Node(name=tmp_array.source_name),
-                        type = tmp_array.type,
-                        indices = [source_idx],
-                        line_numbe = child.line_number
-                    )
-
-                    body.append(
-                        ast_internal_classes.BinOp_Node(
-                            lval=dest,
-                            op="=",
-                            rval=source,
-                            line_number=child.line_number,
-                            parent=child.parent
-                        )
                     )
 
                     init = ast_internal_classes.BinOp_Node(
@@ -4096,11 +4102,13 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                         init=init,
                         cond=cond,
                         iter=iter,
-                        body=ast_internal_classes.Execution_Part_Node(execution=body),
+                        body=ast_internal_classes.Execution_Part_Node(execution=[body]),
                         line_number=child.line_number,
                         parent=child.parent
                     )
-                    newbody.append(current_for)
+                    body = current_for
+
+                newbody.append(body)
 
             newbody.append(n)
 
@@ -4127,12 +4135,19 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     noncont_sizes.append((idx, actual_index))
 
                 elif len(var.sizes) == 0:
-                    new_sizes.append(actual_index)
+                    """
+                        For scalar-based access, the size of new dimension is just 1.
+                    """
+                    new_sizes.append(ast_internal_classes.Int_Literal_Node(value="1"))
                 else:
                     raise NotImplementedError("Non-contiguous array slices are supported only for 1D indices!")
 
             else:
-                new_sizes.append(actual_index)
+                # FIXME: pardecl
+                """
+                    For scalar-based access, the size of new dimension is just 1.
+                """
+                new_sizes.append(ast_internal_classes.Int_Literal_Node(value="1"))
 
             indices.append(self.visit(actual_index))
 
@@ -4143,7 +4158,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
             name = f"tmp_noncontig_{self.counter}"
             self.nodes_to_process.append(
-                self.NonContigArray(self.counter, name, node.name.name, node.type, new_sizes, noncont_sizes)
+                self.NonContigArray(self.counter, name, node.name.name, node.type, new_sizes, indices, noncont_sizes)
             )
             self.counter += 1
 
