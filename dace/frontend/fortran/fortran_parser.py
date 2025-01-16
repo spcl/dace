@@ -1807,7 +1807,7 @@ class AST_translator:
 
                                 all_indices = [None] * (len(array.shape) - len(index_list)) + index_list
                                 if self.normalize_offsets:
-                                    subset = subsets.Range([(i[0] - 1, i[1] - 1, 1) if i is not None else (0, s - 1, 1)
+                                    subset = subsets.Range([(i[0] , i[1] , 1) if i is not None else (0, s - 1, 1)
                                                             for i, s in zip(all_indices, array.shape)])
                                 else:
                                     subset = subsets.Range([(i[0], i[1], 1) if i is not None else (1, s, 1)
@@ -2936,7 +2936,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
-    program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
+    #program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
     program = ast_transforms.allocatableReplacer(program)
     program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
 

@@ -18,7 +18,6 @@ import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
 
-@pytest.mark.skip(reason="Interactive test (opens SDFG).")
 def test_fortran_frontend_view_test():
     """
     Tests to check whether Fortran array slices are correctly translates to DaCe views.
@@ -28,7 +27,7 @@ def test_fortran_frontend_view_test():
                     PROGRAM """ + test_name + """_program
 implicit none
 double precision a(10,11,12)
-double precision res(1,1,2) 
+double precision res(2,2,2) 
 
 CALL """ + test_name + """_function(a,res)
 
@@ -37,7 +36,7 @@ end
 SUBROUTINE """ + test_name + """_function(aa,res)
 
 double precision aa(10,11,12)
-double precision res(1,1,2) 
+double precision res(2,2,2) 
 
 call viewlens(aa(:,:,1),res)
 
@@ -63,9 +62,8 @@ aa(1,1)=res(1,1,1)
 
 END SUBROUTINE viewlens
                     """
-    sdfg2 = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
-    sdfg2.view()
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,True)
+ 
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,True,False)
     for state in sdfg.nodes():
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG):
@@ -101,7 +99,7 @@ END SUBROUTINE viewlens
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()                
-    sdfg.view()                
+                
     sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([1, 1, 2], 42, order="F", dtype=np.float64)
