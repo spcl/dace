@@ -24,9 +24,9 @@ class DefinedType(aenum.AutoNumberEnum):
         :see: DefinedMemlets
     """
     Pointer = ()  # Pointer
-    Scalar = ()   # A copyable scalar moved by value (e.g., POD)
-    Object = ()   # An object moved by reference
-    Stream = ()   # A stream object moved by reference and accessed via a push/pop API
+    Scalar = ()  # A copyable scalar moved by value (e.g., POD)
+    Object = ()  # An object moved by reference
+    Stream = ()  # A stream object moved by reference and accessed via a push/pop API
     StreamArray = ()  # An array of Streams
     FPGA_ShiftRegister = ()  # A shift-register object used in FPGA code generation
     ArrayInterface = ()  # An object representing an interface to an array, used mostly in FPGA
@@ -56,7 +56,7 @@ class DefinedMemlets:
         except KeyError:
             return False
 
-    def get(self, name: str, ancestor: int = 0, is_global: bool = False) -> Tuple[DefinedType, str]:
+    def get(self, name: str, ancestor: int = 0, is_global: bool = False) -> Tuple[DefinedType, dtypes.typeclass]:
         for parent, scope, can_access_parent in reversed(self._scopes):
             last_parent = parent
             if ancestor > 0:
@@ -85,7 +85,14 @@ class DefinedMemlets:
 
         raise KeyError("Variable {} has not been defined".format(name))
 
-    def add(self, name: str, dtype: DefinedType, ctype: str, ancestor: int = 0, allow_shadowing: bool = False):
+    def add(self,
+            name: str,
+            dtype: DefinedType,
+            ctype: dtypes.typeclass,
+            ancestor: int = 0,
+            allow_shadowing: bool = False):
+        if not isinstance(ctype, dtypes.typeclass):
+            raise NotImplementedError('No longer supported')
         if not isinstance(name, str):
             raise TypeError('Variable name type cannot be %s' % type(name).__name__)
         if name.startswith('__state->'):
@@ -95,7 +102,7 @@ class DefinedMemlets:
             if name in scope:
                 err_str = "Shadowing variable {} from type {} to {}".format(name, scope[name], dtype)
                 if (allow_shadowing or config.Config.get_bool("compiler", "allow_shadowing")):
-                    if not allow_shadowing:
+                    if not allow_shadowing and scope[name][0] != dtype:
                         print("WARNING: " + err_str)
                 else:
                     raise cgx.CodegenError(err_str)
@@ -103,7 +110,7 @@ class DefinedMemlets:
                 break
         self._scopes[-1 - ancestor][1][name] = (dtype, ctype)
 
-    def add_global(self, name: str, dtype: DefinedType, ctype: str) -> None:
+    def add_global(self, name: str, dtype: DefinedType, ctype: dtypes.typeclass):
         """
         Adds a global variable (top scope)
         """
@@ -111,6 +118,15 @@ class DefinedMemlets:
             raise TypeError('Variable name type cannot be %s' % type(name).__name__)
 
         self._scopes[0][1][name] = (dtype, ctype)
+
+    def get_all_names(self, ancestor: int = 0) -> Set[str]:
+        global_vars = self._scopes[0][1].keys()
+        result = set(global_vars)
+        for _, scope, can_access_parent in self._scopes[1:len(self._scopes) - ancestor]:
+            if not can_access_parent:
+                result = set(global_vars)
+            result |= scope.keys()
+        return result
 
     def remove(self, name: str, ancestor: int = 0, is_global: bool = False) -> None:
         for parent, scope, can_access_parent in reversed(self._scopes):
@@ -244,7 +260,8 @@ class TargetDispatcher(object):
         """ Returns a list of state dispatchers with predicates. """
         return list(self._state_dispatchers)
 
-    def register_node_dispatcher(self, dispatcher: target.TargetCodeGenerator,
+    def register_node_dispatcher(self,
+                                 dispatcher: target.TargetCodeGenerator,
                                  predicate: Optional[Callable] = None) -> None:
         """ Registers a code generator that processes a single node, calling
             ``generate_node``.
@@ -272,8 +289,7 @@ class TargetDispatcher(object):
         """ Returns a list of node dispatchers with predicates. """
         return list(self._node_dispatchers)
 
-    def register_map_dispatcher(self,
-                                schedule_type: Union[List[dtypes.ScheduleType], dtypes.ScheduleType],
+    def register_map_dispatcher(self, schedule_type: Union[List[dtypes.ScheduleType], dtypes.ScheduleType],
                                 func: target.TargetCodeGenerator) -> None:
         """ Registers a function that processes a scope, used when calling
             ``dispatch_subgraph`` and ``dispatch_scope``.
@@ -315,8 +331,11 @@ class TargetDispatcher(object):
         if not isinstance(func, target.TargetCodeGenerator): raise TypeError
         self._array_dispatchers[storage_type] = func
 
-    def register_copy_dispatcher(self, src_storage: dtypes.StorageType, dst_storage: dtypes.StorageType,
-                                 dst_schedule: dtypes.ScheduleType, func: target.TargetCodeGenerator,
+    def register_copy_dispatcher(self,
+                                 src_storage: dtypes.StorageType,
+                                 dst_storage: dtypes.StorageType,
+                                 dst_schedule: dtypes.ScheduleType,
+                                 func: target.TargetCodeGenerator,
                                  predicate: Optional[Callable] = None) -> None:
         """ Registers code generation of data-to-data (or data from/to
             tasklet, if src/dst storage is StorageType.Register) copy
@@ -449,13 +468,8 @@ class TargetDispatcher(object):
     def get_scope_dispatcher(self, schedule: dtypes.ScheduleType) -> target.TargetCodeGenerator:
         return self._map_dispatchers[schedule]
 
-    def dispatch_scope(self,
-                       map_schedule: dtypes.ScheduleType,
-                       sdfg: SDFG,
-                       cfg: ControlFlowRegion,
-                       sub_dfg: StateSubgraphView,
-                       state_id: int,
-                       function_stream: CodeIOStream,
+    def dispatch_scope(self, map_schedule: dtypes.ScheduleType, sdfg: SDFG, cfg: ControlFlowRegion,
+                       sub_dfg: StateSubgraphView, state_id: int, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream) -> None:
         """ Dispatches a code generator function for a scope in an SDFG
             state. """
@@ -517,9 +531,9 @@ class TargetDispatcher(object):
 
     # Dispatches copy code for a memlet
     def get_copy_dispatcher(self, src_node: Union[nodes.CodeNode, nodes.AccessNode],
-                            dst_node: Union[nodes.CodeNode, nodes.AccessNode, nodes.EntryNode],
-                            edge: MultiConnectorEdge[Memlet],
-                            sdfg: SDFG, state: SDFGState) -> Optional[target.TargetCodeGenerator]:
+                            dst_node: Union[nodes.CodeNode, nodes.AccessNode,
+                                            nodes.EntryNode], edge: MultiConnectorEdge[Memlet], sdfg: SDFG,
+                            state: SDFGState) -> Optional[target.TargetCodeGenerator]:
         """
         (Internal) Returns a code generator that should be dispatched for a
         memory copy operation.

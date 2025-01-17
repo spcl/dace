@@ -684,6 +684,9 @@ class pointer(typeclass):
 
         return pointer(json_to_typeclass(json_obj['dtype'], context))
 
+    def as_arg(self, name):
+        return self._typeclass.as_arg('* ' + name)
+
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
         if isinstance(self._typeclass, struct):
@@ -1047,6 +1050,10 @@ class callback(typeclass):
 
         retval = self.cfunc_return_type()
         return f'{retval} (*{name})({", ".join(input_type_cstring)})'
+
+    @property
+    def ctype(self):
+        return self.as_arg('')
 
     def get_trampoline(self, pyfunc, other_arguments, refs):
         from functools import partial
