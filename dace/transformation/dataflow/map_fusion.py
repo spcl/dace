@@ -1144,14 +1144,21 @@ class MapFusion(transformation.SingleStateTransformation):
     ) -> bool:
         """Test if there is a read write dependency between the two maps to be fused.
 
-        The function checks two different things.
+        The function checks three different things.
         * The function will make sure that there is no read write dependency between
             the input and output of the fused maps. For that it will inspect the
-            respective subsets.
+            respective subsets of the inputs of the MapEntry of the first and the
+            outputs of the MapExit node of the second map.
         * The second part partially checks the intermediate nodes, it mostly ensures
-            that there are not views and that they are not used as inputs or outputs
-            at the same time. However, the function will not check for read write
-            conflicts in this set, this is done in the partition function.
+            that there are not views and that they are not used as output of the
+            combined map. Note that it is allowed that an intermediate node is also
+            an input to the first map.
+        * In case an intermediate node, is also used as input node of the first map,
+            it is forbidden that the data is used as output of the second map, the
+            function will do additional checks. This is needed as the partition function
+            only checks the data consumption of the second map can be satisfied by the
+            data production of the first map, it ignores any potential reads made by
+            the first map's MapEntry.
 
         :return: `True` if there is a conflict between the maps that can not be handled.
             If there is no conflict or if the conflict can be handled `False` is returned.
@@ -1195,6 +1202,9 @@ class MapFusion(transformation.SingleStateTransformation):
         real_read_map_1, real_write_map_1, real_read_map_2, real_write_map_2 = resolved_sets
 
         # We do not allow that the first and second map each write to the same data.
+        #  This essentially ensures that an intermediate can not be used as output of
+        #  the second map at the same time. It is actually stronger as it does not
+        #  take their role into account.
         if not real_write_map_1.isdisjoint(real_write_map_2):
             return True
 
@@ -1204,7 +1214,8 @@ class MapFusion(transformation.SingleStateTransformation):
         exchange_names: Set[str] = set(write_map_1.keys()).intersection(read_map_2.keys())
         exchange_nodes: Set[nodes.AccessNode] = set(write_map_1.values()).intersection(read_map_2.values())
 
-        # If the number are different then a data is accessed through multiple nodes.
+        # If the number are different then a data is accessed through different
+        #  AccessNodes. We could analyse this, but we will consider this as a data race.
         if len(exchange_names) != len(exchange_nodes):
             return True
         assert all(exchange_node.data in exchange_names for exchange_node in exchange_nodes)
@@ -1233,6 +1244,46 @@ class MapFusion(transformation.SingleStateTransformation):
         # TODO(phimuell): Handle this case.
         if not fused_inout_data_names.isdisjoint(exchange_names):
             return True
+
+        # While it is forbidden that a data container, used as intermediate, is also
+        #  used as output of the second map. It is allowed that the data container
+        #  is used as intermediate and as input of the first map. The partition only
+        #  checks that the data dependencies are mean, i.e. what is read by the second
+        #  map is also computed (written to the intermediate) it does not take into
+        #  account the first map's read to the data container.
+        #  To make an example: The partition function will make sure that if the
+        #  second map reads index `i` from the intermediate that the first map writes
+        #  to that index. But it will not care if the first map reads (through its
+        #  MapEntry) index `i + 1`. In order to be valid me must ensure that the first
+        #  map's reads and writes to the intermediate are pointwise.
+        #  Note that we only have to make this check if it is also an intermediate node.
+        #  Because if it is not read by the second map it is not a problem as the node
+        #  will end up as an pure output node anyway.
+        read_write_map_1 = set(read_map_1.keys()).intersection(write_map_1.keys())
+        datas_to_inspect = read_write_map_1.intersection(exchange_names)
+        for data_to_inspect in datas_to_inspect:
+
+            # Now get all subsets of the data container that the first map reads
+            #  from or writes to and check if they are pointwise.
+            all_subsets: List[subsets.Subset] = []
+            all_subsets.extend(
+                self.find_subsets(
+                    node=read_map_1[data_to_inspect],
+                    scope_node=first_map_entry,
+                    state=state,
+                    sdfg=sdfg,
+                    param_repl=None,
+                ))
+            all_subsets.extend(
+                self.find_subsets(
+                    node=write_map_1[data_to_inspect],
+                    scope_node=first_map_exit,
+                    state=state,
+                    sdfg=sdfg,
+                    param_repl=None,
+                ))
+            if not self.test_if_subsets_are_point_wise(all_subsets):
+                return True
 
         # If there is no intersection between the input and output data, then we can
         #  we have nothing to check.
