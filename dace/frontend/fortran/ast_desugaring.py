@@ -873,7 +873,7 @@ def replace_node(node: Base, subst: Union[Base, Iterable[Base]]):
     only_child = bool([c for c in par.children if c == node])
     repls = []
     for c in par.children:
-        if c != node:
+        if c is not node:
             repls.append(c)
             continue
         if isinstance(subst, Base):
