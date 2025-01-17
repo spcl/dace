@@ -2235,10 +2235,6 @@ class AST_translator:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
             # new_sdfg.save(path.join(self.sdfg_path, new_sdfg.name + ".sdfg"))
 
-        if self.multiple_sdfgs == True:
-            internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
-            # new_sdfg.save(path.join(self.sdfg_path, new_sdfg.name + ".sdfg"))
-
     def binop2sdfg(self, node: ast_internal_classes.BinOp_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This parses binary operations to tasklets in a new state or creates a function call with a nested SDFG if the
