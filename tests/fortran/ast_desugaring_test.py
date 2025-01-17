@@ -9,7 +9,8 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
     const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
-    exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments
+    exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
+    make_argument_mapping_explicit
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -2109,6 +2110,70 @@ SUBROUTINE main(res)
   REAL, DIMENSION(2) :: res
   CALL fun(res)
 END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_make_argument_mapping_explicit():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+contains
+  real function fun(x, y)
+    implicit none
+    real, intent(in) :: x, y
+    fun = x + y
+  end function fun
+end module lib
+subroutine not_fun(z, x, y)
+  use lib
+  implicit none
+  real, intent(in) :: x, y
+  real, intent(out) :: z
+  z = fun(y, x)
+end subroutine not_fun
+""").add_file("""
+subroutine main
+  use lib
+  implicit none
+  real :: x, y
+  x = fun(1., 2.)
+  x = fun(x, x)
+  x = fun(x, 2.)
+  call not_fun(y, x, x)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = make_argument_mapping_explicit(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  REAL FUNCTION fun(x, y)
+    IMPLICIT NONE
+    REAL, INTENT(IN) :: x, y
+    fun = x + y
+  END FUNCTION fun
+END MODULE lib
+SUBROUTINE main
+  USE lib
+  IMPLICIT NONE
+  REAL :: x, y
+  x = fun(x = 1., y = 2.)
+  x = fun(x = x, y = x)
+  x = fun(x = x, y = 2.)
+  CALL not_fun(y, x, x)
+END SUBROUTINE main
+SUBROUTINE not_fun(z, x, y)
+  USE lib
+  IMPLICIT NONE
+  REAL, INTENT(IN) :: x, y
+  REAL, INTENT(OUT) :: z
+  z = fun(x = y, y = x)
+END SUBROUTINE not_fun
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()

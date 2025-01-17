@@ -1701,6 +1701,72 @@ def make_practically_constant_global_vars_constants(ast: Program) -> Program:
     return ast
 
 
+def _make_keyword_mapping_of_calls(fcall: Union[Function_Reference, Call_Stmt], alias_map: SPEC_TABLE)\
+        -> Optional[Dict[str, Base]]:
+    fn, args = fcall.children
+    if isinstance(fn, Intrinsic_Name):
+        # Cannot do anything with intrinsic functions.
+        return None
+    args = args.children if args else tuple()
+    fnspec = search_real_local_alias_spec(fn, alias_map)
+    assert fnspec
+    fnstmt = alias_map[fnspec]
+    if isinstance(fnstmt.parent.parent, Program):
+        # Global subroutines cannot be keyworded.
+        return None
+    fnargs = atmost_one(children_of_type(fnstmt, Dummy_Arg_List))
+    fnargs = fnargs.children if fnargs else tuple()
+    assert len(args) <= len(fnargs), f"Cannot pass more arguments({len(args)}) than defined ({len(fnargs)})"
+
+    kv: Dict[str, Base] = {}
+    for a in fnargs:
+        aspec = search_real_local_alias_spec(a, alias_map)
+        assert aspec
+        adecl = alias_map[aspec]
+        atype = find_type_of_entity(adecl, alias_map)
+        assert atype
+        if not args:
+            # If we do not have supplied arguments anymore, the remaining arguments must be optional
+            assert atype.optional
+            continue
+        kwargs_zone = isinstance(args[0], Actual_Arg_Spec)  # Whether we are in keyword args territory.
+        if kwargs_zone:
+            # Everything else is already being keworded, so we don't need to do anything further for this call.
+            break
+        # Pop the next non-keywordd supplied value.
+        v, args = args[0], args[1:]
+        if v is None:
+            assert atype.optional
+            continue
+        kv[aspec[-1]] = v
+
+    return kv
+
+
+def make_argument_mapping_explicit(ast: Program) -> Program:
+    alias_map = alias_specs(ast)
+
+    for fcall in walk(ast, (Function_Reference, Call_Stmt)):
+        fn, args = fcall.children
+        if isinstance(fn, Intrinsic_Name):
+            # Cannot do anything with intrinsic functions.
+            continue
+        fnspec = search_real_local_alias_spec(fn, alias_map)
+        assert fnspec
+        fnstmt = alias_map[fnspec]
+        if isinstance(fnstmt.parent.parent, Program):
+            # Global subroutines cannot be keyworded.
+            continue
+
+        kv = _make_keyword_mapping_of_calls(fcall, alias_map)
+        assert kv is not None
+        for k, v in kv.items():
+            repl = Actual_Arg_Spec(f"{k} = {v.tofortran()}")
+            replace_node(v, repl)
+
+    return ast
+
+
 def make_practically_constant_arguments_constants(ast: Program, keepers: List[SPEC]) -> Program:
     alias_map = alias_specs(ast)
 

@@ -36,7 +36,7 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     inject_const_evals, remove_access_statements, ident_spec, ConstTypeInjection, ConstInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, assign_globally_unique_variable_names, assign_globally_unique_subprogram_names, \
-    create_global_initializers, convert_data_statements_into_assignments
+    create_global_initializers, convert_data_statements_into_assignments, make_argument_mapping_explicit
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -2793,6 +2793,7 @@ def create_sdfg_from_fortran_file_with_options(
         ast = correct_for_function_calls(ast)
         ast = deconstruct_procedure_calls(ast)
         ast = deconstruct_interface_calls(ast)
+        ast = make_argument_mapping_explicit(ast)
 
         print("FParser Op: Inject configs & prune...")
         ast = inject_const_evals(ast, cfg.config_injections)
