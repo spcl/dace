@@ -2928,6 +2928,8 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     array_dims_info.visit(program)
     program = ast_transforms.ArrayDimensionConfigInjector(array_dims_info, cfg.config_injections).visit(program)
 
+    program = ast_transforms.ParDeclNonContigArrayExpander(program).visit(program)
+
     program = ast_transforms.ArrayToLoop(program).visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)

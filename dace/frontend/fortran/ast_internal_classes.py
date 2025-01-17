@@ -66,7 +66,7 @@ class Program_Node(FNode):
 class BinOp_Node(FNode):
     def __init__(self, op: str, lval: FNode, rval: FNode, type: str = 'VOID', **kwargs):
         super().__init__(**kwargs)
-        assert rval
+        assert rval is not None
         self.op = op
         self.lval = lval
         self.rval = rval

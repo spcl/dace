@@ -2887,12 +2887,18 @@ def create_global_initializers(ast: Program, entry_points: List[SPEC]) -> Progra
                 name, _, _, init_val = var.children
                 assert init_val
                 execs.append(f"{'this % ' if this else ''}{name.tofortran()}{init_val.tofortran()}")
-        subr_header = f"subroutine {fn_name}({'this' if this else ''})"
+        fn_args = 'this' if this else ''
         uses_stmts = '\n'.join(uses)
-        this_t_stmt = f"type({this[-1]}) :: this" if this else ''
+        this_decl = f"type({this[-1]}) :: this" if this else ''
         execs_stmts = '\n'.join(execs)
-        subr_footer = f"end subroutine {fn_name}"
-        init_fn = subr_header + '\n' + uses_stmts + '\n' + this_t_stmt + '\n' + execs_stmts + '\n' + subr_footer + '\n'
+        init_fn = f"""
+subroutine {fn_name}({fn_args})
+  {uses_stmts}
+  implicit none
+  {this_decl}
+  {execs_stmts}
+end subroutine {fn_name}
+"""
         init_fn = Subroutine_Subprogram(get_reader(init_fn.strip()))
         append_children(box, init_fn)
         created_init_fns.add(fn_name)
@@ -2968,7 +2974,7 @@ def convert_data_statements_into_assignments(ast: Program) -> Program:
                     else:
                         elem = v
                     # TODO: Support other types of data expressions.
-                    assert isinstance(elem, LITERAL_TYPES),\
+                    assert isinstance(elem, LITERAL_CLASSES),\
                         f"only supports literal values in data data statements: {elem}"
                     if ktyp.shape:
                         if rest:

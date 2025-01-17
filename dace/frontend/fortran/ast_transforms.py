@@ -2,6 +2,7 @@
 
 import copy
 import re
+from collections import namedtuple
 from typing import Dict, List, Optional, Tuple, Set, Union, Type
 
 import sympy as sp
@@ -3982,4 +3983,350 @@ class ElementalIntrinsicExpander(ArrayLoopExpander):
 
     def __init__(self, ast):
         super().__init__(ast)
+
+
+class ParDeclNonContigArrayExpander(NodeTransformer):
+
+    """
+        Variable processer lets the main function know that the following array needs to be processed:
+        - Counter to determine iterator name and the name of temporary array.
+        - Tuple of (source, main_source) containing original array. For structures, this contains the variable defining array
+          and the surrounding data ref node.
+        - Type of temporary array.
+        - Sizes and offsets of temporary array.
+        - Indices for each dimension.
+        - For each non-contiguous dimension, we send tuple (idx, main_var, var) - index of dimension, and the two variables defining
+          array index. main_var is used to send data ref nodes for structure references
+    """
+    NonContigArray = namedtuple("NonContigArray", "counter name source type sizes offsets indices noncontig_dims")
+
+    def __init__(self, ast):
+        self.ast = ast
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations(ast)
+        self.scope_vars.visit(ast)
+
+        self.structures = ast.structures
+
+        self.nodes_to_process = []
+        self.counter = 0
+
+        self.data_ref_stack = []
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        newbody = []
+
+        for child in node.execution:
+
+            self.nodes_to_process = []
+            n = self.visit(child)
+
+            for tmp_array in self.nodes_to_process:
+
+                """
+                    For each variable with non-contiguous slices:
+                    - Generate the temporary array.
+                    - Determine the copy operation b[idx] = a[indices[idx]].
+                    - Generate loop, with one iterator for each dimension
+                      that needs a copy.
+                """
+
+                node.parent.specification_part.specifications.append(
+                    ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                        ast_internal_classes.Var_Decl_Node(
+                            name=tmp_array.name,
+                            type=tmp_array.type,
+                            sizes=tmp_array.sizes,
+                            offsets=tmp_array.offsets,
+                            init=None,
+                        )
+                    ])
+                )
+
+                dest_indices = copy.deepcopy(tmp_array.indices)
+                for idx, _, _ in tmp_array.noncontig_dims:
+                    iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
+                    dest_indices[idx] = iter_var
+
+                dest = ast_internal_classes.Array_Subscript_Node(
+                    name = ast_internal_classes.Name_Node(name=tmp_array.name),
+                    type = tmp_array.type,
+                    indices = dest_indices,
+                    line_numbe = child.line_number
+                )
+
+                source_indices = copy.deepcopy(tmp_array.indices)
+                for idx, main_var, var in tmp_array.noncontig_dims:
+
+                    iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
+
+                    var.indices = [iter_var]
+                    source_indices[idx] = main_var
+
+                source, main_source = tmp_array.source
+                main_source.indices = source_indices
+
+                body = ast_internal_classes.BinOp_Node(
+                    lval=dest,
+                    op="=",
+                    rval=source,
+                    line_number=child.line_number,
+                    parent=child.parent
+                )
+
+                for idx, _, _ in tmp_array.noncontig_dims:
+
+                    initrange = ast_internal_classes.Int_Literal_Node(value="1")
+                    finalrange = tmp_array.sizes[idx]
+
+                    iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
+
+                    node.parent.specification_part.specifications.append(
+                        ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                            ast_internal_classes.Var_Decl_Node(
+                                name=iter_var.name,
+                                type='INTEGER',
+                                sizes=[],
+                                offsets=[1],
+                                init=None
+                            )
+                        ])
+                    )
+
+                    init = ast_internal_classes.BinOp_Node(
+                        lval=iter_var,
+                        op="=",
+                        rval=initrange,
+                        line_number=child.line_number,parent=child.parent)
+                    cond = ast_internal_classes.BinOp_Node(
+                        lval=iter_var,
+                        op="<=",
+                        rval=finalrange,
+                        line_number=child.line_number,parent=child.parent)
+                    iter = ast_internal_classes.BinOp_Node(
+                        lval=iter_var,
+                        op="=",
+                        rval=ast_internal_classes.BinOp_Node(
+                            lval=iter_var,
+                            op="+",
+                            rval=ast_internal_classes.Int_Literal_Node(value="1"),parent=child.parent),
+                        line_number=child.line_number,parent=child.parent)
+                    current_for = ast_internal_classes.Map_Stmt_Node(
+                        init=init,
+                        cond=cond,
+                        iter=iter,
+                        body=ast_internal_classes.Execution_Part_Node(execution=[body]),
+                        line_number=child.line_number,
+                        parent=child.parent
+                    )
+                    body = current_for
+
+                newbody.append(body)
+
+            newbody.append(n)
+
+        return ast_internal_classes.Execution_Part_Node(execution=newbody)
+
+    #def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+
+    def _handle_name_node(self, idx, actual_index, var, new_sizes, noncont_sizes, new_offsets):
+
+        if len(var.sizes) == 1:
+
+            needs_process = True
+            new_sizes.append(var.sizes[0])
+            noncont_sizes.append((idx, actual_index))
+
+        elif len(var.sizes) == 0:
+            """
+                For scalar-based access, the size of new dimension is just 1.
+            """
+            new_sizes.append(ast_internal_classes.Int_Literal_Node(value="1"))
+        else:
+            raise NotImplementedError("Non-contiguous array slices are supported only for 1D indices!")
+
+        new_offsets.append(1)
+
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+
+        """
+            When processing a data reference:
+
+            struct%val
+
+            We note down structure reference and take val for further analysis.
+            This way, we reuse the same logic without excessive specialization to datarefs.
+        """
+
+        struct, variable, last_var = self.structures.find_definition(
+            self.scope_vars, node
+        )
+
+        if not isinstance(last_var.part_ref, ast_internal_classes.Array_Subscript_Node):
+            return node
+
+        self.data_ref_stack.append(copy.deepcopy(node))
+        node.part_ref = self.visit(node.part_ref)
+        self.data_ref_stack.pop()
+
+        if self.needs_copy:
+            return node.part_ref
+        else:
+            return node
+
+    def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
+
+        indices = []
+        self.needs_copy = False
+        new_sizes = []
+        new_offsets = []
+        cont_sizes = []
+        noncont_sizes = []
+
+        for idx, index in enumerate(node.indices):
+
+            """
+                For structure references:
+                index -> full index var inserted in array node
+                actual_index -> the variable that contains actual data
+
+                For other, both are the same.
+            """
+
+            if isinstance(index, ast_internal_classes.Data_Ref_Node):
+
+                struct, variable, last_var = self.structures.find_definition(
+                    self.scope_vars, index
+                )
+
+                actual_index = last_var.part_ref
+            else:
+                actual_index = index
+
+            if isinstance(actual_index, ast_internal_classes.Name_Node):
+
+                var = self.scope_vars.get_var(node.parent, actual_index.name)
+
+                if var.sizes is not None and len(var.sizes) == 1:
+
+                    self.needs_copy = True
+                    new_sizes.append(var.sizes[0])
+
+                    """
+                        We will later assign actual indices when processing the loop code.
+                    """
+                    idx_arr = ast_internal_classes.Array_Subscript_Node(
+                        name = ast_internal_classes.Name_Node(name=actual_index.name),
+                        type = actual_index.type,
+                        indices = None,
+                        line_number = actual_index.line_number
+                    )
+                    if isinstance(index, ast_internal_classes.Data_Ref_Node):
+                        last_var.part_ref = idx_arr
+                        noncont_sizes.append((idx, index, idx_arr))
+                    else:
+                        noncont_sizes.append((idx, idx_arr, idx_arr))
+
+                elif var.sizes is None or len(var.sizes) == 0:
+                    """
+                        For scalar-based access, the size of new dimension is just 1.
+                    """
+                    new_sizes.append(ast_internal_classes.Int_Literal_Node(value="1"))
+                else:
+                    raise NotImplementedError("Non-contiguous array slices are supported only for 1D indices!")
+
+                new_offsets.append(1)
+
+            elif isinstance(actual_index, ast_internal_classes.ParDecl_Node):
+
+                var = self.scope_vars.get_var(node.parent, node.name.name)
+
+                """
+                    For range from a:b, we do not generate the code manually.
+                    Instead, we will let ArrayToLoop transformation to expand this copy.
+
+                    To make sure that we correctly generate copy indices, the destination
+                    array needs to have the same offset as the low range boundary, e.g,
+                    tmp_dest(40:45, ...) = source(40:45, ...)
+
+                    This offset will be normalized before translating to SDFG, in IndexExtractor transformation.
+                """
+
+                if actual_index.type == 'ALL':
+
+                    new_sizes.append(var.sizes[idx])
+                    new_offsets.append(var.offsets[idx])
+
+                elif actual_index.type == 'RANGE':
+
+                    if isinstance(actual_index.range[0], ast_internal_classes.Int_Literal_Node):
+                        new_offsets.append(actual_index.range[0].value)
+                    else:
+                        new_offsets.append(actual_index.range[0])
+
+                    """
+                        For range-based offsets, the array size is given as:
+                        high - low + 1
+                    """
+                    new_sizes.append(
+                        ast_internal_classes.BinOp_Node(
+                            lval = ast_internal_classes.BinOp_Node(
+                                lval = actual_index.range[1],
+                                op = "-",
+                                rval = actual_index.range[0],
+                                line_number = node.line_number,
+                                parent = node.parent
+                            ),
+                            op = "+",
+                            rval = ast_internal_classes.Int_Literal_Node(value="1"),
+                            line_number = node.line_number,
+                            parent = node.parent
+                        )
+                    )
+                else:
+                    raise NotImplementedError()
+
+            else:
+                """
+                    For scalar-based access, the size of new dimension is just 1.
+                """
+                new_sizes.append(ast_internal_classes.Int_Literal_Node(value="1"))
+                new_offsets.append(1)
+
+            indices.append(index)
+
+        if self.needs_copy:
+
+            if len(node.indices) > 2:
+                raise NotImplementedError("Non-contiguous array slices are supported only for 1D/2D arrays!")
+
+            """
+                We will later assign actual indices when processing the loop code.
+            """
+            source = ast_internal_classes.Array_Subscript_Node(
+                name = ast_internal_classes.Name_Node(name=node.name.name),
+                type = node.type,
+                # will be fixed in further processing
+                indices = None,
+                line_number = node.line_number
+            )
+            main_source = source
+            for dataref in self.data_ref_stack[::-1]:
+                dataref.part_ref = source
+                source = dataref
+
+            name = f"tmp_noncontig_{self.counter}"
+            self.nodes_to_process.append(
+                self.NonContigArray(self.counter, name, (source, main_source), node.type, new_sizes, new_offsets, indices, noncont_sizes)
+            )
+            self.counter += 1
+
+            return ast_internal_classes.Name_Node(
+                name = name,
+                type = node.type,
+                line_number = node.line_number
+            )
+        else:
+            node.indices = indices
+            return node
 
