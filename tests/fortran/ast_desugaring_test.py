@@ -2115,7 +2115,7 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
-def test_make_argument_mapping_explicit():
+def test_explicit_argument_mapping():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
   implicit none
@@ -2141,6 +2141,7 @@ subroutine main
   x = fun(1., 2.)
   x = fun(x, x)
   x = fun(x, 2.)
+  x = fun(y = x, x = 3.)
   call not_fun(y, x, x)
 end subroutine main
 """).check_with_gfortran().get()
@@ -2165,6 +2166,7 @@ SUBROUTINE main
   x = fun(x = 1., y = 2.)
   x = fun(x = x, y = x)
   x = fun(x = x, y = 2.)
+  x = fun(y = x, x = 3.)
   CALL not_fun(y, x, x)
 END SUBROUTINE main
 SUBROUTINE not_fun(z, x, y)
