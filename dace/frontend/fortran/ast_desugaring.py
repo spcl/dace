@@ -2593,6 +2593,9 @@ def const_eval_nodes(ast: Program) -> Program:
     EXPRESSION_CLASSES = (
         LITERAL_CLASSES, Expr, Add_Operand, Or_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr,
         Level_5_Expr, Intrinsic_Function_Reference)
+    NON_EXPRESSION_CLASSES = (
+        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization,
+        Section_Subscript_List)
 
     alias_map = alias_specs(ast)
 
@@ -2621,8 +2624,6 @@ def const_eval_nodes(ast: Program) -> Program:
         _, kind, _ = knode.children
         _const_eval_node(kind)
 
-    NON_EXPRESSION_CLASSES = (
-        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization)
     for node in reversed(walk(ast, NON_EXPRESSION_CLASSES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)

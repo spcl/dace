@@ -1342,12 +1342,19 @@ END SUBROUTINE main
 
 def test_constant_resolving_expressions():
     sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  integer, parameter :: ok = 8
+end module lib
+""").add_file("""
 subroutine main
+  use lib
   implicit none
   integer, parameter :: k = 8
   integer :: a = -1, b = -1
   real, parameter :: pk = 4.1_k
   real(kind=selected_real_kind(5, 5)) :: p = 1.0_k
+  real :: arr(20, 20) = 1.0
 
   if (k < 2) then
     a = k
@@ -1360,6 +1367,9 @@ subroutine main
     b = k
     p = a*p + k*pk
   end if
+
+  arr(1:ok, 1:ok) = 7.1
+  arr(ok, ok) = 9.1
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -1367,12 +1377,18 @@ end subroutine main
 
     got = ast.tofortran()
     want = """
+MODULE lib
+  IMPLICIT NONE
+  INTEGER, PARAMETER :: ok = 8
+END MODULE lib
 SUBROUTINE main
+  USE lib
   IMPLICIT NONE
   INTEGER, PARAMETER :: k = 8
   INTEGER :: a = - 1, b = - 1
   REAL, PARAMETER :: pk = 4.1D0
   REAL(KIND = 4) :: p = 1.0D0
+  REAL :: arr(20, 20) = 1.0
   IF (.FALSE.) THEN
     a = 8
     p = 32.79999923706055D0
@@ -1384,6 +1400,8 @@ SUBROUTINE main
     b = 8
     p = a * p + 32.79999923706055D0
   END IF
+  arr(1 : 8, 1 : 8) = 7.1
+  arr(8, 8) = 9.1
 END SUBROUTINE main
 """.strip()
     assert got == want
