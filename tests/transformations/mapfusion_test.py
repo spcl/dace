@@ -28,6 +28,7 @@ def apply_fusion(
         final_maps: Union[int, None] = None,
         unspecific: bool = False,
         apply_once: bool = False,
+        strict_dataflow: bool = True,
 ) -> SDFG:
     """Applies the Map fusion transformation.
 
@@ -36,23 +37,31 @@ def apply_fusion(
     number of maps.
     If `unspecific` is set to `True` then the function will just apply the
     transformation and not check if maps were removed at all.
+    If `strict_dataflow` is set to `True`, the default, then the function will perform
+    the fusion in strict dataflow mode.
     """
     org_sdfg = copy.deepcopy(sdfg)
     num_maps_before = None if unspecific else count_node(sdfg, nodes.MapEntry)
-    with dace.config.temporary_config():
-        dace.Config.set("optimizer", "match_exception", value=True)
-        if apply_once:
-            sdfg.apply_transformations(
-                MapFusion(strict_dataflow=True),
-                validate=True,
-                validate_all=True
-            )
-        else:
-            sdfg.apply_transformations_repeated(
-                MapFusion(strict_dataflow=True),
-                validate=True,
-                validate_all=True
-            )
+
+    try:
+        with dace.config.temporary_config():
+            dace.Config.set("optimizer", "match_exception", value=True)
+            if apply_once:
+                sdfg.apply_transformations(
+                    MapFusion(strict_dataflow=strict_dataflow),
+                    validate=True,
+                    validate_all=True
+                )
+            else:
+                sdfg.apply_transformations_repeated(
+                    MapFusion(strict_dataflow=strict_dataflow),
+                    validate=True,
+                    validate_all=True
+                )
+    except:
+        org_sdfg.view()
+        sdfg.view()
+        raise
 
     if unspecific:
         return sdfg
@@ -927,12 +936,7 @@ def test_fusion_strict_dataflow_pointwise():
     sdfg, state = _make_strict_dataflow_sdfg_pointwise(input_data="A")
 
     # However, if strict dataflow is disabled, then it will be able to fuse.
-    count = sdfg.apply_transformations_repeated(
-            MapFusion(strict_dataflow=False),
-            validate=True,
-            validate_all=True,
-    )
-    assert count == 1
+    apply_fusion(sdfg, removed_maps=1, strict_dataflow=False)
 
 
 def test_fusion_strict_dataflow_not_pointwise():
@@ -944,12 +948,7 @@ def test_fusion_strict_dataflow_not_pointwise():
 
     # Because the dependency is not pointwise even disabling strict dataflow
     #  will not make it work.
-    count = sdfg.apply_transformations_repeated(
-            MapFusion(strict_dataflow=False),
-            validate=True,
-            validate_all=True,
-    )
-    assert count == 0
+    apply_fusion(sdfg, removed_maps=0, strict_dataflow=False)
 
 
 def test_fusion_dataflow_intermediate():
@@ -958,12 +957,11 @@ def test_fusion_dataflow_intermediate():
             intermediate_data="O",
             output_data="O",
     )
-    count = sdfg.apply_transformations_repeated(
-            MapFusion(strict_dataflow=True),
-            validate=True,
-            validate_all=True,
-    )
-    assert count == 0
+    apply_fusion(sdfg, removed_maps=0, strict_dataflow=True)
+
+    # Because the intermediate is also output of the second map it is not possible
+    #  to fuse even without strict dataflow mode.
+    apply_fusion(sdfg, removed_maps=0, strict_dataflow=False)
 
 
 def test_fusion_dataflow_intermediate_2():
@@ -973,12 +971,7 @@ def test_fusion_dataflow_intermediate_2():
             intermediate_data="A",
             output_data="O",
     )
-    count = sdfg.apply_transformations_repeated(
-            MapFusion(strict_dataflow=True),
-            validate=True,
-            validate_all=True,
-    )
-    assert count == 1
+    apply_fusion(sdfg, removed_maps=1, strict_dataflow=True)
     map_exit = next(iter(node for node in state.nodes() if isinstance(node, nodes.MapExit)))
     assert state.out_degree(map_exit) == 2
     assert {"A", "O"} == {edge.dst.data for edge in state.out_edges(map_exit) if isinstance(edge.dst, nodes.AccessNode)}
@@ -1010,20 +1003,11 @@ def test_fusion_dataflow_intermediate_downstream():
     )
     sdfg.validate()
 
-    count = sdfg.apply_transformations_repeated(
-            MapFusion(strict_dataflow=True),
-            validate=True,
-            validate_all=True,
-    )
-    assert count == 0
+    apply_fusion(sdfg, removed_maps=0, strict_dataflow=True)
+    sdfg.view()
 
     # However without strict dataflow, the merge is possible.
-    count = sdfg.apply_transformations_repeated(
-            MapFusion(strict_dataflow=False),
-            validate=True,
-            validate_all=True,
-    )
-    assert count == 1
+    apply_fusion(sdfg, removed_maps=1, strict_dataflow=False)
     assert state.in_degree(output_1) == 1
     assert state.out_degree(output_1) == 1
     assert all(isinstance(edge.src, nodes.MapExit) for edge in state.in_edges(output_1))
@@ -1115,12 +1099,7 @@ def test_fusion_non_strict_dataflow_implicit_dependency():
     )
     sdfg.validate()
 
-    count = sdfg.apply_transformations_repeated(
-            MapFusion(strict_dataflow=False),
-            validate=True,
-            validate_all=True,
-    )
-    assert count == 0
+    apply_fusion(sdfg, removed_maps=0, strict_dataflow=False)
 
 
 def _make_inner_conflict_shared_scalar(
