@@ -1884,6 +1884,82 @@ def test_fusion_intrinsic_memlet_direction():
         assert np.allclose(arg_ref, arg_res)
 
 
+def _make_possible_cycle_if_fuesed_sdfg() -> Tuple[dace.SDFG, nodes.MapExit, nodes.AccessNode, nodes.MapEntry]:
+    """Generate an SDFG that if two maps would be fused a cycle would be created.
+
+    Essentially tests if the MapFusion detects this special case.
+    """
+    sdfg = dace.SDFG("possible_cycle_if_fuesed_sdfg")
+    state = sdfg.add_state(is_start_block=True)
+
+    names = ["A", "B", "T", "U", "V"]
+    for name in names:
+        sdfg.add_array(
+                name,
+                shape=(10,),
+                dtype=dace.float64,
+                transient=True,
+        )
+    sdfg.arrays["A"].transient = False
+    sdfg.arrays["B"].transient = False
+
+    A, B, T, U, V = (state.add_access(name) for name in names)
+
+    _, _, first_map_exit = state.add_mapped_tasklet(
+            "map1",
+            map_ranges={"__i": "0:10"},
+            inputs={"__in": dace.Memlet("A[__i]")},
+            code="__out1 = __in + 10\n__out2 = __in - 10",
+            outputs={
+                "__out1": dace.Memlet("T[__i]"),
+                "__out2": dace.Memlet("U[__i]"),
+            },
+            input_nodes={A},
+            output_nodes={T, U},
+            external_edges=True,
+    )
+
+    state.add_mapped_tasklet(
+            "map2",
+            map_ranges={"__i": "0:10"},
+            inputs={"__in": dace.Memlet("U[__i]")},
+            code="__out = math.sin(__in)",
+            outputs={"__out": dace.Memlet("V[__i]")},
+            input_nodes={U},
+            output_nodes={V},
+            external_edges=True,
+    )
+
+    _, second_map_entry, _ = state.add_mapped_tasklet(
+            "map3",
+            map_ranges={"__i": "0:10"},
+            inputs={
+                "__in1": dace.Memlet("T[__i]"),
+                "__in2": dace.Memlet("V[__i]"),
+            },
+            code="__out = __in1 + __in2",
+            outputs={"__out": dace.Memlet("B[__i]")},
+            input_nodes={T, V},
+            output_nodes={B},
+            external_edges=True,
+    )
+    sdfg.validate()
+
+    return sdfg, first_map_exit, T, second_map_entry
+
+
+def test_possible_cycle_if_fuesed_sdfg():
+    sdfg, first_map_exit, array, second_map_entry = _make_possible_cycle_if_fuesed_sdfg()
+
+    would_transformation_apply = MapFusion.can_be_applied_to(
+            sdfg,
+            first_map_exit=first_map_exit,
+            array=array,
+            second_map_entry=second_map_entry,
+    )
+    assert not would_transformation_apply
+
+
 if __name__ == '__main__':
     test_fusion_intrinsic_memlet_direction()
     test_fusion_dynamic_producer()
@@ -1917,3 +1993,4 @@ if __name__ == '__main__':
     test_different_offsets()
     test_inner_map_dependency()
     test_inner_map_dependency_resolved()
+    test_possible_cycle_if_fuesed_sdfg()
