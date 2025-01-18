@@ -1763,11 +1763,6 @@ class AST_translator:
             
 
 
-            return False , None  
-
-
-        print("PROCESS VARIABLE CALL")
-
     def binop2sdfg(self, node: ast_internal_classes.BinOp_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This parses binary operations to tasklets in a new state or creates a function call with a nested SDFG if the
