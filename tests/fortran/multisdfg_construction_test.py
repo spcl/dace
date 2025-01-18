@@ -184,10 +184,13 @@ subroutine main(z)
   real, intent(out) :: z(1)
   z = fun(1.2)
   z = fun(x=1.2)
+  z = fun(x=1.2+2.1)
   z = fun(x)
   z = fun(x=x)
   z = fun(y)
   z = fun(x=y)
+  z = fun(fun(x))
+  z = fun(x=fun(x))
 end subroutine main
 """).check_with_gfortran().get()
     # Construct
@@ -201,4 +204,4 @@ end subroutine main
 
     main = gmap['main'].compile()
     main(z=z)
-    assert np.allclose(z, [4.2])
+    assert np.allclose(z, [4.4])

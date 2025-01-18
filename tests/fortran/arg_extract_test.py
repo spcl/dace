@@ -3,6 +3,9 @@
 import numpy as np
 
 from dace.frontend.fortran import fortran_parser
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
+
 
 def test_fortran_frontend_arg_extract():
     test_string = """
@@ -42,32 +45,23 @@ def test_fortran_frontend_arg_extract():
 
 
 def test_fortran_frontend_arg_extract3():
-    test_string = """
-                    PROGRAM arg_extract3
-                    implicit none
-                    real, dimension(2) :: d
-                    real, dimension(2) :: res
-                    CALL arg_extract3_test_function(d,res)
-                    end
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(d, res)
+  implicit none
+  real, dimension(2) :: d
+  real, dimension(2) :: res
+  integer :: jg
+  logical, dimension(2) :: is_cloud
+  jg = 1
+  is_cloud(1) = .true.
+  d(1) = 10
+  d(2) = 20
+  res(1) = merge(merge(d(1), d(2), d(1) < d(2) .and. is_cloud(jg)), 0.0, is_cloud(jg))
+  res(2) = 52
+end subroutine main
+""").check_with_gfortran().get()
 
-                    SUBROUTINE arg_extract3_test_function(d,res)
-                    real, dimension(2) :: d
-                    real, dimension(2) :: res
-
-                    integer :: jg
-                    logical, dimension(2) :: is_cloud
-
-                    jg = 1
-                    is_cloud(1) = .true.
-                    d(1)=10
-                    d(2)=20
-                    res(1) = MERGE(MERGE(d(1), d(2), d(1) < d(2) .AND. is_cloud(jg)), 0.0D0, is_cloud(jg))
-                    res(2) = 52
-
-                    END SUBROUTINE arg_extract3_test_function
-                    """
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "arg_extract3_test", normalize_offsets=True)
+    sdfg = create_singular_sdfg_from_string(sources, 'main', True)
     #sdfg.simplify(verbose=True)
     sdfg.compile()
     
