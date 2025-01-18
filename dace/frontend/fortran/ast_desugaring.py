@@ -28,7 +28,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
     Continue_Stmt, Format_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
-from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
+from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, BlockBase
 
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
@@ -907,7 +907,7 @@ def prepend_children(par: Base, children: Union[Base, List[Base]]):
 def remove_children(par: Base, children: Union[Base, List[Base]]):
     if isinstance(children, Base):
         children = [children]
-    repl = [c for c in par.children if c not in children]
+    repl = [c for c in par.children if not any(c is x for x in children)]
     set_children(par, repl)
 
 
@@ -915,7 +915,10 @@ def remove_self(nodes: Union[Base, List[Base]]):
     if isinstance(nodes, Base):
         nodes = [nodes]
     for n in nodes:
-        remove_children(n.parent, n)
+        par = n.parent
+        remove_children(par, n)
+        if isinstance(par, BlockBase) and not par.children:
+            remove_self(par)
 
 
 def correct_for_function_calls(ast: Program):
@@ -1695,8 +1698,9 @@ def make_practically_constant_global_vars_constants(ast: Program) -> Program:
             if not atype.out:
                 # The function cannot write through this argument.
                 continue
-            assert isinstance(v, (Name, Data_Ref, Part_Ref)),\
-                f"{v}, which isn't a writeable object, is passed to a writeable function argument"
+            if not isinstance(v, (Name, Data_Ref, Part_Ref)):
+                # Not writeable objects, so their values cannot change through this call.
+                continue
             if aspec in never_assigned:
                 never_assigned.remove(aspec)
 
@@ -2593,8 +2597,11 @@ def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Pr
         # Build new use statements.
         nuses: List[Use_Stmt] = [Use_Stmt(f"use {k}, only: {', '.join(sorted(use_map[k]))}") for k in use_map.keys()]
         # Remove the old ones, and prepend the new ones.
-        sp.content = nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
-        _reparent_children(sp)
+        nchild = nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
+        if nchild:
+            set_children(sp, nchild)
+        else:
+            remove_self(sp)
     return ast
 
 
