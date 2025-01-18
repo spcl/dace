@@ -965,10 +965,11 @@ class AST_translator:
 
         # First we need to check if the parameters are literals or variables
         for arg_i, variable in enumerate(variables_in_call):
+            if isinstance(variable, ast_internal_classes.Actual_Arg_Spec_Node):
+                keyword, variable = variable.arg_name, variable.arg
+
             if isinstance(variable, ast_internal_classes.Name_Node):
                 varname = variable.name
-            elif isinstance(variable, ast_internal_classes.Actual_Arg_Spec_Node):
-                varname, variable = variable.arg_name.name, variable.arg
             elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
                 varname = variable.name.name
             elif isinstance(variable, ast_internal_classes.Data_Ref_Node):
@@ -1020,24 +1021,25 @@ class AST_translator:
                                                     op="=",
                                                     line_number=node.line_number))
 
-        # This handles the case where the function is called with variables starting with the case that the variable is local to the calling SDFG
+        # This handles the case where the function is called with variables starting with the case that the variable
+        # is local to the calling SDFG.
         needs_replacement = {}
         for variable_in_call in variables_in_call:
             local_name = parameters[variables_in_call.index(variable_in_call)]
             self.name_mapping[new_sdfg][local_name.name] = new_sdfg._find_new_name(local_name.name)
             self.all_array_names.append(self.name_mapping[new_sdfg][local_name.name])
-            read=False
+            read = False
             if local_name.name in read_names:
                 ins_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
-                read=True
-            write=False
+                read = True
+            write = False
             if local_name.name in write_names:
                 outs_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
-                write=True
-            ret,view=self.process_variable_call(variable_in_call,local_name, sdfg, new_sdfg,substate,read,write)
-            if ret:
-                view[3]=variables_in_call.index(variable_in_call)
-                views.append(view)
+                write = True
+            view = self.process_variable_call(variable_in_call, local_name, sdfg, new_sdfg, substate, read, write)
+            if view:
+                sdfg_name, wv, rv, _ = view
+                views.append((sdfg_name, wv, rv, variables_in_call.index(variable_in_call)))
 
 
         # Preparing symbol dictionary for nested sdfg
@@ -1182,7 +1184,7 @@ class AST_translator:
         new_sdfg.parent_sdfg=sdfg
         self.temporary_sym_dict[new_sdfg.name]=sym_dict
         self.temporary_link_to_parent[new_sdfg.name]=substate
-        if self.multiple_sdfgs == False:
+        if not self.multiple_sdfgs:
             # print("Adding nested sdfg", new_sdfg.name, "to", sdfg.name)
             # print(sym_dict)
             if node.execution_part is not None:
@@ -1198,8 +1200,6 @@ class AST_translator:
                                 self.contexts[new_sdfg.name].constants[ast_utils.get_name(k)] = self.contexts[
                                     self.globalsdfg.name].constants[ast_utils.get_name(k)]
 
-                            pass
-
                     old_mode = self.transient_mode
                     # print("For ",sdfg_name," old mode is ",old_mode)
                     self.transient_mode = True
@@ -1214,22 +1214,27 @@ class AST_translator:
                     self.transient_mode = old_mode
 
                 for i in new_sdfg.symbols:
-                    if i in new_sdfg.arrays:
-                        new_sdfg.arrays.pop(i)
-                        if i in ins_in_new_sdfg:
-                            for var in variables_in_call:
-                                if i == ast_utils.get_name(parameters[variables_in_call.index(var)]):
-                                    sym_dict[i] = ast_utils.get_name(var)
-                                    memlet_skip.append(ast_utils.get_name(var))
-                            ins_in_new_sdfg.remove(i)
+                    if i not in new_sdfg.arrays:
+                        continue
+                    new_sdfg.arrays.pop(i)
+                    if i in ins_in_new_sdfg:
+                        for var in variables_in_call:
+                            if i == ast_utils.get_name(parameters[variables_in_call.index(var)]):
+                                sym_dict[i] = ast_utils.get_name(var)
+                                memlet_skip.append(ast_utils.get_name(var))
+                        ins_in_new_sdfg.remove(i)
 
-                        if i in outs_in_new_sdfg:
-                            outs_in_new_sdfg.remove(i)
-                            for var in variables_in_call:
-                                if i == ast_utils.get_name(parameters[variables_in_call.index(var)]):
-                                    sym_dict[i] = ast_utils.get_name(var)
-                                    memlet_skip.append(ast_utils.get_name(var))
+                    if i in outs_in_new_sdfg:
+                        outs_in_new_sdfg.remove(i)
+                        for var in variables_in_call:
+                            if i == ast_utils.get_name(parameters[variables_in_call.index(var)]):
+                                sym_dict[i] = ast_utils.get_name(var)
+                                memlet_skip.append(ast_utils.get_name(var))
 
+            for i in assigns:
+                self.translate(i, new_sdfg, new_sdfg)
+                if i.lval.name in new_sdfg.symbols:
+                    new_sdfg.remove_symbol(i.lval.name)
             internal_sdfg = substate.add_nested_sdfg(new_sdfg,
                                                      sdfg,
                                                      ins_in_new_sdfg,
@@ -1410,10 +1415,7 @@ class AST_translator:
                     nested_sdfg = parent_sdfg
                     parent_sdfg = parent_sdfg.parent_sdfg
 
-        if self.multiple_sdfgs == False:
-
-            for i in assigns:
-                self.translate(i, new_sdfg, new_sdfg)
+        if not self.multiple_sdfgs:
             self.translate(node.execution_part, new_sdfg, new_sdfg)
             # import copy
             #
@@ -1602,7 +1604,10 @@ class AST_translator:
 
         return last_read, last_written
 
-    def process_variable_call(self, variable_in_calling_context: ast_internal_classes.FNode, local_name:ast_internal_classes.FNode,  sdfg: SDFG, new_sdfg: SDFG, substate:SDFGState, read:bool,write:bool):
+    def process_variable_call(
+            self, variable_in_calling_context: ast_internal_classes.FNode, local_name: ast_internal_classes.Name_Node,
+            sdfg: SDFG, new_sdfg: SDFG, substate: SDFGState, read: bool, write: bool) \
+            -> Optional[Tuple[str, Any, Any, FNode]]:
         # We need to first check and have separate handling for:
         # 1. Scalars
         # 2. Arrays
@@ -1614,44 +1619,34 @@ class AST_translator:
         # 3. this will allow the "final" memlets to the inconnectors to be "simple"
 
         # Get name of variable in SDFG of calling context or globalSDFG if that fails
-        sdfg_name = self.name_mapping.get(sdfg).get(ast_utils.get_name(variable_in_calling_context))
-        if sdfg_name is None:
-            globalsdfg_name = self.name_mapping.get(self.globalsdfg).get(ast_utils.get_name(variable_in_calling_context))
+        var_name = ast_utils.get_name(variable_in_calling_context)
 
         # Get array reference in SDFG
-        if sdfg_name is not None:
-            array = sdfg.arrays.get(sdfg_name)
-            self.names_of_object_in_parent_sdfg[new_sdfg][local_name.name] = sdfg_name
-        elif globalsdfg_name is not None:
-            array = self.globalsdfg.arrays.get(globalsdfg_name)
+        sdfg_name = self.name_mapping[sdfg].get(var_name)
+        if sdfg_name is None:
+            globalsdfg_name = self.name_mapping[self.globalsdfg].get(var_name)
+            assert globalsdfg_name is not None, \
+                f"Variable `{var_name}` not found in SDFG {sdfg} or globalSDFG {self.globalsdfg}"
+            array = self.globalsdfg.arrays[globalsdfg_name]
         else:
-            raise ValueError("Variable not found in SDFG or globalSDFG")
+            array = sdfg.arrays[sdfg_name]
+            self.names_of_object_in_parent_sdfg[new_sdfg][local_name.name] = sdfg_name
 
-        #Get the shape, offset, and type of the array
-
-
-
-        #this can be a scalar, a full array, or a full derived type object
+        # this can be a scalar, a full array, or a full derived type object
         if isinstance(variable_in_calling_context, ast_internal_classes.Name_Node):
-            self.add_full_object(new_sdfg,sdfg,array,local_name)
-            return False , None
+            self.add_full_object(new_sdfg, sdfg, array, local_name)
+            return None
 
-
-        #this can be an array slice or a derived type object member slice
-        elif isinstance(variable_in_calling_context, ast_internal_classes.Array_Subscript_Node):
+        # this can be an array slice or a derived type object member slice
+        if isinstance(variable_in_calling_context, ast_internal_classes.Array_Subscript_Node):
             print("Array Subscript node")
-            shape,offsets,strides,subset=self.compute_array_shape(variable_in_calling_context,sdfg,array)
-            offsets_zero = [0]*len(offsets)
+            shape, offsets, strides, subset = self.compute_array_shape(variable_in_calling_context, sdfg, array)
+            offsets_zero = [0] * len(offsets)
             memlet = Memlet(f'{sdfg_name}[{subset}]')
-            viewname, view = sdfg.add_view(sdfg_name + "_view_" + str(self.views),
-                                            shape,
-                                            array.dtype,
-                                            storage=array.storage,
-                                            strides=strides,
-                                            offset=offsets_zero)
-
-            wv = None
-            rv = None
+            viewname, view = sdfg.add_view(
+                sdfg_name + "_view_" + str(self.views), shape, array.dtype,
+                storage=array.storage, strides=strides, offset=offsets_zero)
+            wv, rv = None, None
             if read:
                 r = substate.add_read(sdfg_name)
                 wv = substate.add_write(viewname)
@@ -1660,97 +1655,85 @@ class AST_translator:
                 rv = substate.add_read(viewname)
                 w = substate.add_write(sdfg_name)
                 substate.add_edge(rv, 'views', w, None, dpcp(memlet))
-
             self.views = self.views + 1
 
+            new_sdfg.add_array(
+                self.name_mapping[new_sdfg][local_name.name], shape, array.dtype, array.storage, strides=strides,
+                offset=offsets)
+            return sdfg_name, wv, rv, variable_in_calling_context
 
-            new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
-                                shape,
-                                array.dtype,
-                                array.storage,
-                                strides=strides,
-                                offset=offsets)
-            return True, [sdfg_name, wv, rv, variable_in_calling_context]
-        #this is an access to a (potentially nested) derived type object member
-        elif isinstance(variable_in_calling_context, ast_internal_classes.Data_Ref_Node):
+        # this is access to a (potentially nested) derived type object member
+        if isinstance(variable_in_calling_context, ast_internal_classes.Data_Ref_Node):
             self.struct_view_count = self.struct_view_count + 1
             print("Data Ref node")
-            intermediate_step=variable_in_calling_context
-            top_structure_name=self.name_mapping[sdfg][ast_utils.get_name(variable_in_calling_context.parent_ref)]
-            top_structure=sdfg.arrays[top_structure_name]
-            current_structure=top_structure
-            name_chain=[]
-            if read:
-                last_read=substate.add_read(top_structure_name)
-            else:
-                last_read=None
-            if write:
-                last_written=substate.add_write(top_structure_name)
-            else:
-                last_written=None
+            intermediate_step = variable_in_calling_context
+            top_structure_name = self.name_mapping[sdfg][ast_utils.get_name(variable_in_calling_context.parent_ref)]
+            top_structure = sdfg.arrays[top_structure_name]
+            current_structure = top_structure
+            name_chain = []
+            last_read = substate.add_read(top_structure_name) if read else None
+            last_written = substate.add_write(top_structure_name) if write else None
 
             while True:
-                member=intermediate_step.part_ref
-                parent=intermediate_step.parent_ref
-                if isinstance(parent,ast_internal_classes.Array_Subscript_Node):
-                    #this means that there is an array access in the chain before the end
-                    #such accesses must always collapse to elements
-                    shape,offsets,strides,subset=self.compute_array_shape(parent,sdfg,current_structure)
+                member = intermediate_step.part_ref
+                parent = intermediate_step.parent_ref
+                if isinstance(parent, ast_internal_classes.Array_Subscript_Node):
+                    # this means that there is an array access in the chain before the end
+                    # such accesses must always collapse to elements
+                    shape, offsets, strides, subset = self.compute_array_shape(parent, sdfg, current_structure)
                     print("Array Subscript node")
                     raise NotImplementedError("Array Subscript node in Data Ref parent not implemented")
-                elif isinstance(parent,ast_internal_classes.Name_Node):
-                    #this is the simpler case - no extra work necessary
+                elif isinstance(parent, ast_internal_classes.Name_Node):
+                    # this is the simpler case - no extra work necessary
                     name_chain.append(ast_utils.get_name(parent))
-
                 else:
                     raise ValueError("Unsupported parent node type")
 
-                if isinstance(member,ast_internal_classes.Name_Node):
-                    #this is the end of the chain
-                    array=current_structure.members[ast_utils.get_name(member)]
-                    last_read, last_written=self.add_basic_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write)
+                if isinstance(member, ast_internal_classes.Name_Node):
+                    # this is the end of the chain
+                    array = current_structure.members[ast_utils.get_name(member)]
+                    last_read, last_written = self.add_basic_view_pair_in_tower(
+                        sdfg, array, name_chain, member, substate, last_read, last_written, read, write)
+                    self.add_full_object(new_sdfg, sdfg, array, local_name)
+                    return sdfg_name, last_read, last_written, variable_in_calling_context
 
-                    self.add_full_object(new_sdfg,sdfg,array,local_name)
-                    return True, [sdfg_name,last_read, last_written, variable_in_calling_context]
-                elif isinstance(member,ast_internal_classes.Array_Subscript_Node):
-
+                if isinstance(member, ast_internal_classes.Array_Subscript_Node):
                     print("Array Subscript node in Data Ref as last level")
-                    array=current_structure.members[ast_utils.get_name(member)]
-                    shape,offsets,strides,subset=self.compute_array_shape(member,sdfg,array)
+                    array = current_structure.members[ast_utils.get_name(member)]
+                    shape, offsets, strides, subset = self.compute_array_shape(member, sdfg, array)
 
                     if isinstance(array, dat.ContainerArray):
-                        #this is a derived type object, must have first view to Array, then view to subset if necessary
-                        last_read, last_written=self.add_basic_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write)
-                        if len(shape)==0:
-                            #this is exactly one element of the array of structures
-                            stype=array.stype
+                        # this is a derived type object, must have first view to Array, then view to subset if necessary
+                        last_read, last_written = self.add_basic_view_pair_in_tower(
+                            sdfg, array, name_chain, member, substate, last_read, last_written, read, write)
+                        if len(shape) == 0:
+                            # this is exactly one element of the array of structures
+                            stype = array.stype
                             if isinstance(stype, dat.ContainerArray):
                                 raise NotImplementedError("Array of structures of array of structures not implemented")
-                            else:
-                                last_read, last_written=self.add_array_to_element_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write,subset)
-                                self.add_full_object(new_sdfg,sdfg,stype,local_name)
-                                return True, [sdfg_name,last_read, last_written, variable_in_calling_context]
-
+                            last_read, last_written = self.add_array_to_element_view_pair_in_tower(
+                                sdfg, array, name_chain, member, substate, last_read, last_written, read, write, subset)
+                            self.add_full_object(new_sdfg, sdfg, stype, local_name)
+                            return True, [sdfg_name, last_read, last_written, variable_in_calling_context]
                         else:
                             raise NotImplementedError("Array of structures slice not implemented")
-
                     else:
-                        #this is a simple array, but must still have first view to Array and then to subset.
-                        last_read, last_written=self.add_basic_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write)
-                        last_read, last_written=self.add_simple_array_to_element_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write,shape,offsets,strides,subset)
-                        new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
-                                shape,
-                                array.dtype,
-                                array.storage,
-                                strides=strides,
-                                offset=offsets)
-                        return True, [sdfg_name,last_read, last_written, variable_in_calling_context]
+                        # this is a simple array, but must still have first view to Array and then to subset.
+                        last_read, last_written = self.add_basic_view_pair_in_tower(
+                            sdfg, array, name_chain, member, substate, last_read, last_written, read, write)
+                        last_read, last_written = self.add_simple_array_to_element_view_pair_in_tower(
+                            sdfg, array, name_chain, member, substate, last_read, last_written, read, write, shape,
+                            offsets, strides, subset)
+                        new_sdfg.add_array(
+                            self.name_mapping[new_sdfg][local_name.name], shape, array.dtype, array.storage,
+                            strides=strides, offset=offsets)
+                        return sdfg_name, last_read, last_written, variable_in_calling_context
 
-                elif isinstance(member,ast_internal_classes.Data_Ref_Node):
-                    #this is a member access
-
-                    current_structure=current_structure.members[ast_utils.get_name(member.parent_ref)]
-                    intermediate_step=member
+                elif isinstance(member, ast_internal_classes.Data_Ref_Node):
+                    # this is a member access
+                    current_structure = current_structure.members[ast_utils.get_name(member.parent_ref)]
+                    intermediate_step = member
+                    raise NotImplementedError("???")
         else:
             raise ValueError("Unsupported variable type")
 
