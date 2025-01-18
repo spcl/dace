@@ -1759,7 +1759,9 @@ class AST_translator:
                     #this is a member access
                     
                     current_structure=current_structure.members[ast_utils.get_name(member.parent_ref)]
-                    intermediate_step=member    
+                    intermediate_step=member  
+        else:
+            raise ValueError("Unsupported variable type")         
             
 
 
