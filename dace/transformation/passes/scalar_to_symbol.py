@@ -373,6 +373,8 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
             j = 0
             for i, (start, end, _) in enumerate(memlet_subset.ndrange()):
                 if start != end:
+                    if i >= min(len(new_tasklet_slice), len(tasklet_slice)):
+                        breakpoint()
                     new_tasklet_slice[i] = tasklet_slice[j]
                     j += 1
 
