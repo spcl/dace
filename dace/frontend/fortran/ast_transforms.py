@@ -787,6 +787,9 @@ class ArgumentExtractor(NodeTransformer):
         return tmpname
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+        DIRECTLY_REFERNCEABLE = (ast_internal_classes.Name_Node, ast_internal_classes.Literal,
+                                 ast_internal_classes.Array_Subscript_Node, ast_internal_classes.Data_Ref_Node)
+
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if node.name.name in ["malloc", "pow", "cbrt", "__dace_epsilon",
                               *FortranIntrinsics.call_extraction_exemptions()]:
@@ -797,12 +800,15 @@ class ArgumentExtractor(NodeTransformer):
 
         for i, arg in enumerate(node.args):
             # Ensure we allow to extract function calls from arguments
-            if isinstance(arg, (ast_internal_classes.Name_Node, ast_internal_classes.Literal,
-                                ast_internal_classes.Array_Subscript_Node, ast_internal_classes.Data_Ref_Node)):
+            if (isinstance(arg, DIRECTLY_REFERNCEABLE)
+                    or (isinstance(arg, ast_internal_classes.Actual_Arg_Spec_Node)
+                        and isinstance(arg.arg, DIRECTLY_REFERNCEABLE))):
+                # If it is a node type that's allowed to be directly referenced in a (possibly keyworded) function
+                # argument, then we keep the node as is.
                 result.args.append(arg)
                 continue
 
-            # These needs to be extracted, so register a temporary variable.s
+            # These needs to be extracted, so register a temporary variable.
             tmpname = self._get_tempvar_name()
             decl = ast_internal_classes.Decl_Stmt_Node(
                     vardecl=[ast_internal_classes.Var_Decl_Node(name=tmpname, type='VOID', sizes=None, init=None)])
