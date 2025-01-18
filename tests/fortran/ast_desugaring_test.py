@@ -1531,6 +1531,11 @@ contains
     type(config), intent(inout) :: this
     this%b = 5.1
   end subroutine fun
+  subroutine update(x)
+    implicit none
+    real, intent(inout) :: x
+    x = 1.1
+  end subroutine update
 end module lib
 """).add_file("""
 subroutine main(cfg)
@@ -1539,6 +1544,7 @@ subroutine main(cfg)
   type(big_config), intent(in) :: cfg
   real :: a = 1
   a = cfg%big%b + a * globalo%a
+  call update(globalo%b)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -1566,6 +1572,11 @@ MODULE lib
     TYPE(config), INTENT(INOUT) :: this
     this % b = 5.1
   END SUBROUTINE fun
+  SUBROUTINE update(x)
+    IMPLICIT NONE
+    REAL, INTENT(INOUT) :: x
+    x = 1.1
+  END SUBROUTINE update
 END MODULE lib
 SUBROUTINE main(cfg)
   USE lib
@@ -1573,6 +1584,7 @@ SUBROUTINE main(cfg)
   TYPE(big_config), INTENT(IN) :: cfg
   REAL :: a = 1
   a = 10000.0 + a * 42
+  CALL update(globalo % b)
 END SUBROUTINE main
 """.strip()
     assert got == want
@@ -1833,6 +1845,10 @@ contains
     logical, intent(out) :: what
     what = .true.
   end subroutine update
+  subroutine noop(what)
+    implicit none
+    logical, intent(in) :: what
+  end subroutine noop
 end module lib
 """).add_file("""
 subroutine main
@@ -1840,6 +1856,8 @@ subroutine main
   implicit none
   real :: a = 1.0
   call update(movable_cond)
+  call noop(fixed_cond)
+  call noop(what = fixed_cond)
   movable_cond = .not. movable_cond
   if (fixed_cond .and. movable_cond) a = 7.1
 end subroutine main
@@ -1859,12 +1877,18 @@ MODULE lib
     LOGICAL, INTENT(OUT) :: what
     what = .TRUE.
   END SUBROUTINE update
+  SUBROUTINE noop(what)
+    IMPLICIT NONE
+    LOGICAL, INTENT(IN) :: what
+  END SUBROUTINE noop
 END MODULE lib
 SUBROUTINE main
   USE lib
   IMPLICIT NONE
   REAL :: a = 1.0
   CALL update(movable_cond)
+  CALL noop(fixed_cond)
+  CALL noop(what = fixed_cond)
   movable_cond = .NOT. movable_cond
   IF (fixed_cond .AND. movable_cond) a = 7.1
 END SUBROUTINE main

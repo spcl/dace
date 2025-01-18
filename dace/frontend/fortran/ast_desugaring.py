@@ -1681,12 +1681,7 @@ def make_practically_constant_global_vars_constants(ast: Program) -> Program:
         assert fnspec
         fnspec = ident_spec(alias_map[fnspec])
         kv = _make_keyword_mapping_of_call(fcall, alias_map)
-        if kv is None:
-            # Cannot do much with intrinsic functions, so everything is poisoned.
-            args = args.children if args else tuple()
-            for a in args:
-                _poison_variable(a)
-            continue
+        assert kv is not None
 
         for k, v in kv.items():
             aspec = fnspec + (k,)
@@ -1743,9 +1738,6 @@ def _make_keyword_mapping_of_call(fcall: Union[Function_Reference, Call_Stmt], a
     fnspec = search_real_local_alias_spec(fn, alias_map)
     assert fnspec
     fnstmt = alias_map[fnspec]
-    if isinstance(fnstmt.parent.parent, Program):
-        # Global subroutines cannot be keyworded.
-        return None
     fnargs = atmost_one(children_of_type(fnstmt, Dummy_Arg_List))
     fnargs = fnargs.children if fnargs else tuple()
     assert len(args) <= len(fnargs), f"Cannot pass more arguments({len(args)}) than defined ({len(fnargs)})"
@@ -1812,7 +1804,6 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
     fnargs_undecidables: Set[SPEC] = set()
     fnargs_optional_presence: Dict[SPEC, Set[bool]] = {}
     for fcall in walk(ast, (Function_Reference, Call_Stmt)):
-        kv = _make_keyword_mapping_of_call(fcall, alias_map)
         fn, args = fcall.children
         if isinstance(fn, Intrinsic_Name):
             # Cannot do anything with intrinsic functions.
@@ -1826,6 +1817,8 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
             continue
         fnargs = atmost_one(children_of_type(fnstmt, Dummy_Arg_List))
         fnargs = fnargs.children if fnargs else tuple()
+        kv = _make_keyword_mapping_of_call(fcall, alias_map)
+        assert kv is not None
         assert len(kv) <= len(fnargs), f"Cannot pass more arguments({len(kv)}) than defined ({len(fnargs)})"
         for a in fnargs:
             aspec = search_real_local_alias_spec(a, alias_map)
@@ -2691,8 +2684,7 @@ def const_eval_nodes(ast: Program) -> Program:
         LITERAL_CLASSES, Expr, Add_Operand, Or_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr,
         Level_5_Expr, Intrinsic_Function_Reference)
     NON_EXPRESSION_CLASSES = (
-        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization,
-        Section_Subscript_List)
+        Explicit_Shape_Spec, Loop_Control, Initialization, Component_Initialization, Section_Subscript_List)
 
     alias_map = alias_specs(ast)
 
@@ -2724,6 +2716,35 @@ def const_eval_nodes(ast: Program) -> Program:
     for node in reversed(walk(ast, NON_EXPRESSION_CLASSES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
+
+    for fcall in reversed(walk(ast, (Call_Stmt, Function_Reference))):
+        fn, args = fcall.children
+        if isinstance(fn, Intrinsic_Name):
+            # Cannot do anything with intrinsic functions.
+            continue
+        kv = _make_keyword_mapping_of_call(fcall, alias_map)
+        assert kv is not None
+        fnspec = search_real_local_alias_spec(fn, alias_map)
+        assert fnspec
+        fnstmt = alias_map[fnspec]
+        fnargs = atmost_one(children_of_type(fnstmt, Dummy_Arg_List))
+        fnargs = fnargs.children if fnargs else tuple()
+        assert len(kv) <= len(fnargs), f"Cannot pass more arguments({len(kv)}) than defined ({len(fnargs)})"
+        for a in fnargs:
+            aspec = search_real_local_alias_spec(a, alias_map)
+            assert aspec
+            adecl = alias_map[aspec]
+            atype = find_type_of_entity(adecl, alias_map)
+            assert atype
+            if aspec[-1] not in kv:
+                continue
+            v = kv[aspec[-1]]
+            if atype.out and isinstance(v, (Name, Part_Ref, Data_Ref)):
+                # TODO: This should not happen in the first place. But after some pruning the problematic calls go away.
+                #  So we ignore it for now, but should be revisted later.
+                # We're passing a writeable object.
+                continue
+            _const_eval_node(v)
 
     return ast
 
@@ -2833,6 +2854,49 @@ def inject_const_evals(ast: Program,
     inject_consts = inject_consts or []
     alias_map = alias_specs(ast)
 
+    def _can_inject_in_function_argument(v: Base) -> bool:
+        """
+        Determine whether we are in a function argument, and is it allowed to inject in there.
+        """
+        var = v
+        while var.parent and not isinstance(var.parent, (Actual_Arg_Spec, Actual_Arg_Spec_List)):
+            var = var.parent
+        if not isinstance(var.parent, (Actual_Arg_Spec, Actual_Arg_Spec_List)):
+            # Not a function argument anyway.
+            return True
+        if not isinstance(var, (Name, Data_Ref)):
+            # Not a writeable object anyway.
+            return True
+        fcall = var.parent
+        while fcall and not isinstance(fcall, (Call_Stmt, Function_Reference, Intrinsic_Function_Reference)):
+            fcall = fcall.parent
+        if not fcall:
+            # Not a function argument anyway.
+            return True
+        fn, args = fcall.children
+        if isinstance(fn, Intrinsic_Name):
+            # Cannot do anything with intrinsic functions.
+            return False
+        fnspec = search_real_local_alias_spec(fn, alias_map)
+        assert fnspec
+        fnspec = ident_spec(alias_map[fnspec])
+        kv = _make_keyword_mapping_of_call(fcall, alias_map)
+        assert kv is not None
+
+        for k, v in kv.items():
+            if v is not var:
+                continue
+            aspec = fnspec + (k,)
+            assert aspec in alias_map
+            adecl = alias_map[aspec]
+            atype = find_type_of_entity(adecl, alias_map)
+            assert atype
+
+            # TODO: This should not happen in the first place. But after some pruning the problematic calls go
+            #  away. So we ignore it for now, but should be revisted later.
+            return not atype.out
+        return True
+
     TOPLEVEL_SPEC = ('*',)
 
     items_by_scopes = {}
@@ -2891,6 +2955,8 @@ def inject_const_evals(ast: Program,
                 lv, _, _ = dr.parent.children
                 if lv is dr:
                     continue
+            if not _can_inject_in_function_argument(dr):
+                continue
             item = _find_matching_item(items, dr, alias_map)
             if not item:
                 continue
@@ -2902,6 +2968,9 @@ def inject_const_evals(ast: Program,
                 # We don't want to replace the values in their declarations or imports, but only where their
                 # values are being used.
                 continue
+            if not _can_inject_in_function_argument(nm):
+                continue
+
             loc = search_real_local_alias_spec(nm, alias_map)
             if not loc or not isinstance(alias_map[loc], Entity_Decl):
                 continue
