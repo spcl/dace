@@ -273,7 +273,7 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
 def get_abs_base_type_and_ptr_count(dtype: dtypes.typeclass) -> Tuple[dtypes.typeclass, int]:
     base_type = dtype
     ptr_count = 0
-    while isinstance(base_type, (dace.pointer, dace.fixedlenarray)):
+    while isinstance(base_type, dace.pointer):
         ptr_count += 1
         base_type = base_type.base_type
 
@@ -1243,12 +1243,12 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 src_dtype = self.memlets[source][3]
                 src_ptrs = 0
                 curdtype = src_dtype
-                while isinstance(curdtype, (dace.pointer, dace.fixedlenarray)):
+                while isinstance(curdtype, dace.pointer):
                     src_ptrs += 1
                     curdtype = curdtype.base_type
                 target_ptrs = 0
                 curdtype = dtype
-                while isinstance(curdtype, (dace.pointer, dace.fixedlenarray)):
+                while isinstance(curdtype, dace.pointer):
                     target_ptrs += 1
                     curdtype = curdtype.base_type
 

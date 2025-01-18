@@ -972,7 +972,6 @@ class callback(typeclass):
             self.input_types.append(arg)
         self.bytes = int64.bytes
         self.type = self
-        self.ctype = self
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """

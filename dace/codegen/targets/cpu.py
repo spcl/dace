@@ -280,11 +280,6 @@ class CPUCodeGen(TargetCodeGenerator):
                         defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
                         self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
                         self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
-                # TODO: Find a better way to do this (the issue is with pointers of pointers)
-                # if isinstance(atype, dtypes.pointer):
-                #     atype = atype.base_type
-                # if value.startswith('&'):
-                #     value = value[1:]
             declaration_stream.write(f'{atype.as_arg(aname)};', cfg, state_id, node)
         allocation_stream.write(f'{aname} = {value};', cfg, state_id, node)
 
