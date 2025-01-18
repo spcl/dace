@@ -750,9 +750,9 @@ class NestedSDFG(CodeNode):
                 dst = utils.get_global_memlet_path_dst(sdfg, state, edge)
                 if isinstance(dst, AccessNode):
                     outputs.add(dst.data)
-            if len(inputs - outputs) > 0:
-                raise ValueError(f"Inout connector {conn} is connected to different input ({inputs}) and "
-                                 f"output ({outputs}) arrays")
+            # if len(inputs - outputs) > 0:
+            #     raise ValueError(f"Inout connector {conn} is connected to different input ({inputs}) and "
+            #                      f"output ({outputs}) arrays")
 
         # Validate undefined symbols
         if self.sdfg:

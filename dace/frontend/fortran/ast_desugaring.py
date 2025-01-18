@@ -28,7 +28,7 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
     Continue_Stmt, Format_Stmt
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
-from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
+from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase, BlockBase
 
 from dace.frontend.fortran.ast_utils import singular, children_of_type, atmost_one
 
@@ -159,7 +159,7 @@ def search_scope_spec(node: Base) -> Optional[SPEC]:
         return search_scope_spec(scope)
     elif isinstance(par, Actual_Arg_Spec):
         kw, _ = par.children
-        if kw == node:
+        if kw is node:
             # We're describing a keyword, which is not really an identifiable object.
             return None
     stmt = singular(children_of_type(scope, NAMED_STMTS_OF_INTEREST_CLASSES))
@@ -212,7 +212,7 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
             # TODO: Add ref.
             par, _ = par.children[0], par.children[1:]
         assert isinstance(par, Name)
-        if par != node:
+        if par is not node:
             # Components do not really have a local alias.
             return None
     elif isinstance(par, Kind_Selector):
@@ -226,7 +226,7 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
     elif isinstance(par, Actual_Arg_Spec):
         # Keywords cannot be aliased.
         kw, _ = par.children
-        if kw == node:
+        if kw is node:
             return None
     return scope_spec + (name,)
 
@@ -873,7 +873,7 @@ def replace_node(node: Base, subst: Union[Base, Iterable[Base]]):
     only_child = bool([c for c in par.children if c == node])
     repls = []
     for c in par.children:
-        if c != node:
+        if c is not node:
             repls.append(c)
             continue
         if isinstance(subst, Base):
@@ -907,7 +907,7 @@ def prepend_children(par: Base, children: Union[Base, List[Base]]):
 def remove_children(par: Base, children: Union[Base, List[Base]]):
     if isinstance(children, Base):
         children = [children]
-    repl = [c for c in par.children if c not in children]
+    repl = [c for c in par.children if not any(c is x for x in children)]
     set_children(par, repl)
 
 
@@ -915,7 +915,10 @@ def remove_self(nodes: Union[Base, List[Base]]):
     if isinstance(nodes, Base):
         nodes = [nodes]
     for n in nodes:
-        remove_children(n.parent, n)
+        par = n.parent
+        remove_children(par, n)
+        if isinstance(par, BlockBase) and not par.children:
+            remove_self(par)
 
 
 def correct_for_function_calls(ast: Program):
@@ -1513,12 +1516,15 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
         """
         # Go over all the scoped identifiers available under `node`.
         for nm in walk(node, Name):
+            if isinstance(nm.parent, Actual_Arg_Spec) and nm is nm.parent.children[0]:
+                # It is a keyword of a function call, so does not matter for usage.
+                continue
             loc = search_real_local_alias_spec(nm, alias_map)
             scope_spec = search_scope_spec(nm.parent)
             if not loc or not scope_spec:
                 continue
             nm_spec = ident_spec(alias_map[loc])
-            if isinstance(nm.parent, Entity_Decl) and nm == nm.parent.children[0]:
+            if isinstance(nm.parent, Entity_Decl) and nm is nm.parent.children[0]:
                 fnargs = atmost_one(children_of_type(alias_map[scope_spec], Dummy_Arg_List))
                 fnargs = fnargs.children if fnargs else tuple()
                 if any(a.string == nm.string for a in fnargs):
@@ -1527,7 +1533,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                     continue
                 # Otherwise, this is a declaration of the variable, which is not a use, and so a fair game for removal.
                 continue
-            if isinstance(nm.parent, Component_Decl) and nm == nm.parent.children[0]:
+            if isinstance(nm.parent, Component_Decl) and nm is nm.parent.children[0]:
                 # This is a declaration of the component, which is not a use, and so a fair game for removal.
                 continue
 
@@ -1646,12 +1652,11 @@ def make_practically_constant_global_vars_constants(ast: Program) -> Program:
                                  if isinstance(v, Entity_Decl) and not find_type_of_entity(v, alias_map).const
                                  and search_scope_spec(v) and isinstance(alias_map[search_scope_spec(v)], Module_Stmt)}
 
-    for asgn in walk(ast, Assignment_Stmt):
-        lv, _, rv = asgn.children
-        if not isinstance(lv, Name):
-            # Everything else unsupported for now.
-            continue
-        loc = search_real_local_alias_spec(lv, alias_map)
+    def _poison_variable(v: Base):
+        if not isinstance(v, Name):
+            # Everything else unsupported for now
+            return
+        loc = search_real_local_alias_spec(v, alias_map)
         assert loc
         var = alias_map[loc]
         assert isinstance(var, Entity_Decl)
@@ -1659,20 +1664,40 @@ def make_practically_constant_global_vars_constants(ast: Program) -> Program:
         if var_spec in never_assigned:
             never_assigned.remove(var_spec)
 
+    for asgn in walk(ast, Assignment_Stmt):
+        lv, _, rv = asgn.children
+        _poison_variable(lv)
+
     for fcall in walk(ast, (Function_Reference, Call_Stmt)):
         fn, args = fcall.children
-        args = args.children if args else tuple()
-        for a in args:
-            if not isinstance(a, Name):
-                # Everything else unsupported for now.
+        if isinstance(fn, Intrinsic_Name):
+            # Cannot do much with intrinsic functions, so everything is poisoned.
+            args = args.children if args else tuple()
+            for a in args:
+                _poison_variable(a)
+            continue
+
+        fnspec = search_real_local_alias_spec(fn, alias_map)
+        assert fnspec
+        fnspec = ident_spec(alias_map[fnspec])
+        kv = _make_keyword_mapping_of_call(fcall, alias_map)
+        assert kv is not None
+
+        for k, v in kv.items():
+            aspec = fnspec + (k,)
+            assert aspec in alias_map
+            adecl = alias_map[aspec]
+            assert isinstance(adecl, Entity_Decl)
+            atype = find_type_of_entity(adecl, alias_map)
+            assert atype
+            if not atype.out:
+                # The function cannot write through this argument.
                 continue
-            loc = search_real_local_alias_spec(a, alias_map)
-            assert loc
-            var = alias_map[loc]
-            assert isinstance(var, Entity_Decl)
-            var_spec = ident_spec(var)
-            if var_spec in never_assigned:
-                never_assigned.remove(var_spec)
+            if not isinstance(v, (Name, Data_Ref, Part_Ref)):
+                # Not writeable objects, so their values cannot change through this call.
+                continue
+            if aspec in never_assigned:
+                never_assigned.remove(aspec)
 
     for fixed in never_assigned:
         edcl = alias_map[fixed]
@@ -1701,6 +1726,76 @@ def make_practically_constant_global_vars_constants(ast: Program) -> Program:
     return ast
 
 
+def _make_keyword_mapping_of_call(fcall: Union[Function_Reference, Call_Stmt], alias_map: SPEC_TABLE)\
+        -> Optional[Dict[str, Base]]:
+    fn, args = fcall.children
+    if isinstance(fn, Intrinsic_Name):
+        # Cannot do anything with intrinsic functions.
+        return None
+    args = args.children if args else tuple()
+    kwargs = tuple(a.children for a in args if isinstance(a, Actual_Arg_Spec))
+    kwargs = {k.string: v for k, v in kwargs}
+    fnspec = search_real_local_alias_spec(fn, alias_map)
+    assert fnspec
+    fnstmt = alias_map[fnspec]
+    fnargs = atmost_one(children_of_type(fnstmt, Dummy_Arg_List))
+    fnargs = fnargs.children if fnargs else tuple()
+    assert len(args) <= len(fnargs), f"Cannot pass more arguments({len(args)}) than defined ({len(fnargs)})"
+
+    kv: Dict[str, Base] = {}
+    for a in fnargs:
+        aspec = search_real_local_alias_spec(a, alias_map)
+        assert aspec
+        adecl = alias_map[aspec]
+        atype = find_type_of_entity(adecl, alias_map)
+        assert atype
+        if not args:
+            # If we do not have supplied arguments anymore, the remaining arguments must be optional
+            assert atype.optional
+            continue
+        kwargs_zone = isinstance(args[0], Actual_Arg_Spec)  # Whether we are in keyword args territory.
+        if kwargs_zone:
+            # This is an argument, so it must have been supplied as a keyworded value.
+            assert a.string in kwargs or atype.optional
+            v = kwargs.get(a.string)
+        else:
+            # Pop the next non-keywordd supplied value.
+            v, args = args[0], args[1:]
+        if v is None:
+            assert atype.optional
+            continue
+        kv[aspec[-1]] = v
+
+    return kv
+
+
+def make_argument_mapping_explicit(ast: Program) -> Program:
+    alias_map = alias_specs(ast)
+
+    for fcall in walk(ast, (Function_Reference, Call_Stmt)):
+        fn, args = fcall.children
+        if isinstance(fn, Intrinsic_Name):
+            # Cannot do anything with intrinsic functions.
+            continue
+        fnspec = search_real_local_alias_spec(fn, alias_map)
+        assert fnspec
+        fnstmt = alias_map[fnspec]
+        if isinstance(fnstmt.parent.parent, Program):
+            # Global subroutines cannot be keyworded.
+            continue
+
+        kv = _make_keyword_mapping_of_call(fcall, alias_map)
+        assert kv is not None
+        for k, v in kv.items():
+            if isinstance(v.parent, Actual_Arg_Spec):
+                # Already on a keyword.
+                continue
+            repl = Actual_Arg_Spec(f"{k} = {v.tofortran()}")
+            replace_node(v, repl)
+
+    return ast
+
+
 def make_practically_constant_arguments_constants(ast: Program, keepers: List[SPEC]) -> Program:
     alias_map = alias_specs(ast)
 
@@ -1713,9 +1808,6 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
         if isinstance(fn, Intrinsic_Name):
             # Cannot do anything with intrinsic functions.
             continue
-        args = args.children if args else tuple()
-        kwargs = tuple(a.children for a in args if isinstance(a, Actual_Arg_Spec))
-        kwargs = {k.string: v for k, v in kwargs}
         fnspec = search_real_local_alias_spec(fn, alias_map)
         assert fnspec
         fnstmt = alias_map[fnspec]
@@ -1725,25 +1817,20 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
             continue
         fnargs = atmost_one(children_of_type(fnstmt, Dummy_Arg_List))
         fnargs = fnargs.children if fnargs else tuple()
-        assert len(args) <= len(fnargs), f"Cannot pass more arguments({len(args)}) than defined ({len(fnargs)})"
+        kv = _make_keyword_mapping_of_call(fcall, alias_map)
+        assert kv is not None
+        assert len(kv) <= len(fnargs), f"Cannot pass more arguments({len(kv)}) than defined ({len(fnargs)})"
         for a in fnargs:
             aspec = search_real_local_alias_spec(a, alias_map)
             assert aspec
             adecl = alias_map[aspec]
             atype = find_type_of_entity(adecl, alias_map)
             assert atype
-            if not args:
-                # If we do not have supplied arguments anymore, the remaining arguments must be optional
+            if aspec[-1] not in kv:
+                # If a value is not supplied for the argument, it must have been optional.
                 assert atype.optional
                 continue
-            kwargs_zone = isinstance(args[0], Actual_Arg_Spec)  # Whether we are in keyword args territory.
-            if kwargs_zone:
-                # This is an argument, so it must have been supplied as a keyworded value.
-                assert a.string in kwargs or atype.optional
-                v = kwargs.get(a.string)
-            else:
-                # Pop the next non-keywordd supplied value.
-                v, args = args[0], args[1:]
+            v = kv[aspec[-1]]
             if atype.optional:
                 # The presence should be noted even if it is a writable argument.
                 if aspec not in fnargs_optional_presence:
@@ -2170,7 +2257,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
             _reparent_children(olist)
         else:
             par = use.parent
-            par.content = [c for c in par.children if c != use]
+            par.content = [c for c in par.children if c is not use]
             _reparent_children(par)
 
     # PHASE 1.b: Replaces all the function callsites.
@@ -2317,7 +2404,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Pr
             _reparent_children(olist)
         else:
             par = use.parent
-            par.content = [c for c in par.children if c != use]
+            par.content = [c for c in par.children if c is not use]
             _reparent_children(par)
 
     # PHASE 1.b: Replaces all the keywords when calling the functions. This must be done earlier than resolving other
@@ -2503,8 +2590,11 @@ def consolidate_uses(ast: Program, alias_map: Optional[SPEC_TABLE] = None) -> Pr
         # Build new use statements.
         nuses: List[Use_Stmt] = [Use_Stmt(f"use {k}, only: {', '.join(sorted(use_map[k]))}") for k in use_map.keys()]
         # Remove the old ones, and prepend the new ones.
-        sp.content = nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
-        _reparent_children(sp)
+        nchild = nuses + [c for c in sp.children if not isinstance(c, Use_Stmt)]
+        if nchild:
+            set_children(sp, nchild)
+        else:
+            remove_self(sp)
     return ast
 
 
@@ -2593,6 +2683,8 @@ def const_eval_nodes(ast: Program) -> Program:
     EXPRESSION_CLASSES = (
         LITERAL_CLASSES, Expr, Add_Operand, Or_Operand, Mult_Operand, Level_2_Expr, Level_3_Expr, Level_4_Expr,
         Level_5_Expr, Intrinsic_Function_Reference)
+    NON_EXPRESSION_CLASSES = (
+        Explicit_Shape_Spec, Loop_Control, Initialization, Component_Initialization, Section_Subscript_List)
 
     alias_map = alias_specs(ast)
 
@@ -2621,11 +2713,38 @@ def const_eval_nodes(ast: Program) -> Program:
         _, kind, _ = knode.children
         _const_eval_node(kind)
 
-    NON_EXPRESSION_CLASSES = (
-        Explicit_Shape_Spec, Loop_Control, Call_Stmt, Function_Reference, Initialization, Component_Initialization)
     for node in reversed(walk(ast, NON_EXPRESSION_CLASSES)):
         for nm in reversed(walk(node, Name)):
             _const_eval_node(nm)
+
+    for fcall in reversed(walk(ast, (Call_Stmt, Function_Reference))):
+        fn, args = fcall.children
+        if isinstance(fn, Intrinsic_Name):
+            # Cannot do anything with intrinsic functions.
+            continue
+        kv = _make_keyword_mapping_of_call(fcall, alias_map)
+        assert kv is not None
+        fnspec = search_real_local_alias_spec(fn, alias_map)
+        assert fnspec
+        fnstmt = alias_map[fnspec]
+        fnargs = atmost_one(children_of_type(fnstmt, Dummy_Arg_List))
+        fnargs = fnargs.children if fnargs else tuple()
+        assert len(kv) <= len(fnargs), f"Cannot pass more arguments({len(kv)}) than defined ({len(fnargs)})"
+        for a in fnargs:
+            aspec = search_real_local_alias_spec(a, alias_map)
+            assert aspec
+            adecl = alias_map[aspec]
+            atype = find_type_of_entity(adecl, alias_map)
+            assert atype
+            if aspec[-1] not in kv:
+                continue
+            v = kv[aspec[-1]]
+            if atype.out and isinstance(v, (Name, Part_Ref, Data_Ref)):
+                # TODO: This should not happen in the first place. But after some pruning the problematic calls go away.
+                #  So we ignore it for now, but should be revisted later.
+                # We're passing a writeable object.
+                continue
+            _const_eval_node(v)
 
     return ast
 
@@ -2735,6 +2854,49 @@ def inject_const_evals(ast: Program,
     inject_consts = inject_consts or []
     alias_map = alias_specs(ast)
 
+    def _can_inject_in_function_argument(v: Base) -> bool:
+        """
+        Determine whether we are in a function argument, and is it allowed to inject in there.
+        """
+        var = v
+        while var.parent and not isinstance(var.parent, (Actual_Arg_Spec, Actual_Arg_Spec_List)):
+            var = var.parent
+        if not isinstance(var.parent, (Actual_Arg_Spec, Actual_Arg_Spec_List)):
+            # Not a function argument anyway.
+            return True
+        if not isinstance(var, (Name, Data_Ref)):
+            # Not a writeable object anyway.
+            return True
+        fcall = var.parent
+        while fcall and not isinstance(fcall, (Call_Stmt, Function_Reference, Intrinsic_Function_Reference)):
+            fcall = fcall.parent
+        if not fcall:
+            # Not a function argument anyway.
+            return True
+        fn, args = fcall.children
+        if isinstance(fn, Intrinsic_Name):
+            # Cannot do anything with intrinsic functions.
+            return False
+        fnspec = search_real_local_alias_spec(fn, alias_map)
+        assert fnspec
+        fnspec = ident_spec(alias_map[fnspec])
+        kv = _make_keyword_mapping_of_call(fcall, alias_map)
+        assert kv is not None
+
+        for k, v in kv.items():
+            if v is not var:
+                continue
+            aspec = fnspec + (k,)
+            assert aspec in alias_map
+            adecl = alias_map[aspec]
+            atype = find_type_of_entity(adecl, alias_map)
+            assert atype
+
+            # TODO: This should not happen in the first place. But after some pruning the problematic calls go
+            #  away. So we ignore it for now, but should be revisted later.
+            return not atype.out
+        return True
+
     TOPLEVEL_SPEC = ('*',)
 
     items_by_scopes = {}
@@ -2791,8 +2953,10 @@ def inject_const_evals(ast: Program,
             if isinstance(dr.parent, Assignment_Stmt):
                 # We cannot replace on the LHS of an assignment.
                 lv, _, _ = dr.parent.children
-                if lv == dr:
+                if lv is dr:
                     continue
+            if not _can_inject_in_function_argument(dr):
+                continue
             item = _find_matching_item(items, dr, alias_map)
             if not item:
                 continue
@@ -2804,6 +2968,9 @@ def inject_const_evals(ast: Program,
                 # We don't want to replace the values in their declarations or imports, but only where their
                 # values are being used.
                 continue
+            if not _can_inject_in_function_argument(nm):
+                continue
+
             loc = search_real_local_alias_spec(nm, alias_map)
             if not loc or not isinstance(alias_map[loc], Entity_Decl):
                 continue

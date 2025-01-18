@@ -9,7 +9,8 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
     const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
-    exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments
+    exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
+    make_argument_mapping_explicit
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -1340,14 +1341,69 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
+def test_function_arguments_are_correctly_pruned():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+contains
+  subroutine fun(x)
+    implicit none
+    real, intent(inout) :: x
+    x = x + x
+  end subroutine fun
+end module lib
+""").add_file("""
+subroutine main()
+  use lib
+  implicit none
+  real :: w = 0.1, x = 1.1, y = 2.1, z = 3.1
+  call fun(x=x)
+  call fun(y)
+  call fun(x=z)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = prune_unused_objects(ast, [('main',)])
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  SUBROUTINE fun(x)
+    IMPLICIT NONE
+    REAL, INTENT(INOUT) :: x
+    x = x + x
+  END SUBROUTINE fun
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: fun
+  IMPLICIT NONE
+  REAL :: x = 1.1, y = 2.1, z = 3.1
+  CALL fun(x = x)
+  CALL fun(y)
+  CALL fun(x = z)
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
 def test_constant_resolving_expressions():
     sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+  integer, parameter :: ok = 8
+end module lib
+""").add_file("""
 subroutine main
+  use lib
   implicit none
   integer, parameter :: k = 8
   integer :: a = -1, b = -1
   real, parameter :: pk = 4.1_k
   real(kind=selected_real_kind(5, 5)) :: p = 1.0_k
+  real :: arr(20, 20) = 1.0
 
   if (k < 2) then
     a = k
@@ -1360,6 +1416,9 @@ subroutine main
     b = k
     p = a*p + k*pk
   end if
+
+  arr(1:ok, 1:ok) = 7.1
+  arr(ok, ok) = 9.1
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -1367,12 +1426,18 @@ end subroutine main
 
     got = ast.tofortran()
     want = """
+MODULE lib
+  IMPLICIT NONE
+  INTEGER, PARAMETER :: ok = 8
+END MODULE lib
 SUBROUTINE main
+  USE lib
   IMPLICIT NONE
   INTEGER, PARAMETER :: k = 8
   INTEGER :: a = - 1, b = - 1
   REAL, PARAMETER :: pk = 4.1D0
   REAL(KIND = 4) :: p = 1.0D0
+  REAL :: arr(20, 20) = 1.0
   IF (.FALSE.) THEN
     a = 8
     p = 32.79999923706055D0
@@ -1384,6 +1449,8 @@ SUBROUTINE main
     b = 8
     p = a * p + 32.79999923706055D0
   END IF
+  arr(1 : 8, 1 : 8) = 7.1
+  arr(8, 8) = 9.1
 END SUBROUTINE main
 """.strip()
     assert got == want
@@ -1464,6 +1531,11 @@ contains
     type(config), intent(inout) :: this
     this%b = 5.1
   end subroutine fun
+  subroutine update(x)
+    implicit none
+    real, intent(inout) :: x
+    x = 1.1
+  end subroutine update
 end module lib
 """).add_file("""
 subroutine main(cfg)
@@ -1472,6 +1544,7 @@ subroutine main(cfg)
   type(big_config), intent(in) :: cfg
   real :: a = 1
   a = cfg%big%b + a * globalo%a
+  call update(globalo%b)
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -1499,6 +1572,11 @@ MODULE lib
     TYPE(config), INTENT(INOUT) :: this
     this % b = 5.1
   END SUBROUTINE fun
+  SUBROUTINE update(x)
+    IMPLICIT NONE
+    REAL, INTENT(INOUT) :: x
+    x = 1.1
+  END SUBROUTINE update
 END MODULE lib
 SUBROUTINE main(cfg)
   USE lib
@@ -1506,6 +1584,7 @@ SUBROUTINE main(cfg)
   TYPE(big_config), INTENT(IN) :: cfg
   REAL :: a = 1
   a = 10000.0 + a * 42
+  CALL update(globalo % b)
 END SUBROUTINE main
 """.strip()
     assert got == want
@@ -1766,6 +1845,10 @@ contains
     logical, intent(out) :: what
     what = .true.
   end subroutine update
+  subroutine noop(what)
+    implicit none
+    logical, intent(in) :: what
+  end subroutine noop
 end module lib
 """).add_file("""
 subroutine main
@@ -1773,6 +1856,8 @@ subroutine main
   implicit none
   real :: a = 1.0
   call update(movable_cond)
+  call noop(fixed_cond)
+  call noop(what = fixed_cond)
   movable_cond = .not. movable_cond
   if (fixed_cond .and. movable_cond) a = 7.1
 end subroutine main
@@ -1792,12 +1877,18 @@ MODULE lib
     LOGICAL, INTENT(OUT) :: what
     what = .TRUE.
   END SUBROUTINE update
+  SUBROUTINE noop(what)
+    IMPLICIT NONE
+    LOGICAL, INTENT(IN) :: what
+  END SUBROUTINE noop
 END MODULE lib
 SUBROUTINE main
   USE lib
   IMPLICIT NONE
   REAL :: a = 1.0
   CALL update(movable_cond)
+  CALL noop(fixed_cond)
+  CALL noop(what = fixed_cond)
   movable_cond = .NOT. movable_cond
   IF (fixed_cond .AND. movable_cond) a = 7.1
 END SUBROUTINE main
@@ -2091,6 +2182,72 @@ SUBROUTINE main(res)
   REAL, DIMENSION(2) :: res
   CALL fun(res)
 END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_explicit_argument_mapping():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+contains
+  real function fun(x, y)
+    implicit none
+    real, intent(in) :: x, y
+    fun = x + y
+  end function fun
+end module lib
+subroutine not_fun(z, x, y)
+  use lib
+  implicit none
+  real, intent(in) :: x, y
+  real, intent(out) :: z
+  z = fun(y, x)
+end subroutine not_fun
+""").add_file("""
+subroutine main
+  use lib
+  implicit none
+  real :: x, y
+  x = fun(1., 2.)
+  x = fun(x, x)
+  x = fun(x, 2.)
+  x = fun(y = x, x = 3.)
+  call not_fun(y, x, x)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = make_argument_mapping_explicit(ast)
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  REAL FUNCTION fun(x, y)
+    IMPLICIT NONE
+    REAL, INTENT(IN) :: x, y
+    fun = x + y
+  END FUNCTION fun
+END MODULE lib
+SUBROUTINE main
+  USE lib
+  IMPLICIT NONE
+  REAL :: x, y
+  x = fun(x = 1., y = 2.)
+  x = fun(x = x, y = x)
+  x = fun(x = x, y = 2.)
+  x = fun(y = x, x = 3.)
+  CALL not_fun(y, x, x)
+END SUBROUTINE main
+SUBROUTINE not_fun(z, x, y)
+  USE lib
+  IMPLICIT NONE
+  REAL, INTENT(IN) :: x, y
+  REAL, INTENT(OUT) :: z
+  z = fun(x = y, y = x)
+END SUBROUTINE not_fun
 """.strip()
     assert got == want
     SourceCodeBuilder().add_file(got).check_with_gfortran()

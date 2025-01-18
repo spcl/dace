@@ -1752,6 +1752,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                 s.symbol_mapping = symbol_mapping
                 missing_symbols = [s for s in symbols if s not in symbol_mapping]
             if missing_symbols:
+                breakpoint()
                 raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
 
             # Add new global symbols to nested SDFG
