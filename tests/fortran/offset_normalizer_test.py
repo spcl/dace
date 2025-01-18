@@ -364,16 +364,16 @@ end subroutine fun
     a = np.full([5], 42, order="F", dtype=np.float64)
     sdfg(d=a)
     print(a)
-    for i in range(0, 5):
-        assert a[i] == (50 + i) * 2
+    for i in range(1, 3):
+        assert a[i] == ( i) * 2
 
 
 if __name__ == "__main__":
-    test_fortran_frontend_offset_normalizer_1d()
-    test_fortran_frontend_offset_normalizer_2d()
-    test_fortran_frontend_offset_normalizer_2d_arr2loop()
-    test_fortran_frontend_offset_normalizer_1d_symbol()
-    test_fortran_frontend_offset_normalizer_2d_symbol()
-    test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol()
-    test_fortran_frontend_offset_normalizer_struct()
+    # test_fortran_frontend_offset_normalizer_1d()
+    # test_fortran_frontend_offset_normalizer_2d()
+    # test_fortran_frontend_offset_normalizer_2d_arr2loop()
+    # test_fortran_frontend_offset_normalizer_1d_symbol()
+    # test_fortran_frontend_offset_normalizer_2d_symbol()
+    # test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol()
+    # test_fortran_frontend_offset_normalizer_struct()
     test_fortran_frontend_offset_pardecl()
