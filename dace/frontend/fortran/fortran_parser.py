@@ -2786,6 +2786,9 @@ def create_sdfg_from_fortran_file_with_options(
 
     """
     if not already_parsed_ast:
+        # NOTE: The AST may be unbuildable right after some operations like config injection, but it should be buildable
+        # again at the end of the block (after pruning).
+
         print("FParser Op: Removing indirections from AST...")
         ast = deconstruct_enums(ast)
         ast = deconstruct_associations(ast)
@@ -2794,29 +2797,28 @@ def create_sdfg_from_fortran_file_with_options(
         ast = deconstruct_procedure_calls(ast)
         ast = deconstruct_interface_calls(ast)
         ast = make_argument_mapping_explicit(ast)
+        ast = convert_data_statements_into_assignments(ast)
 
         print("FParser Op: Inject configs & prune...")
         ast = inject_const_evals(ast, cfg.config_injections)
         ast = const_eval_nodes(ast)
-        ast = convert_data_statements_into_assignments(ast)
+        ast = prune_branches(ast)
+        ast = prune_unused_objects(ast, cfg.entry_points)
 
         print("FParser Op: Fix global vars & prune...")
-        # Prune things once after fixing global variables.
-        # NOTE: Global vars fixing has to be done before any pruning, because otherwise some assignment may get lost.
+        # Another round of pruning after fixing global variables.
         ast = make_practically_constant_global_vars_constants(ast)
         ast = const_eval_nodes(ast)
         ast = prune_branches(ast)
         ast = prune_unused_objects(ast, cfg.entry_points)
 
         print("FParser Op: Fix arguments & prune...")
-        # Another round of pruning after fixing the practically constant arguments, just in case.
         ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
         ast = const_eval_nodes(ast)
         ast = prune_branches(ast)
         ast = prune_unused_objects(ast, cfg.entry_points)
 
         print("FParser Op: Fix local vars & prune...")
-        # Another round of pruning after fixing the locally constant variables, just in case.
         ast = exploit_locally_constant_variables(ast)
         ast = const_eval_nodes(ast)
         ast = prune_branches(ast)
