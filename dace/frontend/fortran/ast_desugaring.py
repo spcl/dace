@@ -159,7 +159,7 @@ def search_scope_spec(node: Base) -> Optional[SPEC]:
         return search_scope_spec(scope)
     elif isinstance(par, Actual_Arg_Spec):
         kw, _ = par.children
-        if kw == node:
+        if kw is node:
             # We're describing a keyword, which is not really an identifiable object.
             return None
     stmt = singular(children_of_type(scope, NAMED_STMTS_OF_INTEREST_CLASSES))
@@ -212,7 +212,7 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
             # TODO: Add ref.
             par, _ = par.children[0], par.children[1:]
         assert isinstance(par, Name)
-        if par != node:
+        if par is not node:
             # Components do not really have a local alias.
             return None
     elif isinstance(par, Kind_Selector):
@@ -226,7 +226,7 @@ def search_local_alias_spec(node: Name) -> Optional[SPEC]:
     elif isinstance(par, Actual_Arg_Spec):
         # Keywords cannot be aliased.
         kw, _ = par.children
-        if kw == node:
+        if kw is node:
             return None
     return scope_spec + (name,)
 
@@ -1513,12 +1513,15 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
         """
         # Go over all the scoped identifiers available under `node`.
         for nm in walk(node, Name):
+            if isinstance(nm.parent, Actual_Arg_Spec) and nm is nm.parent.children[0]:
+                # It is a keyword of a function call, so does not matter for usage.
+                continue
             loc = search_real_local_alias_spec(nm, alias_map)
             scope_spec = search_scope_spec(nm.parent)
             if not loc or not scope_spec:
                 continue
             nm_spec = ident_spec(alias_map[loc])
-            if isinstance(nm.parent, Entity_Decl) and nm == nm.parent.children[0]:
+            if isinstance(nm.parent, Entity_Decl) and nm is nm.parent.children[0]:
                 fnargs = atmost_one(children_of_type(alias_map[scope_spec], Dummy_Arg_List))
                 fnargs = fnargs.children if fnargs else tuple()
                 if any(a.string == nm.string for a in fnargs):
@@ -1527,7 +1530,7 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
                     continue
                 # Otherwise, this is a declaration of the variable, which is not a use, and so a fair game for removal.
                 continue
-            if isinstance(nm.parent, Component_Decl) and nm == nm.parent.children[0]:
+            if isinstance(nm.parent, Component_Decl) and nm is nm.parent.children[0]:
                 # This is a declaration of the component, which is not a use, and so a fair game for removal.
                 continue
 
@@ -2257,7 +2260,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
             _reparent_children(olist)
         else:
             par = use.parent
-            par.content = [c for c in par.children if c != use]
+            par.content = [c for c in par.children if c is not use]
             _reparent_children(par)
 
     # PHASE 1.b: Replaces all the function callsites.
@@ -2404,7 +2407,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Pr
             _reparent_children(olist)
         else:
             par = use.parent
-            par.content = [c for c in par.children if c != use]
+            par.content = [c for c in par.children if c is not use]
             _reparent_children(par)
 
     # PHASE 1.b: Replaces all the keywords when calling the functions. This must be done earlier than resolving other
@@ -2879,7 +2882,7 @@ def inject_const_evals(ast: Program,
             if isinstance(dr.parent, Assignment_Stmt):
                 # We cannot replace on the LHS of an assignment.
                 lv, _, _ = dr.parent.children
-                if lv == dr:
+                if lv is dr:
                     continue
             item = _find_matching_item(items, dr, alias_map)
             if not item:

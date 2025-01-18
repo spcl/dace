@@ -1341,6 +1341,54 @@ END SUBROUTINE main
     SourceCodeBuilder().add_file(got).check_with_gfortran()
 
 
+def test_function_arguments_are_correctly_pruned():
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+contains
+  subroutine fun(x)
+    implicit none
+    real, intent(inout) :: x
+    x = x + x
+  end subroutine fun
+end module lib
+""").add_file("""
+subroutine main()
+  use lib
+  implicit none
+  real :: w = 0.1, x = 1.1, y = 2.1, z = 3.1
+  call fun(x=x)
+  call fun(y)
+  call fun(x=z)
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = prune_unused_objects(ast, [('main',)])
+
+    got = ast.tofortran()
+    want = """
+MODULE lib
+  IMPLICIT NONE
+  CONTAINS
+  SUBROUTINE fun(x)
+    IMPLICIT NONE
+    REAL, INTENT(INOUT) :: x
+    x = x + x
+  END SUBROUTINE fun
+END MODULE lib
+SUBROUTINE main
+  USE lib, ONLY: fun
+  IMPLICIT NONE
+  REAL :: x = 1.1, y = 2.1, z = 3.1
+  CALL fun(x = x)
+  CALL fun(y)
+  CALL fun(x = z)
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
 def test_constant_resolving_expressions():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
