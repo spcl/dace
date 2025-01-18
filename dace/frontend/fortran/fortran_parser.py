@@ -1038,7 +1038,7 @@ class AST_translator:
             if ret:
                 view[3]=variables_in_call.index(variable_in_call)
                 views.append(view)
-            
+
 
         # Preparing symbol dictionary for nested sdfg
 
@@ -1319,7 +1319,7 @@ class AST_translator:
                             substate.add_memlet_path(
                                 internal_sdfg, elem[2], src_conn=self.name_mapping[new_sdfg][local_name.name],
                                 memlet=Memlet())
-                        else:    
+                        else:
 
                             substate.add_memlet_path(
                                 internal_sdfg, elem[2], src_conn=self.name_mapping[new_sdfg][local_name.name],
@@ -1495,11 +1495,11 @@ class AST_translator:
         else:
             subset = subsets.Range([(i[0], i[1], 1) if i is not None else (1, s, 1)
                                     for i, s in zip(all_indices, array.shape)])
-        
-        
 
-        return shape,offsets,strides,subset    
-    
+
+
+        return shape,offsets,strides,subset
+
     def add_full_object(self, new_sdfg: SDFG,sdfg:SDFG, array: dat.Array, local_name: ast_internal_classes.FNode):
         """
         This function is responsible for adding a full array to the SDFG.
@@ -1543,14 +1543,14 @@ class AST_translator:
                                             dtype,
                                             array.storage,
                                             strides=array.strides,
-                                            offset=offset)    
+                                            offset=offset)
             else:
                 #raise warning that array already exists in sdfg
                 print(f"Array {self.name_mapping[new_sdfg][local_name.name]} already exists in SDFG {new_sdfg.name}")
- 
+
 
     def add_simple_array_to_element_view_pair_in_tower(self, sdfg: SDFG, array: dat.Array, name_chain: List[str], member: ast_internal_classes.FNode, substate: SDFGState, last_read: nd.AccessNode, last_written: nd.AccessNode, read: bool, write: bool,shape,offsets,strides,subset):
-        
+
         dtype=array.dtype
         offsets_zero = [0]*len(offsets)
         concatenated_name = "_".join(name_chain)
@@ -1566,7 +1566,7 @@ class AST_translator:
                                             storage=array.storage,
                                             strides=strides,
                                             offset=offsets_zero)
-        
+
         memlet=Memlet.simple(concatenated_name + "_" + ast_utils.get_name(member) + "_" + str(
                             self.struct_view_count), subset)
 
@@ -1574,13 +1574,13 @@ class AST_translator:
 
 
     def add_array_to_element_view_pair_in_tower(self, sdfg: SDFG, array: dat.Array, name_chain: List[str], member: ast_internal_classes.FNode, substate: SDFGState, last_read: nd.AccessNode, last_written: nd.AccessNode, read: bool, write: bool,subset):
-        
+
         stype=array.stype
         view_to_member = dat.View.view(stype)
         concatenated_name = "_".join(name_chain)
         view_name=concatenated_name + "_" + ast_utils.get_name(member) + "_m_" + str(
                             self.struct_view_count)
-        
+
         memlet=Memlet.simple(concatenated_name + "_" + ast_utils.get_name(member) + "_" + str(
                             self.struct_view_count), subset)
 
@@ -1600,7 +1600,7 @@ class AST_translator:
                 raise ValueError("Last read and last written are not the same")
         memlet=Memlet.from_array(name + "." + ast_utils.get_name(member), array)
         return self.add_accesses_and_edges(sdfg,view_name,view_to_member, array, substate, last_read, last_written, read, write,memlet)
-        
+
 
     def add_accesses_and_edges(self,sdfg: SDFG,view_name:str,view_to_member:dat.View, array: dat.Array, substate: SDFGState, last_read: nd.AccessNode, last_written: nd.AccessNode, read: bool, write: bool,memlet:Memlet):
         sdfg.arrays[view_name] = view_to_member
@@ -1612,8 +1612,8 @@ class AST_translator:
             new_written=substate.add_write(view_name)
             substate.add_edge( new_written, None,last_written, None, dpcp(memlet))
             last_written=new_written
-        
-        return last_read, last_written    
+
+        return last_read, last_written
 
     def process_variable_call(self, variable_in_calling_context: ast_internal_classes.FNode, local_name:ast_internal_classes.FNode,  sdfg: SDFG, new_sdfg: SDFG, substate:SDFGState, read:bool,write:bool):
         # We need to first check and have separate handling for:
@@ -1621,7 +1621,7 @@ class AST_translator:
         # 2. Arrays
         # 3. Derived types
 
-        # The steps are 
+        # The steps are
         # 1. to first generate towers of views for derived types
         # 2. to generate views for arrays and views of arrays coming out of towers of views if the subset is not the whole array
         # 3. this will allow the "final" memlets to the inconnectors to be "simple"
@@ -1630,7 +1630,7 @@ class AST_translator:
         sdfg_name = self.name_mapping.get(sdfg).get(ast_utils.get_name(variable_in_calling_context))
         if sdfg_name is None:
             globalsdfg_name = self.name_mapping.get(self.globalsdfg).get(ast_utils.get_name(variable_in_calling_context))
-        
+
         # Get array reference in SDFG
         if sdfg_name is not None:
             array = sdfg.arrays.get(sdfg_name)
@@ -1639,18 +1639,18 @@ class AST_translator:
             array = self.globalsdfg.arrays.get(globalsdfg_name)
         else:
             raise ValueError("Variable not found in SDFG or globalSDFG")
-        
+
         #Get the shape, offset, and type of the array
-        
+
 
 
         #this can be a scalar, a full array, or a full derived type object
         if isinstance(variable_in_calling_context, ast_internal_classes.Name_Node):
             self.add_full_object(new_sdfg,sdfg,array,local_name)
-            return False , None               
-            
+            return False , None
 
-        #this can be an array slice or a derived type object member slice    
+
+        #this can be an array slice or a derived type object member slice
         elif isinstance(variable_in_calling_context, ast_internal_classes.Array_Subscript_Node):
             print("Array Subscript node")
             shape,offsets,strides,subset=self.compute_array_shape(variable_in_calling_context,sdfg,array)
@@ -1666,7 +1666,7 @@ class AST_translator:
                                             storage=array.storage,
                                             strides=strides,
                                             offset=offsets_zero)
-            
+
             wv = None
             rv = None
             if read:
@@ -1679,7 +1679,7 @@ class AST_translator:
                 substate.add_edge(rv, 'views', w, None, dpcp(memlet))
 
             self.views = self.views + 1
-            
+
 
             new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
                                 shape,
@@ -1705,7 +1705,7 @@ class AST_translator:
                 last_written=substate.add_write(top_structure_name)
             else:
                 last_written=None
-            
+
             while True:
                 member=intermediate_step.part_ref
                 parent=intermediate_step.parent_ref
@@ -1716,25 +1716,25 @@ class AST_translator:
                     print("Array Subscript node")
                     raise NotImplementedError("Array Subscript node in Data Ref parent not implemented")
                 elif isinstance(parent,ast_internal_classes.Name_Node):
-                    #this is the simpler case - no extra work necessary    
+                    #this is the simpler case - no extra work necessary
                     name_chain.append(ast_utils.get_name(parent))
-                    
+
                 else:
                     raise ValueError("Unsupported parent node type")
-                
+
                 if isinstance(member,ast_internal_classes.Name_Node):
                     #this is the end of the chain
                     array=current_structure.members[ast_utils.get_name(member)]
                     last_read, last_written=self.add_basic_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write)
-                    
+
                     self.add_full_object(new_sdfg,sdfg,array,local_name)
                     return True, [sdfg_name,last_read, last_written, variable_in_calling_context]
                 elif isinstance(member,ast_internal_classes.Array_Subscript_Node):
-                    
+
                     print("Array Subscript node in Data Ref as last level")
                     array=current_structure.members[ast_utils.get_name(member)]
                     shape,offsets,strides,subset=self.compute_array_shape(member,sdfg,array)
-                    
+
                     if isinstance(array, dat.ContainerArray):
                         #this is a derived type object, must have first view to Array, then view to subset if necessary
                         last_read, last_written=self.add_basic_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write)
@@ -1749,8 +1749,8 @@ class AST_translator:
                                 return True, [sdfg_name,last_read, last_written, variable_in_calling_context]
 
                         else:
-                            raise NotImplementedError("Array of structures slice not implemented")    
-                    
+                            raise NotImplementedError("Array of structures slice not implemented")
+
                     else:
                         #this is a simple array, but must still have first view to Array and then to subset.
                         last_read, last_written=self.add_basic_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write)
@@ -1766,17 +1766,17 @@ class AST_translator:
                                 strides=strides,
                                 offset=offsets)
                         return True, [sdfg_name,last_read, last_written, variable_in_calling_context]
-                        
+
                 elif isinstance(member,ast_internal_classes.Data_Ref_Node):
                     #this is a member access
                     array=current_structure.members[ast_utils.get_name(member.parent_ref)]
                     last_read, last_written=self.add_basic_view_pair_in_tower(sdfg,array,name_chain,member.parent_ref,substate,last_read,last_written,read,write)
-                    
+
                     current_structure=current_structure.members[ast_utils.get_name(member.parent_ref)]
-                    intermediate_step=member  
+                    intermediate_step=member
         else:
-            raise ValueError("Unsupported variable type")         
-            
+            raise ValueError("Unsupported variable type")
+
 
 
     def binop2sdfg(self, node: ast_internal_classes.BinOp_Node, sdfg: SDFG, cfg: ControlFlowRegion):
@@ -2364,6 +2364,7 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
     ast = correct_for_function_calls(ast)
     ast = deconstruct_procedure_calls(ast)
     ast = deconstruct_interface_calls(ast)
+    ast = correct_for_function_calls(ast)
 
     if not cfg.entry_points:
         # Keep all the possible entry points.
