@@ -968,7 +968,7 @@ class AST_translator:
             if isinstance(variable, ast_internal_classes.Name_Node):
                 varname = variable.name
             elif isinstance(variable, ast_internal_classes.Actual_Arg_Spec_Node):
-                varname = variable.arg_name.name
+                varname, variable = variable.arg_name.name, variable.arg
             elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
                 varname = variable.name.name
             elif isinstance(variable, ast_internal_classes.Data_Ref_Node):
@@ -1022,14 +1022,7 @@ class AST_translator:
 
         # This handles the case where the function is called with variables starting with the case that the variable is local to the calling SDFG
         needs_replacement = {}
-        substate_sources = []
-        substate_destinations = []
         for variable_in_call in variables_in_call:
-            all_arrays = self.get_arrays_in_context(sdfg)
-
-            sdfg_name = self.name_mapping.get(sdfg).get(ast_utils.get_name(variable_in_call))
-            globalsdfg_name = self.name_mapping.get(self.globalsdfg).get(ast_utils.get_name(variable_in_call))
-            
             local_name = parameters[variables_in_call.index(variable_in_call)]
             self.name_mapping[new_sdfg][local_name.name] = new_sdfg._find_new_name(local_name.name)
             self.all_array_names.append(self.name_mapping[new_sdfg][local_name.name])
@@ -1041,8 +1034,6 @@ class AST_translator:
             if local_name.name in write_names:
                 outs_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
                 write=True
-            matched = False
-            view_ranges = {}
             ret,view=self.process_variable_call(variable_in_call,local_name, sdfg, new_sdfg,substate,read,write)
             if ret:
                 view[3]=variables_in_call.index(variable_in_call)
