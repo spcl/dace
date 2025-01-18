@@ -228,7 +228,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if memlet.subset is None:
                 memlet.subset = subsets.Range.from_array(viewed_dnode.desc(sdfg))
 
-        if isinstance(nodedesc, data.Structure) and not nodedesc.byval:
+        if isinstance(nodedesc, data.Structure):
             # dtype is already a pointer
             view_dtype = nodedesc.dtype
         else:
