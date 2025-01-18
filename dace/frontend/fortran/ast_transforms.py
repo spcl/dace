@@ -3545,21 +3545,9 @@ class ParDeclOffsetNormalizer(NodeTransformer):
             if r is None:
                 new_ranges.append(r)
             else:
-                # lower_boundary - offset + 1
-                # we add +1 because offset normalization is applied later on
+                # lower_boundary - offset
                 new_ranges.append(
-                    ast_internal_classes.BinOp_Node(
-                        op='+',
-                        lval=ast_internal_classes.Int_Literal_Node(value="0"),
-                        rval=ast_internal_classes.BinOp_Node(
-                            op='-',
-                            lval=r,
-                            rval=self.current_offset,
-                            type=r.type
-                        ),
-                        type=r.type
-                    )
-                )
+                    ast_internal_classes.BinOp_Node(op='-', lval=r, rval=self.current_offset, type=r.type))
 
         node = ast_internal_classes.ParDecl_Node(
             type='RANGE',
