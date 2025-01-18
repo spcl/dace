@@ -3660,7 +3660,7 @@ class ParDeclOffsetNormalizer(NodeTransformer):
                 new_ranges.append(
                     ast_internal_classes.BinOp_Node(
                         op='+',
-                        lval=ast_internal_classes.Int_Literal_Node(value="1"),
+                        lval=ast_internal_classes.Int_Literal_Node(value="0"),
                         rval=ast_internal_classes.BinOp_Node(
                             op='-',
                             lval=r,
