@@ -2314,10 +2314,8 @@ class BackwardPassGenerator:
                         else:
                             raise ValueError(f"Unsupported storage {grad_desc.storage}")
                     elif backward_state.in_degree(reversed_node) == 1:
-                        self._set_wcr_sum_if_needed(forward_state,
-                                                    backward_state,
-                                                    backward_state.in_edges(reversed_node)[0],
-                                                    summation_node=True)
+                        self._set_wcr_sum_if_needed(forward_state, backward_state,
+                                                    backward_state.in_edges(reversed_node)[0])
 
                 # if this node is a tasklet with a condition, we add some modification to the backward state
                 elif (isinstance(node, nodes.Tasklet)
@@ -2587,7 +2585,6 @@ class BackwardPassGenerator:
             # Count the amount of in edges per connector
             connector_in_edges = collections.defaultdict(int)
             explored = {}
-            self.sdfg.save("log_sdfgs/before_in_edges.sdfg")
             for _, _, _, dst_conn, _ in backward_state.in_edges(path_edge.dst):
                 connector_in_edges[dst_conn] += 1
                 explored[dst_conn] = False
@@ -4507,7 +4504,9 @@ class BackwardPassGenerator:
         #         assert not any(isinstance(s, dace.symbol) or isinstance(s, sp.Expr) for s in shape)
 
         # If the shape is an expression:
-        if any(isinstance(s, dace.symbol) or isinstance(s, sp.Expr) for s in shape):
+        # If
+        if any((isinstance(s, dace.symbol) or isinstance(s, sp.Expr)) and not (str(s) in self.sdfg.free_symbols)
+               for s in shape):
             # Otherwise, replace all the loop dependant allocations with the max length of the loop
             # For example, an array of size [i+1] in a range(2, 10) loop will be stored in a [10, 10] array (1)
             # Additionally, an array of size [32-i] in the same loop will be stored in a [10, 30]  (2)
@@ -4528,9 +4527,6 @@ class BackwardPassGenerator:
                                 # Get the max loop range
                                 start, end = self._extract_loop_region_info(l)
 
-                                # TODO: Is this a safe conversion?
-                                end = int(end)
-                                start = int(start)
                                 # If this is the case of exmaple (1) mentioned above
                                 # TODO: How can we do this better?
                                 matched = f"-{loop_index}" in str(s) or f"- {loop_index}" in str(s)
@@ -4552,11 +4548,12 @@ class BackwardPassGenerator:
 
                         if loop_size == -1:
                             raise AutoDiffException(
-                                f"Can't figure out how to save the data {forward_an.data} because of its symbol shape {shape}"
+                                f"Can't figure out how to save the data: {forward_an.data} because of its symbol shape {shape}"
                             )
 
                         # Replace the symbol with the loop size and evaluate the expression
-                        s = s.subs(sp.Symbol(loop_index), loop_size)
+                        s = s.subs(sp.Symbol(loop_index), loop_size) if isinstance(loop_size, int) else s.subs(
+                            sp.Symbol(loop_index), dace.symbol(loop_size))
                         shape[i] = s
 
         # Plus the size of any enclosing loops
@@ -4883,7 +4880,6 @@ class BackwardPassGenerator:
             :param required_gradients: input name on the forward node that the gradient should be generated for
             :return: the reversed node and gradient names for the connectors
         """
-        log.debug("Reversing {}".format(node))
 
         # (1)
         if hasattr(self, "_reverse_" + type(node).__name__):
