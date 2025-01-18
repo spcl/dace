@@ -4,6 +4,7 @@ from typing import Dict, List
 
 import numpy as np
 
+import dace
 from dace.frontend.fortran.ast_components import InternalFortranAst
 from dace.frontend.fortran.ast_internal_classes import FNode
 from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, SDFGConfig, \
@@ -159,3 +160,45 @@ end subroutine fun
     fun = gmap['fun'].compile()
     fun(d=d)
     assert np.allclose(d, [1, 4.2, 1, 1])
+
+
+def test_subroutine_with_differnt_ways_to_specificy_arg():
+    """
+    A standalone subroutine, with no program or module in sight.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+  implicit none
+contains
+  real function fun(x)
+    implicit none
+    real, intent(in) :: x
+    fun = x + x
+  end function fun
+end module lib
+""").add_file("""
+subroutine main(z)
+  use lib
+  implicit none
+  real :: x = 1.1, y = 2.1
+  real, intent(out) :: z(1)
+  z = fun(1.2)
+  z = fun(x=1.2)
+  z = fun(x)
+  z = fun(x=x)
+  z = fun(y)
+  z = fun(x=y)
+end subroutine main
+""").check_with_gfortran().get()
+    # Construct
+    entry_points = ['main']
+    iast, prog = construct_internal_ast(sources, entry_points)
+    gmap = construct_sdfg(iast, prog, entry_points)
+
+    # Verify
+    assert gmap.keys() == {'main'}
+    z = np.full([1], fill_value=0, dtype=np.float32)
+
+    main = gmap['main'].compile()
+    main(z=z)
+    assert np.allclose(z, [4.2])
