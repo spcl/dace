@@ -148,7 +148,7 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
             var_type = var
 
         # print(ast_struct_type.name,var_type.__class__)
-        if isinstance(object.members[ast_struct_type.name], dat.Structure):
+        if isinstance(struct_type.members[ast_struct_type.name], dat.Structure):
 
             add_deferred_shape_assigns_for_structs(structures, ast_struct_type, sdfg, assign_state,
                                                    f"{name}->{ast_struct_type.name}", f"{ast_struct_type.name}_{name_}",
@@ -2214,6 +2214,10 @@ class AST_translator:
                 container = dat.ContainerArray(stype=datatype, shape=sizes, offset=offset, transient=transient)
                 # print("Adding local container array",self.name_mapping[sdfg][node.name],sizes,datatype,offset,strides,transient)
                 sdfg.arrays[self.name_mapping[sdfg][node.name]] = container
+                if self.struct_views.get(sdfg) is None:
+                    self.struct_views[sdfg] = {}
+                add_views_recursive(sdfg, node.name, arr_dtype, self.struct_views[sdfg], self.name_mapping[sdfg],
+                                    self.registered_types, [], self.actual_offsets_per_sdfg[sdfg], {}, {})
                 # sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)
 
             else:

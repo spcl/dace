@@ -15,7 +15,6 @@ def construct_internal_ast(sources: Dict[str, str]):
     iast, prog = create_internal_ast(cfg)
     return iast, prog
 
-@pytest.mark.skip("This test is segfaulting deterministically in pytest, works fine in debug")
 def test_minimal():
     sources, main = SourceCodeBuilder().add_file("""
 module lib

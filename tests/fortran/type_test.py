@@ -37,7 +37,6 @@ end subroutine main
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
 
-@pytest.mark.skip(reason="Nested types with arrays to be revisited after merge of struct flattening")
 def test_fortran_frontend_basic_type2():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -124,7 +123,7 @@ end subroutine internal_function
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
 
-@pytest.mark.skip(reason="This test is segfaulting deterministically in pytest, works fine in debug")
+@pytest.mark.skip(reason="Crashed pytest in codegen")
 def test_fortran_frontend_type_pardecl():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -173,7 +172,6 @@ end subroutine internal_function
     assert (a[1,1] == 42)
 
 
-@pytest.mark.skip(reason="Revisit after merge of struct flattening")
 def test_fortran_frontend_type_struct():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -224,7 +222,6 @@ end subroutine internal_function
     assert (a[2, 0] == 42)
 
 
-@pytest.mark.skip(reason="Circular type removal needs revisiting after merge of struct flattening")
 def test_fortran_frontend_circular_type():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -305,7 +302,6 @@ end subroutine main
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
 
-@pytest.mark.skip(reason="Revisit after merge of struct flattening")
 def test_fortran_frontend_type_array():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -440,7 +436,6 @@ end subroutine main
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
 
-@pytest.mark.skip(reason="Nested types with arrays to be revisited after merge of struct flattening")
 def test_fortran_frontend_type_arg():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -482,7 +477,6 @@ end subroutine main
     sdfg(d=a)
     print(a)
 
-@pytest.mark.skip(reason="Nested types with arrays to be revisited after merge of struct flattening")
 def test_fortran_frontend_type_arg2():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -564,16 +558,16 @@ end subroutine main
 
 
 if __name__ == "__main__":
-    #test_fortran_frontend_basic_type()
-    #test_fortran_frontend_basic_type2()
-    #test_fortran_frontend_type_symbol()
-    #test_fortran_frontend_type_pardecl()
-    #test_fortran_frontend_type_struct()
-    #test_fortran_frontend_circular_type()
-    #test_fortran_frontend_type_in_call()
-    #test_fortran_frontend_type_array()
-    #test_fortran_frontend_type_array2()
-    #test_fortran_frontend_type_pointer()
-    #test_fortran_frontend_type_arg()
+    test_fortran_frontend_basic_type()
+    test_fortran_frontend_basic_type2()
+    test_fortran_frontend_type_symbol()
+    test_fortran_frontend_type_pardecl()
+    test_fortran_frontend_type_struct()
+    test_fortran_frontend_circular_type()
+    test_fortran_frontend_type_in_call()
+    test_fortran_frontend_type_array()
+    test_fortran_frontend_type_array2()
+    test_fortran_frontend_type_pointer()
+    test_fortran_frontend_type_arg()
     test_fortran_frontend_type_view()
-    #test_fortran_frontend_type_arg2()
+    test_fortran_frontend_type_arg2()
