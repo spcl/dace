@@ -534,6 +534,11 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
             a = _const_eval_basic_type(a, alias_map)
             assert isinstance(a, (np.float32, np.float64))
             return type(a)(sys.float_info.epsilon)
+        elif intr.string == 'ATAN':
+            a, = args
+            a = _const_eval_basic_type(a, alias_map)
+            assert isinstance(a, (np.float32, np.float64))
+            return np.arctan(a)
         elif intr.string == 'SELECTED_REAL_KIND':
             p, r = args
             p, r = _const_eval_basic_type(p, alias_map), _const_eval_basic_type(r, alias_map)
@@ -2268,7 +2273,7 @@ def add_use_to_specification(scdef: SCOPE_OBJECT_TYPES, clause: str):
         prepend_children(specification_part, Use_Stmt(clause))
 
 
-def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Program:
+def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, SPEC]]) -> Program:
     """
     Update the variable declarations to have globally unique names.
     Precondition:
@@ -2285,10 +2290,26 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Pr
         name_collisions[k[-1]] += 1
     name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1}
 
+    entry_point_args: Set[SPEC] = set()
+    for k in keepers:
+        if k not in ident_map:
+            continue
+        fn = ident_map[k]
+        if not isinstance(fn, (Subroutine_Stmt, Function_Stmt)):
+            continue
+        args = atmost_one(children_of_type(fn, Dummy_Arg_List))
+        args = args.children if args else tuple()
+        for a in args:
+            entry_point_args.add(k + (a.string,))
+
     # Make new unique names for the identifiers.
     uident_map: Dict[SPEC, str] = {}
     for k in ident_map.keys():
+        if k in keepers or entry_point_args:
+            # Specific variable instances requested to keep.
+            continue
         if k[-1] in keepers:
+            # Specific variable _name_ (anywhere) requested to keep.
             continue
         if k[-1] in name_collisions:
             uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
