@@ -71,8 +71,10 @@ subroutine main(res, start, end)
   integer :: end
   type(test_type) :: indices
   type(test_type2) :: val
-  indices = test_type(res, start, end)
-  val = test_type2(indices)
+  indices%res=res
+  indices%start = start
+  indices%end = end
+  val%var= indices
   call fun(val)
 end subroutine main
 
