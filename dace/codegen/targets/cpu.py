@@ -349,7 +349,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # NOTE: OpenMP threadprivate storage MUST be declared globally.
             function_stream.write(
                 "{ctype} = nullptr;\n"
-                "#pragma omp threadprivate({name})".format(ctype=nodedesc.as_arg(name=name)),
+                "#pragma omp threadprivate({name})".format(ctype=nodedesc.as_arg(name=name), name=name),
                 sdfg,
                 state_id,
                 node,
@@ -523,7 +523,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 raise NotImplementedError('Start offset unsupported for registers')
             if node.setzero:
                 declaration_stream.write(
-                    "%s DACE_ALIGN(64) = {0};\n" % (defdesc.as_arg(name=name)),
+                    "%s DACE_ALIGN(64) = {0};\n" % (nodedesc.as_arg(name=name)),
                     cfg,
                     state_id,
                     node,
@@ -532,7 +532,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 return
 
             declaration_stream.write(
-                "%s DACE_ALIGN(64);\n" % (defdesc.as_arg(name=name)),
+                "%s DACE_ALIGN(64);\n" % (nodedesc.as_arg(name=name)),
                 cfg,
                 state_id,
                 node,
