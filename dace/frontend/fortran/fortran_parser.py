@@ -1419,6 +1419,7 @@ class AST_translator:
             #
             new_sdfg.reset_cfg_list()
             new_sdfg.validate()
+            tmp_sdfg=copy.deepcopy(new_sdfg)
             new_sdfg.apply_transformations(IntrinsicSDFGTransformation)
             from dace.transformation.dataflow import RemoveSliceView
             new_sdfg.apply_transformations_repeated([RemoveSliceView])
@@ -1555,6 +1556,10 @@ class AST_translator:
         concatenated_name = "_".join(name_chain)
         view_name=concatenated_name + "_" + ast_utils.get_name(member) + "_m_" + str(
                             self.struct_view_count)
+        if len(shape)==0:
+                shape=[1]
+                offsets_zero=[0]
+                strides=[1]
         viewname, view = sdfg.add_view(view_name,
                                             shape,
                                             array.dtype,
@@ -1575,6 +1580,7 @@ class AST_translator:
         concatenated_name = "_".join(name_chain)
         view_name=concatenated_name + "_" + ast_utils.get_name(member) + "_m_" + str(
                             self.struct_view_count)
+        
         memlet=Memlet.simple(concatenated_name + "_" + ast_utils.get_name(member) + "_" + str(
                             self.struct_view_count), subset)
 
@@ -1585,7 +1591,14 @@ class AST_translator:
         concatenated_name = "_".join(name_chain)
         view_name=concatenated_name + "_" + ast_utils.get_name(member) + "_" + str(
                             self.struct_view_count)
-        memlet=Memlet.from_array(concatenated_name + "." + ast_utils.get_name(member), array)
+        if last_read is not None:
+            name=last_read.label
+        if last_written is not None:
+            name=last_written.label
+        if last_read is not None and last_written is not None:
+            if last_read.label != last_written.label:
+                raise ValueError("Last read and last written are not the same")
+        memlet=Memlet.from_array(name + "." + ast_utils.get_name(member), array)
         return self.add_accesses_and_edges(sdfg,view_name,view_to_member, array, substate, last_read, last_written, read, write,memlet)
         
 
@@ -1643,6 +1656,10 @@ class AST_translator:
             shape,offsets,strides,subset=self.compute_array_shape(variable_in_calling_context,sdfg,array)
             offsets_zero = [0]*len(offsets)
             memlet = Memlet(f'{sdfg_name}[{subset}]')
+            if len(shape)==0:
+                shape=[1]
+                offsets_zero=[0]
+                strides=[1]
             viewname, view = sdfg.add_view(sdfg_name + "_view_" + str(self.views),
                                             shape,
                                             array.dtype,
@@ -1669,7 +1686,7 @@ class AST_translator:
                                 array.dtype,
                                 array.storage,
                                 strides=strides,
-                                offset=offsets)
+                                offset=offsets_zero)
             return True, [sdfg_name, wv, rv, variable_in_calling_context]
         #this is an access to a (potentially nested) derived type object member
         elif isinstance(variable_in_calling_context, ast_internal_classes.Data_Ref_Node):
@@ -1738,6 +1755,10 @@ class AST_translator:
                         #this is a simple array, but must still have first view to Array and then to subset.
                         last_read, last_written=self.add_basic_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write)
                         last_read, last_written=self.add_simple_array_to_element_view_pair_in_tower(sdfg,array,name_chain,member,substate,last_read,last_written,read,write,shape,offsets,strides,subset)
+                        if len(shape)==0:
+                            shape=[1]
+                            offsets=[0]
+                            strides=[1]
                         new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
                                 shape,
                                 array.dtype,
@@ -1748,6 +1769,8 @@ class AST_translator:
                         
                 elif isinstance(member,ast_internal_classes.Data_Ref_Node):
                     #this is a member access
+                    array=current_structure.members[ast_utils.get_name(member.parent_ref)]
+                    last_read, last_written=self.add_basic_view_pair_in_tower(sdfg,array,name_chain,member.parent_ref,substate,last_read,last_written,read,write)
                     
                     current_structure=current_structure.members[ast_utils.get_name(member.parent_ref)]
                     intermediate_step=member  
