@@ -553,10 +553,11 @@ class NameFound(Exception):
 
 
 class ASTFindReplaceComplex(ast.NodeTransformer):
-    def __init__(self, repldict: Dict[str, List], trigger_names: Set[str] = None):
+    def __init__(self, repldict: Dict[str, List], trigger_names: Set[str] = None,remove_zero_index=False):
         self.replace_count = 0
         self.repldict = repldict
         self.trigger_names = trigger_names or set()
+        self.remove_zero_index=remove_zero_index
         # If ast.Names were given, use them as keys as well
         self.repldict.update({k.id: v for k, v in self.repldict.items() if isinstance(k, ast.Name)})
 
@@ -578,10 +579,13 @@ class ASTFindReplaceComplex(ast.NodeTransformer):
                     expression_under_construction+="."
                 expression_under_construction+=val[current_val]    
                 current_val+=1
-
-            expression_under_construction+="."    
-            last_index_expression_from_outside_context=val[-1]
+            last_index_expression_from_outside_context=val[-1]    
             name=last_index_expression_from_outside_context[0]
+            #this means it was a struct rather than an array access:
+            if name!="":
+                expression_under_construction+="."    
+            
+            
             indices=last_index_expression_from_outside_context[1]
             current_local_index=0
             expression_under_construction += name

@@ -544,6 +544,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Convert argument into path to full data
         for arg in args_used_in_assignments:
             complex_replacement = False
+            must_remove_zero_index = False
+            not_a_struct = True
             in_edge = input_memlets[arg]
             if in_edge.data.data in nsdfg.symbols:
                 continue
@@ -560,26 +562,44 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                                 else:
                                     collapsed += 1
                         if collapsed == len(shape_out):            
-                            first_data = in_edge.data.data + "[" + str(in_edge.data.subset) + "]"
+                            #first_data = in_edge.data.data + "[" + str(in_edge.data.subset) + "]"
+                            must_remove_zero_index= True     
+                            components = [""]*len(in_edge.data.subset.size())
+                            for i in range(len(in_edge.data.subset.size())):
+                                components[i]=str(in_edge.data.subset.ranges[i][0])
+                            
+                            first_data = ("",components)
+                            data_path = [in_edge.data.data,first_data]
                         if collapsed == 0:            
-                            first_data = in_edge.data.data        
-                    elif len(shape_in)==0 or (len(shape_in)==1 and shape_in[0]==1):        
-                        first_data = in_edge.data.data + "[" + str(in_edge.data.subset) + "]"
+                            first_data = in_edge.data.data  
+                            data_path = [first_data]      
+                    elif len(shape_in)==0 or (len(shape_in)==1 and shape_in[0]==1):   
+                        must_remove_zero_index= True     
+                        components = [""]*len(in_edge.data.subset.size())
+                        for i in range(len(in_edge.data.subset.size())):
+                            components[i]=str(in_edge.data.subset.ranges[i][0])
+                        
+                        first_data = ("",components)
+                        data_path = [in_edge.data.data,first_data]
                 else:
                     first_data = in_edge.data.data
-
-                data_path = [first_data]
+                    data_path = [first_data]
+                
             else:
                 view_nodes = get_all_view_nodes(outer_state, in_edge.src)[::-1]
                 current_node = view_nodes[0]
                 current_desc = sdfg.arrays[current_node.data]
                 data_path = [current_node.data]
+                
+                member_name = ""
                 for i in range(1, len(view_nodes)):
                     view_node = view_nodes[i]
                     view_edge = get_view_edge(outer_state, view_node)
                     tmp_memlet_part = ""
+                    
                     if "." in view_edge.data.data:
                         member_name = view_edge.data.data.split(".")[-1]
+                        not_a_struct = False
                         memlet_part = member_name
                         if i < len(view_nodes) - 1:
                             memlet_part += "[" + view_edge.data.subset.__str__() + "]"
@@ -593,6 +613,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                             data_path.append(tmp_memlet_part)
                     else:
                         # View on a subset
+                        
                         if view_edge.data.subset != Memlet.from_array(current_node.data, current_desc).subset:
                             #create a list with a length equal to the number of dimensions of the view
                             collapsed = [False]*len(view_edge.data.subset.size())
@@ -608,8 +629,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                                     components[i] = "__to_be_replaced__"
                                     complex_replacement = True
                                     data_path.append((member_name,components))
-                            if all(collapsed):              
-                                data_path.append(member_name+ "[" + view_edge.data.subset.__str__() + "]")
+                            if all(collapsed): 
+                                must_remove_zero_index= True
+                                data_path.append((member_name,components))
                             # TODO: Non-trivial, memlet offsetting required
                             print("Warning: Non-trivial view on a subset")
                             #raise NotImplementedError
@@ -619,17 +641,27 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                                 data_path.append(tmp_memlet_part)
                             continue
             if not complex_replacement:
-                if len(data_path) > 1:                    
-                    data_path = ".".join(data_path)
+                if len(data_path) > 1:  
+                    if not_a_struct:
+                        if must_remove_zero_index:
+                            pass
+                        else:
+                            data_path = "".join(data_path)
+
+                    else:                  
+                        data_path = ".".join(data_path)
                 else:
                     data_path = data_path[0]
                 for edge in nsdfg.all_interstate_edges():
-                    edge.data.replace(arg, data_path)
+                    if must_remove_zero_index:
+                        edge.data.replace_complex(arg, data_path,remove_zero_index=True)        
+                    else:
+                        edge.data.replace(arg, data_path)
                 for cfr in nsdfg.all_control_flow_regions():
                     cfr.replace_meta_accesses({ arg: data_path })
             else:
                 for edge in nsdfg.all_interstate_edges():
-                    edge.data.replace_complex(arg, data_path)        
+                    edge.data.replace_complex(arg, data_path,remove_zero_index=False)        
                 for cfr in nsdfg.all_control_flow_regions():
                     cfr.replace_meta_accesses({ arg: data_path })
 

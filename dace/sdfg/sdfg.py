@@ -314,7 +314,7 @@ class InterstateEdge(object):
             self._cond_sympy = None
 
     
-    def replace_complex_iedge(self, oldname,newname, replace_keys=True) -> None:
+    def replace_complex_iedge(self, oldname,newname,remove_zero_index=False, replace_keys=True) -> None:
         """
         Replaces all given keys with their corresponding values.
 
@@ -328,12 +328,12 @@ class InterstateEdge(object):
         repl={oldname: newname}
         for k, v in self.assignments.items():
             vast = ast.parse(v)
-            vast = astutils.ASTFindReplaceComplex(repl).visit(vast)
+            vast = astutils.ASTFindReplaceComplex(repl,remove_zero_index=remove_zero_index).visit(vast)
             newv = astutils.unparse(vast)
             if newv != v:
                 self.assignments[k] = newv
         condition = ast.parse(self.condition.as_string)
-        condition = astutils.ASTFindReplaceComplex(repl).visit(condition)
+        condition = astutils.ASTFindReplaceComplex(repl,remove_zero_index=remove_zero_index).visit(condition)
         newc = astutils.unparse(condition)
         if newc != condition:
             self.condition.as_string = newc
@@ -350,7 +350,7 @@ class InterstateEdge(object):
         """
         self.replace_dict({name: new_name}, replace_keys)
 
-    def replace_complex(self, name: str, new_name: List, replace_keys=True) -> None:
+    def replace_complex(self, name: str, new_name: List,remove_zero_index=False, replace_keys=True) -> None:
         """
         Replaces all occurrences of ``name`` with ``new_name``.
 
@@ -358,7 +358,7 @@ class InterstateEdge(object):
         :param new_name: The replacement list for iedge memlet replacement.
         :param replace_keys: If False, skips replacing assignment keys.
         """
-        self.replace_complex_iedge(name, new_name, replace_keys)    
+        self.replace_complex_iedge(name, new_name, remove_zero_index,replace_keys)    
 
     def new_symbols(self, sdfg, symbols) -> Dict[str, dtypes.typeclass]:
         """
