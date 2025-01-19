@@ -35,7 +35,7 @@ end subroutine main
     sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify(verbose=True)
     a = np.full([2, 3], 42, order="F", dtype=np.float64)
-    sdfg(d=a, process_mpi_all_size=0)
+    sdfg(d=a)
     assert (a[0, 0] == 0)
     assert (a[0, 1] == 5)
     assert (a[1, 2] == 0)

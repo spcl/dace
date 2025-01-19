@@ -1662,7 +1662,9 @@ def make_practically_constant_global_vars_constants(ast: Program) -> Program:
         loc = search_real_local_alias_spec(lv, alias_map)
         assert loc
         var = alias_map[loc]
-        assert isinstance(var, Entity_Decl)
+        assert isinstance(var, (Entity_Decl, Function_Stmt))
+        if not isinstance(var, Entity_Decl):
+            continue
         var_spec = ident_spec(var)
         if var_spec in never_assigned:
             never_assigned.remove(var_spec)
