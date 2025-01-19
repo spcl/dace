@@ -1552,6 +1552,9 @@ def prune_unused_objects(ast: Program, keepers: List[SPEC]) -> Program:
         # Go over all the data-refs available under `node`.
         for dr in walk(node, Data_Ref):
             root, rest = _lookup_dataref(dr, alias_map)
+            if rest and isinstance(rest[0], Section_Subscript_List):
+                # The root is an array and the data-ref uses only a slice of the root.
+                root, rest = Part_Ref(f"{root.tofortran()}({rest[0].tofortran()})"), rest[1:]
             scope_spec = find_scope_spec(dr)
             # All the data-ref ancestors of `dr` must live too.
             for upto in range(1, len(rest)+1):

@@ -1298,6 +1298,7 @@ module lib
     type(config) :: big
   end type big_config
   type(config) :: globalo
+  type(used_config) :: garray(4)
 contains
   subroutine fun(this)
     implicit none
@@ -1313,6 +1314,7 @@ subroutine main
   integer :: i = 7
   real :: a = 1
   ucfg%b = a*i
+  garray(3)%b = a*i*2
 end subroutine main
 """).check_with_gfortran().get()
     ast = parse_and_improve(sources)
@@ -1325,15 +1327,17 @@ MODULE lib
   TYPE :: used_config
     REAL :: b = - 2.0
   END TYPE used_config
+  TYPE(used_config) :: garray(4)
   CONTAINS
 END MODULE lib
 SUBROUTINE main
-  USE lib, ONLY: used_config
+  USE lib, ONLY: garray, used_config
   IMPLICIT NONE
   TYPE(used_config) :: ucfg
   INTEGER :: i = 7
   REAL :: a = 1
   ucfg % b = a * i
+  garray(3) % b = a * i * 2
 END SUBROUTINE main
 """.strip()
     assert got == want
