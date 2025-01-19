@@ -528,7 +528,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     state_id,
                     node,
                 )
-                define_var(name, DefinedType.Pointer, ctypedef)
+                define_var(name, DefinedType.Pointer, dtypes.pointer(nodedesc.dtype))
                 return
 
             declaration_stream.write(
@@ -537,7 +537,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 state_id,
                 node,
             )
-            define_var(name, DefinedType.Pointer, ctypedef)
+            define_var(name, DefinedType.Pointer, dtypes.pointer(nodedesc.dtype))
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Define pointer once
