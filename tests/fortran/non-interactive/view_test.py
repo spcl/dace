@@ -129,7 +129,7 @@ end
 SUBROUTINE """ + test_name + """_function(aa,bb,cc,n)
 
 integer, parameter :: n=10
-double precision a(n,11,12),b(n,11,12),c(n,11,12)
+double precision aa(n,11,12),bb(n,11,12),cc(n,11,12)
 integer j,k
 
 j=1
@@ -139,24 +139,24 @@ k=2
 
 end SUBROUTINE """ + test_name + """_function
 
-SUBROUTINE viewlens(aa,bb,cc)
+SUBROUTINE viewlens(aaa,bbb,ccc)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11),bb(10,11),cc(10,11) 
+double precision  :: aaa(10,11),bbb(10,11),ccc(10,11) 
 
 INTEGER ::  JK, JL
 
 DO JK=1,10
   DO JL=1,11
-    cc(JK,JL)=bb(JK,JL)+aa(JK,JL)
+    ccc(JK,JL)=bbb(JK,JL)+aaa(JK,JL)
   ENDDO
 ENDDO
 
 END SUBROUTINE viewlens
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,True)
-    #sdfg.simplify(verbose=True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,True,False)
+    sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     c = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
@@ -167,7 +167,6 @@ END SUBROUTINE viewlens
     assert (c[1, 1, 1] == 84)
 
 
-@pytest.mark.skip(reason="Interactive test (opens SDFG).")
 def test_fortran_frontend_view_test_3():
     """
     Tests to check whether Fortran array slices are correctly translates to DaCe views. This test generates multiple views from the same array in the same context.    """
@@ -185,7 +184,7 @@ end
 SUBROUTINE """ + test_name + """_function(aa,bb,n)
 
 integer, parameter :: n=10
-double precision a(n,n+1,12),b(n,n+1,12)
+double precision aa(n,n+1,12),bb(n,n+1,12)
 integer j,k
 
 j=1
@@ -209,8 +208,8 @@ ENDDO
 
 END SUBROUTINE viewlens
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,True)
-    #sdfg.simplify(verbose=True)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,True,False)
+    sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
 
@@ -223,5 +222,5 @@ END SUBROUTINE viewlens
 if __name__ == "__main__":
 
     test_fortran_frontend_view_test()
-    #test_fortran_frontend_view_test_2()
-    #test_fortran_frontend_view_test_3()
+    test_fortran_frontend_view_test_2()
+    test_fortran_frontend_view_test_3()
