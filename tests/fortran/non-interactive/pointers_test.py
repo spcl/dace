@@ -18,7 +18,6 @@ import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
 
-@pytest.mark.skip(reason="Interactive test (opens SDFG).")
 def test_fortran_frontend_pointer_test():
     """
     Tests to check whether Fortran array slices are correctly translates to DaCe views.
@@ -58,7 +57,7 @@ end
    END SUBROUTINE pointer_test_function
   
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,True,False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -71,7 +70,7 @@ end
     sdfg.reset_sdfg_list()   
     sdfg.validate()             
     sdfg.simplify(verbose=True)
-    sdfg.view()
+
 
 
 
