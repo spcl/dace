@@ -992,6 +992,7 @@ class AST_translator:
         variables_in_call = var2
         parameters = par2
         assigns = []
+        symbol_assigns = []
         self.local_not_transient_because_assign[my_name_sdfg] = []
         for lit, litval in zip(literals, literal_values):
             local_name = lit
@@ -1015,7 +1016,7 @@ class AST_translator:
                 # FIXME: Dirty hack to let translator create clean SDFG state names
                 if node.line_number == -1:
                     node.line_number = (0, 0)
-                assigns.append(
+                symbol_assigns.append(
                     ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=parameter.name),
                                                     rval=ast_internal_classes.Name_Node(name=symbol.name),
                                                     op="=",
@@ -1412,6 +1413,19 @@ class AST_translator:
                     parent_sdfg = parent_sdfg.parent_sdfg
 
         if self.multiple_sdfgs == False:
+
+            prev_block = None if new_sdfg not in self.last_sdfg_states else self.last_sdfg_states[new_sdfg]
+            is_start = prev_block is None
+            if is_start:
+                first_substate = new_sdfg.add_state("start_state", is_start_block=True)
+                self.last_sdfg_states[new_sdfg] = first_substate
+                
+            substate = new_sdfg.add_state("dummy_state_for_symbol_init")
+            entries={}
+            for i in symbol_assigns:
+                entries[i.lval.name]=i.rval.name
+            new_sdfg.add_edge(self.last_sdfg_states[new_sdfg], substate, InterstateEdge(assignments=entries))
+            self.last_sdfg_states[new_sdfg] = substate
 
             for i in assigns:
                 self.translate(i, new_sdfg, new_sdfg)

@@ -262,7 +262,7 @@ end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.simplify(verbose=True)
-    a = np.full([4, 5], 42, order="F", dtype=np.float64)
+    a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
