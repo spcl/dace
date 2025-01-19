@@ -2503,14 +2503,8 @@ def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortra
         # Keep all the possible entry points.
         cfg.entry_points = [ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_CLASSES)))
                             for c in ast.children if isinstance(c, ENTRY_POINT_OBJECT_CLASSES)]
-    else:
-        eps = cfg.entry_points
-        if isinstance(eps, tuple):
-            eps = [eps]
-        ident_map = identifier_specs(ast)
-        entry_points = [ep for ep in eps if ep in ident_map]
 
-    ast = run_fparser_transformations(ast, entry_points)
+    ast = run_fparser_transformations(ast, cfg)
     assert isinstance(ast, Program)
 
     iast = ast_components.InternalFortranAst()
