@@ -18,8 +18,6 @@ import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
-
-@pytest.mark.skip(reason="Interactive test (opens SDFG).")
 def test_fortran_frontend_int_init():
     """
     Tests that the power intrinsic is correctly parsed and translated to DaCe. (should become a*a)
@@ -36,7 +34,7 @@ def test_fortran_frontend_int_init():
                    d(1)=INT(z'000000ffffffffff',i8)               
                    END SUBROUTINE int_init_test_function
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "int_init_test",False,False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "int_init_test",True,False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
@@ -48,13 +46,10 @@ def test_fortran_frontend_int_init():
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()                
     sdfg.simplify(verbose=True)
-    sdfg.view()
     sdfg.compile()
-    # sdfg = fortran_parser.create_sdfg_from_string(test_string, "int_init_test")
-    # sdfg.simplify(verbose=True)
-    # d = np.full([2], 42, order="F", dtype=np.int64)
-    # sdfg(d=d)
-    # assert (d[0] == 400)
+    d = np.full([2], 42, order="F", dtype=np.int64)
+    sdfg(d=d)
+    assert (d[0] == 400)
 
 
 
