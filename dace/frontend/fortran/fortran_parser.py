@@ -965,10 +965,11 @@ class AST_translator:
 
         # First we need to check if the parameters are literals or variables
         for arg_i, variable in enumerate(variables_in_call):
+            if isinstance(variable, ast_internal_classes.Actual_Arg_Spec_Node):
+                keyword, variable = variable.arg_name, variable.arg
+
             if isinstance(variable, ast_internal_classes.Name_Node):
                 varname = variable.name
-            elif isinstance(variable, ast_internal_classes.Actual_Arg_Spec_Node):
-                varname, variable = variable.arg_name.name, variable.arg
             elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
                 varname = variable.name.name
             elif isinstance(variable, ast_internal_classes.Data_Ref_Node):
