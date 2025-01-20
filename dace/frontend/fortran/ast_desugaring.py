@@ -2327,6 +2327,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
     2. All public/private access statements were cleanly removed.
     """
     SUFFIX, COUNTER = 'var', 0
+    PYTHON_KEYWORDS = {'for', 'in'}
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
@@ -2334,7 +2335,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
     name_collisions: Dict[str, int] = {k[-1]: 0 for k in ident_map.keys()}
     for k in ident_map.keys():
         name_collisions[k[-1]] += 1
-    name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1}
+    name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1 or k.lower() in PYTHON_KEYWORDS}
 
     entry_point_args: Set[SPEC] = set()
     for k in keepers:
@@ -2351,13 +2352,13 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
     # Make new unique names for the identifiers.
     uident_map: Dict[SPEC, str] = {}
     for k in ident_map.keys():
-        if k in keepers or entry_point_args:
+        if k in keepers or k in entry_point_args:
             # Specific variable instances requested to keep.
             continue
         if k[-1] in keepers:
             # Specific variable _name_ (anywhere) requested to keep.
             continue
-        if k[-1] in name_collisions:
+        if k[-1].lower() in name_collisions:
             uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
         else:
             uname = k[-1]
