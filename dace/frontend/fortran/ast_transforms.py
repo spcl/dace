@@ -3898,7 +3898,8 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
                 )
                 self.nodes.append(node)
 
-            else:
+            elif isinstance(node.lval, ast_internal_classes.Data_Ref_Node):
+
                 _, var_def, last_data_ref_node = self.structures.find_definition(self.scope_vars, node.lval)
 
                 if var_def.sizes is None or len(var_def.sizes) == 0:
