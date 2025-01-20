@@ -293,6 +293,10 @@ class BackwardPassGenerator:
         #: Mapping from forward name to gradient name for arrays
         self.array_grad_map: Dict[str, str] = array_grad_map or {}
 
+        #: Mapping from the backward access nodes that will be zeroed out
+        # to the transients that contain the values before they are zeroed out
+        self.zeroed_out: Dict[nodes.AccessNode, nodes.AccessNode] = {}
+
         # Topological orderning of the states
         self.state_order = self.sdfg.states()
         self.conflicted_gradient_buffers: Set[str] = conflicted_gradient_buffers or set()
@@ -365,14 +369,11 @@ class BackwardPassGenerator:
         if self._applied:
             raise AutoDiffException("Backward may only be called once. Instantiate a new BackwardPassGenerator.")
 
+        # TODO: either change this to be a clean up function at this level or remove it
         self._remove_unnecessary_conditional_regions()
 
-        # If any of the inputs is overwritten before it is ever used,
-        # we will return zero for its gradients and skip AD for it.
-        # Identify what gradients follow this pattern and remove them from the gradients list if necessary
-        self._identify_overwritten_inputs()
-
         # Create state views mapping and exapnd all the SDFG nodes
+        # TODO: deal with a full unroll of a loop inside this function
         self._create_stateviews_mapping()
 
         # Reverse each state in the graph
@@ -383,10 +384,6 @@ class BackwardPassGenerator:
 
         # Fill the interstate edges with the correct conditions
         self._fill_interstate_edge_conditions()
-
-        # Zero out the necessary gradients
-        # These are the overwritten inputs and inputs that don't contribute to the desired output
-        self._zero_out_required_gradients()
 
         # Forward required data by the backward pass according to a user defined strategy
         self._forward_data_to_backward_states()
@@ -471,68 +468,6 @@ class BackwardPassGenerator:
                 # Remove the uncessary region from the graph
                 parent_graph.remove_node(region)
 
-    def _identify_overwritten_inputs(self):
-        """
-        Go through all the inputs we want to differentiate the output w.r.t,
-        if any of them are overwritten to before they are used in the SDFG,
-        the resulting gradient for this input is zero. 
-        Any changes to this input of the function will be overwritten immediatly.
-        In this method we identify which inputs are overwritten to and save them
-        in the overwritten_inputs list. 
-        We also save the memlet of this overwrite to later only zero-out the correct indices
-        in the case where not the whole array has been overwritten.
-        To identify which which inputs have been overwritten:
-            - We get the first AccessNode to this data in the SDFG
-            - If this first occurance has any incoming edges (i.e. write)
-            - Save this data to later be zeroed-out by the _zero_out_required_gradients method
-        """
-
-        self.overwritten_inputs: List[str, Memlet] = []
-
-        # For each input we to differentiate with respect to
-        for required_gradient in self.required_gradients_data:
-            # Get the first instance of this input node in the SDFG
-            first_occurance = None
-
-            # This assumes topological sort of states
-            for state in self.sdfg.states():
-                for node in state.all_nodes_recursive():
-                    if isinstance(node, nodes.AccessNode) and node.data == required_gradient:
-                        first_occurance = node
-                        first_occurance_state = state
-                        break
-
-                # If we already found the AccessNode, break
-                if first_occurance:
-                    break
-
-            # If the data is used in the SDFG
-            # We will deal with the case where the data is not used
-            # or not used in the critical computation graph in the
-            # _zero_out_required_gradients method
-            if first_occurance:
-                in_edges = first_occurance_state.in_edges(first_occurance)
-
-                # Check if the first occurance is a write
-                if len(in_edges) > 0:
-
-                    # This is an AN so there only should be one incoming edge
-                    assert len(in_edges) == 1
-                    memlet = in_edges[0].data
-
-                    # Save this data and the overwrite memlet to the list
-                    self.overwritten_inputs.append((first_occurance.data, memlet))
-
-                    # If this is a complete overwrite of the input, we don't want to do AD for it
-                    comparison_result = self._compare_memlet_accesses_to_array_size(first_occurance.data, memlet)
-                    if comparison_result and comparison_result == 0:
-                        # The whole array is overwritten at the start of the program
-                        # Remove this from the required gradients list
-                        self.required_gradients_data.remove(first_occurance.data)
-                        node = [n for n in self.required_gradients if n.data == first_occurance.data]
-                        assert len(node) == 1
-                        self.required_gradients.remove(node[0])
-
     def _create_stateviews_mapping(self):
         """
         Maps each state in the SDFG to the views that indicates what to differentiate
@@ -560,7 +495,6 @@ class BackwardPassGenerator:
                 loop_view = self.loop_states_view_map[state]
                 state_subgraph_loop_view.append(loop_view)
 
-            all_views = state_subgraph_views + state_subgraph_loop_view
             for state_subgraph_view in state_subgraph_views:
 
                 # Make sure this state has not already been reversed
@@ -835,94 +769,153 @@ class BackwardPassGenerator:
                                    dst=leftover_loop_state,
                                    data=dace.InterstateEdge(condition=leftover_iterations_condition))
 
-    def _zero_out_required_gradients(self):
-        """
-        Zero-out gradients that either didn't contribute to the desired output,
-        or were overwritten and identified by the _identify_overwritten_inputs method.
-        """
-        gradients_to_zero_out: List[str, Memlet] = []
-        # First, we zero-out all the required gradients that didn't contribute at all to the output
-        for required_gradient in self.required_gradients_data:
-            gradient_name = self.array_grad_name(required_gradient)
-            added = False
-            for node, _ in self.backward_sdfg.all_nodes_recursive():
-                if isinstance(node, nodes.AccessNode) and node.data == gradient_name:
-                    added = True
-                    break
-            if not added:
-                gradients_to_zero_out.append((required_gradient, None))
+    def is_within_map(self, state: SDFGState, node: nodes.AccessNode) -> bool:
+        # Get the scope dictionary for the state
+        scope_dict = state.scope_dict()
 
-        # Fuse the lists of gradients to remove
-        gradients_to_zero_out += self.overwritten_inputs
+        # Check if the node is within the scope of a map
+        scope_entry = scope_dict.get(node, None)
+        while scope_entry is not None:
+            if isinstance(scope_entry, nodes.MapEntry):
+                return True
+            scope_entry = scope_dict.get(scope_entry, None)
 
-        # We zero out the gradients that were already identified (if any)
-        if len(gradients_to_zero_out) == 0:
+        return False
+
+    def _zero_out_gradient(self, forward_state: SDFGState, forward_node: nodes.AccessNode, memlet: Memlet):
+        """
+        Overwritten arrays in the forward pass will need to have their gradients zeroed out for gradient accumelation to work.
+        This function will:
+            1- copy the current gradient values to a temporary array. These values will still be used in the backward pass one last time.
+            2- zero-out the overwritten access in the backward pass.
+            3- add the new temporary to a dictionary so that the new read is made to the temporary and not the original gradient array.
+        We will also try to avoid doing this as much as possible to optimize performance.
+        """
+        # Extra checks to only do this if necessary
+
+        # If this access node is not written to in the forward pass except for this one time, we don't need to zero it out
+        # An exception is made for required gradients that can be read outside the scope of the SDFG
+        written_to = forward_node.data in self.required_gradients_data
+
+        # Get all write instances in the forward sdfg to this node
+        # This should avoid unnecessary zeroing out of dace generated temporaries
+        for state in self.state_order:
+            # TODO: what if there are multiple views of the same state
+            state_view = self.states_view_map[state]
+            for node, parent in state_view.all_nodes_recursive():
+                if isinstance(node, nodes.AccessNode) and node.data == forward_node.data:
+                    if parent.in_degree(node) > 0:
+                        # We need to check if the the forward node is inside a map scope or a LoopRegion
+                        within_loop, loop = self._state_within_loop(state)
+                        within_map = self.is_within_map(state, node)
+                        if node != forward_node or (node == forward_node and (within_loop or within_map)):
+                            written_to = True
+                            break
+
+        if not written_to:
             return
 
-        # Get all the end-states of the backward SDFG
-        bwd_sdfg_exit_nodes = []
-        for node in self.backward_sdfg.nodes():
-            if len(self.backward_sdfg.out_edges(node)) == 0:
-                bwd_sdfg_exit_nodes.append(node)
-        assert bwd_sdfg_exit_nodes
+        # Get the backward state
+        backward_state: SDFGState = self.reversed_states_map[forward_state]
 
-        # Create the state that we will be adding the initialization to
-        zero_out_state = self.backward_sdfg.add_state_after(bwd_sdfg_exit_nodes[0], label="__gradient_zero_out_state__")
-
-        # Connect all the leftover exit nodes to this new state
-        bwd_sdfg_exit_nodes = bwd_sdfg_exit_nodes[1:]
-        for exit_node in bwd_sdfg_exit_nodes:
-            self.backward_sdfg.add_edge(src=exit_node, dst=zero_out_state, data=dace.InterstateEdge())
-
-        # Add the initialization maps per data
-        for data, memlet in gradients_to_zero_out:
-            # Zero out each gradient
-            self._zero_out_gradient(zero_out_state, data, memlet)
-
-    def _zero_out_gradient(self, init_state: SDFGState, data: str, memlet: Memlet = None):
-        """
-        Add a zero assignment map to the data array in init_state that zeros-out
-        the elements that were previously accesses by memlet. 
-        By default we zero-out all the values of the array.
-        """
+        # Get the backward node
+        backward_node: nodes.AccessNode = self.reverse_map[forward_node]
 
         # Get the original array
-        array_desc = self.sdfg.arrays[data]
-        new_array_desc = copy.deepcopy(array_desc)
-        new_array = self.array_grad_name(data)
+        fwd_array_desc = self.sdfg.arrays[forward_node.data]
+        array_desc = self.backward_sdfg.arrays[backward_node.data]
 
-        # Add the new array to the sdfg
-        self.backward_sdfg.add_datadesc(new_array, new_array_desc)
-
-        # If memlet was specified, only assign to the specified values
-        if memlet:
-            memlet.data = new_array
-        else:
-            memlet = dace.Memlet.simple(new_array, ", ".join("i{}".format(i) for i in range(len(new_array_desc.shape))))
-
-        scalar = 0
-        if dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, new_array_desc.storage):
+        if dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, array_desc.storage):
             cuda = False
-        elif dtypes.can_access(dtypes.ScheduleType.GPU_Default, new_array_desc.storage):
+        elif dtypes.can_access(dtypes.ScheduleType.GPU_Default, array_desc.storage):
             cuda = True
         else:
-            raise ValueError(f"Unsupported storage {new_array_desc.storage}")
+            raise ValueError(f"Unsupported storage {array_desc.storage}")
 
-        if isinstance(new_array_desc, (dt.Array, dt.Scalar)):
-            init_state.add_mapped_tasklet(
-                "_init_" + data + "_", {
-                    "i{}".format(i): "0:{}".format(shape)
-                    for i, shape in enumerate(new_array_desc.shape)
-                }, {},
-                "__out = {}".format(scalar), {"__out": memlet},
-                schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default,
-                external_edges=True)
-        elif type(new_array_desc) is dt.View:
+        # Careful! The order of the ifs here matters since ArrayView is a subclass of Array
+        if isinstance(array_desc, (dt.View, dt.ArrayView)):
             # No need to initialize: the viewed array will always be visited
             # (since a view can never be a required grad), and thus the viewed array will be initialized.
             pass
+        elif isinstance(array_desc, (dt.Array, dt.Scalar)):
+            # Create a new memlet to write to the gradient arrays
+            map_exit_memlet = copy.deepcopy(memlet)
+            map_exit_memlet.data = backward_node.data
+
+            # Create the tasklet to zero out only the section in the memlet
+            # First, Get the range that the zeroout map should iterate over
+            # TODO: We are looking at writes in the forward pass,
+            # We should take the dst_subset of the memlet
+            # Are there cases where dst_subset is None?
+            ranges = []
+            for iteration in map_exit_memlet.dst_subset:
+                if isinstance(iteration, tuple):
+                    # The end of the range is inclusive in the loop
+                    # We add 1 to get the upper bound for the map
+                    ranges.append((iteration[0], iteration[1] + 1))
+                else:
+                    raise AutoDiffException(f"Unsupported subset type {type(iteration)} in memlet {memlet}")
+
+            # Create the indices dict
+            indices = {f"i{i}": f"{start}:{end}" for i, (start, end) in enumerate(ranges)}
+
+            # Create the tasklet memlet from the indices
+            tasklet_memlet = dace.Memlet.simple(backward_node.data, ", ".join(indices.keys()))
+            tasklet, map_entry, map_exit = backward_state.add_mapped_tasklet(
+                "_init_" + backward_node.data + "_",
+                indices, {},
+                f"__out = 0", {
+                    "__out": tasklet_memlet,
+                },
+                schedule=dtypes.ScheduleType.GPU_Device if cuda else dtypes.ScheduleType.Default,
+                external_edges=True)
+
+            # Get the edge from the map exit to the backward node
+            edge = backward_state.out_edges(map_exit)[0]
+
+            # Create a copy of new memlet that will keep its other subset
+            # We want to copy the elements to their same indices in the new tmp array
+            # Create a new memlet that copies what memlet is writing to to the tmp
+            new_memlet_subset = memlet.subset if memlet.data == forward_node.data else memlet.other_subset
+            original_to_tmp_memlet = dace.Memlet(data=backward_node.data,
+                                                 subset=new_memlet_subset,
+                                                 other_subset=new_memlet_subset)
+
+            # Remove the src_subset of the new memlet and replace the memlet in the edge
+            map_exit_memlet.src_subset = None
+            map_exit_memlet.other_subset = None
+            edge.data = map_exit_memlet
+
+            # Add an edge from the backward_node to the new map entry
+            backward_state.add_edge(backward_node, None, map_entry, None, dace.Memlet())
+
+            # A race will happen unless we make sure the data is being copied being it is zeroed out
+            # There is a read from the same array
+            # We need to add a transient that reads the content from forward pass before it is zeroed out
+            # Create a new array descriptor for the transient
+            # TODO: Reuse array descriptors for the same data
+            transient_desc = copy.deepcopy(array_desc)
+            transient_desc.transient = True
+
+            # Add the new array to the sdfg
+            transient_name = self.array_grad_name(forward_node.data) + "_tmp"
+
+            # Check if the array is already in the backward sdfg
+            if transient_name not in self.backward_sdfg.arrays:
+                self.backward_sdfg.add_datadesc(transient_name, transient_desc)
+
+            # Create an AcessNode for this transient and add it to backward state
+            transient_node = backward_state.add_read(transient_name)
+
+            # Add a read from the backward node to the transient
+            backward_state.add_edge(backward_node, None, transient_node, None, original_to_tmp_memlet)
+
+            # Add an empty edge from the transient to the map entry
+            backward_state.add_edge(transient_node, None, map_entry, None, dace.Memlet())
+
+            self.zeroed_out[backward_node] = transient_node
         else:
-            raise AutoDiffException("Unsupported data descriptor {}".format(new_array_desc))
+            raise AutoDiffException("Unsupported data descriptor {}".format(array_desc))
 
     def _forward_data_to_backward_states(self) -> None:
         """
@@ -940,39 +933,16 @@ class BackwardPassGenerator:
     def _find_subgraph_to_differentiate(self) -> None:
         """ 
         Determine which nodes we need to reverse; this forms the subgraph we will differentiate:
-        we do a reverse BFS and a forward BFS, then take the intersection of nodes found. 
+        we do a reverse BFS from the target output node. 
         In the case where a state is within a loop, this may result in different subgraphs
         depending on the loop iteration.
 
         To calculate the gradients for a node x in ``required_gradients``, we need to sum up the gradient
-        contributions from every node y where x is used as an input. We thus first do a forward BFS. Also, the
-        gradient contributions of all nodes that are not connected by a path to a ``given_gradient`` node are
-        implicitly zero. Thus, we take the intersection of the two BFSs.
+        contributions from every node y where x is used as an input.
         """
-        forward_nodes: set[nodes.Node] = set()
         backward_nodes: set[nodes.Node] = set()
         required_gradients_all_states = {n.data for n in self.required_gradients}
         given_gradients_all_states = {n.data for n in self.given_gradients}
-
-        # Do the forward BFS iterativly
-        for state in self.state_order:
-            state_required_gradients = []
-
-            # Get all the access nodes that are neccessary for AD and are present in this state
-            for node in state:
-                if isinstance(node, nodes.AccessNode) and node.data in required_gradients_all_states:
-                    state_required_gradients.append(node)
-
-            forward_nodes = forward_nodes.union(
-                {n
-                 for e in state.edge_bfs(state_required_gradients)
-                 for n in [e.src, e.dst]})
-
-            # Update the list of required gradients to use for states
-            for node in forward_nodes:
-                if isinstance(node, nodes.AccessNode) and node.data not in required_gradients_all_states:
-                    # We want all of the forward AccessNodes that made it to the intersection
-                    required_gradients_all_states.add(node.data)
 
         # Do the backward BFS iterativly
         for state in reversed(self.state_order):
@@ -983,7 +953,7 @@ class BackwardPassGenerator:
                     state_given_gradients.append(node)
 
             backward_nodes = {n for e in state.edge_bfs(state_given_gradients, reverse=True) for n in [e.src, e.dst]}
-            nodes_list = list(forward_nodes.intersection(backward_nodes))
+            nodes_list = list(backward_nodes)
             state_subgraph = dstate.StateSubgraphView(state, nodes_list)
 
             state_subgraph = self._add_missing_nested_sdfg_connectors_to_view(state=state,
@@ -1012,7 +982,7 @@ class BackwardPassGenerator:
                     for e in state.edge_bfs(state_given_gradients, reverse=True)
                     for n in [e.src, e.dst]
                 }
-                view_nodes = list(forward_nodes.intersection(backward_nodes))
+                view_nodes = list(backward_nodes)
                 # Get the intersection with the forward nodes
                 # Note that these don't change even in the case of a for loop
                 loop_state_subgraph = dstate.StateSubgraphView(state, view_nodes)
@@ -2177,28 +2147,28 @@ class BackwardPassGenerator:
         """ Reverse a given subgraph. All nodes in the subgraph will be reversed. """
         from dace.libraries.onnx.nodes.onnx_op import ONNXSum  # avoid import loop
 
-        # condiitonal assignement nodes
+        # Condiitonal assignement nodes
         conditional_assignement_nodes: List[nodes.Node] = []
         new_backward_state = None
 
-        # a reversed topological sort is a topological sort on the reverse graph
+        # A reversed topological sort is a topological sort on the reverse graph
         for node in reversed(list(dutils.dfs_topological_sort(subgraph, subgraph.source_nodes()))):
 
             try:
-                # if this node is a part of the conditional assignement block, we skip it
+                # If this node is a part of the conditional assignement block, we skip it
                 if node in conditional_assignement_nodes:
                     continue
 
                 if new_backward_state is not None:
                     backward_state = new_backward_state
 
-                # output names on the forward node
+                # Output names on the forward node
                 # (for which the gradient will be connected as an input on the reverse node)
                 given_gradients = [
                     edge.src_conn for edge in subgraph.out_edges(node) if _path_src_node_in_subgraph(edge, subgraph)
                 ]
 
-                # input names on the forward node that gradients should be generated for
+                # Input names on the forward node that gradients should be generated for
                 # note that the edge for the conditional is not included
                 required_gradients = [
                     edge.dst_conn for edge in subgraph.in_edges(node) if _path_src_node_in_subgraph(edge, subgraph)
@@ -2211,19 +2181,12 @@ class BackwardPassGenerator:
                 self.reverse_map[node] = reversed_node
                 self.result_map[node] = backward_result
 
-                # connect the required inputs of the reverse node:
+                # Connect the required inputs of the reverse node:
                 # the gradients ...
                 new_backward_state = self._connect_given_gradients(forward_state=forward_state,
                                                                    backward_state=backward_state,
                                                                    subgraph=subgraph,
                                                                    forward_node=node)
-
-                # in some cases (if the an access node points to a view)
-                # there will be no edges added and this will be an isolated node
-                if isinstance(reversed_node, nodes.AccessNode) and backward_state.in_degree(
-                        reversed_node) == 0 and backward_state.out_degree(reversed_node) == 0:
-                    backward_state.remove_node(reversed_node)
-                    continue
 
                 # ... and any required input values from the forward pass
                 ####################################
@@ -2246,78 +2209,18 @@ class BackwardPassGenerator:
 
                     # we need to make all incoming gradients sum
                     if backward_state.in_degree(reversed_node) > 1:
-                        summation_node = ONNXSum(f"sum_{array_grad_name}")
 
-                        grad_desc = self.backward_sdfg.arrays[array_grad_name]
+                        # Add a wcr to all the writes to the AccessNode
+                        for edge in backward_state.in_edges(reversed_node):
+                            # Add wcr to the memlet
+                            for tree_edge in backward_state.memlet_tree(edge):
+                                tree_edge.data.wcr = "lambda x, y: x + y"
 
-                        # Check if we need to accumulate gradients over loop iterations
-                        within_loop, _ = self._state_within_loop(forward_state)
-                        if within_loop:
-                            # Check that the values read from this loop should accumelate at each iteration
-                            if self._check_if_loop_summation_should_accumelate(backward_state, reversed_node):
-
-                                # Check that the write is to a golbal array and not a temorary
-                                if not self.backward_sdfg.arrays[reversed_node.data].transient:
-
-                                    # Duplicate the access node
-                                    duplicated_reversed_node = copy.deepcopy(reversed_node)
-
-                                    # Add it to the backward state
-                                    backward_state.add_node(duplicated_reversed_node)
-
-                                    # Connect it to the reversed node
-                                    # This will mean it will be summed in the loop after this block
-                                    backward_state.add_edge(
-                                        duplicated_reversed_node, None, reversed_node, None,
-                                        self.backward_sdfg.make_array_memlet(duplicated_reversed_node.data))
-
-                        # connect each incoming edge to the summation node
-                        for i, edge in enumerate(backward_state.in_edges(reversed_node)):
-
-                            intermediate_desc = copy.deepcopy(grad_desc)
-
-                            intermediate_desc.transient = True
-                            intermediate_name = self.backward_sdfg.add_datadesc(f"{array_grad_name}_contribution_{i}",
-                                                                                intermediate_desc,
-                                                                                find_new_name=True)
-                            access_intermediate = backward_state.add_access(intermediate_name)
-                            access_intermediate.setzero = True
-                            for mte in backward_state.memlet_tree(edge):
-                                # # whatever edges were writing to the reversed node
-                                if mte.data.data == array_grad_name:
-                                    # will now need to write to the intermediate node
-                                    mte.data.data = intermediate_name
-
-                            new_edge = backward_state.add_edge(edge.src, edge.src_conn, access_intermediate, None,
-                                                               edge.data)
-
-                            # TODO: I don't think you ever need to accumulate gradients here actually
-                            # self._set_wcr_sum_if_needed(forward_state, backward_state, new_edge)
-
-                            summation_node.add_in_connector(f"data_0__{i}")
-                            backward_state.add_edge(access_intermediate, None, summation_node, f"data_0__{i}",
-                                                    self.backward_sdfg.make_array_memlet(intermediate_name))
-                            backward_state.remove_edge(edge)
-
-                        # Add the final connection to the summation node
-                        self._connect_summation_node(forward_state=forward_state,
-                                                     backward_state=backward_state,
-                                                     summation_node=summation_node,
-                                                     forward_node=node,
-                                                     reversed_node=reversed_node,
-                                                     array_grad_name=array_grad_name)
-
-                        if dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, grad_desc.storage):
-                            pass
-                        elif dtypes.can_access(dtypes.ScheduleType.GPU_Default, grad_desc.storage):
-                            summation_node.schedule = dtypes.ScheduleType.GPU_Default
-                        else:
-                            raise ValueError(f"Unsupported storage {grad_desc.storage}")
                     elif backward_state.in_degree(reversed_node) == 1:
                         self._set_wcr_sum_if_needed(forward_state, backward_state,
                                                     backward_state.in_edges(reversed_node)[0])
 
-                # if this node is a tasklet with a condition, we add some modification to the backward state
+                # If this node is a tasklet with a condition, we add some modification to the backward state
                 elif (isinstance(node, nodes.Tasklet)
                       and self._conditional_tasklet(node)) or (isinstance(node, nodes.NestedSDFG)
                                                                and self._conditional_nested_sdfg(forward_state, node)):
@@ -2329,6 +2232,26 @@ class BackwardPassGenerator:
                     # add these nodes to be skipped in the future
                     conditional_assignement_nodes.extend(conditional_block)
 
+                # If the node is an AccessNode and it is being overwritten in the forward pass,
+                # we need to zero-out the gradients of the overwritten values
+                if isinstance(node, nodes.AccessNode):
+                    # Check if there is an incoming edge to this node
+                    incoming_edges = forward_state.in_edges(node)
+
+                    # If there is an incoming edge, we need to zero-out the gradient
+                    if len(incoming_edges) == 1:
+                        # Check, if possible, if the written subset is not zero
+                        write_size = incoming_edges[0].data.subset.num_elements()
+                        if not isinstance(write_size, int) or write_size > 0:
+                            # We need to zero out the same memlet accesses in the backward pass
+                            self._zero_out_gradient(forward_state=forward_state,
+                                                    forward_node=node,
+                                                    memlet=incoming_edges[0].data)
+                    elif len(incoming_edges) > 1:
+                        # If there is more than one incoming edge,
+                        # they should all have a wcr to be valid and nothing is being overwritten
+                        # TODO: check if this is the case, otherwise this should be caught by validating the forward SDFG
+                        pass
             except AutoDiffException as e:
                 raise AutoDiffException("Failed at node {}: {}".format(node, str(e))) from e
 
@@ -2386,136 +2309,6 @@ class BackwardPassGenerator:
                         None,
                         memlet_data,
                     )
-
-    def _check_write_read_ranges(self, forward_state: SDFGState, forward_node):
-        """
-        Check if this stencil computation only writes to a subset of its array in a loop
-        """
-        return None
-        read_edge = None
-        read_range: List[List[Tuple[int, int, int]]] = []
-        write_edge = None
-        write_range: List[List[Tuple[int, int, int]]] = []
-
-        # get read/write range of this data in the state
-        for node in forward_state.nodes():
-            if isinstance(node, nodes.AccessNode) and node.data == forward_node.data and len(
-                    forward_state.out_edges(node)) > 0:
-                # get the read memlet
-                read_edges = forward_state.out_edges(node)
-                for read_edge in read_edges:
-                    read_memlet = read_edge.data.subset
-                    dim_ranges = read_memlet.ndrange()
-                    for i, dim in enumerate(dim_ranges):
-                        range_start, range_end, step = dim
-                        if not read_range:
-                            read_range.append([range_start, range_end, step])
-                        else:
-                            if i >= len(read_range):
-                                read_range.append([range_start, range_end, step])
-                                continue
-                            if range_start < read_range[i][0]:
-                                read_range[i][0] = range_start
-                            if range_end > read_range[i][1]:
-                                read_range[i][1] = range_end
-
-            if isinstance(node, nodes.AccessNode) and node.data == forward_node.data and len(
-                    forward_state.in_edges(node)) > 0:
-
-                # get the write memlet
-                write_edges = forward_state.in_edges(node)
-                for write_edge in write_edges:
-                    write_memlet = write_edge.data.subset
-                    dim_ranges = write_memlet.ndrange()
-                    for i, dim in enumerate(dim_ranges):
-                        range_start, range_end, step = dim
-                        if not write_range:
-                            write_range.append([range_start, range_end, step])
-                        else:
-                            if i >= len(write_range):
-                                write_range.append([range_start, range_end, step])
-                                continue
-                            if range_start < write_range[i][0]:
-                                write_range[i][0] = range_start
-                            if range_end > write_range[i][1]:
-                                write_range[i][1] = range_end
-
-        if not read_edge or not write_edge:
-            # this data is either read or write only
-            return None
-
-        ranges_list: List[List[Tuple[Tuple, str]]] = []
-        intersection_ranges_list: List[List[Tuple[Tuple, str]]] = []
-
-        # dimensions should match in reads and writes
-        assert len(write_range) == len(read_range)
-        edges_ranges: List[List[Tuple[subsets.Range, str]]] = []
-        intersection_ranges: List[List[Tuple[subsets.Range, str]]] = []
-        difference = False
-        for dim in range(len(write_range)):
-            dim_ranges_list = []
-            # get a list of indicies for this assignement
-            range_start, range_end, step = write_range[dim]
-            write_indicies = []
-            for i in range(range_start, range_end + 1, step):
-                write_indicies.append(i)
-
-            range_start, range_end, step = read_range[dim]
-            read_indicies = []
-            for i in range(range_start, range_end + 1, step):
-                read_indicies.append(i)
-
-            # get the difference in a sorted list
-            sorted_difference = sorted(list(set(read_indicies).difference(set(write_indicies))))
-            wcr = "lambda x, y: x + y"
-            if len(sorted_difference) != 0:
-                difference = True
-            else:
-                continue
-
-            i_start = sorted_difference[0]
-            for index, i in enumerate(sorted_difference):
-                if index == len(sorted_difference) - 1:
-                    dim_ranges_list.append(((i_start, i, step), wcr))
-                    break
-
-                if sorted_difference[index + 1] != sorted_difference[index] + step:
-                    # end the list here and add it to the ranges list
-                    dim_ranges_list.append(((i_start, i, step), wcr))
-                    # set i_start for the next range
-                    i_start = sorted_difference[index + 1]
-
-            # get the intersection in a sorted list
-            sorted_intersection = sorted(list(set(write_indicies).intersection(set(read_indicies))))
-            assert len(sorted_intersection) > 0
-
-            intersection_ranges.append(((sorted_intersection[0], sorted_intersection[-1], step), None))
-            ranges_list.append(dim_ranges_list)
-            intersection_ranges_list.append(intersection_ranges)
-
-        # add the intersecting edges
-        for edge_index in range(len(intersection_ranges_list[0])):
-            # build the memlet dimensions
-            memlet_subset = []
-            for dim in range(len(intersection_ranges_list)):
-                memlet_subset.append(intersection_ranges_list[dim][edge_index][0])
-                memlet_wcr = intersection_ranges_list[dim][edge_index][1]
-
-            edges_ranges.append((subsets.Range(memlet_subset), memlet_wcr))
-
-        # for each range in the non-overlapping ranges
-        for edge_index in range(len(ranges_list[0])):
-            # build the memlet dimensions
-            memlet_subset = []
-            for dim in range(len(ranges_list)):
-                memlet_subset.append(ranges_list[dim][edge_index][0])
-                memlet_wcr = ranges_list[dim][edge_index][1]
-
-            edges_ranges.append((subsets.Range(memlet_subset), memlet_wcr))
-        # if all the write and read ranges match
-        if not difference:
-            return None
-        return edges_ranges
 
     def _get_backward_state(self, state: SDFGState) -> SDFGState:
         """
@@ -2644,22 +2437,6 @@ class BackwardPassGenerator:
         if add_wcr:
             for tree_edge in backward_state.memlet_tree(edge):
                 tree_edge.data.wcr = "lambda x, y: x + y"
-            self._init_grad(forward_state=forward_state, backward_state=backward_state, data_an=edge.dst)
-
-        # if the initialization has not already been added
-        # if not add_wcr:
-        #     # check if the write to the gradient contribution is to a subset of of the array
-        #     contribution_accessnode: nodes.AccessNode = edge.dst
-        #     assert isinstance(contribution_accessnode, nodes.AccessNode)
-
-        #     # get the memlet range
-        #     write_memlet = edge.data
-
-        #     # compare the memlet range with the size of the array
-        #     comparison_result = self._compare_memlet_accesses_to_array_size(contribution_accessnode.data, write_memlet)
-        #     if comparison_result is None or comparison_result > 0:
-        #         #TODO this should only be done if this is the first write to the gradient
-        #         self._init_grad(forward_state=forward_state, backward_state=backward_state, data=edge.data.data)
 
     def _input_used_with_a_wcr(self, forward_state: SDFGState, backward_node: nodes.AccessNode):
         """
@@ -2719,30 +2496,19 @@ class BackwardPassGenerator:
 
         return False
 
-    def _set_wcr_if_needed(self, forward_state: SDFGState, forward_node: nodes.Node, memlet: dstate.MultiConnectorEdge):
+    def _set_wcr_if_needed(self, backward_state: SDFGState, backward_node: nodes.Node, edge: dstate.MultiConnectorEdge):
         """
         If this Access node represents a gradient that has already been used in other places.
         We want to accumulat the gradients and not overwrite them.
         """
 
         # Check if the forward node is an AccessNode
-        if not isinstance(forward_node, nodes.AccessNode):
-            return memlet
-
-        # Check if this if the first time we see if when reversing the SDFG
-        # There needs to be at least one read from this node for the wcr to apply
-        instances = [
-            fwd_node for fwd_node, _ in self.reverse_map.items() if isinstance(fwd_node, nodes.AccessNode)
-            and fwd_node.data == forward_node.data and forward_state.in_degree(forward_node) > 0
-        ]
-
-        # If this is the first time, no need for a wcr
-        if len(instances) <= 1:
-            return memlet
+        if not isinstance(backward_node, nodes.AccessNode):
+            return
 
         # Otherwise, we add up the gradients, not overwrite them
-        memlet.wcr = "lambda x, y: x + y"
-        return memlet
+        for tree_edge in backward_state.memlet_tree(edge):
+            tree_edge.data.wcr = "lambda x, y: x + y"
 
     def _connect_given_gradients(self, forward_state: SDFGState, backward_state: SDFGState,
                                  subgraph: dstate.StateSubgraphView, forward_node: nodes.Node) -> SDFGState:
@@ -2769,9 +2535,9 @@ class BackwardPassGenerator:
                                                                              fwd_tasklet=edge.dst)
                 continue
 
-            src_node, output_conn, dest_node, input_conn, memlet = edge
+            src_node, output_conn, dest_node, input_conn, fwd_memlet = edge
 
-            memlet = copy.deepcopy(memlet)
+            memlet = copy.deepcopy(fwd_memlet)
 
             # Remove the WCR since these are now read edges
             memlet.wcr = None
@@ -2781,16 +2547,52 @@ class BackwardPassGenerator:
                 # This grad hasn't been written before: initialize it
                 self._add_gradient_data_descriptor(memlet.data)
 
-            memlet = self._set_wcr_if_needed(forward_state=forward_state, forward_node=forward_node, memlet=memlet)
             memlet.data = grad_name
 
-            backward_state.add_edge(
-                self.reverse_map[dest_node],
+            # Check of the values have been zeroed out
+            backward_dst_node = self.reverse_map[dest_node]
+            if backward_dst_node in self.zeroed_out:
+                # The values will be zeroed out in the backward node
+                # We use the transient array instead
+                backward_dst_node = self.zeroed_out[backward_dst_node]
+                memlet.data = backward_dst_node.data
+
+                # If this is a connection between two access nodes we need to flip the memlet subsets
+                if isinstance(forward_node, nodes.AccessNode):
+                    new_memlet = dace.Memlet(
+                        data=self.reverse_map[forward_node].data,
+                        subset=fwd_memlet.subset if fwd_memlet.data == forward_node.data else fwd_memlet.other_subset,
+                        other_subset=fwd_memlet.other_subset
+                        if fwd_memlet.data == forward_node.data else fwd_memlet.subset)
+                    memlet = new_memlet
+
+            new_edge = backward_state.add_edge(
+                backward_dst_node,
                 self._lookup_required_grad_name(dest_node, input_conn),
                 self.reverse_map[forward_node],
                 self._lookup_given_grad_name(forward_node, output_conn),
                 memlet,
             )
+
+            # Change the access data in the memlet path if it has been zeroed out
+            # Calling the memlet path while reversing will raise an error
+            # Because the map has not been completely added for the backward state yet
+            # We also don't need to do anything for an AccessNode -> AccessNode connection
+            if (not isinstance(forward_node,
+                               (nodes.MapExit, nodes.MapEntry))) and not (isinstance(forward_node, nodes.AccessNode)
+                                                                          and isinstance(dest_node, nodes.AccessNode)):
+                path = backward_state.memlet_path(new_edge)
+
+                # Get the source access node in the path
+                source_access_node = list(path)[0].src
+                if isinstance(source_access_node, nodes.AccessNode):
+                    # Check if this is a zeroed out node
+                    if source_access_node.data != memlet.data and source_access_node in self.zeroed_out.values():
+                        memlet.data = source_access_node.data
+            self._set_wcr_if_needed(backward_state=backward_state,
+                                    backward_node=self.reverse_map[forward_node],
+                                    edge=new_edge)
+
         return new_backward_state
 
     def _get_all_path_edges(self, state: SDFGState, source: nodes.Node,
@@ -4552,9 +4354,11 @@ class BackwardPassGenerator:
                             )
 
                         # Replace the symbol with the loop size and evaluate the expression
-                        s = s.subs(sp.Symbol(loop_index), loop_size) if isinstance(loop_size, int) else s.subs(
-                            sp.Symbol(loop_index), dace.symbol(loop_size))
-                        shape[i] = s
+                        # Check if loop size can be converted to an integer
+                        if isinstance(loop_size, int) or (isinstance(loop_size, str) and loop_size.isnumeric()):
+                            shape[i] = s.subs(sp.Symbol(loop_index), loop_size)
+                        else:
+                            shape[i] = s.subs(sp.Symbol(loop_index), dace.symbol(loop_size))
 
         # Plus the size of any enclosing loops
         encolsed, _ = self._state_within_loop(forward_state=forward_state)
@@ -5012,6 +4816,10 @@ class BackwardPassGenerator:
         required_gradients: List[str],
     ) -> ReverseNodeReturnType:
         rev = nodes.AccessNode(self.array_grad_name(node.data))
+
+        # We want all gradient arrays to be initialized to zero
+        # This is important for correct gradient accumulation
+        rev.setzero = True
         backward_state.add_node(rev)
         required_grad_names = {None: None}
         given_grad_names = {None: None}
@@ -5091,16 +4899,20 @@ class BackwardPassGenerator:
 
         # tasklets should have scalar inputs (can be relaxed)
         for _, _, _, _, memlet in state.in_edges(tasklet):
-            try:
-                _is_int_value(memlet.subset.num_elements(), 1)
-            except AutoDiffException as e:
-                raise AutoDiffException("Autodiff only supported for tasklets with scalar inputs and outputs") from e
+            if memlet.data is not None:
+                try:
+                    _is_int_value(memlet.subset.num_elements(), 1)
+                except AutoDiffException as e:
+                    raise AutoDiffException(
+                        "Autodiff only supported for tasklets with scalar inputs and outputs") from e
 
         for _, _, _, _, memlet in state.out_edges(tasklet):
-            try:
-                _is_int_value(memlet.subset.num_elements(), 1)
-            except AutoDiffException as e:
-                raise AutoDiffException("Autodiff only supported for tasklets with scalar inputs and outputs") from e
+            if memlet.data is not None:
+                try:
+                    _is_int_value(memlet.subset.num_elements(), 1)
+                except AutoDiffException as e:
+                    raise AutoDiffException(
+                        "Autodiff only supported for tasklets with scalar inputs and outputs") from e
 
         code_str = tasklet.code.as_string
 
