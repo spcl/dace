@@ -2,6 +2,7 @@
 
 import copy
 import re
+import warnings
 from collections import namedtuple
 from typing import Dict, List, Optional, Tuple, Set, Union, Type
 
@@ -3712,9 +3713,14 @@ class ArrayLoopExpander(NodeTransformer):
 
                         current = arg
                         ranges = []
-                        par_Decl_Range_Finder(current, ranges, [], self.count, newbody, self.scope_vars,
-                                            self.ast.structures, True)
-                        all_ranges.append(ranges)
+                        # if we parsed an arg and it's still a name node, then it's a scalar
+                        # we don't process it.
+                        if not isinstance(arg, ast_internal_classes.Name_Node):
+                            par_Decl_Range_Finder(current, ranges, [], self.count, newbody, self.scope_vars,
+                                                self.ast.structures, True)
+                            all_ranges.append(ranges)
+                        else:
+                            all_ranges.append([])
 
                     for ranges in all_ranges[1:]:
 
@@ -3722,7 +3728,11 @@ class ArrayLoopExpander(NodeTransformer):
                             warnings.warn(f"Mismatch between dimensionality of array expansion, in line: {child.line_number}")
 
                     # For simplicity, the range is dictated by the first array
-                    ranges = all_ranges[0]
+                    ranges = None
+                    for r in all_ranges:
+                        if len(r) > 0:
+                            ranges = r
+                            break
 
                     # catch cases where an array is used as name, without range expression
                     args = []
@@ -3986,8 +3996,11 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
 
                     needs_expansion = True
 
-            node.args = args
+                else:
+                    args.append(arg)
+
             if needs_expansion:
+                node.args = args
                 self.nodes.append(node)
 
         return
