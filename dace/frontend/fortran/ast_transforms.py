@@ -3983,9 +3983,11 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
 
                     if var_def.sizes is None or len(var_def.sizes) == 0:
                         args.append(arg)
+                        continue
 
                     if not isinstance(last_data_ref_node.part_ref, ast_internal_classes.Name_Node):
                         args.append(arg)
+                        continue
 
                     last_data_ref_node.part_ref = ast_internal_classes.Array_Subscript_Node(
                         name=last_data_ref_node.part_ref, parent=node.parent, type=var_def.type,
