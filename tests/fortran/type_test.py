@@ -471,7 +471,6 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.view()
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
