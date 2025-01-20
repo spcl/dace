@@ -46,7 +46,7 @@ SUBROUTINE viewlens(aa,res)
 
 IMPLICIT NONE
 
-double precision  :: aa(10,11,23) 
+double precision  :: aa(10,11) 
 double precision :: res(1,1,2)
 
 INTEGER ::  JK, JL

@@ -320,9 +320,11 @@ class FindNames(NodeVisitor):
 class FindDefinedNames(NodeVisitor):
     def __init__(self):
         self.names: List[str] = []
+        self.specs: {} = {} 
 
     def visit_Var_Decl_Node(self, node: ast_internal_classes.Var_Decl_Node):
         self.names.append(node.name)
+        self.specs[node.name] = node
 
 
 class FindInputs(NodeVisitor):
