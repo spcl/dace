@@ -420,6 +420,13 @@ BINARY_OPS = {
     '**': operator.pow,
 }
 
+TRIG_FNS = {
+    'ATAN': np.arctan,
+    'ASIN': np.arcsin,
+    'ACOS': np.arccos,
+    'ATAN2': np.arctan2,
+}
+
 NUMPY_INTS_TYPES = Union[np.int8, np.int16, np.int32, np.int64]
 NUMPY_INTS = (np.int8, np.int16, np.int32, np.int64)
 NUMPY_REALS = (np.float32, np.float64)
@@ -540,11 +547,10 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
             a = _const_eval_basic_type(a, alias_map)
             assert isinstance(a, (np.float32, np.float64))
             return type(a)(sys.float_info.epsilon)
-        elif intr.string == 'ATAN':
-            a, = args
-            a = _const_eval_basic_type(a, alias_map)
-            assert isinstance(a, (np.float32, np.float64))
-            return np.arctan(a)
+        elif intr.string in TRIG_FNS:
+            avals = tuple(_const_eval_basic_type(a, alias_map) for a in args)
+            if all(isinstance(a, (np.float32, np.float64)) for a in avals):
+                return np.arctan(*avals)
         elif intr.string == 'SELECTED_REAL_KIND':
             p, r = args
             p, r = _const_eval_basic_type(p, alias_map), _const_eval_basic_type(r, alias_map)
@@ -2034,7 +2040,7 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
             loop_var_spec = search_real_local_alias_spec(loop_var, alias_map)
             assert loop_var_spec
             loop_var_spec = ident_spec(alias_map[loop_var_spec])
-            minus.add(loop_var_spec)
+            _integrate_subresults({}, {loop_var_spec})
     elif isinstance(node, (
         Name, *LITERAL_CLASSES, Char_Literal_Constant, Data_Ref, Part_Ref, Return_Stmt, Write_Stmt, Error_Stop_Stmt,
         Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt)):
@@ -2282,7 +2288,11 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
         # Fix the tail too.
         fdef = v.parent
         end_stmt = singular(children_of_type(fdef, (End_Function_Stmt, End_Subroutine_Stmt)))
-        singular(children_of_type(end_stmt, Name)).string = uname
+        _, end_name = end_stmt.children
+        if end_name:
+            end_name.string = uname
+        else:
+            replace_node(end_stmt, type(end_stmt)(f"{end_stmt} {uname}"))
         # For functions, the function name is also available as a variable inside.
         if isinstance(v, Function_Stmt):
             vspec = atmost_one(children_of_type(fdef, Specification_Part))
