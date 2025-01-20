@@ -9,7 +9,8 @@ from dace.frontend.fortran.ast_desugaring import correct_for_function_calls, dec
     assign_globally_unique_subprogram_names, assign_globally_unique_variable_names, prune_branches, \
     const_eval_nodes, prune_unused_objects, inject_const_evals, ConstTypeInjection, ConstInstanceInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
-    exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments
+    exploit_locally_constant_variables, create_global_initializers, convert_data_statements_into_assignments, \
+    deconstruct_statement_functions
 from dace.frontend.fortran.fortran_parser import recursive_ast_improver
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
@@ -2094,6 +2095,58 @@ SUBROUTINE main(res)
   IMPLICIT NONE
   REAL, DIMENSION(2) :: res
   CALL fun(res)
+END SUBROUTINE main
+""".strip()
+    assert got == want
+    SourceCodeBuilder().add_file(got).check_with_gfortran()
+
+
+def test_deconstruct_statement_functions():
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(d)
+  double precision d(3, 4, 5)
+  double precision :: ptare, rtt(2), foedelta, foeldcp
+  double precision :: ralvdcp(2), ralsdcp(2), res
+  foedelta(ptare) = max(0.0, sign(1.d0, ptare - rtt(1)))
+  foeldcp(ptare) = foedelta(ptare)*ralvdcp(1) + (1.0 - foedelta(ptare))*ralsdcp(1)
+  rtt(1) = 4.5
+  ralvdcp(1) = 4.9
+  ralsdcp(1) = 5.1
+  d(1, 1, 1) = foeldcp(3.d0)
+  res = foeldcp(3.d0)
+  d(1, 1, 2) = res
+end subroutine main
+""").check_with_gfortran().get()
+    ast = parse_and_improve(sources)
+    ast = deconstruct_statement_functions(ast)
+
+    got = ast.tofortran()
+    want = """
+SUBROUTINE main(d)
+  DOUBLE PRECISION :: d(3, 4, 5)
+  DOUBLE PRECISION :: ptare, rtt(2)
+  DOUBLE PRECISION :: ralvdcp(2), ralsdcp(2), res
+  rtt(1) = 4.5
+  ralvdcp(1) = 4.9
+  ralsdcp(1) = 5.1
+  d(1, 1, 1) = foeldcp(3.D0, rtt, ralvdcp, ralsdcp)
+  res = foeldcp(3.D0, rtt, ralvdcp, ralsdcp)
+  d(1, 1, 2) = res
+  CONTAINS
+  DOUBLE PRECISION FUNCTION foedelta(ptare, rtt)
+    IMPLICIT NONE
+    DOUBLE PRECISION, INTENT(IN) :: ptare
+    DOUBLE PRECISION, INTENT(IN) :: rtt(2)
+    foedelta = MAX(0.0, SIGN(1.D0, ptare - rtt(1)))
+  END FUNCTION foedelta
+  DOUBLE PRECISION FUNCTION foeldcp(ptare, rtt, ralvdcp, ralsdcp)
+    IMPLICIT NONE
+    DOUBLE PRECISION, INTENT(IN) :: ptare
+    DOUBLE PRECISION, INTENT(IN) :: rtt(2)
+    DOUBLE PRECISION, INTENT(IN) :: ralvdcp(2)
+    DOUBLE PRECISION, INTENT(IN) :: ralsdcp(2)
+    foeldcp = foedelta(ptare, rtt) * ralvdcp(1) + (1.0 - foedelta(ptare, rtt)) * ralsdcp(1)
+  END FUNCTION foeldcp
 END SUBROUTINE main
 """.strip()
     assert got == want

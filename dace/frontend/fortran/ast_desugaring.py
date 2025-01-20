@@ -19,14 +19,14 @@ from fparser.two.Fortran2003 import Program_Stmt, Module_Stmt, Function_Stmt, Su
     Level_2_Unary_Expr, And_Operand, Parenthesis, Level_2_Expr, Level_3_Expr, Array_Constructor, Execution_Part, \
     Specification_Part, Interface_Block, Association, Procedure_Designator, Type_Bound_Procedure_Part, \
     Associate_Construct, Subscript_Triplet, End_Function_Stmt, End_Subroutine_Stmt, Module_Subprogram_Part, \
-    Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Section_Subscript_List, Char_Selector, \
-    Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, If_Then_Stmt, \
-    Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, Mult_Operand, \
-    Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt, Save_Stmt, Contains_Stmt, \
-    Implicit_Part, Component_Part, End_Module_Stmt, Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, Do_Construct, \
+    Enumerator_List, Actual_Arg_Spec_List, Only_List, Dummy_Arg_List, Dummy_Arg_Name_List, Section_Subscript_List, \
+    Char_Selector, Data_Pointer_Object, Explicit_Shape_Spec, Component_Initialization, Subroutine_Body, Function_Body, \
+    If_Then_Stmt, Else_If_Stmt, Else_Stmt, If_Construct, Level_4_Expr, Level_5_Expr, Hex_Constant, Add_Operand, \
+    Mult_Operand, Assignment_Stmt, Loop_Control, Equivalence_Stmt, If_Stmt, Or_Operand, End_If_Stmt, Save_Stmt, \
+    Contains_Stmt, Implicit_Part, End_Module_Stmt, Data_Stmt, Data_Stmt_Set, Data_Stmt_Value, \
     Block_Nonlabel_Do_Construct, Block_Label_Do_Construct, Label_Do_Stmt, Nonlabel_Do_Stmt, End_Do_Stmt, Return_Stmt, \
     Write_Stmt, Data_Component_Def_Stmt, Exit_Stmt, Allocate_Stmt, Deallocate_Stmt, Close_Stmt, Goto_Stmt, \
-    Continue_Stmt, Format_Stmt
+    Continue_Stmt, Format_Stmt, Stmt_Function_Stmt, Internal_Subprogram_Part
 from fparser.two.Fortran2008 import Procedure_Stmt, Type_Declaration_Stmt, Error_Stop_Stmt
 from fparser.two.utils import Base, walk, BinaryOpBase, UnaryOpBase
 
@@ -36,16 +36,16 @@ ENTRY_POINT_OBJECT_TYPES = Union[Main_Program, Subroutine_Subprogram, Function_S
 ENTRY_POINT_OBJECT_CLASSES = (Main_Program, Subroutine_Subprogram, Function_Subprogram)
 SCOPE_OBJECT_TYPES = Union[
     Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def, Interface_Block,
-    Subroutine_Body, Function_Body]
+    Subroutine_Body, Function_Body, Stmt_Function_Stmt]
 SCOPE_OBJECT_CLASSES = (
     Main_Program, Module, Function_Subprogram, Subroutine_Subprogram, Derived_Type_Def, Interface_Block,
-    Subroutine_Body, Function_Body)
+    Subroutine_Body, Function_Body, Stmt_Function_Stmt)
 NAMED_STMTS_OF_INTEREST_TYPES = Union[
     Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
-    Specific_Binding, Generic_Binding, Interface_Stmt]
+    Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt]
 NAMED_STMTS_OF_INTEREST_CLASSES = (
     Program_Stmt, Module_Stmt, Function_Stmt, Subroutine_Stmt, Derived_Type_Stmt, Component_Decl, Entity_Decl,
-    Specific_Binding, Generic_Binding, Interface_Stmt)
+    Specific_Binding, Generic_Binding, Interface_Stmt, Stmt_Function_Stmt)
 SPEC = Tuple[str, ...]
 SPEC_TABLE = Dict[SPEC, NAMED_STMTS_OF_INTEREST_TYPES]
 
@@ -162,7 +162,10 @@ def search_scope_spec(node: Base) -> Optional[SPEC]:
         if kw == node:
             # We're describing a keyword, which is not really an identifiable object.
             return None
-    stmt = singular(children_of_type(scope, NAMED_STMTS_OF_INTEREST_CLASSES))
+    if isinstance(scope, Stmt_Function_Stmt):
+        stmt = scope
+    else:
+        stmt = singular(children_of_type(scope, NAMED_STMTS_OF_INTEREST_CLASSES))
     if not find_name_of_stmt(stmt):
         # If this is an anonymous object, the scope has to be outside.
         return search_scope_spec(scope.parent)
@@ -256,6 +259,9 @@ def identifier_specs(ast: Program) -> SPEC_TABLE:
             # There can be anonymous blocks, e.g., interface blocks, which cannot be identified.
             continue
         spec = ident_spec(stmt)
+        if isinstance(stmt, Stmt_Function_Stmt):
+            # An exception is statement-functions, which must have a dummy variable already declared in the same scope.
+            continue
         assert spec not in ident_map, f"{spec} / {stmt.parent.parent.parent.parent} / {ident_map[spec].parent.parent.parent.parent}"
         ident_map[spec] = stmt
     return ident_map
@@ -414,6 +420,13 @@ BINARY_OPS = {
     '**': operator.pow,
 }
 
+TRIG_FNS = {
+    'ATAN': np.arctan,
+    'ASIN': np.arcsin,
+    'ACOS': np.arccos,
+    'ATAN2': np.arctan2,
+}
+
 NUMPY_INTS_TYPES = Union[np.int8, np.int16, np.int32, np.int64]
 NUMPY_INTS = (np.int8, np.int16, np.int32, np.int64)
 NUMPY_REALS = (np.float32, np.float64)
@@ -534,6 +547,10 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
             a = _const_eval_basic_type(a, alias_map)
             assert isinstance(a, (np.float32, np.float64))
             return type(a)(sys.float_info.epsilon)
+        elif intr.string in TRIG_FNS:
+            avals = tuple(_const_eval_basic_type(a, alias_map) for a in args)
+            if all(isinstance(a, (np.float32, np.float64)) for a in avals):
+                return np.arctan(*avals)
         elif intr.string == 'SELECTED_REAL_KIND':
             p, r = args
             p, r = _const_eval_basic_type(p, alias_map), _const_eval_basic_type(r, alias_map)
@@ -922,6 +939,33 @@ def correct_for_function_calls(ast: Program):
     """Look for function calls that may have been misidentified as array access and fix them."""
     alias_map = alias_specs(ast)
 
+    for asgn in walk(ast, Assignment_Stmt):
+        lv, _, _ = asgn.children
+        if not isinstance(lv, (Part_Ref, Structure_Constructor, Function_Reference)):
+            continue
+        lv, _ = lv.children
+        lvloc = search_real_local_alias_spec(lv, alias_map)
+        if not lvloc:
+            continue
+        lv = alias_map[lvloc]
+        if not isinstance(lv, Entity_Decl):
+            continue
+        lv_type = find_type_of_entity(lv, alias_map)
+        if not lv_type or lv_type.shape:
+            continue
+
+        # Now we know that this identifier actually refers to a statement function.
+        stmt_fn = Stmt_Function_Stmt(asgn.tofortran())
+        ex = asgn.parent
+        while not isinstance(ex, Execution_Part):
+            ex = ex.parent
+        sp = atmost_one(children_of_type(ex.parent, Specification_Part))
+        assert sp
+        append_children(sp, stmt_fn)
+        remove_self(asgn)
+
+    alias_map = alias_specs(ast)
+
     # TODO: Looping over and over is not ideal. But `Function_Reference(...)` sometimes generate inner `Part_Ref`s. We
     #  should figure out a way to avoid this clutter.
     changed = True
@@ -957,7 +1001,8 @@ def correct_for_function_calls(ast: Program):
         # TODO: Add ref.
         sc_type, _ = sc.children
         sc_type_spec = find_real_ident_spec(sc_type.string, scope_spec, alias_map)
-        if isinstance(alias_map[sc_type_spec], (Function_Stmt, Interface_Stmt)):
+        sc_decl = alias_map[sc_type_spec]
+        if isinstance(sc_decl, (Function_Stmt, Interface_Stmt, Stmt_Function_Stmt)):
             # Now we know that this identifier actually refers to a function.
             replace_node(sc, Function_Reference(sc.tofortran()))
 
@@ -1657,7 +1702,9 @@ def make_practically_constant_global_vars_constants(ast: Program) -> Program:
         loc = search_real_local_alias_spec(lv, alias_map)
         assert loc
         var = alias_map[loc]
-        assert isinstance(var, Entity_Decl)
+        assert isinstance(var, (Entity_Decl, Function_Stmt))
+        if not isinstance(var, Entity_Decl):
+            continue
         var_spec = ident_spec(var)
         if var_spec in never_assigned:
             never_assigned.remove(var_spec)
@@ -1726,7 +1773,7 @@ def make_practically_constant_arguments_constants(ast: Program, keepers: List[SP
         if fnspec in keepers:
             # The "entry-point" functions arguments are fair game for external usage.
             continue
-        fnargs = atmost_one(children_of_type(fnstmt, Dummy_Arg_List))
+        fnargs = atmost_one(children_of_type(fnstmt, (Dummy_Arg_List, Dummy_Arg_Name_List)))
         fnargs = fnargs.children if fnargs else tuple()
         assert len(args) <= len(fnargs), f"Cannot pass more arguments({len(args)}) than defined ({len(fnargs)})"
         for a in fnargs:
@@ -1994,7 +2041,7 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
             loop_var_spec = search_real_local_alias_spec(loop_var, alias_map)
             assert loop_var_spec
             loop_var_spec = ident_spec(alias_map[loop_var_spec])
-            minus.add(loop_var_spec)
+            _integrate_subresults({}, {loop_var_spec})
     elif isinstance(node, (
         Name, *LITERAL_CLASSES, Char_Literal_Constant, Data_Ref, Part_Ref, Return_Stmt, Write_Stmt, Error_Stop_Stmt,
         Exit_Stmt, Actual_Arg_Spec, Write_Stmt, Close_Stmt, Goto_Stmt, Continue_Stmt, Format_Stmt)):
@@ -2242,7 +2289,11 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
         # Fix the tail too.
         fdef = v.parent
         end_stmt = singular(children_of_type(fdef, (End_Function_Stmt, End_Subroutine_Stmt)))
-        singular(children_of_type(end_stmt, Name)).string = uname
+        _, end_name = end_stmt.children
+        if end_name:
+            end_name.string = uname
+        else:
+            replace_node(end_stmt, type(end_stmt)(f"{end_stmt} {uname}"))
         # For functions, the function name is also available as a variable inside.
         if isinstance(v, Function_Stmt):
             vspec = atmost_one(children_of_type(fdef, Specification_Part))
@@ -2268,7 +2319,7 @@ def add_use_to_specification(scdef: SCOPE_OBJECT_TYPES, clause: str):
         prepend_children(specification_part, Use_Stmt(clause))
 
 
-def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Program:
+def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, SPEC]]) -> Program:
     """
     Update the variable declarations to have globally unique names.
     Precondition:
@@ -2276,6 +2327,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Pr
     2. All public/private access statements were cleanly removed.
     """
     SUFFIX, COUNTER = 'var', 0
+    PYTHON_KEYWORDS = {'for', 'in'}
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
@@ -2283,14 +2335,30 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[str]) -> Pr
     name_collisions: Dict[str, int] = {k[-1]: 0 for k in ident_map.keys()}
     for k in ident_map.keys():
         name_collisions[k[-1]] += 1
-    name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1}
+    name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1 or k.lower() in PYTHON_KEYWORDS}
+
+    entry_point_args: Set[SPEC] = set()
+    for k in keepers:
+        if k not in ident_map:
+            continue
+        fn = ident_map[k]
+        if not isinstance(fn, (Subroutine_Stmt, Function_Stmt)):
+            continue
+        args = atmost_one(children_of_type(fn, Dummy_Arg_List))
+        args = args.children if args else tuple()
+        for a in args:
+            entry_point_args.add(k + (a.string,))
 
     # Make new unique names for the identifiers.
     uident_map: Dict[SPEC, str] = {}
     for k in ident_map.keys():
-        if k[-1] in keepers:
+        if k in keepers or k in entry_point_args:
+            # Specific variable instances requested to keep.
             continue
-        if k[-1] in name_collisions:
+        if k[-1] in keepers:
+            # Specific variable _name_ (anywhere) requested to keep.
+            continue
+        if k[-1].lower() in name_collisions:
             uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
         else:
             uname = k[-1]
@@ -2994,5 +3062,92 @@ def convert_data_statements_into_assignments(ast: Program) -> Program:
                 # NOTE: Since the function does nothing at all (hence, no execution part), don't bother with the inits.
                 continue
             prepend_children(xpart, repls)
+
+    return ast
+
+
+def deconstruct_statement_functions(ast: Program) -> Program:
+    alias_map = alias_specs(ast)
+    all_stmt_fns: Set[SPEC] = {find_scope_spec(sf) + (sf.children[0].string,) for sf in walk(ast, Stmt_Function_Stmt)}
+
+    for sf in walk(ast, Stmt_Function_Stmt):
+        scope_spec = find_scope_spec(sf)
+        fn, args, expr = sf.children
+        if args:
+            args = args.children
+
+        def _get_typ(var: Name):
+            _spec = scope_spec + (var.string,)
+            _decl = alias_map[_spec]
+            assert isinstance(_decl, Entity_Decl)
+            _tdecl = _decl.parent.parent
+            _typ, _, _ = _tdecl.children
+            return _typ
+
+        ret_typ = _get_typ(fn)
+        arg_typs = tuple(_get_typ(a) for a in args)
+        dummy_args = [a.string for a in args]
+
+        arg_decls = [f"{t}, intent(in) :: {a}" for t, a in zip(arg_typs, args)]
+        carryovers = []
+        for nm in walk(expr, Name):
+            if nm.string in dummy_args:
+                continue
+            spec = scope_spec + (nm.string,)
+            if spec not in alias_map:
+                continue
+            decl = alias_map[spec]
+            if not isinstance(decl, Entity_Decl):
+                continue
+            tdecl = decl.parent.parent
+            typ, _, _ = tdecl.children
+            shape = find_type_of_entity(decl, alias_map).shape
+            shape = f"({','.join(shape)})" if shape else ''
+            if spec not in all_stmt_fns and nm.string not in carryovers:
+                carryovers.append(nm.string)
+                arg_decls.append(f"{typ}, intent(in) :: {nm}{shape}")
+
+        dummy_args = ','.join(dummy_args + carryovers)
+        arg_decls = '\n'.join(arg_decls)
+        nufn = f"""
+{ret_typ} function {fn}({dummy_args})
+  implicit none
+  {arg_decls}
+  {fn} = {expr}
+end function {fn}
+"""
+        sp = sf.parent
+        assert isinstance(sp, Specification_Part)
+        box = sp.parent
+
+        # Fix the arguments on the call-sites.
+        for fcall in walk(box, (Call_Stmt, Function_Reference, Part_Ref, Structure_Constructor)):
+            tfn, targs = fcall.children
+            tfnloc = search_real_local_alias_spec(tfn, alias_map)
+            if tfnloc != scope_spec + (fn.string,):
+                continue
+            nufcall = Function_Reference(fcall.tofortran())
+            tfn, targs = nufcall.children
+            targs = targs.children if targs else []
+            targs = [t.string for t in targs]
+            targs.extend(carryovers)
+            targs = ','.join(targs)
+            nufcall = Function_Reference(f"{tfn}({targs})")
+            replace_node(fcall, nufcall)
+
+        intsp = atmost_one(children_of_type(box, (Internal_Subprogram_Part, Module_Subprogram_Part)))
+        if intsp:
+            append_children(intsp, Function_Subprogram(get_reader(nufn)))
+        else:
+            if isinstance(box, Module):
+                intsp = Module_Subprogram_Part(get_reader(f"contains\n{nufn}".strip()))
+            else:
+                intsp = Internal_Subprogram_Part(get_reader(f"contains\n{nufn}".strip()))
+            endbox = box.children[-1]
+            replace_node(endbox, (intsp, endbox))
+
+        ret_decl = alias_map[scope_spec + (fn.string,)]
+        remove_self(ret_decl)
+        remove_self(sf)
 
     return ast
