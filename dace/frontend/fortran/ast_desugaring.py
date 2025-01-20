@@ -1890,7 +1890,9 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
         scope_spec = search_scope_spec(dref)
         assert scope_spec
         root, _, _ = _dataref_root(dref, scope_spec, alias_map)
-        assert isinstance(root, Name)
+        # TODO: Handle the `cfg % a(1:5) % b(1:5) % c` type cases better.
+        if not isinstance(root, Name):
+            return None
         loc = search_real_local_alias_spec(root, alias_map)
         assert loc
         root_spec = ident_spec(alias_map[loc])
