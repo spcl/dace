@@ -1617,11 +1617,14 @@ class SDFG(ControlFlowRegion):
         shared = []
 
         # If a transient is present in an inter-state edge, it is shared
+        interstate_views = set()
         for interstate_edge in self.all_interstate_edges():
             for sym in interstate_edge.data.free_symbols:
                 if sym in self.arrays and self.arrays[sym].transient:
                     seen[sym] = interstate_edge
                     shared.append(sym)
+                    if isinstance(self.arrays[sym], dt.View):
+                        interstate_views.add(sym)
 
         # The same goes for the conditions of conditional blocks.
         for block in self.all_control_flow_blocks():
@@ -1635,23 +1638,29 @@ class SDFG(ControlFlowRegion):
                                 shared.append(sym)
 
         # If transient is accessed in more than one state, it is shared
+        from dace.sdfg.utils import get_all_view_nodes
         for state in self.states():
             for node in state.data_nodes():
-                tokens = node.data.split('.')
-                # NOTE: The following three lines ensure that nested data share transient and toplevel attributes.
-                desc = self.arrays[tokens[0]]
-                is_transient = desc.transient
-                is_toplevel = desc.toplevel
-                if include_nested_data:
-                    datanames = set(['.'.join(tokens[:i + 1]) for i in range(len(tokens))])
-                else:
-                    datanames = set([tokens[0]])
-                for dataname in datanames:
-                    desc = self.arrays[dataname]
-                    if is_transient:
-                        if (check_toplevel and is_toplevel) or (dataname in seen and seen[dataname] != state):
-                            shared.append(dataname)
-                        seen[dataname] = state
+                node_names = set([node.data])
+                node_names.update([n.data for n in get_all_view_nodes(state, node)])
+                for name in node_names:
+                    tokens = name.split('.')
+                    # NOTE: The following three lines ensure that nested data share transient and toplevel attributes.
+                    desc = self.arrays[tokens[0]]
+                    is_transient = desc.transient
+                    is_toplevel = desc.toplevel
+                    if include_nested_data:
+                        datanames = set(['.'.join(tokens[:i + 1]) for i in range(len(tokens))])
+                    else:
+                        datanames = set([tokens[0]])
+                    for dataname in datanames:
+                        desc = self.arrays[dataname]
+                        if is_transient:
+                            if node.data in interstate_views and dataname not in shared:
+                                shared.append(dataname)
+                            elif (check_toplevel and is_toplevel) or (dataname in seen and seen[dataname] != state):
+                                shared.append(dataname)
+                            seen[dataname] = state
 
         return dtypes.deduplicate(shared)
 
