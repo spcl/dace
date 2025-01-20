@@ -99,7 +99,6 @@ SUBROUTINE setup_comm_pattern(p_pat, dst_n_points)
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()                
     sdfg.simplify(verbose=True)
-    sdfg.view()
     sdfg.compile()
     # sdfg = fortran_parser.create_sdfg_from_string(test_string, "int_init_test")
     # sdfg.simplify(verbose=True)
