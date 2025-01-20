@@ -59,12 +59,12 @@ module lib
   integer, parameter :: pi = 4
 end module lib
 """).add_file("""
-program main
+subroutine main(d)
   implicit none
   double precision d(4)
   d(1) = 0
   call fun(d)
-end program main
+end subroutine main
 
 subroutine fun(d)
   use lib, only: pi
@@ -79,16 +79,16 @@ end subroutine fun
 
     assert not ast.parent
     assert isinstance(ast, Program_Node)
-    assert not ast.main_program.parent
+    assert not ast.main_program
+    assert set(s.name.name for s in ast.subroutine_definitions) == {'main', 'fun'}
 
     assert len(ast.modules) == 1
     module = ast.modules[0]
     assert not module.parent
 
-    assert module.specification_part is not None
-    assert len(module.specification_part.symbols) == 1
-    specification = module.specification_part.symbols[0]
-    assert specification.parent == module
+    assert module.specification_part
+    # Integer constants are eliminated.
+    assert not module.specification_part.symbols
 
 
 if __name__ == "__main__":

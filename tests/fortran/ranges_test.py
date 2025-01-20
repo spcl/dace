@@ -620,28 +620,20 @@ def test_fortran_frontend_ranges_noarray3():
 
     assert np.all(res == input)
 
+
 def test_fortran_frontend_ranges_scalar():
     """
     Tests that the generated array map correctly handles offsets.
     """
-    test_string = """
-                    PROGRAM multiple_ranges
-                    implicit none
-                    double precision, dimension(7) :: input1
-                    double precision, dimension(7) :: res
-                    CALL multiple_ranges_function(input1, input2, res)
-                    end
-
-                    SUBROUTINE multiple_ranges_function(input1, input2, res)
-                    double precision, dimension(7) :: input1
-                    double precision, dimension(7) :: res
-
-                    res = 1.0 - input1
-
-                    END SUBROUTINE multiple_ranges_function
-                    """
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "multiple_ranges", True)
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(input1, input2, res)
+  ! NOTE: `input2`'s declaration is intentially missing, and it still is a valid program.
+  double precision, dimension(7) :: input1
+  double precision, dimension(7) :: res
+  res = 1.0 - input1
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.simplify(verbose=True)
     sdfg.compile()
 

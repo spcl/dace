@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 
 from dace.frontend.fortran import fortran_parser
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_min_max():
@@ -808,43 +810,28 @@ def test_fortran_frontend_hyperbolic():
 
 
 def test_fortran_frontend_trig_inverse():
-    test_string = """
-                    PROGRAM intrinsic_math_test_hyperbolic
-                    implicit none
-                    real, dimension(3) :: sincos_args
-                    real, dimension(3) :: tan_args
-                    real, dimension(6) :: tan2_args
-                    real, dimension(12) :: res
-                    CALL intrinsic_math_test_hyperbolic_function(sincos_args, tan_args, tan2_args, res)
-                    end
-
-                    SUBROUTINE intrinsic_math_test_hyperbolic_function(sincos_args, tan_args, tan2_args, res)
-                    integer :: n
-                    real, dimension(3) :: sincos_args
-                    real, dimension(3) :: tan_args
-                    real, dimension(6) :: tan2_args
-                    real, dimension(12) :: res
-
-                    DO n=1,3
-                        res(n) = ASIN(sincos_args(n))
-                    END DO
-
-                    DO n=1,3
-                        res(n+3) = ACOS(sincos_args(n))
-                    END DO
-
-                    DO n=1,3
-                        res(n+6) = ATAN(tan_args(n))
-                    END DO
-
-                    DO n=1,3
-                        res(n+9) = ATAN2(tan2_args(2*n - 1), tan2_args(2*n))
-                    END DO
-
-                    END SUBROUTINE intrinsic_math_test_hyperbolic_function
-                    """
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_hyperbolic", True)
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(sincos_args, tan_args, tan2_args, res)
+  integer :: n
+  real, dimension(3) :: sincos_args
+  real, dimension(3) :: tan_args
+  real, dimension(6) :: tan2_args
+  real, dimension(12) :: res
+  do n = 1, 3
+    res(n) = asin(sincos_args(n))
+  end do
+  do n = 1, 3
+    res(n + 3) = acos(sincos_args(n))
+  end do
+  do n = 1, 3
+    res(n + 6) = atan(tan_args(n))
+  end do
+  do n = 1, 3
+    res(n + 9) = atan2(tan2_args(2*n - 1), tan2_args(2*n))
+  end do
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'main',)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
