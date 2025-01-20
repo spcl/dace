@@ -957,6 +957,20 @@ class BackwardPassGenerator:
 
             backward_nodes = {n for e in state.edge_bfs(state_given_gradients, reverse=True) for n in [e.src, e.dst]}
             nodes_list = list(backward_nodes)
+            # for node in nodes_list:
+            #     if isinstance(node, nodes.MapEntry) and len(node.in_connectors) == 0:
+            #         nodes_list.remove(node)
+            #         # Remove the MapExist and everything inbetween
+            #         # Get the equivelent map exit for the map entry
+            #         map_exit = state.exit_node(node)
+            #         nodes_list.remove(map_exit)
+
+            #         # Get all the nodes between the map entry and exit
+            #         for state_node in state.nodes():
+            #             # Check the scope of the node if it is within the map
+            #             if state_node in state.scope_dict() and state.scope_dict(
+            #             )[state_node] == node and state_node in nodes_list:
+            #                 nodes_list.remove(state_node)
             state_subgraph = dstate.StateSubgraphView(state, nodes_list)
 
             state_subgraph = self._add_missing_nested_sdfg_connectors_to_view(state=state,
@@ -967,7 +981,8 @@ class BackwardPassGenerator:
             self.states_view_map[state] = state_subgraph
 
             # In the case where this state is within a for loop
-            if self._state_within_loop(state):
+            within_loop, _ = self._state_within_loop(state)
+            if within_loop:
                 # Other elements that are not within state_subgraph will need to be reversed
                 # We create a separate mapping for these elements
 
