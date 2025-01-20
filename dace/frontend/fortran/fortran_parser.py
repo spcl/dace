@@ -2556,10 +2556,6 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
-    program = ast_transforms.ElementalFunctionExpander(
-        ast_transforms.FindFunctionAndSubroutines.from_node(program).names,
-        ast = program
-    ).visit(program)
     for i in program.modules:
         count = 0
         for j in i.function_definitions:
@@ -2588,7 +2584,10 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     program = ast_transforms.ArgumentExtractor(program).visit(program)
 
     program = ast_transforms.TypeInference(program, assert_voids=False).visit(program)
-    program = ast_transforms.ElementalIntrinsicExpander(program).visit(program)
+    program = ast_transforms.ElementalIntrinsicExpander(
+        ast_transforms.FindFunctionAndSubroutines.from_node(program).names,
+        program
+    ).visit(program)
 
     prior_exception: Optional[NeedsTypeInferenceException] = None
     for transformation in own_ast.fortran_intrinsics().transformations():
