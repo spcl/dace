@@ -848,6 +848,7 @@ class BackwardPassGenerator:
             # We should take the dst_subset of the memlet
             # Are there cases where dst_subset is None?
             ranges = []
+            # TODO: is dst_subset always the right choice?
             for iteration in map_exit_memlet.dst_subset:
                 if isinstance(iteration, tuple):
                     # The end of the range is inclusive in the loop
@@ -861,8 +862,10 @@ class BackwardPassGenerator:
 
             # Create the tasklet memlet from the indices
             tasklet_memlet = dace.Memlet.simple(backward_node.data, ", ".join(indices.keys()))
+
+            # Create the tasklet
             tasklet, map_entry, map_exit = backward_state.add_mapped_tasklet(
-                "_init_" + backward_node.data + "_",
+                "_clear_" + backward_node.data + "_",
                 indices, {},
                 f"__out = 0", {
                     "__out": tasklet_memlet,
@@ -882,7 +885,7 @@ class BackwardPassGenerator:
                                                  other_subset=new_memlet_subset)
 
             # Remove the src_subset of the new memlet and replace the memlet in the edge
-            map_exit_memlet.src_subset = None
+            map_exit_memlet.subset = memlet.subset if memlet.data == forward_node.data else memlet.other_subset
             map_exit_memlet.other_subset = None
             edge.data = map_exit_memlet
 
