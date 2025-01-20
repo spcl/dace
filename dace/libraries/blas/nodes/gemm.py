@@ -47,7 +47,7 @@ class ExpandGemmPure(ExpandTransformation):
     def make_sdfg(node, parent_state, parent_sdfg):
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
+        ((edge_a, outer_array_a, shape_a, strides_a, _, _), (edge_b, outer_array_b, shape_b, strides_b, _, _),
          cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
         dtype_a = outer_array_a.dtype.type
@@ -79,7 +79,7 @@ class ExpandGemmPure(ExpandTransformation):
 
         _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
-        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
+        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-3], storage=cdata[1].storage)
 
         if equal_valued(1, node.alpha):
             mul_program = "__out = __a * __b"
@@ -93,7 +93,7 @@ class ExpandGemmPure(ExpandTransformation):
             state = sdfg.add_state_after(init_state, node.label + "_state")
 
         if '_cin' in node.in_connectors:
-            sdfg.add_array("_cin", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
+            sdfg.add_array("_cin", shape_c, dtype_c, strides=cdata[-3], storage=cdata[1].storage)
 
         mul_out, mul_out_array = "_c", array_c
         output_nodes = None
@@ -159,7 +159,7 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, _, _, _, _), (_, bdesc, _, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + 'gemm'
         alpha = f'{dtype.ctype}({node.alpha})'
@@ -458,7 +458,7 @@ class ExpandGemmPBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, ashape, _, _, _), (_, bdesc, bshape, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
 
         if not equal_valued(0, node.beta):
@@ -513,8 +513,8 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         :return:
         """
 
-        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
-         (edge_c, outer_array_c, shape_c, strides_c)) = _get_matmul_operands(node, parent_state, parent_sdfg)
+        ((edge_a, outer_array_a, shape_a, strides_a, _, _), (edge_b, outer_array_b, shape_b, strides_b, _, _),
+         (edge_c, outer_array_c, shape_c, strides_c, _, _)) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
@@ -1014,15 +1014,12 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == '_a':
                 subset = dc(memlet.subset)
-                subset.squeeze()
                 size0 = subset.size()
             if dst_conn == '_b':
                 subset = dc(memlet.subset)
-                subset.squeeze()
                 size1 = subset.size()
             if dst_conn == '_c':
                 subset = dc(memlet.subset)
-                subset.squeeze()
                 size2 = subset.size()
 
         if self.transA:
@@ -1044,7 +1041,6 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         elif not res:
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
         out_subset = dc(out_memlet.subset)
-        out_subset.squeeze()
         size3 = out_subset.size()
         if size2 is not None:
             res = [equal(s0, s1) for s0, s1 in zip(size2, size3)]
