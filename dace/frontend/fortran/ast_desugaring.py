@@ -945,7 +945,8 @@ def correct_for_function_calls(ast: Program):
             continue
         lv, _ = lv.children
         lvloc = search_real_local_alias_spec(lv, alias_map)
-        assert lvloc
+        if not lvloc:
+            continue
         lv = alias_map[lvloc]
         if not isinstance(lv, Entity_Decl):
             continue

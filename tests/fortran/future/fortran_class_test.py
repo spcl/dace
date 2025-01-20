@@ -60,7 +60,7 @@ end subroutine main
     sdfg.compile()
     d = np.full([2], 42, order="F", dtype=np.int64)
     sdfg(d=d)
-    assert d == [400, 42]
+    assert np.all(d == [400, 42])
 
 
 if __name__ == "__main__":
