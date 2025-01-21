@@ -1063,7 +1063,8 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
 
         # Replace values with their code-generated names (for example, persistent arrays)
         desc = self.sdfg.arrays[t.id]
-        self.write(ptr(t.id, desc, self.sdfg, self.codegen))
+        ref = '' if not isinstance(desc, data.View) else '*'
+        self.write(ref + ptr(t.id, desc, self.sdfg, self.codegen))
 
     def _Attribute(self, t: ast.Attribute):
         from dace.frontend.python.astutils import rname
