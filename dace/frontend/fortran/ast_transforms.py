@@ -3655,6 +3655,7 @@ class ArrayLoopExpander(NodeTransformer):
 
         Both transformations inherit from this base, and they define all *lister* classes that decide which
         AST nodes should be transformed.
+
     """
 
     @staticmethod
@@ -3841,6 +3842,15 @@ class ArrayLoopExpander(NodeTransformer):
 class ArrayLoopNodeLister(NodeVisitor):
     """
     Finds all array operations that have to be transformed to loops in the AST
+
+    For each binary operator, we first check if LHS has indices with pardecl.
+    If yes, then this is a candidate for replacement.
+
+    If not, then we check if LHS is a name of an array or data reference pointing to an array.
+    We explicitly exclude here expressions `arr = func(input)` as these have different replacement rules.
+
+    If array is but implicit, e.g., just array name, then we have to replace it with a pardecl operation such that
+    the main processing function can replace them with proper accesess dependent on loop iterators.
     """
 
     def __init__(self, scope_vars, structures, _):
@@ -3902,10 +3912,13 @@ class ArrayLoopNodeLister(NodeVisitor):
 
 class ArrayToLoop(ArrayLoopExpander):
     """
-        Transforms the AST by removing expressions arr = func(input) a replacing them with loops:
+        Transforms the AST by removing expressions arr = <arbitrary-ast-operators>(input-arrays...) a replacing them with loops:
 
         for i in len(input):
-            arr(i) = func(input(i))
+            arr(i) = <arbitrary-ast-operators>(input-array-1(i), input-array-2(i), ...)
+
+        It should only apply when arguments and destination are arrays.
+        We assume the Fortran code is well-formed and we do not check carefully if sizes and ranks of arguments match.
     """
 
     @staticmethod
@@ -3917,7 +3930,18 @@ class ArrayToLoop(ArrayLoopExpander):
 
 class ElementalIntrinsicNodeLister(NodeVisitor):
     """
-    Finds all elemental operations that have to be transformed to loops in the AST
+    Finds all elemental operations that have to be transformed to loops in the AST.
+
+    For each binary operator, we first check if RHS is call expression, and the function called is elemental.
+
+    Then, we look if the destination is an array - explicitly or implicitly.
+    if it is implicit, e.g., just array name, then we have to replace it with a pardecl operation such that
+    the main processing function can replace them with proper accesess dependent on loop iterators.
+
+    We have the following cases:
+    - Explicit pardecl in array indices, which we leave as it is.
+    - Name node that refers to an array, which we replace with pardecl ALL
+    - Data reference, which we have to parse and check if the last element is an array
     """
 
     def __init__(self, scope_vars, structures, functions: List[ast_internal_classes.Name_Node]):
@@ -4064,6 +4088,13 @@ class ElementalIntrinsicExpander(ArrayLoopExpander):
 
         for i in len(input):
             arr(i) = func(input(i))
+
+        This should only apply under the following conditions:
+        - The function is an elemental intrinsic.
+        - Arguments are array of the same rank and size.
+
+        Currently, we do not check completely for the size as they can be symbolic.
+        We assume that the Fortran code is well-formed, and we check if the arguments are arrays.
     """
 
     @staticmethod

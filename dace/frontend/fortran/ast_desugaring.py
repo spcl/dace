@@ -1889,8 +1889,12 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
     def _root_comp(dref: Data_Ref):
         scope_spec = search_scope_spec(dref)
         assert scope_spec
+        if walk(dref, Part_Ref):
+            # If we are dealing with any array subscript, we cannot get a "component spec", and should take the
+            # pessimistic path.
+            # TODO: Handle the `cfg % a(1:5) % b(1:5) % c` type cases better.
+            return None
         root, _, _ = _dataref_root(dref, scope_spec, alias_map)
-        assert isinstance(root, Name)
         loc = search_real_local_alias_spec(root, alias_map)
         assert loc
         root_spec = ident_spec(alias_map[loc])
@@ -2030,7 +2034,8 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
         assert isinstance(node.children[-1], End_Do_Stmt)
         do_ops = node.children[1:-1]
         for op in do_ops:
-            tp, tm = _track_local_consts(op, alias_map, plus, minus)
+            # Inside the do-block don't assume anything is known (a pessimistic, but safe view).
+            tp, tm = _track_local_consts(op, alias_map, {}, set())
             _integrate_subresults(tp, tm)
 
         _, loop_ctl = do_stmt.children

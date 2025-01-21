@@ -14,7 +14,7 @@ def test_fortran_frontend_type_array():
 module lib
   implicit none
   type simple_type
-    real, pointer :: w(:, :)
+    real :: w(5, 5)
   end type simple_type
   type simple_type2
     type(simple_type) :: pprog(10)
