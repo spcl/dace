@@ -2032,7 +2032,8 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
         assert isinstance(node.children[-1], End_Do_Stmt)
         do_ops = node.children[1:-1]
         for op in do_ops:
-            tp, tm = _track_local_consts(op, alias_map, plus, minus)
+            # Inside the do-block don't assume anything is known (a pessimistic, but safe view).
+            tp, tm = _track_local_consts(op, alias_map, {}, set())
             _integrate_subresults(tp, tm)
 
         _, loop_ctl = do_stmt.children

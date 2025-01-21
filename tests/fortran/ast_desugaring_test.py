@@ -1839,6 +1839,12 @@ subroutine main()
     out = out + 1.
   end do
 
+  i = 0
+  do while (i < 10)
+    out = out + 1
+    i = i + 1
+  end do
+
   if (cond) out = out + 1.
 
 contains
@@ -1876,6 +1882,11 @@ SUBROUTINE main
   out = fun(.NOT. .TRUE., out)
   DO i = 1, 20
     out = out + 1.
+  END DO
+  i = 0
+  DO WHILE (i < 10)
+    out = out + 1
+    i = i + 1
   END DO
   IF (.TRUE.) out = out + 1.
   CONTAINS
