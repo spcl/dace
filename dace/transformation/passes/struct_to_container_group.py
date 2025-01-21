@@ -2,34 +2,32 @@
 """ This module contains classes and functions that implement the grid-strided map tiling
     transformation."""
 
-from ast import List
 import copy
 from typing import Any, Dict
 import dace
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.state import ControlFlowBlock
 from dace.properties import make_properties
 from dace.sdfg import nodes
 from dace.data import Structure, View
-import re
 from dace.transformation import pass_pipeline as ppl
-from enum import Enum
 from dace.sdfg.container_group import ContainerGroupFlatteningMode
-import dace.sdfg.utils as sdutil
-from dace.sdfg.propagation import propagate_memlets_state
-
-def _remove_trailing_number(s):
-    # Pattern to match '_<int>' at the end of the string
-    return re.sub(r"_\d+$", "", s)
-
-
-def _has_trailing_number(s):
-    # Check if the string ends with '_<int>'
-    return bool(re.search(r"_\d+$", s))
 
 
 @make_properties
 class StructToContainerGroups(ppl.Pass):
-    def __init__(self, flattening_mode: ContainerGroupFlatteningMode = ContainerGroupFlatteningMode.StructOfArrays):
+    def __init__(
+        self,
+        flattening_mode: ContainerGroupFlatteningMode = ContainerGroupFlatteningMode.StructOfArrays,
+        simplify: bool = True,
+        validate: bool = True,
+        validate_all: bool = False,
+    ):
+        if flattening_mode != ContainerGroupFlatteningMode.StructOfArrays:
+            raise Exception("Only StructOfArrays is supported")
+        self._simplify = simplify
+        self._validate = validate
+        self._validate_all = validate_all
         self._access_names_map = dict()
         self._data_connected_to_vsv_struct = dict()
         self._flattening_mode = flattening_mode
@@ -38,7 +36,13 @@ class StructToContainerGroups(ppl.Pass):
         super().__init__()
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Nodes | ppl.Modifies.Edges
+        return (
+            ppl.Modifies.Nodes
+            | ppl.Modifies.Edges
+            | ppl.Modifies.AccessNodes
+            | ppl.Modifies.Memlets
+            | ppl.Modifies.Descriptors
+        )
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
@@ -72,22 +76,13 @@ class StructToContainerGroups(ppl.Pass):
                                     state, sdfg, src_access, dst_access
                                 )
                                 removed_nodes = removed_nodes.union(newly_removed_nodes)
-                                sdfg.save(f"{sdfg.name}_{i}.sdfg")
 
         # Clean Mapped Views (Views within data groups)
         for state in sdfg.states():
-            #for node in state.nodes():
-                #if isinstance(node, dace.nodes.AccessNode):
-                #    if node.data in self._access_names_map:
-                #        data_name = self._access_names_map[node.data]
-                #        node.data = data_name
             for edge in state.edges():
                 if edge.data.data in self._access_names_map:
                     data_name = self._access_names_map[edge.data.data]
                     edge.data.data = data_name
-                    #edge.data = dace.memlet.Memlet(data=data_name,
-                    #                               subset=dace.subsets.Range(missing_dims + edge.data.subset.ranges))
-
 
         # View -> Struct -> View patterns result with disconnected compenets reconnect them with saved info
         for state in sdfg.states():
@@ -124,8 +119,12 @@ class StructToContainerGroups(ppl.Pass):
         for name, desc in sdfg.arrays.items():
             if isinstance(desc, dace.data.Structure):
                 to_rm.insert(0, name)
+        sdfg.save("a.sdfg")
         for name in to_rm:
             sdfg.remove_data(name=name, validate=True)
+
+        if self._simplify:
+            sdfg.simplify(self._validate, self._validate_all)
 
     def _can_be_applied(
         self,
@@ -255,7 +254,6 @@ class StructToContainerGroups(ppl.Pass):
             else:
                 return view_accesses
 
-
     def _get_view_to_struct_view_chain(
         self, state: SDFGState, sdfg: SDFG, last_view_access: nodes.AccessNode
     ):
@@ -305,7 +303,11 @@ class StructToContainerGroups(ppl.Pass):
             view_access = src_access
             struct_access = dst_access
 
-        view_chain = self._get_struct_to_view_view_chain(state, sdfg, view_access) if struct_to_view else self._get_view_to_struct_view_chain(state, sdfg, view_access)
+        view_chain = (
+            self._get_struct_to_view_view_chain(state, sdfg, view_access)
+            if struct_to_view
+            else self._get_view_to_struct_view_chain(state, sdfg, view_access)
+        )
 
         assert len(view_chain) >= 1
         name_hierarchy = []
@@ -342,7 +344,6 @@ class StructToContainerGroups(ppl.Pass):
                     take_last=True,
                 )
 
-
         demangled_name = sdfg.get_demangled_container_group_member_name(name_hierarchy)
 
         an = nodes.AccessNode(data=demangled_name)
@@ -359,54 +360,66 @@ class StructToContainerGroups(ppl.Pass):
             assert len(state.out_edges(view_chain[-1])) == 1
             dst_edge = state.out_edges(view_chain[-1])[0]
 
-        src_data = src_edge.data
-        dst_data = dst_edge.data
-        view_chain_w_struct = view_chain + [struct_access] if view_to_struct else [struct_access] + view_chain
+        if self._flattening_mode == ContainerGroupFlatteningMode.StructOfArrays:
+            memlet_shape = ()
 
-        # This feels like a wrong solution to this issue, TODO: fix
-        memlet_shape = ()
+            if struct_to_view:
+                assert len(struct_to_view_edges) == 1
+                struct_to_view_edge = struct_to_view_edges[0]
+                memlet_shape += tuple(struct_to_view_edge.data.subset.ranges)
 
-        if struct_to_view:
-            assert len(struct_to_view_edges) == 1
-            struct_to_view_edge = struct_to_view_edges[0]
-            memlet_shape += tuple(struct_to_view_edge.data.subset.ranges)
-
-            if (isinstance(sdfg.arrays[struct_to_view_edge.src.data], dace.data.Structure) and
-                not isinstance(sdfg.arrays[struct_to_view_edge.data.data], dace.data.ContainerArray)):
-                skip = True
-            else:
-                skip = False
-            for vc in view_chain:
-                if skip:
-                    skip = False
-                    continue
-                dst_edge = state.out_edges(vc)[0]
-                if (isinstance(sdfg.arrays[vc.data], dace.data.Structure) and
-                    not isinstance(sdfg.arrays[dst_edge.data.data], dace.data.ContainerArray)):
+                if isinstance(
+                    sdfg.arrays[struct_to_view_edge.src.data], dace.data.Structure
+                ) and not isinstance(
+                    sdfg.arrays[struct_to_view_edge.data.data], dace.data.ContainerArray
+                ):
                     skip = True
-                memlet_shape += tuple(dst_edge.data.subset.ranges)
-
-        if view_to_struct:
-            assert len(view_to_struct_edges) == 1
-            view_to_struct_edge = view_to_struct_edges[0]
-            memlet_shape += tuple(view_to_struct_edge.data.subset.ranges)
-
-            if (isinstance(sdfg.arrays[view_to_struct_edge.dst.data], dace.data.Structure) and
-                not isinstance(sdfg.arrays[view_to_struct_edge.data.data], dace.data.ContainerArray)):
-                skip = True
-            else:
-                skip = False
-            for vc in reversed(view_chain):
-                if skip:
+                else:
                     skip = False
-                    continue
-                src_edge = state.in_edges(vc)[0]
-                memlet_shape += tuple(src_edge.data.subset.ranges)
-                if (isinstance(sdfg.arrays[vc.data], dace.data.Structure) and
-                    not isinstance(sdfg.arrays[src_edge.data.data], dace.data.ContainerArray)):
-                    skip = True
+                for vc in view_chain:
+                    if skip:
+                        skip = False
+                        continue
+                    dst_edge = state.out_edges(vc)[0]
+                    if isinstance(
+                        sdfg.arrays[vc.data], dace.data.Structure
+                    ) and not isinstance(
+                        sdfg.arrays[dst_edge.data.data], dace.data.ContainerArray
+                    ):
+                        skip = True
+                    memlet_shape += tuple(dst_edge.data.subset.ranges)
 
-        mc = dace.memlet.Memlet(subset=dace.subsets.Range(memlet_shape), data=demangled_name)
+            if view_to_struct:
+                assert len(view_to_struct_edges) == 1
+                view_to_struct_edge = view_to_struct_edges[0]
+                memlet_shape += tuple(view_to_struct_edge.data.subset.ranges)
+
+                if isinstance(
+                    sdfg.arrays[view_to_struct_edge.dst.data], dace.data.Structure
+                ) and not isinstance(
+                    sdfg.arrays[view_to_struct_edge.data.data], dace.data.ContainerArray
+                ):
+                    skip = True
+                else:
+                    skip = False
+                for vc in reversed(view_chain):
+                    if skip:
+                        skip = False
+                        continue
+                    src_edge = state.in_edges(vc)[0]
+                    memlet_shape += tuple(src_edge.data.subset.ranges)
+                    if isinstance(
+                        sdfg.arrays[vc.data], dace.data.Structure
+                    ) and not isinstance(
+                        sdfg.arrays[src_edge.data.data], dace.data.ContainerArray
+                    ):
+                        skip = True
+        else:
+            raise Exception("ArrayOfStructs mode is not implemented yet")
+
+        mc = dace.memlet.Memlet(
+            subset=dace.subsets.Range(memlet_shape), data=demangled_name
+        )
 
         # If Struct -> View -> Dst:
         # Then Struct (uc) -> (None) \ View \ (None) -> (vc) Dst
@@ -416,13 +429,12 @@ class StructToContainerGroups(ppl.Pass):
         # Then Src (uc) -> (None) \ View \ (None) -> (vc) Struct
         # Becomes Src (uc) -> (None) NewData
         state.add_node(an)
-        # TODO: Fix memlet calculation in recursive data groups
+        # Simplify manages to remove this
         if struct_to_view:
-
             view_name = "v_" + demangled_name
             a = sdfg.arrays[dst_edge.data.data]
             if view_name not in sdfg.arrays:
-                _, view_desc = sdfg.add_view(
+                sdfg.add_view(
                     name=view_name,
                     shape=a.shape,
                     dtype=a.dtype,
@@ -433,8 +445,6 @@ class StructToContainerGroups(ppl.Pass):
                     find_new_name=False,
                     may_alias=a.may_alias,
                 )
-            else:
-                view_desc = sdfg.arrays[view_name]
             view_access = state.add_access(view_name)
             state.add_edge(an, None, view_access, "views", mc)
             nm = copy.deepcopy(dst_edge.data)
@@ -451,7 +461,7 @@ class StructToContainerGroups(ppl.Pass):
             view_name = "v_" + demangled_name
             if view_name not in sdfg.arrays:
                 a = sdfg.arrays[dst_edge.data.data]
-                _, view_desc = sdfg.add_view(
+                sdfg.add_view(
                     name=view_name,
                     shape=a.shape,
                     dtype=a.dtype,
@@ -462,8 +472,6 @@ class StructToContainerGroups(ppl.Pass):
                     find_new_name=False,
                     may_alias=a.may_alias,
                 )
-            else:
-                view_desc = sdfg.arrays[view_name]
             view_access = state.add_access(view_name)
             nm = copy.deepcopy(src_edge.data)
             nm.data = view_name
@@ -487,12 +495,10 @@ class StructToContainerGroups(ppl.Pass):
 
         # All acccess from the view need to me mapped to the newly added array
         # The leaf node will not have access to all of the dimensions in the generated array we need to do that
-        #missing_dims = memlet_shape[:-len(sdfg.arrays[view_chain[-1 if struct_to_view else 0].data].shape)]
-        #if not isinstance(missing_dims, List):
+        # missing_dims = memlet_shape[:-len(sdfg.arrays[view_chain[-1 if struct_to_view else 0].data].shape)]
+        # if not isinstance(missing_dims, List):
         #    missing_dims = list(missing_dims)
-        self._access_names_map[view_chain[-1 if struct_to_view else 0].data] = (
-            view_name
-        )
+        self._access_names_map[view_chain[-1 if struct_to_view else 0].data] = view_name
 
         return removed_nodes
 

@@ -2969,7 +2969,6 @@ class SDFG(ControlFlowRegion):
                             )
                         else:
                             raise Exception("Leaf member in a container group needs to be scalar or array")
-                        print("CG", self.container_groups, member_demangled_name, datadesc, datadesc.shape)
                         self.add_datadesc(name=member_demangled_name, datadesc=datadesc, find_new_name=False)
             elif isinstance(container_group_or_array, dace.data.ContainerArray):
                 assert False
@@ -3003,7 +3002,6 @@ class SDFG(ControlFlowRegion):
                     return demangled_name
             else:
                 # if we are at last element and it is a "Leaf" (data had no name) it is not an error
-                print("A", i, current_dg, current_dg.members)
                 if i == len(name_hierarchy) - 1 and len(current_dg.members) == 1 and "Leaf" in current_dg.members:
                     demangled_name += f"__m_Leaf"
                     return demangled_name
