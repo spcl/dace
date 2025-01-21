@@ -1889,10 +1889,12 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
     def _root_comp(dref: Data_Ref):
         scope_spec = search_scope_spec(dref)
         assert scope_spec
-        root, _, _ = _dataref_root(dref, scope_spec, alias_map)
-        # TODO: Handle the `cfg % a(1:5) % b(1:5) % c` type cases better.
-        if not isinstance(root, Name):
+        if walk(dref, Part_Ref):
+            # If we are dealing with any array subscript, we cannot get a "component spec", and should take the
+            # pessimistic path.
+            # TODO: Handle the `cfg % a(1:5) % b(1:5) % c` type cases better.
             return None
+        root, _, _ = _dataref_root(dref, scope_spec, alias_map)
         loc = search_real_local_alias_spec(root, alias_map)
         assert loc
         root_spec = ident_spec(alias_map[loc])
