@@ -213,7 +213,7 @@ end program main
             'subroutine_definitions': [
                 M(Subroutine_Subprogram_Node, {
                     'name': M.NAMED('fun'),
-                    'args': [M.NAMED('d_var_0')],
+                    'args': [M.NAMED('d')],
                 }),
             ],
         }, has_empty_attr={'function_definitions', 'interface_blocks'})],
