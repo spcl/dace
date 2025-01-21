@@ -1,22 +1,17 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.properties import Property, SymbolicProperty
+from dace.properties import SymbolicProperty
 from dace.transformation.transformation import ExpandTransformation
 from dace.frontend.common import op_repository as oprepo
 from dace.sdfg.nodes import LibraryNode
-from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 import dace.library as library
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace import data as dt, memlet as mm, subsets as sbs
 import dace
 import copy
-import numpy as np
 
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-
-from dace import dtypes
-from dace.memlet import Memlet
 
 
 @library.expansion
