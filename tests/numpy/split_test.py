@@ -127,7 +127,8 @@ def test_dsplit_4d():
     return a, b, c
 
 
-def test_compiletime_split():
+@pytest.mark.parametrize('out_idx', [0, 1])
+def test_compiletime_split(out_idx):
 
     @dace.program
     def tester(x, y, in_indices: dace.compiletime, out_index: dace.compiletime):
@@ -138,9 +139,9 @@ def test_compiletime_split():
 
     x = np.random.rand(1000, 8)
     y = np.zeros_like(x)
-    tester(x, y, (1, 2, 3, 4, 5, 7), 0)
+    tester(x, y, (1, 2, 3, 4, 5, 7), out_idx)
     ref = np.zeros_like(y)
-    tester.f(x, ref, (1, 2, 3, 4, 5, 7), 0)
+    tester.f(x, ref, (1, 2, 3, 4, 5, 7), out_idx)
 
     assert np.allclose(y, ref)
 
@@ -158,4 +159,5 @@ if __name__ == "__main__":
     test_vsplit()
     test_hsplit()
     test_dsplit_4d()
-    test_compiletime_split()
+    test_compiletime_split(0)
+    test_compiletime_split(1)
