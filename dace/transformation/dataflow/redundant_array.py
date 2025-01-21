@@ -557,13 +557,13 @@ class RedundantArray(pm.SingleStateTransformation):
         from dace.libraries.standard import Reduce
         reduction = False
         for e in graph.in_edges(in_array):
-            if isinstance(e.src, Reduce) or (isinstance(e.src, nodes.NestedSDFG)
+            if isinstance(e.src, Reduce) or (isinstance(e.src, (nodes.NestedSDFG, nodes.LibraryNode))
                                              and len(in_desc.shape) != len(out_desc.shape)):
                 reduction = True
 
         # If:
         # 1. A reduce node is involved; or
-        # 2. A NestedSDFG node is involved and the arrays have different dimensionality; or
+        # 2. A NestedSDFG or Library node is involved and the arrays have different dimensionality; or
         # 3. The memlet does not cover the removed array; or
         # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
