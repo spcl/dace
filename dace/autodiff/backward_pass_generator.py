@@ -795,11 +795,12 @@ class BackwardPassGenerator:
 
         # If this access node is not written to in the forward pass except for this one time, we don't need to zero it out
         # An exception is made for required gradients that can be read outside the scope of the SDFG
-        written_to = forward_node.data in self.required_gradients_data
+        clear_out_gradients = forward_node.data in self.required_gradients_data
 
-        # Get all write instances in the forward sdfg to this node
+        # Get the write instances in the forward sdfg to this node that happen in states before the current state
+        # These will represent the reads that will happen after this AccessNode
         # This should avoid unnecessary zeroing out of dace generated temporaries
-        for state in self.state_order:
+        for state in self.state_order[0:self.state_order.index(forward_state) + 1]:
             # TODO: what if there are multiple views of the same state
             state_view = self.states_view_map[state]
             for node, parent in state_view.all_nodes_recursive():
@@ -809,10 +810,10 @@ class BackwardPassGenerator:
                         within_loop, loop = self._state_within_loop(state)
                         within_map = self.is_within_map(state, node)
                         if node != forward_node or (node == forward_node and (within_loop or within_map)):
-                            written_to = True
+                            clear_out_gradients = True
                             break
 
-        if not written_to:
+        if not clear_out_gradients:
             return
 
         # Get the backward state
@@ -822,7 +823,6 @@ class BackwardPassGenerator:
         backward_node: nodes.AccessNode = self.reverse_map[forward_node]
 
         # Get the original array
-        fwd_array_desc = self.sdfg.arrays[forward_node.data]
         array_desc = self.backward_sdfg.arrays[backward_node.data]
 
         if dtypes.can_access(dtypes.ScheduleType.CPU_Multicore, array_desc.storage):
@@ -933,6 +933,29 @@ class BackwardPassGenerator:
             self._connect_forward_accessnode(forward_state, backward_state, access_node, node, edge,
                                              recomputation_nsdfgs[index], strategy_choice[index])
 
+    def _remove_maps_without_input_connectors(self, nodes_list: List[nodes.Node], state: SDFGState) -> None:
+        """
+        Remove maps that don't have any input connectors from the nodes_list.
+        These are maps that won't have an output in the backward pass and thus can be skipped from the reversal process.
+        Note that we do not remove the AccessNode that the no-input map writes to
+        This is because we might need to zero out the gradient of this node
+        If no zeroing out is necessary, the node will be removed in the reverse_subgraph function clean up at the end
+        """
+        for node in nodes_list[:]:  # Iterate over a copy of the list to avoid modification issues
+            if isinstance(node, nodes.MapEntry) and len(node.in_connectors) == 0:
+                nodes_list.remove(node)
+                # Remove the MapExit and everything in between
+                # Get the equivalent map exit for the map entry
+                map_exit = state.exit_node(node)
+                nodes_list.remove(map_exit)
+
+                # Get all the nodes between the map entry and exit
+                for state_node in state.nodes():
+                    # Check the scope of the node if it is within the map
+                    if state_node in state.scope_dict() and state.scope_dict(
+                    )[state_node] == node and state_node in nodes_list:
+                        nodes_list.remove(state_node)
+
     def _find_subgraph_to_differentiate(self) -> None:
         """ 
         Determine which nodes we need to reverse; this forms the subgraph we will differentiate:
@@ -944,7 +967,6 @@ class BackwardPassGenerator:
         contributions from every node y where x is used as an input.
         """
         backward_nodes: set[nodes.Node] = set()
-        required_gradients_all_states = {n.data for n in self.required_gradients}
         given_gradients_all_states = {n.data for n in self.given_gradients}
 
         # Do the backward BFS iterativly
@@ -957,20 +979,9 @@ class BackwardPassGenerator:
 
             backward_nodes = {n for e in state.edge_bfs(state_given_gradients, reverse=True) for n in [e.src, e.dst]}
             nodes_list = list(backward_nodes)
-            # for node in nodes_list:
-            #     if isinstance(node, nodes.MapEntry) and len(node.in_connectors) == 0:
-            #         nodes_list.remove(node)
-            #         # Remove the MapExist and everything inbetween
-            #         # Get the equivelent map exit for the map entry
-            #         map_exit = state.exit_node(node)
-            #         nodes_list.remove(map_exit)
 
-            #         # Get all the nodes between the map entry and exit
-            #         for state_node in state.nodes():
-            #             # Check the scope of the node if it is within the map
-            #             if state_node in state.scope_dict() and state.scope_dict(
-            #             )[state_node] == node and state_node in nodes_list:
-            #                 nodes_list.remove(state_node)
+            self._remove_maps_without_input_connectors(nodes_list, state)
+
             state_subgraph = dstate.StateSubgraphView(state, nodes_list)
 
             state_subgraph = self._add_missing_nested_sdfg_connectors_to_view(state=state,
@@ -1000,9 +1011,10 @@ class BackwardPassGenerator:
                     for e in state.edge_bfs(state_given_gradients, reverse=True)
                     for n in [e.src, e.dst]
                 }
+
                 view_nodes = list(backward_nodes)
-                # Get the intersection with the forward nodes
-                # Note that these don't change even in the case of a for loop
+                self._remove_maps_without_input_connectors(nodes_list, state)
+
                 loop_state_subgraph = dstate.StateSubgraphView(state, view_nodes)
 
                 loop_state_subgraph = self._add_missing_nested_sdfg_connectors_to_view(
@@ -2260,7 +2272,11 @@ class BackwardPassGenerator:
                     if len(incoming_edges) == 1:
                         # Check, if possible, if the written subset is not zero
                         write_size = incoming_edges[0].data.subset.num_elements()
-                        if not isinstance(write_size, int) or write_size > 0:
+
+                        # Check if the node doesn't have a wcr
+                        # If it does this is not an overwrite and the gradients should not be cleared
+                        has_wcr = incoming_edges[0].data.wcr is not None
+                        if not has_wcr and not isinstance(write_size, int) or write_size > 0:
                             # We need to zero out the same memlet accesses in the backward pass
                             self._zero_out_gradient(forward_state=forward_state,
                                                     forward_node=node,
@@ -2268,8 +2284,21 @@ class BackwardPassGenerator:
                     elif len(incoming_edges) > 1:
                         # If there is more than one incoming edge,
                         # they should all have a wcr to be valid and nothing is being overwritten
-                        # TODO: check if this is the case, otherwise this should be caught by validating the forward SDFG
+                        for edge in incoming_edges:
+                            if edge.data.wcr is None:
+                                raise AutoDiffException("Multiple incoming edges to an AccessNode without wcr")
                         pass
+
+                # Clean up of isolated nodes
+                # We will have an isolated node if it is not connected to any other node in the state view
+                # And it has not been cleared out if it is an AccessNode
+                # Isolated nodes should only appear from clearing out gradients
+                if not any(e.src in subgraph.nodes()
+                           for e in forward_state.in_edges(node)) and not any(e.dst in subgraph.nodes()
+                                                                              for e in forward_state.out_edges(node)):
+                    if isinstance(node, nodes.AccessNode) and node not in self.zeroed_out:
+                        backward_state.remove_node(reversed_node)
+
             except AutoDiffException as e:
                 raise AutoDiffException("Failed at node {}: {}".format(node, str(e))) from e
 
