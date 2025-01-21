@@ -11,6 +11,7 @@ import sympy as sp
 from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes, ast_utils
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
+from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes
 
 
 class Structure:
@@ -95,46 +96,6 @@ class Structures:
             struct_def = self.structures[struct_type]
 
         return struct_def, cur_var, prev_node
-
-
-def iter_fields(node: ast_internal_classes.FNode):
-    """
-    Yield a tuple of ``(fieldname, value)`` for each field in ``node._fields``
-    that is present on *node*.
-    """
-    for field in node._fields:
-        try:
-            yield field, getattr(node, field)
-        except AttributeError:
-            pass
-
-
-def iter_attributes(node: ast_internal_classes.FNode):
-    """
-    Yield a tuple of ``(fieldname, value)`` for each field in ``node._attributes``
-    that is present on *node*.
-    """
-    for field in node._attributes:
-        try:
-            yield field, getattr(node, field)
-        except AttributeError:
-            pass
-
-
-def iter_child_nodes(node: ast_internal_classes.FNode):
-    """
-    Yield all direct child nodes of *node*, that is, all fields that are nodes
-    and all items of fields that are lists of nodes.
-    """
-
-    for name, field in iter_fields(node):
-        # print("NASME:",name)
-        if isinstance(field, ast_internal_classes.FNode):
-            yield field
-        elif isinstance(field, list):
-            for item in field:
-                if isinstance(item, ast_internal_classes.FNode):
-                    yield item
 
 
 class NodeVisitor(object):
@@ -2309,19 +2270,6 @@ class ReplaceArrayConstructor(NodeTransformer):
                     typ=node.type))
             return ast_internal_classes.Execution_Part_Node(execution=assigns)
         return self.generic_visit(node)
-
-def mywalk(node):
-    """
-    Recursively yield all descendant nodes in the tree starting at *node*
-    (including *node* itself), in no specified order.  This is useful if you
-    only want to modify nodes in place and don't care about the context.
-    """
-    from collections import deque
-    todo = deque([node])
-    while todo:
-        node = todo.popleft()
-        todo.extend(iter_child_nodes(node))
-        yield node
 
 
 class RenameVar(NodeTransformer):
