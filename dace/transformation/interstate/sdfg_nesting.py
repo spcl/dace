@@ -380,8 +380,11 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     pass
         for node in nstate.sink_nodes():
             if (isinstance(node, nodes.AccessNode) and node.data not in transients and node.data not in reshapes):
-                new_outgoing_edges[node] = outputs[node.data]
-                sink_accesses.add(node)
+                try:
+                    new_outgoing_edges[node] = outputs[node.data]
+                    sink_accesses.add(node)
+                except KeyError:
+                    pass
 
         # All constants (and associated transients) become constants of the parent
         for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
@@ -572,13 +575,19 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for edge in removed_in_edges:
             # Find first access node that refers to this edge
             try:
-                node = next(n for n in order if n.data == edge.data.data)
+                node = next(n for n in order
+                            if n.data == edge.data.data or ('.' in n.data and n.data.split('.')[0] == edge.data.data))
             except StopIteration:
                 continue
                 # raise NameError(f'Access node with data "{edge.data.data}" not found in'
                 #                 f' nested SDFG "{nsdfg.name}" while inlining '
                 #                 '(reconnecting inputs)')
-            state.add_edge(edge.src, edge.src_conn, node, edge.dst_conn, edge.data)
+            if node.data != edge.data.data:
+                anode = state.add_access(edge.data.data)
+                state.add_edge(edge.src, edge.src_conn, anode, edge.dst_conn, edge.data)
+                state.add_edge(anode, None, node, None, Memlet())
+            else:
+                state.add_edge(edge.src, edge.src_conn, node, edge.dst_conn, edge.data)
             # Fission state if necessary
             cc = utils.weakly_connected_component(state, node)
             if not any(n in cc for n in subgraph.nodes()):
@@ -586,13 +595,19 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for edge in removed_out_edges:
             # Find last access node that refers to this edge
             try:
-                node = next(n for n in reversed(order) if n.data == edge.data.data)
+                node = next(n for n in reversed(order)
+                            if n.data == edge.data.data or ('.' in n.data and n.data.split('.')[0] == edge.data.data))
             except StopIteration:
                 continue
                 # raise NameError(f'Access node with data "{edge.data.data}" not found in'
                 #                 f' nested SDFG "{nsdfg.name}" while inlining '
                 #                 '(reconnecting outputs)')
-            state.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
+            if node.data != edge.data.data:
+                anode = state.add_access(edge.data.data)
+                state.add_edge(node, None, anode, None, Memlet())
+                state.add_edge(anode, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
+            else:
+                state.add_edge(node, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
             # Fission state if necessary
             cc = utils.weakly_connected_component(state, node)
             if not any(n in cc for n in subgraph.nodes()):

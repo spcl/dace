@@ -3820,18 +3820,20 @@ class ProgramVisitor(ExtNodeVisitor):
         for state in sdfg.states():
             visited_state_data = set()
             for node in state.nodes():
-                if isinstance(node, nodes.AccessNode) and node.data == name:
-                    visited_state_data.add(node.data)
-                    if (node.data not in visited_data and state.in_degree(node) == 0):
-                        return True
+                if isinstance(node, nodes.AccessNode):
+                    if node.data == name or ('.' in node.data and node.data.split('.')[0] == name):
+                        visited_state_data.add(node.data)
+                        if (node.data not in visited_data and state.in_degree(node) == 0):
+                            return True
             visited_data = visited_data.union(visited_state_data)
 
     def _is_outputnode(self, sdfg: SDFG, name: str):
         for state in sdfg.states():
             for node in state.nodes():
-                if isinstance(node, nodes.AccessNode) and node.data == name:
-                    if state.in_degree(node) > 0:
-                        return True
+                if isinstance(node, nodes.AccessNode):
+                    if node.data == name or ('.' in node.data and node.data.split('.')[0] == name):
+                        if state.in_degree(node) > 0:
+                            return True
 
     def _get_sdfg(self, value: Any, args: Tuple[Any], kwargs: Dict[str, Any]) -> SDFG:
         if isinstance(value, SDFG):  # Already an SDFG
