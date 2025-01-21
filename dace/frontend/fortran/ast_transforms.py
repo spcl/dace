@@ -11,7 +11,7 @@ import sympy as sp
 from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes, ast_utils
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
-from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes
+from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes, TempName
 
 
 class Structure:
@@ -746,10 +746,6 @@ class ArgumentExtractor(NodeTransformer):
         # `self.execution_preludes[-1]` will contain all the temporary variable assignments necessary for that node.
         self.execution_preludes: List[List[ast_internal_classes.BinOp_Node]] = []
 
-    def _get_tempvar_name(self):
-        tmpname, self._count = f"tmp_arg_{self._count}", self._count + 1
-        return tmpname
-
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         DIRECTLY_REFERNCEABLE = (ast_internal_classes.Name_Node, ast_internal_classes.Literal,
                                  ast_internal_classes.Array_Subscript_Node, ast_internal_classes.Data_Ref_Node)
@@ -773,7 +769,7 @@ class ArgumentExtractor(NodeTransformer):
                 continue
 
             # These needs to be extracted, so register a temporary variable.
-            tmpname = self._get_tempvar_name()
+            tmpname = TempName.get_name('tmp_arg')
             decl = ast_internal_classes.Decl_Stmt_Node(
                     vardecl=[ast_internal_classes.Var_Decl_Node(name=tmpname, type='VOID', sizes=None, init=None)])
             node.parent.specification_part.specifications.append(decl)
