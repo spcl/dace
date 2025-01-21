@@ -2188,7 +2188,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
     name_collisions: Dict[str, int] = {k[-1]: 0 for k in ident_map.keys()}
     for k in ident_map.keys():
         name_collisions[k[-1]] += 1
-    name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1}
+    name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1 or k.lower() in KEYWORDS_TO_AVOID}
 
     # Make new unique names for the identifiers.
     uident_map: Dict[SPEC, str] = {}
