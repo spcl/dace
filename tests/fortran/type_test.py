@@ -6,6 +6,7 @@ from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_strin
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 import pytest
 
+
 def test_fortran_frontend_basic_type():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -36,6 +37,7 @@ end subroutine main
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
+
 
 def test_fortran_frontend_basic_type2():
     """
@@ -123,6 +125,7 @@ end subroutine internal_function
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
 
+
 @pytest.mark.skip(reason="Crashed pytest in codegen")
 def test_fortran_frontend_type_pardecl():
     """
@@ -169,7 +172,7 @@ end subroutine internal_function
     assert (a[0, 0] == 11)
     assert (a[1, 0] == 5.5)
     assert (a[2, 0] == 5.5)
-    assert (a[1,1] == 42)
+    assert (a[1, 1] == 42)
 
 
 def test_fortran_frontend_type_struct():
@@ -301,6 +304,7 @@ end subroutine main
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
+
 
 def test_fortran_frontend_type_array():
     """
@@ -436,6 +440,7 @@ end subroutine main
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
 
+
 def test_fortran_frontend_type_arg():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -471,11 +476,11 @@ subroutine main(d)
 end subroutine main
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
-    sdfg.view()
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     print(a)
+
 
 def test_fortran_frontend_type_arg2():
     """

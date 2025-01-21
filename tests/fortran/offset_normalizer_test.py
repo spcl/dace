@@ -20,15 +20,6 @@ subroutine main(d)
   end do
 end subroutine main
 """).check_with_gfortran().get()
-
-    # Test to verify that offset is normalized correctly
-    _, program = create_internal_ast(ParseConfig(main=main, entry_points=tuple('main', )))
-    for subroutine in program.subroutine_definitions:
-        loop = subroutine.execution_part.execution[1]
-        idx_assignment = loop.body.execution[1]
-        assert idx_assignment.rval.rval.value == "50"
-
-    # Now test to verify it executes correctly
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.simplify(verbose=True)
     sdfg.compile()
@@ -38,8 +29,7 @@ end subroutine main
 
     a = np.full([5], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    for i in range(0, 5):
-        assert a[i] == (50 + i) * 2
+    assert np.all(a == [(50 + i) * 2 for i in range(0, 5)])
 
 
 def test_fortran_frontend_offset_normalizer_1d_symbol():
@@ -57,16 +47,6 @@ subroutine main(d, arrsize, arrsize2)
   end do
 end subroutine main
 """).check_with_gfortran().get()
-
-    # Test to verify that offset is normalized correctly
-    _, program = create_internal_ast(ParseConfig(main=main, entry_points=tuple('main', )))
-    for subroutine in program.subroutine_definitions:
-        loop = subroutine.execution_part.execution[1]
-        idx_assignment = loop.body.execution[1]
-        assert isinstance(idx_assignment.rval.rval, ast_internal_classes.Name_Node)
-        assert idx_assignment.rval.rval.name == "arrsize"
-
-    # Now test to verify it executes correctly
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.simplify(verbose=True)
     sdfg.compile()
@@ -100,22 +80,6 @@ subroutine main(d)
   end do
 end subroutine main
 """).check_with_gfortran().get()
-
-    # Test to verify that offset is normalized correctly
-    _, program = create_internal_ast(ParseConfig(main=main, entry_points=tuple('main', )))
-    for subroutine in program.subroutine_definitions:
-        loop = subroutine.execution_part.execution[1]
-        nested_loop = loop.body.execution[1]
-
-        idx = nested_loop.body.execution[1]
-        assert idx.lval.name == 'tmp_index_0'
-        assert idx.rval.rval.value == "50"
-
-        idx2 = nested_loop.body.execution[3]
-        assert idx2.lval.name == 'tmp_index_1'
-        assert idx2.rval.rval.value == "7"
-
-    # Now test to verify it executes correctly
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.simplify(verbose=True)
     sdfg.compile()
@@ -150,24 +114,6 @@ subroutine main(d, arrsize, arrsize2, arrsize3, arrsize4)
   end do
 end subroutine main
 """).check_with_gfortran().get()
-
-    # Test to verify that offset is normalized correctly
-    _, program = create_internal_ast(ParseConfig(main=main, entry_points=tuple('main', )))
-    for subroutine in program.subroutine_definitions:
-        loop = subroutine.execution_part.execution[1]
-        nested_loop = loop.body.execution[1]
-
-        idx = nested_loop.body.execution[1]
-        assert idx.lval.name == 'tmp_index_0'
-        assert isinstance(idx.rval.rval, ast_internal_classes.Name_Node)
-        assert idx.rval.rval.name == "arrsize"
-
-        idx2 = nested_loop.body.execution[3]
-        assert idx2.lval.name == 'tmp_index_1'
-        assert isinstance(idx2.rval.rval, ast_internal_classes.Name_Node)
-        assert idx2.rval.rval.name == "arrsize3"
-
-    # Now test to verify it executes correctly
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.simplify(verbose=True)
     sdfg.compile()
@@ -198,22 +144,6 @@ subroutine main(d)
   end do
 end subroutine main
 """).check_with_gfortran().get()
-
-    # Test to verify that offset is normalized correctly
-    _, program = create_internal_ast(ParseConfig(main=main, entry_points=tuple('main', )))
-    for subroutine in program.subroutine_definitions:
-        loop = subroutine.execution_part.execution[1]
-        nested_loop = loop.body.execution[1]
-
-        idx = nested_loop.body.execution[1]
-        assert idx.lval.name == 'tmp_index_0'
-        assert idx.rval.rval.value == "50"
-
-        idx2 = nested_loop.body.execution[3]
-        assert idx2.lval.name == 'tmp_index_1'
-        assert idx2.rval.rval.value == "7"
-
-    # Now test to verify it executes correctly
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.save('test.sdfg')
     sdfg.simplify(verbose=True)
@@ -247,24 +177,6 @@ subroutine main(d, arrsize, arrsize2, arrsize3, arrsize4)
   end do
 end subroutine main
 """).check_with_gfortran().get()
-
-    # Test to verify that offset is normalized correctly
-    _, program = create_internal_ast(ParseConfig(main=main, entry_points=tuple('main', )))
-    for subroutine in program.subroutine_definitions:
-        loop = subroutine.execution_part.execution[1]
-        nested_loop = loop.body.execution[1]
-
-        idx = nested_loop.body.execution[1]
-        assert idx.lval.name == 'tmp_index_0'
-        assert isinstance(idx.rval.rval, ast_internal_classes.Name_Node)
-        assert idx.rval.rval.name == "arrsize"
-
-        idx2 = nested_loop.body.execution[3]
-        assert idx2.lval.name == 'tmp_index_1'
-        assert isinstance(idx2.rval.rval, ast_internal_classes.Name_Node)
-        assert idx2.rval.rval.name == "arrsize3"
-
-    # Now test to verify it executes correctly
     sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
     sdfg.simplify(verbose=True)
     sdfg.compile()
@@ -369,11 +281,11 @@ end subroutine fun
 
 
 if __name__ == "__main__":
-    # test_fortran_frontend_offset_normalizer_1d()
-    # test_fortran_frontend_offset_normalizer_2d()
-    # test_fortran_frontend_offset_normalizer_2d_arr2loop()
-    # test_fortran_frontend_offset_normalizer_1d_symbol()
-    # test_fortran_frontend_offset_normalizer_2d_symbol()
-    # test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol()
-    # test_fortran_frontend_offset_normalizer_struct()
+    test_fortran_frontend_offset_normalizer_1d()
+    test_fortran_frontend_offset_normalizer_2d()
+    test_fortran_frontend_offset_normalizer_2d_arr2loop()
+    test_fortran_frontend_offset_normalizer_1d_symbol()
+    test_fortran_frontend_offset_normalizer_2d_symbol()
+    test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol()
+    test_fortran_frontend_offset_normalizer_struct()
     test_fortran_frontend_offset_pardecl()

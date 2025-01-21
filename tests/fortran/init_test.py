@@ -69,10 +69,8 @@ end subroutine main
     sdfg = create_singular_sdfg_from_string(sources, 'main')
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
-    sdfg(d=a, torus_max_lat=4.0 / 18.0 * np.arctan(1.0))
-    assert (a[0] == 42)
-    assert (a[1] == 5.674532920122147)
-    assert (a[2] == 42)
+    sdfg(d=a)
+    assert np.allclose(a, [42, 5.674532920122147, 42, 42])
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     inject_const_evals, remove_access_statements, ident_spec, ConstTypeInjection, ConstInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, assign_globally_unique_variable_names, assign_globally_unique_subprogram_names, \
-    create_global_initializers, convert_data_statements_into_assignments
+    create_global_initializers, convert_data_statements_into_assignments, deconstruct_statement_functions
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -2499,24 +2499,12 @@ def create_fparser_ast(cfg: ParseConfig) -> Program:
 def create_internal_ast(cfg: ParseConfig) -> Tuple[ast_components.InternalFortranAst, FNode]:
     ast = create_fparser_ast(cfg)
 
-    ast = deconstruct_enums(ast)
-    ast = deconstruct_associations(ast)
-    ast = correct_for_function_calls(ast)
-    ast = deconstruct_procedure_calls(ast)
-    ast = deconstruct_interface_calls(ast)
-    ast = correct_for_function_calls(ast)
-
     if not cfg.entry_points:
         # Keep all the possible entry points.
-        entry_points = [ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_CLASSES)))
-                        for c in ast.children if isinstance(c, ENTRY_POINT_OBJECT_CLASSES)]
-    else:
-        eps = cfg.entry_points
-        if isinstance(eps, tuple):
-            eps = [eps]
-        ident_map = identifier_specs(ast)
-        entry_points = [ep for ep in eps if ep in ident_map]
-    ast = prune_unused_objects(ast, entry_points)
+        cfg.entry_points = [ident_spec(ast_utils.singular(children_of_type(c, NAMED_STMTS_OF_INTEREST_CLASSES)))
+                            for c in ast.children if isinstance(c, ENTRY_POINT_OBJECT_CLASSES)]
+
+    ast = run_fparser_transformations(ast, cfg)
     assert isinstance(ast, Program)
 
     iast = ast_components.InternalFortranAst()
@@ -2540,6 +2528,55 @@ class SDFGConfig:
         self.config_injections = config_injections or []
         self.normalize_offsets = normalize_offsets
         self.multiple_sdfgs = multiple_sdfgs
+
+
+def run_fparser_transformations(ast: Program, cfg: ParseConfig):
+    print("FParser Op: Removing indirections from AST...")
+    ast = deconstruct_enums(ast)
+    ast = deconstruct_associations(ast)
+    ast = remove_access_statements(ast)
+    ast = correct_for_function_calls(ast)
+    ast = deconstruct_statement_functions(ast)
+    ast = deconstruct_procedure_calls(ast)
+    ast = deconstruct_interface_calls(ast)
+    ast = correct_for_function_calls(ast)
+
+    print("FParser Op: Inject configs & prune...")
+    ast = inject_const_evals(ast, cfg.config_injections)
+    ast = const_eval_nodes(ast)
+    ast = convert_data_statements_into_assignments(ast)
+
+    print("FParser Op: Fix global vars & prune...")
+    # Prune things once after fixing global variables.
+    # NOTE: Global vars fixing has to be done before any pruning, because otherwise some assignment may get lost.
+    ast = make_practically_constant_global_vars_constants(ast)
+    ast = const_eval_nodes(ast)
+    ast = prune_branches(ast)
+    ast = prune_unused_objects(ast, cfg.entry_points)
+
+    print("FParser Op: Fix arguments & prune...")
+    # Another round of pruning after fixing the practically constant arguments, just in case.
+    ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
+    ast = const_eval_nodes(ast)
+    ast = prune_branches(ast)
+    ast = prune_unused_objects(ast, cfg.entry_points)
+
+    print("FParser Op: Fix local vars & prune...")
+    # Another round of pruning after fixing the locally constant variables, just in case.
+    ast = exploit_locally_constant_variables(ast)
+    ast = const_eval_nodes(ast)
+    ast = prune_branches(ast)
+    ast = prune_unused_objects(ast, cfg.entry_points)
+
+    print("FParser Op: Create global initializers & rename uniquely...")
+    ast = create_global_initializers(ast, cfg.entry_points)
+    ast = assign_globally_unique_subprogram_names(ast, set(cfg.entry_points))
+    # TODO: Disabled because some other transforms rely on the naming scheme of variables.
+    # ast = assign_globally_unique_variable_names(ast, set(cfg.entry_points))
+    ast = consolidate_uses(ast)
+
+    return ast
+
 
 def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program: FNode, cfg: SDFGConfig, normalize_offsets: bool = True):
 
@@ -2966,46 +3003,7 @@ def create_sdfg_from_fortran_file_with_options(
 
     """
     if not already_parsed_ast:
-        print("FParser Op: Removing indirections from AST...")
-        ast = deconstruct_enums(ast)
-        ast = deconstruct_associations(ast)
-        ast = remove_access_statements(ast)
-        ast = correct_for_function_calls(ast)
-        ast = deconstruct_procedure_calls(ast)
-        ast = deconstruct_interface_calls(ast)
-
-        print("FParser Op: Inject configs & prune...")
-        ast = inject_const_evals(ast, cfg.config_injections)
-        ast = const_eval_nodes(ast)
-        ast = convert_data_statements_into_assignments(ast)
-
-        print("FParser Op: Fix global vars & prune...")
-        # Prune things once after fixing global variables.
-        # NOTE: Global vars fixing has to be done before any pruning, because otherwise some assignment may get lost.
-        ast = make_practically_constant_global_vars_constants(ast)
-        ast = const_eval_nodes(ast)
-        ast = prune_branches(ast)
-        ast = prune_unused_objects(ast, cfg.entry_points)
-
-        print("FParser Op: Fix arguments & prune...")
-        # Another round of pruning after fixing the practically constant arguments, just in case.
-        ast = make_practically_constant_arguments_constants(ast, cfg.entry_points)
-        ast = const_eval_nodes(ast)
-        ast = prune_branches(ast)
-        ast = prune_unused_objects(ast, cfg.entry_points)
-
-        print("FParser Op: Fix local vars & prune...")
-        # Another round of pruning after fixing the locally constant variables, just in case.
-        ast = exploit_locally_constant_variables(ast)
-        ast = const_eval_nodes(ast)
-        ast = prune_branches(ast)
-        ast = prune_unused_objects(ast, cfg.entry_points)
-
-        print("FParser Op: Create global initializers & rename uniquely...")
-        ast = create_global_initializers(ast, cfg.entry_points)
-        ast = assign_globally_unique_subprogram_names(ast, {('radiation_interface', 'radiation')})
-        ast = assign_globally_unique_variable_names(ast, {'config','thermodynamics','flux','gas','cloud','aerosol','single_level'})
-        ast = consolidate_uses(ast)
+        ast = run_fparser_transformations(ast, cfg)
     else:
         ast = correct_for_function_calls(ast)
 
