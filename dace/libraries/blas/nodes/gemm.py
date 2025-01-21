@@ -7,8 +7,7 @@ from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access, dtype_to_cudadatatype,
-                                              to_cublas_computetype)
+from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen_gemm_opts)
 from .. import environments
 import numpy as np
@@ -1013,14 +1012,11 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         size2 = None
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == '_a':
-                subset = dc(memlet.subset)
-                size0 = subset.size()
+                size0 = memlet.subset.size()
             if dst_conn == '_b':
-                subset = dc(memlet.subset)
-                size1 = subset.size()
+                size1 = memlet.subset.size()
             if dst_conn == '_c':
-                subset = dc(memlet.subset)
-                size2 = subset.size()
+                size2 = memlet.subset.size()
 
         if self.transA:
             size0 = list(reversed(size0))
@@ -1040,8 +1036,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                           UserWarning)
         elif not res:
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
-        out_subset = dc(out_memlet.subset)
-        size3 = out_subset.size()
+        size3 = out_memlet.subset.size()
         if size2 is not None:
             res = [equal(s0, s1) for s0, s1 in zip(size2, size3)]
             fail = any([r is False for r in res])
