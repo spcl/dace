@@ -72,6 +72,16 @@ class ContainerGroup:
     def _validate(self):
         return True
 
+    @staticmethod
+    def from_json(json_obj, context=None):
+        if json_obj['type'] != 'ContainerGroup':
+            raise TypeError("Invalid data type")
+
+        ret = ContainerGroup({})
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
+
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
         retdict = {"type": type(self).__name__, "attributes": attrs}

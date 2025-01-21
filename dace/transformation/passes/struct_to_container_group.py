@@ -5,7 +5,7 @@
 import copy
 from typing import Any, Dict
 import dace
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, NestedDict, SDFGState
 from dace.sdfg.state import ControlFlowBlock
 from dace.properties import make_properties
 from dace.sdfg import nodes
@@ -22,12 +22,14 @@ class StructToContainerGroups(ppl.Pass):
         simplify: bool = True,
         validate: bool = True,
         validate_all: bool = False,
+        clean_container_grous: bool = True,
     ):
         if flattening_mode != ContainerGroupFlatteningMode.StructOfArrays:
             raise Exception("Only StructOfArrays is supported")
         self._simplify = simplify
         self._validate = validate
         self._validate_all = validate_all
+        self._clean_container_grous = clean_container_grous
         self._access_names_map = dict()
         self._data_connected_to_vsv_struct = dict()
         self._flattening_mode = flattening_mode
@@ -125,6 +127,9 @@ class StructToContainerGroups(ppl.Pass):
 
         if self._simplify:
             sdfg.simplify(self._validate, self._validate_all)
+
+        if self._clean_container_grous:
+            sdfg.container_groups = NestedDict()
 
     def _can_be_applied(
         self,
