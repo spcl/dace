@@ -2324,6 +2324,9 @@ def add_use_to_specification(scdef: SCOPE_OBJECT_TYPES, clause: str):
         prepend_children(specification_part, Use_Stmt(clause))
 
 
+KEYWORDS_TO_AVOID = {k.lower for k in ('for', 'in', 'beta')}
+
+
 def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, SPEC]]) -> Program:
     """
     Update the variable declarations to have globally unique names.
@@ -2332,7 +2335,6 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
     2. All public/private access statements were cleanly removed.
     """
     SUFFIX, COUNTER = 'var', 0
-    PYTHON_KEYWORDS = {'for', 'in'}
 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
@@ -2340,7 +2342,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
     name_collisions: Dict[str, int] = {k[-1]: 0 for k in ident_map.keys()}
     for k in ident_map.keys():
         name_collisions[k[-1]] += 1
-    name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1 or k.lower() in PYTHON_KEYWORDS}
+    name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1 or k.lower() in KEYWORDS_TO_AVOID}
 
     entry_point_args: Set[SPEC] = set()
     for k in keepers:
