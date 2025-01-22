@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple, Union, Dict, Any
 
 class FNode(object):
     def __init__(self,
-                 line_number: int = -1,
+                 line_number: Tuple[int, int] = (0, 0),
                  parent: Union[
                      None, 'Subroutine_Subprogram_Node', 'Function_Subprogram_Node', 'Main_Program_Node',
                      'Module_Node'] = None,
@@ -31,6 +31,33 @@ class FNode(object):
         o_field_vals = list(map(lambda name: getattr(o, name, None), o._fields))
         o_attr_vals = list(map(lambda name: getattr(o, name, None), o._attributes))
         return self_field_vals == o_field_vals and self_attr_vals == o_attr_vals
+
+    def __str__(self) -> str:
+        """Project the node object to a readable string, which may not necessarily be a full representation."""
+
+        def _indent(txt: str) -> str:
+            INDENT_BY = 2
+            lns = txt.strip().split('\n')
+            lns = [f"{' ' * INDENT_BY}{l.rstrip()}" for l in lns]
+            return '\n'.join(lns)
+
+        def _fieldstr(fnode) -> str:
+            if isinstance(fnode, (list, tuple)):
+                if not fnode:
+                    return "[]"
+                fstrs = ',\n'.join([str(f) for f in fnode])
+                return f"[\n{_indent(fstrs)}\n]"
+            return str(fnode)
+
+        clsname = type(self).__name__.removesuffix('_Node')
+        objname = self.name if hasattr(self, 'name') else '?'
+        fieldstrs = {f: _fieldstr(getattr(self, f)) for f in self._fields if hasattr(self, f)}
+        fieldstrs = [f"{k}:{_indent(v)}" for k, v in fieldstrs.items()]
+        if fieldstrs:
+            fieldstrs = '\n'.join(fieldstrs)
+            return f"{clsname} '{objname}':\n{_indent(fieldstrs)}"
+        else:
+            return f"{clsname} '{objname}'"
 
 
 class Program_Node(FNode):
@@ -289,6 +316,9 @@ class Name_Node(FNode):
     _attributes = ('name', 'type',)
     _fields = ()
 
+    def __str__(self) -> str:
+        return self.name
+
 
 class Name_Range_Node(FNode):
     _attributes = ('name', 'type', 'arrname', 'pos',)
@@ -492,6 +522,9 @@ class Literal(FNode):
 
     _attributes = ('value', 'type')
     _fields = ()
+
+    def __str__(self) -> str:
+        return f"{self.type}({self.value})"
 
 
 class Int_Literal_Node(Literal):
