@@ -341,7 +341,23 @@ class Generic_Binding_Node(FNode):
 
 
 class Specification_Part_Node(FNode):
-    _fields = ('specifications', 'symbols', 'interface_blocks', 'typedecls', 'enums',)
+    def __init__(self,
+                 specifications: List[FNode],
+                 symbols: List[FNode],
+                 interface_blocks: List[FNode],
+                 typedecls: List[FNode],
+                 enums: List[FNode],
+                 uses: List[FNode],
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.specifications = specifications
+        self.symbols = symbols
+        self.interface_blocks = interface_blocks
+        self.typedecls = typedecls
+        self.enums = enums
+        self.uses = uses
+
+    _fields = ('specifications', 'symbols', 'interface_blocks', 'typedecls', 'enums', 'uses')
 
 
 class Stop_Stmt_Node(FNode):

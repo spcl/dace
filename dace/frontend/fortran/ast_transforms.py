@@ -960,11 +960,11 @@ class FunctionToSubroutineDefiner(NodeTransformer):
             else:
                 node.specification_part = ast_internal_classes.Specification_Part_Node(
                     specifications=[stmt_node],
-                    symbols=None,
-                    interface_blocks=None,
-                    uses=None,
-                    typedecls=None,
-                    enums=None
+                    symbols=[],
+                    interface_blocks=[],
+                    typedecls=[],
+                    enums=[],
+                    uses=[],
                 )
 
         # We should always be able to tell a functions return _variable_ (i.e., not type, which we also should be able
@@ -1404,7 +1404,7 @@ class IndexExtractor(NodeTransformer):
                         else:
                             tmp_name = "tmp_index_" + str(temp)
                             temp = temp + 1
-                            newbody.append(
+                            node.parent.specification_part.specifications.append(
                                 ast_internal_classes.Decl_Stmt_Node(vardecl=[
                                     ast_internal_classes.Var_Decl_Node(name=tmp_name,
                                                                        type="INTEGER",
@@ -2997,7 +2997,8 @@ class PointerRemoval(NodeTransformer):
             symbols=new_symbols,
             typedecls=node.typedecls,
             uses=node.uses,
-            enums=node.enums
+            enums=node.enums,
+            interface_blocks=[],
         )
 
 
