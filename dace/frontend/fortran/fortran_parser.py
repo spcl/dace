@@ -1443,7 +1443,7 @@ class AST_translator:
             new_sdfg.reset_cfg_list()
             new_sdfg.validate()
             tmp_sdfg=copy.deepcopy(new_sdfg)
-            new_sdfg.apply_transformations(IntrinsicSDFGTransformation)
+            new_sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
             from dace.transformation.dataflow import RemoveSliceView
             new_sdfg.apply_transformations_repeated([RemoveSliceView])
             from dace.transformation.passes.lift_struct_views import LiftStructViews
@@ -2754,7 +2754,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         from dace.transformation.passes.lift_struct_views import LiftStructViews
         from dace.transformation.pass_pipeline import FixedPointPipeline
         FixedPointPipeline([LiftStructViews()]).apply_pass(g, {})
-        g.apply_transformations(IntrinsicSDFGTransformation)
+        g.apply_transformations_repeated(IntrinsicSDFGTransformation)
         g.expand_library_nodes()
         gmap[ep] = g
 
@@ -3290,7 +3290,7 @@ def create_sdfg_from_fortran_file_with_options(
         print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz")}')
         sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
 
-        sdfg.apply_transformations(IntrinsicSDFGTransformation)
+        sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
 
         try:
             sdfg.expand_library_nodes()
@@ -3362,7 +3362,7 @@ def create_sdfg_from_fortran_file_with_options(
             sdfg.validate()
             sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
             sdfg.validate()
-            sdfg.apply_transformations(IntrinsicSDFGTransformation)
+            sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
             sdfg.validate()
             try:
                 sdfg.expand_library_nodes()
