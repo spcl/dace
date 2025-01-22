@@ -150,6 +150,9 @@ def symbolic_execution({}):
         ", ".join(outputs),
     )
 
+    # Clean out type coonversions from the code
+    code_fn = re.sub(r"dace\.(float32|int32|float64|int64)\((.*?)\)", r"\2", code_fn)
+
     try:
         # need to have dace so things like `dace.float32(1)` work
         temp_globals = {'dace': dace}
@@ -306,7 +309,8 @@ class BackwardPassGenerator:
         self.zero_non_transients = zero_non_transients
 
         # Save a copy of the forward sdfg in case the backward pass will be added to the same object
-        self.original_forward_sdfg = copy.deepcopy(self.sdfg)
+        # TODO: This will be used for recomputation but preferably find another way
+        # self.original_forward_sdfg = copy.deepcopy(self.sdfg)
 
         #: Mapping from overwritten input name to storing AccessNode
         self.stored_inputs: Dict[str, nodes.AccessNode] = {}
@@ -4293,6 +4297,15 @@ class BackwardPassGenerator:
         :return: the new AccessNode which contains the stored data, 
                  a list of memlets connecting an assign tasklet to this new AccessNode.
         """
+        # We need to add an empty memlet from the new store AccessNode to make sure the data is stored before it is
+        # potentially altered
+        to_connect = []
+        for out_edge in forward_state.out_edges(forward_an):
+            # Get the destination of the edge
+            dst = out_edge.dst
+            if not isinstance(dst, nodes.MapEntry):
+                # This will not be necessary for maps since the storing is added to the same map
+                to_connect.append(dst)
 
         # Get the connector and edge to save
         if isinstance(edge.src, nodes.AccessNode) and edge.src is not forward_an:
@@ -4559,6 +4572,10 @@ class BackwardPassGenerator:
                 # This should be the last connection
                 forward_state.add_edge(previous_node, previous_node_out_connector, new_store_node, None, memlet_data)
                 break
+
+        for node in to_connect:
+            # Connect the new store AccessNode to assure the store happens first
+            forward_state.add_edge(new_store_node, None, node, None, Memlet())
 
         return new_store_node, memlets_stack
 
