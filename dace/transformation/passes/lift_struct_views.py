@@ -16,6 +16,8 @@ from dace import dtypes
 
 
 import sys
+
+from dace.transformation.transformation import explicit_cf_compatible
 if sys.version_info >= (3, 8):
     from typing import Literal
     dirtype = Literal['in', 'out']
@@ -348,6 +350,7 @@ def _data_containers_in_ast(node: ast.AST, arrnames: Set[str]) -> Set[str]:
                 result.add(data)
     return result
 
+@explicit_cf_compatible
 class LiftStructViews(ppl.Pass):
     """
     Lift direct accesses to struct members to accesses to views pointing to that struct member.

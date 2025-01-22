@@ -3287,11 +3287,82 @@ class ProgramVisitor(ExtNodeVisitor):
         if isinstance(node.value, (ast.Tuple, ast.List)):
             for n in node.value.elts:
                 results.extend(self._gettype(n))
+        elif isinstance(node.value, ast.Name) and node.value.id in self.sdfg.arrays and isinstance(
+                self.sdfg.arrays[node.value.id],
+                data.Array) and self.sdfg.arrays[node.value.id].total_size == len(elts):
+            # In the case where the rhs is an array (not being accessed with a slice) of exactly the same length as the
+            # number of elements in the lhs, the array can be expanded with a series of slice/subscript accesses to
+            # constant indexes (according to the number of elements in the lhs). These expansions can then be used to
+            # perform an unpacking assignment, similar to what Python does natively.
+            for i in range(len(elts)):
+                const_node = NumConstant(i)
+                ast.copy_location(const_node, node)
+                slice_node = ast.Subscript(node.value, const_node, node.value.ctx)
+                ast.copy_location(slice_node, node)
+                results.extend(self._gettype(slice_node))
         else:
             results.extend(self._gettype(node.value))
 
         if len(results) != len(elts):
-            raise DaceSyntaxError(self, node, 'Function returns %d values but %d provided' % (len(results), len(elts)))
+            if len(elts) == 1 and len(results) > 1 and isinstance(elts[0], ast.Name):
+                # If multiple results are being assigned to one element, attempt to perform a packing assignment,
+                # i.e., similar to Python. This constructs a tuple / array of the correct size for the lhs according to
+                # the number of elements on the rhs, and then assigns to individual array / tuple positions using the
+                # correct slice accesses. If the datacontainer on the lhs is not defined yet, it is created here.
+                # If it already exists, only succeed if the size matches the number of elements on the rhs, similar to
+                # Python. All elements on the rhs must have a common datatype for this to work.
+                elt = elts[0]
+                desc = None
+                if elt.id in self.sdfg.arrays:
+                    desc = self.sdfg.arrays[elt.id]
+                if desc is not None and not isinstance(desc, data.Array):
+                    raise DaceSyntaxError(
+                        self, node, 'Cannot assign %d function return values to %s due to incompatible type' %
+                        (len(results), elt.id))
+                elif desc is not None and desc.total_size != len(results):
+                    raise DaceSyntaxError(
+                        self, node, 'Cannot assign %d function return values to a data container of size %s' %
+                        (len(results), str(desc.total_size)))
+
+                # Determine the result data type and make sure there is only one.
+                res_dtype = None
+                for res, _ in results:
+                    if not (isinstance(res, str) and res in self.sdfg.arrays):
+                        res_dtype = None
+                        break
+                    res_data = self.sdfg.arrays[res]
+                    if res_dtype is None:
+                        res_dtype = res_data.dtype
+                    elif res_dtype != res_data.dtype:
+                        res_dtype = None
+                        break
+                if res_dtype is None:
+                    raise DaceSyntaxError(
+                        self, node,
+                        'Cannot determine common result datatype for %d function return values' % (len(results)))
+
+                res_name = elt.id
+                if desc is None:
+                    # If no data container exists yet, create it.
+                    res_name, desc = self.sdfg.add_transient(res_name, (len(results), ), res_dtype)
+                    self.variables[res_name] = res_name
+
+                # Create the correct slice accesses.
+                new_elts = []
+                for i in range(len(results)):
+                    name_node = ast.Name(res_name, elt.ctx)
+                    ast.copy_location(name_node, elt)
+                    const_node = NumConstant(i)
+                    ast.copy_location(const_node, elt)
+                    slice_node = ast.Subscript(name_node, const_node, elt.ctx)
+                    ast.copy_location(slice_node, elt)
+                    new_elts.append(slice_node)
+
+                elts = new_elts
+            else:
+                raise DaceSyntaxError(
+                    self, node,
+                    'Function returns %d values but assigning to %d expected values' % (len(results), len(elts)))
 
         defined_vars = {**self.variables, **self.scope_vars}
         defined_arrays = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.scope_arrays})

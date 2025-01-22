@@ -2,21 +2,25 @@
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
-import sympy
-
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
-from dace.subsets import Range
-from dace.transformation import pass_pipeline as ppl, transformation
-from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt, symbolic
-from dace.sdfg.graph import Edge
-from dace.sdfg import nodes as nd, utils as sdutil
-from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.propagation import align_memlet
-from typing import Dict, Iterable, List, Set, Tuple, Any, Optional, Union
 import networkx as nx
+import sympy
 from networkx.algorithms import shortest_paths as nxsp
 
+from dace import SDFG, InterstateEdge, Memlet, SDFGState
+from dace import data as dt
+from dace import properties, symbolic
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
+from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.graph import Edge
+from dace.sdfg.propagation import align_memlet
+from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock,
+                             ControlFlowBlock, ControlFlowRegion, LoopRegion)
+from dace.subsets import Range
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
 
 WriteScopeDict = Dict[str, Dict[Optional[Tuple[SDFGState, nd.AccessNode]],
@@ -111,6 +115,8 @@ class ControlFlowBlockReachability(ppl.Pass):
         :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
                  control flow blocks.
         """
+        top_sdfg.reset_cfg_list()
+
         single_level_reachable: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = defaultdict(
             lambda: defaultdict(set)
         )

@@ -1208,6 +1208,11 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     _sdfg: Optional['SDFG'] = None
     _parent_graph: Optional['ControlFlowRegion'] = None
 
+    certain_reads = DictProperty(key_type=str, value_type=mm.Memlet)
+    possible_reads = DictProperty(key_type=str, value_type=mm.Memlet)
+    certain_writes = DictProperty(key_type=str, value_type=mm.Memlet)
+    possible_writes = DictProperty(key_type=str, value_type=mm.Memlet)
+
     def __init__(self, label: str = '', sdfg: Optional['SDFG'] = None, parent: Optional['ControlFlowRegion'] = None):
         super(ControlFlowBlock, self).__init__()
         self._label = label
@@ -1218,6 +1223,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         self.pre_conditions = {}
         self.post_conditions = {}
         self.invariant_conditions = {}
+        self.certain_reads = {}
+        self.possible_reads = {}
+        self.certain_writes = {}
+        self.possible_writes = {}
 
         self.guid = generate_element_id(self)
 
