@@ -52,7 +52,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         cur_v = cur_v.stype
                         prefix_ = f'(*{prefix_})'
 
-                    _visit_structure(cur_v, args, prefix_)
+                    if isinstance(cur_v, data.Structure):
+                        _visit_structure(cur_v, args, prefix_)
 
                 if isinstance(v, data.Data):
                     args[f'{prefix}->{k}'] = v
@@ -268,7 +269,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         conntype,
                                                         ancestor=0,
                                                         is_write=True)
-        
+
         # # if '.' in memlet.data:
         # #     root = memlet.data.split('.')[0]
         # #     if root in value and isinstance(sdfg.arrays[root], data.StructureView):
@@ -307,7 +308,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     value = f'{arrexpr}->{field_name}'
                     if isinstance(stype.members[field_name], data.Scalar):
                         value = '&' + value
-        
+
         def _visit_structure(struct: Union[data.Structure, data.StructureView],
                              prefix: str = '', declare: bool = True, define: bool = True):
                 for k, v in struct.members.items():
@@ -568,15 +569,15 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
-            
+
             # NOTE: Special case: double pointer
             ctype_str = nodedesc.dtype.ctype
             format_str = "{name} = new {ctype} DACE_ALIGN(64)[{size}];\n"
             if (isinstance(nodedesc.dtype, dtypes.pointer) and
                 isinstance(nodedesc.dtype.base_type, (dtypes.pointer, dtypes.struct))):
                 ctype_str = nodedesc.dtype.base_type.ctype
-                format_str = "{name} = new {ctype} DACE_ALIGN(64)*[{size}];\n"    
-            
+                format_str = "{name} = new {ctype} DACE_ALIGN(64)*[{size}];\n"
+
             allocation_stream.write(format_str.format(name=alloc_name, ctype=ctype_str, size=cpp.sym2cpp(arrsize)),
                                     cfg, state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
@@ -1759,7 +1760,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         fsyms = self._frame.free_symbols(node.sdfg)
         arglist = node.sdfg.arglist(scalars_only=False, free_symbols=fsyms)
-        
+
         self._define_sdfg_arguments(node.sdfg, arglist)
 
 
