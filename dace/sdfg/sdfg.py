@@ -2518,6 +2518,7 @@ class SDFG(ControlFlowRegion):
         """
         from dace.transformation.passes.simplify import SimplifyPass
         return SimplifyPass(validate=validate, validate_all=validate_all, verbose=verbose,
+                            skip=options.get('skip', None),
                             pass_options=options).apply_pass(self, {})
 
     def auto_optimize(self,
