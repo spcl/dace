@@ -193,9 +193,9 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                     # If input array has inputs of its own (cannot promote within same state), skip
                     if state.in_degree(tinput.src) > 0:
                         if isinstance(sdfg.arrays[tinput.src.data], dt.View):
-                            # Trivial views should be removed first
+                            # Views that are not examining struct members should be removed first
                             viewing_node = sdutils.get_view_node(state, tinput.src)
-                            if viewing_node.data == tinput.src.data:
+                            if not isinstance(sdfg.arrays[viewing_node.data], (dt.StructureView, dt.ContainerView)):
                                 candidates.remove(candidate)
                                 break         
                         else:
