@@ -353,6 +353,10 @@ class Error_Stmt_Node(FNode):
 
 
 class Execution_Part_Node(FNode):
+    def __init__(self, execution: List[FNode], **kwargs):
+        super().__init__(**kwargs)
+        self.execution = execution
+
     _fields = ('execution',)
 
 
@@ -656,12 +660,14 @@ class Map_Stmt_Node(For_Stmt_Node):
 
 
 class If_Stmt_Node(FNode):
+    def __init__(self, cond:FNode, body:Optional[FNode] = None, body_else:Optional[FNode] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.cond = cond
+        self.body = body
+        self.body_else = body_else
+
     _attributes = ()
-    _fields = (
-        'cond',
-        'body',
-        'body_else',
-    )
+    _fields = ('cond', 'body', 'body_else')
 
 
 class Defer_Shape_Node(FNode):

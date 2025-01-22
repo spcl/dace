@@ -2194,7 +2194,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
             rangepos.append(currentindex)
             if declaration:
-                newbody.append(
+                node.parent.specification_part.specifications.append(
                     ast_internal_classes.Decl_Stmt_Node(vardecl=[
                         ast_internal_classes.Symbol_Decl_Node(
                             name="tmp_parfor_" + str(count + len(rangepos) - 1), type="INTEGER", sizes=None, init=None,
@@ -2304,42 +2304,42 @@ class IfConditionExtractor(NodeTransformer):
     Ensures that each loop iterator is unique by extracting the actual iterator and assigning it to a uniquely named local variable
     """
 
-    def __init__(self):
+    def __init__(self, program: ast_internal_classes.Program_Node):
         self.count = 0
+
+        ParentScopeAssigner().visit(program)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
         for child in node.execution:
-
-            if isinstance(child, ast_internal_classes.If_Stmt_Node):
-                old_cond = child.cond
-                newbody.append(
-                    ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                        ast_internal_classes.Var_Decl_Node(
-                            name="_if_cond_" + str(self.count), type="INTEGER", sizes=None, init=None)
-                    ]))
-                newbody.append(ast_internal_classes.BinOp_Node(
-                    lval=ast_internal_classes.Name_Node(name="_if_cond_" + str(self.count)),
-                    op="=",
-                    rval=old_cond,
-                    line_number=child.line_number,
-                    parent=child.parent))
-                newcond = ast_internal_classes.BinOp_Node(
-                    lval=ast_internal_classes.Name_Node(name="_if_cond_" + str(self.count)),
-                    op="==",
-                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                    line_number=child.line_number, parent=old_cond.parent)
-                newifbody = self.visit(child.body)
-                newelsebody = self.visit(child.body_else)
-
-                newif = ast_internal_classes.If_Stmt_Node(cond=newcond, body=newifbody, body_else=newelsebody,
-                                                          line_number=child.line_number, parent=child.parent)
-                self.count += 1
-
-                newbody.append(newif)
-
-            else:
+            if not isinstance(child, ast_internal_classes.If_Stmt_Node):
                 newbody.append(self.visit(child))
+                continue
+
+            tmpname = TempName.get_name('_if_cond_')
+            node.parent.specification_part.specifications.append(
+                ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                    ast_internal_classes.Var_Decl_Node(
+                        name=tmpname, type="INTEGER", sizes=None, init=None,
+                        line_number=node.line_number, parent=node.parent)]))
+            newbody.append(
+                ast_internal_classes.BinOp_Node(
+                    lval=ast_internal_classes.Name_Node(name=tmpname), op="=", rval=child.cond,
+                    line_number=child.line_number, parent=child.parent))
+            newcond = ast_internal_classes.BinOp_Node(
+                lval=ast_internal_classes.Name_Node(name=tmpname),
+                op="==",
+                rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                line_number=child.line_number, parent=node.parent)
+            newifbody = self.visit(child.body)
+            newelsebody = self.visit(child.body_else)
+
+            newif = ast_internal_classes.If_Stmt_Node(
+                cond=newcond, body=newifbody, body_else=newelsebody,
+                line_number=child.line_number, parent=child.parent)
+            self.count += 1
+
+            newbody.append(newif)
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
 
@@ -2358,7 +2358,7 @@ class ForDeclarer(NodeTransformer):
                 newbody.append(self.visit(child))
                 continue
             if isinstance(child, ast_internal_classes.For_Stmt_Node):
-                newbody.append(
+                node.parent.specification_part.specifications.append(
                     ast_internal_classes.Decl_Stmt_Node(vardecl=[
                         ast_internal_classes.Symbol_Decl_Node(
                             name="_for_it_" + str(self.count), type="INTEGER", sizes=None, init=None)
@@ -2430,7 +2430,7 @@ class ElementalFunctionExpander(NodeTransformer):
                 if not arrays:
                     newbody.append(self.visit(child))
                 else:
-                    newbody.append(
+                    node.parent.specification_part.specifications.append(
                         ast_internal_classes.Decl_Stmt_Node(vardecl=[
                             ast_internal_classes.Var_Decl_Node(
                                 name="_for_elem_it_" + str(self.count), type="INTEGER", sizes=None, init=None)
