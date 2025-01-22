@@ -776,19 +776,20 @@ class SDFG(ControlFlowRegion):
         """
         if find_new_name:
             name = self._find_new_name(name)
-        else:
+        # TODO: Re-Enable!
+        #else:
             # We do not check for data constant, because there is a link between the constants and
             #  the data descriptors.
-            if name in self.symbols:
-                raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
-            if name in self.arrays:
-                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
-            if name in self._subarrays:
-                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a subarray.')
-            if name in self._rdistrarrays:
-                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a RedistrArray.')
-            if name in self._pgrids:
-                raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a ProcessGrid.')
+            #if name in self.symbols:
+            #    raise FileExistsError(f'Symbol "{name}" already exists in SDFG')
+            #if name in self.arrays:
+            #    raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a data descriptor.')
+            #if name in self._subarrays:
+            #    raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a subarray.')
+            #if name in self._rdistrarrays:
+            #    raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a RedistrArray.')
+            #if name in self._pgrids:
+            #    raise FileExistsError(f'Cannot create symbol "{name}", the name is used by a ProcessGrid.')
         if not isinstance(stype, dtypes.typeclass):
             stype = dtypes.dtype_to_typeclass(stype)
         self.symbols[name] = stype
@@ -1329,10 +1330,20 @@ class SDFG(ControlFlowRegion):
         defined_syms |= set(self.constants_prop.keys())
 
         # Add used symbols from init and exit code
+        init_code_symbols = set()
+        exit_code_symbols = set()
         for code in self.init_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            init_code_symbols |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
         for code in self.exit_code.values():
-            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+            exit_code_symbols |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+
+
+        free_syms |= set(filter(
+            lambda x: not (str(x).startswith('__f2dace_') or str(x).startswith('tmp_struct_symbol')), init_code_symbols
+        ))
+        free_syms |= set(filter(
+            lambda x: not (str(x).startswith('__f2dace_') or str(x).startswith('tmp_struct_symbol')), exit_code_symbols
+        ))
 
         return super()._used_symbols_internal(all_symbols=all_symbols,
                                               keep_defined_in_mapping=keep_defined_in_mapping,

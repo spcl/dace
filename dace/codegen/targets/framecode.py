@@ -51,6 +51,11 @@ class DaCeCodeGenerator(object):
         self.fsyms: Dict[int, Set[str]] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
         fsyms = self.free_symbols(sdfg)
+        # TODO: Hack, remove!
+        fsyms = set(filter(lambda x: not (
+            str(x).startswith('__f2dace_SA') or str(x).startswith('__f2dace_SOA') or
+            str(x).startswith('tmp_struct_symbol')
+        ), fsyms))
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
         # resolve all symbols and constants
@@ -239,8 +244,11 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
-        initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
-        initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
+        # TODO: Hack, revert!
+        initparams = sdfg.signature(arglist=self.arglist)
+        initparamnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
+        #initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
+        #initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():

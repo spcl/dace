@@ -1755,6 +1755,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     # symbols_defined_at in this moment
                     sdfg.add_symbol(sym, infer_expr_type(symval, self.sdfg.symbols) or dtypes.typeclass(int))
 
+        self.sdfg.reset_cfg_list()
         return s
 
     def add_map(
@@ -2814,6 +2815,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         if isinstance(node, AbstractControlFlowRegion):
             for n in node.all_control_flow_blocks():
                 n.sdfg = self.sdfg
+            self.reset_cfg_list()
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
