@@ -10,54 +10,40 @@ import pytest
 from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
 from dace.frontend.fortran import fortran_parser
 from fparser.two.symbol_table import SymbolTable
+
+from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 from dace.sdfg import utils as sdutil
 
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
 
 def test_fortran_frontend_pointer_test():
     """
     Tests to check whether Fortran array slices are correctly translates to DaCe views.
     """
-    test_name = "pointer_test"
-    test_string = """
-                    PROGRAM """ + test_name + """_program
-implicit none
-REAL lon(10)
-REAL lout(10)
-TYPE simple_type
-                        REAL:: w(5,5,5),z(5)
-                        INTEGER:: a         
-END TYPE simple_type
-
-lon(:) = 1.0
-CALL pointer_test_function(lon,lout)
-
-end
-
-
-  SUBROUTINE pointer_test_function (lon,lout)
-     REAL, INTENT(in) :: lon(10)
-     REAL, INTENT(out) :: lout(10)
-     TYPE(simple_type) :: s
-     REAL :: area
-     REAL, POINTER, CONTIGUOUS :: p_area
-     INTEGER :: i,j
-     
-     s%w(1,1,1)=5.5
-     lout(:)=0.0
-     p_area  => s%w
-    
-     lout(1)=p_area(1,1,1)+lon(1)
-
-     
-   END SUBROUTINE pointer_test_function
-  
-                    """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,True,False)
+    sources, main = SourceCodeBuilder().add_file("""
+subroutine main(lon, lout)
+  real, intent(in) :: lon(10)
+  real, intent(out) :: lout(10)
+  type simple_type
+    real:: w(5, 5, 5), z(5)
+    integer:: a
+  end type simple_type
+  type(simple_type), target :: s
+  real :: area
+  real, pointer, contiguous :: p_area(:, :, :)
+  integer :: i, j
+  s%w(1, 1, 1) = 5.5
+  lout(:) = 0.0
+  p_area => s%w
+  lout(1) = p_area(1, 1, 1) + lon(1)
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'main')
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
             if node.sdfg is not None:
