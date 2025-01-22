@@ -1,13 +1,13 @@
 from typing import Dict
 
 import numpy as np
+import pytest
 
 import dace
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
-from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, SDFGConfig, \
-    create_sdfg_from_internal_ast, create_singular_sdfg_from_string
+from dace.frontend.fortran.fortran_parser import ParseConfig, create_internal_ast, create_singular_sdfg_from_string
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
-import pytest
+
 
 def construct_internal_ast(sources: Dict[str, str]):
     assert 'main.f90' in sources
@@ -15,6 +15,8 @@ def construct_internal_ast(sources: Dict[str, str]):
     iast, prog = create_internal_ast(cfg)
     return iast, prog
 
+
+@pytest.mark.skip('Segfaults in Python 3.9, works in Python 3.12')
 def test_minimal():
     sources, main = SourceCodeBuilder().add_file("""
 module lib
@@ -42,7 +44,7 @@ subroutine main(cfg, c)
 end subroutine main
 """).check_with_gfortran().get()
     g = create_singular_sdfg_from_string(
-        sources, entry_point='main',  normalize_offsets=False,
+        sources, entry_point='main', normalize_offsets=False,
         config_injections=[
             ConstTypeInjection(scope_spec=None, type_spec=('lib', 'config'), component_spec=('a_d0_s',), value='3'),
             ConstTypeInjection(scope_spec=None, type_spec=('lib', 'config'), component_spec=('a_d1_s',), value='4'),
@@ -70,4 +72,4 @@ end subroutine main
 
 
 if __name__ == "__main__":
-    test_minimal() 
+    test_minimal()

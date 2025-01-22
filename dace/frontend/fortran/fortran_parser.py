@@ -34,7 +34,8 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     inject_const_evals, remove_access_statements, ident_spec, ConstTypeInjection, ConstInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
     exploit_locally_constant_variables, assign_globally_unique_subprogram_names, \
-    create_global_initializers, convert_data_statements_into_assignments, deconstruct_statement_functions
+    create_global_initializers, convert_data_statements_into_assignments, deconstruct_statement_functions, \
+    assign_globally_unique_variable_names
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
@@ -2571,7 +2572,7 @@ def run_fparser_transformations(ast: Program, cfg: ParseConfig):
     ast = create_global_initializers(ast, cfg.entry_points)
     ast = assign_globally_unique_subprogram_names(ast, set(cfg.entry_points))
     # TODO: Disabled because some other transforms rely on the naming scheme of variables.
-    # ast = assign_globally_unique_variable_names(ast, set(cfg.entry_points))
+    ast = assign_globally_unique_variable_names(ast, set(cfg.entry_points))
     ast = consolidate_uses(ast)
 
     return ast
