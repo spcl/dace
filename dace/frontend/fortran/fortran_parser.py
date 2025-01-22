@@ -2611,7 +2611,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
         raise NameError("Not all functions were transformed to subroutines")
     program.function_definitions = []
 
-    program = ast_transforms.SignToIf().visit(program)
+    program = ast_transforms.SignToIf(own_ast).visit(program)
     # run it again since signtoif might introduce patterns that have to be extracted
     # example: ABS call inside an UnOpNode
     program = ast_transforms.CallExtractor(program).visit(program)

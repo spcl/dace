@@ -1702,6 +1702,7 @@ class MathFunctions(IntrinsicTransformation):
             node = binop_node.rval
 
             name = node.name.name.split('__dace_')
+
             if len(name) != 2 or name[1] not in MathFunctions.INTRINSIC_TO_DACE:
                 return binop_node
             func_name = name[1]
@@ -1876,12 +1877,12 @@ class FortranIntrinsics:
     def call_extraction_exemptions() -> List[str]:
         return FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION
 
-    def replace_function_name(self, node: FASTNode) -> ast_internal_classes.Name_Node:
+    def replace_function_name(self, node: Union[FASTNode, ast_internal_classes.Name_Node]) -> ast_internal_classes.Name_Node:
         if isinstance(node, ast_internal_classes.Name_Node):
             func_name = node.name
         else:
             func_name = node.string
-        
+
         replacements = {
             "SIGN": "__dace_sign",
             # TODO implement and categorize the intrinsic functions below
@@ -1901,7 +1902,7 @@ class FortranIntrinsics:
             "DATE_AND_TIME": "__dace_date_and_time",
             "RESHAPE": "__dace_reshape",
         }
-       
+
         if func_name in replacements:
             return ast_internal_classes.Name_Node(name=replacements[func_name])
         elif DirectReplacement.replacable_name(func_name):

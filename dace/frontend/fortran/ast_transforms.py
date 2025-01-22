@@ -1467,6 +1467,10 @@ class IndexExtractor(NodeTransformer):
 
 
 class SignToIf(NodeTransformer):
+
+    def __init__(self, ast):
+        self.ast = ast
+
     """
     Transforms all sign expressions into if statements
     """
@@ -1479,11 +1483,14 @@ class SignToIf(NodeTransformer):
                                                    rval=ast_internal_classes.Real_Literal_Node(value="0.0"),
                                                    lval=args[1],
                                                    line_number=node.line_number, parent=node.parent)
+
+            abs_name = self.ast.intrinsic_handler.replace_function_name(ast_internal_classes.Name_Node(name="ABS"))
+
             body_if = ast_internal_classes.Execution_Part_Node(execution=[
                 ast_internal_classes.BinOp_Node(lval=copy.deepcopy(lval),
                                                 op="=",
                                                 rval=ast_internal_classes.Call_Expr_Node(
-                                                    name=ast_internal_classes.Name_Node(name="__dace_ABS"),
+                                                    name=abs_name,
                                                     type="DOUBLE",
                                                     args=[copy.deepcopy(args[0])],
                                                     line_number=node.line_number, parent=node.parent,
@@ -1498,7 +1505,7 @@ class SignToIf(NodeTransformer):
                                                     op="-",
                                                     type="VOID",
                                                     lval=ast_internal_classes.Call_Expr_Node(
-                                                        name=ast_internal_classes.Name_Node(name="__dace_ABS"),
+                                                        name=abs_name,
                                                         args=[copy.deepcopy(args[0])],
                                                         type="DOUBLE",
                                                         subroutine=False,
