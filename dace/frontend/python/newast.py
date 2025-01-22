@@ -3295,7 +3295,7 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             rval = self._gettype(node.value)
             if (len(elts) > 1 and len(rval) == 1 and rval[0][1] == data.Array and rval[0][0] in self.sdfg.arrays and
-                self.sdfg.arrays[rval[0][0]].shape == (len(elts),)):
+                self.sdfg.arrays[rval[0][0]].shape[0] == len(elts)):
                 # In the case where the rhs is an array (not being accessed with a slice) of exactly the same length as
                 # the number of elements in the lhs, the array can be expanded with a series of slice/subscript accesses
                 # to constant indexes (according to the number of elements in the lhs). These expansions can then be
