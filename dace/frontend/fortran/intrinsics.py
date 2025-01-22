@@ -9,8 +9,8 @@ from numpy import array_repr
 
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, \
-    ScopeVarsDeclarations, TypeInference, par_Decl_Range_Finder, mywalk
-from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
+    ScopeVarsDeclarations, TypeInference, par_Decl_Range_Finder
+from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes, mywalk
 from dace.libraries.blas.nodes.dot import dot_libnode
 from dace.libraries.blas.nodes.gemm import gemm_libnode
 from dace.libraries.standard.nodes import Transpose
