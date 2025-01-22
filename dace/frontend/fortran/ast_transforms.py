@@ -11,6 +11,7 @@ import sympy as sp
 from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes, ast_utils
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
+from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes, TempName
 
 
 class Structure:
@@ -95,46 +96,6 @@ class Structures:
             struct_def = self.structures[struct_type]
 
         return struct_def, cur_var, prev_node
-
-
-def iter_fields(node: ast_internal_classes.FNode):
-    """
-    Yield a tuple of ``(fieldname, value)`` for each field in ``node._fields``
-    that is present on *node*.
-    """
-    for field in node._fields:
-        try:
-            yield field, getattr(node, field)
-        except AttributeError:
-            pass
-
-
-def iter_attributes(node: ast_internal_classes.FNode):
-    """
-    Yield a tuple of ``(fieldname, value)`` for each field in ``node._attributes``
-    that is present on *node*.
-    """
-    for field in node._attributes:
-        try:
-            yield field, getattr(node, field)
-        except AttributeError:
-            pass
-
-
-def iter_child_nodes(node: ast_internal_classes.FNode):
-    """
-    Yield all direct child nodes of *node*, that is, all fields that are nodes
-    and all items of fields that are lists of nodes.
-    """
-
-    for name, field in iter_fields(node):
-        # print("NASME:",name)
-        if isinstance(field, ast_internal_classes.FNode):
-            yield field
-        elif isinstance(field, list):
-            for item in field:
-                if isinstance(item, ast_internal_classes.FNode):
-                    yield item
 
 
 class NodeVisitor(object):
@@ -785,10 +746,6 @@ class ArgumentExtractor(NodeTransformer):
         # `self.execution_preludes[-1]` will contain all the temporary variable assignments necessary for that node.
         self.execution_preludes: List[List[ast_internal_classes.BinOp_Node]] = []
 
-    def _get_tempvar_name(self):
-        tmpname, self._count = f"tmp_arg_{self._count}", self._count + 1
-        return tmpname
-
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         DIRECTLY_REFERNCEABLE = (ast_internal_classes.Name_Node, ast_internal_classes.Literal,
                                  ast_internal_classes.Array_Subscript_Node, ast_internal_classes.Data_Ref_Node)
@@ -812,7 +769,7 @@ class ArgumentExtractor(NodeTransformer):
                 continue
 
             # These needs to be extracted, so register a temporary variable.
-            tmpname = self._get_tempvar_name()
+            tmpname = TempName.get_name('tmp_arg')
             decl = ast_internal_classes.Decl_Stmt_Node(
                     vardecl=[ast_internal_classes.Var_Decl_Node(name=tmpname, type='VOID', sizes=None, init=None)])
             node.parent.specification_part.specifications.append(decl)
@@ -1510,6 +1467,10 @@ class IndexExtractor(NodeTransformer):
 
 
 class SignToIf(NodeTransformer):
+
+    def __init__(self, ast):
+        self.ast = ast
+
     """
     Transforms all sign expressions into if statements
     """
@@ -1522,11 +1483,14 @@ class SignToIf(NodeTransformer):
                                                    rval=ast_internal_classes.Real_Literal_Node(value="0.0"),
                                                    lval=args[1],
                                                    line_number=node.line_number, parent=node.parent)
+
+            abs_name = self.ast.intrinsic_handler.replace_function_name(ast_internal_classes.Name_Node(name="ABS"))
+
             body_if = ast_internal_classes.Execution_Part_Node(execution=[
                 ast_internal_classes.BinOp_Node(lval=copy.deepcopy(lval),
                                                 op="=",
                                                 rval=ast_internal_classes.Call_Expr_Node(
-                                                    name=ast_internal_classes.Name_Node(name="__dace_ABS"),
+                                                    name=abs_name,
                                                     type="DOUBLE",
                                                     args=[copy.deepcopy(args[0])],
                                                     line_number=node.line_number, parent=node.parent,
@@ -1541,7 +1505,7 @@ class SignToIf(NodeTransformer):
                                                     op="-",
                                                     type="VOID",
                                                     lval=ast_internal_classes.Call_Expr_Node(
-                                                        name=ast_internal_classes.Name_Node(name="__dace_ABS"),
+                                                        name=abs_name,
                                                         args=[copy.deepcopy(args[0])],
                                                         type="DOUBLE",
                                                         subroutine=False,
@@ -2310,19 +2274,6 @@ class ReplaceArrayConstructor(NodeTransformer):
             return ast_internal_classes.Execution_Part_Node(execution=assigns)
         return self.generic_visit(node)
 
-def mywalk(node):
-    """
-    Recursively yield all descendant nodes in the tree starting at *node*
-    (including *node* itself), in no specified order.  This is useful if you
-    only want to modify nodes in place and don't care about the context.
-    """
-    from collections import deque
-    todo = deque([node])
-    while todo:
-        node = todo.popleft()
-        todo.extend(iter_child_nodes(node))
-        yield node
-
 
 class RenameVar(NodeTransformer):
     def __init__(self, oldname: str, newname: str):
@@ -2663,6 +2614,10 @@ class TypeInference(NodeTransformer):
         node.lval = self.visit(node.lval)
         node.rval = self.visit(node.rval)
 
+        """
+            Handle promotion of numeric types.
+        """
+
         type_hierarchy = [
             'VOID',
             'LOGICAL',
@@ -2672,15 +2627,18 @@ class TypeInference(NodeTransformer):
             'DOUBLE'
         ]
 
-        idx_left = type_hierarchy.index(self._get_type(node.lval))
-        idx_right = type_hierarchy.index(self._get_type(node.rval))
-        idx_void = type_hierarchy.index('VOID')
+        lval_type = self._get_type(node.lval)
+        rval_type = self._get_type(node.rval)
+        if lval_type in type_hierarchy and rval_type in type_hierarchy:
 
-        # if self.assert_voids:
-        #    assert idx_left != idx_void or idx_right != idx_void
-        #    #assert self._get_dims(node.lval) == self._get_dims(node.rval)
+            idx_left = type_hierarchy.index(lval_type)
+            idx_right = type_hierarchy.index(rval_type)
 
-        node.type = type_hierarchy[max(idx_left, idx_right)]
+            node.type = type_hierarchy[max(idx_left, idx_right)]
+
+        else:
+
+            node.type = lval_type
 
         if node.op == '=' and isinstance(node.lval, ast_internal_classes.Name_Node) and node.lval.type == 'VOID' and node.rval.type != 'VOID':
 
@@ -4128,7 +4086,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
         self.structures = ast.structures
 
-        self.nodes_to_process = []
+        self.nodes_to_process = {}
         self.counter = 0
 
         self.data_ref_stack = []
@@ -4138,10 +4096,10 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
         for child in node.execution:
 
-            self.nodes_to_process = []
+            self.nodes_to_process = {}
             n = self.visit(child)
 
-            for tmp_array in self.nodes_to_process:
+            for tmp_array_name, tmp_array in self.nodes_to_process.items():
 
                 """
                     For each variable with non-contiguous slices:
@@ -4149,6 +4107,11 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     - Determine the copy operation b[idx] = a[indices[idx]].
                     - Generate loop, with one iterator for each dimension
                       that needs a copy.
+
+                    We also recursively process indices of arrays to handle cases of nested,
+                    non-contiguous arrays.
+                    These are handled by visitors, and we expected that nested arrays are added
+                    to `nodes_to_process` first.
                 """
 
                 node.parent.specification_part.specifications.append(
@@ -4303,7 +4266,15 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
         cont_sizes = []
         noncont_sizes = []
 
+        new_indices = []
         for idx, index in enumerate(node.indices):
+
+            old_data_ref_stack = self.data_ref_stack
+            self.data_ref_stack = []
+            new_indices.append(self.visit(index))
+            self.data_ref_stack = old_data_ref_stack
+
+        for idx, index in enumerate(new_indices):
 
             """
                 For structure references:
@@ -4325,12 +4296,15 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
             if isinstance(actual_index, ast_internal_classes.Name_Node):
 
-                var = self.scope_vars.get_var(node.parent, actual_index.name)
+                if actual_index.name in self.nodes_to_process:
+                    var_sizes = self.nodes_to_process[actual_index.name].sizes
+                else:
+                    var_sizes = self.scope_vars.get_var(node.parent, actual_index.name).sizes
 
-                if var.sizes is not None and len(var.sizes) == 1:
+                if var_sizes is not None and len(var_sizes) == 1:
 
                     self.needs_copy = True
-                    new_sizes.append(var.sizes[0])
+                    new_sizes.append(var_sizes[0])
 
                     """
                         We will later assign actual indices when processing the loop code.
@@ -4347,7 +4321,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     else:
                         noncont_sizes.append((idx, idx_arr, idx_arr))
 
-                elif var.sizes is None or len(var.sizes) == 0:
+                elif var_sizes is None or len(var_sizes) == 0:
                     """
                         For scalar-based access, the size of new dimension is just 1.
                     """
@@ -4359,7 +4333,12 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
             elif isinstance(actual_index, ast_internal_classes.ParDecl_Node):
 
-                var = self.scope_vars.get_var(node.parent, node.name.name)
+                if node.name.name in self.nodes_to_process:
+                    var_sizes = self.nodes_to_process[node.name.name].sizes
+                    var_offsets = self.nodes_to_process[node.name.name].offsets
+                else:
+                    var_sizes = self.scope_vars.get_var(node.parent, node.name.name).sizes
+                    var_offsets = self.scope_vars.get_var(node.parent, node.name.name).offsets
 
                 """
                     For range from a:b, we do not generate the code manually.
@@ -4374,8 +4353,8 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
                 if actual_index.type == 'ALL':
 
-                    new_sizes.append(var.sizes[idx])
-                    new_offsets.append(var.offsets[idx])
+                    new_sizes.append(var_sizes[idx])
+                    new_offsets.append(var_offsets[idx])
 
                 elif actual_index.type == 'RANGE':
 
@@ -4436,8 +4415,8 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                 source = dataref
 
             name = f"tmp_noncontig_{self.counter}"
-            self.nodes_to_process.append(
-                self.NonContigArray(self.counter, name, (source, main_source), node.type, new_sizes, new_offsets, indices, noncont_sizes)
+            self.nodes_to_process[name] = self.NonContigArray(
+                self.counter, name, (source, main_source), node.type, new_sizes, new_offsets, indices, noncont_sizes
             )
             self.counter += 1
 

@@ -1,4 +1,5 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+from collections import Counter
 from itertools import chain
 from typing import List, Set, Iterator, Type, TypeVar, Dict, Tuple, Iterable, Union, Optional
 
@@ -807,7 +808,91 @@ def parse_module_declarations(program):
     return module_level_variables
 
 
+def validate_internal_ast(prog: ast_internal_classes.Program_Node):
+    # A variable should not be redeclared in the same context.
+    occurences = {}
+    for fn in mywalk(prog,
+                     (ast_internal_classes.Subroutine_Subprogram_Node, ast_internal_classes.Main_Program_Node)):
+        # Execution-part is included in case some declaration is still there.
+        decls = [v.name for d in chain(mywalk(fn.specification_part, ast_internal_classes.Decl_Stmt_Node),
+                                       mywalk(fn.execution_part, ast_internal_classes.Decl_Stmt_Node))
+                 for v in d.vardecl]
+        counts = Counter(decls)
+        counts = Counter({k: v for k, v in counts.items() if v > 1})
+        if counts:
+            occurences[fn.name.name] = counts
+    if occurences:
+        msg = '\n'.join(f"{k}: {c}" for k, c in occurences.items())
+        raise ValueError(f"A variable should not be redeclared in the same context; got:\n{msg}")
+
+    # Execution-part should not contain any declaration.
+    occurences = {}
+    for ex in mywalk(prog, ast_internal_classes.Execution_Part_Node):
+        decls = [v.name for d in mywalk(ex, ast_internal_classes.Decl_Stmt_Node) for v in d.vardecl]
+        if decls:
+            occurences[ex.parent.name.name] = decls
+    if occurences:
+        msg = '\n'.join(f"{k}: {c}" for k, c in occurences.items())
+        raise ValueError(f"execution-part should not contain any declaration; got\n{msg}")
+
+
 T = TypeVar('T')
+
+
+def iter_fields(node: ast_internal_classes.FNode):
+    """
+    Yield a tuple of ``(fieldname, value)`` for each field in ``node._fields``
+    that is present on *node*.
+    """
+    for field in node._fields:
+        try:
+            yield field, getattr(node, field)
+        except AttributeError:
+            pass
+
+
+def iter_attributes(node: ast_internal_classes.FNode):
+    """
+    Yield a tuple of ``(fieldname, value)`` for each field in ``node._attributes``
+    that is present on *node*.
+    """
+    for field in node._attributes:
+        try:
+            yield field, getattr(node, field)
+        except AttributeError:
+            pass
+
+
+def iter_child_nodes(node: ast_internal_classes.FNode):
+    """
+    Yield all direct child nodes of *node*, that is, all fields that are nodes
+    and all items of fields that are lists of nodes.
+    """
+
+    for name, field in iter_fields(node):
+        # print("NASME:",name)
+        if isinstance(field, ast_internal_classes.FNode):
+            yield field
+        elif isinstance(field, list):
+            for item in field:
+                if isinstance(item, ast_internal_classes.FNode):
+                    yield item
+
+
+def mywalk(node,
+           types: Union[None, Type[ast_internal_classes.FNode], Tuple[Type[ast_internal_classes.FNode], ...]] = None):
+    """
+    Recursively yield all descendant nodes in the tree starting at *node*
+    (including *node* itself), in no specified order.  This is useful if you
+    only want to modify nodes in place and don't care about the context.
+    """
+    from collections import deque
+    todo = deque([node])
+    while todo:
+        node = todo.popleft()
+        todo.extend(iter_child_nodes(node))
+        if not types or isinstance(node, types):
+            yield node
 
 
 def singular(items: Iterator[T]) -> T:
@@ -855,3 +940,20 @@ def extend_with_new_items_from(lst: List[T], items: Iterable[T]):
     for it in items:
         if it not in lst:
             lst.append(it)
+
+
+class TempName(object):
+    _instance = None
+    _counter = None
+
+    def __new__(cls):
+        if not getattr(cls, '_instance'):
+            cls._instance = super(TempName, cls).__new__(cls)
+            cls._instance._counter = 0
+        return cls._instance
+
+    @staticmethod
+    def get_name(tag: str = 'tmp'):
+        tmp = TempName()
+        name, tmp._counter = f"{tag}_{tmp._counter}", tmp._counter + 1
+        return name

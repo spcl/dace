@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Optional, Set, Dict, Tuple, Union
 
 import networkx as nx
-from fparser.common.readfortran import FortranFileReader as ffr, FortranStringReader
+from fparser.common.readfortran import FortranStringReader
 from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.two.Fortran2003 import Program, Name, Module_Stmt
 from fparser.two.parser import ParserFactory as pf, ParserFactory
@@ -20,27 +20,26 @@ from fparser.two.utils import Base, walk
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_utils as ast_utils
 from dace import Language as lang
-from dace.sdfg import nodes as nd
 from dace import SDFG, InterstateEdge, Memlet, pointer, SDFGState
 from dace import data as dat
 from dace import dtypes
-from dace import subsets as subs
 from dace import symbolic as sym
 from dace.data import Scalar, Structure
+from dace.frontend.fortran import ast_utils
 from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAMED_STMTS_OF_INTEREST_CLASSES, SPEC, \
-    find_name_of_stmt, find_name_of_node, identifier_specs, append_children, correct_for_function_calls, sort_modules, \
+    find_name_of_stmt, find_name_of_node, append_children, correct_for_function_calls, sort_modules, \
     deconstruct_enums, deconstruct_interface_calls, deconstruct_procedure_calls, prune_unused_objects, \
     deconstruct_associations, consolidate_uses, prune_branches, const_eval_nodes, lower_identifier_names, \
     inject_const_evals, remove_access_statements, ident_spec, ConstTypeInjection, ConstInjection, \
     make_practically_constant_arguments_constants, make_practically_constant_global_vars_constants, \
-    exploit_locally_constant_variables, assign_globally_unique_variable_names, assign_globally_unique_subprogram_names, \
+    exploit_locally_constant_variables, assign_globally_unique_subprogram_names, \
     create_global_initializers, convert_data_statements_into_assignments, deconstruct_statement_functions
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
 from dace.frontend.fortran.ast_utils import children_of_type
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
 from dace.properties import CodeBlock
+from dace.sdfg import nodes as nd
 from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowRegion, LoopRegion
 
 global_struct_instance_counter = 0
@@ -1444,7 +1443,7 @@ class AST_translator:
             new_sdfg.reset_cfg_list()
             #new_sdfg.validate()
             #tmp_sdfg=copy.deepcopy(new_sdfg)
-            new_sdfg.apply_transformations(IntrinsicSDFGTransformation)
+            new_sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
             from dace.transformation.dataflow import RemoveSliceView
             new_sdfg.apply_transformations_repeated([RemoveSliceView])
             from dace.transformation.passes.lift_struct_views import LiftStructViews
@@ -2055,7 +2054,7 @@ class AST_translator:
                     sdfg.arrays.get(self.name_mapping[sdfg][libstate]).dtype)
                 special_list_out.append(self.name_mapping[sdfg][libstate] + "_task_out")
             used_vars = [
-                node for node in ast_transforms.mywalk(node) if isinstance(node, ast_internal_classes.Name_Node)
+                node for node in ast_utils.mywalk(node) if isinstance(node, ast_internal_classes.Name_Node)
             ]
 
             for i in used_vars:
@@ -2200,7 +2199,7 @@ class AST_translator:
             actual_offsets = []
             offset_value = 0 if self.normalize_offsets else -1
             for i in node.sizes:
-                stuff = [ii for ii in ast_transforms.mywalk(i) if isinstance(ii, ast_internal_classes.Data_Ref_Node)]
+                stuff = [ii for ii in ast_utils.mywalk(i) if isinstance(ii, ast_internal_classes.Data_Ref_Node)]
                 if len(stuff) > 0:
                     count = self.count_of_struct_symbols_lifted
                     sdfg.add_symbol("tmp_struct_symbol_" + str(count), dtypes.int32)
@@ -2612,7 +2611,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
         raise NameError("Not all functions were transformed to subroutines")
     program.function_definitions = []
 
-    program = ast_transforms.SignToIf().visit(program)
+    program = ast_transforms.SignToIf(own_ast).visit(program)
     # run it again since signtoif might introduce patterns that have to be extracted
     # example: ABS call inside an UnOpNode
     program = ast_transforms.CallExtractor(program).visit(program)
@@ -2701,6 +2700,8 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     # Check before rerunning CloudSC
     # ast_transforms.ArgumentPruner(functions_and_subroutines_builder.nodes).visit(program)
 
+    # TODO: Enable permanently after the tests pass.
+    # ast_utils.validate_internal_ast(program)
     return program
 
 def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, program: FNode, cfg: SDFGConfig):
@@ -2753,7 +2754,7 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         from dace.transformation.passes.lift_struct_views import LiftStructViews
         from dace.transformation.pass_pipeline import FixedPointPipeline
         FixedPointPipeline([LiftStructViews()]).apply_pass(g, {})
-        g.apply_transformations(IntrinsicSDFGTransformation)
+        g.apply_transformations_repeated(IntrinsicSDFGTransformation)
         g.expand_library_nodes()
         gmap[ep] = g
 
@@ -3289,7 +3290,7 @@ def create_sdfg_from_fortran_file_with_options(
         print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz")}')
         sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
 
-        sdfg.apply_transformations(IntrinsicSDFGTransformation)
+        sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
 
         try:
             sdfg.expand_library_nodes()
@@ -3361,7 +3362,7 @@ def create_sdfg_from_fortran_file_with_options(
             sdfg.validate()
             sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_raw_before_intrinsics_full.sdfgz"), compress=True)
             sdfg.validate()
-            sdfg.apply_transformations(IntrinsicSDFGTransformation)
+            sdfg.apply_transformations_repeated(IntrinsicSDFGTransformation)
             sdfg.validate()
             try:
                 sdfg.expand_library_nodes()
