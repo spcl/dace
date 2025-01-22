@@ -621,9 +621,9 @@ def _const_eval_basic_type(expr: Base, alias_map: SPEC_TABLE) -> Optional[NUMPY_
         return _const_eval_basic_type(x, alias_map)
     elif isinstance(expr, Hex_Constant):
         x = expr.string
-        assert x[:2] == 'Z"' and x[-1:] == '"'
+        assert f"{x[:2]}{x[-1:]}" in {'Z""', "Z''"}
         x = x[2:-1]
-        return np.int32(int(x, 16))
+        return np.int64(int(x, 16))
 
     # TODO: Add other evaluations.
     return None
