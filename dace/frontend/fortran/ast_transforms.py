@@ -2614,6 +2614,10 @@ class TypeInference(NodeTransformer):
         node.lval = self.visit(node.lval)
         node.rval = self.visit(node.rval)
 
+        """
+            Handle promotion of numeric types.
+        """
+
         type_hierarchy = [
             'VOID',
             'LOGICAL',
@@ -2623,15 +2627,18 @@ class TypeInference(NodeTransformer):
             'DOUBLE'
         ]
 
-        idx_left = type_hierarchy.index(self._get_type(node.lval))
-        idx_right = type_hierarchy.index(self._get_type(node.rval))
-        idx_void = type_hierarchy.index('VOID')
+        lval_type = self._get_type(node.lval)
+        rval_type = self._get_type(node.rval)
+        if lval_type in type_hierarchy and rval_type in type_hierarchy:
 
-        # if self.assert_voids:
-        #    assert idx_left != idx_void or idx_right != idx_void
-        #    #assert self._get_dims(node.lval) == self._get_dims(node.rval)
+            idx_left = type_hierarchy.index(lval_type)
+            idx_right = type_hierarchy.index(rval_type)
 
-        node.type = type_hierarchy[max(idx_left, idx_right)]
+            node.type = type_hierarchy[max(idx_left, idx_right)]
+
+        else:
+
+            node.type = lval_type
 
         if node.op == '=' and isinstance(node.lval, ast_internal_classes.Name_Node) and node.lval.type == 'VOID' and node.rval.type != 'VOID':
 
