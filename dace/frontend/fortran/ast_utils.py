@@ -940,3 +940,20 @@ def extend_with_new_items_from(lst: List[T], items: Iterable[T]):
     for it in items:
         if it not in lst:
             lst.append(it)
+
+
+class TempName(object):
+    _instance = None
+    _counter = None
+
+    def __new__(cls):
+        if not getattr(cls, '_instance'):
+            cls._instance = super(TempName, cls).__new__(cls)
+            cls._instance._counter = 0
+        return cls._instance
+
+    @staticmethod
+    def get_name(tag: str = 'tmp'):
+        tmp = TempName()
+        name, tmp._counter = f"{tag}_{tmp._counter}", tmp._counter + 1
+        return name
