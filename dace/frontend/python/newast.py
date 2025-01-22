@@ -3297,7 +3297,21 @@ class ProgramVisitor(ExtNodeVisitor):
             for n in node.value.elts:
                 results.extend(self._gettype(n))
         else:
-            results.extend(self._gettype(node.value))
+            rval = self._gettype(node.value)
+            if (len(elts) > 1 and len(rval) == 1 and rval[0][1] == data.Array and rval[0][0] in self.sdfg.arrays and
+                self.sdfg.arrays[rval[0][0]].shape[0] == len(elts)):
+                # In the case where the rhs is an array (not being accessed with a slice) of exactly the same length as
+                # the number of elements in the lhs, the array can be expanded with a series of slice/subscript accesses
+                # to constant indexes (according to the number of elements in the lhs). These expansions can then be
+                # used to perform an unpacking assignment, similar to what Python does natively.
+                for i in range(len(elts)):
+                    const_node = NumConstant(i)
+                    ast.copy_location(const_node, node)
+                    slice_node = ast.Subscript(rval[0][0], const_node, ast.Load)
+                    ast.copy_location(slice_node, node)
+                    results.extend(self._gettype(slice_node))
+            else:
+                results.extend(rval)
 
         if len(results) != len(elts):
             raise DaceSyntaxError(self, node, 'Function returns %d values but %d provided' % (len(results), len(elts)))
