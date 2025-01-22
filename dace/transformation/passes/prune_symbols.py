@@ -6,12 +6,13 @@ from typing import Optional, Set, Tuple
 
 from dace import SDFG, dtypes, properties, symbolic
 from dace.sdfg import nodes
+from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@transformation.single_level_sdfg_only
+@transformation.explicit_cf_compatible
 class RemoveUnusedSymbols(ppl.Pass):
     """
     Prunes unused symbols from the SDFG symbol repository (``sdfg.symbols``) and interstate edges.
@@ -64,7 +65,7 @@ class RemoveUnusedSymbols(ppl.Pass):
             sid = sdfg.cfg_id
             result = set((sid, sym) for sym in result)
 
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
                         old_symbols = self.symbols
@@ -90,27 +91,30 @@ class RemoveUnusedSymbols(ppl.Pass):
         for desc in sdfg.arrays.values():
             result |= set(map(str, desc.free_symbols))
 
-        for state in sdfg.nodes():
-            result |= state.free_symbols
+        for block in sdfg.all_control_flow_blocks():
+            result |= block.free_symbols
             # In addition to the standard free symbols, we are conservative with other tasklet languages by
             # tokenizing their code. Since this is intersected with `sdfg.symbols`, keywords such as "if" are
             # ok to include
-            for node in state.nodes():
-                if isinstance(node, nodes.Tasklet):
-                    if node.code.language != dtypes.Language.Python:
-                        result |= symbolic.symbols_in_code(node.code.as_string, sdfg.symbols.keys(),
-                                                           node.ignored_symbols)
-                    if node.code_global.language != dtypes.Language.Python:
-                        result |= symbolic.symbols_in_code(node.code_global.as_string, sdfg.symbols.keys(),
-                                                           node.ignored_symbols)
-                    if node.code_init.language != dtypes.Language.Python:
-                        result |= symbolic.symbols_in_code(node.code_init.as_string, sdfg.symbols.keys(),
-                                                           node.ignored_symbols)
-                    if node.code_exit.language != dtypes.Language.Python:
-                        result |= symbolic.symbols_in_code(node.code_exit.as_string, sdfg.symbols.keys(),
-                                                           node.ignored_symbols)
+            if isinstance(block, SDFGState):
+                for node in block.nodes():
+                    if isinstance(node, nodes.Tasklet):
+                        if node.code.language != dtypes.Language.Python:
+                            result |= symbolic.symbols_in_code(node.code.as_string, sdfg.symbols.keys(),
+                                                            node.ignored_symbols)
+                        if node.code_global.language != dtypes.Language.Python:
+                            result |= symbolic.symbols_in_code(node.code_global.as_string, sdfg.symbols.keys(),
+                                                            node.ignored_symbols)
+                        if node.code_init.language != dtypes.Language.Python:
+                            result |= symbolic.symbols_in_code(node.code_init.as_string, sdfg.symbols.keys(),
+                                                            node.ignored_symbols)
+                        if node.code_exit.language != dtypes.Language.Python:
+                            result |= symbolic.symbols_in_code(node.code_exit.as_string, sdfg.symbols.keys(),
+                                                            node.ignored_symbols)
+            else:
+                result |= block.used_symbols(all_symbols=True, with_contents=False)
 
-        for e in sdfg.edges():
+        for e in sdfg.all_interstate_edges():
             result |= e.data.free_symbols
 
         return result

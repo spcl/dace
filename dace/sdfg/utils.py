@@ -11,14 +11,15 @@ import time
 import dace.sdfg.nodes
 from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.sdfg import SDFG
+from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import ConditionalBlock, SDFGState, StateSubgraphView, LoopRegion, ControlFlowRegion
+from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, SDFGState,
+                             StateSubgraphView, LoopRegion, ControlFlowRegion)
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs
 from dace.cli.progress import optional_progressbar
-from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Type, Union
 
 
 def node_path_graph(*args) -> gr.OrderedDiGraph:
@@ -866,16 +867,16 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return None
 
     in_edge = in_edges[0]
-    out_edge = out_edges[0]
+    out_edge = out_edges[0] if len(out_edges) > 0 else None
 
     # If there is one incoming and one outgoing edge, and one leads to a code
     # node, the one that leads to an access node is the viewed data.
     inmpath = state.memlet_path(in_edge)
-    outmpath = state.memlet_path(out_edge)
+    outmpath = state.memlet_path(out_edge) if out_edge else None
     src_is_data, dst_is_data = False, False
     if isinstance(inmpath[0].src, nd.AccessNode):
         src_is_data = True
-    if isinstance(outmpath[-1].dst, nd.AccessNode):
+    if outmpath and isinstance(outmpath[-1].dst, nd.AccessNode):
         dst_is_data = True
 
     if src_is_data and not dst_is_data:
@@ -1235,7 +1236,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                      shows progress bar.
     :return: The total number of states fused.
     """
-    from dace.transformation.interstate import StateFusion  # Avoid import loop
+    from dace.transformation.interstate import StateFusion, BlockFusion  # Avoid import loop
+
 
     if progress is None and not config.Config.get_bool('progress'):
         progress = False
@@ -1268,20 +1270,33 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                         progress = True
                         pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
 
-                    if (u in skip_nodes or v in skip_nodes or not isinstance(v, SDFGState)
-                            or not isinstance(u, SDFGState)):
+                    if u in skip_nodes or v in skip_nodes:
                         continue
-                    candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
-                    sf = StateFusion()
-                    sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
-                    if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
-                        sf.apply(cfg, sd)
-                        applied += 1
-                        counter += 1
-                        if progress:
-                            pbar.update(1)
-                        skip_nodes.add(u)
-                        skip_nodes.add(v)
+
+                    if isinstance(u, SDFGState) and isinstance(v, SDFGState):
+                        candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
+                        sf = StateFusion()
+                        sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
+                        if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
+                            sf.apply(cfg, sd)
+                            applied += 1
+                            counter += 1
+                            if progress:
+                                pbar.update(1)
+                            skip_nodes.add(u)
+                            skip_nodes.add(v)
+                    else:
+                        candidate = {BlockFusion.first_block: u, BlockFusion.second_block: v}
+                        bf = BlockFusion()
+                        bf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
+                        if bf.can_be_applied(cfg, 0, sd, permissive=permissive):
+                            bf.apply(cfg, sd)
+                            applied += 1
+                            counter += 1
+                            if progress:
+                                pbar.update(1)
+                            skip_nodes.add(u)
+                            skip_nodes.add(v)
                 if applied == 0:
                     break
     if progress:
@@ -1289,20 +1304,17 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     return counter
 
 
-def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
-    count = 0
-
-    for _block in optional_progressbar(reversed(blocks), title='Inlining Loops', n=len(blocks), progress=progress):
-        block: LoopRegion = _block
-        if block.inline()[0]:
-            count += 1
-
-    return count
-
-
-def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ControlFlowRegion)]
+def inline_control_flow_regions(sdfg: SDFG, types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
+                                ignore_region_types: Optional[List[Type[AbstractControlFlowRegion]]] = None,
+                                progress: bool = None, lower_returns: bool = False,
+                                eliminate_dead_states: bool = False) -> int:
+    if types:
+        blocks = [n for n, _ in sdfg.all_nodes_recursive() if type(n) in types]
+    elif ignore_region_types:
+        blocks = [n for n, _ in sdfg.all_nodes_recursive()
+                  if isinstance(n, AbstractControlFlowRegion) and type(n) not in ignore_region_types]
+    else:
+        blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, AbstractControlFlowRegion)]
     count = 0
 
     for _block in optional_progressbar(reversed(blocks),
@@ -1310,23 +1322,17 @@ def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: 
                                        n=len(blocks),
                                        progress=progress):
         block: ControlFlowRegion = _block
-        if block.inline()[0]:
+        # Control flow regions where the parent is a conditional block are not inlined.
+        if block.parent_graph and type(block.parent_graph) == ConditionalBlock:
+            continue
+        if block.inline(lower_returns=lower_returns)[0]:
             count += 1
+    if eliminate_dead_states:
+        # Avoid cyclic imports.
+        from dace.transformation.passes.dead_state_elimination import DeadStateElimination
+        DeadStateElimination().apply_pass(sdfg, {})
 
-    return count
-
-
-def inline_conditional_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
-    blocks = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
-    count = 0
-
-    for _block in optional_progressbar(reversed(blocks),
-                                       title='Inlining conditional blocks',
-                                       n=len(blocks),
-                                       progress=progress):
-        block: ConditionalBlock = _block
-        if block.inline()[0]:
-            count += 1
+    sdfg.reset_cfg_list()
 
     return count
 
@@ -1455,11 +1461,12 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     result: Set[SDFGState] = set()
 
     # Traverse children until states are not empty
-    for succ in sdfg.successors(state):
-        result |= set(dfs_conditional(sdfg, sources=[succ], condition=lambda parent, _: parent.is_empty()))
+    for succ in state.parent_graph.successors(state):
+        result |= set(dfs_conditional(state.parent_graph, sources=[succ],
+                                      condition=lambda parent, _: parent.number_of_nodes() == 0))
 
     # Filter out empty states
-    result = {s for s in result if not s.is_empty()}
+    result = {s for s in result if not s.number_of_nodes() == 0}
 
     return result
 
@@ -1550,42 +1557,48 @@ def _tswds_state(
 
 def _tswds_cf_region(
         sdfg: SDFG,
-        region: ControlFlowRegion,
+        cfg: AbstractControlFlowRegion,
         symbols: Dict[str, dtypes.typeclass],
         recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
-    # Add symbols from inter-state edges along the state machine
-    start_region = region.start_block
-    visited = set()
-    visited_edges = set()
-    for edge in region.dfs_edges(start_region):
-        # Source -> inter-state definition -> Destination
-        visited_edges.add(edge)
-        # Source
-        if edge.src not in visited:
-            visited.add(edge.src)
-            if isinstance(edge.src, SDFGState):
-                yield from _tswds_state(sdfg, edge.src, {}, recursive)
-            elif isinstance(edge.src, ControlFlowRegion):
-                yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
+    sub_regions = cfg.sub_regions() or [cfg]
+    for region in sub_regions:
+        # Add symbols newly defined by this region, if present.
+        region_symbols = region.new_symbols(symbols)
+        symbols.update({k: v for k, v in region_symbols.items() if v is not None})
 
-        # Add edge symbols into defined symbols
-        issyms = edge.data.new_symbols(sdfg, symbols)
-        symbols.update({k: v for k, v in issyms.items() if v is not None})
+        # Add symbols from inter-state edges along the state machine
+        start_region = region.start_block
+        visited = set()
+        visited_edges = set()
+        for edge in region.dfs_edges(start_region):
+            # Source -> inter-state definition -> Destination
+            visited_edges.add(edge)
+            # Source
+            if edge.src not in visited:
+                visited.add(edge.src)
+                if isinstance(edge.src, SDFGState):
+                    yield from _tswds_state(sdfg, edge.src, {}, recursive)
+                elif isinstance(edge.src, AbstractControlFlowRegion):
+                    yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
 
-        # Destination
-        if edge.dst not in visited:
-            visited.add(edge.dst)
-            if isinstance(edge.dst, SDFGState):
-                yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
-            elif isinstance(edge.dst, ControlFlowRegion):
-                yield from _tswds_cf_region(sdfg, edge.dst, symbols, recursive)
+            # Add edge symbols into defined symbols
+            issyms = edge.data.new_symbols(sdfg, symbols)
+            symbols.update({k: v for k, v in issyms.items() if v is not None})
 
-    # If there is only one state, the DFS will miss it
-    if start_region not in visited:
-        if isinstance(start_region, SDFGState):
-            yield from _tswds_state(sdfg, start_region, symbols, recursive)
-        elif isinstance(start_region, ControlFlowRegion):
-            yield from _tswds_cf_region(sdfg, start_region, symbols, recursive)
+            # Destination
+            if edge.dst not in visited:
+                visited.add(edge.dst)
+                if isinstance(edge.dst, SDFGState):
+                    yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
+                elif isinstance(edge.dst, AbstractControlFlowRegion):
+                    yield from _tswds_cf_region(sdfg, edge.dst, symbols, recursive)
+
+        # If there is only one state, the DFS will miss it
+        if start_region not in visited:
+            if isinstance(start_region, SDFGState):
+                yield from _tswds_state(sdfg, start_region, symbols, recursive)
+            elif isinstance(start_region, AbstractControlFlowRegion):
+                yield from _tswds_cf_region(sdfg, start_region, symbols, recursive)
 
 
 def traverse_sdfg_with_defined_symbols(
@@ -1596,9 +1609,9 @@ def traverse_sdfg_with_defined_symbols(
 
     :return: A generator that yields tuples of (state, node in state, currently-defined symbols)
     """
-    # Start with global symbols
+    # Start with global symbols and scalar constants
     symbols = copy.copy(sdfg.symbols)
-    symbols.update({k: dt.create_datadescriptor(v).dtype for k, v in sdfg.constants.items()})
+    symbols.update({k: desc.dtype for k, (desc, _) in sdfg.constants_prop.items() if isinstance(desc, dt.Scalar)})
     for desc in sdfg.arrays.values():
         symbols.update({str(s): s.dtype for s in desc.free_symbols})
 
@@ -1630,41 +1643,44 @@ def is_fpga_kernel(sdfg, state):
     return at_least_one_fpga_array
 
 
-def postdominators(
-    sdfg: SDFG,
-    return_alldoms: bool = False
-) -> Optional[Union[Dict[SDFGState, SDFGState], Tuple[Dict[SDFGState, SDFGState], Dict[SDFGState, Set[SDFGState]]]]]:
-    """
-    Return the immediate postdominators of an SDFG. This may require creating new nodes and removing them, which
-    happens in-place on the SDFG.
+CFBlockDictT = Dict[ControlFlowBlock, ControlFlowBlock]
 
-    :param sdfg: The SDFG to generate the postdominators from.
+
+def postdominators(
+    cfg: ControlFlowRegion,
+    return_alldoms: bool = False
+) -> Optional[Union[CFBlockDictT, Tuple[CFBlockDictT, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]]]:
+    """
+    Return the immediate postdominators of a CFG. This may require creating new nodes and removing them, which
+    happens in-place on the CFG.
+
+    :param cfg: The CFG to generate the postdominators from.
     :param return_alldoms: If True, returns the "all postdominators" dictionary as well.
     :return: Immediate postdominators, or a 2-tuple of (ipostdom, allpostdoms) if ``return_alldoms`` is True.
     """
-    from dace.sdfg.analysis import cfg
+    from dace.sdfg.analysis import cfg as cfg_analysis
 
     # Get immediate post-dominators
-    sink_nodes = sdfg.sink_nodes()
+    sink_nodes = cfg.sink_nodes()
     if len(sink_nodes) > 1:
-        sink = sdfg.add_state()
+        sink = cfg.add_state()
         for snode in sink_nodes:
-            sdfg.add_edge(snode, sink, dace.InterstateEdge())
+            cfg.add_edge(snode, sink, dace.InterstateEdge())
     elif len(sink_nodes) == 0:
         return None
     else:
         sink = sink_nodes[0]
-    ipostdom: Dict[SDFGState, SDFGState] = nx.immediate_dominators(sdfg._nx.reverse(), sink)
+    ipostdom: CFBlockDictT = nx.immediate_dominators(cfg._nx.reverse(), sink)
 
     if return_alldoms:
-        allpostdoms = cfg.all_dominators(sdfg, ipostdom)
+        allpostdoms = cfg_analysis.all_dominators(cfg, ipostdom)
         retval = (ipostdom, allpostdoms)
     else:
         retval = ipostdom
 
     # If a new sink was added for post-dominator computation, remove it
     if len(sink_nodes) > 1:
-        sdfg.remove_node(sink)
+        cfg.remove_node(sink)
 
     return retval
 
@@ -1960,3 +1976,119 @@ def get_global_memlet_path_dst(sdfg: SDFG, state: SDFGState, edge: MultiConnecto
             pedge = pedges[0]
             return get_global_memlet_path_dst(psdfg, pstate, pedge)
     return dst
+
+
+def get_control_flow_block_dominators(sdfg: SDFG,
+                                      idom: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
+                                      all_dom: Optional[Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = None,
+                                      ipostdom: Optional[Dict[ControlFlowBlock, ControlFlowBlock]] = None,
+                                      all_postdom: Optional[Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = None):
+    """
+    Find the dominator and postdominator relationship between control flow blocks of an SDFG.
+    This transitively computes the domination relationship across control flow regions, as if the SDFG were to be
+    inlined entirely.
+
+    :param idom: A dictionary in which to store immediate dominator relationships. Not computed if None.
+    :param all_dom: A dictionary in which to store all dominator relationships. Not computed if None.
+    :param ipostdom: A dictionary in which to store immediate postdominator relationships. Not computed if None.
+    :param all_postdom: A dictionary in which to all postdominator relationships. Not computed if None.
+    """
+    # Avoid cyclic import
+    from dace.sdfg.analysis import cfg as cfg_analysis
+
+    if idom is not None or all_dom is not None:
+        added_sinks: Dict[AbstractControlFlowRegion, SDFGState] = {}
+        if idom is None:
+            idom = {}
+        for cfg in sdfg.all_control_flow_regions(parent_first=True):
+            if isinstance(cfg, ConditionalBlock):
+                continue
+            sinks = cfg.sink_nodes()
+            if len(sinks) > 1:
+                added_sinks[cfg] = cfg.add_state()
+                for s in sinks:
+                    cfg.add_edge(s, added_sinks[cfg], InterstateEdge())
+            idom.update(nx.immediate_dominators(cfg.nx, cfg.start_block))
+        # Compute the transitive relationship of immediate dominators:
+        # - For every start state in a control flow region, the immediate dominator is the immediate dominator of the
+        #   parent control flow region.
+        # - If the immediate dominator is a conditional or a loop, change the immediate dominator to be the immediate
+        #   dominator of that loop or conditional.
+        # - If the immediate dominator is any other control flow region, change the immediate dominator to be the
+        #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
+        for k, _ in idom.items():
+            if k.parent_graph is not sdfg and k is k.parent_graph.start_block:
+                next_dom = idom[k.parent_graph]
+                while next_dom.parent_graph is not sdfg and next_dom is next_dom.parent_graph.start_block:
+                    next_dom = idom[next_dom.parent_graph]
+                idom[k] = next_dom
+        changed = True
+        while changed:
+            changed = False
+            for k, v in idom.items():
+                if isinstance(v, AbstractControlFlowRegion):
+                    if isinstance(v, (LoopRegion, ConditionalBlock)):
+                        idom[k] = idom[v]
+                    else:
+                        if v in added_sinks:
+                            idom[k] = idom[added_sinks[v]]
+                        else:
+                            idom[k] = v.sink_nodes()[0]
+                    if idom[k] is not v:
+                        changed = True
+
+        for cf, v in added_sinks.items():
+            cf.remove_node(v)
+
+        if all_dom is not None:
+            all_dom.update(cfg_analysis.all_dominators(sdfg, idom))
+
+    if ipostdom is not None or all_postdom is not None:
+        added_sinks: Dict[AbstractControlFlowRegion, SDFGState] = {}
+        sinks_per_cfg: Dict[AbstractControlFlowRegion, ControlFlowBlock] = {}
+        if ipostdom is None:
+            ipostdom = {}
+
+        for cfg in sdfg.all_control_flow_regions(parent_first=True):
+            if isinstance(cfg, ConditionalBlock):
+                continue
+            # Get immediate post-dominators
+            sink_nodes = cfg.sink_nodes()
+            if len(sink_nodes) > 1:
+                sink = cfg.add_state()
+                added_sinks[cfg] = sink
+                sinks_per_cfg[cfg] = sink
+                for snode in sink_nodes:
+                    cfg.add_edge(snode, sink, dace.InterstateEdge())
+            elif len(sink_nodes) == 0:
+                return None
+            else:
+                sink = sink_nodes[0]
+                sinks_per_cfg[cfg] = sink
+            ipostdom.update(nx.immediate_dominators(cfg._nx.reverse(), sink))
+
+        # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
+        # dominators, but inverse.
+        for k, _ in ipostdom.items():
+            if k.parent_graph is not sdfg and k is sinks_per_cfg[k.parent_graph]:
+                next_pdom = ipostdom[k.parent_graph]
+                while next_pdom.parent_graph is not sdfg and next_pdom is sinks_per_cfg[next_pdom.parent_graph]:
+                    next_pdom = ipostdom[next_pdom.parent_graph]
+                ipostdom[k] = next_pdom
+        changed = True
+        while changed:
+            changed = False
+            for k, v in ipostdom.items():
+                if isinstance(v, AbstractControlFlowRegion):
+                    if isinstance(v, (LoopRegion, ConditionalBlock)):
+                        ipostdom[k] = ipostdom[v]
+                    else:
+                        ipostdom[k] = v.start_block
+                    if ipostdom[k] is not v:
+                        changed = True
+
+        for cf, v in added_sinks.items():
+            cf.remove_node(v)
+
+        if all_postdom is not None:
+            all_postdom.update(cfg_analysis.all_dominators(sdfg, ipostdom))

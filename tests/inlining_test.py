@@ -1,5 +1,6 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.sdfg.state import FunctionCallRegion, NamedRegion
 from dace.transformation.interstate import InlineSDFG, StateFusion
 from dace.libraries import blas
 from dace.library import change_default
@@ -134,7 +135,7 @@ def test_multistate_inline():
 
     from dace.transformation.interstate import InlineMultistateSDFG
     sdfg.apply_transformations(InlineMultistateSDFG)
-    assert sdfg.number_of_nodes() in (4, 5)
+    assert sdfg.number_of_nodes() in (1, 2)
 
     sdfg(A)
     assert np.allclose(A, expected)
@@ -145,14 +146,14 @@ def test_multistate_inline_samename():
     @dace.program
     def nested(A: dace.float64[20]):
         for i in range(5):
-            A[i] += A[i - 1]
+            A[i + 1] += A[i]
 
     @dace.program
     def outerprog(A: dace.float64[20]):
         for i in range(5):
             nested(A)
 
-    sdfg = outerprog.to_sdfg(simplify=True)
+    sdfg = outerprog.to_sdfg(simplify=False)
 
     A = np.random.rand(20)
     expected = np.copy(A)
@@ -160,7 +161,8 @@ def test_multistate_inline_samename():
 
     from dace.transformation.interstate import InlineMultistateSDFG
     sdfg.apply_transformations(InlineMultistateSDFG)
-    assert sdfg.number_of_nodes() in (7, 8)
+    sdfg.simplify()
+    assert sdfg.number_of_nodes() == 1
 
     sdfg(A)
     assert np.allclose(A, expected)
@@ -193,8 +195,11 @@ def test_multistate_inline_outer_dependencies():
                 b = 2 * a
 
     sdfg = outerprog.to_sdfg(simplify=False)
+    for cf in sdfg.all_control_flow_regions():
+        if isinstance(cf, (FunctionCallRegion, NamedRegion)):
+            cf.inline()
     sdfg.apply_transformations_repeated((StateFusion, InlineSDFG))
-    assert len(sdfg.states()) == 1
+    assert len(sdfg.nodes()) == 1
 
     A = np.random.rand(20)
     B = np.random.rand(20)
@@ -229,9 +234,12 @@ def test_multistate_inline_concurrent_subgraphs():
                 c = 2 * a
 
     sdfg = outerprog.to_sdfg(simplify=False)
+    for cf in sdfg.all_control_flow_regions():
+        if isinstance(cf, (FunctionCallRegion, NamedRegion)):
+            cf.inline()
     dace.propagate_memlets_sdfg(sdfg)
     sdfg.apply_transformations_repeated((StateFusion, InlineSDFG))
-    assert len(sdfg.states()) == 1
+    assert len(sdfg.nodes()) == 1
     assert len([node for node in sdfg.start_state.data_nodes()]) == 3
 
     A = np.random.rand(10)
@@ -437,7 +445,7 @@ def test_inlining_view_input():
         sdfg.expand_library_nodes()
     sdfg.simplify()
 
-    state = sdfg.nodes()[1]
+    state = sdfg.sink_nodes()[0]
     # find nested_sdfg
     nsdfg = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.NestedSDFG)][0]
     # delete gemm initialization state
