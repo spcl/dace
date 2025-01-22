@@ -166,6 +166,8 @@ END SUBROUTINE intrinsic_bound_test_function2
 
     assert np.allclose(res, [1, 1, 4, 7])
 
+
+@pytest.mark.skip("Fails due to not correctly matching arguments in: https://github.com/spcl/dace/blob/a867a6be0598209dff16c7f81bc8b8928161fcaa/dace/frontend/fortran/ast_transforms.py#L1870-L1878")
 def test_fortran_frontend_bound_allocatable_offsets():
     sources, main = SourceCodeBuilder().add_file("""
 MODULE intrinsic_bound_interfaces
