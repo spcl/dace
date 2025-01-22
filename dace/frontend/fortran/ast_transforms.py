@@ -4086,7 +4086,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
         self.structures = ast.structures
 
-        self.nodes_to_process = []
+        self.nodes_to_process = {}
         self.counter = 0
 
         self.data_ref_stack = []
@@ -4096,10 +4096,10 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
         for child in node.execution:
 
-            self.nodes_to_process = []
+            self.nodes_to_process = {}
             n = self.visit(child)
 
-            for tmp_array in self.nodes_to_process:
+            for tmp_array_name, tmp_array in self.nodes_to_process.items():
 
                 """
                     For each variable with non-contiguous slices:
@@ -4261,6 +4261,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
         cont_sizes = []
         noncont_sizes = []
 
+
         for idx, index in enumerate(node.indices):
 
             """
@@ -4270,6 +4271,8 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
                 For other, both are the same.
             """
+
+            index = self.visit(index)
 
             if isinstance(index, ast_internal_classes.Data_Ref_Node):
 
@@ -4283,12 +4286,15 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
             if isinstance(actual_index, ast_internal_classes.Name_Node):
 
-                var = self.scope_vars.get_var(node.parent, actual_index.name)
+                if actual_index.name in self.nodes_to_process:
+                    var_sizes = self.nodes_to_process[actual_index.name].sizes
+                else:
+                    var_sizes = self.scope_vars.get_var(node.parent, actual_index.name).sizes
 
-                if var.sizes is not None and len(var.sizes) == 1:
+                if var_sizes is not None and len(var_sizes) == 1:
 
                     self.needs_copy = True
-                    new_sizes.append(var.sizes[0])
+                    new_sizes.append(var_sizes[0])
 
                     """
                         We will later assign actual indices when processing the loop code.
@@ -4305,7 +4311,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     else:
                         noncont_sizes.append((idx, idx_arr, idx_arr))
 
-                elif var.sizes is None or len(var.sizes) == 0:
+                elif var_sizes is None or len(var_sizes) == 0:
                     """
                         For scalar-based access, the size of new dimension is just 1.
                     """
@@ -4317,7 +4323,12 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
             elif isinstance(actual_index, ast_internal_classes.ParDecl_Node):
 
-                var = self.scope_vars.get_var(node.parent, node.name.name)
+                if node.name.name in self.nodes_to_process:
+                    var_sizes = self.nodes_to_process[node.name.name].sizes
+                    var_offsets = self.nodes_to_process[node.name.name].offsets
+                else:
+                    var_sizes = self.scope_vars.get_var(node.parent, node.name.name).sizes
+                    var_offsets = self.scope_vars.get_var(node.parent, node.name.name).offsets
 
                 """
                     For range from a:b, we do not generate the code manually.
@@ -4332,8 +4343,8 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
                 if actual_index.type == 'ALL':
 
-                    new_sizes.append(var.sizes[idx])
-                    new_offsets.append(var.offsets[idx])
+                    new_sizes.append(var_sizes[idx])
+                    new_offsets.append(var_offsets[idx])
 
                 elif actual_index.type == 'RANGE':
 
@@ -4394,8 +4405,8 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                 source = dataref
 
             name = f"tmp_noncontig_{self.counter}"
-            self.nodes_to_process.append(
-                self.NonContigArray(self.counter, name, (source, main_source), node.type, new_sizes, new_offsets, indices, noncont_sizes)
+            self.nodes_to_process[name] = self.NonContigArray(
+                self.counter, name, (source, main_source), node.type, new_sizes, new_offsets, indices, noncont_sizes
             )
             self.counter += 1
 

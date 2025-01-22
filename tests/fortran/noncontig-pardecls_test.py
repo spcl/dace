@@ -298,10 +298,64 @@ end subroutine fun
 
     assert np.all(d[1:4][:, [0, 2, 4]] * 2 == d2)
 
+def test_fortran_frontend_noncontiguous_nested():
+    """
+    As above, but pass the whole subset across one dimension.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+
+subroutine main(d, d2)
+  double precision, dimension(4, 5) :: d
+  double precision, dimension(3) :: d2
+  double precision, dimension(3) :: d3
+  integer, dimension(6) :: cols
+  integer, dimension(3) :: cols2
+
+  cols(1) = 6
+  cols(2) = 5
+  cols(3) = 4
+  cols(4) = 3
+  cols(5) = 2
+  cols(6) = 1
+
+  cols2(1) = 6
+  cols2(2) = 4
+  cols2(3) = 2
+
+  ! We should in the end select columns 1, 3, 5
+
+  call fun( d(2, cols(cols2)) , d2)
+end subroutine main
+
+subroutine fun(d, d2)
+  double precision, dimension(5) :: d
+  double precision, dimension(3) :: d2
+  integer :: i
+  do i = 1, 3
+    d2(i) = d(i)*2.0
+  end do
+end subroutine fun
+""", 'main').check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, entry_point='main')
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size_x, size_y = 4, 5
+    d = np.full([size_x, size_y], 42, order="F", dtype=np.float64)
+    d2 = np.full([3], 42, order="F", dtype=np.float64)
+    for i in range(0, size_x):
+        for j in range(0, size_y):
+            d[i, j] = i + 20 * j
+
+    sdfg(d=d, d2=d2)
+
+    assert np.all(d[1, [0, 2, 4]] * 2 == d2)
+
 if __name__ == "__main__":
-    #test_fortran_frontend_noncontiguous_slices()
-    #test_fortran_frontend_noncontiguous_slices_2d()
-    #test_fortran_frontend_noncontiguous_slices_2d_double_copy()
-    #test_fortran_frontend_noncontiguous_slices_2d_pardecl()
-    #test_fortran_frontend_noncontiguous_slices_2d_pardecl2()
+    test_fortran_frontend_noncontiguous_slices()
+    test_fortran_frontend_noncontiguous_slices_2d()
+    test_fortran_frontend_noncontiguous_slices_2d_double_copy()
+    test_fortran_frontend_noncontiguous_slices_2d_pardecl()
+    test_fortran_frontend_noncontiguous_slices_2d_pardecl2()
     test_fortran_frontend_noncontiguous_slices_2d_data_refs()
+    test_fortran_frontend_noncontiguous_nested()
