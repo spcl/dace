@@ -947,11 +947,13 @@ class TempName(object):
     _counter = None
 
     def __new__(cls):
-        if not hasattr(cls, 'instance'):
+        if not getattr(cls, '_instance'):
             cls._instance = super(TempName, cls).__new__(cls)
             cls._instance._counter = 0
         return cls._instance
 
     @staticmethod
     def get_name(tag: str = 'tmp'):
-        return f"{tag}_{TempName()._counter}"
+        tmp = TempName()
+        name, tmp._counter = f"{tag}_{tmp._counter}", tmp._counter + 1
+        return name
