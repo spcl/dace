@@ -566,7 +566,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                             must_remove_zero_index= True     
                             components = [""]*len(in_edge.data.subset.size())
                             for i in range(len(in_edge.data.subset.size())):
-                                components[i]=str(in_edge.data.subset.ranges[i][0])
+                                components[i]=(str(in_edge.data.subset.ranges[i][0]),1)
                             
                             first_data = ("",components)
                             data_path = [in_edge.data.data,first_data]
@@ -577,7 +577,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         must_remove_zero_index= True     
                         components = [""]*len(in_edge.data.subset.size())
                         for i in range(len(in_edge.data.subset.size())):
-                            components[i]=str(in_edge.data.subset.ranges[i][0])
+                            components[i]=(str(in_edge.data.subset.ranges[i][0]),1)
                         
                         first_data = ("",components)
                         data_path = [in_edge.data.data,first_data]
@@ -619,19 +619,31 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                             collapsed = [False]*len(view_edge.data.subset.size())
                             components = [""]*len(view_edge.data.subset.size())
                             #check if the view is collapsed in any dimension
+                            dims_outside =len([i for i in view_edge.data.subset.size() if i!=1])
+                            dims_inside=len([i for i in nsdfg.arrays[arg].shape if i!=1])
+                            with_reshape=False
+                            if dims_outside > dims_inside:
+                                if dims_outside!=2 or dims_inside!=1:
+                                    raise NotImplementedError("The view is not collapsed in the same dimensions as the internal array and the internal array is not 1d")
+                                else:
+                                    with_reshape=True
+
                             for i in range(len(view_edge.data.subset.size())):
                                 if view_edge.data.subset.size()[i] ==1:
                                         collapsed[i] = True
-                                        components[i] = str(view_edge.data.subset.ranges[i][0])
+                                        components[i] = (str(view_edge.data.subset.ranges[i][0]),1)
                                 elif view_edge.data.subset.size()[i] != current_desc.shape[i]:
                                     raise NotImplementedError
                                 else:
-                                    components[i] = "__to_be_replaced__"
+                                    if with_reshape:
+                                        components[i] = ("__to_be_reshaped__",view_edge.data.subset.size()[i])
+                                    else:
+                                        components[i] = ("__to_be_replaced__",1)
                                     complex_replacement = True
-                                    data_path.append((member_name,components))
+                            data_path.append((member_name,components))
                             if all(collapsed): 
                                 must_remove_zero_index= True
-                                data_path.append((member_name,components))
+                            #    data_path.append((member_name,components))
                             # TODO: Non-trivial, memlet offsetting required
                             print("Warning: Non-trivial view on a subset")
                             #raise NotImplementedError

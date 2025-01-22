@@ -592,7 +592,13 @@ class ASTFindReplaceComplex(ast.NodeTransformer):
             only_one_index=False
             expression_under_construction+="["
             first=True
-            for i, dim in enumerate(indices):
+            old_dim_divisor=1
+            first_dim=True
+            for i, dimtuple in enumerate(indices):
+                dim=dimtuple[0]
+                
+                dimdivisor=dimtuple[1]
+                
                 if first:
                     first=False
                 else:
@@ -606,8 +612,18 @@ class ASTFindReplaceComplex(ast.NodeTransformer):
                         expression_under_construction+=unparse(node.slice)
                         only_one_index=True    
                     current_local_index+=1
+                elif dim=="__to_be_reshaped__":
+                    #this is exactly going from two dimensions to one dimension
+                    expression_under_construction+=unparse(node.slice)
+                    if first_dim:
+                        first_dim=False
+                        expression_under_construction+=f"%{dimdivisor}"
+                    else:
+                        expression_under_construction+=f"/{old_dim_divisor}"
+
                 else:
                     expression_under_construction+=dim
+                old_dim_divisor=dimdivisor    
             expression_under_construction+="]"
                     
             new_node = ast.copy_location(ast.parse(expression_under_construction), node)
