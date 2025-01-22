@@ -1520,12 +1520,6 @@ class BackwardPassGenerator:
             if source == "inputs":
                 # We return the first node with this data
                 input_node: nodes.AccessNode = matches[0][0]
-                input_node_state: SDFGState = matches[0][1]
-
-                # There should not be any incoming edges for this node since it is the first one
-                in_edges = input_node_state.in_edges(input_node)
-                assert len(in_edges) == 0
-
                 return input_node
 
             if source == "outputs":
@@ -4285,6 +4279,45 @@ class BackwardPassGenerator:
                                assign_memlet_data)
         return return_node, return_connector
 
+    def _analyze_loop_change(self, code: str, loop_variable: str) -> str:
+        """
+        Analyze if the given loop variable in the provided code increases or decreases.
+
+        Parameters:
+            code (str): The Python code to analyze.
+            loop_variable (str): The name of the loop variable to analyze.
+
+        Returns:
+            str: 'increase', 'decrease', or 'unknown'
+        """
+        tree = ast.parse(code)
+        change_type = "unknown"
+
+        for node in ast.walk(tree):
+            # Look for assignment statements
+            if isinstance(node, ast.Assign):
+                # Ensure the assignment targets the loop variable
+                if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                    target = node.targets[0].id
+                    if target == loop_variable and isinstance(node.value, ast.BinOp):
+                        # Check for `loop_variable = loop_variable + ...`
+                        if isinstance(node.value.left, ast.Name) and node.value.left.id == loop_variable:
+                            # Analyze the right-hand side for increase or decrease
+                            rhs = node.value.right
+                            if isinstance(rhs, ast.UnaryOp) and isinstance(rhs.op, ast.USub):  # Unary negative
+                                if isinstance(rhs.operand, ast.Constant) and isinstance(
+                                        rhs.operand.value, (int, float)):
+                                    change_type = "decrease"
+                            elif isinstance(rhs, ast.UnaryOp) and isinstance(rhs.op, ast.UAdd):  # Unary positive
+                                if isinstance(rhs.operand, ast.Constant) and isinstance(
+                                        rhs.operand.value, (int, float)):
+                                    change_type = "increase"
+                            elif isinstance(rhs, ast.Constant) and isinstance(rhs.value, (int, float)):
+                                change_type = "increase" if rhs.value > 0 else "decrease"
+        if change_type == "unknown":
+            raise AutoDiffException(f"Could not determine loop variable change in code: {code}")
+        return change_type
+
     def _store_data(self, forward_state: SDFGState, backward_state: SDFGState, forward_an: nodes.AccessNode,
                     target_node: nodes.Node, edge: dgraph.MultiConnectorEdge) -> Tuple[nodes.AccessNode, List[Memlet]]:
         """
@@ -4431,14 +4464,40 @@ class BackwardPassGenerator:
             # Get the size of each loop and add it to the list
             for loop in all_encolsing_loops:
                 # Get the end of the loop
-                _, end = self._extract_loop_region_info(loop)
+                start, end = self._extract_loop_region_info(loop)
 
-                # TODO: This assumes the loop is increasing
-                shape.insert(0, end)
+                # Check if the loop is increasing or decreasing
+                # First, try to convert the strings to ints if possible
+                # Note that we look for the start or end of the loop
+                # And not the size of the loop.
+                # This is because we access using the loop indices
+                # Using the loop sizes instead would require shifting accesses
+                if start.isnumeric() and end.isnumeric():
+                    int_start, int_end = int(start), int(end)
+                    if int_start < int_end:
+                        # Increasing loop
+                        shape.insert(0, int_end)
+                    else:
+                        # Decreasing loop
+                        shape.insert(0, int_start)
+                else:
+                    # We check using the update statement
+                    change = self._analyze_loop_change(loop.update_statement.as_string, loop.loop_variable)
+                    if change == "increase":
+                        # Increasing loop
+                        shape.insert(0, int_end)
+                    else:
+                        # Decreasing loop
+                        shape.insert(0, int_start)
+
                 loop_param_list.insert(0, loop.loop_variable)
 
         # Add the array descriptor and AccessNode to the forward state
         original_desc = forward_an.desc(forward_state)
+
+        # TODO: the shape could depend on a runtime dependant symbol,
+        # TODO: we cannot do data-dependant shapes,
+        # how should we deal with these?
         new_store_node = forward_state.add_array(
             name=new_store_node_name,
             shape=shape,
