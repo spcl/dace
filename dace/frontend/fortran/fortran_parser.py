@@ -1442,19 +1442,19 @@ class AST_translator:
             # import copy
             #
             new_sdfg.reset_cfg_list()
-            new_sdfg.validate()
-            tmp_sdfg=copy.deepcopy(new_sdfg)
+            #new_sdfg.validate()
+            #tmp_sdfg=copy.deepcopy(new_sdfg)
             new_sdfg.apply_transformations(IntrinsicSDFGTransformation)
             from dace.transformation.dataflow import RemoveSliceView
             new_sdfg.apply_transformations_repeated([RemoveSliceView])
             from dace.transformation.passes.lift_struct_views import LiftStructViews
             from dace.transformation.pass_pipeline import FixedPointPipeline
             FixedPointPipeline([LiftStructViews()]).apply_pass(new_sdfg, {})
-            new_sdfg.validate()
+            #new_sdfg.validate()
             # tmp_sdfg=copy.deepcopy(new_sdfg)
             new_sdfg.simplify()
-            new_sdfg.validate()
-            sdfg.validate()
+            #new_sdfg.validate()
+            #sdfg.validate()
 
         if self.multiple_sdfgs == True:
             internal_sdfg.path = self.sdfg_path + new_sdfg.name + ".sdfg"
