@@ -3919,6 +3919,9 @@ class ElementalIntrinsicNodeLister(NodeVisitor):
             if hasattr(func, "elemental") and func.elemental:
                 self.ELEMENTAL_FUNCTIONS.add(func.name)
 
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        return node
+
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         is_elemental_intrinsic = node.name.name.startswith('__dace') and node.name.name.split('__dace_')[1] in self.ELEMENTAL_INTRINSICS
