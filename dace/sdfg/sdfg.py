@@ -2517,7 +2517,9 @@ class SDFG(ControlFlowRegion):
             :note: This is an in-place operation on the SDFG.
         """
         from dace.transformation.passes.simplify import SimplifyPass
-        return SimplifyPass(validate=validate, validate_all=validate_all, verbose=verbose,
+        return SimplifyPass(validate=validate,
+                            validate_all=validate_all,
+                            verbose=verbose,
                             skip=options.get('skip', None),
                             pass_options=options).apply_pass(self, {})
 
