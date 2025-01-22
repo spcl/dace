@@ -4107,6 +4107,11 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     - Determine the copy operation b[idx] = a[indices[idx]].
                     - Generate loop, with one iterator for each dimension
                       that needs a copy.
+
+                    We also recursively process indices of arrays to handle cases of nested,
+                    non-contiguous arrays.
+                    These are handled by visitors, and we expected that nested arrays are added
+                    to `nodes_to_process` first.
                 """
 
                 node.parent.specification_part.specifications.append(
@@ -4261,8 +4266,15 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
         cont_sizes = []
         noncont_sizes = []
 
-
+        new_indices = []
         for idx, index in enumerate(node.indices):
+
+            old_data_ref_stack = self.data_ref_stack
+            self.data_ref_stack = []
+            new_indices.append(self.visit(index))
+            self.data_ref_stack = old_data_ref_stack
+
+        for idx, index in enumerate(new_indices):
 
             """
                 For structure references:
@@ -4271,8 +4283,6 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
                 For other, both are the same.
             """
-
-            index = self.visit(index)
 
             if isinstance(index, ast_internal_classes.Data_Ref_Node):
 
