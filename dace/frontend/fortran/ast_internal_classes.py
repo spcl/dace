@@ -190,8 +190,9 @@ class Function_Subprogram_Node(FNode):
                  name: 'Name_Node',
                  args: List,
                  ret: 'Name_Node',
-                 specification_part: 'Specification_Part_Node',
-                 execution_part: 'Execution_Part_Node',
+                 specification_part: Optional['Specification_Part_Node'],
+                 execution_part: Optional['Execution_Part_Node'],
+                 internal_subprogram_part: Optional[Internal_Subprogram_Part_Node],
                  type: str,
                  elemental: bool,
                  **kwargs):
@@ -203,6 +204,7 @@ class Function_Subprogram_Node(FNode):
         self.args = args
         self.specification_part = specification_part
         self.execution_part = execution_part
+        self.internal_subprogram_part = internal_subprogram_part
         self.elemental = elemental
 
     _attributes = ('name', 'type', 'ret')
@@ -217,8 +219,9 @@ class Subroutine_Subprogram_Node(FNode):
     def __init__(self,
                  name: 'Name_Node',
                  args: List,
-                 specification_part: 'Specification_Part_Node',
-                 execution_part: 'Execution_Part_Node',
+                 specification_part: Optional['Specification_Part_Node'],
+                 execution_part: Optional['Execution_Part_Node'],
+                 internal_subprogram_part: Optional[Internal_Subprogram_Part_Node],
                  mandatory_args_count: int = -1,
                  optional_args_count: int = -1,
                  type: Any = None,
@@ -233,6 +236,7 @@ class Subroutine_Subprogram_Node(FNode):
         self.elemental = elemental
         self.specification_part = specification_part
         self.execution_part = execution_part
+        self.internal_subprogram_part = internal_subprogram_part
 
     _attributes = ('name', 'type', 'elemental')
     _fields = (
@@ -241,6 +245,7 @@ class Subroutine_Subprogram_Node(FNode):
         'optional_args_count',
         'specification_part',
         'execution_part',
+        'internal_subprogram_part',
     )
 
 
