@@ -179,10 +179,12 @@ class Internal_Subprogram_Part_Node(FNode):
 
 
 class Actual_Arg_Spec_Node(FNode):
-    _fields = (
-        'arg_name',
-        'arg',
-    )
+    def __init__(self, arg_name: 'Name_Node', arg: FNode, **kwargs):
+        super().__init__(**kwargs)
+        self.arg_name = arg_name
+        self.arg = arg
+
+    _fields = ('arg_name', 'arg')
 
 
 class Function_Subprogram_Node(FNode):

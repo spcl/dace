@@ -836,6 +836,31 @@ def validate_internal_ast(prog: ast_internal_classes.Program_Node):
         raise ValueError(f"execution-part should not contain any declaration; got\n{msg}")
 
 
+def match_callsite_args_to_function_args(
+        fn: ast_internal_classes.Subroutine_Subprogram_Node,
+        call: ast_internal_classes.Call_Expr_Node) \
+        -> Dict[str, ast_internal_classes.FNode]:
+    fargs, cargs = fn.args, call.args
+    out: Dict[str, ast_internal_classes.FNode] = {}
+
+    # Once we start with keyword arguments, everything that comes after must be keyword arguments.
+    kwzone = False
+    while fargs and cargs:
+        fa, fargs = fargs[0], fargs[1:]
+        ca, cargs = cargs[0], cargs[1:]
+        if isinstance(ca, ast_internal_classes.Actual_Arg_Spec_Node):
+            kwzone = True
+        if kwzone:
+            assert isinstance(ca, ast_internal_classes.Actual_Arg_Spec_Node)
+            kw, ca = ca.arg_name, ca.arg
+            assert kw.name == fa.name
+        out[fa.name] = ca
+    # TODO: We assume any extra argument added by the current transforms (that called this helper) is added to the end
+    #  of `fn.args` or `call.args`, whichever was visited first. But we still should check if other arguments are in
+    #  order.
+    return out
+
+
 T = TypeVar('T')
 
 

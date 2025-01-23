@@ -11,7 +11,8 @@ import sympy as sp
 from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes, ast_utils
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
-from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes, TempName, singular, atmost_one
+from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes, TempName, singular, atmost_one, \
+    match_callsite_args_to_function_args
 
 
 class Structure:
@@ -1761,21 +1762,13 @@ class AllocatableReplacerTransformer(NodeTransformer):
         assert isinstance(var, ast_internal_classes.Var_Decl_Node) and var.alloc
         return f"__f2dace_ALLOCATED_{var.name}"
 
-    @staticmethod
-    def _match_args(fn: ast_internal_classes.Subroutine_Subprogram_Node, call: ast_internal_classes.Call_Expr_Node) \
-            -> Dict[str, ast_internal_classes.FNode]:
-        # TODO: This assumes that arguments are passed exactly in order, with no keyword or optional arguments in sight.
-        #  That should be changed too. Also assumes that all the extra arguments related to arrays are added in the end,
-        #  so `zip()` may miss the extra arguments from one side.
-        return {fa.name: ca for fa, ca in zip(fn.args, call.args)}
-
     def visit_Call_Expr_Node(self, call: ast_internal_classes.Call_Expr_Node):
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if call.name.name in FortranIntrinsics.retained_function_names():
             return self.generic_visit(call)
         assert call.name.name in self.functions_by_name
         fn = self.functions_by_name[call.name.name]
-        map_callee_name_to_caller_expressions = self._match_args(fn, call)
+        callee_to_caller_argmap = match_callsite_args_to_function_args(fn, call)
 
         # Since we are here, this call expression does not have the extra arguments yet. So, for each callee argument in
         # order, we will add the extra argument in order. Note that we may not have updated the callee definition yet,
@@ -1786,7 +1779,7 @@ class AllocatableReplacerTransformer(NodeTransformer):
                 v for v in mywalk(fn.specification_part, ast_internal_classes.Var_Decl_Node) if v.name == fa.name)
             if not fadecl or not fadecl.alloc:
                 continue
-            ca = map_callee_name_to_caller_expressions[fa.name]
+            ca = callee_to_caller_argmap[fa.name]
             # TODO: We assume that `ca` is a variable declared inside the call-site (i.e. not somewhere above). We
             #  should do proper scope search instead.
             if isinstance(ca, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node)):
