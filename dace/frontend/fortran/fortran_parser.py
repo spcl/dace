@@ -923,6 +923,14 @@ class AST_translator:
         write_names = list(dict.fromkeys([i.name for i in output_vars]))
         read_names = list(dict.fromkeys([i.name for i in input_vars]))
 
+        # 1. Find all names used in size declaration expressions in the subroutine.
+        # 2. Find all names used in size declaration that are also provided as arguments to the subroutine.
+        # 2.5 For each name that is a argument that must be a symbol, create a scalar on the parent SDFG
+        # 3. Create separate symbol_version and add them to the symbol mapping of the parent nSDFG state.
+        # 4. Replace the names in the size declaration expressions with the new symbol versions.
+        # 5. Create a state before the current substate where we add the NSDFG node.
+        # 6. For each, add the acces "tower" as in the NSDFG state to a scalar in that state.
+
         # Collect the parameters and the function signature to comnpare and link
         parameters = node.args.copy()
         my_name_sdfg = node.name.name + str(self.sdfgs_count)
