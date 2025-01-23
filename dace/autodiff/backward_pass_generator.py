@@ -2274,11 +2274,15 @@ class BackwardPassGenerator:
                         # Check if the node doesn't have a wcr
                         # If it does this is not an overwrite and the gradients should not be cleared
                         has_wcr = incoming_edges[0].data.wcr is not None
-                        if not has_wcr and not isinstance(write_size, int) or write_size > 0:
+                        if not has_wcr:
+                            # Determine if we need to zero out the gradient
+                            zero_out = not (isinstance(write_size, int) and write_size == 0)
+
                             # We need to zero out the same memlet accesses in the backward pass
-                            self._zero_out_gradient(forward_state=forward_state,
-                                                    forward_node=node,
-                                                    memlet=incoming_edges[0].data)
+                            if zero_out:
+                                self._zero_out_gradient(forward_state=forward_state,
+                                                        forward_node=node,
+                                                        memlet=incoming_edges[0].data)
                     elif len(incoming_edges) > 1:
                         # If there is more than one incoming edge,
                         # they should all have a wcr to be valid and nothing is being overwritten
@@ -3860,7 +3864,7 @@ class BackwardPassGenerator:
                 child_node_in_connector = parent_node_in_connector
 
             if isinstance(edge_src, nodes.AccessNode):
-
+                # The connection from the stored data will be made here
                 assert edge_src == forward_node
                 memlet_data = copy.deepcopy(memlets.pop(0))
 
@@ -3873,6 +3877,28 @@ class BackwardPassGenerator:
 
                 # Add the final connection to the source node
                 backward_state.add_edge(replicated_source_node, None, child_node, child_node_in_connector, memlet_data)
+
+                # If this connection was made to a NestedSDFG and the forward node was a view,
+                # We need to change the strides in the data descriptor this points to
+                # Since the stored data is not a view
+                # For example, if the stride of A is 5 (because it points to a column in  a 2d array),
+                # The stored data will only contain the row and the stride for it should be one
+                # This is only a problem if the view points to a NestedSDFG input,
+                # that expects a descriptor with the original view stride
+                if isinstance(child_node, nodes.NestedSDFG) and isinstance(forward_node.desc(self.sdfg),
+                                                                           (dt.View, dt.ArrayView)):
+                    # Get the strides of the stored data
+                    stored_data_desc = self.sdfg.arrays[source_node.data]
+                    stored_strides = stored_data_desc.strides
+
+                    # Get the NestedSDFG input descriptor
+                    input_desc = child_node.sdfg.arrays[child_node_in_connector]
+
+                    # Set the strides to be the last elements of the stored strides
+                    # We take the last elements since we might add loop indices to the shape
+                    # Sanity check the strides for this desc should be less than or equal to the stored strides
+                    assert len(input_desc.strides) <= len(stored_strides)
+                    input_desc.strides = stored_strides[-len(input_desc.shape):]
 
         # There should be the same number of memlets through the new path
         assert len(memlets) == 0
@@ -4318,6 +4344,81 @@ class BackwardPassGenerator:
             raise AutoDiffException(f"Could not determine loop variable change in code: {code}")
         return change_type
 
+    def _get_loop_end(self, start: str, end: str, loop: LoopRegion) -> str:
+        if start.isnumeric() and end.isnumeric():
+            int_start, int_end = int(start), int(end)
+            if int_start < int_end:
+                # Increasing loop
+                largest_index = int_end
+                smallest_index = int_start
+            else:
+                # Decreasing loop
+                largest_index = int_start
+                smallest_index = int_end
+        else:
+            # We check using the update statement
+            change = self._analyze_loop_change(loop.update_statement.as_string, loop.loop_variable)
+            if change == "increase":
+                # Increasing loop
+                largest_index = end
+                smallest_index = start
+            else:
+                # Decreasing loop
+                largest_index = start
+                smallest_index = end
+
+        return smallest_index, largest_index
+
+    def _get_symbol_upper_bound_from_loop(self, s: sp.Symbol, loops: List[LoopRegion]) -> int:
+        """
+        Given a symbol and a list of loops, get the upper bound of the symbol from the loops.
+        Raises an error if the symbol is not a loop index or the upper bound cannot be extracted correctly.
+        """
+        # Get the symbol to match
+        if isinstance(s, sp.Symbol):
+            loop_indices = s.free_symbols
+            if len(loop_indices) != 1:
+                raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed correctly during storing")
+            loop_index = str(list(loop_indices)[0])
+        elif isinstance(s, str):
+            # Extract the free symbols in the string besides the constants and operators and remove white space
+            variable_regex = r'\b[a-zA-Z_][a-zA-Z0-9_]*\b'
+            loop_indices = re.findall(variable_regex, s)
+
+            # If there are multiple symbols in the string
+            if len(loop_indices) != 1 or loop_indices[0] not in self.sdfg.symbols:
+                raise AutoDiffException(f"Symbol dimension {s} couldn't be parsed correctly during storing")
+            loop_index = loop_indices[0]
+        else:
+            raise AutoDiffException(f"Symbol dimesnion {s} is not a string and not a sympy symbol")
+
+        # Get the loop range for this symbol
+        loop_size = -1
+        for l in loops:
+            # Convert the sympy symbol to string to check if it macthes the loop variable
+            if loop_index in l.loop_variable:
+                # Get the max loop range
+                start, end = self._extract_loop_region_info(l)
+
+                # If this is the case of exmaple of a loop like 6 - i
+                # TODO: How can we do this better?
+                matched = f"-{loop_index}" in str(s) or f"- {loop_index}" in str(s)
+                smallest, largest = self._get_loop_end(start, end, l)
+                if not matched:
+                    loop_size = largest
+                else:
+                    loop_size = smallest
+
+        if loop_size == -1:
+            raise AutoDiffException(
+                f"Can't figure out how to save the data inside: {l.label} because of its symbol shape {s}")
+
+        # We will call this function recusrively until loop size is numeric
+        if (isinstance(loop_size, sp.Symbol) and not loop_size.is_number) or (isinstance(loop_size, str)
+                                                                              and not loop_size.isnumeric()):
+            loop_size, _ = self._get_symbol_upper_bound_from_loop(loop_size, loops)
+        return loop_size, loop_index
+
     def _store_data(self, forward_state: SDFGState, backward_state: SDFGState, forward_an: nodes.AccessNode,
                     target_node: nodes.Node, edge: dgraph.MultiConnectorEdge) -> Tuple[nodes.AccessNode, List[Memlet]]:
         """
@@ -4374,32 +4475,7 @@ class BackwardPassGenerator:
         # This will be the shape of the current array
         shape: List[int] = list(self.sdfg.arrays[forward_an.data].shape)
 
-        # # If this is a view and the shape is not static
-        # if any(isinstance(s, dace.symbol) or isinstance(s, sp.Expr) for s in shape):
-        #     # If this is a view
-        #     if type(forward_an.desc(self.sdfg)) is dt.ArrayView:
-        #         # Use the shape of the viewed node instead
-        #         in_edges = forward_state.in_edges(forward_an)
-
-        #         # Sanity checks
-        #         assert len(in_edges) == 1
-        #         assert "views" in forward_an.in_connectors
-
-        #         # Get the shape of the viewed node
-        #         node = in_edges[0].src
-        #         new_shape = list(self.sdfg.arrays[node.data].shape)
-
-        #         # We only want to make this change if the two shapes match in size
-        #         # Otherwise, the memlets for the storing will be wrong
-        #         assert len(new_shape) == shape
-        #         shape = new_shape
-
-        #         # Make sure that the new shape doesn't have any symbolic elements
-        #         # TODO: this is still fixable in case this is a view of a view
-        #         assert not any(isinstance(s, dace.symbol) or isinstance(s, sp.Expr) for s in shape)
-
         # If the shape is an expression:
-        # If
         if any((isinstance(s, dace.symbol) or isinstance(s, sp.Expr)) and not (str(s) in self.sdfg.free_symbols)
                for s in shape):
             # Otherwise, replace all the loop dependant allocations with the max length of the loop
@@ -4411,41 +4487,7 @@ class BackwardPassGenerator:
                 # Loop over the shape dimensions
                 for i, s in enumerate(shape):
                     if isinstance(s, dace.symbol) or isinstance(s, sp.Expr):
-                        # Get the symbol to match
-                        loop_index = s.free_symbols
-                        loop_index = str(list(loop_index)[0])
-                        # Get the loop range for this symbol
-                        loop_size = -1
-                        for l in loops:
-                            # Convert the sympy symbol to string to check if it macthes the loop variable
-                            if loop_index in l.loop_variable:
-                                # Get the max loop range
-                                start, end = self._extract_loop_region_info(l)
-
-                                # If this is the case of exmaple (1) mentioned above
-                                # TODO: How can we do this better?
-                                matched = f"-{loop_index}" in str(s) or f"- {loop_index}" in str(s)
-                                if not matched:
-                                    # TODO: Check code for reversed loops
-                                    if end > start:
-                                        loop_size = end
-                                    else:
-                                        loop_size = start
-                                    break
-                                else:
-                                    # Example (2)
-                                    # We want the opposite
-                                    if end <= start:
-                                        loop_size = end
-                                    else:
-                                        loop_size = start
-                                    break
-
-                        if loop_size == -1:
-                            raise AutoDiffException(
-                                f"Can't figure out how to save the data: {forward_an.data} because of its symbol shape {shape}"
-                            )
-
+                        loop_size, loop_index = self._get_symbol_upper_bound_from_loop(s, loops)
                         # Replace the symbol with the loop size and evaluate the expression
                         # Check if loop size can be converted to an integer
                         if isinstance(loop_size, int) or (isinstance(loop_size, str) and loop_size.isnumeric()):
@@ -4472,24 +4514,25 @@ class BackwardPassGenerator:
                 # And not the size of the loop.
                 # This is because we access using the loop indices
                 # Using the loop sizes instead would require shifting accesses
-                if start.isnumeric() and end.isnumeric():
-                    int_start, int_end = int(start), int(end)
-                    if int_start < int_end:
-                        # Increasing loop
-                        shape.insert(0, int_end)
-                    else:
-                        # Decreasing loop
-                        shape.insert(0, int_start)
-                else:
-                    # We check using the update statement
-                    change = self._analyze_loop_change(loop.update_statement.as_string, loop.loop_variable)
-                    if change == "increase":
-                        # Increasing loop
-                        shape.insert(0, int_end)
-                    else:
-                        # Decreasing loop
-                        shape.insert(0, int_start)
+                # TODO: Do we need to treat the case where 1-i is in the shape here too?
+                _, new_dim = self._get_loop_end(start, end, loop)
 
+                # First we check if the new dimension contains symbols
+                # These will need to be replaced with scalars for correct allocation
+                if isinstance(new_dim, dace.symbol) or isinstance(new_dim,
+                                                                  sp.Expr) or str(new_dim) in self.sdfg.symbols:
+                    # Take the expression to sympy for easier processing
+                    if isinstance(new_dim, str):
+                        new_dim = sp.Symbol(new_dim)
+
+                    # Try to replace the symbols with the loop size
+                    # TODO: this can be extended to a loop over the symbols in new_dim
+                    loop_size, loop_index = self._get_symbol_upper_bound_from_loop(new_dim, all_encolsing_loops)
+                    if isinstance(loop_size, int) or (isinstance(loop_size, str) and loop_size.isnumeric()):
+                        new_dim = new_dim.subs(sp.Symbol(loop_index), loop_size)
+                    else:
+                        new_dim = new_dim.subs(sp.Symbol(loop_index), dace.symbol(loop_size))
+                shape.insert(0, new_dim)
                 loop_param_list.insert(0, loop.loop_variable)
 
         # Add the array descriptor and AccessNode to the forward state
