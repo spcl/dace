@@ -338,7 +338,7 @@ def test_fortran_frontend_allocated_nested():
     size = 3
     res = np.full([size], 42, order="F", dtype=np.int32)
 
-    sdfg(res=res, __f2dace_A_data_var_0_d_0_s_0=0)
+    sdfg(res=res)
 
     assert np.allclose(res, [0, 1, 0])
 

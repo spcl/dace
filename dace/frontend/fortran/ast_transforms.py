@@ -11,7 +11,7 @@ import sympy as sp
 from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes, ast_utils
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
-from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes, TempName, singular
+from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes, TempName, singular, atmost_one
 
 
 class Structure:
@@ -1782,9 +1782,9 @@ class AllocatableReplacerTransformer(NodeTransformer):
         # but this will be resolved when we visit that definition.
         for fa in fn.args:
             # The declaration must exist somewhere in the function specification parts.
-            fadecl: ast_internal_classes.Var_Decl_Node = singular(
+            fadecl: ast_internal_classes.Var_Decl_Node = atmost_one(
                 v for v in mywalk(fn.specification_part, ast_internal_classes.Var_Decl_Node) if v.name == fa.name)
-            if not fadecl.alloc:
+            if not fadecl or not fadecl.alloc:
                 continue
             ca = map_callee_name_to_caller_expressions[fa.name]
             # TODO: We assume that `ca` is a variable declared inside the call-site (i.e. not somewhere above). We
@@ -1819,9 +1819,9 @@ class AllocatableReplacerTransformer(NodeTransformer):
         # any of the call-sites yet, but this will be resolved when we visit those call expressions.
         for fa in fn.args:
             # The declaration must exist somewhere in the function specification parts.
-            fadecl: ast_internal_classes.Var_Decl_Node = singular(
+            fadecl: ast_internal_classes.Var_Decl_Node = atmost_one(
                 v for v in mywalk(fn.specification_part, ast_internal_classes.Var_Decl_Node) if v.name == fa.name)
-            if not fadecl.alloc:
+            if not fadecl or not fadecl.alloc:
                 continue
             # We need to make it an argument.
             alloc_flag = self._allocated_flag(fadecl)
