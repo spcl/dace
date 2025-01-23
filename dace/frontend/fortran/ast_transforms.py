@@ -243,6 +243,7 @@ class FindFunctionAndSubroutines(NodeVisitor):
         ret = node.name
         ret.elemental = node.elemental
         self.names.append(ret)
+        assert ret.name not in self.nodes
         self.nodes[ret.name] = node
         self.module_based_names[self.current_module].append(ret)
 
@@ -250,6 +251,7 @@ class FindFunctionAndSubroutines(NodeVisitor):
         ret = node.name
         ret.elemental = node.elemental
         self.names.append(ret)
+        assert ret.name not in self.nodes
         self.nodes[ret.name] = node
         self.module_based_names[self.current_module].append(ret)
 

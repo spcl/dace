@@ -37,7 +37,7 @@ from dace.frontend.fortran.ast_desugaring import ENTRY_POINT_OBJECT_CLASSES, NAM
     create_global_initializers, convert_data_statements_into_assignments, deconstruct_statement_functions, \
     assign_globally_unique_variable_names
 from dace.frontend.fortran.ast_internal_classes import FNode, Main_Program_Node
-from dace.frontend.fortran.ast_utils import children_of_type
+from dace.frontend.fortran.ast_utils import children_of_type, mywalk, atmost_one
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation, NeedsTypeInferenceException
 from dace.properties import CodeBlock
 from dace.sdfg import nodes as nd
@@ -2024,134 +2024,125 @@ class AST_translator:
         # print(sdfg.name,node.line_number,output_names,output_names_changed,input_names,input_names_tasklet)
         tasklet.code = CodeBlock(text, lang.Python)
 
-    def call2sdfg(self, node: ast_internal_classes.Call_Expr_Node, sdfg: SDFG, cfg: ControlFlowRegion):
+    def call2sdfg(self, call: ast_internal_classes.Call_Expr_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This parses function calls to a nested SDFG 
         or creates a tasklet with an external library call.
-        :param node: The node to be translated
+        :param call: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
         :param cfg: The control flow region to which the node should be translated
         """
 
-        self.last_call_expression[sdfg] = node.args
-        match_found = False
+        self.last_call_expression[sdfg] = call.args
         rettype = "INTEGER"
         hasret = False
-        for fsname in self.functions_and_subroutines:
-            if fsname.name == node.name.name:
 
-                for i in self.top_level.function_definitions:
-                    if i.name.name == node.name.name:
-                        self.function2sdfg(i, sdfg, cfg)
-                        return
-                for i in self.top_level.subroutine_definitions:
-                    if i.name.name == node.name.name:
-                        self.subroutine2sdfg(i, sdfg, cfg)
-                        return
-                for j in self.top_level.modules:
-                    for i in j.function_definitions:
-                        if i.name.name == node.name.name:
-                            self.function2sdfg(i, sdfg, cfg)
-                            return
-                    for i in j.subroutine_definitions:
-                        if i.name.name == node.name.name:
-                            self.subroutine2sdfg(i, sdfg, cfg)
-                            return
-        else:
-            # This part handles the case that it's an external library call
-            libstate = self.libraries.get(node.name.name)
-            if not isinstance(rettype, ast_internal_classes.Void) and hasattr(node, "hasret"):
-                if node.hasret:
-                    hasret = True
-                    retval = node.args.pop(len(node.args) - 1)
-            if node.name == "free":
-                return
-            input_names_tasklet = {}
-            output_names_tasklet = []
-            input_names = []
-            output_names = []
-            special_list_in = {}
-            special_list_out = []
-            if libstate is not None:
-                special_list_in[self.name_mapping[sdfg][libstate] + "_task"] = dtypes.pointer(
-                    sdfg.arrays.get(self.name_mapping[sdfg][libstate]).dtype)
-                special_list_out.append(self.name_mapping[sdfg][libstate] + "_task_out")
-            used_vars = [
-                node for node in ast_utils.mywalk(node) if isinstance(node, ast_internal_classes.Name_Node)
-            ]
+        # We assume globally unique function names here.
+        # TODO: Convert `self.functions_and_subroutines` into a dictionary to not have to look up a million times.
+        if call.name.name in {fn.name for fn in self.functions_and_subroutines}:
+            fndef = atmost_one(
+                fn for fn in mywalk(self.top_level, (ast_internal_classes.Subroutine_Subprogram_Node,
+                                                     ast_internal_classes.Function_Subprogram_Node))
+                if fn.name.name == call.name.name)
+            if fndef:
+                # Functions should not exist anymore at this point, really.
+                assert isinstance(fndef, ast_internal_classes.Subroutine_Subprogram_Node)
+                return self.subroutine2sdfg(fndef, sdfg, cfg)
 
-            for i in used_vars:
-                for j in sdfg.arrays:
-                    if self.name_mapping.get(sdfg).get(i.name) == j and j not in input_names:
-                        elem = sdfg.arrays.get(j)
-                        scalar = False
-                        if len(elem.shape) == 0:
-                            scalar = True
-                        elif (len(elem.shape) == 1 and elem.shape[0] == 1):
-                            scalar = True
-                        if not scalar and not node.name.name in ["fprintf", "printf"]:
-                            output_names.append(j)
-                            output_names_tasklet.append(i.name)
+        # This part handles the case that it's an external library call.
+        libstate = self.libraries.get(call.name.name)
+        if not isinstance(rettype, ast_internal_classes.Void) and hasattr(call, "hasret"):
+            if call.hasret:
+                hasret = True
+                retval = call.args.pop(len(call.args) - 1)
+        if call.name == "free":
+            return
+        input_names_tasklet = {}
+        output_names_tasklet = []
+        input_names = []
+        output_names = []
+        special_list_in = {}
+        special_list_out = []
+        if libstate is not None:
+            special_list_in[self.name_mapping[sdfg][libstate] + "_task"] = dtypes.pointer(
+                sdfg.arrays.get(self.name_mapping[sdfg][libstate]).dtype)
+            special_list_out.append(self.name_mapping[sdfg][libstate] + "_task_out")
+        used_vars = [
+            node for node in ast_utils.mywalk(call) if isinstance(node, ast_internal_classes.Name_Node)
+        ]
 
-                        input_names_tasklet[i.name] = dtypes.pointer(elem.dtype)
-                        input_names.append(j)
+        for i in used_vars:
+            for j in sdfg.arrays:
+                if self.name_mapping.get(sdfg).get(i.name) == j and j not in input_names:
+                    elem = sdfg.arrays.get(j)
+                    scalar = False
+                    if len(elem.shape) == 0:
+                        scalar = True
+                    elif len(elem.shape) == 1 and elem.shape[0] == 1:
+                        scalar = True
+                    if not scalar and not call.name.name in ["fprintf", "printf"]:
+                        output_names.append(j)
+                        output_names_tasklet.append(i.name)
 
-            output_names_changed = []
-            for o, o_t in zip(output_names, output_names_tasklet):
-                output_names_changed.append(o_t + "_out")
+                    input_names_tasklet[i.name] = dtypes.pointer(elem.dtype)
+                    input_names.append(j)
 
-            tw = ast_utils.TaskletWriter(output_names_tasklet.copy(), output_names_changed.copy(), sdfg,
-                                         self.name_mapping, placeholders=self.placeholders,
-                                         placeholders_offsets=self.placeholders_offsets, rename_dict=self.replace_names)
-            if not isinstance(rettype, ast_internal_classes.Void) and hasret:
-                if isinstance(retval, ast_internal_classes.Name_Node):
-                    special_list_in[retval.name] = pointer(self.get_dace_type(rettype))
-                    special_list_out.append(retval.name + "_out")
-                elif isinstance(retval, ast_internal_classes.Array_Subscript_Node):
-                    special_list_in[retval.name.name] = pointer(self.get_dace_type(rettype))
-                    special_list_out.append(retval.name.name + "_out")
-                else:
-                    raise NotImplementedError("Return type not implemented")
+        output_names_changed = []
+        for o, o_t in zip(output_names, output_names_tasklet):
+            output_names_changed.append(o_t + "_out")
 
-                text = tw.write_code(
-                    ast_internal_classes.BinOp_Node(lval=retval, op="=", rval=node, line_number=node.line_number))
-
+        tw = ast_utils.TaskletWriter(output_names_tasklet.copy(), output_names_changed.copy(), sdfg,
+                                     self.name_mapping, placeholders=self.placeholders,
+                                     placeholders_offsets=self.placeholders_offsets, rename_dict=self.replace_names)
+        if not isinstance(rettype, ast_internal_classes.Void) and hasret:
+            if isinstance(retval, ast_internal_classes.Name_Node):
+                special_list_in[retval.name] = pointer(self.get_dace_type(rettype))
+                special_list_out.append(retval.name + "_out")
+            elif isinstance(retval, ast_internal_classes.Array_Subscript_Node):
+                special_list_in[retval.name.name] = pointer(self.get_dace_type(rettype))
+                special_list_out.append(retval.name.name + "_out")
             else:
-                text = tw.write_code(node)
-            substate = self._add_simple_state_to_cfg(cfg, "_state" + str(node.line_number[0]))
+                raise NotImplementedError("Return type not implemented")
 
-            tasklet = self._add_tasklet(substate, str(node.line_number[0]), {
-                **input_names_tasklet,
-                **special_list_in
-            }, output_names_changed + special_list_out, "text", node.line_number, self.file_name)
-            if libstate is not None:
-                ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][libstate], tasklet,
-                                          self.name_mapping[sdfg][libstate] + "_task", "0")
+            text = tw.write_code(
+                ast_internal_classes.BinOp_Node(lval=retval, op="=", rval=call, line_number=call.line_number))
 
-                ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][libstate], tasklet,
-                                           self.name_mapping[sdfg][libstate] + "_task_out", "0")
-            if not isinstance(rettype, ast_internal_classes.Void) and hasret:
-                if isinstance(retval, ast_internal_classes.Name_Node):
-                    ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][retval.name], tasklet, retval.name, "0")
+        else:
+            text = tw.write_code(call)
+        substate = self._add_simple_state_to_cfg(cfg, "_state" + str(call.line_number[0]))
 
-                    ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][retval.name], tasklet,
-                                               retval.name + "_out", "0")
-                if isinstance(retval, ast_internal_classes.Array_Subscript_Node):
-                    ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][retval.name.name], tasklet,
-                                              retval.name.name, "0")
+        tasklet = self._add_tasklet(substate, str(call.line_number[0]), {
+            **input_names_tasklet,
+            **special_list_in
+        }, output_names_changed + special_list_out, "text", call.line_number, self.file_name)
+        if libstate is not None:
+            ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][libstate], tasklet,
+                                      self.name_mapping[sdfg][libstate] + "_task", "0")
 
-                    ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][retval.name.name], tasklet,
-                                               retval.name.name + "_out", "0")
+            ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][libstate], tasklet,
+                                       self.name_mapping[sdfg][libstate] + "_task_out", "0")
+        if not isinstance(rettype, ast_internal_classes.Void) and hasret:
+            if isinstance(retval, ast_internal_classes.Name_Node):
+                ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][retval.name], tasklet, retval.name, "0")
 
-            for i, j in zip(input_names, input_names_tasklet):
-                memlet_range = self.get_memlet_range(sdfg, used_vars, i, j)
-                ast_utils.add_memlet_read(substate, i, tasklet, j, memlet_range)
+                ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][retval.name], tasklet,
+                                           retval.name + "_out", "0")
+            if isinstance(retval, ast_internal_classes.Array_Subscript_Node):
+                ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][retval.name.name], tasklet,
+                                          retval.name.name, "0")
 
-            for i, j, k in zip(output_names, output_names_tasklet, output_names_changed):
-                memlet_range = self.get_memlet_range(sdfg, used_vars, i, j)
-                ast_utils.add_memlet_write(substate, i, tasklet, k, memlet_range)
+                ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][retval.name.name], tasklet,
+                                           retval.name.name + "_out", "0")
 
-            setattr(tasklet, "code", CodeBlock(text, lang.Python))
+        for i, j in zip(input_names, input_names_tasklet):
+            memlet_range = self.get_memlet_range(sdfg, used_vars, i, j)
+            ast_utils.add_memlet_read(substate, i, tasklet, j, memlet_range)
+
+        for i, j, k in zip(output_names, output_names_tasklet, output_names_changed):
+            memlet_range = self.get_memlet_range(sdfg, used_vars, i, j)
+            ast_utils.add_memlet_write(substate, i, tasklet, k, memlet_range)
+
+        setattr(tasklet, "code", CodeBlock(text, lang.Python))
 
     def declstmt2sdfg(self, node: ast_internal_classes.Decl_Stmt_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
@@ -2726,6 +2717,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     # TODO: Enable permanently after the tests pass.
     # ast_utils.validate_internal_ast(program)
     return program
+
 
 def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, program: FNode, cfg: SDFGConfig):
     # Repeated!
