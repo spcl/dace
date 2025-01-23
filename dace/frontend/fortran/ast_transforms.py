@@ -243,6 +243,8 @@ class FindFunctionAndSubroutines(NodeVisitor):
         assert ret.name not in self.nodes
         self.nodes[ret.name] = node
         self.module_based_names[self.current_module].append(ret)
+        if node.internal_subprogram_part:
+            self.visit(node.internal_subprogram_part)
 
     def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
         ret = node.name
@@ -251,6 +253,8 @@ class FindFunctionAndSubroutines(NodeVisitor):
         assert ret.name not in self.nodes
         self.nodes[ret.name] = node
         self.module_based_names[self.current_module].append(ret)
+        if node.internal_subprogram_part:
+            self.visit(node.internal_subprogram_part)
 
     def visit_Module_Node(self, node: ast_internal_classes.Module_Node):
         self.iblocks.update(node.interface_blocks)
