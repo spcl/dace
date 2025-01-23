@@ -1775,10 +1775,22 @@ class AST_translator:
             self.views = self.views + 1
             is_scalar=(len(shape)==0) or (len(shape)==1 and shape[0]==1)
             is_local_scalar=(len(local_shape)==0) or (len(local_shape)==1 and local_shape[0]==1)
+            
             if local_shape!=shape and (not(is_scalar and is_local_scalar)):
                 #we must add an extra view reshaping the access to the local shape
                 if len(shape)==len(local_shape):
                     print("Shapes are not equal, but the same size. We hope that the symbolic sizes evaluate to the same values")
+                    recompute_strides=False
+                    for i,local in enumerate(local_shape):
+                        if local.name.startswith("__f2dace"):
+                            local_shape[i]=shape[i]
+                            print(f"replacing local shape: {local_shape[i]}")
+                            local_offsets[i]=offsets[i]
+                            recompute_strides=True
+                    if recompute_strides:
+                        local_strides = [dat._prod(local_shape[:i]) for i in range(len(local_shape))]        
+
+                            
                 else:    
                     if len(local_shape)!=1:
                         raise NotImplementedError("Local shape not 1")
@@ -1893,6 +1905,16 @@ class AST_translator:
                         if local_shape!=shape and (not(is_scalar and is_local_scalar)):  
                             if len(shape)==len(local_shape):
                                 print("Shapes are not equal, but the same size. We hope that the symbolic sizes evaluate to the same values")
+                                #this is not necessary, as here we use the outside sizes for some reason???
+                                # recompute_strides=False
+                                # for i,local in enumerate(local_shape):
+                                #     if local.name.startswith("__f2dace"):
+                                #         local_shape[i]=shape[i]
+                                #         print(f"replacing local shape: {local_shape[i]}")
+                                #         local_offsets[i]=offsets[i]
+                                #         recompute_strides=True
+                                # if recompute_strides:
+                                #     local_strides = [dat._prod(local_shape[:i]) for i in range(len(local_shape))]        
                             else:    
                                 raise NotImplementedError("Local shape not the same as outside shape")  
                         new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
