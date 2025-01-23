@@ -2669,7 +2669,7 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
     #program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
-    program = ast_transforms.allocatableReplacer(program)
+    program = ast_transforms.AllocatableReplacerTransformer(program).visit(program)
     program = ast_transforms.ParDeclOffsetNormalizer(program).visit(program)
 
     structs_lister = ast_transforms.StructLister()
