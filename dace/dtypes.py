@@ -701,6 +701,9 @@ class pointer(typeclass):
     def ocltype(self):
         return f"{self.base_type.ocltype}*"
 
+    def to_string(self):
+        return f"{self.type.__name__}_ptr"
+
 
 class vector(typeclass):
     """

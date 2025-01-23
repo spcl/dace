@@ -751,6 +751,7 @@ class InternalFortranAst:
 
         specification_part = get_child(children, ast_internal_classes.Specification_Part_Node)
         execution_part = get_child(children, ast_internal_classes.Execution_Part_Node)
+        internal_subprogram_part = get_child(children, ast_internal_classes.Internal_Subprogram_Part_Node)
 
         name = get_child(children, ast_internal_classes.Function_Stmt_Node)
         return_var: Name_Node = name.ret.name if name.ret else name.name
@@ -769,6 +770,7 @@ class InternalFortranAst:
             ret=return_var,
             specification_part=specification_part,
             execution_part=execution_part,
+            internal_subprogram_part=internal_subprogram_part,
             type=return_type,
             line_number=name.line_number,
             elemental=name.elemental,

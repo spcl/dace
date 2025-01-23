@@ -177,51 +177,48 @@ class Flatten_Classes(NodeTransformer):
         return self.generic_visit(node)
 
     def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
-        new_node = self.generic_visit(node)
+        node: ast_internal_classes.Subroutine_Subprogram_Node = self.generic_visit(node)
         print("Subroutine: ", node.name.name)
-        if self.current_class is not None:
-            for i in self.classes:
-                if i.is_class is True:
-                    if i.name.name == self.current_class.name.name:
-                        for j in i.procedure_part.procedures:
-                            if j.name.name == node.name.name:
-                                return ast_internal_classes.Subroutine_Subprogram_Node(
-                                    name=ast_internal_classes.Name_Node(name=i.name.name + "_" + node.name.name,
-                                                                        type=node.type),
-                                    args=new_node.args,
-                                    specification_part=new_node.specification_part,
-                                    execution_part=new_node.execution_part,
-                                    mandatory_args_count=new_node.mandatory_args_count,
-                                    optional_args_count=new_node.optional_args_count,
-                                    elemental=new_node.elemental,
-                                    line_number=new_node.line_number)
-                            elif hasattr(j, "args") and j.args[2] is not None:
-                                if j.args[2].name == node.name.name:
-                                    return ast_internal_classes.Subroutine_Subprogram_Node(
-                                        name=ast_internal_classes.Name_Node(name=i.name.name + "_" + j.name.name,
-                                                                            type=node.type),
-                                        args=new_node.args,
-                                        specification_part=new_node.specification_part,
-                                        execution_part=new_node.execution_part,
-                                        mandatory_args_count=new_node.mandatory_args_count,
-                                        optional_args_count=new_node.optional_args_count,
-                                        elemental=new_node.elemental,
-                                        line_number=new_node.line_number)
-        return new_node
+        if not self.current_class:
+            return node
+        for i in self.classes:
+            if not i.is_class or i.name.name != self.current_class.name.name:
+                continue
+            for j in i.procedure_part.procedures:
+                name = None
+                if j.name.name == node.name.name:
+                    name = i.name.name + "_" + node.name.name
+                elif hasattr(j, "args") and j.args[2] is not None:
+                    if j.args[2].name == node.name.name:
+                        name = i.name.name + "_" + j.name.name
+                if name:
+                    return ast_internal_classes.Subroutine_Subprogram_Node(
+                        name=ast_internal_classes.Name_Node(name=name, type=node.type),
+                        args=node.args,
+                        specification_part=node.specification_part,
+                        execution_part=node.execution_part,
+                        internal_subprogram_part=node.execution_part,
+                        mandatory_args_count=node.mandatory_args_count,
+                        optional_args_count=node.optional_args_count,
+                        elemental=node.elemental,
+                        line_number=node.line_number)
+
+        return node
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-        if self.current_class is not None:
-            for i in self.classes:
-                if i.is_class is True:
-                    if i.name.name == self.current_class.name.name:
-                        for j in i.procedure_part.procedures:
-                            if j.name.name == node.name.name:
-                                return ast_internal_classes.Call_Expr_Node(
-                                    name=ast_internal_classes.Name_Node(name=i.name.name + "_" + node.name.name,
-                                                                        type=node.type, args=node.args,
-                                                                        line_number=node.line_number), args=node.args,
-                                    type=node.type, subroutine=node.subroutine, line_number=node.line_number,
-                                    parent=node.parent)
+        if not self.current_class:
+            return self.generic_visit(node)
+        for i in self.classes:
+            if not i.is_class or i.name.name != self.current_class.name.name:
+                continue
+            for j in i.procedure_part.procedures:
+                if j.name.name == node.name.name:
+                    name = i.name.name + "_" + j.name.name
+                    return ast_internal_classes.Call_Expr_Node(
+                        name=ast_internal_classes.Name_Node(
+                            name=name, type=node.type, args=node.args, line_number=node.line_number),
+                        args=node.args, type=node.type, subroutine=node.subroutine,
+                        line_number=node.line_number, parent=node.parent)
         return self.generic_visit(node)
 
 
@@ -243,15 +240,21 @@ class FindFunctionAndSubroutines(NodeVisitor):
         ret = node.name
         ret.elemental = node.elemental
         self.names.append(ret)
+        assert ret.name not in self.nodes
         self.nodes[ret.name] = node
         self.module_based_names[self.current_module].append(ret)
+        if node.internal_subprogram_part:
+            self.visit(node.internal_subprogram_part)
 
     def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
         ret = node.name
         ret.elemental = node.elemental
         self.names.append(ret)
+        assert ret.name not in self.nodes
         self.nodes[ret.name] = node
         self.module_based_names[self.current_module].append(ret)
+        if node.internal_subprogram_part:
+            self.visit(node.internal_subprogram_part)
 
     def visit_Module_Node(self, node: ast_internal_classes.Module_Node):
         self.iblocks.update(node.interface_blocks)
@@ -978,6 +981,7 @@ class FunctionToSubroutineDefiner(NodeTransformer):
             args=args,
             specification_part=node.specification_part,
             execution_part=execution_part,
+            internal_subprogram_part=node.internal_subprogram_part,
             subroutine=True,
             line_number=node.line_number,
             elemental=node.elemental)
@@ -1896,7 +1900,8 @@ class AllocatableReplacerTransformer(NodeTransformer):
             name=node.name,
             args=args,
             specification_part=node.specification_part,
-            execution_part=node.execution_part
+            execution_part=node.execution_part,
+            internal_subprogram_part=node.internal_subprogram_part,
         )
 
 
@@ -2961,11 +2966,17 @@ class PointerRemoval(NodeTransformer):
         else:
             specification_part = node.specification_part
 
+        if node.internal_subprogram_part is not None:
+            internal_subprogram_part = self.visit(node.internal_subprogram_part)
+        else:
+            internal_subprogram_part = node.internal_subprogram_part
+
         return ast_internal_classes.Subroutine_Subprogram_Node(
             name=node.name,
             args=node.args,
             specification_part=specification_part,
             execution_part=execution_part,
+            internal_subprogram_part=internal_subprogram_part,
             line_number=node.line_number,
             elemental=node.elemental
         )
