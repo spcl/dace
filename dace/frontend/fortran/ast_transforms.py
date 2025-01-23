@@ -1805,15 +1805,16 @@ class AllocatableReplacerTransformer(NodeTransformer):
     def visit_Subroutine_Subprogram_Node(self, fn: ast_internal_classes.Subroutine_Subprogram_Node):
         # Since we are here, this function defintion does not have the extra variables and arguments yet. So, first we
         # declare the extra variables for all allocated variables.
-        for fvdecl in mywalk(fn.specification_part, ast_internal_classes.Var_Decl_Node):
-            assert isinstance(fvdecl, ast_internal_classes.Var_Decl_Node)
-            if not fvdecl.alloc:
-                continue
-            alloc_flag = self._allocated_flag(fvdecl)
-            decl = ast_internal_classes.Var_Decl_Node(
-                name=alloc_flag, type='LOGICAL', init=ast_internal_classes.Bool_Literal_Node('False'),
-                line_number=fn.line_number, parent=fn.parent)
-            fn.specification_part.specifications.append(ast_internal_classes.Decl_Stmt_Node(vardecl=[decl]))
+        if fn.specification_part:
+            for fvdecl in mywalk(fn.specification_part, ast_internal_classes.Var_Decl_Node):
+                assert isinstance(fvdecl, ast_internal_classes.Var_Decl_Node)
+                if not fvdecl.alloc:
+                    continue
+                alloc_flag = self._allocated_flag(fvdecl)
+                decl = ast_internal_classes.Var_Decl_Node(
+                    name=alloc_flag, type='LOGICAL', init=ast_internal_classes.Bool_Literal_Node('False'),
+                    line_number=fn.line_number, parent=fn.parent)
+                fn.specification_part.specifications.append(ast_internal_classes.Decl_Stmt_Node(vardecl=[decl]))
         # Then, for each argument in order, we will add the extra argument in order. Note that we may not have updated
         # any of the call-sites yet, but this will be resolved when we visit those call expressions.
         for fa in fn.args:
