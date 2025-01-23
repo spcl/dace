@@ -11,7 +11,7 @@ import sympy as sp
 from dace import symbolic as sym
 from dace.frontend.fortran import ast_internal_classes, ast_utils
 from dace.frontend.fortran.ast_desugaring import ConstTypeInjection
-from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes, TempName
+from dace.frontend.fortran.ast_utils import mywalk, iter_fields, iter_attributes, TempName, singular
 
 
 class Structure:
@@ -1742,174 +1742,131 @@ def optionalArgsExpander(node=ast_internal_classes.Program_Node):
     return node
 
 
-class AllocatableFunctionLister(NodeVisitor):
-
-    def __init__(self):
-        self.functions = {}
-
-    def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
-
-        for i in node.specification_part.specifications:
-
-            vars = []
-            if isinstance(i, ast_internal_classes.Decl_Stmt_Node):
-
-                for var_decl in i.vardecl:
-                    if var_decl.alloc:
-
-                        # we are only interestd in adding flag if it's an arg
-                        found = False
-                        for arg in node.args:
-                            assert isinstance(arg, ast_internal_classes.Name_Node)
-
-                            if var_decl.name == arg.name:
-                                found = True
-                                break
-
-                        if found:
-                            vars.append(var_decl.name)
-
-            if len(vars) > 0:
-                self.functions[node.name.name] = vars
-
-
-class AllocatableReplacerVisitor(NodeVisitor):
-
-    def __init__(self, functions_with_alloc):
-        self.allocate_var_names = []
-        self.deallocate_var_names = []
-        self.call_nodes = []
-        self.functions_with_alloc = functions_with_alloc
-
-    def visit_Allocate_Stmt_Node(self, node: ast_internal_classes.Allocate_Stmt_Node):
-
-        for var in node.allocation_list:
-            self.allocate_var_names.append(var.name.name)
-
-    def visit_Deallocate_Stmt_Node(self, node: ast_internal_classes.Deallocate_Stmt_Node):
-
-        for var in node.list:
-            self.deallocate_var_names.append(var.name)
-
-    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-
-        for node.name.name in self.functions_with_alloc:
-            self.call_nodes.append(node)
-
-
 class AllocatableReplacerTransformer(NodeTransformer):
+    def __init__(self, program=ast_internal_classes.Program_Node):
+        ParentScopeAssigner().visit(program)
 
-    def __init__(self, functions_with_alloc: Dict[str, List[str]]):
-        self.functions_with_alloc = functions_with_alloc
+        # TODO: This assumes globally unique function names. We can make it more general by keeping track of the
+        #  module etc. too.
+        self.functions_by_name: Dict[str, ast_internal_classes.Subroutine_Subprogram_Node] = {
+            f.name.name: f for f in mywalk(program, ast_internal_classes.Subroutine_Subprogram_Node)}
+
+        # For a nesting of execution parts (rare, but in case it happens), after visiting each direct child of it,
+        # `self.execution_preludes[-1]` will contain all the temporary variable assignments necessary for that node.
+        self.execution_preludes: List[List[ast_internal_classes.BinOp_Node]] = []
+
+
+    @staticmethod
+    def _allocated_flag(var: ast_internal_classes.Var_Decl_Node) -> str:
+        assert isinstance(var, ast_internal_classes.Var_Decl_Node) and var.alloc
+        return f"__f2dace_ALLOCATED_{var.name}"
+
+    @staticmethod
+    def _match_args(fn: ast_internal_classes.Subroutine_Subprogram_Node, call: ast_internal_classes.Call_Expr_Node) \
+            -> Dict[str, ast_internal_classes.FNode]:
+        # TODO: This assumes that arguments are passed exactly in order, with no keyword or optional arguments in sight.
+        #  That should be changed too. Also assumes that all the extra arguments related to arrays are added in the end,
+        #  so `zip()` may miss the extra arguments from one side.
+        return {fa.name: ca for fa, ca in zip(fn.args, call.args)}
+
+    def visit_Call_Expr_Node(self, call: ast_internal_classes.Call_Expr_Node):
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
+        if call.name.name in FortranIntrinsics.retained_function_names():
+            return self.generic_visit(call)
+        assert call.name.name in self.functions_by_name
+        fn = self.functions_by_name[call.name.name]
+        map_callee_name_to_caller_expressions = self._match_args(fn, call)
+
+        # Since we are here, this call expression does not have the extra arguments yet. So, for each callee argument in
+        # order, we will add the extra argument in order. Note that we may not have updated the callee definition yet,
+        # but this will be resolved when we visit that definition.
+        for fa in fn.args:
+            # The declaration must exist somewhere in the function specification parts.
+            fadecl: ast_internal_classes.Var_Decl_Node = singular(
+                v for v in mywalk(fn.specification_part, ast_internal_classes.Var_Decl_Node) if v.name == fa.name)
+            if not fadecl.alloc:
+                continue
+            ca = map_callee_name_to_caller_expressions[fa.name]
+            # TODO: We assume that `ca` is a variable declared inside the call-site (i.e. not somewhere above). We
+            #  should do proper scope search instead.
+            if isinstance(ca, (ast_internal_classes.Name_Node, ast_internal_classes.Array_Subscript_Node)):
+                cadecl: ast_internal_classes.Var_Decl_Node = singular(
+                    v for v in mywalk(ca.parent.specification_part, ast_internal_classes.Var_Decl_Node)
+                    if v.name == ca.name)
+            elif isinstance(ca, ast_internal_classes.Data_Ref_Node):
+                raise NotImplementedError
+            # There must be an allocated flag for it too. We may not have defined it yet, but we will by the time we are
+            # done with visiting the callee definition.
+            alloc_flag = ast_internal_classes.Name_Node(
+                name=self._allocated_flag(cadecl), type='LOGICAL', line_number=call.line_number, parent=call.parent)
+            call.args.append(alloc_flag)
+        return self.generic_visit(call)
+
+    def visit_Subroutine_Subprogram_Node(self, fn: ast_internal_classes.Subroutine_Subprogram_Node):
+        # Since we are here, this function defintion does not have the extra variables and arguments yet. So, first we
+        # declare the extra variables for all allocated variables.
+        for fvdecl in mywalk(fn.specification_part, ast_internal_classes.Var_Decl_Node):
+            assert isinstance(fvdecl, ast_internal_classes.Var_Decl_Node)
+            if not fvdecl.alloc:
+                continue
+            alloc_flag = self._allocated_flag(fvdecl)
+            decl = ast_internal_classes.Var_Decl_Node(
+                name=alloc_flag, type='LOGICAL', init=ast_internal_classes.Bool_Literal_Node('False'),
+                line_number=fn.line_number, parent=fn.parent)
+            fn.specification_part.specifications.append(ast_internal_classes.Decl_Stmt_Node(vardecl=[decl]))
+        # Then, for each argument in order, we will add the extra argument in order. Note that we may not have updated
+        # any of the call-sites yet, but this will be resolved when we visit those call expressions.
+        for fa in fn.args:
+            # The declaration must exist somewhere in the function specification parts.
+            fadecl: ast_internal_classes.Var_Decl_Node = singular(
+                v for v in mywalk(fn.specification_part, ast_internal_classes.Var_Decl_Node) if v.name == fa.name)
+            if not fadecl.alloc:
+                continue
+            # We need to make it an argument.
+            alloc_flag = self._allocated_flag(fadecl)
+            fn.args.append(ast_internal_classes.Name_Node(
+                name=alloc_flag, type='LOGICAL', line_number=fn.line_number, parent=fn.parent))
+        return self.generic_visit(fn)
+
+    def visit_Allocate_Stmt_Node(self, alloc: ast_internal_classes.Allocate_Stmt_Node):
+        for av in alloc.allocation_list:
+            # The declaration must exist somewhere in the function specification parts.
+            avdecl: ast_internal_classes.Var_Decl_Node = singular(
+                v for v in mywalk(av.parent.specification_part, ast_internal_classes.Var_Decl_Node)
+                if v.name == av.name.name)
+            # TODO: Here we are setting only the `ALLOCATED` flag for the array, but there are other operations missing,
+            #  e.g., setting the sizes, offsets, and the actual memory allocation itself.
+            asgn = ast_internal_classes.BinOp_Node(
+                lval=ast_internal_classes.Name_Node(name=self._allocated_flag(avdecl)), op='=',
+                rval=ast_internal_classes.Bool_Literal_Node(value='True'),
+                line_number=alloc.line_number, parent=alloc.parent)
+            self.execution_preludes[-1].append(asgn)
+
+    def visit_Deallocate_Stmt_Node(self, dealloc: ast_internal_classes.Deallocate_Stmt_Node):
+        for dv in dealloc.deallocation_list:
+            # The declaration must exist somewhere in the function specification parts.
+            dvdecl: ast_internal_classes.Var_Decl_Node = singular(
+                v for v in mywalk(dv.parent.specification_part, ast_internal_classes.Var_Decl_Node)
+                if v.name == dv.name)
+            # TODO: Here we are setting only the `ALLOCATED` flag for the array, but there are other operations missing,
+            #  e.g., the actual memory deallocation itself.
+            asgn = ast_internal_classes.BinOp_Node(
+                lval=ast_internal_classes.Name_Node(name=self._allocated_flag(dvdecl)), op='=',
+                rval=ast_internal_classes.Bool_Literal_Node(value='False'),
+                line_number=dealloc.line_number, parent=dealloc.parent)
+            self.execution_preludes[-1].append(asgn)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
-
         newbody = []
+        self.execution_preludes.append([])
+        for ex in node.execution:
+            ex = self.visit(ex)
+            newbody.extend(reversed(self.execution_preludes[-1]))
+            newbody.append(ex)
+            self.execution_preludes[-1].clear()
+        self.execution_preludes.pop()
+        return ast_internal_classes.Execution_Part_Node(execution = newbody)
 
-        for child in node.execution:
-
-            lister = AllocatableReplacerVisitor(self.functions_with_alloc)
-            lister.visit(child)
-
-            for alloc_node in lister.allocate_var_names:
-                name = f'__f2dace_ALLOCATED_{alloc_node}'
-                newbody.append(
-                    ast_internal_classes.BinOp_Node(
-                        op="=",
-                        lval=ast_internal_classes.Name_Node(name=name),
-                        rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                        line_number=child.line_number,
-                        parent=child.parent
-                    )
-                )
-
-            for dealloc_node in lister.deallocate_var_names:
-                name = f'__f2dace_ALLOCATED_{dealloc_node}'
-                newbody.append(
-                    ast_internal_classes.BinOp_Node(
-                        op="=",
-                        lval=ast_internal_classes.Name_Node(name=name),
-                        rval=ast_internal_classes.Int_Literal_Node(value="0"),
-                        line_number=child.line_number,
-                        parent=child.parent
-                    )
-                )
-
-            for call_node in lister.call_nodes:
-
-                alloc_nodes = self.functions_with_alloc[call_node.name.name]
-
-                for alloc_name in alloc_nodes:
-                    name = f'__f2dace_ALLOCATED_{alloc_name}'
-                    call_node.args.append(
-                        ast_internal_classes.Name_Node(name=name)
-                    )
-
-            newbody.append(child)
-
-        return ast_internal_classes.Execution_Part_Node(execution=newbody)
-
-    def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
-
-        node.execution_part = self.visit(node.execution_part)
-
-        args = node.args.copy()
-        newspec = []
-        for i in node.specification_part.specifications:
-
-            if not isinstance(i, ast_internal_classes.Decl_Stmt_Node):
-                newspec.append(self.visit(i))
-            else:
-
-                newdecls = []
-                for var_decl in i.vardecl:
-
-                    if var_decl.alloc:
-
-                        name = f'__f2dace_ALLOCATED_{var_decl.name}'
-                        init = ast_internal_classes.Int_Literal_Node(value="0")
-
-                        # if it's an arg, then we don't initialize
-                        if (node.name.name in self.functions_with_alloc
-                                and var_decl.name in self.functions_with_alloc[node.name.name]):
-                            init = None
-                            args.append(
-                                ast_internal_classes.Name_Node(name=name)
-                            )
-
-                        var = ast_internal_classes.Var_Decl_Node(
-                            name=name,
-                            type='LOGICAL',
-                            alloc=False,
-                            sizes=None,
-                            offsets=None,
-                            kind=None,
-                            optional=False,
-                            init=init,
-                            line_number=var_decl.line_number
-                        )
-                        newdecls.append(var)
-
-                if len(newdecls) > 0:
-                    newspec.append(ast_internal_classes.Decl_Stmt_Node(vardecl=newdecls))
-
-        if len(newspec) > 0:
-            node.specification_part.specifications.extend(newspec)
-
-        return ast_internal_classes.Subroutine_Subprogram_Node(
-            name=node.name,
-            args=args,
-            specification_part=node.specification_part,
-            execution_part=node.execution_part,
-            internal_subprogram_part=node.internal_subprogram_part,
-        )
-
-
-def allocatableReplacer(node=ast_internal_classes.Program_Node):
-    visitor = AllocatableFunctionLister()
-    visitor.visit(node)
-
-    return AllocatableReplacerTransformer(visitor.functions).visit(node)
 
 
 def functionStatementEliminator(node=ast_internal_classes.Program_Node):

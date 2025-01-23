@@ -396,6 +396,11 @@ class Allocate_Shape_Spec_List(FNode):
 
 
 class Allocation_Node(FNode):
+    def __init__(self, name: Name_Node, shape: Allocate_Shape_Spec_List, **kwargs):
+        super().__init__(**kwargs)
+        self.name = name
+        self.shape = shape
+
     _attributes = ('name',)
     _fields = ('shape',)
 
@@ -406,6 +411,10 @@ class Continue_Node(FNode):
 
 
 class Allocate_Stmt_Node(FNode):
+    def __init__(self, allocation_list: List[Allocation_Node], **kwargs):
+        super().__init__(**kwargs)
+        self.allocation_list = allocation_list
+
     _attributes = ()
     _fields = ('allocation_list',)
 
@@ -499,7 +508,11 @@ class Allocate_Object_List_Node(FNode):
 
 
 class Deallocate_Stmt_Node(FNode):
-    _fields = ('list',)
+    def __init__(self, deallocation_list: List[Name_Node], **kwargs):
+        super().__init__(**kwargs)
+        self.deallocation_list = deallocation_list
+
+    _fields = ('deallocation_list',)
 
 
 class Decl_Stmt_Node(Statement_Node):

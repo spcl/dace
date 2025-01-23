@@ -20,6 +20,7 @@ from tests.fortran.fortran_test_helper import SourceCodeBuilder
     * Arrays inside structures with multiple layers of indirection + assumed size.
 """
 
+
 def test_fortran_frontend_bound():
     test_string = """
                     PROGRAM intrinsic_bound_test
@@ -51,6 +52,7 @@ def test_fortran_frontend_bound():
 
     assert np.allclose(res, [1, 1, 4, 7])
 
+
 def test_fortran_frontend_bound_offsets():
     test_string = """
                     PROGRAM intrinsic_bound_test
@@ -81,6 +83,7 @@ def test_fortran_frontend_bound_offsets():
     sdfg(res=res)
 
     assert np.allclose(res, [3, 9, 8, 12])
+
 
 def test_fortran_frontend_bound_assumed():
     sources, main = SourceCodeBuilder().add_file("""
@@ -123,6 +126,7 @@ END SUBROUTINE intrinsic_bound_test_function2
     sdfg(res=res)
 
     assert np.allclose(res, [1, 1, 4, 7])
+
 
 def test_fortran_frontend_bound_assumed_offsets():
     sources, main = SourceCodeBuilder().add_file("""
@@ -167,7 +171,6 @@ END SUBROUTINE intrinsic_bound_test_function2
     assert np.allclose(res, [1, 1, 4, 7])
 
 
-@pytest.mark.skip("Fails due to not correctly matching arguments in: https://github.com/spcl/dace/blob/a867a6be0598209dff16c7f81bc8b8928161fcaa/dace/frontend/fortran/ast_transforms.py#L1870-L1878")
 def test_fortran_frontend_bound_allocatable_offsets():
     sources, main = SourceCodeBuilder().add_file("""
 MODULE intrinsic_bound_interfaces
@@ -210,13 +213,14 @@ END SUBROUTINE intrinsic_bound_test_function3
     res = np.full([size], 42, order="F", dtype=np.int32)
     sdfg(
         res=res,
-        __f2dace_A_input_d_0_s_0=4,
-        __f2dace_A_input_d_1_s_1=7,
-        __f2dace_OA_input_d_0_s_0=42,
-        __f2dace_OA_input_d_1_s_1=13
+        __f2dace_A_input_var_0_d_0_s_0=4,
+        __f2dace_A_input_var_0_d_1_s_1=7,
+        __f2dace_OA_input_var_0_d_0_s_0=42,
+        __f2dace_OA_input_var_0_d_1_s_1=13
     )
 
     assert np.allclose(res, [42, 13, 45, 19])
+
 
 def test_fortran_frontend_bound_structure():
     sources, main = SourceCodeBuilder().add_file("""
@@ -251,7 +255,8 @@ MODULE test_bounds
     END SUBROUTINE
 END MODULE
 """, 'main').check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'test_bounds.intrinsic_bound_test_function', normalize_offsets=True)
+    sdfg = create_singular_sdfg_from_string(sources, 'test_bounds.intrinsic_bound_test_function',
+                                            normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -260,6 +265,7 @@ END MODULE
     sdfg(res=res)
 
     assert np.allclose(res, [2, 3, 5, 9])
+
 
 def test_fortran_frontend_bound_structure_override():
     sources, main = SourceCodeBuilder().add_file("""
@@ -296,7 +302,8 @@ MODULE test_bounds
     END SUBROUTINE
 END MODULE
 """, 'main').check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'test_bounds.intrinsic_bound_test_function', normalize_offsets=True)
+    sdfg = create_singular_sdfg_from_string(sources, 'test_bounds.intrinsic_bound_test_function',
+                                            normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -305,6 +312,7 @@ END MODULE
     sdfg(res=res)
 
     assert np.allclose(res, [2, 3, 5, 9])
+
 
 def test_fortran_frontend_bound_structure_recursive():
     sources, main = SourceCodeBuilder().add_file("""
@@ -350,7 +358,8 @@ MODULE test_bounds
     END SUBROUTINE
 END MODULE
 """, 'main').check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'test_bounds.intrinsic_bound_test_function', normalize_offsets=True)
+    sdfg = create_singular_sdfg_from_string(sources, 'test_bounds.intrinsic_bound_test_function',
+                                            normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -359,6 +368,7 @@ END MODULE
     sdfg(res=res)
 
     assert np.allclose(res, [-1, 0, 2, 3])
+
 
 @pytest.mark.skip(reason="Needs suport for allocatable + datarefs")
 def test_fortran_frontend_bound_structure_recursive_allocatable():
@@ -410,7 +420,8 @@ MODULE test_bounds
     END SUBROUTINE
 END MODULE
 """, 'main').check_with_gfortran().get()
-    sdfg = create_singular_sdfg_from_string(sources, 'test_bounds.intrinsic_bound_test_function', normalize_offsets=True)
+    sdfg = create_singular_sdfg_from_string(sources, 'test_bounds.intrinsic_bound_test_function',
+                                            normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -420,8 +431,8 @@ END MODULE
 
     assert np.allclose(res, [-1, 0, 2, 3])
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     test_fortran_frontend_bound()
     test_fortran_frontend_bound_offsets()
     test_fortran_frontend_bound_assumed()
@@ -431,4 +442,4 @@ if __name__ == "__main__":
     test_fortran_frontend_bound_structure_override()
     test_fortran_frontend_bound_structure_recursive()
     # FIXME: ALLOCATBLE does not support data refs
-    #test_fortran_frontend_bound_structure_recursive_allocatable()
+    # test_fortran_frontend_bound_structure_recursive_allocatable()

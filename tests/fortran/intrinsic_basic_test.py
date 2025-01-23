@@ -7,6 +7,7 @@ from dace.frontend.fortran import fortran_parser
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
 from tests.fortran.fortran_test_helper import SourceCodeBuilder
 
+
 def test_fortran_frontend_bit_size():
     test_string = """
                     PROGRAM intrinsic_math_test_bit_size
@@ -39,6 +40,7 @@ def test_fortran_frontend_bit_size():
     sdfg(res=res)
 
     assert np.allclose(res, [32, 32, 32, 64])
+
 
 def test_fortran_frontend_bit_size_symbolic():
     test_string = """
@@ -82,16 +84,17 @@ def test_fortran_frontend_bit_size_symbolic():
     size3 = 7
     res = np.full([size], 42, order="F", dtype=np.int32)
     res2 = np.full([size, size2, size3], 42, order="F", dtype=np.int32)
-    res3 = np.full([size+size2, size2*5, size3 + size*size2], 42, order="F", dtype=np.int32)
+    res3 = np.full([size + size2, size2 * 5, size3 + size * size2], 42, order="F", dtype=np.int32)
     sdfg(res=res, res2=res2, res3=res3, arrsize=size, arrsize2=size2, arrsize3=size3)
 
     assert res[0] == size
-    assert res[1] == size*size2*size3
-    assert res[2] == (size + size2) * (size2 * 5) * (size3 + size2*size)
-    assert res[3] == size * 2 
+    assert res[1] == size * size2 * size3
+    assert res[2] == (size + size2) * (size2 * 5) * (size3 + size2 * size)
+    assert res[3] == size * 2
     assert res[4] == res[0] * res[1] * res[2]
     assert res[5] == size + size2 + size3
-    assert res[6] == size + size2 + size2*5 + size3 + size*size2
+    assert res[6] == size + size2 + size2 * 5 + size3 + size * size2
+
 
 def test_fortran_frontend_size_arbitrary():
     test_string = """
@@ -132,9 +135,10 @@ def test_fortran_frontend_size_arbitrary():
     )
     print(res)
 
-    assert res[0,0] == size*size2
-    assert res[1,0] == size
-    assert res[2,0] == size2
+    assert res[0, 0] == size * size2
+    assert res[1, 0] == size
+    assert res[2, 0] == size2
+
 
 def test_fortran_frontend_present():
     test_string = """
@@ -177,77 +181,80 @@ def test_fortran_frontend_present():
     assert res[0] == 1
     assert res2[0] == 0
 
+
 def test_fortran_frontend_bitwise_ops():
     sources, main = SourceCodeBuilder().add_file("""
-    SUBROUTINE bitwise_ops(input, res)
+    SUBROUTINE bitwise_ops(inp, res)
 
-    integer, dimension(11) :: input
+    integer, dimension(11) :: inp
     integer, dimension(11) :: res
 
-    res(1) = IBSET(input(1), 0)
-    res(2) = IBSET(input(2), 30)
+    res(1) = IBSET(inp(1), 0)
+    res(2) = IBSET(inp(2), 30)
 
-    res(3) = IBCLR(input(3), 0)
-    res(4) = IBCLR(input(4), 30)
+    res(3) = IBCLR(inp(3), 0)
+    res(4) = IBCLR(inp(4), 30)
 
-    res(5) = IEOR(input(5), 63)
-    res(6) = IEOR(input(6), 480)
+    res(5) = IEOR(inp(5), 63)
+    res(6) = IEOR(inp(6), 480)
 
-    res(7) = ISHFT(input(7), 5)
-    res(8) = ISHFT(input(8), 30)
+    res(7) = ISHFT(inp(7), 5)
+    res(8) = ISHFT(inp(8), 30)
 
-    res(9) = ISHFT(input(9), -5)
-    res(10) = ISHFT(input(10), -30)
+    res(9) = ISHFT(inp(9), -5)
+    res(10) = ISHFT(inp(10), -30)
 
-    res(11) = ISHFT(input(11), 0)
+    res(11) = ISHFT(inp(11), 0)
 
     END SUBROUTINE bitwise_ops
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'bitwise_ops', normalize_offsets=True)
-    #sdfg.simplify(verbose=True)
+    sdfg.simplify(verbose=True)
     sdfg.compile()
 
     size = 11
-    input = np.full([size], 42, order="F", dtype=np.int32)
+    inp = np.full([size], 42, order="F", dtype=np.int32)
+    inp[:] = [32, 32, 33, 1073741825, 53, 530, 12, 1, 128, 1073741824, 12]
+
     res = np.full([size], 42, order="F", dtype=np.int32)
 
-    input = [32, 32, 33, 1073741825, 53, 530, 12, 1, 128, 1073741824, 12 ]
-
-    sdfg(input=input, res=res)
+    sdfg(inp=inp, res=res)
 
     assert np.allclose(res, [33, 1073741856, 32, 1, 10, 1010, 384, 1073741824, 4, 1, 12])
 
+
 def test_fortran_frontend_bitwise_ops2():
     sources, main = SourceCodeBuilder().add_file("""
-    SUBROUTINE bitwise_ops(input, res)
+    SUBROUTINE bitwise_ops(inp, res)
 
-    integer, dimension(6) :: input
+    integer, dimension(6) :: inp
     integer, dimension(6) :: res
 
-    res(1) = IAND(input(1), 0)
-    res(2) = IAND(input(2), 31)
+    res(1) = IAND(inp(1), 0)
+    res(2) = IAND(inp(2), 31)
 
-    res(3) = BTEST(input(3), 0)
-    res(4) = BTEST(input(4), 5)
+    res(3) = BTEST(inp(3), 0)
+    res(4) = BTEST(inp(4), 5)
 
-    res(5) = IBITS(input(5), 0, 5)
-    res(6) = IBITS(input(6), 3, 10)
+    res(5) = IBITS(inp(5), 0, 5)
+    res(6) = IBITS(inp(6), 3, 10)
 
     END SUBROUTINE bitwise_ops
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'bitwise_ops', normalize_offsets=True)
-    #sdfg.simplify(verbose=True)
+    sdfg.simplify(verbose=True)
     sdfg.compile()
 
     size = 6
-    input = np.full([size], 42, order="F", dtype=np.int32)
+    inp = np.full([size], 42, order="F", dtype=np.int32)
+    inp[:] = [2147483647, 16, 3, 31, 30, 630]
+
     res = np.full([size], 42, order="F", dtype=np.int32)
 
-    input = [2147483647, 16, 3, 31, 30, 630] 
-
-    sdfg(input=input, res=res)
+    sdfg(inp=inp, res=res)
 
     assert np.allclose(res, [0, 16, 1, 0, 30, 78])
+
 
 def test_fortran_frontend_allocated():
     # FIXME: this pattern is generally not supported.
@@ -272,7 +279,7 @@ def test_fortran_frontend_allocated():
     END SUBROUTINE allocated_test
 """).check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'allocated_test', normalize_offsets=True)
-    #sdfg.simplify(verbose=True)
+    sdfg.simplify(verbose=True)
     sdfg.compile()
 
     size = 3
@@ -283,9 +290,7 @@ def test_fortran_frontend_allocated():
     assert np.allclose(res, [0, 1, 0])
 
 
-@pytest.mark.skip("Fails due to not correctly matching arguments in: https://github.com/spcl/dace/blob/a867a6be0598209dff16c7f81bc8b8928161fcaa/dace/frontend/fortran/ast_transforms.py#L1870-L1878")
 def test_fortran_frontend_allocated_nested():
-
     # FIXME: this pattern is generally not supported.
     # this needs an update once defered allocs are merged
 
@@ -327,15 +332,16 @@ def test_fortran_frontend_allocated_nested():
     END SUBROUTINE allocated_test_nested
 """, 'main').check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'allocated_test', normalize_offsets=True)
-    #sdfg.simplify(verbose=True)
+    sdfg.simplify(verbose=True)
     sdfg.compile()
 
     size = 3
     res = np.full([size], 42, order="F", dtype=np.int32)
 
-    sdfg(res=res, __f2dace_A_data_d_0_s_0=0)
+    sdfg(res=res, __f2dace_A_data_var_0_d_0_s_0=0)
 
     assert np.allclose(res, [0, 1, 0])
+
 
 @pytest.mark.skip(reason="Needs suport for allocatable + datarefs")
 def test_fortran_frontend_allocated_struct():
@@ -372,7 +378,7 @@ def test_fortran_frontend_allocated_struct():
     END SUBROUTINE allocated_test
 """, "main").check_with_gfortran().get()
     sdfg = create_singular_sdfg_from_string(sources, 'allocated_test', normalize_offsets=True)
-    #sdfg.simplify(verbose=True)
+    # sdfg.simplify(verbose=True)
     sdfg.compile()
 
     size = 3
@@ -381,6 +387,7 @@ def test_fortran_frontend_allocated_struct():
     sdfg(res=res)
 
     assert np.allclose(res, [0, 1, 0])
+
 
 if __name__ == "__main__":
     test_fortran_frontend_bit_size()
@@ -392,5 +399,4 @@ if __name__ == "__main__":
     test_fortran_frontend_allocated()
     test_fortran_frontend_allocated_nested()
     # FIXME: ALLOCATED does not support data refs
-    #test_fortran_frontend_allocated_struct()
-
+    # test_fortran_frontend_allocated_struct()
