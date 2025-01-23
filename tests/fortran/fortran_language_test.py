@@ -2,9 +2,9 @@
 
 import numpy as np
 
-from dace.frontend.fortran import fortran_parser
-from tests.fortran.fortran_test_helper import SourceCodeBuilder
 from dace.frontend.fortran.fortran_parser import create_singular_sdfg_from_string
+from tests.fortran.fortran_test_helper import SourceCodeBuilder
+
 
 def test_fortran_frontend_real_kind_selector():
     """
@@ -93,7 +93,7 @@ end subroutine main
     assert (d[0, 0, 1] == 1)
 
 
-def test_fortran_frontend_function_statement1():
+def test_fortran_frontend_function_statement():
     """
     Tests that the function statement are correctly removed recursively.
     """
@@ -120,6 +120,43 @@ end subroutine main
     sdfg(d=d)
     assert (d[0, 0, 0] == 5.1)
     assert (d[0, 0, 1] == 5.1)
+
+
+def test_internal_subprograms():
+    """
+    Tests that the function statement are correctly removed recursively.
+    """
+    sources, main = SourceCodeBuilder().add_file("""
+module lib
+contains
+  real function fn2()
+    fn2 = 2.
+  contains
+    subroutine subr
+    end subroutine subr
+  end function fn2
+end module lib
+""").add_file("""
+subroutine main(d)
+  use lib
+  implicit none
+  real :: f(5)
+  real, intent(out) :: d(1)
+  call fn(f, d(1))
+contains
+  subroutine fn(f, d)
+    real, intent(inout) :: f(:)
+    real, intent(out) :: d
+    f(1) = 7
+    d = fn2()
+  end subroutine fn
+end subroutine main
+""").check_with_gfortran().get()
+    sdfg = create_singular_sdfg_from_string(sources, 'main')
+    sdfg.simplify(verbose=True)
+    d = np.full([1], 42, order="F", dtype=np.float32)
+    sdfg(d=d)
+    assert np.allclose(d, [2])
 
 
 def test_fortran_frontend_pow1():
