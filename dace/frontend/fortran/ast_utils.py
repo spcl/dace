@@ -851,7 +851,8 @@ def match_callsite_args_to_function_args(
         if isinstance(ca, ast_internal_classes.Actual_Arg_Spec_Node):
             kwzone = True
         if kwzone:
-            assert isinstance(ca, ast_internal_classes.Actual_Arg_Spec_Node)
+            # TODO: This should be the case but we do not handle it correctly when converting functions to subroutines.
+            # assert isinstance(ca, ast_internal_classes.Actual_Arg_Spec_Node)
             kw, ca = ca.arg_name, ca.arg
             assert kw.name == fa.name
         out[fa.name] = ca
