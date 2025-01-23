@@ -5744,6 +5744,7 @@ class ProgramVisitor(ExtNodeVisitor):
             code=f'__out = __arr[{access_str}]',
             external_edges=True,
             debuginfo=self.current_lineinfo,
+            input_nodes={rnode.data: rnode}
         )
 
         return outname
