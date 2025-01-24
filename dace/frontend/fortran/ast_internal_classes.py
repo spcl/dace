@@ -564,6 +564,8 @@ class Double_Literal_Node(Literal):
 
 class Bool_Literal_Node(Literal):
     def __init__(self, value: str, type='LOGICAL', **kwargs):
+        assert value in {'0', '1'},\
+            f"`{value}` is not a valid respresentation: use `0` for falsey values, and `1` for truthy values."
         super().__init__(value, type, **kwargs)
 
 

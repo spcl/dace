@@ -1988,9 +1988,9 @@ class InternalFortranAst:
 
     def logical_literal_constant(self, node: Logical_Literal_Constant):
         if node.string in [".TRUE.", ".true.", ".True."]:
-            return ast_internal_classes.Bool_Literal_Node(value="True")
+            return ast_internal_classes.Bool_Literal_Node(value="1")
         if node.string in [".FALSE.", ".false.", ".False."]:
-            return ast_internal_classes.Bool_Literal_Node(value="False")
+            return ast_internal_classes.Bool_Literal_Node(value="0")
         raise ValueError("Unknown logical literal constant")
 
     def real_literal_constant(self, node: Union[Real_Literal_Constant, Signed_Real_Literal_Constant]):

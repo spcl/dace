@@ -1596,7 +1596,6 @@ class AllocatableReplacerTransformer(NodeTransformer):
         # `self.execution_preludes[-1]` will contain all the temporary variable assignments necessary for that node.
         self.execution_preludes: List[List[ast_internal_classes.BinOp_Node]] = []
 
-
     @staticmethod
     def _allocated_flag(var: ast_internal_classes.Var_Decl_Node) -> str:
         assert isinstance(var, ast_internal_classes.Var_Decl_Node) and var.alloc
@@ -1645,7 +1644,7 @@ class AllocatableReplacerTransformer(NodeTransformer):
                     continue
                 alloc_flag = self._allocated_flag(fvdecl)
                 decl = ast_internal_classes.Var_Decl_Node(
-                    name=alloc_flag, type='LOGICAL', init=ast_internal_classes.Bool_Literal_Node('False'),
+                    name=alloc_flag, type='LOGICAL', init=ast_internal_classes.Bool_Literal_Node('0'),
                     line_number=fn.line_number, parent=fn.parent)
                 fn.specification_part.specifications.append(ast_internal_classes.Decl_Stmt_Node(vardecl=[decl]))
         # Then, for each argument in order, we will add the extra argument in order. Note that we may not have updated
@@ -1672,7 +1671,7 @@ class AllocatableReplacerTransformer(NodeTransformer):
             #  e.g., setting the sizes, offsets, and the actual memory allocation itself.
             asgn = ast_internal_classes.BinOp_Node(
                 lval=ast_internal_classes.Name_Node(name=self._allocated_flag(avdecl)), op='=',
-                rval=ast_internal_classes.Bool_Literal_Node(value='True'),
+                rval=ast_internal_classes.Bool_Literal_Node(value='1'),
                 line_number=alloc.line_number, parent=alloc.parent)
             self.execution_preludes[-1].append(asgn)
 
@@ -1686,7 +1685,7 @@ class AllocatableReplacerTransformer(NodeTransformer):
             #  e.g., the actual memory deallocation itself.
             asgn = ast_internal_classes.BinOp_Node(
                 lval=ast_internal_classes.Name_Node(name=self._allocated_flag(dvdecl)), op='=',
-                rval=ast_internal_classes.Bool_Literal_Node(value='False'),
+                rval=ast_internal_classes.Bool_Literal_Node(value='0'),
                 line_number=dealloc.line_number, parent=dealloc.parent)
             self.execution_preludes[-1].append(asgn)
 
