@@ -1006,49 +1006,6 @@ class CallExtractor(NodeTransformer):
 
         return ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp - 1))
 
-    # def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
-    #     newspec = []
-
-    #     for i in node.specifications:
-    #         if not isinstance(i, ast_internal_classes.Decl_Stmt_Node):
-    #             newspec.append(self.visit(i))
-    #         else:
-    #             newdecl = []
-    #             for var in i.vardecl:
-    #                 lister = CallExtractorNodeLister()
-    #                 lister.visit(var)
-    #                 res = lister.nodes
-    #                 for j in res:
-    #                     if j == var:
-    #                         res.pop(res.index(j))
-    #                 if len(res) > 0:
-    #                     temp = self.count + len(res) - 1
-    #                     for ii in reversed(range(0, len(res))):
-    #                         newdecl.append(
-    #                             ast_internal_classes.Var_Decl_Node(
-    #                                 name="tmp_call_" + str(temp),
-    #                                 type=res[ii].type,
-    #                                 sizes=None,
-    #                                 line_number=var.line_number,
-    #                                 init=res[ii],
-    #                             )
-    #                         )
-    #                         newdecl.append(
-    #                             ast_internal_classes.Var_Decl_Node(
-    #                                 name="tmp_call_" + str(temp),
-    #                                 type=res[ii].type,
-    #                                 sizes=None,
-    #                                 line_number=var.line_number,
-    #                                 init=res[ii],
-    #                             )
-    #                         )
-    #                         temp = temp - 1
-    #                 newdecl.append(self.visit(var))
-    #             newspec.append(ast_internal_classes.Decl_Stmt_Node(vardecl=newdecl))
-    #     return ast_internal_classes.Specification_Part_Node(specifications=newspec, symbols=node.symbols,
-    #                                                         typedecls=node.typedecls, uses=node.uses, enums=node.enums,
-    #                                                         interface_blocks=node.interface_blocks)
-
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
 
         oldbody = node.execution
