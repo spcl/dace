@@ -2324,7 +2324,7 @@ def add_use_to_specification(scdef: SCOPE_OBJECT_TYPES, clause: str):
         prepend_children(specification_part, Use_Stmt(clause))
 
 
-KEYWORDS_TO_AVOID = {k.lower() for k in ('for', 'in', 'beta')}
+KEYWORDS_TO_AVOID = {k.lower() for k in ('for', 'in', 'beta', 'input')}
 
 
 def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, SPEC]]) -> Program:

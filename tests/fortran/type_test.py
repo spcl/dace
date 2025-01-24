@@ -84,7 +84,7 @@ end subroutine main
     assert (a[2, 0] == 42)
 
 
-@pytest.mark.skip("Fails due to not correctly matching arguments in: https://github.com/spcl/dace/blob/a867a6be0598209dff16c7f81bc8b8928161fcaa/dace/frontend/fortran/ast_transforms.py#L1870-L1878")
+@pytest.mark.skip("Fails due to not correctly matching arguments on the InterstateEdge")
 def test_fortran_frontend_type_symbol():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -176,7 +176,7 @@ end subroutine internal_function
     assert (a[1, 1] == 42)
 
 
-@pytest.mark.skip("Fails due to not correctly matching arguments in: https://github.com/spcl/dace/blob/a867a6be0598209dff16c7f81bc8b8928161fcaa/dace/frontend/fortran/ast_transforms.py#L1870-L1878")
+@pytest.mark.skip("Fails due to not correctly matching arguments on the InterstateEdge")
 def test_fortran_frontend_type_struct():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
