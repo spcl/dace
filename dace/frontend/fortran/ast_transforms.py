@@ -1881,7 +1881,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                 newbody.append(
                     ast_internal_classes.Decl_Stmt_Node(vardecl=[
                         ast_internal_classes.Symbol_Decl_Node(
-                            name="tmp_parfor_" + str(count + len(rangepos) - 1), type="INTEGER", sizes=None, init=None,
+                            name="tmp_pdrf_" + str(count + len(rangepos) - 1), type="INTEGER", sizes=None, init=None,
                             parent=node.parent, line_number=node.line_number)
                     ]))
 
@@ -1890,8 +1890,8 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                 we need to adapt array accesses.
                 The main loop iterator is already initialized with the lower boundary of the dominating array.
 
-                Thus, if the offset is the same, the index is just "tmp_parfor".
-                Otherwise, it is "tmp_parfor - tmp_parfor_lower_boundary + our_lower_boundary"
+                Thus, if the offset is the same, the index is just "tmp_pdrf".
+                Otherwise, it is "tmp_pdrf - tmp_pdrf_lower_boundary + our_lower_boundary"
             """
 
             if declaration:
@@ -1900,7 +1900,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                 """
 
                 indices.append(
-                    ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1))
+                    ast_internal_classes.Name_Node(name="tmp_pdrf_" + str(count + len(rangepos) - 1))
                 )
             else:
 
@@ -1914,7 +1914,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
                 indices.append(
                     ast_internal_classes.BinOp_Node(
-                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)),
+                        lval=ast_internal_classes.Name_Node(name="tmp_pdrf_" + str(count + len(rangepos) - 1)),
                         op="+",
                         rval=ast_internal_classes.BinOp_Node(
                             lval=lower_boundary,
@@ -3293,20 +3293,20 @@ class ArrayLoopExpander(NodeTransformer):
                     initrange = i[0]
                     finalrange = i[1]
                     init = ast_internal_classes.BinOp_Node(
-                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                        lval=ast_internal_classes.Name_Node(name="tmp_ale_" + str(self.count + range_index)),
                         op="=",
                         rval=initrange,
                         line_number=child.line_number,parent=child.parent)
                     cond = ast_internal_classes.BinOp_Node(
-                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                        lval=ast_internal_classes.Name_Node(name="tmp_ale_" + str(self.count + range_index)),
                         op="<=",
                         rval=finalrange,
                         line_number=child.line_number,parent=child.parent)
                     iter = ast_internal_classes.BinOp_Node(
-                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                        lval=ast_internal_classes.Name_Node(name="tmp_ale_" + str(self.count + range_index)),
                         op="=",
                         rval=ast_internal_classes.BinOp_Node(
-                            lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
+                            lval=ast_internal_classes.Name_Node(name="tmp_ale_" + str(self.count + range_index)),
                             op="+",
                             rval=ast_internal_classes.Int_Literal_Node(value="1"),parent=child.parent),
                         line_number=child.line_number,parent=child.parent)
@@ -3660,7 +3660,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
 
                 dest_indices = copy.deepcopy(tmp_array.indices)
                 for idx, _, _ in tmp_array.noncontig_dims:
-                    iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
+                    iter_var = ast_internal_classes.Name_Node(name=f"tmp_pdncae_{tmp_array.counter}_{idx}")
                     dest_indices[idx] = iter_var
 
                 dest = ast_internal_classes.Array_Subscript_Node(
@@ -3673,7 +3673,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                 source_indices = copy.deepcopy(tmp_array.indices)
                 for idx, main_var, var in tmp_array.noncontig_dims:
 
-                    iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
+                    iter_var = ast_internal_classes.Name_Node(name=f"tmp_pdncae_{tmp_array.counter}_{idx}")
 
                     var.indices = [iter_var]
                     source_indices[idx] = main_var
@@ -3694,7 +3694,7 @@ class ParDeclNonContigArrayExpander(NodeTransformer):
                     initrange = ast_internal_classes.Int_Literal_Node(value="1")
                     finalrange = tmp_array.sizes[idx]
 
-                    iter_var = ast_internal_classes.Name_Node(name=f"tmp_parfor_{tmp_array.counter}_{idx}")
+                    iter_var = ast_internal_classes.Name_Node(name=f"tmp_pdncae_{tmp_array.counter}_{idx}")
 
                     node.parent.specification_part.specifications.append(
                         ast_internal_classes.Decl_Stmt_Node(vardecl=[
