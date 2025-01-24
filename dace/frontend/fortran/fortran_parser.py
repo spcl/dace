@@ -2454,7 +2454,6 @@ def create_ast_from_string(
     functions_and_subroutines_builder.visit(program)
 
     if transform:
-        program = ast_transforms.functionStatementEliminator(program)
         program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
         program = ast_transforms.CallExtractor(program).visit(program)
         program = ast_transforms.SignToIf().visit(program)
@@ -2596,7 +2595,6 @@ def run_ast_transformations(own_ast: ast_components.InternalFortranAst, program:
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
 
-    program = ast_transforms.functionStatementEliminator(program)
     #program = ast_transforms.StructConstructorToFunctionCall(
     #    ast_transforms.FindFunctionAndSubroutines.from_node(program).names).visit(program)
     #program = ast_transforms.CallToArray(ast_transforms.FindFunctionAndSubroutines.from_node(program)).visit(program)
@@ -3110,7 +3108,6 @@ def create_sdfg_from_fortran_file_with_options(
     #         functions_and_subroutines_builder.names.append(ast_internal_classes.Name_Node(name=i, type="VOID"))
     # program.iblocks = functions_and_subroutines_builder.iblocks
     # partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
-    # program = ast_transforms.functionStatementEliminator(program)
 
     # program = ast_transforms.IfConditionExtractor().visit(program)
 
