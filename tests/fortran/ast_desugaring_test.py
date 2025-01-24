@@ -1819,6 +1819,7 @@ subroutine main()
   real :: out = 0.
   integer :: i
 
+  ! `cond` is known in this block and doesn't change. `out` is unknown`, since it changes conditionally.
   if (cond) out = out + 1.
   out = out*2
   if (cond) then
@@ -1827,25 +1828,42 @@ subroutine main()
     out = out - 1.
   end if
 
+  ! `cond` is unknown after this, since it changes conditionally.
   if (out .gt. 20) cond = .false.
   if (cond) out = out + 100.
 
+  ! `cond` is known again, and even `out` this time.
   cond = .true.
   out = 7.2
   out = out*2.0
   out = fun(.not. cond, out)
 
+  ! A simple do loop with `i` as loop variable.
   do i=1, 20
     out = out + 1.
   end do
+  ! TODO: `i` should be known at this point, since do loop is deterministic.
+  i = i + 1
 
+  ! A simple do-while loop with `i` as loop variable, `i` becomes unknown.
   i = 0
   do while (i < 10)
     out = out + 1
     i = i + 1
   end do
 
+  ! Just making sure that `cond` is still known after all the loops.
   if (cond) out = out + 1.
+
+` ! `cond` evaluation inside a branch should also happen.
+  if (cond) then
+    cond = .true.
+    if (cond) then
+      out = out + 1.
+    else
+      out = out + 7.
+    end if
+  end if
 
 contains
   real function fun(cond, out)
@@ -1883,12 +1901,21 @@ SUBROUTINE main
   DO i = 1, 20
     out = out + 1.
   END DO
+  i = i + 1
   i = 0
   DO WHILE (i < 10)
     out = out + 1
     i = i + 1
   END DO
   IF (.TRUE.) out = out + 1.
+  IF (.TRUE.) THEN
+    cond = .TRUE.
+    IF (.TRUE.) THEN
+      out = out + 1.
+    ELSE
+      out = out + 7.
+    END IF
+  END IF
   CONTAINS
   REAL FUNCTION fun(cond, out)
     IMPLICIT NONE

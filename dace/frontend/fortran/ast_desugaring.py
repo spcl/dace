@@ -1879,7 +1879,7 @@ LITERAL_CLASSES = (
     Logical_Literal_Constant)
 
 
-def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
+def _track_local_consts(node: Union[Base, List[Base]], alias_map: SPEC_TABLE,
                         plus: Optional[Dict[Union[SPEC, Tuple[SPEC, SPEC]], LITERAL_TYPES]] = None,
                         minus: Optional[Set[Union[SPEC, Tuple[SPEC, SPEC]]]] = None) \
         -> Tuple[Dict[SPEC, LITERAL_TYPES], Set[SPEC]]:
@@ -1963,7 +1963,11 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
         else:
             raise NotImplementedError(f"cannot handle {x} | {type(x)}")
 
-    if isinstance(node, Execution_Part):
+    if isinstance(node, list):
+        for c in node:
+            tp, tm = _track_local_consts(c, alias_map, plus, minus)
+            _integrate_subresults(tp, tm)
+    elif isinstance(node, Execution_Part):
         scpart = atmost_one(children_of_type(node.parent, Specification_Part))
         knowns: Dict[SPEC, LITERAL_TYPES] = {}
         if scpart:
@@ -2023,11 +2027,34 @@ def _track_local_consts(node: Base, alias_map: SPEC_TABLE,
             elif isinstance(c, Else_If_Stmt):
                 cond, _ = c.children
             _inject_knowns(cond)
-        for c in node.children:
-            if isinstance(c, (If_Then_Stmt, Else_If_Stmt, Else_Stmt, End_If_Stmt)):
-                continue
-            tp, tm = _track_local_consts(c, alias_map)
-            _integrate_subresults({}, tm | tp.keys())
+        assert isinstance(node.children[-1], End_If_Stmt)
+        # Split the construct into blocks.
+        blocks: List[List[Base]] = []
+        for c in node.children[:-1]:
+            if isinstance(c, (If_Then_Stmt, Else_If_Stmt, Else_Stmt)):
+                # Start a new block.
+                blocks.append([])
+            else:
+                # Add to the running block.
+                blocks[-1].append(c)
+        if not atmost_one(children_of_type(node, Else_Stmt)):
+            # If we don't have an else branch, then assume an empty block, as it negates any knowns from other branches.
+            blocks.append([])
+        # We add to `tp_net` only if it was fixed to the same value after every block.
+        # Otherwise, we add it to `tm_net`.
+        tp_net, tm_net = None, set()
+        for b in blocks:
+            tp, tm = _track_local_consts(b, alias_map, plus, minus)
+            if tp_net is None:
+                tp_net = tp
+            else:
+                # The retained subset of known local consts.
+                tp_net_nu = {k: tp_net[k] for k in tp_net.keys() & tp.keys() if tp_net[k] == tp[k]}
+                # Chuck everything else into unknown bin.
+                tm_net.update((tp_net.keys() | tp.keys()) - tp_net_nu.keys())
+                tp_net = tp_net_nu
+            tm_net.update(tm)
+        _integrate_subresults(tp_net, tm_net)
     elif isinstance(node, (Block_Nonlabel_Do_Construct, Block_Label_Do_Construct)):
         do_stmt = node.children[0]
         assert isinstance(do_stmt, (Label_Do_Stmt, Nonlabel_Do_Stmt))
