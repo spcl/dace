@@ -610,50 +610,6 @@ class StructPointerEliminator(NodeTransformer):
             return node
 
 
-class StructConstructorToFunctionCall(NodeTransformer):
-    """
-    Fortran does not differentiate between structure constructors and functions without arguments.
-    We need to go over and convert all structure constructors that are in fact functions and transform them.
-    So, we create a closure of all math and defined functions and 
-    transform if necessary.
-    """
-
-    def __init__(self, funcs=None):
-        if funcs is None:
-            funcs = []
-        self.funcs = funcs
-
-        from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        self.excepted_funcs = [
-            "malloc", "pow", "cbrt", "__dace_sign", "tanh", "atan2",
-            "__dace_epsilon", *FortranIntrinsics.function_names()
-        ]
-
-    def visit_Structure_Constructor_Node(self, node: ast_internal_classes.Structure_Constructor_Node):
-        if isinstance(node.name, str):
-            return node
-        if node.name is None:
-            raise ValueError("Structure name is None")
-            return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
-        found = False
-        for i in self.funcs:
-            if i.name == node.name.name:
-                found = True
-                break
-        if node.name.name in self.excepted_funcs or found:
-            processed_args = []
-            for i in node.args:
-                arg = StructConstructorToFunctionCall(self.funcs).visit(i)
-                processed_args.append(arg)
-            node.args = processed_args
-            return ast_internal_classes.Call_Expr_Node(
-                name=ast_internal_classes.Name_Node(name=node.name.name, type="VOID", line_number=node.line_number),
-                args=node.args, line_number=node.line_number, type="VOID", parent=node.parent)
-
-        else:
-            return node
-
-
 class CallToArray(NodeTransformer):
     """
     Fortran does not differentiate between arrays and functions.
