@@ -2736,7 +2736,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 
             # Redirect all edges to the region to the internal start state.
             for b_edge in parent.in_edges(self):
-                parent.add_edge(b_edge.src, self.start_block, b_edge.data)
+                dst = block_to_state_map[self.start_block] if self.start_block in block_to_state_map else self.start_block
+                parent.add_edge(b_edge.src, dst, b_edge.data)
                 parent.remove_edge(b_edge)
             
             end_state = None
