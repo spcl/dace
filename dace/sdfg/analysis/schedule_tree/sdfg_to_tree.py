@@ -56,6 +56,9 @@ def dealias_sdfg(sdfg: SDFG):
                 continue
             for edge in parent_state.edges_by_connector(parent_node, name):
                 parent_name = edge.data.data
+                # TODO: this should be done better maybe
+                if parent_name in parent_node.in_connectors or parent_name in parent_node.out_connectors:
+                    continue
                 assert parent_name in parent_sdfg.arrays
                 if name != parent_name:
                     replacements[name] = parent_name
