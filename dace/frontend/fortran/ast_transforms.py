@@ -435,21 +435,6 @@ class FindOutputs(NodeVisitor):
             self.visit(node.rval)
 
 
-class FindFunctionCalls(NodeVisitor):
-    """
-    Finds all function calls in the AST node and its children
-    :return: List of names
-    """
-
-    def __init__(self):
-        self.nodes: List[ast_internal_classes.Name_Node] = []
-
-    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-        self.nodes.append(node)
-        for i in node.args:
-            self.visit(i)
-
-
 class StructLister(NodeVisitor):
     """
     Fortran does not differentiate between arrays and functions.

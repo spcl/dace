@@ -1946,10 +1946,9 @@ class AST_translator:
         :param cfg: The control flow region to which the node should be translated
         """
 
-        calls = ast_transforms.FindFunctionCalls()
-        calls.visit(node)
-        if len(calls.nodes) == 1:
-            augmented_call = calls.nodes[0]
+        calls = list(mywalk(node, ast_internal_classes.Call_Expr_Node))
+        if len(calls) == 1:
+            augmented_call = calls[0]
             from dace.frontend.fortran.intrinsics import FortranIntrinsics
             if augmented_call.name.name not in ["pow", "atan2", "tanh", "__dace_epsilon",
                                                 *FortranIntrinsics.retained_function_names()]:
