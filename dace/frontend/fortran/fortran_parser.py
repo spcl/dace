@@ -1790,6 +1790,8 @@ class AST_translator:
                     print("Shapes are not equal, but the same size. We hope that the symbolic sizes evaluate to the same values")
                     recompute_strides=False
                     for i,local in enumerate(local_shape):
+                        if not(hasattr(local,"name")):
+                            continue
                         if local.name.startswith("__f2dace"):
                             local_shape[i]=shape[i]
                             print(f"replacing local shape: {local_shape[i]}")
@@ -3394,13 +3396,13 @@ def create_sdfg_from_fortran_file_with_options(
                 continue
 
             sdfg.validate()
-            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_dbg.sdfgz"), compress=True)
+            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_validated_dbg22.sdfgz"), compress=True)
             sdfg.validate()
             sdfg.simplify(verbose=True)
             print(f'Saving SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplified_tr.sdfgz")}')
-            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg.sdfgz"), compress=True)
+            sdfg.save(os.path.join(sdfgs_dir, sdfg.name + "_simplified_dbg22.sdfgz"), compress=True)
             sdfg.validate()
-            print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf.sdfgz")}')
+            print(f'Compiling SDFG {os.path.join(sdfgs_dir, sdfg.name + "_simplifiedf22.sdfgz")}')
             sdfg.compile()
 
     # return sdfg
