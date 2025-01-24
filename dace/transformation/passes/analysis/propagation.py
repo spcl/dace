@@ -524,6 +524,10 @@ class MemletPropagation(ppl.ControlFlowRegionPass):
         # Propagate memlets from inside the loop through the loop ranges.
         # Collect loop information and form the loop variable range first.
         itvar = loop.loop_variable
+        if not itvar:
+            # For a while loop we don't have the ability to propagate much.
+            # TODO: We may need to propagate dynamic unbounded, actually...
+            return
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
         stride = loop_analysis.get_loop_stride(loop)
