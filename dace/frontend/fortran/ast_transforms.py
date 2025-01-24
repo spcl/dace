@@ -435,21 +435,6 @@ class FindOutputs(NodeVisitor):
             self.visit(node.rval)
 
 
-class FindFunctionCalls(NodeVisitor):
-    """
-    Finds all function calls in the AST node and its children
-    :return: List of names
-    """
-
-    def __init__(self):
-        self.nodes: List[ast_internal_classes.Name_Node] = []
-
-    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-        self.nodes.append(node)
-        for i in node.args:
-            self.visit(i)
-
-
 class StructLister(NodeVisitor):
     """
     Fortran does not differentiate between arrays and functions.
@@ -621,50 +606,6 @@ class StructPointerEliminator(NodeTransformer):
                         parent=node.parent))
             newnode.component_part = component_part
             return newnode
-        else:
-            return node
-
-
-class StructConstructorToFunctionCall(NodeTransformer):
-    """
-    Fortran does not differentiate between structure constructors and functions without arguments.
-    We need to go over and convert all structure constructors that are in fact functions and transform them.
-    So, we create a closure of all math and defined functions and 
-    transform if necessary.
-    """
-
-    def __init__(self, funcs=None):
-        if funcs is None:
-            funcs = []
-        self.funcs = funcs
-
-        from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        self.excepted_funcs = [
-            "malloc", "pow", "cbrt", "__dace_sign", "tanh", "atan2",
-            "__dace_epsilon", *FortranIntrinsics.function_names()
-        ]
-
-    def visit_Structure_Constructor_Node(self, node: ast_internal_classes.Structure_Constructor_Node):
-        if isinstance(node.name, str):
-            return node
-        if node.name is None:
-            raise ValueError("Structure name is None")
-            return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
-        found = False
-        for i in self.funcs:
-            if i.name == node.name.name:
-                found = True
-                break
-        if node.name.name in self.excepted_funcs or found:
-            processed_args = []
-            for i in node.args:
-                arg = StructConstructorToFunctionCall(self.funcs).visit(i)
-                processed_args.append(arg)
-            node.args = processed_args
-            return ast_internal_classes.Call_Expr_Node(
-                name=ast_internal_classes.Name_Node(name=node.name.name, type="VOID", line_number=node.line_number),
-                args=node.args, line_number=node.line_number, type="VOID", parent=node.parent)
-
         else:
             return node
 
@@ -1064,49 +1005,6 @@ class CallExtractor(NodeTransformer):
         #    node.args[i] = self.visit(arg)
 
         return ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp - 1))
-
-    # def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
-    #     newspec = []
-
-    #     for i in node.specifications:
-    #         if not isinstance(i, ast_internal_classes.Decl_Stmt_Node):
-    #             newspec.append(self.visit(i))
-    #         else:
-    #             newdecl = []
-    #             for var in i.vardecl:
-    #                 lister = CallExtractorNodeLister()
-    #                 lister.visit(var)
-    #                 res = lister.nodes
-    #                 for j in res:
-    #                     if j == var:
-    #                         res.pop(res.index(j))
-    #                 if len(res) > 0:
-    #                     temp = self.count + len(res) - 1
-    #                     for ii in reversed(range(0, len(res))):
-    #                         newdecl.append(
-    #                             ast_internal_classes.Var_Decl_Node(
-    #                                 name="tmp_call_" + str(temp),
-    #                                 type=res[ii].type,
-    #                                 sizes=None,
-    #                                 line_number=var.line_number,
-    #                                 init=res[ii],
-    #                             )
-    #                         )
-    #                         newdecl.append(
-    #                             ast_internal_classes.Var_Decl_Node(
-    #                                 name="tmp_call_" + str(temp),
-    #                                 type=res[ii].type,
-    #                                 sizes=None,
-    #                                 line_number=var.line_number,
-    #                                 init=res[ii],
-    #                             )
-    #                         )
-    #                         temp = temp - 1
-    #                 newdecl.append(self.visit(var))
-    #             newspec.append(ast_internal_classes.Decl_Stmt_Node(vardecl=newdecl))
-    #     return ast_internal_classes.Specification_Part_Node(specifications=newspec, symbols=node.symbols,
-    #                                                         typedecls=node.typedecls, uses=node.uses, enums=node.enums,
-    #                                                         interface_blocks=node.interface_blocks)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
 
@@ -1527,64 +1425,6 @@ class SignToIf(NodeTransformer):
             return self.generic_visit(node)
 
 
-class RenameArguments(NodeTransformer):
-    """
-    Renames all arguments of a function to the names of the arguments of the function call
-    Used when eliminating function statements
-    """
-
-    def __init__(self, node_args: list, call_args: list):
-        self.node_args = node_args
-        self.call_args = call_args
-
-    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
-        for i, j in zip(self.node_args, self.call_args):
-            if node.name == j.name:
-                return copy.deepcopy(i)
-        return node
-
-
-class ReplaceFunctionStatement(NodeTransformer):
-    """
-    Replaces a function statement with its content, similar to propagating a macro
-    """
-
-    def __init__(self, statement, replacement):
-        self.name = statement.name
-        self.content = replacement
-
-    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-        if node.name == self.name:
-            return ast_internal_classes.Parenthesis_Expr_Node(expr=copy.deepcopy(self.content))
-        else:
-            return self.generic_visit(node)
-
-
-class ReplaceFunctionStatementPass(NodeTransformer):
-    """
-    Replaces a function statement with its content, similar to propagating a macro
-    """
-
-    def __init__(self, statefunc: list):
-        self.funcs = statefunc
-
-    def visit_Structure_Constructor_Node(self, node: ast_internal_classes.Structure_Constructor_Node):
-        for i in self.funcs:
-            if node.name.name == i[0].name.name:
-                ret_node = copy.deepcopy(i[1])
-                ret_node = RenameArguments(node.args, i[0].args).visit(ret_node)
-                return ast_internal_classes.Parenthesis_Expr_Node(expr=ret_node)
-        return self.generic_visit(node)
-
-    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-        for i in self.funcs:
-            if node.name.name == i[0].name.name:
-                ret_node = copy.deepcopy(i[1])
-                ret_node = RenameArguments(node.args, i[0].args).visit(ret_node)
-                return ast_internal_classes.Parenthesis_Expr_Node(expr=ret_node)
-        return self.generic_visit(node)
-
-
 def optionalArgsHandleFunction(func):
     func.optional_args = []
     if func.specification_part is None:
@@ -1861,125 +1701,6 @@ class AllocatableReplacerTransformer(NodeTransformer):
         self.execution_preludes.pop()
         return ast_internal_classes.Execution_Part_Node(execution = newbody)
 
-
-
-def functionStatementEliminator(node=ast_internal_classes.Program_Node):
-    """
-    Eliminates function statements from the AST
-    :param node: The AST to be transformed
-    :return: The transformed AST
-    :note Should only be used on the program node
-    """
-    main_program = localFunctionStatementEliminator(node.main_program)
-    function_definitions = [localFunctionStatementEliminator(i) for i in node.function_definitions]
-    subroutine_definitions = [localFunctionStatementEliminator(i) for i in node.subroutine_definitions]
-    modules = []
-    for i in node.modules:
-        module_function_definitions = [localFunctionStatementEliminator(j) for j in i.function_definitions]
-        module_subroutine_definitions = [localFunctionStatementEliminator(j) for j in i.subroutine_definitions]
-        modules.append(
-            ast_internal_classes.Module_Node(
-                name=i.name,
-                specification_part=i.specification_part,
-                subroutine_definitions=module_subroutine_definitions,
-                function_definitions=module_function_definitions,
-                interface_blocks=i.interface_blocks,
-            ))
-    node.main_program = main_program
-    node.function_definitions = function_definitions
-    node.subroutine_definitions = subroutine_definitions
-    node.modules = modules
-    return node
-
-
-def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
-    """
-    Eliminates function statements from the AST
-    :param node: The AST to be transformed
-    :return: The transformed AST
-    """
-    if node is None:
-        return None
-    if hasattr(node, "specification_part") and node.specification_part is not None:
-        spec = node.specification_part.specifications
-    else:
-        spec = []
-    if hasattr(node, "execution_part"):
-        if node.execution_part is not None:
-            exec = node.execution_part.execution
-        else:
-            exec = []
-    else:
-        exec = []
-    new_exec = exec.copy()
-    to_change = []
-    for i in exec:
-        if isinstance(i, ast_internal_classes.BinOp_Node):
-            if i.op == "=":
-                if isinstance(i.lval, ast_internal_classes.Call_Expr_Node) or isinstance(
-                        i.lval, ast_internal_classes.Structure_Constructor_Node):
-                    function_statement_name = i.lval.name
-                    is_actually_function_statement = False
-                    # In Fortran, function statement are defined as scalar values,
-                    # but called as arrays, so by identifiying that it is called as
-                    # a call_expr or structure_constructor, we also need to match
-                    # the specification part and see that it is scalar rather than an array.
-                    found = False
-                    for j in spec:
-                        if found:
-                            break
-                        for k in j.vardecl:
-                            if k.name == function_statement_name.name:
-                                if k.sizes is None:
-                                    is_actually_function_statement = True
-                                    function_statement_type = k.type
-                                    j.vardecl.remove(k)
-                                    found = True
-                                    break
-                    if is_actually_function_statement:
-                        to_change.append([i.lval, i.rval])
-                        new_exec.remove(i)
-
-                    else:
-                        # There are no function statements after the first one that isn't a function statement
-                        break
-    still_changing = True
-    while still_changing:
-        still_changing = False
-        for i in to_change:
-            rval = i[1]
-            calls = FindFunctionCalls()
-            calls.visit(rval)
-            for j in to_change:
-                for k in calls.nodes:
-                    if k.name == j[0].name:
-                        calls_to_replace = FindFunctionCalls()
-                        calls_to_replace.visit(j[1])
-                        # must check if it is recursive and contains other function statements
-                        it_is_simple = True
-                        for l in calls_to_replace.nodes:
-                            for m in to_change:
-                                if l.name == m[0].name:
-                                    it_is_simple = False
-                        if it_is_simple:
-                            still_changing = True
-                            i[1] = ReplaceFunctionStatement(j[0], j[1]).visit(rval)
-    final_exec = []
-    for i in new_exec:
-        final_exec.append(ReplaceFunctionStatementPass(to_change).visit(i))
-    if hasattr(node, "execution_part"):
-        if node.execution_part is not None:
-            node.execution_part.execution = final_exec
-        else:
-            node.execution_part = ast_internal_classes.Execution_Part_Node(execution=final_exec)
-    else:
-        node.execution_part = ast_internal_classes.Execution_Part_Node(execution=final_exec)
-        # node.execution_part.execution = final_exec
-    if hasattr(node, "specification_part"):
-        if node.specification_part is not None:
-            node.specification_part.specifications = spec
-    # node.specification_part.specifications = spec
-    return node
 
 
 def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
@@ -2759,96 +2480,6 @@ class TypeInference(NodeTransformer):
         else:
             return node.sizes
 
-class ReplaceInterfaceBlocks(NodeTransformer):
-    """
-    """
-
-    def __init__(self, program, funcs: FindFunctionAndSubroutines):
-        self.funcs = funcs
-
-        ParentScopeAssigner().visit(program)
-        self.scope_vars = ScopeVarsDeclarations(program)
-        self.scope_vars.visit(program)
-
-    def _get_dims(self, node):
-
-        if hasattr(node, "dims"):
-            return node.dims
-
-        if isinstance(node, ast_internal_classes.Var_Decl_Node):
-            return len(node.sizes) if node.sizes is not None else 1
-
-        raise RuntimeError()
-
-    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-
-        # is_func = node.name.name in self.excepted_funcs or node.name in self.funcs.names
-        # is_interface_func = not node.name in self.funcs.names and node.name.name in self.funcs.iblocks
-        is_interface_func = node.name.name in self.funcs.iblocks
-
-        if is_interface_func:
-
-            available_names = []
-            print("Invoke", node.name.name, available_names)
-            for name in self.funcs.iblocks[node.name.name]:
-
-                # non_optional_args = len(self.funcs.nodes[name].args) - self.funcs.nodes[name].optional_args_count
-                non_optional_args = self.funcs.nodes[name].mandatory_args_count
-                print("Check", name, non_optional_args, self.funcs.nodes[name].optional_args_count)
-
-                success = True
-                for call_arg, func_arg in zip(node.args[0:non_optional_args],
-                                              self.funcs.nodes[name].args[0:non_optional_args]):
-                    print("Mandatory arg", call_arg, type(call_arg))
-                    if call_arg.type != func_arg.type or self._get_dims(call_arg) != self._get_dims(func_arg):
-                        print(f"Ignore function {name}, wrong param type {call_arg.type} instead of {func_arg.type}")
-                        success = False
-                        break
-                    else:
-                        print(self._get_dims(call_arg), self._get_dims(func_arg), type(call_arg), call_arg.type,
-                              func_arg.name, type(func_arg), func_arg.type)
-
-                optional_args = self.funcs.nodes[name].args[non_optional_args:]
-                pos = non_optional_args
-                for idx, call_arg in enumerate(node.args[non_optional_args:]):
-
-                    print("Optional arg", call_arg, type(call_arg))
-                    if isinstance(call_arg, ast_internal_classes.Actual_Arg_Spec_Node):
-                        func_arg_name = call_arg.arg_name
-                        try:
-                            func_arg = self.scope_vars.get_var(name, func_arg_name.name)
-                        except:
-                            # this keyword parameter is not available in this function
-                            success = False
-                            break
-                        print('btw', func_arg, type(func_arg), func_arg.type)
-                    else:
-                        func_arg = optional_args[idx]
-
-                    # if call_arg.type != func_arg.type:
-                    if call_arg.type != func_arg.type or self._get_dims(call_arg) != self._get_dims(func_arg):
-                        print(f"Ignore function {name}, wrong param type {call_arg.type} instead of {func_arg.type}")
-                        success = False
-                        break
-                    else:
-                        print(self._get_dims(call_arg), self._get_dims(func_arg), type(call_arg), call_arg.type,
-                              func_arg.name, type(func_arg), func_arg.type)
-
-                if success:
-                    available_names.append(name)
-
-            if len(available_names) == 0:
-                raise RuntimeError("No matching function calls!")
-
-            if len(available_names) != 1:
-                print(node.name.name, available_names)
-                raise RuntimeError("Too many matching function calls!")
-
-            print(f"Selected {available_names[0]} as invocation for {node.name}")
-            node.name = ast_internal_classes.Name_Node(name=available_names[0])
-
-        return node
-
 
 class PointerRemoval(NodeTransformer):
 
@@ -3112,45 +2743,6 @@ class ArgumentPruner(NodeVisitor):
             self.visit(arg)
 
 
-class PropagateEnums(NodeTransformer):
-    """
-    """
-
-    def __init__(self):
-        self.parsed_enums = {}
-
-    def _parse_enums(self, enums):
-
-        for j in enums:
-            running_count = 0
-            for k in j:
-                if isinstance(k, list):
-                    for l in k:
-                        if isinstance(l, ast_internal_classes.Name_Node):
-                            self.parsed_enums[l.name] = running_count
-                            running_count += 1
-                        elif isinstance(l, list):
-                            self.parsed_enums[l[0].name] = l[2].value
-                            running_count = int(l[2].value) + 1
-                        else:
-
-                            raise ValueError("Unknown enum type")
-                else:
-                    raise ValueError("Unknown enum type")
-
-    def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
-        self._parse_enums(node.enums)
-        return self.generic_visit(node)
-
-    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
-
-        if self.parsed_enums.get(node.name) is not None:
-            node.type = 'INTEGER'
-            return ast_internal_classes.Int_Literal_Node(value=str(self.parsed_enums[node.name]))
-
-        return node
-
-
 class IfEvaluator(NodeTransformer):
     def __init__(self):
         self.replacements = 0
@@ -3260,31 +2852,6 @@ class AssignmentPropagator(NodeTransformer):
                 else:
                     setattr(node, field, new_node)
         return node
-
-
-class getCalls(NodeVisitor):
-    def __init__(self):
-        self.calls = []
-
-    def visit_Call_Expr_Node(self, node):
-        self.calls.append(node.name.name)
-        for arg in node.args:
-            self.visit(arg)
-        return
-
-
-class FindUnusedFunctions(NodeVisitor):
-    def __init__(self, root, parse_order):
-        self.root = root
-        self.parse_order = parse_order
-        self.used_names = {}
-
-    def visit_Subroutine_Subprogram_Node(self, node):
-        getacall = getCalls()
-        getacall.visit(node.execution_part)
-        used_calls = getacall.calls
-        self.used_names[node.name.name] = used_calls
-        return
 
 
 class ReplaceImplicitParDecls(NodeTransformer):
