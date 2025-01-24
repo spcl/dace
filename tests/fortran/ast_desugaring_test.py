@@ -1855,7 +1855,7 @@ subroutine main()
   ! Just making sure that `cond` is still known after all the loops.
   if (cond) out = out + 1.
 
-` ! `cond` evaluation inside a branch should also happen.
+  ! `cond` evaluation inside a branch should also happen.
   if (cond) then
     cond = .true.
     if (cond) then
