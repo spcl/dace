@@ -1782,6 +1782,8 @@ class AST_translator:
                     print("Shapes are not equal, but the same size. We hope that the symbolic sizes evaluate to the same values")
                     recompute_strides=False
                     for i,local in enumerate(local_shape):
+                        if not hasattr(local, "name"):
+                            continue
                         if local.name.startswith("__f2dace"):
                             local_shape[i]=shape[i]
                             print(f"replacing local shape: {local_shape[i]}")
