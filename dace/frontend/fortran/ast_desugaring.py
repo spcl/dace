@@ -2212,7 +2212,8 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
 
-    name_collisions: Dict[str, int] = {k[-1]: 0 for k in ident_map.keys()}
+    known_names: Set[str] = {k[-1] for k in ident_map.keys()}
+    name_collisions: Dict[str, int] = {k: 0 for k in known_names}
     for k in ident_map.keys():
         name_collisions[k[-1]] += 1
     name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1 or k.lower() in KEYWORDS_TO_AVOID}
@@ -2226,6 +2227,7 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
             uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
         else:
             uname = k[-1]
+        assert uname not in known_names
         uident_map[k] = uname
 
     # PHASE 1.a: Remove all the places where any function is imported.
@@ -2366,7 +2368,8 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
     ident_map = identifier_specs(ast)
     alias_map = alias_specs(ast)
 
-    name_collisions: Dict[str, int] = {k[-1]: 0 for k in ident_map.keys()}
+    known_names: Set[str] = {k[-1] for k in ident_map.keys()}
+    name_collisions: Dict[str, int] = {k: 0 for k in known_names}
     for k in ident_map.keys():
         name_collisions[k[-1]] += 1
     name_collisions: Set[str] = {k for k, v in name_collisions.items() if v > 1 or k.lower() in KEYWORDS_TO_AVOID}
@@ -2396,6 +2399,7 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
             uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
         else:
             uname = k[-1]
+        assert uname not in known_names
         uident_map[k] = uname
 
     # PHASE 1.a: Remove all the places where any variable is imported.
