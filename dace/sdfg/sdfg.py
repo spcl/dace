@@ -1614,6 +1614,8 @@ class SDFG(ControlFlowRegion):
         """
         filename = os.path.expanduser(filename)
 
+        if filename.endswith('.sdfgz'):
+            compress = True
         if compress:
             fileopen = lambda file, mode: gzip.open(file, mode + 't')
         else:
