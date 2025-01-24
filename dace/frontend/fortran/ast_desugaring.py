@@ -2225,9 +2225,10 @@ def assign_globally_unique_subprogram_names(ast: Program, keepers: Set[SPEC]) ->
             continue
         if k[-1] in name_collisions:
             uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
+            while uname in known_names:
+                uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
         else:
             uname = k[-1]
-        assert uname not in known_names
         uident_map[k] = uname
 
     # PHASE 1.a: Remove all the places where any function is imported.
@@ -2397,9 +2398,10 @@ def assign_globally_unique_variable_names(ast: Program, keepers: Set[Union[str, 
             continue
         if k[-1].lower() in name_collisions:
             uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
+            while uname in known_names:
+                uname, COUNTER = f"{k[-1]}_{SUFFIX}_{COUNTER}", COUNTER + 1
         else:
             uname = k[-1]
-        assert uname not in known_names
         uident_map[k] = uname
 
     # PHASE 1.a: Remove all the places where any variable is imported.
