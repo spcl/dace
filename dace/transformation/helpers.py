@@ -635,6 +635,12 @@ def state_fission_after(state: SDFGState, node: nodes.Node, label: Optional[str]
             for e in state.memlet_path(edge):
                 nodes_to_move.add(e.src)
                 orig_edges.add(e)
+                pivot = e.src
+                while isinstance(pivot, nodes.AccessNode) and isinstance(state.sdfg.arrays[pivot.data], data.View):
+                    for vedge in utils.get_all_view_edges(state, pivot):
+                        nodes_to_move.add(vedge.src)
+                        pivot = vedge.src
+                        orig_edges.add(vedge)
 
     # Collect nodes_to_move
     for edge in state.edge_bfs(node):
