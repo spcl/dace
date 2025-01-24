@@ -728,6 +728,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
             for inner_edge in inner_edges:
                 if inner_edge in edges_to_ignore:
                     new_memlet = inner_edge.data
+                elif inner_edge.data.data != top_edge.data.data and '.' in inner_edge.data.data and '.'.join(
+                        inner_edge.data.data.split('.')[:-1]) == top_edge.data.data:
+                    new_memlet = inner_edge.data
                 else:
                     new_memlet = helpers.unsqueeze_memlet(inner_edge.data, top_edge.data)
                 if inputs:
@@ -1075,8 +1078,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
-                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices),
-                                                                      list(indices)) - set(nsdfg.symbol_mapping.keys()))
+                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) -
+                                   set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
                     ignore.add(cname)
                     continue
@@ -1085,10 +1088,13 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         _check_cand(out_candidates, state.out_edges_by_connector)
 
         # Return result, filtering out the states
-        return ({k: (dc(v), ind)
-                 for k, (v, _, ind) in in_candidates.items()
-                 if k not in ignore}, {k: (dc(v), ind)
-                                       for k, (v, _, ind) in out_candidates.items() if k not in ignore})
+        return ({
+            k: (dc(v), ind)
+            for k, (v, _, ind) in in_candidates.items() if k not in ignore
+        }, {
+            k: (dc(v), ind)
+            for k, (v, _, ind) in out_candidates.items() if k not in ignore
+        })
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
         nsdfg = self.nsdfg
