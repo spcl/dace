@@ -2480,96 +2480,6 @@ class TypeInference(NodeTransformer):
         else:
             return node.sizes
 
-class ReplaceInterfaceBlocks(NodeTransformer):
-    """
-    """
-
-    def __init__(self, program, funcs: FindFunctionAndSubroutines):
-        self.funcs = funcs
-
-        ParentScopeAssigner().visit(program)
-        self.scope_vars = ScopeVarsDeclarations(program)
-        self.scope_vars.visit(program)
-
-    def _get_dims(self, node):
-
-        if hasattr(node, "dims"):
-            return node.dims
-
-        if isinstance(node, ast_internal_classes.Var_Decl_Node):
-            return len(node.sizes) if node.sizes is not None else 1
-
-        raise RuntimeError()
-
-    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-
-        # is_func = node.name.name in self.excepted_funcs or node.name in self.funcs.names
-        # is_interface_func = not node.name in self.funcs.names and node.name.name in self.funcs.iblocks
-        is_interface_func = node.name.name in self.funcs.iblocks
-
-        if is_interface_func:
-
-            available_names = []
-            print("Invoke", node.name.name, available_names)
-            for name in self.funcs.iblocks[node.name.name]:
-
-                # non_optional_args = len(self.funcs.nodes[name].args) - self.funcs.nodes[name].optional_args_count
-                non_optional_args = self.funcs.nodes[name].mandatory_args_count
-                print("Check", name, non_optional_args, self.funcs.nodes[name].optional_args_count)
-
-                success = True
-                for call_arg, func_arg in zip(node.args[0:non_optional_args],
-                                              self.funcs.nodes[name].args[0:non_optional_args]):
-                    print("Mandatory arg", call_arg, type(call_arg))
-                    if call_arg.type != func_arg.type or self._get_dims(call_arg) != self._get_dims(func_arg):
-                        print(f"Ignore function {name}, wrong param type {call_arg.type} instead of {func_arg.type}")
-                        success = False
-                        break
-                    else:
-                        print(self._get_dims(call_arg), self._get_dims(func_arg), type(call_arg), call_arg.type,
-                              func_arg.name, type(func_arg), func_arg.type)
-
-                optional_args = self.funcs.nodes[name].args[non_optional_args:]
-                pos = non_optional_args
-                for idx, call_arg in enumerate(node.args[non_optional_args:]):
-
-                    print("Optional arg", call_arg, type(call_arg))
-                    if isinstance(call_arg, ast_internal_classes.Actual_Arg_Spec_Node):
-                        func_arg_name = call_arg.arg_name
-                        try:
-                            func_arg = self.scope_vars.get_var(name, func_arg_name.name)
-                        except:
-                            # this keyword parameter is not available in this function
-                            success = False
-                            break
-                        print('btw', func_arg, type(func_arg), func_arg.type)
-                    else:
-                        func_arg = optional_args[idx]
-
-                    # if call_arg.type != func_arg.type:
-                    if call_arg.type != func_arg.type or self._get_dims(call_arg) != self._get_dims(func_arg):
-                        print(f"Ignore function {name}, wrong param type {call_arg.type} instead of {func_arg.type}")
-                        success = False
-                        break
-                    else:
-                        print(self._get_dims(call_arg), self._get_dims(func_arg), type(call_arg), call_arg.type,
-                              func_arg.name, type(func_arg), func_arg.type)
-
-                if success:
-                    available_names.append(name)
-
-            if len(available_names) == 0:
-                raise RuntimeError("No matching function calls!")
-
-            if len(available_names) != 1:
-                print(node.name.name, available_names)
-                raise RuntimeError("Too many matching function calls!")
-
-            print(f"Selected {available_names[0]} as invocation for {node.name}")
-            node.name = ast_internal_classes.Name_Node(name=available_names[0])
-
-        return node
-
 
 class PointerRemoval(NodeTransformer):
 
@@ -2833,45 +2743,6 @@ class ArgumentPruner(NodeVisitor):
             self.visit(arg)
 
 
-class PropagateEnums(NodeTransformer):
-    """
-    """
-
-    def __init__(self):
-        self.parsed_enums = {}
-
-    def _parse_enums(self, enums):
-
-        for j in enums:
-            running_count = 0
-            for k in j:
-                if isinstance(k, list):
-                    for l in k:
-                        if isinstance(l, ast_internal_classes.Name_Node):
-                            self.parsed_enums[l.name] = running_count
-                            running_count += 1
-                        elif isinstance(l, list):
-                            self.parsed_enums[l[0].name] = l[2].value
-                            running_count = int(l[2].value) + 1
-                        else:
-
-                            raise ValueError("Unknown enum type")
-                else:
-                    raise ValueError("Unknown enum type")
-
-    def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
-        self._parse_enums(node.enums)
-        return self.generic_visit(node)
-
-    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
-
-        if self.parsed_enums.get(node.name) is not None:
-            node.type = 'INTEGER'
-            return ast_internal_classes.Int_Literal_Node(value=str(self.parsed_enums[node.name]))
-
-        return node
-
-
 class IfEvaluator(NodeTransformer):
     def __init__(self):
         self.replacements = 0
@@ -2981,31 +2852,6 @@ class AssignmentPropagator(NodeTransformer):
                 else:
                     setattr(node, field, new_node)
         return node
-
-
-class getCalls(NodeVisitor):
-    def __init__(self):
-        self.calls = []
-
-    def visit_Call_Expr_Node(self, node):
-        self.calls.append(node.name.name)
-        for arg in node.args:
-            self.visit(arg)
-        return
-
-
-class FindUnusedFunctions(NodeVisitor):
-    def __init__(self, root, parse_order):
-        self.root = root
-        self.parse_order = parse_order
-        self.used_names = {}
-
-    def visit_Subroutine_Subprogram_Node(self, node):
-        getacall = getCalls()
-        getacall.visit(node.execution_part)
-        used_calls = getacall.calls
-        self.used_names[node.name.name] = used_calls
-        return
 
 
 class ReplaceImplicitParDecls(NodeTransformer):
