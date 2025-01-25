@@ -328,6 +328,13 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
     def __init__(self):
         super().__init__()
 
+    def remove_prefix(self, src_arr_name: str):
+        for prefix in self.location_prefixes.values():
+            if src_arr_name.startswith(prefix):
+                return src_arr_name[len(prefix)+1:]
+        return src_arr_name
+
+
     @classmethod
     def expressions(cls):
         return [
@@ -482,8 +489,10 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 for b, e, s in self.thread_group_map_entry.map.range
             ]
 
+
+            pruned_src_arr_name = self.remove_prefix(src_arr_name)
             dst_arr_name = (
-                self._location_to_prefix(self.dst_memory_location) + "_" + src_arr_name
+                self._location_to_prefix(self.dst_memory_location) + "_" + pruned_src_arr_name
             )
             c = 0
             while dst_arr_name in sdfg.arrays:
