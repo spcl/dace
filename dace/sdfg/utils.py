@@ -2089,11 +2089,22 @@ def get_control_flow_block_dominators(sdfg: SDFG,
         #   dominator of that loop or conditional.
         # - If the immediate dominator is any other control flow region, change the immediate dominator to be the
         #   immediate dominator of that region's end / exit - or a virtual one if no single one exists.
+        
+        def _get_parent(n, d):
+            if n.parent_graph not in d and n.parent_graph.parent_graph is not sdfg:
+                if isinstance(n.parent_graph.parent_graph, ConditionalBlock):
+                    return n.parent_graph.parent_graph
+                warnings.warn(f"Could not find immediate dominator for {n}")
+            return n.parent_graph
+        
         for k, _ in idom.items():
-            if k.parent_graph is not sdfg and k is k.parent_graph.start_block:
-                next_dom = idom[k.parent_graph]
-                while next_dom.parent_graph is not sdfg and next_dom is next_dom.parent_graph.start_block:
-                    next_dom = idom[next_dom.parent_graph]
+            k_parent = _get_parent(k, idom)
+            if k_parent is not sdfg and k is k_parent.start_block:
+                next_dom = idom[k_parent]
+                next_dom_parent = _get_parent(next_dom, idom)
+                while next_dom_parent is not sdfg and next_dom is next_dom_parent.start_block:
+                    next_dom = idom[next_dom_parent]
+                    next_dom_parent = _get_parent(next_dom, idom)
                 idom[k] = next_dom
         changed = True
         while changed:
@@ -2124,6 +2135,7 @@ def get_control_flow_block_dominators(sdfg: SDFG,
 
         for cfg in sdfg.all_control_flow_regions(parent_first=True):
             if isinstance(cfg, ConditionalBlock):
+                sinks_per_cfg[cfg] = cfg
                 continue
             # Get immediate post-dominators
             sink_nodes = cfg.sink_nodes()
@@ -2143,10 +2155,13 @@ def get_control_flow_block_dominators(sdfg: SDFG,
         # Compute the transitive relationship of immediate postdominators, similar to how it works for immediate
         # dominators, but inverse.
         for k, _ in ipostdom.items():
-            if k.parent_graph is not sdfg and k is sinks_per_cfg[k.parent_graph]:
-                next_pdom = ipostdom[k.parent_graph]
-                while next_pdom.parent_graph is not sdfg and next_pdom is sinks_per_cfg[next_pdom.parent_graph]:
-                    next_pdom = ipostdom[next_pdom.parent_graph]
+            k_parent = _get_parent(k, ipostdom)
+            if k_parent is not sdfg and k is sinks_per_cfg[k_parent]:
+                next_pdom = ipostdom[k_parent]
+                next_pdom_parent = _get_parent(next_pdom, ipostdom)
+                while next_pdom_parent is not sdfg and next_pdom is sinks_per_cfg[next_pdom_parent]:
+                    next_pdom = ipostdom[next_pdom_parent]
+                    next_pdom_parent = _get_parent(next_pdom, ipostdom)
                 ipostdom[k] = next_pdom
         changed = True
         while changed:
