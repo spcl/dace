@@ -808,8 +808,12 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     first_cfg = first_state_instance.parent_graph
                     last_cfg = last_state_instance.parent_graph
                     different_cfgs = first_cfg != last_cfg
-                    if (different_cfgs or
-                            any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst, _ in instances)):
+                    if different_cfgs:
+                        start = sdfg.start_block
+                        # if isinstance(start, ControlFlowBlock):
+                        #     start = start.nodes()[0]
+                        self.to_allocate[curscope].append((sdfg, start, nodes.AccessNode(name), True, True, True))
+                    elif any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst, _ in instances):
                         first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
@@ -820,16 +824,17 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         self.to_allocate[curscope].append(
                             (sdfg, first_state_instance, first_node_instance, True, False, False))
 
-                    curscope = first_state_instance
-                    self.to_allocate[curscope].append(
-                        (sdfg, first_state_instance, first_node_instance, False, True, False))
-                    curscope = last_state_instance
+                    if not different_cfgs:
+                        curscope = first_state_instance
+                        self.to_allocate[curscope].append(
+                            (sdfg, first_state_instance, first_node_instance, False, True, False))
+                        curscope = last_state_instance
                     
-                    if different_cfgs and isinstance(last_state_instance, ControlFlowRegion):
-                        last_state_instance = last_state_instance.nodes()[-1]
-                        self.to_allocate[sdfg].append(
-                            (sdfg, last_state_instance, last_node_instance, False, False, True))
-                    else:
+                        # if different_cfgs and isinstance(last_state_instance, ControlFlowRegion):
+                        #     last_state_instance = last_state_instance.nodes()[-1]
+                        #     self.to_allocate[sdfg].append(
+                        #         (sdfg, last_state_instance, last_node_instance, False, False, True))
+                        # else:
                         self.to_allocate[curscope].append(
                             (sdfg, last_state_instance, last_node_instance, False, False, True))
                 else:
