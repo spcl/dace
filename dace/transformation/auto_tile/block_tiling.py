@@ -60,70 +60,6 @@ class BlockTiling(transformation.SingleStateTransformation):
     def can_be_applied(self, state, expr_index, sdfg, permissive=False):
         return True
 
-    def find_next_map_entry(self, state: SDFGState, node : nodes.MapEntry):
-        nodes_to_check = [v for u, u_conn, v, v_conn, memlet in state.out_edges(node)]
-        while (len(nodes_to_check) != 0):
-            node_to_check = nodes_to_check.pop()
-            if isinstance(node_to_check, nodes.MapEntry):
-                return node_to_check
-            if not isinstance(nodes_to_check, nodes.MapExit):
-                nodes_to_check += [v for u, u_conn, v, v_conn, memlet in state.out_edges(node_to_check)]
-        return None
-
-    def find_next_map_exit(self, state: SDFGState, node : nodes.MapExit):
-        nodes_to_check = [v for u, u_conn, v, v_conn, memlet in state.out_edges(node)]
-        while (len(nodes_to_check) != 0):
-            node_to_check = nodes_to_check.pop()
-            if isinstance(node_to_check, nodes.MapExit):
-                return node_to_check
-            if not isinstance(nodes_to_check, nodes.MapEntry):
-                nodes_to_check += [v for u, u_conn, v, v_conn, memlet in state.out_edges(node_to_check)]
-        return None
-
-    def return_access_node(self, state: SDFGState, array_name: str):
-        for node in sdutil.dfs_topological_sort(state):
-            if isinstance(node, nodes.AccessNode):
-                if node.data == array_name:
-                    return node
-        # Create new
-        access_node = nodes.AccessNode(data=array_name)
-        state.add_node(access_node)
-        return access_node
-
-    def replace_connectors(self, state: SDFGState, map_node, match_str : str, replace_str: str):
-        new_in_conns = []
-        new_out_conns = []
-
-        for in_conn in map_node.in_connectors:
-            if in_conn[3:] == match_str:
-                new_in_conns.append("IN_" + replace_str)
-                for in_edge in state.in_edges(map_node):
-                    u, u_conn, v, v_conn, memlet = in_edge
-                    if v_conn == in_conn:
-                        state.remove_edge(in_edge)
-                        state.add_edge(u, u_conn, v, "IN_" + replace_str, memlet)
-            else:
-                new_in_conns.append(in_conn)
-        for in_conn in copy.deepcopy(map_node.in_connectors):
-            map_node.remove_in_connector(in_conn)
-        for new_in_conn in new_in_conns:
-            map_node.add_in_connector(new_in_conn)
-
-        for out_conn in map_node.out_connectors:
-            if out_conn[4:] == match_str:
-                new_out_conns.append("OUT_" + replace_str)
-                for out_edge in state.out_edges(map_node):
-                    u, u_conn, v, v_conn, memlet = out_edge
-                    if u_conn == out_conn:
-                        state.remove_edge(out_edge)
-                        state.add_edge(u, "OUT_" + replace_str, v, v_conn, memlet)
-            else:
-                new_out_conns.append(out_conn)
-        for out_conn in copy.deepcopy(map_node.out_connectors):
-            map_node.remove_out_connector(out_conn)
-        for new_out_conn in new_out_conns:
-            map_node.add_out_connector(new_out_conn)
-
     def replace_subsets(self, state: SDFGState,
                         map_node,
                         match_subset : subsets.Range,
@@ -134,11 +70,11 @@ class BlockTiling(transformation.SingleStateTransformation):
             u, u_conn, v, v_conn, memlet = edge
             new_range_list = []
             if memlet.subset:
-                for range in memlet.subset:
-                    if range == match_subset:
+                for _range in memlet.subset:
+                    if _range == match_subset:
                         new_range_list.append(replace_subset)
                     else:
-                        new_range_list.append(range)
+                        new_range_list.append(_range)
             else:
                 new_range_list = None
             new_memlet = Memlet(data=memlet.data, subset=subsets.Range(new_range_list) if new_range_list != None else new_range_list,
@@ -147,30 +83,6 @@ class BlockTiling(transformation.SingleStateTransformation):
             state.add_edge(u, u_conn, v, v_conn, new_memlet)
             #print("AE8", u, u_conn, v, v_conn, new_memlet)
             edges_to_check += [e for e in state.out_edges(v) if e != state.exit_node(map_node)]
-
-    def replace_subsets_from_data(self, state: SDFGState,
-                                  begin_node,
-                                  end_node,
-                                  match_data : str,
-                                  replace_data : str,
-                                  replace_range):
-        edges_to_check = set(state.out_edges(begin_node))
-        while len(edges_to_check) > 0:
-            edge = edges_to_check.pop()
-            u, u_conn, v, v_conn, memlet = edge
-            new_range_list = []
-            if memlet.data == match_data:
-                if replace_range != None:
-                    new_memlet = Memlet(data=replace_data, subset=replace_range, wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo)
-                else:
-                    new_memlet = Memlet(data=replace_data, subset=memlet.subset, wcr=memlet.wcr, wcr_nonatomic=memlet.wcr_nonatomic, allow_oob=memlet.allow_oob, debuginfo=memlet.debuginfo)
-            else:
-                new_memlet = memlet
-            state.remove_edge(edge)
-            state.add_edge(u, u_conn, v, v_conn, new_memlet)
-            print("AE9", u, u_conn, v, v_conn, new_memlet)
-            edge = u, u_conn, v, v_conn, new_memlet
-            edges_to_check = edges_to_check.union(set([(_u, _uc, _v, _vc, _memlet) for (_u, _uc, _v, _vc, _memlet) in state.out_edges(v) if _v != end_node]))
 
     def apply(self, state: SDFGState, sdfg: SDFG):
         work_map_entry : nodes.MapEntry = self.work_map_entry

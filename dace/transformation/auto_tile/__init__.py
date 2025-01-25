@@ -7,3 +7,4 @@ from .underapproximate_memlet_subset import UnderApprorixmateMemletSubsets
 from .block_tiling import BlockTiling
 from .explicit_memory_move import ExplicitMemoryMove
 from .remainder_loop import RemainderLoop
+from .consecutive_block_tiling import ConsecutiveBlockTiling

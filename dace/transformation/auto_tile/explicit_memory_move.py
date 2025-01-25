@@ -4,7 +4,7 @@ import copy
 import dace
 from dace import subsets
 from dace.data import Array
-from dace.properties import ListProperty, Property, SubsetProperty, make_properties
+from dace.properties import DictProperty, ListProperty, Property, SubsetProperty, make_properties
 from dace.libraries.standard.nodes import CodeLibraryNode
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
@@ -321,9 +321,11 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
         desc="Source memory location",
     )
     use_lib_node = Property(dtype=bool, default=False, desc="use library node if available")
+    location_prefixes = DictProperty(key_type=dace.dtypes.StorageType, value_type=str,
+                                     default={}, desc="Name mapping")
+    level = Property(dtype=int, default=0, desc="Level of the map")
 
     def __init__(self):
-        self._added_arrays = []
         super().__init__()
 
     @classmethod
@@ -343,13 +345,8 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
         u, uc, v, vc, memlet = edge
         return (memlet.data, sdfg.arrays[memlet.data].storage)
 
-    _location_prefixes = {
-        dtypes.StorageType.GPU_Global: "glb",
-        dtypes.StorageType.GPU_Shared: "shr",
-    }
-
     def _location_to_prefix(self, storage: dtypes.StorageType):
-        return self._location_prefixes.get(storage, storage.name)
+        return self.location_prefixes.get(storage, storage.name)
 
     def filter_terms(self, expr : SymExpr, vars):
         if isinstance(expr, int):
@@ -397,13 +394,17 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
         tiles_evenly = self.tiles_evenly
         for out_edge in state.out_edges(self.map_entry):
             u, uc, v, vc, memlet = out_edge
-            src_arr_name, src_arrstorage_type = self._infer_source(state, sdfg, out_edge)
-            if src_arrstorage_type == self.src_memory_location:
-                num_loads += 1
+            if memlet is not None and memlet.data is not None:
+                src_arr_name, src_arrstorage_type = self._infer_source(state, sdfg, out_edge)
+                if src_arrstorage_type == self.src_memory_location:
+                    num_loads += 1
 
         current_load = 0
         for out_edge in state.out_edges(self.map_entry):
             u, uc, v, vc, memlet = out_edge
+            if memlet is None or memlet.data is None:
+                continue
+
             src_arr_name, src_arrstorage_type = self._infer_source(state, sdfg, out_edge)
             print(src_arrstorage_type, self.src_memory_location, isinstance(
                 sdfg.arrays[src_arr_name], dace.data.Scalar
@@ -422,26 +423,54 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             subset_to_pass = []
             shape = []
             to_replace = []
-            for i, (beg, end, step) in enumerate(memlet.subset):
-                for sym in set.union(beg.free_symbols, end.free_symbols):
-                    for param in self.thread_group_map_entry.map.params:
-                        if str(sym) == param:
-                            to_replace.append(i)
-                            break
-            for in_edge in state.in_edges(self.thread_group_map_entry):
-                _, _, _, _, _memlet = in_edge
-                if _memlet.data == memlet.data:
-                    for j in range(len(memlet.subset)):
-                        if j in to_replace:
-                            subset_to_pass.append(_memlet.subset[j])
-                            b, e, s = _memlet.subset[j]
-                            assert s == 1
-                            shape.append(e + 1 - b)
-                        else:
-                            subset_to_pass.append(memlet.subset[j])
-                            b, e, s = memlet.subset[j]
-                            assert s == 1
-                            shape.append(e + 1 - b)
+            if self.level == 0:
+                for i, (beg, end, step) in enumerate(memlet.subset):
+                    for sym in set.union(beg.free_symbols, end.free_symbols):
+                        for param in self.thread_group_map_entry.map.params:
+                            if str(sym) == param:
+                                to_replace.append(i)
+                                break
+                for in_edge in state.in_edges(self.thread_group_map_entry):
+                    _, _, _, _, _memlet = in_edge
+                    if _memlet.data == memlet.data:
+                        for j in range(len(memlet.subset)):
+                            if j in to_replace:
+                                subset_to_pass.append(_memlet.subset[j])
+                                b, e, s = _memlet.subset[j]
+                                assert s == 1
+                                shape.append(e + 1 - b)
+                            else:
+                                subset_to_pass.append(memlet.subset[j])
+                                b, e, s = memlet.subset[j]
+                                assert s == 1
+                                shape.append(e + 1 - b)
+            else:
+                for i, (beg, end, step) in enumerate(memlet.subset):
+                    for sym in set.union(beg.free_symbols, end.free_symbols):
+                        for param in self.thread_group_map_entry.map.params:
+                            if str(sym) == param:
+                                to_replace.append(i)
+                                break
+                # Prune tblock prefix from memlet
+                # Prune work map prefix from memlet
+                smys_to_rm = set()
+                for p in self.thread_group_map_entry.map.params:
+                    smys_to_rm.add(dace.symbol(p))
+                for p in self.map_entry.map.params:
+                    smys_to_rm.add(dace.symbol(p))
+
+                subset_to_pass = []
+                print("CCCCCc", memlet.subset)
+                for i, (beg, end, step) in enumerate(memlet.subset):
+                    subs_dict = {sym: 0 for sym in smys_to_rm}
+                    _beg = beg.subs(subs_dict)
+                    _end = end.subs(subs_dict)
+                    _step = step.subs(subs_dict)
+                    subset_to_pass.append((_beg, _end, _step))
+
+                shape = [(end + 1 - beg)//step for beg, end, step in subset_to_pass]
+                print("BBBBBBB", memlet)
+            print("AAAAAAA", subset_to_pass, shape, to_replace)
             # End Mapping
 
             mem_loc_a = parsedstorage_type
@@ -469,7 +498,6 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
                 transient=True,
                 storage=self.dst_memory_location,
             )
-            self._added_arrays.append(dst_arr_name)
 
             # raise Exception(type(subset_to_pass), ", ", type(subset_to_pass[0]))
 
@@ -511,28 +539,47 @@ class ExplicitMemoryMove(transformation.SingleStateTransformation):
             # This removes any parameter that depends on the grid loop
             new_subset = []
             thread_group_offset = []
-            for beg, end, step in old_subset:
-                _beg = self.filter_terms(
-                    SymExpr(beg), self.thread_group_map_entry.map.params
-                )
-                _end = self.filter_terms(
-                    SymExpr(end), self.thread_group_map_entry.map.params
-                )
-                _step = self.filter_terms(
-                    SymExpr(step), self.thread_group_map_entry.map.params
-                )
-                if isinstance(_beg, SymExpr) or isinstance(_beg, symbol):
-                    thread_group_offset.append(
-                        any(
-                            [
-                                _beg.has(symbol(v))
-                                for v in self.thread_group_map_entry.map.params
-                            ]
-                        )
+            if self.level == 0:
+                for beg, end, step in old_subset:
+                    _beg = self.filter_terms(
+                        SymExpr(beg), self.thread_group_map_entry.map.params
                     )
-                else:
-                    thread_group_offset.append(False)
-                new_subset.append((_beg, _end, _step))
+                    _end = self.filter_terms(
+                        SymExpr(end), self.thread_group_map_entry.map.params
+                    )
+                    _step = self.filter_terms(
+                        SymExpr(step), self.thread_group_map_entry.map.params
+                    )
+                    if isinstance(_beg, SymExpr) or isinstance(_beg, symbol):
+                        thread_group_offset.append(
+                            any(
+                                [
+                                    _beg.has(symbol(v))
+                                    for v in self.thread_group_map_entry.map.params
+                                ]
+                            )
+                        )
+                    else:
+                        thread_group_offset.append(False)
+                    new_subset.append((_beg, _end, _step))
+            else:
+                for i, (beg, end, step) in enumerate(memlet.subset):
+                    subs_dict = {sym: 0 for sym in smys_to_rm}
+                    _beg = beg.subs(subs_dict)
+                    _end = end.subs(subs_dict)
+                    _step = step.subs(subs_dict)
+                    new_subset.append((_beg, _end, _step))
+                    if isinstance(_beg, SymExpr) or isinstance(_beg, symbol):
+                        thread_group_offset.append(
+                            any(
+                                [
+                                    _beg.has(symbol(v))
+                                    for v in self.thread_group_map_entry.map.params
+                                ]
+                            )
+                        )
+                    else:
+                        thread_group_offset.append(False)
 
             new_range_list = new_subset
             to_dst_memlet = Memlet(
