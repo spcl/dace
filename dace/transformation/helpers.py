@@ -596,12 +596,27 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
     nodes_to_remove = set(subgraph.nodes())
     boundary_nodes = [n for n in subgraph.nodes() if len(state.out_edges(n)) > len(subgraph.out_edges(n))
                       ] + [n for n in subgraph.nodes() if len(state.in_edges(n)) > len(subgraph.in_edges(n))]
+    nodes_to_remove -= set(boundary_nodes)
+    # Mark nodes to keep if they are needed for building views.
+    kept_nodes = set(state.nodes()) - nodes_to_remove
+    view_base_nodes_to_keep = set()
+    for kept_node in kept_nodes:
+        if isinstance(kept_node, nodes.AccessNode) and isinstance(kept_node.desc(state.sdfg), data.View):
+            for viewed_node in get_all_view_nodes(state, kept_node):
+                if viewed_node in nodes_to_remove:
+                    view_base_nodes_to_keep.add(viewed_node)
+    nodes_to_remove -= view_base_nodes_to_keep
 
     # Make dictionary of nodes to add to new state
-    new_nodes = {n: n for n in subgraph.nodes()}
+    new_nodes = {}
+    for n in subgraph.nodes():
+        if n in view_base_nodes_to_keep:
+            # These nodes will be in both states, so we need a copy.
+            new_nodes[n] = copy.deepcopy(n)
+        else:
+            new_nodes[n] = n
     new_nodes.update({b: copy.deepcopy(b) for b in boundary_nodes})
 
-    nodes_to_remove -= set(boundary_nodes)
     state.remove_nodes_from(nodes_to_remove)
 
     for n in new_nodes.values():
@@ -612,10 +627,12 @@ def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> 
     newstate.add_nodes_from(new_nodes.values())
 
     for e in orig_edges:
-        newstate.add_edge(new_nodes[e.src], e.src_conn, new_nodes[e.dst], e.dst_conn, e.data)
+        newstate.add_edge(new_nodes[e.src], e.src_conn, new_nodes[e.dst], e.dst_conn, copy.deepcopy(e.data))
 
     for bn in boundary_nodes:
-        bn._in_connectors.clear()
+        # Do not clear the 'views' connectors for access nodes to Views.
+        if not (isinstance(bn, nodes.AccessNode) and isinstance(bn.desc(state.sdfg), data.View)):
+            bn._in_connectors.clear()
 
     return newstate
 
