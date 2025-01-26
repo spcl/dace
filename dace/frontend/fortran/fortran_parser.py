@@ -301,6 +301,8 @@ class AST_translator:
         self.normalize_offsets = normalize_offsets
         self.temporary_sym_dict = {}
         self.temporary_link_to_parent = {}
+        self.temporary_ins={}
+        self.temporary_outs={}
         self.do_not_make_internal_variables_argument = do_not_make_internal_variables_argument
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
@@ -930,12 +932,15 @@ class AST_translator:
         # 4. Replace the names in the size declaration expressions with the new symbol versions.
         # 5. Create a state before the current substate where we add the NSDFG node.
         # 6. For each, add the acces "tower" as in the NSDFG state to a scalar in that state.
+        #TODO: Implementation change coming in future commit
 
         # Collect the parameters and the function signature to comnpare and link
         parameters = node.args.copy()
         my_name_sdfg = node.name.name + str(self.sdfgs_count)
         new_sdfg = SDFG(my_name_sdfg)
         self.sdfgs_count += 1
+        self.temporary_ins[new_sdfg] = []
+        self.temporary_outs[new_sdfg] = []
         self.actual_offsets_per_sdfg[new_sdfg] = {}
         self.names_of_object_in_parent_sdfg[new_sdfg] = {}
         substate = self._add_simple_state_to_cfg(cfg, "state" + my_name_sdfg)
@@ -1001,6 +1006,7 @@ class AST_translator:
         parameters = par2
         assigns = []
         symbol_assigns = []
+        self.temporary_sym_dict[new_sdfg.name]={}
         sym_dict = {}
         self.local_not_transient_because_assign[my_name_sdfg] = []
         for lit, litval in zip(literals, literal_values):
@@ -1054,10 +1060,12 @@ class AST_translator:
             read=False
             if local_name.name in read_names:
                 ins_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
+                self.temporary_ins[new_sdfg].append((self.name_mapping[new_sdfg][local_name.name],self.name_mapping.get(sdfg).get(ast_utils.get_name(variable_in_call))))
                 read=True
             write=False
             if local_name.name in write_names:
                 outs_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
+                self.temporary_outs[new_sdfg].append((self.name_mapping[new_sdfg][local_name.name],self.name_mapping.get(sdfg).get(ast_utils.get_name(variable_in_call))))
                 write=True
             ret,view=self.process_variable_call(variable_in_call,local_name, sdfg, new_sdfg,substate,read,write,local_definition)
             if ret:
@@ -1069,6 +1077,8 @@ class AST_translator:
 
         for i in sdfg.symbols:
             sym_dict[i] = i
+
+        sym_dict.update(self.temporary_sym_dict[new_sdfg.name])    
 
         not_found_write_names = []
         not_found_read_names = []
@@ -1189,6 +1199,8 @@ class AST_translator:
                                            transient=False,
                                            strides=array_in_global.strides,
                                            offset=array_in_global.offset)
+        #self.temporary_ins[new_sdfg] = ins_in_new_sdfg
+        #self.temporary_outs[new_sdfg] = outs_in_new_sdfg
         all_symbols = new_sdfg.free_symbols
         missing_symbols = [s for s in all_symbols if s not in sym_dict]
         for i in missing_symbols:
@@ -1573,6 +1585,7 @@ class AST_translator:
                     pass
                 else:
                     #raise ValueError("Shape of array does not match")
+                    local_shape,local_strides = self.fix_shapes_before_adding_from_nested(sdfg,new_sdfg,local_shape,local_strides) 
                     reshape_viewname, reshape_view = sdfg.add_view(sdfg_name + "_view_reshape_" + str(self.views),
                                                 local_shape,
                                                 dtype,
@@ -1590,6 +1603,7 @@ class AST_translator:
                         rv = substate.add_read(reshape_viewname)
                         w = substate.add_write(sdfg_name)
                         substate.add_edge(rv, 'views', w, None, dpcp(memlet))
+                    local_shape,local_strides = self.fix_shapes_before_adding_nested(sdfg,new_sdfg,local_shape,local_strides)    
                     new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
                                             local_shape,
                                             dtype,
@@ -1603,11 +1617,13 @@ class AST_translator:
                     new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype,
                                                     array.storage)
                 else:
+                    strides=array.strides
+                    shape,strides = self.fix_shapes_before_adding_nested(sdfg,new_sdfg,shape,strides)
                     new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
                                             shape,
                                             dtype,
                                             array.storage,
-                                            strides=array.strides,
+                                            strides=strides,
                                             offset=offset)
                 return False, None    
             else:
@@ -1626,6 +1642,7 @@ class AST_translator:
                 shape=[1]
                 offsets_zero=[0]
                 strides=[1]
+        shape,strides = self.fix_shapes_before_adding(sdfg,shape,strides)        
         viewname, view = sdfg.add_view(view_name,
                                             shape,
                                             array.dtype,
@@ -1762,6 +1779,7 @@ class AST_translator:
                 shape=[1]
                 offsets_zero=[0]
                 strides=[1]
+            shape,strides = self.fix_shapes_before_adding(sdfg,shape,strides)       
             viewname, view = sdfg.add_view(sdfg_name + "_view_" + str(self.views),
                                             shape,
                                             array.dtype,
@@ -1804,6 +1822,7 @@ class AST_translator:
                 else:    
                     if len(local_shape)!=1:
                         raise NotImplementedError("Local shape not 1")
+                    local_shape,local_strides = self.fix_shapes_before_adding_from_nested(sdfg,new_sdfg,local_shape,local_strides)
                     reshape_viewname, reshape_view = sdfg.add_view(sdfg_name + "_view_reshape_" + str(self.views),
                                                 local_shape,
                                                 array.dtype,
@@ -1823,7 +1842,7 @@ class AST_translator:
                         wv=res_v_write
                     
 
-
+            local_shape,local_strides = self.fix_shapes_before_adding_nested(sdfg,new_sdfg,local_shape,local_strides)
             new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
                                 local_shape,
                                 array.dtype,
@@ -1926,7 +1945,8 @@ class AST_translator:
                                 # if recompute_strides:
                                 #     local_strides = [dat._prod(local_shape[:i]) for i in range(len(local_shape))]        
                             else:    
-                                raise NotImplementedError("Local shape not the same as outside shape")  
+                                raise NotImplementedError("Local shape not the same as outside shape") 
+                        shape,strides = self.fix_shapes_before_adding_nested(sdfg,new_sdfg,shape,strides)     
                         new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
                                 shape,
                                 array.dtype,
@@ -2378,6 +2398,8 @@ class AST_translator:
                 # sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)
 
             else:
+                sizes,strides = self.fix_shapes_before_adding(sdfg,sizes,strides)             
+
                 # print("Adding local array",self.name_mapping[sdfg][node.name],sizes,datatype,offset,strides,transient)
                 sdfg.add_array(self.name_mapping[sdfg][node.name],
                                shape=sizes,
@@ -2405,6 +2427,124 @@ class AST_translator:
                         lval=ast_internal_classes.Name_Node(name=node.name, type=node.type),
                         op="=", rval=node.init, line_number=node.line_number, parent=node.parent, type=node.type), sdfg,
                         cfg)
+
+    def fix_shapes_before_adding_nested(self, sdfg: SDFG,new_sdfg,sizes:List,strides:List):
+        changed=False
+        for idx, i in enumerate(sizes):
+            if not hasattr(i,"free_symbols"):
+                continue
+            free_symbols=i.free_symbols
+            
+            for s in free_symbols:
+                if new_sdfg.symbols.get(s.name) is not None:
+                    #self.temporary_sym_dict[new_sdfg.name]["sym_"+s.name]=["sym_"+s.name]
+                    #new_sdfg.add_symbol("sym_"+s.name, sdfg.symbols[s.name].dtype)
+                    pass
+                elif new_sdfg.arrays.get(s.name) is not None:
+                    if not new_sdfg.arrays[s.name].transient:
+                        changed=True
+                        new_sdfg.add_symbol("sym_"+s.name, new_sdfg.arrays[s.name].dtype)
+                        i=i.subs(s,sym.symbol("sym_"+s.name))
+                        if self.temporary_sym_dict.get(new_sdfg.name) is None:
+                            self.temporary_sym_dict[new_sdfg.name]={}
+                        found=False
+                        for name_pair in self.temporary_ins[new_sdfg]:
+                            if s.name==name_pair[0]:
+                                name_in_parent=name_pair[1]
+                                self.temporary_sym_dict[new_sdfg.name]["sym_"+s.name]=name_in_parent
+                                found=True
+                        if not found:
+                            raise ValueError(f"Temporary symbol not found for {s.name}")        
+                else:
+                    print(f"Symbol {s.name} not found in arrays")     
+                        
+            sizes= list(sizes)
+            sizes[idx]=i
+            sizes=tuple(sizes)
+
+                        #this  means it is an input, so we can try adding it to the symbols mapping
+        if changed:
+            strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]   
+        return sizes,strides    
+    
+    def fix_shapes_before_adding_from_nested(self, sdfg: SDFG,new_sdfg,sizes:List,strides:List):
+        changed=False
+        for idx, i in enumerate(sizes):
+            if not hasattr(i,"free_symbols"):
+                continue
+            free_symbols=i.free_symbols
+            
+            for s in free_symbols:
+                if sdfg.symbols.get(s.name) is not None:
+                    #self.temporary_sym_dict[new_sdfg.name]["sym_"+s.name]=["sym_"+s.name]
+                    #new_sdfg.add_symbol("sym_"+s.name, sdfg.symbols[s.name].dtype)
+                    pass
+                elif sdfg.arrays.get(s.name) is not None:
+                    if not sdfg.arrays[s.name].transient:
+                        changed=True
+                        sdfg.add_symbol("sym_"+s.name, sdfg.arrays[s.name].dtype)
+                        i=i.subs(s,sym.symbol("sym_"+s.name))
+                        if self.temporary_sym_dict.get(sdfg.name) is None:
+                            self.temporary_sym_dict[sdfg.name]={}
+                        self.temporary_sym_dict[sdfg.name]["sym_"+s.name]="sym_"+s.name
+                elif new_sdfg.arrays.get(s.name) is not None:
+                    for name_pair in self.temporary_ins[new_sdfg]:
+                        if s.name==name_pair[0]:
+                            name_in_parent=name_pair[1]
+                            i=i.subs(s,sym.symbol(name_in_parent))
+
+                            print("here")
+                else:
+                    print(f"Symbol {s.name} not found in arrays")     
+                        
+            sizes= list(sizes)
+            sizes[idx]=i
+            sizes=tuple(sizes)
+
+                        #this  means it is an input, so we can try adding it to the symbols mapping
+        if changed:
+            strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]   
+        return sizes,strides 
+
+    def fix_shapes_before_adding(self, sdfg: SDFG,sizes:List,strides:List):
+        changed=False
+        for idx, i in enumerate(sizes):
+            if not hasattr(i,"free_symbols"):
+                continue
+            free_symbols=i.free_symbols
+            
+            for s in free_symbols:
+                if sdfg.symbols.get(s.name) is not None:
+                    pass
+                if sdfg.symbols.get("sym_"+s.name) is not None:
+                    pass
+                if sdfg.arrays.get(s.name) is not None:
+                    if not sdfg.arrays[s.name].transient:
+                        changed=True
+                        sdfg.add_symbol("sym_"+s.name, sdfg.arrays[s.name].dtype)
+                        i=i.subs(s,sym.symbol("sym_"+s.name))
+                        if self.temporary_sym_dict.get(sdfg.name) is None:
+                            self.temporary_sym_dict[sdfg.name]={}
+                        found=False
+                        if self.temporary_ins.get(sdfg) is not None:
+                            for name_pair in self.temporary_ins[sdfg]:
+                                if s.name==name_pair[0]:
+                                    name_in_parent=name_pair[1]
+                                    self.temporary_sym_dict[sdfg.name]["sym_"+s.name]=name_in_parent
+                                    found=True
+                            if not found:
+                                raise ValueError(f"Temporary symbol not found for {s.name}")       
+                else:
+                    print(f"Symbol {s.name} not found in arrays")     
+                        
+            sizes= list(sizes)
+            sizes[idx]=i
+            sizes=tuple(sizes)
+
+                        #this  means it is an input, so we can try adding it to the symbols mapping
+        if changed:
+            strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]   
+        return sizes,strides    
 
     def break2sdfg(self, node: ast_internal_classes.Break_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         break_block = BreakBlock(f'Break_l_{str(node.line_number[0])}_c_{str(node.line_number[1])}')

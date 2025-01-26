@@ -75,7 +75,7 @@ end subroutine main
     lu = np.full([iend, m, m], 0, order="F", dtype=np.float64)
     a = np.full([iend, m, m], 42, order="F", dtype=np.float64)
 
-    sdfg(a=a, lu=lu, iend=iend, m=m)
+    sdfg(a=a, lu=lu, sym_iend=iend, m=m,iend=iend, sym_m=m)
     assert np.allclose(lu, 42)
 
 

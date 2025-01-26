@@ -150,7 +150,7 @@ end subroutine main
     arrsize = 50
     arrsize2 = 54
     assert len(sdfg.data('d').shape) == 1
-    assert evaluate(sdfg.data('d').shape[0], {'arrsize': arrsize, 'arrsize2': arrsize2}) == 5
+    assert evaluate(sdfg.data('d').shape[0], {'sym_arrsize': arrsize, 'sym_arrsize2': arrsize2}) == 5
     assert len(sdfg.data('d').offset) == 1
     assert sdfg.data('d').offset[0] == -1
 
@@ -214,7 +214,7 @@ end subroutine main
     arrsize = 50
     arrsize2 = 54
     assert len(sdfg.data('d').shape) == 1
-    assert evaluate(sdfg.data('d').shape[0], {'arrsize': arrsize, 'arrsize2': arrsize2}) == 5
+    assert evaluate(sdfg.data('d').shape[0], {'sym_arrsize': arrsize, 'sym_arrsize2': arrsize2}) == 5
     assert len(sdfg.data('d').offset) == 1
     assert sdfg.data('d').offset[0] == -1
 

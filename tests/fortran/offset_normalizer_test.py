@@ -55,7 +55,7 @@ end subroutine main
     arrsize = 50
     arrsize2 = 54
     assert len(sdfg.data('d').shape) == 1
-    assert evaluate(sdfg.data('d').shape[0], {'arrsize': arrsize, 'arrsize2': arrsize2}) == 5
+    assert evaluate(sdfg.data('d').shape[0], {'sym_arrsize': arrsize, 'sym_arrsize2': arrsize2}) == 5
 
     arrsize = 50
     arrsize2 = 54
@@ -119,11 +119,11 @@ end subroutine main
     sdfg.compile()
 
     from dace.symbolic import evaluate
-    values = {'arrsize': 50, 'arrsize2': 54, 'arrsize3': 7, 'arrsize4': 9}
+    values = {'sym_arrsize': 50, 'sym_arrsize2': 54, 'sym_arrsize3': 7, 'sym_arrsize4': 9}
     assert len(sdfg.data('d').shape) == 2
     assert evaluate(sdfg.data('d').shape[0], values) == 5
     assert evaluate(sdfg.data('d').shape[1], values) == 3
-
+    values = {'sym_arrsize': 50, 'sym_arrsize2': 54, 'sym_arrsize3': 7, 'sym_arrsize4': 9, 'arrsize': 50, 'arrsize2': 54, 'arrsize3': 7, 'arrsize4': 9}
     a = np.full([5, 3], 42, order="F", dtype=np.float64)
     sdfg(d=a, **values)
     for i in range(0, 5):
@@ -182,12 +182,13 @@ end subroutine main
     sdfg.compile()
 
     from dace.symbolic import evaluate
-    values = {'arrsize': 50, 'arrsize2': 54, 'arrsize3': 7, 'arrsize4': 9}
+    values = {'sym_arrsize': 50, 'sym_arrsize2': 54, 'sym_arrsize3': 7, 'sym_arrsize4': 9}
     assert len(sdfg.data('d').shape) == 2
     assert evaluate(sdfg.data('d').shape[0], values) == 5
     assert evaluate(sdfg.data('d').shape[1], values) == 3
 
     a = np.full([5, 3], 42, order="F", dtype=np.float64)
+    values = {'sym_arrsize': 50, 'sym_arrsize2': 54, 'sym_arrsize3': 7, 'sym_arrsize4': 9, 'arrsize': 50, 'arrsize2': 54, 'arrsize3': 7, 'arrsize4': 9}
     sdfg(d=a, **values)
     for i in range(0, 5):
         for j in range(0, 3):
@@ -238,12 +239,13 @@ end subroutine main
     sdfg.compile()
 
     from dace.symbolic import evaluate
-    values = {'arrsize': 50, 'arrsize2': 54, 'arrsize3': 7, 'arrsize4': 9}
+    values = {'sym_arrsize': 50, 'sym_arrsize2': 54, 'sym_arrsize3': 7, 'sym_arrsize4': 9}
     assert len(sdfg.data('d').shape) == 2
     assert evaluate(sdfg.data('d').shape[0], values) == 5
     assert evaluate(sdfg.data('d').shape[1], values) == 3
 
     a = np.full([5, 3], 42, order="F", dtype=np.float64)
+    values = {'sym_arrsize': 50, 'sym_arrsize2': 54, 'sym_arrsize3': 7, 'sym_arrsize4': 9, 'arrsize': 50, 'arrsize2': 54, 'arrsize3': 7, 'arrsize4': 9}
     sdfg(d=a, **values)
     for i in range(0, 5):
         for j in range(0, 3):
