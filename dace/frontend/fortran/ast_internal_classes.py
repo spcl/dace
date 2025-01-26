@@ -51,13 +51,15 @@ class FNode(object):
 
         clsname = type(self).__name__.removesuffix('_Node')
         objname = self.name if hasattr(self, 'name') else '?'
-        fieldstrs = {f: _fieldstr(getattr(self, f)) for f in self._fields if hasattr(self, f)}
+        objtype = f"/{self.type}" if hasattr(self, 'type') else ''
+        fieldstrs = {f: _fieldstr(getattr(self, f)) for f in self._fields
+                     if hasattr(self, f) and f not in {'name', 'type'}}
         fieldstrs = [f"{k}:{_indent(v)}" for k, v in fieldstrs.items()]
         if fieldstrs:
             fieldstrs = '\n'.join(fieldstrs)
-            return f"{clsname} '{objname}':\n{_indent(fieldstrs)}"
+            return f"{clsname} '{objname}{objtype}':\n{_indent(fieldstrs)}"
         else:
-            return f"{clsname} '{objname}'"
+            return f"{clsname} '{objname}{objtype}'"
 
 
 class Program_Node(FNode):

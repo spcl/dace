@@ -2895,10 +2895,9 @@ def create_sdfg_from_internal_ast(own_ast: ast_components.InternalFortranAst, pr
         if not mod and program.main_program and program.main_program.name.name.name == pt:
             # The main program can be a valid entry point, so include that when appropriate.
             fn.append(program.main_program)
-        assert len(fn) <= 1, f"found multiple subroutines with the same name {ep}"
+        fn = atmost_one(f for f in fn)
         if not fn:
             continue
-        fn = fn[0]
 
         # Do the actual translation.
         ast2sdfg = AST_translator(__file__, multiple_sdfgs=cfg.multiple_sdfgs, startpoint=fn, toplevel_subroutine=None,
